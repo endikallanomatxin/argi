@@ -2,11 +2,15 @@ const std = @import("std");
 const llvm = @import("llvm.zig");
 const c = llvm.c;
 
+const parser = @import("parser.zig");
+
 pub const Error = error{
     ModuleCreationFailed,
 };
 
-pub fn generateIR(filename: []const u8) !c.LLVMModuleRef {
+pub fn generateIR(ast: std.ArrayList(*parser.ASTNode), filename: []const u8) !c.LLVMModuleRef {
+    _ = ast;
+
     std.debug.print("Generando IR para {s}\n", .{filename});
 
     // Crear el módulo LLVM con un nombre (por ejemplo, "dummy_module").

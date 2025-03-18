@@ -15,11 +15,11 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    const llvm_include_path = std.Build.LazyPath{ .cwd_relative = "/usr/local/Cellar/llvm/19.1.7/include" };
-    const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = "/usr/local/Cellar/llvm/19.1.7/lib" };
+    const llvm_include_path = std.Build.LazyPath{ .cwd_relative = "/usr/local/Cellar/llvm/19.1.7_1/include" };
+    const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = "/usr/local/Cellar/llvm/19.1.7_1/lib" };
 
     const lib = b.addStaticLibrary(.{
-        .name = "argi-compiler",
+        .name = "argi_compiler",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
         .root_source_file = b.path("src/root.zig"),
@@ -37,7 +37,7 @@ pub fn build(b: *std.Build) void {
     b.installArtifact(lib);
 
     const exe = b.addExecutable(.{
-        .name = "argi-compiler",
+        .name = "argi_compiler",
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
