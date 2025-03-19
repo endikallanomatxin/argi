@@ -36,7 +36,7 @@ pub fn compile(filename: []const u8) !void {
     // Si aún no la has implementado, temporalmente puedes usar generateIR(filename)
     // y luego migrar a la versión basada en AST.
     const llvm_filename = "output.ll";
-    const module = try codegen.generateIR(astList, llvm_filename);
+    const module = try codegen.generateIR(astList, llvm_filename, &allocator);
 
     // 5. Guardar el LLVM IR en un archivo.
     const output_filename = "output.ll";
