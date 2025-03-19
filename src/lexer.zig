@@ -143,10 +143,13 @@ pub fn printToken(token: Token) void {
 }
 
 pub fn printTokenList(tokens: []Token, indent: usize) void {
+    var i: usize = 0;
     for (tokens) |token| {
+        std.debug.print("{d}: ", .{i});
         for (0..indent) |_| {
             std.debug.print(" ", .{});
         }
         printToken(token);
+        i += 1;
     }
 }
