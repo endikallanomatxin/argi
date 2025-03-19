@@ -11,7 +11,7 @@ pub const ASTNode = union(enum) {
     returnStmt: *ReturnStmt,
 };
 
-const Decl = struct {
+pub const Decl = struct {
     name: []const u8,
     type: ?Type,
     mutability: Mutability,
@@ -19,27 +19,27 @@ const Decl = struct {
     value: *ASTNode,
 };
 
-const Mutability = enum {
+pub const Mutability = enum {
     Const,
     Var,
 };
 
-const CodeBlock = struct {
+pub const CodeBlock = struct {
     items: []const *ASTNode,
     // Return args in the future.
 };
 
-const Argument = struct {
+pub const Argument = struct {
     name: []const u8,
     mutability: Mutability,
     type: Type,
 };
 
-const TypeLiteral = struct {
+pub const TypeLiteral = struct {
     type: Type,
 };
 
-const Type = enum {
+pub const Type = enum {
     Int32,
     Int,
     Float,
@@ -55,7 +55,7 @@ const Type = enum {
     Function,
 };
 
-const ValueLiteral = union(enum) {
+pub const ValueLiteral = union(enum) {
     intLiteral: *IntLiteral,
     floatLiteral: *FloatLiteral,
     doubleLiteral: *DoubleLiteral,
@@ -64,31 +64,31 @@ const ValueLiteral = union(enum) {
     stringLiteral: *StringLiteral,
 };
 
-const IntLiteral = struct {
+pub const IntLiteral = struct {
     value: i64,
 };
 
-const FloatLiteral = struct {
+pub const FloatLiteral = struct {
     value: f32,
 };
 
-const DoubleLiteral = struct {
+pub const DoubleLiteral = struct {
     value: f64,
 };
 
-const CharLiteral = struct {
+pub const CharLiteral = struct {
     value: u8,
 };
 
-const BoolLiteral = struct {
+pub const BoolLiteral = struct {
     value: bool,
 };
 
-const StringLiteral = struct {
+pub const StringLiteral = struct {
     value: []const u8,
 };
 
-const ReturnStmt = struct {
+pub const ReturnStmt = struct {
     expression: ?*ASTNode,
 };
 
