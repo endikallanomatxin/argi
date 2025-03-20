@@ -1,0 +1,189 @@
+const std = @import("std");
+const llvm = @import("llvm.zig");
+const c = llvm.c;
+
+const parser = @import("parser.zig");
+
+pub const Error = error{
+    ModuleCreationFailed,
+    SymbolNotFound,
+    OutOfMemory,
+};
+
+pub fn generateIR(ast: std.ArrayList(*parser.ASTNode), filename: []const u8, allocator: *const std.mem.Allocator) !llvm.c.LLVMModuleRef {
+    std.debug.print("Generando IR para {s}\n", .{filename});
+
+    const module = c.LLVMModuleCreateWithName("dummy_module");
+    if (module == null) {
+        return Error.ModuleCreationFailed;
+    }
+
+    const func_type = c.LLVMFunctionType(c.LLVMInt32Type(), null, 0, 0);
+    const main_fn = c.LLVMAddFunction(module, "main", func_type);
+
+    const entry_bb = c.LLVMAppendBasicBlock(main_fn, "entry");
+    const builder = llvm.c.LLVMCreateBuilder();
+    c.LLVMPositionBuilderAtEnd(builder, entry_bb);
+
+    var context = IRGenContext.init(builder, module, allocator);
+
+    // Generar IR
+    for (ast.items) |node| {
+        _ = visitNode(&context, node) catch |err| {
+            std.debug.print("Error al compilar: {any}\n", .{err});
+            break;
+        };
+    }
+
+    // Return por defecto (int main => ret 0)
+    std.debug.print("generateIR: Building default return 0.\n", .{});
+    _ = c.LLVMBuildRet(builder, c.LLVMConstInt(c.LLVMInt32Type(), 0, 0));
+
+    // Liberar builder
+    c.LLVMDisposeBuilder(builder);
+
+    // === Verificar el módulo ===
+    var error_msg: [*c]u8 = null;
+    const res_code = c.LLVMVerifyModule(
+        module,
+        c.LLVMPrintMessageAction,
+        &error_msg,
+    );
+    if (res_code != 0) {
+        std.debug.print("LLVMVerifyModule detectó IR inválido:\n{s}\n", .{error_msg});
+        // Podrías hacer c.LLVMDisposeMessage(error_msg) aquí
+        return Error.ModuleCreationFailed; // o algún error tuyo
+    }
+
+    return module;
+}
+
+pub const IRGenContext = struct {
+    builder: llvm.c.LLVMBuilderRef,
+    module: llvm.c.LLVMModuleRef,
+    var_table: std.StringHashMap(llvm.c.LLVMValueRef),
+    allocator: *const std.mem.Allocator, // Quitar 'const'
+
+    pub fn init(builder: llvm.c.LLVMBuilderRef, module: llvm.c.LLVMModuleRef, allocator: *const std.mem.Allocator) IRGenContext {
+        return IRGenContext{
+            .builder = builder,
+            .module = module,
+            .var_table = std.StringHashMap(llvm.c.LLVMValueRef).init(allocator.*),
+            .allocator = allocator,
+        };
+    }
+    // ...
+};
+
+fn visitNode(context: *IRGenContext, node: *parser.ASTNode) Error!llvm.c.LLVMValueRef {
+    switch (node.*) {
+        .decl => |declPtr| {
+            const decl = declPtr.*;
+            return genDeclaration(context, decl);
+        },
+        .returnStmt => |retStmtPtr| {
+            const retStmt = retStmtPtr.*;
+            return genReturn(context, retStmt);
+        },
+        .codeBlock => |blockPtr| {
+            const block = blockPtr.*;
+            return genCodeBlock(context, block);
+        },
+        .valueLiteral => |valLiteralPtr| {
+            return genValueLiteral(context, valLiteralPtr.*);
+        },
+        .identifier => |ident| {
+            return genIdentifier(context, ident);
+        },
+        else => {
+            // Manejar otros tipos que tengas
+            return llvm.c.LLVMConstNull(llvm.c.LLVMVoidType());
+        },
+    }
+}
+
+fn dupZ(allocator: *const std.mem.Allocator, src: []const u8) ![]u8 {
+    var buffer = try allocator.alloc(u8, src.len + 1);
+    var i: usize = 0;
+    while (i < src.len) : (i += 1) {
+        buffer[i] = src[i];
+    }
+    buffer[src.len] = 0;
+    return buffer;
+}
+
+fn genDeclaration(context: *IRGenContext, decl: parser.Decl) !llvm.c.LLVMValueRef {
+    std.debug.print("genDeclaration: Generating for {s}\n", .{decl.name});
+
+    // Si el nombre es "main", procesamos el cuerpo
+    if (std.mem.eql(u8, decl.name, "main")) {
+        std.debug.print("genDeclaration: 'main' detected, directly visit body.\n", .{});
+        return visitNode(context, decl.value);
+    }
+
+    // Generar la parte normal (alloca, store, etc.)
+    std.debug.print("genDeclaration: Doing alloca for var '{s}'...\n", .{decl.name});
+    const i32_type = llvm.c.LLVMInt32Type();
+    const c_name = try dupZ(context.allocator, decl.name);
+
+    std.debug.print("genDeclaration: About to call LLVMBuildAlloca\n", .{});
+    const alloc = llvm.c.LLVMBuildAlloca(context.builder, i32_type, c_name.ptr);
+    std.debug.print("genDeclaration: Alloca done.\n", .{});
+
+    try context.var_table.put(decl.name, alloc);
+
+    const valueNode = decl.value;
+    std.debug.print("genDeclaration: Visiting RHS for var '{s}'...\n", .{decl.name});
+    const rhsValue = try visitNode(context, valueNode);
+
+    std.debug.print("genDeclaration: Storing RHS into alloca.\n", .{});
+    _ = llvm.c.LLVMBuildStore(context.builder, rhsValue, alloc);
+    std.debug.print("genDeclaration: Store done.\n", .{});
+
+    return alloc;
+}
+
+fn genValueLiteral(context: *IRGenContext, valLit: parser.ValueLiteral) !llvm.c.LLVMValueRef {
+    _ = context;
+    switch (valLit) {
+        .intLiteral => |intLitPtr| {
+            const i32_type = llvm.c.LLVMInt32Type();
+            return llvm.c.LLVMConstInt(i32_type, @bitCast(intLitPtr.value), 0);
+        },
+        else => {
+            return llvm.c.LLVMConstNull(llvm.c.LLVMVoidType());
+        },
+    }
+}
+
+fn genIdentifier(context: *IRGenContext, ident: []const u8) !llvm.c.LLVMValueRef {
+    const maybeAlloc = context.var_table.get(ident);
+    if (maybeAlloc) |alloc| {
+        // load el valor
+        return llvm.c.LLVMBuildLoad2(context.builder, llvm.c.LLVMInt32Type(), // asumiendo i32
+            alloc, "tmpLoad");
+    } else {
+        return error.SymbolNotFound;
+    }
+}
+
+fn genCodeBlock(context: *IRGenContext, block: parser.CodeBlock) !llvm.c.LLVMValueRef {
+    var lastValue: llvm.c.LLVMValueRef = llvm.c.LLVMConstNull(llvm.c.LLVMVoidType());
+    for (block.items) |stmt| {
+        lastValue = try visitNode(context, stmt);
+    }
+    return lastValue;
+}
+
+fn genReturn(context: *IRGenContext, retStmt: parser.ReturnStmt) !llvm.c.LLVMValueRef {
+    std.debug.print("genReturn: Starting.\n", .{});
+    if (retStmt.expression) |expr| {
+        std.debug.print("genReturn: There's an expression to return.\n", .{});
+        const val = try visitNode(context, expr);
+        std.debug.print("genReturn: About to LLVMBuildRet(...)\n", .{});
+        return llvm.c.LLVMBuildRet(context.builder, val);
+    } else {
+        std.debug.print("genReturn: Return void.\n", .{});
+        return llvm.c.LLVMBuildRetVoid(context.builder);
+    }
+}
