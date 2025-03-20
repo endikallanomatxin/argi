@@ -17,6 +17,14 @@ pub const Decl = struct {
     mutability: Mutability,
     args: []const Argument,
     value: *ASTNode,
+
+    pub fn isFunction(self: Decl) bool {
+        // if the value points to a code block, then it's a function
+        switch (self.value.*) {
+            ASTNode.codeBlock => return true,
+            else => return false,
+        }
+    }
 };
 
 pub const Mutability = enum {
