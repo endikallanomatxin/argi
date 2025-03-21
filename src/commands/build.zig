@@ -26,31 +26,23 @@ pub fn compile(filename: []const u8) !void {
     const astList = try parser.parse(&p, &allocator);
     defer astList.deinit();
     parser.printAST(astList.items);
-    // Nota: astList es, por ejemplo, una ArrayList(ASTNode) que contiene
-    // la declaración de la función 'main' y sus sentencias.
-    // Aquí podrías imprimir el AST para depuración.
 
     // 4. Generar IR a partir del AST.
-    // Para este ejemplo, suponemos que has definido en codegen.zig
-    // una función generateIRFromAST que recibe el AST y devuelve un LLVMModuleRef.
-    // Si aún no la has implementado, temporalmente puedes usar generateIR(filename)
-    // y luego migrar a la versión basada en AST.
-    const llvm_filename = "output.ll";
-    const module = try codegen.generateIR(astList, llvm_filename, &allocator);
-
-    // 5. Guardar el LLVM IR en un archivo.
-    const output_filename = "output.ll";
+    const module = try codegen.generateIR(astList, &allocator);
+    std.debug.print("\n\nCODEGEN\n", .{});
+    const llvm_output_filename = "output.ll";
     var err_msg: [*c]u8 = null;
-    if (c.LLVMPrintModuleToFile(module, output_filename, &err_msg) != 0) {
+    if (c.LLVMPrintModuleToFile(module, llvm_output_filename, &err_msg) != 0) {
         std.debug.print("Error al escribir el módulo LLVM: {s}\n", .{err_msg});
         return error.WriteFailed;
     }
-    std.debug.print("Código LLVM IR guardado en {s}\n", .{output_filename});
+    std.debug.print("Código LLVM IR guardado en {s}\n", .{llvm_output_filename});
 
-    // 6. Compilar el IR a un ejecutable usando Clang.
+    // 5. Compilar el IR a un ejecutable usando Clang.
+    std.debug.print("\n\nCOMPILATION\n", .{});
     const result = std.process.Child.run(.{
         .allocator = allocator,
-        .argv = &[_][]const u8{ "clang", output_filename, "-o", "output" },
+        .argv = &[_][]const u8{ "clang", llvm_output_filename, "-o", "output" },
     }) catch return;
     _ = result;
 
