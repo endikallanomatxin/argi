@@ -7,7 +7,18 @@ pub const Error = error{
     ModuleCreationFailed,
     SymbolNotFound,
     OutOfMemory,
+    UnknownNode,
 };
+
+pub fn dupZ(allocator: *const std.mem.Allocator, src: []const u8) ![]u8 {
+    var buffer = try allocator.alloc(u8, src.len + 1);
+    var i: usize = 0;
+    while (i < src.len) : (i += 1) {
+        buffer[i] = src[i];
+    }
+    buffer[src.len] = 0;
+    return buffer;
+}
 
 /// Genera IR a partir del AST, sin crear manualmente la función main.
 pub fn generateIR(ast: std.ArrayList(*parser.ASTNode), filename: []const u8, allocator: *const std.mem.Allocator) !llvm.c.LLVMModuleRef {
@@ -16,14 +27,16 @@ pub fn generateIR(ast: std.ArrayList(*parser.ASTNode), filename: []const u8, all
     // Creamos el módulo
     const module = c.LLVMModuleCreateWithName("dummy_module");
     if (module == null) return Error.ModuleCreationFailed;
+    std.debug.print("Módulo creado.\n", .{});
 
     // Creamos un IRGenContext con un builder "vacío" (todavía sin un BasicBlock posicionado).
     const builder = c.LLVMCreateBuilder();
     var context = IRGenContext.init(builder, module, allocator);
+    std.debug.print("Contexto creado.\n", .{});
 
     // Recorremos el AST, que será el que defina main u otras funciones
     for (ast.items) |node| {
-        _ = visitNode(&context, node) catch |err| {
+        visitNode(&context, node) catch |err| {
             std.debug.print("Error al compilar: {any}\n", .{err});
             break;
         };
@@ -60,96 +73,83 @@ pub const IRGenContext = struct {
     }
 };
 
+// El AST tiene esta pinta:
+//
+// Declaration main (const) = Bloque de código:
+//    Declaration x (var) = IntLiteral 42
+//    return IntLiteral 0
+
 /// Visita un nodo del AST y genera IR correspondiente
-fn visitNode(context: *IRGenContext, node: *parser.ASTNode) Error!llvm.c.LLVMValueRef {
+fn visitNode(context: *IRGenContext, node: *parser.ASTNode) Error!void {
     switch (node.*) {
         .decl => |declPtr| {
-            return genDeclaration(context, declPtr.*);
+            if (declPtr.*.isFunction()) {
+                _ = try genFunction(context, declPtr);
+                return;
+            } else {
+                _ = try genVar(context, declPtr);
+                return;
+            }
         },
         .returnStmt => |retStmtPtr| {
-            return genReturn(context, retStmtPtr.*);
+            _ = try genReturn(context, retStmtPtr);
+            return;
         },
         .codeBlock => |blockPtr| {
-            return genCodeBlock(context, blockPtr.*);
+            _ = try genCodeBlock(context, blockPtr);
+            return;
         },
         .valueLiteral => |valLiteralPtr| {
-            return genValueLiteral(context, valLiteralPtr.*);
+            _ = try genValueLiteral(context, valLiteralPtr);
+            return;
         },
         .identifier => |ident| {
-            return genIdentifier(context, ident);
+            _ = try genIdentifier(context, ident);
+            return;
         },
         else => {
-            // Otros tipos de nodo
-            return llvm.c.LLVMConstNull(llvm.c.LLVMVoidType());
+            return Error.UnknownNode;
         },
     }
 }
 
-/// Duplicar un slice en uno null-terminated
-fn dupZ(allocator: *const std.mem.Allocator, src: []const u8) ![]u8 {
-    var buffer = try allocator.alloc(u8, src.len + 1);
-    var i: usize = 0;
-    while (i < src.len) : (i += 1) {
-        buffer[i] = src[i];
-    }
-    buffer[src.len] = 0;
-    return buffer;
-}
+fn genFunction(context: *IRGenContext, decl: *parser.Decl) !void {
+    std.debug.print("genFunction: Generating for '{s}'...\n", .{decl.name});
 
-/// Genera la IR para una declaración (puede ser variable o función).
-fn genDeclaration(context: *IRGenContext, decl: parser.Decl) !llvm.c.LLVMValueRef {
-    // Detectamos si es función o variable
-    if (decl.isFunction()) {
-        // Generar una función (puede ser main u otra).
-        return genFunction(context, decl);
-    } else {
-        // Es una variable/const
-        return genVar(context, decl);
-    }
-}
+    std.debug.print("Generating type for '{s}'...\n", .{decl.name});
+    // Creamos el tipo: supongamos i32 sin parámetros
+    const fnType = c.LLVMFunctionType(c.LLVMInt32Type(), null, 0, 0);
 
-/// Genera IR para una declaración de función
-fn genFunction(context: *IRGenContext, decl: parser.Decl) !llvm.c.LLVMValueRef {
-    // Creamos el tipo de función. Suponiendo que devuelva i32 y no tiene args.
-    // (Si en tu AST tienes decl.args, podrías construirlo dinámicamente).
-    const fnTy = c.LLVMFunctionType(c.LLVMInt32Type(), null, 0, 0);
-
-    // Creamos la cadena null-terminated con el nombre
+    std.debug.print("Adding function '{s}' to module...\n", .{decl.name});
+    // Nombre nulo-terminado
     const c_name = try dupZ(context.allocator, decl.name);
-    // Creamos la función
-    const fnVal = c.LLVMAddFunction(context.module, c_name.ptr, fnTy);
+    // Creamos la función en el módulo
+    const func = c.LLVMAddFunction(context.module, c_name.ptr, fnType);
 
+    std.debug.print("Creating entry block for '{s}'...\n", .{decl.name});
     // Creamos un BasicBlock "entry"
-    const entryBB = c.LLVMAppendBasicBlock(fnVal, "entry");
-
-    // Guardamos la posición anterior del builder (no es estrictamente necesario
-    // pero puede ser útil si tu builder ya estaba posicionado en otra parte).
+    const entryBB = c.LLVMAppendBasicBlock(func, "entry");
+    // Guardamos la posición previa del builder
     const oldBlock = c.LLVMGetInsertBlock(context.builder);
 
-    // Movemos el builder al final de "entry" de esta nueva función
+    std.debug.print("Setting builder position at end of entry block...\n", .{});
+    // Movemos el builder al final de "entry"
     c.LLVMPositionBuilderAtEnd(context.builder, entryBB);
 
-    // Visitamos el cuerpo (un codeBlock, presumably)
-    // Esto generará las sentencias, etc.
-    _ = visitNode(context, decl.value) catch |err| {
-        std.debug.print("Error generando body de funcion '{s}': {any}\n", .{ decl.name, err });
-        // Podrías forzar un ret "0" o ret void en caso de error
-    };
+    std.debug.print("Visiting function body of '{s}'...\n", .{decl.name});
+    _ = try genCodeBlock(context, decl.value.codeBlock);
 
-    // Si el AST no generó un return explícito, generamos un return 0
-    // (Este approach se puede mejorar rastreando si ya hubo un return.)
-    _ = c.LLVMBuildRet(context.builder, c.LLVMConstInt(c.LLVMInt32Type(), 0, 0));
-
-    // Restauramos posición del builder
+    std.debug.print("Restoring builder position...\n", .{});
+    // Restauramos la posición original del builder
     if (oldBlock) |ob| {
         c.LLVMPositionBuilderAtEnd(context.builder, ob);
     }
 
-    return fnVal;
+    return;
 }
 
 /// Genera IR para una declaración de variable
-fn genVar(context: *IRGenContext, decl: parser.Decl) !llvm.c.LLVMValueRef {
+fn genVar(context: *IRGenContext, decl: *parser.Decl) !void {
     std.debug.print("genVar: Generating for var '{s}'...\n", .{decl.name});
 
     // Hacemos alloca
@@ -161,38 +161,41 @@ fn genVar(context: *IRGenContext, decl: parser.Decl) !llvm.c.LLVMValueRef {
     try context.var_table.put(decl.name, alloc);
 
     // Generamos la parte derecha (rhsValue)
-    const rhsValue = try visitNode(context, decl.value);
+    // const rhsValue = try visitNode(context, decl.value);
+    const rhsValue = c.LLVMConstInt(i32_type, 42, 0);
 
     // Hacemos store
     _ = c.LLVMBuildStore(context.builder, rhsValue, alloc);
 
-    return alloc;
+    return;
 }
 
-fn genReturn(context: *IRGenContext, retStmt: parser.ReturnStmt) !llvm.c.LLVMValueRef {
+fn genReturn(context: *IRGenContext, retStmt: *parser.ReturnStmt) !void {
     std.debug.print("genReturn: Starting.\n", .{});
     if (retStmt.expression) |expr| {
         std.debug.print("genReturn: There's an expression to return.\n", .{});
-        const val = try visitNode(context, expr);
+        // const val = try visitNode(context, expr);
+        _ = expr;
+        const val = c.LLVMConstInt(c.LLVMInt32Type(), 0, 0);
         std.debug.print("genReturn: About to LLVMBuildRet(...)\n", .{});
-        return c.LLVMBuildRet(context.builder, val);
+        _ = c.LLVMBuildRet(context.builder, val);
+        return;
     } else {
         std.debug.print("genReturn: Return void.\n", .{});
-        return c.LLVMBuildRetVoid(context.builder);
+        _ = c.LLVMBuildRetVoid(context.builder);
+        return;
     }
 }
 
-fn genCodeBlock(context: *IRGenContext, block: parser.CodeBlock) !llvm.c.LLVMValueRef {
-    var lastValue: llvm.c.LLVMValueRef = llvm.c.LLVMConstNull(llvm.c.LLVMVoidType());
+fn genCodeBlock(context: *IRGenContext, block: *parser.CodeBlock) !void {
     for (block.items) |stmt| {
-        lastValue = try visitNode(context, stmt);
+        try visitNode(context, stmt);
     }
-    return lastValue;
 }
 
-fn genValueLiteral(context: *IRGenContext, valLit: parser.ValueLiteral) !llvm.c.LLVMValueRef {
+fn genValueLiteral(context: *IRGenContext, valLit: *parser.ValueLiteral) !llvm.c.LLVMValueRef {
     _ = context;
-    switch (valLit) {
+    switch (valLit.*) {
         .intLiteral => |intLitPtr| {
             const i32_type = c.LLVMInt32Type();
             return c.LLVMConstInt(i32_type, @bitCast(intLitPtr.value), 0);

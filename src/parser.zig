@@ -390,22 +390,22 @@ pub fn printNode(node: *ASTNode) void {
         ASTNode.valueLiteral => |valueLiteral| {
             switch (valueLiteral.*) {
                 ValueLiteral.intLiteral => |intLit| {
-                    std.debug.print("IntLiteral {d}", .{intLit.value});
+                    std.debug.print("IntLiteral {d}\n", .{intLit.value});
                 },
                 ValueLiteral.floatLiteral => |floatLit| {
-                    std.debug.print("FloatLiteral {}", .{floatLit.value});
+                    std.debug.print("FloatLiteral {}\n", .{floatLit.value});
                 },
                 ValueLiteral.doubleLiteral => |doubleLit| {
-                    std.debug.print("DoubleLiteral {}", .{doubleLit.value});
+                    std.debug.print("DoubleLiteral {}\n", .{doubleLit.value});
                 },
                 ValueLiteral.charLiteral => |charLit| {
-                    std.debug.print("CharLiteral {c}", .{charLit.value});
+                    std.debug.print("CharLiteral {c}\n", .{charLit.value});
                 },
                 ValueLiteral.boolLiteral => |boolLit| {
-                    std.debug.print("BoolLiteral {}", .{boolLit.value});
+                    std.debug.print("BoolLiteral {}\n", .{boolLit.value});
                 },
                 ValueLiteral.stringLiteral => |stringLit| {
-                    std.debug.print("StringLiteral {s}", .{stringLit.value});
+                    std.debug.print("StringLiteral {s}\n", .{stringLit.value});
                 },
             }
         },
