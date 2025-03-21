@@ -353,28 +353,38 @@ pub fn parse(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!st
     return ast;
 }
 
-/// Función para imprimir el AST.
+/// Imprime el AST completo iniciando en el nivel 0.
 pub fn printAST(ast: []*ASTNode) void {
     std.debug.print("\n\nAST\n", .{});
     for (ast) |node| {
-        printNode(node);
+        printNode(node, 0);
     }
 }
 
-/// Función para imprimir un nodo del AST.
-pub fn printNode(node: *ASTNode) void {
+/// Función auxiliar para imprimir espacios de indentación.
+fn printIndent(indent: usize) void {
+    var i: usize = 0;
+    while (i < indent) : (i += 1) {
+        std.debug.print("  ", .{}); // 2 espacios por nivel
+    }
+}
+
+/// Imprime un nodo del AST, recibiendo el nivel de indentación.
+pub fn printNode(node: *ASTNode, indent: usize) void {
+    printIndent(indent);
     switch (node.*) {
         ASTNode.decl => |decl| {
-            std.debug.print("Declaration {s} ({s}) = ", .{ decl.*.name, if (decl.*.mutability == Mutability.Var) "var" else "const" });
-            printNode(decl.*.value);
+            std.debug.print("Declaration {s} ({s}) =\n", .{ decl.*.name, if (decl.*.mutability == Mutability.Var) "var" else "const" });
+            // Se incrementa el nivel de indentación para el nodo hijo.
+            printNode(decl.*.value, indent + 1);
         },
         ASTNode.identifier => |ident| {
-            std.debug.print("identifier: {s}", .{ident});
+            std.debug.print("identifier: {s}\n", .{ident});
         },
         ASTNode.codeBlock => |codeBlock| {
-            std.debug.print("Bloque de código:\n", .{});
+            std.debug.print("code block:\n", .{});
             for (codeBlock.*.items) |item| {
-                printNode(item);
+                printNode(item, indent + 1);
             }
         },
         ASTNode.valueLiteral => |valueLiteral| {
@@ -400,26 +410,28 @@ pub fn printNode(node: *ASTNode) void {
             }
         },
         ASTNode.typeLiteral => |typeLiteral| {
+            std.debug.print("TypeLiteral: ", .{});
             switch (typeLiteral.*.type) {
-                Type.Int32 => std.debug.print("Int32", .{}),
-                Type.Int => std.debug.print("Int", .{}),
-                Type.Float => std.debug.print("Float", .{}),
-                Type.Double => std.debug.print("Double", .{}),
-                Type.Char => std.debug.print("Char", .{}),
-                Type.Bool => std.debug.print("Bool", .{}),
-                Type.String => std.debug.print("String", .{}),
-                Type.Array => std.debug.print("Array", .{}),
-                Type.Struct => std.debug.print("Struct", .{}),
-                Type.Enum => std.debug.print("Enum", .{}),
-                Type.Union => std.debug.print("Union", .{}),
-                Type.Pointer => std.debug.print("Pointer", .{}),
-                Type.Function => std.debug.print("Function", .{}),
+                Type.Int32 => std.debug.print("Int32\n", .{}),
+                Type.Int => std.debug.print("Int\n", .{}),
+                Type.Float => std.debug.print("Float\n", .{}),
+                Type.Double => std.debug.print("Double\n", .{}),
+                Type.Char => std.debug.print("Char\n", .{}),
+                Type.Bool => std.debug.print("Bool\n", .{}),
+                Type.String => std.debug.print("String\n", .{}),
+                Type.Array => std.debug.print("Array\n", .{}),
+                Type.Struct => std.debug.print("Struct\n", .{}),
+                Type.Enum => std.debug.print("Enum\n", .{}),
+                Type.Union => std.debug.print("Union\n", .{}),
+                Type.Pointer => std.debug.print("Pointer\n", .{}),
+                Type.Function => std.debug.print("Function\n", .{}),
             }
         },
         ASTNode.returnStmt => |returnStmt| {
-            std.debug.print("return ", .{});
+            std.debug.print("return\n", .{});
             if (returnStmt.expression) |expr| {
-                printNode(expr);
+                // Se incrementa la indentación para la expresión retornada.
+                printNode(expr, indent + 1);
             }
         },
     }
