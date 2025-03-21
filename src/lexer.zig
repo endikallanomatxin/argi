@@ -143,6 +143,7 @@ pub fn printToken(token: Token) void {
 }
 
 pub fn printTokenList(tokens: []Token, indent: usize) void {
+    std.debug.print("\nTOKENS\n", .{});
     var i: usize = 0;
     for (tokens) |token| {
         std.debug.print("{d}: ", .{i});
