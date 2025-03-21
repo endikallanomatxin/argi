@@ -132,8 +132,6 @@ pub fn initParser(tokens: []const Token) Parser {
 
 /// Devuelve el token actual o Token.eof si se han consumido todos.
 fn current(parser: *Parser) Token {
-    std.debug.print("Parseando token {d}", .{parser.index});
-    lexer.printToken(parser.tokens[parser.index]);
     if (parser.index < parser.tokens.len) {
         return parser.tokens[parser.index];
     }
@@ -142,7 +140,6 @@ fn current(parser: *Parser) Token {
 
 /// Avanza un token.
 fn advance(parser: *Parser) void {
-    std.debug.print("Parseado token {d}\n", .{parser.index});
     if (parser.index < parser.tokens.len) parser.index += 1;
 }
 
@@ -194,7 +191,6 @@ fn tokenIs(parser: *Parser, expected: Token) bool {
 
 /// Parsea un identificador.
 fn parseIdentifier(parser: *Parser) ParseError![]const u8 {
-    std.debug.print("Parseando identificador\n", .{});
     const tok = current(parser);
     return switch (tok) {
         Token.identifier => |name| {
@@ -208,7 +204,6 @@ fn parseIdentifier(parser: *Parser) ParseError![]const u8 {
 /// Parsea (de forma opcional) una anotación de tipo.
 /// Se asume que el tipo viene como un identificador (ej., "Int", "Float", etc.).
 fn parseType(parser: *Parser) ParseError!?Type {
-    std.debug.print("Parseando tipo\n", .{});
     if (tokenIs(parser, Token.equal)) {
         return null;
     }
@@ -232,9 +227,7 @@ fn parseType(parser: *Parser) ParseError!?Type {
 }
 
 fn parseExpression(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*ASTNode {
-    std.debug.print("Parseando expresión\n", .{});
     const tok = current(parser);
-    lexer.printToken(tok);
     return switch (tok) {
         Token.int_literal => |value| {
             advance(parser);
@@ -271,7 +264,6 @@ fn parseExpression(parser: *Parser, allocator: *const std.mem.Allocator) ParseEr
 /// Parsea una declaración de variable o constante.
 /// Se asume que no se usan tokens "const" o "var".
 fn parseDecl(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*ASTNode {
-    std.debug.print("Parseando declaración\n", .{});
     const name = try parseIdentifier(parser);
     var mutability = Mutability.Var;
     if (!tokenIs(parser, Token.colon)) return ParseError.ExpectedColon;
@@ -300,7 +292,6 @@ fn parseDecl(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*A
 }
 
 fn parseCodeBlock(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*ASTNode {
-    std.debug.print("Parseando bloque de código\n", .{});
     if (!tokenIs(parser, Token.open_brace)) return ParseError.ExpectedLeftBrace;
     advance(parser); // consume '{'
     var list = std.ArrayList(*ASTNode).init(allocator.*);
@@ -327,7 +318,6 @@ fn parseCodeBlock(parser: *Parser, allocator: *const std.mem.Allocator) ParseErr
 
 /// Parsea una sentencia de retorno.
 fn parseReturn(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*ASTNode {
-    std.debug.print("Parseando sentencia de retorno\n", .{});
     // Verificar que el token actual es 'keyword_return'
     if (!tokenIs(parser, Token.keyword_return)) {
         return ParseError.ExpectedIdentifier; // O un error específico para 'return'
@@ -346,7 +336,6 @@ fn parseReturn(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!
 
 /// Función principal: parsee todos los tokens hasta eof y retorne una lista de nodos AST.
 pub fn parse(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!std.ArrayList(*ASTNode) {
-    std.debug.print("Parseando\n", .{});
     var ast = std.ArrayList(*ASTNode).init(allocator.*);
     while (parser.index < parser.tokens.len and !tokenIs(parser, Token.eof)) {
         switch (current(parser)) {
@@ -366,6 +355,7 @@ pub fn parse(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!st
 
 /// Función para imprimir el AST.
 pub fn printAST(ast: []*ASTNode) void {
+    std.debug.print("\n\nAST\n", .{});
     for (ast) |node| {
         printNode(node);
     }
@@ -431,7 +421,6 @@ pub fn printNode(node: *ASTNode) void {
             if (returnStmt.expression) |expr| {
                 printNode(expr);
             }
-            std.debug.print(";\n", .{});
         },
     }
 }
