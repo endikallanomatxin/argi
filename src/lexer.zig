@@ -1,125 +1,198 @@
 const std = @import("std");
 
 pub const Token = union(enum) {
+    eof: struct {},
+
+    // Names
     identifier: []const u8,
-    keyword_func: struct {},
-    keyword_return: struct {},
-    int_literal: i64,
-    string_literal: []const u8,
-    colon: struct {},
-    equal: struct {},
+
+    // Literals
+    literal: Literal,
+
+    // Delimiters
     open_parenthesis: struct {},
     close_parenthesis: struct {},
     open_brace: struct {},
     close_brace: struct {},
-    symbol: []const u8,
-    eof: struct {},
+
+    // Keywords
+    keyword_return: struct {},
+
+    // Operators
+    colon: struct {}, // TODO: Give it a more semantically meaningful name
+    double_colon: struct {},
+    equal: struct {},
+    binary_operator: BinaryOperator,
 };
 
-pub fn tokenize(allocator: std.mem.Allocator, source: []const u8) !std.ArrayList(Token) {
-    var tokens = std.ArrayList(Token).init(allocator);
+pub const Literal = union(enum) {
+    int_literal: i64,
+    float_literal: f64,
+    string_literal: []const u8,
+};
 
-    var i: usize = 0;
-    while (i < source.len) {
-        const c = source[i];
+pub const BinaryOperator = enum {
+    Addition,
+    Subtraction,
+    Multiplication,
+    Division,
+    Modulo,
+};
+
+pub const LexerError = error{
+    UnknownCharacter,
+};
+
+pub const Lexer = struct {
+    allocator: *const std.mem.Allocator,
+    source: []const u8,
+    tokens: std.ArrayList(Token),
+    index: usize,
+
+    pub fn init(allocator: *const std.mem.Allocator, source: []const u8) Lexer {
+        return Lexer{
+            .allocator = allocator,
+            .source = source,
+            .tokens = std.ArrayList(Token).init(allocator.*),
+            .index = 0,
+        };
+    }
+
+    pub fn tokenize(self: *Lexer) !std.ArrayList(Token) {
+        while (self.index < self.source.len) {
+            lexNextToken(self) catch |err| {
+                std.debug.print("Error al lexear: {any}\n", .{err});
+                return err;
+            };
+        }
+        return self.tokens;
+    }
+
+    pub fn lexNextToken(self: *Lexer) !void {
+        const c = self.source[self.index];
 
         if (std.ascii.isWhitespace(c)) {
-            i += 1;
-            continue;
+            self.index += 1;
+            return;
         }
 
         // Literales enteros
         if (std.ascii.isDigit(c)) {
-            const start = i;
-            while (i < source.len and std.ascii.isDigit(source[i])) : (i += 1) {}
-            const num_str = source[start..i];
+            const start = self.index;
+            while (self.index < self.source.len and std.ascii.isDigit(self.source[self.index])) : (self.index += 1) {}
+            const num_str = self.source[start..self.index];
             const number = try std.fmt.parseInt(i64, num_str, 10);
-            try tokens.append(Token{ .int_literal = number });
-            continue;
+            const literal = Literal{ .int_literal = number };
+            try self.tokens.append(Token{ .literal = literal });
+            return;
         }
 
         // Identificadores y keywords
         if (std.ascii.isAlphabetic(c) or c == '_') {
-            const start = i;
-            while (i < source.len and (std.ascii.isAlphanumeric(source[i]) or source[i] == '_')) : (i += 1) {}
-            const word = source[start..i];
-            if (std.mem.eql(u8, word, "func")) {
-                try tokens.append(Token{ .keyword_func = .{} });
-            } else if (std.mem.eql(u8, word, "return")) {
-                try tokens.append(Token{ .keyword_return = .{} });
+            const start = self.index;
+            while (self.index < self.source.len and (std.ascii.isAlphanumeric(self.source[self.index]) or self.source[self.index] == '_')) : (self.index += 1) {}
+            const word = self.source[start..self.index];
+            if (std.mem.eql(u8, word, "return")) {
+                try self.tokens.append(Token{ .keyword_return = .{} });
             } else {
-                try tokens.append(Token{ .identifier = word });
+                try self.tokens.append(Token{ .identifier = word });
             }
-            continue;
+            return;
         }
 
         // Para tokens individuales según el carácter:
         switch (c) {
-            ':' => {
-                try tokens.append(Token{ .colon = .{} });
-                i += 1;
-                continue;
-            },
-            '=' => {
-                try tokens.append(Token{ .equal = .{} });
-                i += 1;
-                continue;
-            },
             '(' => {
-                try tokens.append(Token{ .open_parenthesis = .{} });
-                i += 1;
-                continue;
+                try self.tokens.append(Token{ .open_parenthesis = .{} });
+                self.index += 1;
+                return;
             },
             ')' => {
-                try tokens.append(Token{ .close_parenthesis = .{} });
-                i += 1;
-                continue;
+                try self.tokens.append(Token{ .close_parenthesis = .{} });
+                self.index += 1;
+                return;
             },
             '{' => {
-                try tokens.append(Token{ .open_brace = .{} });
-                i += 1;
-                continue;
+                try self.tokens.append(Token{ .open_brace = .{} });
+                self.index += 1;
+                return;
             },
             '}' => {
-                try tokens.append(Token{ .close_brace = .{} });
-                i += 1;
-                continue;
+                try self.tokens.append(Token{ .close_brace = .{} });
+                self.index += 1;
+                return;
+            },
+            ':' => {
+                // Check for double colon
+                if (self.index + 1 < self.source.len and self.source[self.index + 1] == ':') {
+                    try self.tokens.append(Token{ .double_colon = .{} });
+                    self.index += 2;
+                    return;
+                } else {
+                    try self.tokens.append(Token{ .colon = .{} });
+                    self.index += 1;
+                    return;
+                }
+            },
+            '=' => {
+                try self.tokens.append(Token{ .equal = .{} });
+                self.index += 1;
+                return;
+            },
+            '+' => {
+                try self.tokens.append(Token{ .binary_operator = .Addition });
+                self.index += 1;
+                return;
+            },
+            '-' => {
+                try self.tokens.append(Token{ .binary_operator = .Subtraction });
+                self.index += 1;
+                return;
+            },
+            '*' => {
+                try self.tokens.append(Token{ .binary_operator = .Multiplication });
+                self.index += 1;
+                return;
+            },
+            '/' => {
+                try self.tokens.append(Token{ .binary_operator = .Division });
+                self.index += 1;
+                return;
+            },
+            '%' => {
+                try self.tokens.append(Token{ .binary_operator = .Modulo });
+                self.index += 1;
+                return;
             },
             else => {
-                // Para cualquier otro símbolo
-                try tokens.append(Token{ .symbol = source[i .. i + 1] });
-                i += 1;
-                continue;
+                std.debug.print("Unknown character: {c}\n", .{c});
+                return LexerError.UnknownCharacter;
             },
         }
     }
 
-    try tokens.append(Token{ .eof = .{} });
-    return tokens;
-}
+    pub fn deinit(self: *Lexer) void {
+        self.tokens.deinit();
+    }
+
+    pub fn printTokens(self: *Lexer) void {
+        std.debug.print("\nTOKENS\n", .{});
+        var i: usize = 0;
+        for (self.tokens.items) |token| {
+            std.debug.print("{d}: ", .{i});
+            printToken(token);
+            i += 1;
+        }
+    }
+};
 
 pub fn printToken(token: Token) void {
     switch (token) {
+        .eof => {
+            std.debug.print("eof\n", .{});
+        },
         .identifier => |val| {
             std.debug.print("identifier: {s}\n", .{val});
-        },
-        .keyword_func => {
-            std.debug.print("keyword_func\n", .{});
-        },
-        .keyword_return => {
-            std.debug.print("keyword_return\n", .{});
-        },
-        .int_literal => |num| {
-            std.debug.print("int_literal: {d}\n", .{num});
-        },
-        .string_literal => |s| {
-            std.debug.print("string_literal: {s}\n", .{s});
-        },
-        .colon => {
-            std.debug.print("colon\n", .{});
-        },
-        .equal => {
-            std.debug.print("equal\n", .{});
         },
         .open_parenthesis => {
             std.debug.print("open_parenthesis\n", .{});
@@ -133,24 +206,49 @@ pub fn printToken(token: Token) void {
         .close_brace => {
             std.debug.print("close_brace\n", .{});
         },
-        .symbol => |sym| {
-            std.debug.print("symbol: {s}\n", .{sym});
+        .keyword_return => {
+            std.debug.print("keyword_return\n", .{});
         },
-        .eof => {
-            std.debug.print("eof\n", .{});
+        .literal => |lit| {
+            switch (lit) {
+                .int_literal => |val| {
+                    std.debug.print("literal: int_literal {d}\n", .{val});
+                },
+                .float_literal => |val| {
+                    std.debug.print("literal: float_literal {e}\n", .{val});
+                },
+                .string_literal => |val| {
+                    std.debug.print("literal: string_literal {s}\n", .{val});
+                },
+            }
         },
-    }
-}
-
-pub fn printTokenList(tokens: []Token, indent: usize) void {
-    std.debug.print("\nTOKENS\n", .{});
-    var i: usize = 0;
-    for (tokens) |token| {
-        std.debug.print("{d}: ", .{i});
-        for (0..indent) |_| {
-            std.debug.print(" ", .{});
-        }
-        printToken(token);
-        i += 1;
+        .colon => {
+            std.debug.print("colon\n", .{});
+        },
+        .double_colon => {
+            std.debug.print("double_colon\n", .{});
+        },
+        .equal => {
+            std.debug.print("equal\n", .{});
+        },
+        .binary_operator => |op| {
+            switch (op) {
+                .Addition => {
+                    std.debug.print("binary_operator: Addition\n", .{});
+                },
+                .Subtraction => {
+                    std.debug.print("binary_operator: Subtraction\n", .{});
+                },
+                .Multiplication => {
+                    std.debug.print("binary_operator: Multiplication\n", .{});
+                },
+                .Division => {
+                    std.debug.print("binary_operator: Division\n", .{});
+                },
+                .Modulo => {
+                    std.debug.print("binary_operator: Modulo\n", .{});
+                },
+            }
+        },
     }
 }

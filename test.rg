@@ -1,10 +1,13 @@
 main ::= {
-    success ::= 0
+    a ::= 1
+    b ::= 2
 
-    success = 1
+    c := 0
+    c = a + b
+    c = a - b
+    c = a * b
+    c = a / b
+    c = a % b
 
-    status :=  1
-    status = success
-
-    return status
+    return 0
 }
