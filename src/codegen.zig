@@ -11,6 +11,8 @@ pub const Error = error{
     UnknownNode,
     ValueNotFound,
     NotYetImplemented,
+    ConstantReassignment,
+    CompilationFailed,
 };
 
 /// Genera IR a partir del AST, sin crear manualmente la función main.
@@ -29,7 +31,7 @@ pub fn generateIR(ast: std.ArrayList(*parser.ASTNode), allocator: *const std.mem
     for (ast.items) |node| {
         _ = visitNode(&context, node) catch |err| {
             std.debug.print("Error al compilar: {any}\n", .{err});
-            break;
+            return Error.CompilationFailed;
         };
     }
 
@@ -197,6 +199,9 @@ fn genVarOrConstDeclaration(context: *IRGenContext, decl: *parser.Declaration) !
 fn genAssignment(context: *IRGenContext, assign: *parser.Assignment) !llvm.c.LLVMValueRef {
     const symbol = context.symbol_table.get(assign.name);
     if (symbol) |s| {
+        if (s.mutability == parser.Mutability.Const) {
+            return Error.ConstantReassignment;
+        }
         const val = try visitNode(context, assign.value);
         if (val) |v| {
             _ = c.LLVMBuildStore(context.builder, v, s.value_ref);
