@@ -17,18 +17,20 @@ pub fn compile(filename: []const u8) !void {
     defer allocator.free(source);
 
     // 2. Lexear el contenido para obtener la lista de tokens.
-    var tokensList = try lexer.tokenize(allocator, source);
+    var l = lexer.Lexer.init(&allocator, source);
+    var tokensList = try l.tokenize();
     defer tokensList.deinit();
-    lexer.printTokenList(tokensList.items, 4);
+    l.printTokens();
 
     // 3. Parsear la lista de tokens para obtener el AST.
-    var p = parser.initParser(tokensList.items);
-    const astList = try parser.parse(&p, &allocator);
+    var p = parser.Parser.init(&allocator, tokensList.items);
+    const astList = try p.parse();
     defer astList.deinit();
-    parser.printAST(astList.items);
+    p.printAST();
 
     // 4. Generar IR a partir del AST.
-    const module = try codegen.generateIR(astList, &allocator);
+    var g = codegen.CodeGenerator.init(&allocator, astList) catch return;
+    const module = try g.generate();
     const llvm_output_filename = "output.ll";
     var err_msg: [*c]u8 = null;
     if (c.LLVMPrintModuleToFile(module, llvm_output_filename, &err_msg) != 0) {

@@ -2,6 +2,10 @@ const std = @import("std");
 const lexer = @import("lexer.zig");
 const Token = lexer.Token;
 
+pub const AST = struct {
+    nodes: []const *ASTNode,
+};
+
 pub const ASTNode = union(enum) {
     declaration: *Declaration,
     assignment: *Assignment,
@@ -10,6 +14,84 @@ pub const ASTNode = union(enum) {
     valueLiteral: *ValueLiteral,
     typeLiteral: *TypeLiteral,
     returnStmt: *ReturnStmt,
+    binaryOperation: *BinaryOperation,
+
+    pub fn print(self: ASTNode, indent: usize) void {
+        printIndent(indent);
+        switch (self) {
+            ASTNode.declaration => |decl| {
+                std.debug.print("Declaration {s} ({s}) =\n", .{ decl.*.name, if (decl.*.mutability == Mutability.Var) "var" else "const" });
+                // Se incrementa el nivel de indentación para el nodo hijo.
+                decl.*.value.print(indent + 1);
+            },
+            ASTNode.assignment => |assign| {
+                std.debug.print("Assignment {s} =\n", .{assign.*.name});
+                // Se incrementa el nivel de indentación para el nodo hijo.
+                assign.*.value.print(indent + 1);
+            },
+            ASTNode.identifier => |ident| {
+                std.debug.print("identifier: {s}\n", .{ident});
+            },
+            ASTNode.codeBlock => |codeBlock| {
+                std.debug.print("code block:\n", .{});
+                for (codeBlock.*.items) |item| {
+                    item.print(indent + 1);
+                }
+            },
+            ASTNode.valueLiteral => |valueLiteral| {
+                switch (valueLiteral.*) {
+                    ValueLiteral.intLiteral => |intLit| {
+                        std.debug.print("IntLiteral {d}\n", .{intLit.value});
+                    },
+                    ValueLiteral.floatLiteral => |floatLit| {
+                        std.debug.print("FloatLiteral {}\n", .{floatLit.value});
+                    },
+                    ValueLiteral.doubleLiteral => |doubleLit| {
+                        std.debug.print("DoubleLiteral {}\n", .{doubleLit.value});
+                    },
+                    ValueLiteral.charLiteral => |charLit| {
+                        std.debug.print("CharLiteral {c}\n", .{charLit.value});
+                    },
+                    ValueLiteral.boolLiteral => |boolLit| {
+                        std.debug.print("BoolLiteral {}\n", .{boolLit.value});
+                    },
+                    ValueLiteral.stringLiteral => |stringLit| {
+                        std.debug.print("StringLiteral {s}\n", .{stringLit.value});
+                    },
+                }
+            },
+            ASTNode.typeLiteral => |typeLiteral| {
+                std.debug.print("TypeLiteral: ", .{});
+                switch (typeLiteral.*.type) {
+                    Type.Int32 => std.debug.print("Int32\n", .{}),
+                    Type.Int => std.debug.print("Int\n", .{}),
+                    Type.Float => std.debug.print("Float\n", .{}),
+                    Type.Double => std.debug.print("Double\n", .{}),
+                    Type.Char => std.debug.print("Char\n", .{}),
+                    Type.Bool => std.debug.print("Bool\n", .{}),
+                    Type.String => std.debug.print("String\n", .{}),
+                    Type.Array => std.debug.print("Array\n", .{}),
+                    Type.Struct => std.debug.print("Struct\n", .{}),
+                    Type.Enum => std.debug.print("Enum\n", .{}),
+                    Type.Union => std.debug.print("Union\n", .{}),
+                    Type.Pointer => std.debug.print("Pointer\n", .{}),
+                    Type.Function => std.debug.print("Function\n", .{}),
+                }
+            },
+            ASTNode.returnStmt => |returnStmt| {
+                std.debug.print("return\n", .{});
+                if (returnStmt.expression) |expr| {
+                    // Se incrementa la indentación para la expresión retornada.
+                    expr.print(indent + 1);
+                }
+            },
+            ASTNode.binaryOperation => |binOp| {
+                std.debug.print("BinaryOperation\n", .{});
+                binOp.left.print(indent + 1);
+                binOp.right.print(indent + 1);
+            },
+        }
+    }
 };
 
 pub const Declaration = struct {
@@ -106,6 +188,12 @@ pub const ReturnStmt = struct {
     expression: ?*ASTNode,
 };
 
+pub const BinaryOperation = struct {
+    operator: lexer.BinaryOperator,
+    left: *ASTNode,
+    right: *ASTNode,
+};
+
 pub const ParseError = error{
     ExpectedIdentifier,
     ExpectedColon,
@@ -128,329 +216,310 @@ pub const ParseError = error{
 pub const Parser = struct {
     tokens: []const Token,
     index: usize,
-};
+    allocator: *const std.mem.Allocator,
+    ast: std.ArrayList(*ASTNode),
 
-/// Inicializa el parser.
-pub fn initParser(tokens: []const Token) Parser {
-    return Parser{
-        .tokens = tokens,
-        .index = 0,
-    };
-}
-
-/// Devuelve el token actual o Token.eof si se han consumido todos.
-fn current(parser: *Parser) Token {
-    if (parser.index < parser.tokens.len) {
-        return parser.tokens[parser.index];
-    }
-    return Token.eof;
-}
-
-/// Avanza un token.
-fn advance(parser: *Parser) void {
-    std.debug.print("Parseado token: ", .{});
-    lexer.printToken(current(parser));
-    if (parser.index < parser.tokens.len) parser.index += 1;
-}
-
-/// Comprueba que el token actual es el esperado; de lo contrario retorna un error.
-fn expect(parser: *Parser, expected: Token) !ParseError {
-    if (!tokenIs(parser, expected)) return ParseError.ExpectedAssignment;
-    advance(parser);
-    return;
-}
-
-/// Compara el token actual con uno esperado mediante un switch exhaustivo.
-fn tokenIs(parser: *Parser, expected: Token) bool {
-    return switch (current(parser)) {
-        Token.identifier => switch (expected) {
-            Token.identifier => true,
-            else => false,
-        },
-        Token.int_literal => switch (expected) {
-            Token.int_literal => true,
-            else => false,
-        },
-        Token.colon => switch (expected) {
-            Token.colon => true,
-            else => false,
-        },
-        Token.equal => switch (expected) {
-            Token.equal => true,
-            else => false,
-        },
-        Token.open_brace => switch (expected) {
-            Token.open_brace => true,
-            else => false,
-        },
-        Token.close_brace => switch (expected) {
-            Token.close_brace => true,
-            else => false,
-        },
-        Token.eof => switch (expected) {
-            Token.eof => true,
-            else => false,
-        },
-        Token.keyword_return => switch (expected) {
-            Token.keyword_return => true,
-            else => false,
-        },
-        else => false,
-    };
-}
-
-/// Parsea un identificador.
-fn parseIdentifier(parser: *Parser) ParseError![]const u8 {
-    const tok = current(parser);
-    return switch (tok) {
-        Token.identifier => |name| {
-            advance(parser);
-            return name;
-        },
-        else => return ParseError.ExpectedIdentifier,
-    };
-}
-
-/// Parsea (de forma opcional) una anotación de tipo.
-/// Se asume que el tipo viene como un identificador (ej., "Int", "Float", etc.).
-fn parseType(parser: *Parser) ParseError!?Type {
-    if (tokenIs(parser, Token.equal)) {
-        return null;
-    }
-    // Desempaquetamos usando ".?" ya que esperamos que no sea null.
-    const typeName = try parseIdentifier(parser);
-    if (std.mem.eql(u8, typeName, "Int")) {
-        return Type.Int;
-    } else if (std.mem.eql(u8, typeName, "Float")) {
-        return Type.Float;
-    } else if (std.mem.eql(u8, typeName, "Double")) {
-        return Type.Double;
-    } else if (std.mem.eql(u8, typeName, "Char")) {
-        return Type.Char;
-    } else if (std.mem.eql(u8, typeName, "Bool")) {
-        return Type.Bool;
-    } else if (std.mem.eql(u8, typeName, "String")) {
-        return Type.String;
-    } else {
-        return ParseError.ExpectedTypeAnnotation;
-    }
-}
-
-fn parseExpression(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*ASTNode {
-    const tok = current(parser);
-    return switch (tok) {
-        Token.int_literal => |value| {
-            advance(parser);
-            // Creamos la constante entera
-            const intLiteral = try allocator.create(IntLiteral);
-            intLiteral.* = IntLiteral{ .value = value };
-            // Creamos la unión ValueLiteral y luego el nodo AST
-            const valLiteral = try allocator.create(ValueLiteral);
-            valLiteral.* = ValueLiteral{ .intLiteral = intLiteral };
-            const node = try allocator.create(ASTNode);
-            node.* = ASTNode{ .valueLiteral = valLiteral };
-            return node;
-        },
-        Token.identifier => |_| {
-            const name = try parseIdentifier(parser);
-            const node = try allocator.create(ASTNode);
-            node.* = ASTNode{ .identifier = name };
-            return node;
-        },
-        Token.open_parenthesis => {
-            advance(parser);
-            const expr = try parseExpression(parser, allocator);
-            if (!tokenIs(parser, Token.close_parenthesis)) return ParseError.ExpectedRightParen;
-            advance(parser);
-            return expr;
-        },
-        Token.open_brace => {
-            return parseCodeBlock(parser, allocator);
-        },
-        else => return ParseError.ExpectedIntLiteral,
-    };
-}
-
-fn parseDeclarationOrAssignment(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*ASTNode {
-    const name = try parseIdentifier(parser);
-    if (tokenIs(parser, Token.colon)) {
-        advance(parser); // consume ':'
-
-        // Check for another : indicating constant declaration (::)
-        var mutability = Mutability.Var;
-        if (tokenIs(parser, Token.colon)) {
-            advance(parser); // consume ':'
-            mutability = Mutability.Const;
-        }
-
-        const tipo = try parseType(parser);
-        if (!tokenIs(parser, Token.equal)) return ParseError.ExpectedEqual;
-        advance(parser); // consume '='
-        const value = try parseExpression(parser, allocator);
-        const node = try allocator.create(ASTNode);
-        const decl = try allocator.create(Declaration);
-        // Asumimos que no hay argumentos, por eso usamos undefined.
-        const args: []const Argument = undefined;
-        decl.* = Declaration{
-            .name = name,
-            .type = tipo,
-            .mutability = mutability,
-            .args = args,
-            .value = value,
+    pub fn init(allocator: *const std.mem.Allocator, tokens: []const lexer.Token) Parser {
+        return Parser{
+            .tokens = tokens,
+            .index = 0,
+            .allocator = allocator,
+            .ast = std.ArrayList(*ASTNode).init(allocator.*),
         };
-        node.* = ASTNode{ .declaration = decl };
-        return node;
-    } else if (tokenIs(parser, Token.equal)) {
-        advance(parser); // consume '='
-        const value = try parseExpression(parser, allocator);
-        const node = try allocator.create(ASTNode);
-        const assign = try allocator.create(Assignment);
-        assign.* = Assignment{ .name = name, .value = value };
-        node.* = ASTNode{ .assignment = assign };
-        return node;
     }
-    return ParseError.ExpectedDeclarationOrAssignment;
-}
 
-fn parseSentences(parser: *Parser, allocator: *const std.mem.Allocator) !std.ArrayList(*ASTNode) {
-    var ast = std.ArrayList(*ASTNode).init(allocator.*);
-    while (parser.index < parser.tokens.len and !tokenIs(parser, Token.eof) and !tokenIs(parser, Token.close_brace)) {
-        switch (current(parser)) {
-            Token.keyword_return => {
-                const retNode = try parseReturn(parser, allocator);
-                try ast.append(retNode);
+    pub fn parse(self: *Parser) !std.ArrayList(*ASTNode) {
+        self.ast = parseSentences(self) catch |err| {
+            std.debug.print("Error al parsear: {any}\n", .{err});
+            return err;
+        };
+        return self.ast;
+    }
+
+    fn current(self: *Parser) Token {
+        if (self.index < self.tokens.len) {
+            return self.tokens[self.index];
+        }
+        return Token.eof;
+    }
+
+    fn next(self: *Parser) Token {
+        if (self.index + 1 < self.tokens.len) {
+            return self.tokens[self.index + 1];
+        }
+        return Token.eof;
+    }
+
+    fn advance(self: *Parser) void {
+        std.debug.print("Parseado token: ", .{});
+        lexer.printToken(self.current());
+        if (self.index < self.tokens.len) self.index += 1;
+    }
+
+    fn tokenIs(self: *Parser, expected: Token) bool {
+        return switch (self.current()) {
+            Token.identifier => switch (expected) {
+                Token.identifier => true,
+                else => false,
             },
-            else => {
-                const declNode = try parseDeclarationOrAssignment(parser, allocator);
-                try ast.append(declNode);
+            Token.literal => switch (expected) {
+                Token.literal => true,
+                else => false,
             },
+            Token.colon => switch (expected) {
+                Token.colon => true,
+                else => false,
+            },
+            Token.double_colon => switch (expected) {
+                Token.double_colon => true,
+                else => false,
+            },
+            Token.equal => switch (expected) {
+                Token.equal => true,
+                else => false,
+            },
+            Token.open_brace => switch (expected) {
+                Token.open_brace => true,
+                else => false,
+            },
+            Token.close_brace => switch (expected) {
+                Token.close_brace => true,
+                else => false,
+            },
+            Token.eof => switch (expected) {
+                Token.eof => true,
+                else => false,
+            },
+            Token.keyword_return => switch (expected) {
+                Token.keyword_return => true,
+                else => false,
+            },
+            else => false,
+        };
+    }
+
+    fn expect(self: *Parser, expected: Token) !ParseError {
+        if (!self.tokenIs(expected)) return ParseError.ExpectedAssignment;
+        self.advance();
+        return;
+    }
+
+    fn parseIdentifier(self: *Parser) ![]const u8 {
+        const tok = self.current();
+        return switch (tok) {
+            Token.identifier => |name| {
+                self.advance();
+                return name;
+            },
+            else => return ParseError.ExpectedIdentifier,
+        };
+    }
+
+    fn parseType(self: *Parser) ParseError!?Type {
+        if (self.tokenIs(Token.equal)) {
+            return null;
+        }
+        const typeName = try self.parseIdentifier();
+        if (std.mem.eql(u8, typeName, "Int")) {
+            return Type.Int;
+        } else if (std.mem.eql(u8, typeName, "Float")) {
+            return Type.Float;
+        } else if (std.mem.eql(u8, typeName, "Double")) {
+            return Type.Double;
+        } else if (std.mem.eql(u8, typeName, "Char")) {
+            return Type.Char;
+        } else if (std.mem.eql(u8, typeName, "Bool")) {
+            return Type.Bool;
+        } else if (std.mem.eql(u8, typeName, "String")) {
+            return Type.String;
+        } else {
+            return ParseError.ExpectedTypeAnnotation;
         }
     }
-    return ast;
-}
 
-fn parseCodeBlock(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*ASTNode {
-    if (!tokenIs(parser, Token.open_brace)) return ParseError.ExpectedLeftBrace;
-    advance(parser); // consume '{'
-    const list = try parseSentences(parser, allocator);
-    if (!tokenIs(parser, Token.close_brace)) return ParseError.ExpectedRightBrace;
-    advance(parser); // consume '}'
-    const node = try allocator.create(ASTNode);
-    const codeBlock = try allocator.create(CodeBlock);
-    codeBlock.* = CodeBlock{ .items = list.items };
-    node.* = ASTNode{ .codeBlock = codeBlock };
-    return node;
-}
-
-/// Parsea una sentencia de retorno.
-fn parseReturn(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*ASTNode {
-    // Verificar que el token actual es 'keyword_return'
-    if (!tokenIs(parser, Token.keyword_return)) {
-        return ParseError.ExpectedKeywordReturn;
+    fn parseLiteral(self: *Parser) !*ASTNode {
+        const tok = self.current();
+        return switch (tok.literal) {
+            .int_literal => |value| {
+                self.advance();
+                const intLiteral = try self.allocator.create(IntLiteral);
+                intLiteral.* = IntLiteral{ .value = value };
+                const valLiteral = try self.allocator.create(ValueLiteral);
+                valLiteral.* = ValueLiteral{ .intLiteral = intLiteral };
+                const node = try self.allocator.create(ASTNode);
+                node.* = ASTNode{ .valueLiteral = valLiteral };
+                return node;
+            },
+            .float_literal => |value| {
+                self.advance();
+                const floatLiteral = try self.allocator.create(FloatLiteral);
+                floatLiteral.* = FloatLiteral{ .value = @floatCast(value) };
+                const valLiteral = try self.allocator.create(ValueLiteral);
+                valLiteral.* = ValueLiteral{ .floatLiteral = floatLiteral };
+                const node = try self.allocator.create(ASTNode);
+                node.* = ASTNode{ .valueLiteral = valLiteral };
+                return node;
+            },
+            else => return ParseError.ExpectedIntLiteral,
+        };
     }
-    advance(parser); // consume 'keyword_return'
 
-    // Intentamos parsear una expresión que se retorne.
-    const expr = try parseExpression(parser, allocator);
-
-    const node = try allocator.create(ASTNode);
-    const retStmt = try allocator.create(ReturnStmt);
-    retStmt.* = ReturnStmt{ .expression = expr };
-    node.* = ASTNode{ .returnStmt = retStmt };
-    return node;
-}
-
-/// Función principal: parsee todos los tokens hasta eof y retorne una lista de nodos AST.
-pub fn parse(parser: *Parser, allocator: *const std.mem.Allocator) !std.ArrayList(*ASTNode) {
-    const ast = try parseSentences(parser, allocator);
-    return ast;
-}
-
-/// Imprime el AST completo iniciando en el nivel 0.
-pub fn printAST(ast: []*ASTNode) void {
-    std.debug.print("\n\nAST\n", .{});
-    for (ast) |node| {
-        printNode(node, 0);
+    fn parseSymbolOrLiteral(self: *Parser) !*ASTNode {
+        const tok = self.current();
+        return switch (tok) {
+            Token.identifier => |_| {
+                const name = try self.parseIdentifier();
+                const node = try self.allocator.create(ASTNode);
+                node.* = ASTNode{ .identifier = name };
+                return node;
+            },
+            Token.literal => {
+                return self.parseLiteral();
+            },
+            else => return ParseError.ExpectedIntLiteral,
+        };
     }
-}
+
+    fn parseExpression(self: *Parser) !*ASTNode {
+        const tok = self.current();
+        return switch (tok) {
+            Token.literal, Token.identifier => {
+                // Check if the next token is a binary operator
+                if (self.next() == Token.binary_operator) {
+                    const left = try self.parseSymbolOrLiteral();
+
+                    const op = self.current().binary_operator;
+                    self.advance(); // consume binary operator
+                    const right = try self.parseExpression();
+
+                    const node = try self.allocator.create(ASTNode);
+                    const binOp = try self.allocator.create(BinaryOperation);
+                    binOp.* = BinaryOperation{ .operator = op, .left = left, .right = right };
+                    node.* = ASTNode{ .binaryOperation = binOp };
+                    return node;
+                }
+
+                const node = try parseSymbolOrLiteral(self);
+                return node;
+            },
+            Token.open_parenthesis => {
+                self.advance();
+                const expr = try self.parseExpression();
+                if (!self.tokenIs(Token.close_parenthesis)) return ParseError.ExpectedRightParen;
+                self.advance();
+                return expr;
+            },
+            Token.open_brace => {
+                return self.parseCodeBlock();
+            },
+            else => return ParseError.ExpectedIntLiteral,
+        };
+    }
+
+    fn parseDeclarationOrAssignment(self: *Parser) ParseError!*ASTNode {
+        const name = try self.parseIdentifier();
+
+        // Assignment
+        if (self.tokenIs(Token.equal)) {
+            self.advance(); // consume '='
+            const value = try self.parseExpression();
+            const node = try self.allocator.create(ASTNode);
+            const assign = try self.allocator.create(Assignment);
+            assign.* = Assignment{ .name = name, .value = value };
+            node.* = ASTNode{ .assignment = assign };
+            return node;
+        }
+
+        // Declaration
+        if (self.tokenIs(Token.colon) or self.tokenIs(Token.double_colon)) {
+            // Check for another : indicating constant declaration (::)
+            var mutability = Mutability.Var;
+            if (self.tokenIs(Token.double_colon)) {
+                mutability = Mutability.Const;
+            }
+            self.advance(); // consume ':' or '::'
+
+            const tipo = try self.parseType();
+            if (!self.tokenIs(Token.equal)) return ParseError.ExpectedEqual;
+            self.advance(); // consume '='
+            const value = try self.parseExpression();
+            const node = try self.allocator.create(ASTNode);
+            const decl = try self.allocator.create(Declaration);
+            // Asumimos que no hay argumentos, por eso usamos undefined.
+            const args: []const Argument = undefined;
+            decl.* = Declaration{
+                .name = name,
+                .type = tipo,
+                .mutability = mutability,
+                .args = args,
+                .value = value,
+            };
+            node.* = ASTNode{ .declaration = decl };
+            return node;
+        }
+
+        return ParseError.ExpectedDeclarationOrAssignment;
+    }
+
+    fn parseSentences(self: *Parser) !std.ArrayList(*ASTNode) {
+        var ast = std.ArrayList(*ASTNode).init(self.allocator.*);
+        while (self.index < self.tokens.len and !self.tokenIs(Token.eof) and !self.tokenIs(Token.close_brace)) {
+            switch (self.current()) {
+                Token.keyword_return => {
+                    const retNode = try self.parseReturn();
+                    try ast.append(retNode);
+                },
+                else => {
+                    const declNode = try self.parseDeclarationOrAssignment();
+                    try ast.append(declNode);
+                },
+            }
+        }
+        return ast;
+    }
+
+    fn parseCodeBlock(self: *Parser) ParseError!*ASTNode {
+        if (!self.tokenIs(Token.open_brace)) return ParseError.ExpectedLeftBrace;
+        self.advance(); // consume '{'
+        const list = try self.parseSentences();
+        if (!self.tokenIs(Token.close_brace)) return ParseError.ExpectedRightBrace;
+        self.advance(); // consume '}'
+        const node = try self.allocator.create(ASTNode);
+        const codeBlock = try self.allocator.create(CodeBlock);
+        codeBlock.* = CodeBlock{ .items = list.items };
+        node.* = ASTNode{ .codeBlock = codeBlock };
+        return node;
+    }
+
+    fn parseReturn(self: *Parser) ParseError!*ASTNode {
+        // Verificar que el token actual es 'keyword_return'
+        if (!self.tokenIs(Token.keyword_return)) {
+            return ParseError.ExpectedKeywordReturn;
+        }
+        self.advance(); // consume 'keyword_return'
+
+        // Intentamos parsear una expresión que se retorne.
+        const expr = try self.parseExpression();
+
+        const node = try self.allocator.create(ASTNode);
+        const retStmt = try self.allocator.create(ReturnStmt);
+        retStmt.* = ReturnStmt{ .expression = expr };
+        node.* = ASTNode{ .returnStmt = retStmt };
+        return node;
+    }
+
+    pub fn printAST(self: *Parser) void {
+        std.debug.print("\n\nAST\n", .{});
+        for (self.ast.items) |node| {
+            node.print(0);
+        }
+    }
+};
 
 /// Función auxiliar para imprimir espacios de indentación.
 fn printIndent(indent: usize) void {
     var i: usize = 0;
     while (i < indent) : (i += 1) {
         std.debug.print("  ", .{}); // 2 espacios por nivel
-    }
-}
-
-/// Imprime un nodo del AST, recibiendo el nivel de indentación.
-pub fn printNode(node: *ASTNode, indent: usize) void {
-    printIndent(indent);
-    switch (node.*) {
-        ASTNode.declaration => |decl| {
-            std.debug.print("Declaration {s} ({s}) =\n", .{ decl.*.name, if (decl.*.mutability == Mutability.Var) "var" else "const" });
-            // Se incrementa el nivel de indentación para el nodo hijo.
-            printNode(decl.*.value, indent + 1);
-        },
-        ASTNode.assignment => |assign| {
-            std.debug.print("Assignment {s} =\n", .{assign.*.name});
-            // Se incrementa el nivel de indentación para el nodo hijo.
-            printNode(assign.*.value, indent + 1);
-        },
-        ASTNode.identifier => |ident| {
-            std.debug.print("identifier: {s}\n", .{ident});
-        },
-        ASTNode.codeBlock => |codeBlock| {
-            std.debug.print("code block:\n", .{});
-            for (codeBlock.*.items) |item| {
-                printNode(item, indent + 1);
-            }
-        },
-        ASTNode.valueLiteral => |valueLiteral| {
-            switch (valueLiteral.*) {
-                ValueLiteral.intLiteral => |intLit| {
-                    std.debug.print("IntLiteral {d}\n", .{intLit.value});
-                },
-                ValueLiteral.floatLiteral => |floatLit| {
-                    std.debug.print("FloatLiteral {}\n", .{floatLit.value});
-                },
-                ValueLiteral.doubleLiteral => |doubleLit| {
-                    std.debug.print("DoubleLiteral {}\n", .{doubleLit.value});
-                },
-                ValueLiteral.charLiteral => |charLit| {
-                    std.debug.print("CharLiteral {c}\n", .{charLit.value});
-                },
-                ValueLiteral.boolLiteral => |boolLit| {
-                    std.debug.print("BoolLiteral {}\n", .{boolLit.value});
-                },
-                ValueLiteral.stringLiteral => |stringLit| {
-                    std.debug.print("StringLiteral {s}\n", .{stringLit.value});
-                },
-            }
-        },
-        ASTNode.typeLiteral => |typeLiteral| {
-            std.debug.print("TypeLiteral: ", .{});
-            switch (typeLiteral.*.type) {
-                Type.Int32 => std.debug.print("Int32\n", .{}),
-                Type.Int => std.debug.print("Int\n", .{}),
-                Type.Float => std.debug.print("Float\n", .{}),
-                Type.Double => std.debug.print("Double\n", .{}),
-                Type.Char => std.debug.print("Char\n", .{}),
-                Type.Bool => std.debug.print("Bool\n", .{}),
-                Type.String => std.debug.print("String\n", .{}),
-                Type.Array => std.debug.print("Array\n", .{}),
-                Type.Struct => std.debug.print("Struct\n", .{}),
-                Type.Enum => std.debug.print("Enum\n", .{}),
-                Type.Union => std.debug.print("Union\n", .{}),
-                Type.Pointer => std.debug.print("Pointer\n", .{}),
-                Type.Function => std.debug.print("Function\n", .{}),
-            }
-        },
-        ASTNode.returnStmt => |returnStmt| {
-            std.debug.print("return\n", .{});
-            if (returnStmt.expression) |expr| {
-                // Se incrementa la indentación para la expresión retornada.
-                printNode(expr, indent + 1);
-            }
-        },
     }
 }
