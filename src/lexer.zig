@@ -2,6 +2,7 @@ const std = @import("std");
 
 pub const Token = union(enum) {
     eof: struct {},
+    new_line: struct {},
 
     // Names
     identifier: []const u8,
@@ -70,6 +71,12 @@ pub const Lexer = struct {
 
     pub fn lexNextToken(self: *Lexer) !void {
         const c = self.source[self.index];
+
+        if (c == '\n') {
+            self.index += 1;
+            try self.tokens.append(Token{ .new_line = .{} });
+            return;
+        }
 
         if (std.ascii.isWhitespace(c)) {
             self.index += 1;
@@ -203,6 +210,9 @@ pub fn printToken(token: Token) void {
     switch (token) {
         .eof => {
             std.debug.print("eof\n", .{});
+        },
+        .new_line => {
+            std.debug.print("new_line\n", .{});
         },
         .identifier => |val| {
             std.debug.print("identifier: {s}\n", .{val});

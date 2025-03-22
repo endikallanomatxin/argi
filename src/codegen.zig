@@ -13,6 +13,8 @@ pub const Error = error{
     NotYetImplemented,
     ConstantReassignment,
     CompilationFailed,
+    ExpressionNotFound,
+    InvalidType,
 };
 
 /// Representa una entrada de símbolo (variable o función) en la tabla de símbolos.
@@ -20,7 +22,7 @@ const Symbol = struct {
     cname: []u8,
     mutability: parser.Mutability,
     type_ref: llvm.c.LLVMTypeRef,
-    value_ref: llvm.c.LLVMValueRef,
+    ref: llvm.c.LLVMValueRef,
 };
 
 const TypedValue = struct {
@@ -160,7 +162,11 @@ pub const CodeGenerator = struct {
         c.LLVMPositionBuilderAtEnd(self.builder, entryBB);
 
         // Generamos el interior de la función
-        _ = try self.genCodeBlock(decl.value.codeBlock);
+        if (decl.value) |v| {
+            _ = try self.genCodeBlock(v.codeBlock);
+        } else {
+            return Error.ExpressionNotFound;
+        }
 
         // Restauramos la posición original del builder
         if (oldBlock) |ob| {
@@ -176,68 +182,86 @@ pub const CodeGenerator = struct {
             return Error.SymbolAlreadyDefined;
         }
 
-        // Obtenemos el valor y su tipo
-        const tv_opt = try self.visitNode(decl.value);
-        if (tv_opt) |tv| {
+        var value_ref: ?llvm.c.LLVMValueRef = null;
+        var type_ref: ?llvm.c.LLVMTypeRef = null;
 
-            // Creamos la alloca usando tv.type_ref en lugar de i32
-            const alloc = c.LLVMBuildAlloca(self.builder, tv.type_ref, c_name.ptr);
+        if (decl.value) |v| {
+            // Obtenemos el valor y su tipo
+            const tv_opt = try self.visitNode(v);
+            const tv = tv_opt orelse return Error.ValueNotFound;
 
-            // Guardamos en la tabla de símbolos
-            try self.symbol_table.put(
-                decl.name,
-                Symbol{
-                    .cname = c_name,
-                    .mutability = decl.mutability,
-                    .type_ref = tv.type_ref,
-                    .value_ref = alloc,
-                },
-            );
+            value_ref = tv.value_ref;
 
-            // Almacenar el valor en la variable
-            _ = c.LLVMBuildStore(self.builder, tv.value_ref, alloc);
+            // Check type compatibility
+            if (decl.type) |t| {
+                std.debug.print("Checking type compatibility\n", .{});
+                const expected_type = try toLLVMType(t);
+                if (tv.type_ref != expected_type) {
+                    return Error.InvalidType;
+                }
+            }
+            type_ref = tv.type_ref;
         } else {
-            // No devolvió nada, error en este caso
-            return Error.ValueNotFound;
+            // Si no hay valor, declaramos la variable sin inicializar
+            if (decl.type) |t| {
+                type_ref = try toLLVMType(t);
+            } else {
+                return Error.NotYetImplemented;
+            }
+        }
+
+        // Creamos la alloca usando tv.type_ref en lugar de i32
+        const alloc = c.LLVMBuildAlloca(self.builder, type_ref orelse return Error.InvalidType, c_name.ptr);
+
+        // Guardamos en la tabla de símbolos
+        try self.symbol_table.put(
+            decl.name,
+            Symbol{
+                .cname = c_name,
+                .mutability = decl.mutability,
+                .type_ref = type_ref orelse return Error.InvalidType,
+                .ref = alloc,
+            },
+        );
+
+        // Almacenar el valor en la variable
+        if (value_ref) |v| {
+            _ = c.LLVMBuildStore(self.builder, v, alloc);
         }
     }
 
     /// Genera IR para una asignación: busca la variable y almacena el nuevo valor.
     fn genAssignment(self: *CodeGenerator, assign: *parser.Assignment) !TypedValue {
         const symbol_opt = self.symbol_table.get(assign.name);
-        if (symbol_opt == null) return Error.SymbolNotFound;
-
-        const symbol = symbol_opt.?;
+        const symbol = symbol_opt orelse return Error.SymbolNotFound;
         if (symbol.mutability == parser.Mutability.Const) {
             return Error.ConstantReassignment;
         }
 
         const tv_opt = try self.visitNode(assign.value);
+        const tv = tv_opt orelse return Error.ValueNotFound;
 
-        if (tv_opt) |tv| {
-            // Si la variable se declaró como float y tv es int, haz cast
-            // O al revés. Ejemplo: "int -> float" con LLVMBuildSIToFP, etc.
-            var final_value_ref: llvm.c.LLVMValueRef = tv.value_ref;
-            if (symbol.type_ref == c.LLVMFloatType() and tv.type_ref == c.LLVMInt32Type()) {
-                // Cambiamos de int a float
-                final_value_ref = c.LLVMBuildSIToFP(self.builder, tv.value_ref, symbol.type_ref, "int_to_float");
-            } else if (symbol.type_ref == c.LLVMInt32Type() and tv.type_ref == c.LLVMFloatType()) {
-                // Floats que asignan a int: saca tu lógica o error
-                // Para ejemplo, un "floor" implícito:
-                final_value_ref = c.LLVMBuildFPToSI(self.builder, tv.value_ref, symbol.type_ref, "float_to_int");
-            }
-
-            _ = c.LLVMBuildStore(self.builder, final_value_ref, symbol.value_ref);
-
-            // Retornamos un TypedValue con el tipo original de la variable
-            // (que no cambia) y el valor final que guardamos
-            return TypedValue{
-                .value_ref = final_value_ref,
-                .type_ref = symbol.type_ref,
-            };
-        } else {
-            return Error.ValueNotFound;
+        // Si la variable se declaró como float y tv es int, haz cast
+        // O al revés. Ejemplo: "int -> float" con LLVMBuildSIToFP, etc.
+        var final_value_ref: llvm.c.LLVMValueRef = tv.value_ref;
+        if (symbol.type_ref == c.LLVMFloatType() and tv.type_ref == c.LLVMInt32Type()) {
+            // Cambiamos de int a float
+            final_value_ref = c.LLVMBuildSIToFP(self.builder, tv.value_ref, symbol.type_ref, "int_to_float");
+            // TODO: Pensar si queremos permitir esto
+        } else if (symbol.type_ref == c.LLVMInt32Type() and tv.type_ref == c.LLVMFloatType()) {
+            // Para ejemplo, un "floor" implícito:
+            // final_value_ref = c.LLVMBuildFPToSI(self.builder, tv.value_ref, symbol.type_ref, "float_to_int");
+            return Error.InvalidType;
         }
+
+        _ = c.LLVMBuildStore(self.builder, final_value_ref, symbol.ref);
+
+        // Retornamos un TypedValue con el tipo original de la variable
+        // (que no cambia) y el valor final que guardamos
+        return TypedValue{
+            .value_ref = final_value_ref,
+            .type_ref = symbol.type_ref,
+        };
     }
 
     /// Genera IR para una instrucción return: `return <expr?>`.
@@ -295,7 +319,7 @@ pub const CodeGenerator = struct {
             const load_val = c.LLVMBuildLoad2(
                 self.builder,
                 s.type_ref,
-                s.value_ref,
+                s.ref,
                 s.cname.ptr,
             );
             return TypedValue{ .value_ref = load_val, .type_ref = s.type_ref };
@@ -377,3 +401,11 @@ pub const CodeGenerator = struct {
         return buffer;
     }
 };
+
+fn toLLVMType(t: parser.Type) !llvm.c.LLVMTypeRef {
+    switch (t) {
+        parser.Type.Int => return c.LLVMInt32Type(),
+        parser.Type.Float => return c.LLVMFloatType(),
+        else => return Error.InvalidType,
+    }
+}
