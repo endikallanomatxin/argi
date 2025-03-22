@@ -15,6 +15,7 @@ pub const Error = error{
 
 /// Genera IR a partir del AST, sin crear manualmente la función main.
 pub fn generateIR(ast: std.ArrayList(*parser.ASTNode), allocator: *const std.mem.Allocator) !llvm.c.LLVMModuleRef {
+    std.debug.print("\n\nCODEGEN\n", .{});
 
     // Creamos el módulo
     const module = c.LLVMModuleCreateWithName("dummy_module");
@@ -47,7 +48,7 @@ pub fn generateIR(ast: std.ArrayList(*parser.ASTNode), allocator: *const std.mem
 }
 
 const Symbol = struct {
-    name: []const u8,
+    cname: []u8,
     mutability: parser.Mutability,
     type: llvm.c.LLVMTypeRef,
     value_ref: llvm.c.LLVMValueRef,
@@ -105,8 +106,8 @@ fn visitNode(context: *IRGenContext, node: *parser.ASTNode) Error!?c.LLVMValueRe
         },
         .identifier => |ident| {
             std.debug.print("Generating identifier\n", .{});
-            _ = try genIdentifier(context, ident);
-            return null;
+            const value = try genIdentifier(context, ident);
+            return value;
         },
         else => {
             return Error.UnknownNode;
@@ -178,7 +179,7 @@ fn genVarOrConstDeclaration(context: *IRGenContext, decl: *parser.Declaration) !
 
     // Guardamos en la symbol table
     try context.symbol_table.put(decl.name, Symbol{
-        .name = decl.name,
+        .cname = c_name,
         .mutability = decl.mutability,
         .type = i32_type,
         .value_ref = alloc,
@@ -250,7 +251,7 @@ fn genIdentifier(context: *IRGenContext, ident: []const u8) !llvm.c.LLVMValueRef
             context.builder,
             s.type,
             s.value_ref,
-            s.name.ptr,
+            s.cname.ptr,
         );
     } else {
         return Error.SymbolNotFound;

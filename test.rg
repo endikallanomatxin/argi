@@ -1,8 +1,8 @@
 main ::= {
-    my_const ::= 0
+    success ::= 0
 
-    my_var :=  1
-    my_var = 0
+    status :=  1
+    status = success
 
-    return 0
+    return status
 }

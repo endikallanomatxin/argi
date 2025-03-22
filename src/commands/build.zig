@@ -29,7 +29,6 @@ pub fn compile(filename: []const u8) !void {
 
     // 4. Generar IR a partir del AST.
     const module = try codegen.generateIR(astList, &allocator);
-    std.debug.print("\n\nCODEGEN\n", .{});
     const llvm_output_filename = "output.ll";
     var err_msg: [*c]u8 = null;
     if (c.LLVMPrintModuleToFile(module, llvm_output_filename, &err_msg) != 0) {
