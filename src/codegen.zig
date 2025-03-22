@@ -10,6 +10,7 @@ pub const Error = error{
     OutOfMemory,
     UnknownNode,
     ValueNotFound,
+    NotYetImplemented,
 };
 
 /// Genera IR a partir del AST, sin crear manualmente la función main.
@@ -79,21 +80,31 @@ pub const IRGenContext = struct {
 fn visitNode(context: *IRGenContext, node: *parser.ASTNode) Error!?c.LLVMValueRef {
     switch (node.*) {
         .declaration => |declPtr| {
+            std.debug.print("Generating declaration\n", .{});
             _ = try genDeclaration(context, declPtr);
             return null;
         },
+        .assignment => |assignPtr| {
+            std.debug.print("Generating assignment\n", .{});
+            _ = try genAssignment(context, assignPtr);
+            return null;
+        },
         .returnStmt => |retStmtPtr| {
+            std.debug.print("Generating return\n", .{});
             _ = try genReturn(context, retStmtPtr);
             return null;
         },
         .codeBlock => |blockPtr| {
+            std.debug.print("Generating code block\n", .{});
             _ = try genCodeBlock(context, blockPtr);
             return null;
         },
         .valueLiteral => |valLiteralPtr| {
+            std.debug.print("Generating value literal\n", .{});
             return try genValueLiteral(valLiteralPtr);
         },
         .identifier => |ident| {
+            std.debug.print("Generating identifier\n", .{});
             _ = try genIdentifier(context, ident);
             return null;
         },
@@ -180,6 +191,21 @@ fn genVarOrConstDeclaration(context: *IRGenContext, decl: *parser.Declaration) !
         return Error.ValueNotFound;
     }
     return;
+}
+
+fn genAssignment(context: *IRGenContext, assign: *parser.Assignment) !llvm.c.LLVMValueRef {
+    const symbol = context.symbol_table.get(assign.name);
+    if (symbol) |s| {
+        const val = try visitNode(context, assign.value);
+        if (val) |v| {
+            _ = c.LLVMBuildStore(context.builder, v, s.value_ref);
+            return v;
+        } else {
+            return Error.ValueNotFound;
+        }
+    } else {
+        return Error.SymbolNotFound;
+    }
 }
 
 fn genReturn(context: *IRGenContext, retStmt: *parser.ReturnStmt) !void {

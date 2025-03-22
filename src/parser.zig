@@ -4,6 +4,7 @@ const Token = lexer.Token;
 
 pub const ASTNode = union(enum) {
     declaration: *Declaration,
+    assignment: *Assignment,
     identifier: []const u8,
     codeBlock: *CodeBlock,
     valueLiteral: *ValueLiteral,
@@ -25,6 +26,11 @@ pub const Declaration = struct {
             else => return false,
         }
     }
+};
+
+pub const Assignment = struct {
+    name: []const u8,
+    value: *ASTNode,
 };
 
 pub const Mutability = enum {
@@ -112,7 +118,9 @@ pub const ParseError = error{
     ExpectedTypeAnnotation,
     ExpectedDoubleColon,
     ExpectedAssignment,
+    ExpectedDeclarationOrAssignment,
     ExpectedFuncAssignment,
+    ExpectedKeywordReturn,
     OutOfMemory,
 };
 
@@ -140,6 +148,8 @@ fn current(parser: *Parser) Token {
 
 /// Avanza un token.
 fn advance(parser: *Parser) void {
+    std.debug.print("Parseado token: ", .{});
+    lexer.printToken(current(parser));
     if (parser.index < parser.tokens.len) parser.index += 1;
 }
 
@@ -261,53 +271,69 @@ fn parseExpression(parser: *Parser, allocator: *const std.mem.Allocator) ParseEr
     };
 }
 
-/// Parsea una declaración de variable o constante.
-/// Se asume que no se usan tokens "const" o "var".
-fn parseDeclaration(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*ASTNode {
+fn parseDeclarationOrAssignment(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*ASTNode {
     const name = try parseIdentifier(parser);
-    var mutability = Mutability.Var;
-    if (!tokenIs(parser, Token.colon)) return ParseError.ExpectedColon;
-    advance(parser); // consume el primer ':'
     if (tokenIs(parser, Token.colon)) {
-        mutability = Mutability.Const;
-        advance(parser);
+        advance(parser); // consume ':'
+
+        // Check for another : indicating constant declaration (::)
+        var mutability = Mutability.Var;
+        if (tokenIs(parser, Token.colon)) {
+            advance(parser); // consume ':'
+            mutability = Mutability.Const;
+        }
+
+        const tipo = try parseType(parser);
+        if (!tokenIs(parser, Token.equal)) return ParseError.ExpectedEqual;
+        advance(parser); // consume '='
+        const value = try parseExpression(parser, allocator);
+        const node = try allocator.create(ASTNode);
+        const decl = try allocator.create(Declaration);
+        // Asumimos que no hay argumentos, por eso usamos undefined.
+        const args: []const Argument = undefined;
+        decl.* = Declaration{
+            .name = name,
+            .type = tipo,
+            .mutability = mutability,
+            .args = args,
+            .value = value,
+        };
+        node.* = ASTNode{ .declaration = decl };
+        return node;
+    } else if (tokenIs(parser, Token.equal)) {
+        advance(parser); // consume '='
+        const value = try parseExpression(parser, allocator);
+        const node = try allocator.create(ASTNode);
+        const assign = try allocator.create(Assignment);
+        assign.* = Assignment{ .name = name, .value = value };
+        node.* = ASTNode{ .assignment = assign };
+        return node;
     }
-    const tipo = try parseType(parser);
-    if (!tokenIs(parser, Token.equal)) return ParseError.ExpectedEqual;
-    advance(parser); // consume '='
-    const value = try parseExpression(parser, allocator);
-    const node = try allocator.create(ASTNode);
-    const decl = try allocator.create(Declaration);
-    // Asumimos que no hay argumentos, por eso usamos undefined.
-    const args: []const Argument = undefined;
-    decl.* = Declaration{
-        .name = name,
-        .type = tipo,
-        .mutability = mutability,
-        .args = args,
-        .value = value,
-    };
-    node.* = ASTNode{ .declaration = decl };
-    return node;
+    return ParseError.ExpectedDeclarationOrAssignment;
+}
+
+fn parseSentences(parser: *Parser, allocator: *const std.mem.Allocator) !std.ArrayList(*ASTNode) {
+    var ast = std.ArrayList(*ASTNode).init(allocator.*);
+    while (parser.index < parser.tokens.len and !tokenIs(parser, Token.eof) and !tokenIs(parser, Token.close_brace)) {
+        switch (current(parser)) {
+            Token.keyword_return => {
+                const retNode = try parseReturn(parser, allocator);
+                try ast.append(retNode);
+            },
+            else => {
+                const declNode = try parseDeclarationOrAssignment(parser, allocator);
+                try ast.append(declNode);
+            },
+        }
+    }
+    return ast;
 }
 
 fn parseCodeBlock(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*ASTNode {
     if (!tokenIs(parser, Token.open_brace)) return ParseError.ExpectedLeftBrace;
     advance(parser); // consume '{'
-    var list = std.ArrayList(*ASTNode).init(allocator.*);
-    while (!tokenIs(parser, Token.close_brace)) {
-        switch (current(parser)) {
-            Token.eof => return ParseError.ExpectedRightBrace,
-            Token.keyword_return => {
-                const retNode = try parseReturn(parser, allocator);
-                try list.append(retNode);
-            },
-            else => {
-                const declNode = try parseDeclaration(parser, allocator);
-                try list.append(declNode);
-            },
-        }
-    }
+    const list = try parseSentences(parser, allocator);
+    if (!tokenIs(parser, Token.close_brace)) return ParseError.ExpectedRightBrace;
     advance(parser); // consume '}'
     const node = try allocator.create(ASTNode);
     const codeBlock = try allocator.create(CodeBlock);
@@ -320,7 +346,7 @@ fn parseCodeBlock(parser: *Parser, allocator: *const std.mem.Allocator) ParseErr
 fn parseReturn(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*ASTNode {
     // Verificar que el token actual es 'keyword_return'
     if (!tokenIs(parser, Token.keyword_return)) {
-        return ParseError.ExpectedIdentifier; // O un error específico para 'return'
+        return ParseError.ExpectedKeywordReturn;
     }
     advance(parser); // consume 'keyword_return'
 
@@ -335,21 +361,8 @@ fn parseReturn(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!
 }
 
 /// Función principal: parsee todos los tokens hasta eof y retorne una lista de nodos AST.
-pub fn parse(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!std.ArrayList(*ASTNode) {
-    var ast = std.ArrayList(*ASTNode).init(allocator.*);
-    while (parser.index < parser.tokens.len and !tokenIs(parser, Token.eof)) {
-        switch (current(parser)) {
-            Token.eof => return ParseError.ExpectedRightBrace,
-            Token.keyword_return => {
-                const retNode = try parseReturn(parser, allocator);
-                try ast.append(retNode);
-            },
-            else => {
-                const declNode = try parseDeclaration(parser, allocator);
-                try ast.append(declNode);
-            },
-        }
-    }
+pub fn parse(parser: *Parser, allocator: *const std.mem.Allocator) !std.ArrayList(*ASTNode) {
+    const ast = try parseSentences(parser, allocator);
     return ast;
 }
 
@@ -377,6 +390,11 @@ pub fn printNode(node: *ASTNode, indent: usize) void {
             std.debug.print("Declaration {s} ({s}) =\n", .{ decl.*.name, if (decl.*.mutability == Mutability.Var) "var" else "const" });
             // Se incrementa el nivel de indentación para el nodo hijo.
             printNode(decl.*.value, indent + 1);
+        },
+        ASTNode.assignment => |assign| {
+            std.debug.print("Assignment {s} =\n", .{assign.*.name});
+            // Se incrementa el nivel de indentación para el nodo hijo.
+            printNode(assign.*.value, indent + 1);
         },
         ASTNode.identifier => |ident| {
             std.debug.print("identifier: {s}\n", .{ident});
