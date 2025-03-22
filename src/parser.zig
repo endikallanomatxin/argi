@@ -3,7 +3,7 @@ const lexer = @import("lexer.zig");
 const Token = lexer.Token;
 
 pub const ASTNode = union(enum) {
-    decl: *Decl,
+    declaration: *Declaration,
     identifier: []const u8,
     codeBlock: *CodeBlock,
     valueLiteral: *ValueLiteral,
@@ -11,14 +11,14 @@ pub const ASTNode = union(enum) {
     returnStmt: *ReturnStmt,
 };
 
-pub const Decl = struct {
+pub const Declaration = struct {
     name: []const u8,
     type: ?Type,
     mutability: Mutability,
     args: []const Argument,
     value: *ASTNode,
 
-    pub fn isFunction(self: Decl) bool {
+    pub fn isFunction(self: Declaration) bool {
         // if the value points to a code block, then it's a function
         switch (self.value.*) {
             ASTNode.codeBlock => return true,
@@ -263,7 +263,7 @@ fn parseExpression(parser: *Parser, allocator: *const std.mem.Allocator) ParseEr
 
 /// Parsea una declaración de variable o constante.
 /// Se asume que no se usan tokens "const" o "var".
-fn parseDecl(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*ASTNode {
+fn parseDeclaration(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*ASTNode {
     const name = try parseIdentifier(parser);
     var mutability = Mutability.Var;
     if (!tokenIs(parser, Token.colon)) return ParseError.ExpectedColon;
@@ -277,17 +277,17 @@ fn parseDecl(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!*A
     advance(parser); // consume '='
     const value = try parseExpression(parser, allocator);
     const node = try allocator.create(ASTNode);
-    const decl = try allocator.create(Decl);
+    const decl = try allocator.create(Declaration);
     // Asumimos que no hay argumentos, por eso usamos undefined.
     const args: []const Argument = undefined;
-    decl.* = Decl{
+    decl.* = Declaration{
         .name = name,
         .type = tipo,
         .mutability = mutability,
         .args = args,
         .value = value,
     };
-    node.* = ASTNode{ .decl = decl };
+    node.* = ASTNode{ .declaration = decl };
     return node;
 }
 
@@ -303,7 +303,7 @@ fn parseCodeBlock(parser: *Parser, allocator: *const std.mem.Allocator) ParseErr
                 try list.append(retNode);
             },
             else => {
-                const declNode = try parseDecl(parser, allocator);
+                const declNode = try parseDeclaration(parser, allocator);
                 try list.append(declNode);
             },
         }
@@ -345,7 +345,7 @@ pub fn parse(parser: *Parser, allocator: *const std.mem.Allocator) ParseError!st
                 try ast.append(retNode);
             },
             else => {
-                const declNode = try parseDecl(parser, allocator);
+                const declNode = try parseDeclaration(parser, allocator);
                 try ast.append(declNode);
             },
         }
@@ -373,7 +373,7 @@ fn printIndent(indent: usize) void {
 pub fn printNode(node: *ASTNode, indent: usize) void {
     printIndent(indent);
     switch (node.*) {
-        ASTNode.decl => |decl| {
+        ASTNode.declaration => |decl| {
             std.debug.print("Declaration {s} ({s}) =\n", .{ decl.*.name, if (decl.*.mutability == Mutability.Var) "var" else "const" });
             // Se incrementa el nivel de indentación para el nodo hijo.
             printNode(decl.*.value, indent + 1);

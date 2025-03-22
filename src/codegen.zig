@@ -78,8 +78,8 @@ pub const IRGenContext = struct {
 /// Visita un nodo del AST y genera IR correspondiente
 fn visitNode(context: *IRGenContext, node: *parser.ASTNode) Error!?c.LLVMValueRef {
     switch (node.*) {
-        .decl => |declPtr| {
-            _ = try genDecl(context, declPtr);
+        .declaration => |declPtr| {
+            _ = try genDeclaration(context, declPtr);
             return null;
         },
         .returnStmt => |retStmtPtr| {
@@ -103,16 +103,16 @@ fn visitNode(context: *IRGenContext, node: *parser.ASTNode) Error!?c.LLVMValueRe
     }
 }
 
-fn genDecl(context: *IRGenContext, decl: *parser.Decl) !void {
+fn genDeclaration(context: *IRGenContext, decl: *parser.Declaration) !void {
     if (decl.mutability == parser.Mutability.Const and decl.isFunction()) {
         _ = try genTopLevelFunction(context, decl);
     } else {
-        _ = try genVarOrConstDecl(context, decl);
+        _ = try genVarOrConstDeclaration(context, decl);
     }
     return;
 }
 
-fn genTopLevelFunction(context: *IRGenContext, decl: *parser.Decl) !void {
+fn genTopLevelFunction(context: *IRGenContext, decl: *parser.Declaration) !void {
 
     // Creamos el tipo: supongamos i32 sin parámetros
     // TODO: soportar otros tipos
@@ -142,7 +142,7 @@ fn genTopLevelFunction(context: *IRGenContext, decl: *parser.Decl) !void {
 }
 
 /// Genera IR para una declaración de variable
-fn genVarOrConstDecl(context: *IRGenContext, decl: *parser.Decl) !void {
+fn genVarOrConstDeclaration(context: *IRGenContext, decl: *parser.Declaration) !void {
     // NOMBRE
     const c_name = try dupZ(context.allocator, decl.name);
 
