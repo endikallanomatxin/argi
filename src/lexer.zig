@@ -79,10 +79,23 @@ pub const Lexer = struct {
         // Literales enteros
         if (std.ascii.isDigit(c)) {
             const start = self.index;
-            while (self.index < self.source.len and std.ascii.isDigit(self.source[self.index])) : (self.index += 1) {}
+            var is_float = false;
+            while (self.index < self.source.len and (std.ascii.isDigit(self.source[self.index]) or self.source[self.index] == '.')) {
+                if (self.source[self.index] == '.') {
+                    is_float = true;
+                }
+                self.index += 1;
+            }
             const num_str = self.source[start..self.index];
-            const number = try std.fmt.parseInt(i64, num_str, 10);
-            const literal = Literal{ .int_literal = number };
+
+            var literal: Literal = undefined;
+            if (is_float) {
+                const number = try std.fmt.parseFloat(f64, num_str);
+                literal = Literal{ .float_literal = number };
+            } else {
+                const number = try std.fmt.parseInt(i64, num_str, 10);
+                literal = Literal{ .int_literal = number };
+            }
             try self.tokens.append(Token{ .literal = literal });
             return;
         }
