@@ -6,20 +6,11 @@ const parser = @import("parser.zig");
 pub const Error = error{
     ModuleCreationFailed,
     SymbolNotFound,
+    SymbolAlreadyDefined,
     OutOfMemory,
     UnknownNode,
     ValueNotFound,
 };
-
-pub fn dupZ(allocator: *const std.mem.Allocator, src: []const u8) ![]u8 {
-    var buffer = try allocator.alloc(u8, src.len + 1);
-    var i: usize = 0;
-    while (i < src.len) : (i += 1) {
-        buffer[i] = src[i];
-    }
-    buffer[src.len] = 0;
-    return buffer;
-}
 
 /// Genera IR a partir del AST, sin crear manualmente la función main.
 pub fn generateIR(ast: std.ArrayList(*parser.ASTNode), allocator: *const std.mem.Allocator) !llvm.c.LLVMModuleRef {
@@ -54,18 +45,25 @@ pub fn generateIR(ast: std.ArrayList(*parser.ASTNode), allocator: *const std.mem
     return module;
 }
 
+const Symbol = struct {
+    name: []const u8,
+    mutability: parser.Mutability,
+    type: llvm.c.LLVMTypeRef,
+    value_ref: llvm.c.LLVMValueRef,
+};
+
 /// Contexto para la generación de IR
 pub const IRGenContext = struct {
     builder: llvm.c.LLVMBuilderRef,
     module: llvm.c.LLVMModuleRef,
-    var_table: std.StringHashMap(llvm.c.LLVMValueRef),
+    symbol_table: std.StringHashMap(Symbol),
     allocator: *const std.mem.Allocator,
 
     pub fn init(builder: llvm.c.LLVMBuilderRef, module: llvm.c.LLVMModuleRef, allocator: *const std.mem.Allocator) IRGenContext {
         return IRGenContext{
             .builder = builder,
             .module = module,
-            .var_table = std.StringHashMap(llvm.c.LLVMValueRef).init(allocator.*),
+            .symbol_table = std.StringHashMap(Symbol).init(allocator.*),
             .allocator = allocator,
         };
     }
@@ -81,13 +79,8 @@ pub const IRGenContext = struct {
 fn visitNode(context: *IRGenContext, node: *parser.ASTNode) Error!?c.LLVMValueRef {
     switch (node.*) {
         .decl => |declPtr| {
-            if (declPtr.*.isFunction()) {
-                _ = try genFunction(context, declPtr);
-                return null;
-            } else {
-                _ = try genVar(context, declPtr);
-                return null;
-            }
+            _ = try genDecl(context, declPtr);
+            return null;
         },
         .returnStmt => |retStmtPtr| {
             _ = try genReturn(context, retStmtPtr);
@@ -110,7 +103,16 @@ fn visitNode(context: *IRGenContext, node: *parser.ASTNode) Error!?c.LLVMValueRe
     }
 }
 
-fn genFunction(context: *IRGenContext, decl: *parser.Decl) !void {
+fn genDecl(context: *IRGenContext, decl: *parser.Decl) !void {
+    if (decl.mutability == parser.Mutability.Const and decl.isFunction()) {
+        _ = try genTopLevelFunction(context, decl);
+    } else {
+        _ = try genVarOrConstDecl(context, decl);
+    }
+    return;
+}
+
+fn genTopLevelFunction(context: *IRGenContext, decl: *parser.Decl) !void {
 
     // Creamos el tipo: supongamos i32 sin parámetros
     // TODO: soportar otros tipos
@@ -140,28 +142,44 @@ fn genFunction(context: *IRGenContext, decl: *parser.Decl) !void {
 }
 
 /// Genera IR para una declaración de variable
-fn genVar(context: *IRGenContext, decl: *parser.Decl) !void {
+fn genVarOrConstDecl(context: *IRGenContext, decl: *parser.Decl) !void {
+    // NOMBRE
+    const c_name = try dupZ(context.allocator, decl.name);
+
+    // Comprobamos si existe en la tabla de símbolos
+    // POr ahora, evitaremos redefiniciones
+    // TODO: Soportar distintos scopes
+
+    if (context.symbol_table.contains(decl.name)) {
+        return Error.SymbolAlreadyDefined;
+    }
+
+    // VALOR
+    const value = try visitNode(context, decl.value);
+
+    // TIPO
+    const i32_type = c.LLVMInt32Type();
+    // TODO: soportar otros tipos
+    // TODO: inferir tipo en base al valor
 
     // Hacemos alloca
-    // TODO: soportar otros tipos
-    const i32_type = c.LLVMInt32Type();
-    const c_name = try dupZ(context.allocator, decl.name);
     const alloc = c.LLVMBuildAlloca(context.builder, i32_type, c_name.ptr);
 
-    // Guardamos en var_table
-    try context.var_table.put(decl.name, alloc);
+    // Guardamos en la symbol table
+    try context.symbol_table.put(decl.name, Symbol{
+        .name = decl.name,
+        .mutability = decl.mutability,
+        .type = i32_type,
+        .value_ref = alloc,
+    });
 
-    // Generamos la parte derecha (rhsValue)
-    const rhsValue = try visitNode(context, decl.value);
-
-    if (rhsValue) |val| {
-        // Hacemos store
-        _ = c.LLVMBuildStore(context.builder, val, alloc);
-        return;
+    if (value) |v| {
+        // Guardamos el valor en el alloc
+        _ = c.LLVMBuildStore(context.builder, v, alloc);
     } else {
-        std.debug.print("genVar: No value to store.\n", .{});
         return Error.ValueNotFound;
     }
+    return;
 }
 
 fn genReturn(context: *IRGenContext, retStmt: *parser.ReturnStmt) !void {
@@ -199,16 +217,26 @@ fn genValueLiteral(valLit: *parser.ValueLiteral) !llvm.c.LLVMValueRef {
 }
 
 fn genIdentifier(context: *IRGenContext, ident: []const u8) !llvm.c.LLVMValueRef {
-    const maybeAlloc = context.var_table.get(ident);
-    if (maybeAlloc) |alloc| {
+    const symbol = context.symbol_table.get(ident);
+    if (symbol) |s| {
         // load el valor
         return c.LLVMBuildLoad2(
             context.builder,
-            c.LLVMInt32Type(), // asumiendo i32
-            alloc,
-            "tmpLoad",
+            s.type,
+            s.value_ref,
+            s.name.ptr,
         );
     } else {
         return Error.SymbolNotFound;
     }
+}
+
+pub fn dupZ(allocator: *const std.mem.Allocator, src: []const u8) ![]u8 {
+    var buffer = try allocator.alloc(u8, src.len + 1);
+    var i: usize = 0;
+    while (i < src.len) : (i += 1) {
+        buffer[i] = src[i];
+    }
+    buffer[src.len] = 0;
+    return buffer;
 }
