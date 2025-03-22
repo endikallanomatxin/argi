@@ -22,7 +22,9 @@ pub const ASTNode = union(enum) {
             ASTNode.declaration => |decl| {
                 std.debug.print("Declaration {s} ({s}) =\n", .{ decl.*.name, if (decl.*.mutability == Mutability.Var) "var" else "const" });
                 // Se incrementa el nivel de indentación para el nodo hijo.
-                decl.*.value.print(indent + 1);
+                if (decl.*.value) |v| {
+                    v.print(indent + 1);
+                }
             },
             ASTNode.assignment => |assign| {
                 std.debug.print("Assignment {s} =\n", .{assign.*.name});
@@ -99,11 +101,12 @@ pub const Declaration = struct {
     type: ?Type,
     mutability: Mutability,
     args: []const Argument,
-    value: *ASTNode,
+    value: ?*ASTNode,
 
     pub fn isFunction(self: Declaration) bool {
+        const v = self.value orelse return false;
         // if the value points to a code block, then it's a function
-        switch (self.value.*) {
+        switch (v.*) {
             ASTNode.codeBlock => return true,
             else => return false,
         }
@@ -229,6 +232,7 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) !std.ArrayList(*ASTNode) {
+        std.debug.print("\n\nPARSING\n", .{});
         self.ast = parseSentences(self) catch |err| {
             std.debug.print("Error al parsear: {any}\n", .{err});
             return err;
@@ -258,6 +262,14 @@ pub const Parser = struct {
 
     fn tokenIs(self: *Parser, expected: Token) bool {
         return switch (self.current()) {
+            Token.eof => switch (expected) {
+                Token.eof => true,
+                else => false,
+            },
+            Token.new_line => switch (expected) {
+                Token.new_line => true,
+                else => false,
+            },
             Token.identifier => switch (expected) {
                 Token.identifier => true,
                 else => false,
@@ -286,8 +298,12 @@ pub const Parser = struct {
                 Token.close_brace => true,
                 else => false,
             },
-            Token.eof => switch (expected) {
-                Token.eof => true,
+            Token.open_parenthesis => switch (expected) {
+                Token.open_parenthesis => true,
+                else => false,
+            },
+            Token.close_parenthesis => switch (expected) {
+                Token.close_parenthesis => true,
                 else => false,
             },
             Token.keyword_return => switch (expected) {
@@ -304,7 +320,14 @@ pub const Parser = struct {
         return;
     }
 
+    fn ignoreNewLines(self: *Parser) void {
+        while (self.tokenIs(Token.new_line)) {
+            self.advance();
+        }
+    }
+
     fn parseIdentifier(self: *Parser) ![]const u8 {
+        self.ignoreNewLines();
         const tok = self.current();
         return switch (tok) {
             Token.identifier => |name| {
@@ -440,9 +463,12 @@ pub const Parser = struct {
             self.advance(); // consume ':' or '::'
 
             const tipo = try self.parseType();
-            if (!self.tokenIs(Token.equal)) return ParseError.ExpectedEqual;
-            self.advance(); // consume '='
-            const value = try self.parseExpression();
+            var value: ?*ASTNode = null;
+            if (!self.tokenIs(Token.new_line)) {
+                if (!self.tokenIs(Token.equal)) return ParseError.ExpectedEqual;
+                self.advance(); // consume '='
+                value = try self.parseExpression();
+            }
             const node = try self.allocator.create(ASTNode);
             const decl = try self.allocator.create(Declaration);
             // Asumimos que no hay argumentos, por eso usamos undefined.
@@ -468,6 +494,9 @@ pub const Parser = struct {
                 Token.keyword_return => {
                     const retNode = try self.parseReturn();
                     try ast.append(retNode);
+                },
+                Token.new_line => {
+                    self.advance();
                 },
                 else => {
                     const declNode = try self.parseDeclarationOrAssignment();
@@ -509,7 +538,7 @@ pub const Parser = struct {
     }
 
     pub fn printAST(self: *Parser) void {
-        std.debug.print("\n\nAST\n", .{});
+        std.debug.print("\nast:\n", .{});
         for (self.ast.items) |node| {
             node.print(0);
         }
