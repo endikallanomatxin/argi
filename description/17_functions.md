@@ -87,13 +87,13 @@ Uso:
 var   -- deep copy
 ~var  -- shallow copy (valorarlo)
 &var  -- inmutable pointer
-!&var -- mutable pointer
+$&var -- mutable pointer (s is for "side effect")
 ```
 
 La sintaxis básica para pasar punteros 
 
 ```
-funcion_que_recibe_puntero(p_datos: Ptr<Map<String,Int>>) ::= {
+funcion_que_recibe_puntero(p_datos: &Map<String,Int>) ::= {
 	-- Aquí se usa: p_datos
 	-- Es un puntero
 	...
@@ -117,13 +117,13 @@ funcion_que_lee(&datos)
 Pero no deja mutar lo que hay al otro lado del puntero. Si se quiere mutar el valor hay que pasar con un indicador de que es una referencia mutable:
 
 ```
-funcion_que_escribe(!&datos: Map<String,Int>) ::= {
+funcion_que_escribe($&datos: Map<String,Int>) ::= {
 	-- Aquí se usa: datos
 	-- Es un map
 	...
 }
 
-funcion_que_escribe(!&datos)
+funcion_que_escribe($&datos)
 ```
 
 Hacer esto bien hace que no haga falta decir si las funciones son puras o tienen side effects.
@@ -132,97 +132,13 @@ Hacer esto bien hace que no haga falta decir si las funciones son puras o tienen
 
 #### Side effects
 
-If a function has side effects, it requires marking with `!`, and it propagates.
+If a function has side effects, it requires marking with `$`, and it propagates.
 
-> [!BUG]
-> Esto va a hacer que printf("Hello, world\n") tenga side effects.
-> NO PODEMOS PERMITIR QUE EDITAR UN ARCHIVO NO SE CONSIDERE UN SIDE EFFECT.
-> Podemos hacer:
-> - Que efectivamente printf! tenga side effects y haga que las funciones que lo usan también lo tengan.
->   Pero esto hará function coloring.
-> - DEPENDENCY INJECTION: Que haya que abrir el archivo de IO y pasarselo a aquellas funciones que quieran imprimir.
->   Pero esto igual es demasiado tedioso.
+This allows to understand the effect of a function at a glance, avoiding unexpected side effects. This is in some way a capability-based programming style.
 
-Chagpt:
-Esto se conoce generalmente como "programación basada en capacidades" o, en contextos más amplios, como inyección de dependencias para el manejo de efectos secundarios. La idea es que en lugar de depender de variables globales o funciones "impuras", se pasa explícitamente un objeto (o "handle") que representa la capacidad de realizar cierta operación (como E/S, acceso a bases de datos, etc.), haciendo que la función se mantenga lo más pura posible en cuanto al estado global.
-El compilador podría decirte al hacer audit, si ve que hay muchas funciones con side effects, entonces te avisa de que hay un problema de diseño. Y que le eches un ojo a lo que es la dependency injection.
+It encourages the use of pure functions, which are easier to reason about and test; and dependency injection, which allows for more explicit, flexible and modular code.
 
-
-Así quedaría si hubiera que abrir los archivos al principio y pasarlos como argumentos.
-
-```rg
--- Importamos la librería de IO
-import stdioe
-import fs
-
-
-main! ::= {
-	-- Creamos un archivo de IO
-	stdi, stdo, stde := stdioe.open_buffers()
-
-	file = file.Open()
-
-	-- Llamada a una función pura que imprime
-	do_something_pure(123, log = !&file)
-}
-
--- Podemos usar el hecho de que tome stdo para controlar si queremos que imprima.
-do_something_pure(a: Int, !&log: !&Buffer? = null) ::= {
-	if log { log|write("Hello, world\n") }
-}
-
-do_something_pure(a: Int, !&log: !&Buffer) ::= {
-	log|write("Hello, world\n")
-}
-```
-Una cosa buena es que hace fácil hacer todo el log a un archivo de logueo.
-
-(Hacer el printf debuggin un poco más complicado en realidad hará que la gente use más asserts. Pero el assert, a donde imprime?)
-
-Assert debería ser una función pura? Yo creo que sí, porque tras modificar el estado crashea.
-
-
-O una keyword debug que ignore los side effects.
-
-```rg
-do_something_pure(a: Int) ::= {
-	debug { io.std.out!()|write("Hello, world\n") }
-}
-```
-
-Con un shortcut para eso:
-
-```rg
-debug_print("Hello, world")
-```
-
-o igual
-
-```rg
-debug print!("Hello, world")
-```
-
-
-> [!TODO]
-> Esta es la solución que más me gusta.
-> Pensar si debug se va a usar para otras cosas.
-> Si sí, me parece bien que uno de sus efectos sea que ignore los side effects.
-> Si no, igual eso debería ser una keyword diferente: `pure`, `ignore`, `ignore_side_effects` o algo así.
-> O igual el hecho de que eso solo está pensado para debugging da información útil. Te hace ver que eso no debería estar en producción.
-> Igual tanto `assert` como `ignore_side_effects` deberían ser parte del módulo debug.
-
-
-From D:
-There is the debug keyword together with the the -debug compiler switch. You can disable your print commands with this switch without deleting them. Consider the following code snippet.
-
-```d
-writeln("Hello");
-debug writeln("World");
-```
-If compiled without -debug, it will print only “Hello”. However, compiled with -debug, it will also print “World”.
-
-
-Para acceder a una base de datos:
+For example, accessing a database:
 
 ```rg
 import db
@@ -232,10 +148,10 @@ main! ::= {
 	db_conn = db.open_database("my_db")
 
 	-- Llamada a una función pura que consulta la base de datos
-	user = query_user(!&db_conn, 123)
+	user = query_user($&db_conn, 123)
 }
 
-query_user(!&db_conn: !&DbConnection, user_id:: Int) ::= User? {
+query_user($&db_conn: $&DbConnection, user_id:: Int) ::= User? {
 	-- Acceso a la db
 	row = db_conn|execute(!&_, "SELECT * FROM user WHERE id = ?", user_id)
 	if row == null {
@@ -246,16 +162,6 @@ query_user(!&db_conn: !&DbConnection, user_id:: Int) ::= User? {
 }
 ```
 
-
-HEEEYY
-> [!BUG]
-> Podría ser un problema para las librerías el hecho de usar ! o no.
-> Realmente te obliga a poner !?
-> Porque eso hace que si una librería cambia funciones de puras a impuras o viceversa el código deja de ser compilable.
-> Pensar en esto!!!
-> Igual lo mejor es que sea una marca que se ignora (compila igual) Solo que cuando estás programando automáticamente se actualiza, y te sirve.
-
-
 ##### Closures
 
 Cuando una función accede a variables de un scope exterior, tiene que indicarlo con un `!`.
@@ -263,11 +169,11 @@ Cuando una función accede a variables de un scope exterior, tiene que indicarlo
 ```
 variable := 4
 
-contador! ::= {
+contador$ ::= {
 	variable++
 }
 
-contador!()  -- variable = 5
+contador$()  -- variable = 5
 ```
 
 Así queda claro (y con una sintaxis similar a la de los argumentos) si una función tiene side effects.
@@ -278,6 +184,60 @@ _(En realidad, me gustaría prohibir las closures (me parecen un poco antipatter
 
 
 >[!TODO] Si dentro capturas por referencia de solo lectura? Eso habría que indicarlo?
+> No, porque no es un side effect. Pero si lo haces, lo haces con un `&`.
+
+
+##### The case for printing
+
+Printing to the terminal is writing to a file, so it is a side effect, and should be marked as such.
+
+So, as with the database, we can do dependency injecion, and use a file handle to print to the terminal or to a file.
+
+```rg
+import io
+import fs
+
+
+main$ ::= {
+	-- Creamos un archivo de IO
+	stdo = io.std.get_stdo()
+
+	-- Llamada a una función pura que imprime
+	do_something_pure(123, log = $&stdo)
+}
+
+-- Podemos usar el hecho de que tome stdo para controlar si queremos que imprima
+do_something_pure(a: Int, $&log: Buffer? = null) ::= {
+	if log { log|write($&_, "Hello, world\n") }
+}
+```
+
+Una cosa buena es que hace fácil hacer todo el log a un archivo de logueo. Y deja claro donde ocurre el printing.
+
+However, this can be quite tedious, and it is not always necessary to have this level of control over the output, specially when debugging.
+
+If we just did something like:
+
+```rg
+print$("Hello, world")
+```
+
+That would be a side effect, and would require the side effect to be marked. And it would be propagated to the functions that call it. That would make the mark unhelpful.
+
+For that, we have a special keyword for ignoring side effects:
+
+```rg
+ignore print$("Hello, world")
+```
+(también podría ser disregard o dismiss)
+
+
+
+El compilador podría decirte al hacer audit, si ve que hay muchas funciones con side effects, entonces te avisa de que hay un problema de diseño. Y que le eches un ojo a lo que es la dependency injection.
+
+(Hacer el printf debuggin un poco más complicado en realidad hará que la gente use más asserts. Pero el assert, a donde imprime?)
+
+> Assert debería ser una función pura? Yo creo que sí, porque tras modificar el estado crashea.
 
 
 
@@ -295,7 +255,7 @@ En go, no se puede definir métodos de struct de otros paquetes. Eso es una mier
 ### Operator overloading
 
 ```
-operator + (v1: Vector, v2: Vector) ::= (Vector) {
+operator + (&v1: Vector, &v2: Vector) ::= Vector {
     return Vector(v1.x + v2.x, v1.y + v2.y)
 }
 ```
@@ -328,129 +288,7 @@ my_var|my_func(_1, other_arg, _2)  -- Multiple piped arguments
 Si se pasa por referencia:
 
 ```
-my_var|my_func(&_)              -- o my_var|&|my_func
-my_var|my_func(&_, second_arg)  -- o my_var|&|my_func(_, second_arg)
+my_var|my_func(&_)
+my_var|my_func(&_, second_arg)
 ```
 
-
-### NO OOP
-
-No hay objetos.
-
-Para dar la comodidad de llamar a métodos de objetos con un punto, se puede usar el pipe operator.
-
-```
-obj | method  -- como hacer obj.method()
-```
-
-Para recibir referencias a métodos, se usa el pipe operator con un ampersand.
-
-```
-length(&v: Vector) ::= Float {
-    return sqrt(v.x^2 + v.y^2 + v.z^2)
-}
-
-my_vect = Vector(1, 2, 3)
-my_vect|&|length
-```
-
-
-Para hacer el análogo \_\_init\_\_:
-
-```
-Expr :: Type = struct [
-    ---
-    An expression type for symbolic stuff
-    ---
-    _s:   String -- The string the user put
-    _ast: Tree   -- The AST generated by the program
-]
-
-init(#t:: Type == Expr, s: String) ::= Expr {
-    ast = create_ast_from_sym_s(s)
-    return Expr(s, ast)
-}
-
-my_expr :: Expr = "x^2"
-```
-
-Con más info en el nombre si requieren desambiguación:
-
-```
-Vector :: Type = struct [
-    x: Float
-    y: Float
-    z: Float
-]
-
-new_vector_cartesian(x: Float, y: Float, z: Float) ::= Vector {
-    return Vector(x, y, z)
-}
-
-new_vector_from_polar(r: Float, theta: Float) ::= Vector {
-    x = r * cos(theta)
-    y = r * sin(theta)
-    z = 0
-    return Vector(x, y, z)
-}
-
-my_vect = new_vector_from_polar(2, PI)
-```
-
-Para definir el comportamiento de operadores, se usa operator overloading
-
-```plaintext
-operator + (v1: Vector, v2: Vector) ::= Vector {
-    return Vector(v1.x + v2.x, v1.y + v2.y)
-}
-```
-
-
-Para definir como se convierten en strings u otros castings.
-
-```
-to(v:: Vector, #s::== String) ::= String {
-    return "Vector(" + v.x + ", " + v.y + ", " + v.z + ")"
-}
-
-my_vec|to(String)
-```
-
-
-### Indexables
-
-Como ofrecer la sintaxis de \[\], para que la gente la implemente en sus tipos.
-En python es \_\_getitem\_\_ y \_\_setitem\_\_. Para numpy por ejemplo.
-Go no tiene de estos, igual se puede prescindir.
-
-```
-Indexable(T: Type) ::= abstract [
-    operator get[](index: Int) :: T
-    operator set[](index: Int, value: T)
-]
-```
-
-
-```
-Milista :: Type = struct [
-    elementos: List(Int)
-]
-
-operator get[](my_list: Milista, index: Int) ::= Int {
-    return my_list.elementos[index]
-}
-
-operator set[](my_list: Milista, index: Int, value: Int) {
-    my_list.elementos[index] = value
-}
-
-Indexable canbe Milista
-```
-
-```
-my_list :: Milista = [1, 2, 3]
-print(lista[0])  -- Llama a `get`
-lista[1] = 25    -- Llama a `set`
-```
-
-O igual se puede hacer con operator overloading.
