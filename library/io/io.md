@@ -1,5 +1,3 @@
-### string
-
 En todos los lenguajes, os.std_in, os.std_out, os.std_err son file descriptors globales que se inicializan al iniciar un progama, incluso aunque no importes stdio.h o similares.
 Son variables globales de tipo *os.FILE que se pueden usar para leer y escribir.
 

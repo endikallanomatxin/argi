@@ -171,6 +171,13 @@ Direction :: Type = choice [
 ..north
 ```
 
+>[!BUG]
+> Pensar en como hacer para que tengan otros tipos. Como una tagged union.
+
+> [!BUG]
+> Pensar en como hacer que tenga un valor por defecto. Igual un `=` por delante del campo?
+
+
 >[!IDEA]
 >Pensar en como hacer para que tengan valores concretos. Igual poniendo un ` = ` tras cada campo.
 
@@ -301,6 +308,8 @@ They are:
 - lists
 - maps
 - sets
+- graphs
+- queues
 
 They are all structs!! There is no built-in types for them.
 
@@ -320,165 +329,57 @@ m ::= ["a"=1, "b"=2]
 
 These types are only special in the sense that they are the default types infered from their literals.
 
-##### Lists
+More info on collection types in `../library/collections/`
 
-```
-Index :: Type = Int64  -- 1 based index
-
-List<t> :: Abstract = [
-	.type : Type
-
-	append(_, _.type)
-	insert(_, _.type, Index)
-	remove(_, Index)
-	length() :: Int
-	...
-]
-
-List<t> canbe [
-	Array<t, _>     -- Static length
-	DynamicArray<t> -- Dynamic length thanks to buffer
-	Chain<t>        -- Linked list ( one-directional or two directional ? )
-	Rope<t>         -- es una linked list de arrays, representada en un BTree
-]
-
-List defaultsto DynamicArray
-```
-
->[!BUG] Generics in abstracts
-> La sintaxis para conecta qué campo del abstract corresponde con qué campo del hijo no es muy buena.
-> Como sabe la funcion canbe lo que hay que saber.
-
-Definition of a dynamic array:
+The easy default: definition of a heap allocated dynamic array:
 
 ```
 l := [1, 2, 3]
 
 -- Turns into:
 
-l : DynamicArray<Int> = DynamicArray|init([1, 2, 3])
-
+l : DynamicArray<Int> = DynamicArray|init(_, [1, 2, 3])
 ```
 
-Definition of a static array:
+For the low-level-seeking ones: Definition of a stack-allocated array:
 
 ```
-l : Array<Int, 3> = [1, 2, 3]
-
--- Turns into
-
-l : Array<Int, 3> = Array|init(Int, 3, [1, 2, 3])
+l : StackArray<Int, 3> = [1, 2, 3]
 ```
 
-
->[!IDEA] Sintaxis para una lista dinámica literal
->```
->[1, 2, 3, ...]
->```
-> Eso se convierte en una DynamicList y si no pones ... entonces se convierte en Array
+> [!TODO] Pensar una forma de definir longitud de forma automática.
+> Igual que haya valores por defecto en un generic?
 
 
-** AoS to SoA **
-
-_Igual es buena idea una forma fácil de que un array de structs internamente se implemente como un struct de arrays. O hacer una forma fácil de convertir de uno a otro._
-
-Esto es útil porque hace que se almacenen los datos con menos padding.
-
-Igual puede hacerse como
-- conversión como método de listas de structs para convertir en struct de listas: |aos_to_soa()
-- implementación interna, pero uso del usuario sin modificar: |optimize_internal_layout_as_soa()
-
-##### Maps
-
-Value puede o no ser heterogéneo (`Any`). El key no puede nunca ser heterogéneo. 
-_(Esto es una limitación artificial para evitar código mierdoso. En go por ejemplo no se puede y no entiendo en qué contexto podría ser útil. Mejor evitarlo.)_
-Si se pone un abstract con default, entonces se tomará como el tipo del key.
-
-```
--- Un típico dict
-notas : Map<String, Int> = [
-	"Mikel"=8
-	"Jon"=9
-]
-```
-
-Por defecto si haces:
-```
-notas := ["Mikel"=8, "Jon"=9]
-```
-infiere los tipos.
-
-
-##### Sets
-
-an unordered collection of unique items.
-
-```plaintext
-m : Set<Int> = [1, 2, 3]
-```
-
-Como usa un list literal, siempre hay que especificar el tipo.
-
-
-
-##### Slices
+### Slices
 
 `2..5` y `2.2.10`
 
+> [!TODO] Pensar en otra sintaxis, que el punto se usa para otras cosas.
 
-##### Strings
+
+
+### Strings
 
 ThePrimeagen dice que go string handling is mid, rust is amazing.
 
 Two literals:
 
-- `'...'` for characters
-- `"..."` for strings
+- `'c'` for characters
+- `"string"` for strings
 
 Una lista string, se debería poder "ver" como una lista de chars o una lista de bytes. Un char puede ser de múltiples bytes (UTF8)
 
 ```
-my_string.chars[5]
-my_string.bytes[4]
-```
-
-```
-String :: Abstract = [
-	char_length(_) :: Int
-	byte_length(_) :: Int
-]
-
-String canbe [
-	DynamicString
-	ArrayString
-	LinkedListString
-	RopeString
-	NullTerminatedString -- For C interop
-]
-
-String defaultsto DynamicString
-```
-
-```
-LengthedString :: Type = struct [
-    content :: &char
-    length  :: int64
-]
-```
-
-```
-DynamicString :: Type = struct [
-    buffer   : Array(Byte)
-    length   : Int         -- Longitud actual
-    capacity : Int         -- Máxima longitud
-]
+my_string[5]            -- The fifth character
+my_string|bytes_get(&_, 4)  -- The fourth byte
 ```
 
 
 Declaration:
 
 ```
-my_str :: String = "this is a string declaration"
+my_str ::= "this is a string declaration"
 
 my_str ::= """
 	this is a multi-line string declaration
@@ -506,17 +407,6 @@ Several escape sequences are supported:
 - `\t` - tab
 - `\u{xxxxxx}` - unicode codepoint
 
-##### Graphs
-
-Tree
-Btree
-
-
-##### Queues
-
-Stack
-Queue
-PriorityQueue (implemented as a FibonacciHeap)
 
 
 #### Private vs. Public

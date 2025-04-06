@@ -89,7 +89,13 @@ MyGenericType<# t: Type> :: Type = struct [
 ]
 ```
 
+
 > [!TODO] Pensar en la sintaxis de inicialización de instancias de tipos.
+
+>[!BUG] Generics in abstracts
+> La sintaxis para conecta qué campo del abstract corresponde con qué campo del hijo no es muy buena.
+> Como sabe la funcion canbe lo que hay que saber.
+
 
 Dilemita con generics:
 
