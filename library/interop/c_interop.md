@@ -17,4 +17,5 @@ pub fn main() void {
 }
 ```
 
+## Null terminated arrays and strings
 

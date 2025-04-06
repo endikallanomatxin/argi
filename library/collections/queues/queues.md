@@ -1,5 +1,3 @@
-- Queues (fifo)
-    PriorityDequeue
-    PriorityQueue
-
 Stack
+Queue
+PriorityQueue (implemented as a FibonacciHeap)

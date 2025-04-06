@@ -2,7 +2,7 @@
 
 Functions are first class citizen.
 
-##### Function definition syntax
+## Function definition syntax
 
 ```
 add(a: Int, b: Int) ::= Int {
