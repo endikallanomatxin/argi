@@ -455,10 +455,10 @@ pub const Parser = struct {
 
         // Declaration
         if (self.tokenIs(Token.colon) or self.tokenIs(Token.double_colon)) {
-            // Check for another : indicating constant declaration (::)
-            var mutability = Mutability.Var;
+            // Check for another : indicating variable declaration (::)
+            var mutability = Mutability.Const;
             if (self.tokenIs(Token.double_colon)) {
-                mutability = Mutability.Const;
+                mutability = Mutability.Var;
             }
             self.advance(); // consume ':' or '::'
 
