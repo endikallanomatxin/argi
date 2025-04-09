@@ -11,7 +11,7 @@ Todo es un módulo y se importa como en Python:
 
 O igual mejor como zig:
 
-- `m ::= import module`
+- `m := import module`
 
 
 ## Interpretation and imports

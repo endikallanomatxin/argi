@@ -18,17 +18,17 @@ Ambos ofrecen una experiencia homogenea (aunque igual hay que hacer dos variante
 ### OS threads
 
 ```
-th ::= spawn_thread({  -- type is ThreadHandler
+th := spawn_thread({  -- type is ThreadHandler
 	...
 })
 
 th | wait()
 
 -- Con funciones
-th ::= spawn_thread(my_function(x, y, z))
+th := spawn_thread(my_function(x, y, z))
 
 -- Lanzar un bucle infinito
-th ::= spawn_thread(
+th := spawn_thread(
 	loop {
 
 	}
@@ -52,7 +52,7 @@ El runtime se encarga de:
 - **Sincronización:** Proveer primitivas (como wait groups o canales) para coordinar tareas y recoger resultados.
 
 ```
-lcr ::= LightConcurrencyRuntime(threads = 4)
+lcr := LightConcurrencyRuntime(threads = 4)
 
 lcr | spawn_thread ({
 	...
@@ -79,16 +79,16 @@ Tiene sentido no permitir que el input no sean deep_copies o mutex o channels? L
 #### Channels
 
 ```
-Channel<#T:: Type> :: Type
+Channel<#T: Type> : Type
 ```
 
 ```
-funcion_enviadora(canal:: Channel) ::= {
+funcion_enviadora(canal: Channel) := {
 	time|wait(1)
 	canal|send("done")
 }
 
-canal :: Channel<int>
+canal : Channel<int>
 
 for i in 1..10 {
 	branch funcion_enviadora(canal)
@@ -109,7 +109,7 @@ Igual haría que hubiera tres tipos:
 - Stack (LIFO)
 
 ```
-Channel<T> :: Abstract = [
+Channel<T> : Abstract = [
     put(T)
     get() -> T
 ]
@@ -117,14 +117,14 @@ Channel canbe [Spot, Queue, Stack]
 Channel defaults Spot
 
 
-Queue<T> :: Abstract = [
+Queue<T> : Abstract = [
 	put(T)
 	get() -> T
 ]
 Queue canbe [DynamicQueue, StaticQueue<n>]
 Queue defaults DynamicQueue
 
-Stack<T> :: Abstract = [
+Stack<T> : Abstract = [
 	put(T)
 	get() -> T
 ]
@@ -159,9 +159,9 @@ c = a|get + b|get
 Lo ofrece el OS.
 
 ```
-estado :: Mutex<Int>
+estado : Mutex<Int>
 
-incrementar(!&estado) ::= {
+incrementar(!&estado) := {
 	estado|lock
 	estado++
 	estado|unlock
@@ -174,9 +174,9 @@ for 1..10 spawn_thread({
 
 > [!IDEA] Automutex
 > ```
-> estado :: AutoMutex<Int>
+> estado : AutoMutex<Int>
 > 
-> incrementar(!&estado) ::= {
+> incrementar(!&estado) := {
 > 	estado++
 > }
 > 
@@ -192,7 +192,7 @@ semaphores?
 #### Wait groups
 
 ```
-wg ::= lcr | new_waitgroup()  -- of type WaitGroupHandler
+wg := lcr | new_waitgroup()  -- of type WaitGroupHandler
 
 wg | branch({
 	...

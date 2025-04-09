@@ -35,22 +35,22 @@ test.rg
 
 build.rg
 ```
-target ::= standardTargetConfig
-optimization ::= standardOptimizationConfig 
+target := standardTargetConfig
+optimization := standardOptimizationConfig 
 
 -- For example, using a library
-llvm ::= Library[
-	llvm_include_path ::= std.Build.LazyPath{ .cwd_relative = "/usr/.../llvm/includ" },
-	llvm_lib_path     ::= std.Build.LazyPath{ .cwd_relative = "/usr/.../llvm/lib" },
+llvm := Library[
+	llvm_include_path := std.Build.LazyPath{ .cwd_relative = "/usr/.../llvm/includ" },
+	llvm_lib_path     := std.Build.LazyPath{ .cwd_relative = "/usr/.../llvm/lib" },
 ]
 
 -- To create an executable
-exe ::= ExecutableConfig[
-	name             ::= "argi_compiler"
-	root_source_file ::= b.path("src/main.zig")
-	target           ::= target
-	optimize         ::= optimize
-	libraries        ::= [llvm]
+exe := ExecutableConfig[
+	name             := "argi_compiler"
+	root_source_file := b.path("src/main.zig")
+	target           := target
+	optimize         := optimize
+	libraries        := [llvm]
 ]
 exe|build
 ```
@@ -67,7 +67,7 @@ test.rg
 ```
 from build import target, optimize, llvm
 
-tests ::= Tests[
+tests := Tests[
 	root_source_file = "..."
     target = target,
     optimize = optimize,
@@ -92,12 +92,12 @@ install.rg (o lo que quiera que se haga con una librería)
 ```
 from build import target, optimize, llvm
 
-lib ::= Library[
+lib := Library[
     name             = "argi_compiler",
     root_source_file = b.path("src/root.zig"),
 	target           = target,
 	optimize         = optimize,
-	libraries        ::= [llvm]
+	libraries        := [llvm]
 ]
 lib|install
 ```

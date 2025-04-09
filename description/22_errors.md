@@ -11,7 +11,7 @@ Añadirle anyhow crate de Rust, para añadir contexto a los errores.
 #### Error sets
 
 ```
-my_error_set :: ErrorSet = [
+my_error_set : ErrorSet = [
 	error1
 	error2
 	error3
@@ -24,7 +24,7 @@ You can coerce an error from a subset to a superset, but you cannot coerce an er
 #### Error unions
 
 ```
-Errable<#T:: Type, #E:: Type> :: Type = choice [
+Errable<#T: Type, #E: Type> : Type = choice [
 	..Ok    (T)  -- Success
 	..Error (E)  -- Fail
 ]

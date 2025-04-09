@@ -4,7 +4,7 @@
 
 Es un tipo:
 ```
-p:: Ptr<Int>
+p: Ptr<Int>
 ```
 
 Para obtener la referencia a una variable (como en c, go, rust...):
@@ -40,18 +40,18 @@ Pensar en si merece la pena implementarlo y como hacerlo.
 
 ```
 -- For arrays, strings...
-LengthedPointer<#T: Type> ::= struct [
-	pointer :: Pointer(T)
-	length  :: Int
+LengthedPointer<#T: Type> := struct [
+	pointer : Pointer(T)
+	length  : Int
 ]
 
 
 -- Mainly for C interop
-UnknownLengthedPointer<T: Type> :: struct = [
+UnknownLengthedPointer<T: Type> : struct = [
 	pointer : Pointer(T)
 ]
 
-AnyPointer<#T: Type> :: abstract = [
+AnyPointer<#T: Type> : abstract = [
 	...
 ]
 
@@ -84,22 +84,22 @@ Sin embargo, often the user doesn't have to worry about it. Most heap allocated 
 
 
 ```
-HashMap(from: Type, to: Type) :: Type = struct [
-	allocator :: Allocator
-	data      :: Option(Pointer)
+HashMap(from: Type, to: Type) : Type = struct [
+	allocator : Allocator
+	data      : Option(Pointer)
 ]
 
 
 init(
 	hm: Hasmap,
 	allocator: Allocator = std.RTAllocator
-) ::=  {
+) :=  {
 	hm.allocator = allocator
 	hm.data = allocator|allocate(...)
 }
 
 
-deinit ::= (hm: Hashmap) {
+deinit := (hm: Hashmap) {
 	hm.allocator|free(hm.data)
 }
 ```
@@ -138,7 +138,7 @@ Para implementar la funcionalidad necesitamos crear referencias sin avisar que s
 Hay que registrar las referencias cuando se hace &objeto o cuando se usa el puntero.
 
 ```
-RTAllocatedType :: Abstract = [
+RTAllocatedType : Abstract = [
 	allocator : Allocator
 ]
 
@@ -146,19 +146,19 @@ RTAllocatedType :: Abstract = [
 init(
 	obj       : RTAllocatedType,
 	allocator : Allocator = std.RTAllocator
-) ::=  {
+) :=  {
 	obj.allocator = allocator
 	obj.data = allocator|allocate(...)
 }
 
 
-deinit ::= (obj: RTAllocatedType) {
+deinit := (obj: RTAllocatedType) {
 	obj.allocator|free(obj.data)
 }
 ```
 
 ```
-create_reference(obj: RTAllocatedType) ::= Pointer<RTAllocatedType> {
+create_reference(obj: RTAllocatedType) := Pointer<RTAllocatedType> {
 	p = $&obj  -- Silent reference
 	if obj.allocator is RTAllocator {
 		obj.allocator|register_reference(&p)
@@ -168,7 +168,7 @@ create_reference(obj: RTAllocatedType) ::= Pointer<RTAllocatedType> {
 ```
 
 ```
-copy(p: Pointer<RTAllocatedType>) ::= Pointer<RTAllocatedType> {
+copy(p: Pointer<RTAllocatedType>) := Pointer<RTAllocatedType> {
 	new_p = $p  -- Silent copy
 	if obj.allocator is RTAllocator {
 		obj.allocator|register_reference(&new_p)  -- Cuando se crea es directamente accesible.
@@ -196,7 +196,7 @@ exit_scope(p: Pointer<RTAllocatedType>) {
 Para los punteros a este tipo de dato:
 
 ```
-deinit(p: Pointer<RTAllocatedType>) ::= {
+deinit(p: Pointer<RTAllocatedType>) := {
 	obj = @p
 	if obj.data != null {
 		obj.allocator|mark_unaccessible(p)
@@ -209,19 +209,19 @@ deinit(p: Pointer<RTAllocatedType>) ::= {
 **Allocator**
 
 ```
-RTAllocator :: Type = struct [
+RTAllocator : Type = struct [
 	tracked_allocations : Hashmap(AllocationReference->HashSet(Reference))
 	-- Allows for combination of allocators
 ]
 
-AllocationReference :: Type = struct [
+AllocationReference : Type = struct [
 	-- Points directly to the location on the heap that has been allocated
 	-- Created at initialization
 	pointer                : HeapPrt
 	is_directly_accessible : Bool
 ]
 
-Reference :: Type = struct [
+Reference : Type = struct [
 	-- This is a pointer to anything containing a reference to the allocation
 	pointer                : Ptr<Any>
 	is_directly_accessible : Bool
@@ -229,7 +229,7 @@ Reference :: Type = struct [
 ```
 
 ```
-allocate(a: RTAllocator) ::= Pointer {
+allocate(a: RTAllocator) := Pointer {
 	p = a|allocate
 	a|track_allocation(p)
 	return p
@@ -241,14 +241,14 @@ free(a: RTAllocator, p: Ptr) {
 ```
 
 ```
-track_allocation(a: RTAllocator, p: Ptr) ::= {
+track_allocation(a: RTAllocator, p: Ptr) := {
 	-- For new allocations, only called once
 	ar = AllocationReference(p, true)
 	hs = HashSet().init(page_allocator)
 	a.tracked_allocations[ar] = hs
 }
 
-combine(a1: RTAllocator, a2: RTAllocator) ::= (c: RTAllocator) {
+combine(a1: RTAllocator, a2: RTAllocator) := (c: RTAllocator) {
 	-- Should I initialize c? Automatic initialization cannot have a custom allocator...
 	for ap, hs in a1.tracked_allocations {
 		c.tracked_allocations[ap] = hs
@@ -263,14 +263,14 @@ combine(a1: RTAllocator, a2: RTAllocator) ::= (c: RTAllocator) {
 	return c
 }
 
-register_reference(a: RTAllocator, ap: HeapPtr, p: Ptr) ::= {
+register_reference(a: RTAllocator, ap: HeapPtr, p: Ptr) := {
 	ar = AllocationReference(ap, true)  -- Esto no es correcto, porque va a sobreescribir con true
 	r = Reference(p, true)
 	a.tracked_allocations[ar]|append(r)
 }
 
 
-mark_not_directly_accessible(a: RTAllocator, ap: HeapPtr, p: Ptr) ::= {
+mark_not_directly_accessible(a: RTAllocator, ap: HeapPtr, p: Ptr) := {
 	ar = AllocationReference(ap, true)  -- Esto no es correcto, porque va a sobreescribir con true
 	r = Reference(p, true)
 	a.tracked_allocations[ar][r].is_directly_accesible = false
@@ -294,7 +294,7 @@ mark_not_directly_accessible(a: RTAllocator, ap: HeapPtr, p: Ptr) ::= {
 }
 
 
-remove_reference(a: RTAllocator, ap: HeapPtr, p: Ptr) ::= {
+remove_reference(a: RTAllocator, ap: HeapPtr, p: Ptr) := {
 	a.tracked_references[ap]|remove(p)
 
 	if a.references|len == 0
@@ -324,7 +324,7 @@ remove_reference(a: RTAllocator, ap: HeapPtr, p: Ptr) ::= {
 Para que un tipo propio pueda ser gestionado por el RTAllocator, simplemente:
 
 ```
-MyType :: Type = struct [
+MyType : Type = struct [
 	...
 	allocator : RTAllocator
 ]
@@ -360,7 +360,7 @@ Pero a veces hay datos que se almacenan en el stack y que queremos que vivan má
 Para eso, podemos usar un Box.
 
 ```
-Box(T: Type) ::= struct [
+Box(T: Type) := struct [
 	data : T
 ]
 ```
@@ -403,7 +403,7 @@ Echarle un pensamiento, porque es bastante eficiente.
 ### Alignment
 
 ```
-MyStruct :: Type = [
+MyStruct : Type = [
 	.a : u8
 	.b : u32
 	.c : u16

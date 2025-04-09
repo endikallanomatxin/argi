@@ -29,9 +29,9 @@ Inline declaration requires commas, but they can be ommited when using new lines
 This declares a new struct type:
 
 ```
-Pokemon :: Type = [
-	.ID   : Int64  = 0    -- It allows default values
-	.Name : String = ""
+Pokemon : Type = [
+	.ID   :: Int64  = 0    -- It allows default values
+	.Name :: String = ""
 ]
 ```
 
@@ -39,9 +39,9 @@ Pokemon :: Type = [
 This declares a new struct (with no named type):
 
 ```
-data :: [
-	.ID   : Int64
-	.Name : String
+data : [
+	.ID   :: Int64
+	.Name :: String
 ] = [
 	.ID = 0
 	.Name = ""
@@ -51,9 +51,9 @@ data :: [
 Or as a shorthand:
 
 ```
-data ::= [
-	.ID   : Int64 = 0
-	.Name : String = ""
+data := [
+	.ID   :: Int64 = 0
+	.Name :: String = ""
 ]
 ```
 
@@ -66,15 +66,15 @@ Los campos que empiecen por _ serán privados y no podrán ser accedidos desde f
 Por ejemplo:
 
 ```
-MyStruct :: Type = [
-	._x : Int = 0
+MyStruct : Type = [
+	._x :: Int = 0
 ]
 
-get_x(s:: MyStruct) ::= Int {
+get_x(s: MyStruct) := Int {
 	return s._x
 }
 
-set_x(s:: MyStruct, x:: Int) {
+set_x(s: MyStruct, x: Int) {
 	s._x = x
 }
 ```
@@ -82,57 +82,41 @@ set_x(s:: MyStruct, x:: Int) {
 También puede ser útil para garantizar que un struct se inicializa correctamente.
 
 ```
-MyStruct ::= [
-	._x : Int = 0
-	._y : Int = 0
-	._z : Int = 0
+MyStruct := [
+	._x :: Int = 0
+	._y :: Int = 0
+	._z :: Int = 0
 ]
 
-init(x: Int, y: Int, z: Int) :: MyStruct {
+init(#t:==MyStruct, x: Int, y: Int, z: Int) : MyStruct {
 	return MyStruct(x, y, z)
 }
 ```
 
+We use dynamic dispatch by value (from Haskell) to create the initializer.
 
->[!BUG] Sintaxis inicialización de tipo
->
-> >[!IDEA] Dispatch by value
-> >
-> > Para inicializar:
-> >	```
-> >	init(#t :: Type == MyType, a: Int, b: Int, c: Int) :: MyType { ... }
-> >	```
-> > Así se hace como si fuera un método estático.
-> >	```
-> >	MyType|init(a, b, c)
-> >	```
-> > Es un poco como en haskell, que se puede hacer dispatch en función no solo del tipo del input, sino también del valor. En algunos casos igual queda limpio.
-> >
-> >	```haskell
-> >	factorial 0 = 1
-> >	factorial n = n * factorial (n-1)
-> >	```
-> > sería
-> >	```
-> >	factorial(n:: Int == 0) :: Int { 1 }
-> >	factorial(n:: Int) :: Int { n * factorial(n-1) }
-> >	```
-> > Si vamos a permitir el multiple dispatch por valor, es una buena forma de hacerlo. Lo único que igual añade demasiada complejidad.
->
-> 
-> >[!IDEA] Inferencia de tipo de retorno
-> >	```
-> >	-- Igual init que devuelva MiTipo? Es capaz de inferir eso?
-> >	-- O igual eso obliga a que se rutee el dispatch también en función del return type? Eso no está bien.
-> >	
-> >	x :: MiTipo = init([1, 2, 3])
-> >	
-> >	init(list::List<Any>) :: MiTipo {
-> >		...
-> >	}
-> >	```
-> 
-> Si no, siempre se puede hacer con funciones init_TypeName().
+Así se hace como si fuera un método estático.
+
+```
+MyType|init(_, a, b, c)
+```
+
+Si init toma un solo argumento, entonces se puede usar esta otra sintaxis:
+
+```
+my_var : MyType = [1, 2, 3]
+```
+
+Esto se convierte en:
+
+```
+my_var := MyType|init(_, [1, 2, 3])
+```
+
+y queda muy limpio.
+
+> Podríamos extenderlo para que valiera también con varios?
+
 
 
 > [!IDEA] Struct field types
@@ -143,9 +127,9 @@ init(x: Int, y: Int, z: Int) :: MyStruct {
 > Por ejemplo:
 >
 >	```
->	User ::= [
->		ID    : Int64
->		Name  : String
+>	User := [
+>		ID    :: Int64
+>		Name  :: String
 >	]
 >	userIDs : List(User.ID)  -- En lugar de Users, o simplemente Int64
 >	```
@@ -156,7 +140,7 @@ init(x: Int, y: Int, z: Int) :: MyStruct {
 #### Choice
 
 ```
-Direction :: Type = choice [
+Direction : Type = [
 	..north
 	..east
 	..south
@@ -192,18 +176,18 @@ Un abstract es como una interfaz en go, solo qué:
 Es importante que el canbe pueda ser definido a posteriori y fuera del paquete, para que tenga la flexibilidad de Julia.
 
 ```
-Animal :: Abstract = [
+Animal : Abstract = [
 	.name : String
 	speak(_) => String
 	do_something(_, Int)
 ]
 
-Dog :: Type = struct [
+Dog : Type = struct [
 	.name : String
 	.breed : String
 ]
 
-speak(d: Dog) ::= String {
+speak(d: Dog) := String {
 	return "Woof"
 }
 
@@ -211,6 +195,9 @@ Animal canbe Dog
 
 Animal defaultsto Dog
 ```
+
+> [!BUG] Pensar como se declaran las funciones que se requieren
+
 
 ### Basic types
 
@@ -225,7 +212,7 @@ Literals are:
 #### Numbers
 
 ```
-Number :: Abstract = [
+Number : Abstract = [
 	...
 ]
 
@@ -247,14 +234,14 @@ Number defaultsto Exact
 #### Integers
 
 ```
-Int :: Abstract = [
-	float(_) :: Float
-	operator +(_, _) :: Int
-	operator -(_, _) :: Int
-	operator *(_, _) :: Int
-	operator /(_, _) :: Int
-	operator %(_, _) :: Int
-	operator ^(_, _) :: Int
+Int : Abstract = [
+	float(_) : Float
+	operator +(_, _) : Int
+	operator -(_, _) : Int
+	operator *(_, _) : Int
+	operator /(_, _) : Int
+	operator %(_, _) : Int
+	operator ^(_, _) : Int
 	...
 ]
 
@@ -277,11 +264,11 @@ Int defaultsto DynamicInt
 
 ```
 Float : Type : abstract [
-	operator +(_, _) :: _
-	operator -(_, _) :: _
-	operator *(_, _) :: _
-	operator /(_, _) :: _
-	operator ^(_, _) :: _
+	operator +(_, _) : _
+	operator -(_, _) : _
+	operator *(_, _) : _
+	operator /(_, _) : _
+	operator ^(_, _) : _
 	...
 ]
 
@@ -296,7 +283,7 @@ Number canbe Float
 Se hace con la misma sintaxis que para la definición de tipos.
 
 ```
-Name :: Type = String  -- Uff pero esto es el abstract o el tipo.
+Name : Type = String  -- Uff pero esto es el abstract o el tipo.
 ```
 
 Los aliases son inputs válidos para funciones con input del tipo subyacente.
@@ -318,13 +305,13 @@ What we have is literals for them:
 - List literals
 
 ```
-l ::= [1, 2, 3]
+l := [1, 2, 3]
 ```
 
 - Map literals
 
 ```
-m ::= ["a"=1, "b"=2]
+m := ["a"=1, "b"=2]
 ```
 
 These types are only special in the sense that they are the default types infered from their literals.
@@ -379,9 +366,9 @@ my_string|bytes_get(&_, 4)  -- The fourth byte
 Declaration:
 
 ```
-my_str ::= "this is a string declaration"
+my_str := "this is a string declaration"
 
-my_str ::= """
+my_str := """
 	this is a multi-line string declaration
 	Openning line is ignored
 	The closing quotes serve as the reference for indentation.
@@ -392,7 +379,7 @@ my_str ::= """
 _It would be nice to offer a way to have syntax highlighting in the strings (html, sql, ...)._
 
 ```
-my_query ::="""sql
+my_query :="""sql
 	SELECT * FROM my_table
 	"""
 ```
