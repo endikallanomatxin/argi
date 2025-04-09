@@ -1,8 +1,8 @@
-String :: Abstract = [
+String : Abstract = [
 	-- For chars (most sensible default)
 	operator get[]
 	operator set[]
-	length(_) :: Int
+	length(_) : Int
 
 	-- For bytes if needed
 	byte_get()
@@ -15,7 +15,7 @@ String canbe DynamicString
 String defaultsto DynamicString
 
 
-StaticString :: Abstract = []
+StaticString : Abstract = []
 
 StaticString canbe StackArrayString
 StaticString canbe StaticArrayString
@@ -23,7 +23,7 @@ StaticString canbe StaticArrayString
 StaticString defaultsto StaticArrayString
 
 
-DynamicString :: Abstract = [
+DynamicString : Abstract = [
     push()
     push_str()
     pop()
@@ -37,11 +37,11 @@ DynamicString defaultsto CopyingDynamicArrayString
 
 
 
-StringView :: Type = [
+StringView : Type = [
     ---
     String view is a read only pointer to a section of a string.
     ---
-    ._original   :: String
+    ._original   : String
     ._from_index :  Index
     ._to_index   :  Index
 ]

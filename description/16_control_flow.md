@@ -96,13 +96,13 @@ Los `Iterator` gestionan como se recorren o procesan las colecciones, pero defin
 Se puede hacer a través de abstrascts:
 
 ```
-Iterable :: Abstract = [
-    to(_, #a::==Iterator) :: Iterator
+Iterable : Abstract = [
+    to(_, #a:==Iterator) : Iterator
 ]
 
-Iterator :: Abstract = [
-    next(_) :: T
-    has_next(_) :: Bool
+Iterator : Abstract = [
+    next(_) : T
+    has_next(_) : Bool
 ]
 ```
 
@@ -126,25 +126,25 @@ _(Pensar en una forma de que esto sirva para vectorizar funciones. Que si la fun
 Y para hacer que tu tipo pueda ser iterable:
 
 ```
-MyType :: Type = struct [
+MyType : Type = struct [
     data: List<Int>
 ]
 
-to(collection: MyType, #t::==Iterator) ::= MyTypeIterator {
+to(collection: MyType, #t:==Iterator) := MyTypeIterator {
     return MyTypeIterator(collection)
 }
 
-MyTypeIterator :: Type = struct [
+MyTypeIterator : Type = struct [
     data: &MyType
     index: Int
 ]
 
-next(mti: MyTypeIterator) ::= Int {
+next(mti: MyTypeIterator) := Int {
     mti.index += 1
     return mti.data[mti.index-1]
 }
 
-has_next(mti: MyTypeIterator) ::= Bool {
+has_next(mti: MyTypeIterator) := Bool {
     return mti.index < mti.data|len
 }
 

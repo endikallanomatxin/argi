@@ -2,15 +2,15 @@
 GENERAL TYPES
 ---
 
-Index :: Type = Int64  -- 1 based index
+Index : Type = Int64  -- 1 based index
 
-ListAlignment :: Type = [
+ListAlignment : Type = [
     ..smallest_power_of_two
     ..compact
-    ..custom(n:: Int)
+    ..custom(n: Int)
 ]
 
-builtin StackBitArray<N> :: Type
+builtin StackBitArray<N> : Type
 ---
 This holds a contiguous memory in the stack that is N bits long.
 It directly maps to what results from alloca in LLVM.
@@ -24,15 +24,15 @@ In general, don't use it. Use a StaticArray<Bit, n> instead
 GENERAL LIST ABSTRACTION
 ---
 
-List<t> :: Abstract = [
+List<t> : Abstract = [
     ---
     A list is any collection that can be indexable.
     ---
-    .type :: Type
+    .type : Type
 
     operator get[]
     operator set[]
-    length() :: Int
+    length() : Int
     ...
 ]
 
@@ -44,12 +44,12 @@ List<t> canbe DynamicList<t>
 STATIC LISTS
 ---
 
-StaticList<t:: Type, n:: Int> :: abstract = []
+StaticList<t: Type, n: Int> : abstract = []
 
 StaticList<t, n> canbe StackArray<t, n>
 StaticList<t, n> canbe StaticArray<t, n>
 
-StackArray<t, n> :: Type = [
+StackArray<t, n> : Type = [
     ---
     This is a stack allocated array.
     Similar to the default array in C or zig, when not using malloc.
@@ -60,7 +60,7 @@ StackArray<t, n> :: Type = [
     ._alignment : Alignment = ..Default
 ]
 
-StaticArray<t, n> :: Type = [
+StaticArray<t, n> : Type = [
     ---
     A heap allocated static array
     ---
@@ -75,7 +75,7 @@ StaticArray<t, n> :: Type = [
 DYNAMIC LISTS
 ---
 
-DynamicList<t> :: Abstract = [
+DynamicList<t> : Abstract = [
     append(_, _.type)
     insert(_, _.type, Index)
     remove(_, Index)
@@ -86,7 +86,7 @@ DynamicList<t> canbe SegmentedDynamicArray<t>
 DynamicList<t> canbe SinglyLinkedList<t>
 DynamicList<t> canbe DoublyLinkedList<t>
 
-CopyingDynamicArray<t> :: Type = [
+CopyingDynamicArray<t> : Type = [
     ---
     A heap allocated dynamic array
     that copies data when length exceeds capacity
@@ -100,7 +100,7 @@ CopyingDynamicArray<t> :: Type = [
     ._capacity  : Int64
 ]
 
-SegmentedDynamicArray<t> :: Type = [
+SegmentedDynamicArray<t> : Type = [
     ---
     A heap allocated dynamic array
     that grows by getting more segments of memory, without copying data.
@@ -114,17 +114,17 @@ SegmentedDynamicArray<t> :: Type = [
     ._capacity  : Int64
 ]
 
-SinglyLinkedList<t> :: Type = [
+SinglyLinkedList<t> : Type = [
 	---
 	---
 ]
 
-DoublyLinkedList<t> :: Type = [
+DoublyLinkedList<t> : Type = [
 	---
 	---
 ]
 
-Rope<t> :: Type = [
+Rope<t> : Type = [
 	---
 	Linked list of StaticArray
 	O un Btree, no se. Decidir como implementamos esto.

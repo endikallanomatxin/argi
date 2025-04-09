@@ -1,4 +1,4 @@
-StructOfArrays<t> :: Type = [
+StructOfArrays<t> : Type = [
     ---
     It behaves as an array-of-structs for the user but is implemented as a struct-of-arrays
     It allows for:
@@ -10,7 +10,7 @@ StructOfArrays<t> :: Type = [
     ...
 ]
 
-init(#t ::== List<t>, &l :: List) {
+init(#t :== List<t>, &l : List) {
     ...
 }
 

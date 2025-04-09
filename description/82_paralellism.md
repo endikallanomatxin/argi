@@ -29,19 +29,19 @@ Podríamos definir una Spec de una gráfica de la siguiente manera:
 Tipos parte 
 
 ```
-ParallelProcessingUnit :: Type = struct [
+ParallelProcessingUnit : Type = struct [
     .parallel_groups: list[ParallelGroup]
     .memory_domains: list[ParallelMemory]
     .operations: list[ParallelOperation]
 ]
 
-ParallelGroup :: Type = struct [
+ParallelGroup : Type = struct [
     .name: string
     .groups: ?ParallelGroup
     .number: int
 ]
 
-ParallelMemory :: Type = struct [
+ParallelMemory : Type = struct [
     .name: string
     .shared_across: ?ParallelGroup
     .size: int
@@ -49,7 +49,7 @@ ParallelMemory :: Type = struct [
     .access_mode: string
 ]
 
-ParallelOperation :: Type = struct [
+ParallelOperation : Type = struct [
     .name: string
     .supported_by: ?ParallelGroup
     .supported_data_types: list[string]
@@ -59,7 +59,7 @@ ParallelOperation :: Type = struct [
     .native_implementation: string
 ]
 
-thread :: ParallelGroup = [
+thread : ParallelGroup = [
     .name="Thread",
     .groups=nil,        // No tiene agrupación abstractior
     .number=1           // Cada thread es independiente
@@ -70,13 +70,13 @@ thread :: ParallelGroup = [
 
 // Parallel Groups
 
-block :: ParallelGroup = [
+block : ParallelGroup = [
     .name="Block",
     .groups=&THREAD,       // Bloques contienen threads
     .number=16             // 16 threads por bloque
 ]
 
-grid :: ParallelGroup = [
+grid : ParallelGroup = [
     .name="Grid",
     .groups=&block,  // Grid contiene bloques
     .number=4              // 4 bloques por grid
@@ -84,7 +84,7 @@ grid :: ParallelGroup = [
 
 // Memory Domains
 
-registers :: ParallelMemory = [
+registers : ParallelMemory = [
     .name="Registers",
     .sharedAcross=&THREAD,
     .size=32 * 1024,       // 32 KB por thread
@@ -92,7 +92,7 @@ registers :: ParallelMemory = [
     .accessMode="Read-Write"
 ]
 
-shared_memory :: ParallelMemory = [
+shared_memory : ParallelMemory = [
     .name="Shared Memory",
     .sharedAcross=&block,
     .size=48 * 1024,       // 48 KB por bloque
@@ -100,7 +100,7 @@ shared_memory :: ParallelMemory = [
     .accessMode="Read-Write"
 )
 
-global_memory :: ParallelMemory = [
+global_memory : ParallelMemory = [
     .name="Global Memory",
     .sharedAcross=&grid,
     .size=8 * 1024 * 1024 * 1024, // 8 GB globales
@@ -110,7 +110,7 @@ global_memory :: ParallelMemory = [
 
 // Operations
 
-matrix_multiply :: ParallelOperation = [
+matrix_multiply : ParallelOperation = [
     .name="Matrix Multiply",
     .supportedBy=&block,      // Operación a nivel de bloque
     .supportedDataTypes=["Float32", "Float64"],
@@ -120,7 +120,7 @@ matrix_multiply :: ParallelOperation = [
     .nativeImplementation="mma.sync"
 ]
 
-vector_add :: ParallelOperation = [
+vector_add : ParallelOperation = [
     .name="Vector Add",
     .supportedBy=&THREAD,     // Operación a nivel de thread
     .supportedDataTypes=["Int32", "Float32"],
@@ -132,7 +132,7 @@ vector_add :: ParallelOperation = [
 
 // Spec
 
-cuda_spec :: ParallelProcessingUnit = [
+cuda_spec : ParallelProcessingUnit = [
     .parallel_groups=[
         &block,
         &grid

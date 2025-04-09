@@ -20,20 +20,26 @@ Nestable comments?
 ### Variables vs. constants
 
 ```
-PI          :: Float = 3.141592653  -- Declares a constant
-my_variable :  Int   = 42           -- Declares a variable
+PI          : Float = 3.141592653  -- Declares a constant
+my_variable ::  Int   = 42           -- Declares a variable
 ```
 
 The declaration syntax has two delimeters:
 
 - First, the type annotation delimeter. There are two options:
-	- `::` for constants
-	- `:` for variables
+	- `:` for constants
+	- `::` for variables
 	When type is omitted, it is inferred from the value.
 
 - Second, the value assignment delimeter. Always ` = `.
 
+> [!NOTE] Como se gestiona la mutabilidad de un "objeto"?
+> Creo que con impedir que se reasigne su nombre, ni sus campos, y con impedir que se creen punteros mutables ya debería valer.
+
+
 ### Functions
+
+MULTIPLE DISPATCH.
 
 Everything between `{ }` is considered the function body.
 
@@ -42,7 +48,7 @@ There is a unified syntax that allows for both generics and function arguments.
 Everything after the name and between `( )` is considered arguments.
 
 ```
-my_function(a: Int) ::= {
+my_function(a: Int) := {
 	...
 }
 ```
@@ -53,16 +59,20 @@ Se ha
 Return arguments in functions are defined before the function body. They can be named.
 
 ```
-sum_two_numbers(A: Int, B: Int) :: Func(Int, Int -> Int) = (C: Int) {
-	return A + B
+sum_two_numbers(A: Int, B: Int) : Func<Int, Int -> Int> = (C: Int) {
+	C = A + B
+	return C
 }
 ```
+
+Los return arguments pueden ser constantes. Simplemente solo dejará inicializarlas una vez. En general, (en contextos locales) una constante puede ser inicializada antes de su declaración, siempre y cuando sea antes de su primer uso. (Like rust)
+
 
 Anonymous functions can be defined by:
 
 ```
 some_function_that_needs_another_function(
-	(a: Int, b: Int) ::= (c: Int) {
+	(a: Int, b: Int) := (c: Int) {
 		c = a + b
 	},
 	"Some other argument"
@@ -84,7 +94,7 @@ But that forces you to write cleaner code.
 ## Generics
 
 ```
-MyGenericType<# t: Type> :: Type = struct [
+MyGenericType<# t: Type> : Type = struct [
 	datos : List(t)
 ]
 ```
