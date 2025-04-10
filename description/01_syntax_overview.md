@@ -15,9 +15,7 @@ Nestable comments?
 *--
 ```
 
-## Declaration
-
-### Variables vs. constants
+## Variable and constant declaration
 
 ```
 PI          : Float = 3.141592653  -- Declares a constant
@@ -33,19 +31,51 @@ The declaration syntax has two delimeters:
 
 - Second, the value assignment delimeter. Always ` = `.
 
-> [!NOTE] Como se gestiona la mutabilidad de un "objeto"?
-> Creo que con impedir que se reasigne su nombre, ni sus campos, y con impedir que se creen punteros mutables ya debería valer.
+> [!NOTE]
+> When a struct is constant, you are not allowed to:
+> - Reassign its name
+> - Reassign its fields
+> - Create mutable pointers to it
+> Con eso debería valer, porque las funciones que lo modifiquen necesitan un puntero mutable a la struct.
 
 
-### Functions
+## Code blocks
 
-MULTIPLE DISPATCH.
+Everything between `{ }` is considered a code block.
 
-Everything between `{ }` is considered the function body.
+Se hace implicit return de la última línea, así se puede usar como paréntesis para definir el orden de evaluación de las expresiones. (from gleam)
 
-There is a unified syntax that allows for both generics and function arguments.
+```
+c = {a + b}^2
+```
 
-Everything after the name and between `( )` is considered arguments.
+Every code block has its own scope.
+
+This is also used for loops and conditional, so locally declared variables are not accessible outside the block.
+This forces the good practice of declaring variables before loops and conditionals, instead of inside them.
+
+If a code block has a return value, it has to be declared before the block inside ().
+
+```
+my_var := (a: Int, b: Int) {
+	a + b
+}
+```
+
+> [!BUG] This is not coherent with the {} as parentheses for the order of evaluation.
+> Igual hay que hacerlo opcional? Que sea inferido si no se pone nada?
+> No me gusta eso.
+
+> [!NOTE]
+> En go, si hacer `v1, v2 := ...` dentro de un bloque, eso no declara solo las no declaradas, sino todas, haciendo que si una existía de antes, se eclipse.
+> En nuestro lenguaje eso no debería pasar, si existe fuera, entonces no se re-declara si se hacen varias a la vez. Solo cuando se hace una.
+
+
+## Functions
+
+Functions are declared similar to variables or constants.
+
+It just has `(...)` after the name, with the arguments inside.
 
 ```
 my_function(a: Int) := {
@@ -53,22 +83,22 @@ my_function(a: Int) := {
 }
 ```
 
-Se ha
-(En gleam, como se hace implicit return de la última linea, se puede usar para definir el orden de evaluación de las expresiones, en lugar de paréntesis.)
-
-Return arguments in functions are defined before the function body. They can be named.
+Return arguments go with the code block. They can be named.
 
 ```
-sum_two_numbers(A: Int, B: Int) : Func<Int, Int -> Int> = (C: Int) {
+sum_two_numbers(A: Int, B: Int) := (C: Int) {
 	C = A + B
 	return C
 }
 ```
 
-Los return arguments pueden ser constantes. Simplemente solo dejará inicializarlas una vez. En general, (en contextos locales) una constante puede ser inicializada antes de su declaración, siempre y cuando sea antes de su primer uso. (Like rust)
+> [!NOTE]
+> They can be constant. Declaration and initialization can be done at once, or separately.
+> It rust this can be done for example. You just have to not use the variable before its initialization.
 
+If we had to say it, the type of the function would be: ` Func<Int, Int -> Int> `
 
-Anonymous functions can be defined by:
+Anonymous functions can be defined like here:
 
 ```
 some_function_that_needs_another_function(
@@ -79,19 +109,15 @@ some_function_that_needs_another_function(
 )
 ```
 
-Si una variable tiene parámetros, pero no es un type, en realidad es una función, que devuelve el valor parametrizado que tiene en la derecha. Por lo que siempre que veas () despues de un nombre en una declaración, sabes que se trata de una función.
+> [!TODO] Pensar si queremos queremos permitir esta sintaxis.
+> Si una variable tiene parámetros, pero no es un type, en realidad es una función, que devuelve el valor parametrizado que tiene en la derecha. Por lo que siempre que veas () despues de un nombre en una declaración, sabes que se trata de una función.
 
-#### Scope
-
-Every function body has its own scope.
-
-Also for if, for, while, match... It makes local variables not to be accessible outside the block.
-But that forces you to write cleaner code.
-
->En go, si hacer v1, v2 := dentro de un bloque, eso no declara solo las no declaradas, sino todas, haciendo que si una existía de antes, se eclipse.
->En nuestro lenguaje eso no debería pasar, si existe fuera, entonces no se re-declara si se hacen varias a la vez. Solo cuando se hace una.
 
 ## Generics
+
+The language has generics.
+
+Generics are different from functions in that they do not have multiple dispatch.
 
 ```
 MyGenericType<# t: Type> : Type = struct [
@@ -99,45 +125,11 @@ MyGenericType<# t: Type> : Type = struct [
 ]
 ```
 
-
 > [!TODO] Pensar en la sintaxis de inicialización de instancias de tipos.
 
->[!BUG] Generics in abstracts
-> La sintaxis para conecta qué campo del abstract corresponde con qué campo del hijo no es muy buena.
-> Como sabe la funcion canbe lo que hay que saber.
+> [!BUG] Tipos con generics en el input de una función
+> El lenguaje tiene que ser lo suficientemente inteligente para saber que:
+> `Vector<Int64>` cumple `Vector<Number>`, aunque no sea un subtipo directamente, sino en sus campos.
+> Por lo general, si el generic del input tiene un valor que cuadra con el generic, entonces se toma como un requisito para cumplir el tipo. Si en cambio tiene una variable que no está asignada a nada, entonces en un parámetro de entrada adicional.
 
 
-Dilemita con generics:
-
-Since `Point{Float64}` is not a subtype of `Point{Real}`, the following method can't be applied to arguments of type `Point{Float64}`:
-
-```julia
-function norm(p::Point{Real})
-    sqrt(p.x^2 + p.y^2)
-end
-```
-
-A correct way to define a method that accepts all arguments of type `Point{T}` where `T` is a subtype of [`Real`](https://docs.julialang.org/en/v1/base/numbers/#Core.Real) is:
-
-```julia
-function norm(p::Point{<:Real})
-    sqrt(p.x^2 + p.y^2)
-end
-```
-
-(Equivalently, one could define `function norm(p::Point{T} where T<:Real)` or `function norm(p::Point{T}) where T<:Real`; see [UnionAll Types](https://docs.julialang.org/en/v1/manual/types/#UnionAll-Types).)
-
-
-
-Esto para los aliases vendría bien:
-
-Go introdujo la posibilidad de usar `~` (tilde) para indicar subyacencia, o sea `T` puede ser cualquier tipo cuyo subyacente sea `int`, `float64`, etc.
-
-Sobre los generics:
-- **Si quieres aprender la “base teórica” de polimorfismo paramétrico**, Haskell es muy instructivo.
-- **Si quieres ver un enfoque práctico, moderno, con control de memoria y alta optimización**, Rust es un modelo muy interesante.
-- **Si buscas algo minimalista**, Go 1.18+ es el más reciente ejemplo de un diseño de generics intencionalmente reducido, útil para aprender cómo un lenguaje “simple” puede integrar un sistema genérico sin volverse extremadamente complejo.
-
-CONVIVENCIA DE FUNCIONES CON GENERICS:
-
-- Son iguales que los argumentos de funciones, pero Los tipos NO PUEDEN TENER MULTIPLE DISPATCH. 

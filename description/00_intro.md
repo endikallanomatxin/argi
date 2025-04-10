@@ -30,3 +30,18 @@
 	Official formatter from the lsp.
 
 
+# Key characteristics
+
+- Multiple dispatch
+
+- Side effects are always indicated
+
+- Errable and Nullable types
+
+- No objects
+
+- No inheritance, but abstract types
+
+- Has generics
+
+

@@ -24,8 +24,13 @@ Por ejemplo un proyecto que resulta en un ejecutable.
 
 ```
 src
-	file.rg
-	file.rg
+	main.rg
+	module
+		file.rg
+		file.rg
+	module
+		file.rg
+		file.rg
 
 build.rg
 run.rg
@@ -68,10 +73,10 @@ test.rg
 from build import target, optimize, llvm
 
 tests := Tests[
-	root_source_file = "..."
+    root_source_file = "..."
     target = target,
     optimize = optimize,
-	libraries = [llvm]
+    libraries = [llvm]
 ]
 tests|build
 tests|run
