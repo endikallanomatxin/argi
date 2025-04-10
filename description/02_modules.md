@@ -13,6 +13,22 @@ O igual mejor como zig:
 
 - `m := import module`
 
+Eso es para metaprogramación. Zig no tiene magia.
+Realmente vamos a permitir que se le de un uso a eso.
+No le vamos a meter magia? Seremos capacer de que sea coherente con el resto del lenguaje? 
+
+> [!BUG] Decidir esto
+
+
+## Locating modules
+
+If the module starts with a . then it is relative to the current module. (inside)
+If it starts with .. then it is relative to the parent module. (outside)
+
+If it is just a name, then it is a module installed in the system.
+
+/ are used to refer to modules inside other modules.
+
 
 ## Interpretation and imports
 
@@ -25,14 +41,15 @@ Python por defecto corre todo lo importado linea a linea, y hay que hacer `if __
 
 Tiene sentido que se pueda importar "scripts"?
 
-Igual podríamos hacer algo como:
-
-interpret("script.rg")
+Podríamos hacer:
+- `run_if_not_yet(module)`
+- `run(module)`
+- `import(module)`
 
 
 Igual es buena idea también separar los archivos que se pueden correr, de los que se pueden importar:
 
-- Libraries: `script.rgl`
+- Files inside a module: `script.rg`
 - Scripts: `script.rgs`
 
 
