@@ -198,6 +198,10 @@ Animal defaultsto Dog
 
 > [!BUG] Pensar como se declaran las funciones que se requieren
 
+> [!BUG] Generics in abstracts
+> La sintaxis para conecta qué campo del abstract corresponde con qué campo del hijo no es muy buena.
+> Como sabe la funcion canbe lo que hay que saber.
+
 
 ### Basic types
 
@@ -230,6 +234,36 @@ Number defaultsto Exact
  
 >[!BUG] Pensar
 > Cuando haces == entre Int64 y Int8, o Int32 y DynamicInt... debería dejarse comparar variables de distintos tipos?
+
+
+From Julia:
+
+Number  (Abstract Type)
+├─ Complex
+└─ Real  (Abstract Type)
+   ├─ AbstractFloat  (Abstract Type)
+   │  ├─ Float16
+   │  ├─ Float32
+   │  ├─ Float64
+   │  └─ BigFloat
+   ├─ Integer  (Abstract Type)
+   │  ├─ Bool
+   │  ├─ Signed  (Abstract Type)
+   │  │  ├─ Int8
+   │  │  ├─ Int16
+   │  │  ├─ Int32
+   │  │  ├─ Int64
+   │  │  ├─ Int128
+   │  │  └─ BigInt
+   │  └─ Unsigned  (Abstract Type)
+   │     ├─ UInt8
+   │     ├─ UInt16
+   │     ├─ UInt32
+   │     ├─ UInt64
+   │     └─ UInt128
+   ├─ Rational
+   └─ AbstractIrrational  (Abstract Type)
+      └─ Irrational
 
 #### Integers
 
@@ -287,6 +321,13 @@ Name : Type = String  -- Uff pero esto es el abstract o el tipo.
 ```
 
 Los aliases son inputs válidos para funciones con input del tipo subyacente.
+
+> Seguro?
+> Esto para los aliases vendría bien:
+> Go introdujo la posibilidad de usar `~` (tilde) para indicar subyacencia, o sea `T` puede ser cualquier tipo cuyo subyacente sea `int`, `float64`, etc.
+> Igual conviene ser estricto para que realmente pueda ser útil.
+> Pero bueno, todavía ni siquiera hemos decidido si el casting automático es bueno.
+
 
 
 ### Collection types

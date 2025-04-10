@@ -16,7 +16,7 @@ if a == 2 {
 
 De odin: cada case es su propio scope, `implicit break` por defecto, y si en lugar de eso quieres que siga le pones un `fallthrough` o algo así.
 
-```plaintext
+```
 match x [
 
 	a {
