@@ -1,13 +1,9 @@
-## Memory
+# Memory
 
-#### Pointers
-
-Es un tipo:
-```
-p: Ptr<Int>
-```
+## Pointers
 
 Para obtener la referencia a una variable (como en c, go, rust...):
+
 ```
 p = &x
 ```
@@ -24,69 +20,103 @@ x = @p
 -- Que es syntactic sugar para lo anterior y se usa al pasar argumentos a funciones.
 ```
 
-Apunta a un solo elemento y no puede ser nulo (para hacerlo nulo, usar un option).
+Su tipo es:
 
 ```
--- Si puede ser null
-Option(Pointer(Int))
+p: &int  -- que en realidad es algo como pointer<int>
 ```
 
-En zig también hay tipos de puntero:
-- Pointer to just one element
-- Pointer to unknown length segment of memory
-- Pointer with length.
-Esto ayuda a aclarar muchas dudas que se dan en c.
-Pensar en si merece la pena implementarlo y como hacerlo.
-
-```
--- For arrays, strings...
-LengthedPointer<#T: Type> := struct [
-	pointer : Pointer(T)
-	length  : Int
-]
-
-
--- Mainly for C interop
-UnknownLengthedPointer<T: Type> : struct = [
-	pointer : Pointer(T)
-]
-
-AnyPointer<#T: Type> : abstract = [
-	...
-]
-
-AnyPointer<T> canbe [
-	Pointer<T>
-	LengthedPointer<T>
-	UnknownLengthedPointer<T>
-]
-
-AnyPointer defaultsto Pointer(T)
-```
+No puede ser nulo. si se quiere hacer nulo, usar un nullable: `?&int`.
 
 No se puede hacer aritmética con punteros.
 Si quieres hacerlo, tienes que convertirlo en un tipo numérico, hacer la aritmética y luego volverlo a convertir en un puntero. Es suficientemente incómodo como para no hacerlo sin querer, te obliga a ser explícito para cagarla.
-(From zig)
+(from zig)
 
-En Go, el resultado de una llamada a función no es una variable "addressable" (con dirección en memoria), por lo que no puedes tomar su dirección directamente con la sintaxis `&(función(...))`. Debes asignar el resultado a una variable y luego tomar su dirección, como se mostró anteriormente. Esto es parte de las reglas del lenguaje.
-Eso no me gusta. Deberías poder hacer a = &(function(...))
-Aunque igual tiene sentido que no se pueda, claro; si no has definido ni la variable, como vas a tener un putero a esa variable.
-No se igual simplemente que el compilador auto genere una variable igual es suficiente y lo hace más cómodo.
+> [!IDEA] Pointer to many items
+> Zig además tiene un tipo de puntero que hace referencia a que apunta a una región de memoria de longitud desconocida. es util para interactuar con c.
+> pensar en si merece la pena implementarlo y como hacerlo.
+> en realidad seguramente no necesitemos.
+> 
+> ```
+> -- for arrays, strings...
+> LengthedPointer<#t: Type> : Type = [
+> 	.pointer : &t
+> 	.length  : Int
+> ]
+> 
+> 
+> -- mainly for c interop
+> UnknownLengthedPointer<t: Type> : Type = [
+> 	.pointer : &t
+> ]
+> 
+> AnyPointer<#t: Type> : Abstract = [
+> 	...
+> ]
+> 
+> AnyPointer<t> canbe [
+> 	&t
+> 	LengthedPointer<t>
+> 	UnknownLengthedPointer<t>
+> ]
+> 
+> AnyPointer defaultsto &t
+> ```
+>
 
 
-### Memory management
+> [!BUG] In-expression variable creation for pointer obtaining
+> En go, el resultado de una llamada a función no es una variable "addressable" (con dirección en memoria), por lo que no puedes tomar su dirección directamente con la sintaxis `&(función(...))`. debes asignar el resultado a una variable y luego tomar su dirección, como se mostró anteriormente. esto es parte de las reglas del lenguaje.
+> Eso no me gusta. deberías poder hacer a = &(function(...))
+> Aunque igual tiene sentido que no se pueda, claro; si no has definido ni la variable, como vas a tener un putero a esa variable.
+> No se igual simplemente que el compilador auto genere una variable igual es suficiente y lo hace más cómodo.
+> 
+> Pero entonces de qué mutabilidad es esa variable por ejemplo? eso es un dilema. nuestra notación de mutabilidad solo define la mutabilidad de la variable, no de a lo que apunta. igual se podría asumir que si es un solo un puntero, entonces si es & lo referenciado se considera constante, y si es !& lo referenciado se considera variable.
+> 
+> Si no permitimos esto jodemos el workflow de piping. Así que hay que pensar como hacerlo.
+> 
+> Pensar en como se puede coordinar con el memory management que propongo.
+>
+> Chatgpt dice que use un box:
+>
+> ```
+> myData
+>  | step1
+>  | step2 | Box|init(_)
+>  | step3(&_)
+>  | step4
+> ```
+>
+> No se si me gusta mucho.
+>
+> Summary of the Proposed Rules
+> 
+> - Default: &(functionCall()) is a compile‐time error unless:
+>     - functionCall() returns an rtallocatedtype (already on the heap), or
+>     - the user explicitly boxes the ephemeral with box(...) / ^(...).
+> - box(...) (or your chosen syntax) is how to heap‐allocate a by‐value result. Once boxed, you can safely form pointers to it, store them anywhere, etc. The reference‐tracker ensures it lives until no pointers remain.
+> - In ephemeral “borrowed” scenarios – i.e. fnCall(&someFunction()) where the pointer does not escape – you can either:
+>     - Forbid it to keep the language simpler (the user must name the temporary or box it), or
+>     - Add special ephemeral-lifetime rules (like a miniature borrow checker) so that the pointer is valid only inside that call and cannot be stored.
+> - Pipelining still works: just box the relevant stage before taking &_. Or, if the type is already an rtallocatedtype, no need to box at all – you can always safely do &_.
+> - Implementation: behind the scenes, box(...) calls your allocate(...), copies the value, and returns a handle that triggers register_reference(...). Taking the pointer to that handle’s payload also triggers or updates the GC’s knowledge of references.
+> This is consistent with your reference‐tracking logic, because now all pointer creations that might outlive the expression are happening in a “tracked” region. If the user wants something that is purely a stack variable, they can do so – but then they can’t form an escaping pointer to it without an explicit box(...).
 
-_Es importante encontrar un sistema que permita el control manual para los expertos, pero que por defecto tenga una gestión automática._
 
-Similar to zig, allocators are passed as arguments, and they are are used to allocate and free memory.
 
-Sin embargo, often the user doesn't have to worry about it. Most heap allocated memory is automatically managed by default allocators. 
+## Memory management
+
+_es importante encontrar un sistema que permita el control manual para los expertos, pero que por defecto tenga una gestión automática._
+
+similar to zig, allocators are passed as arguments, and they are are used to allocate and free memory.
+
+sin embargo, often the user doesn't have to worry about it. most heap allocated memory is automatically managed by default allocators. 
 
 
 ```
-HashMap(from: Type, to: Type) : Type = struct [
+Hashmap(from: type, to: type) : type = struct [
 	allocator : Allocator
-	data      : Option(Pointer)
+	data      : Ponter?
 ]
 
 
@@ -344,13 +374,13 @@ El compilador debería dar herramientas para que pudieras comprobar si todas las
 lang check-signal-use main.l
 ```
 
-Si consigues que el uso sea cero, puedes quitarlo.
+si consigues que el uso sea cero, puedes quitarlo.
 
 ```bash
 lang build main.l--no-signals
 ```
 
-Si no se usa el gc o no hay otras referencias a estas funciones, entonces no se emiten esos eventos.
+si no se usa el gc o no hay otras referencias a estas funciones, entonces no se emiten esos eventos.
 
 
 ##### Box
