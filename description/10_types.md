@@ -168,39 +168,66 @@ Direction : Type = [
 
 #### Polymorfism. Abstract.
 
-Un abstract es como una interfaz en go, solo qué:
-- también permite definir atributos (si es que se trata de un struct)
-- Hay que decir cuando un tipo implementa una interface.
-- Se le puede poner un tipo por defecto.
+> [!TODO] Decidir nombre
+> Estoy entre: `abstract`, `interface`, `protocol`, `trait`
 
-Es importante que el canbe pueda ser definido a posteriori y fuera del paquete, para que tenga la flexibilidad de Julia.
+Los abstract types:
+- Permiten definir qué funciones deben poder llamarse sobre un tipo.
+- Obligan a especificar explícitamente qué tipos implementan el abstract.
+- Permiten definir un tipo por defecto, que será el que se inicialice si se usa como tipo al ser declarado.
+- NO permiten definir propiedades (Para evitar malas prácticas)
+- Se pueden componer.
+- Se pueden definir extender fuera de sus módulos de origen.
+
+
+Así se declara un tipo abstracto:
 
 ```
 Animal : Abstract = [
-	.name : String
-	speak(_) => String
-	do_something(_, Int)
-]
-
-Dog : Type = struct [
-	.name : String
-	.breed : String
+	-- Las funciones se definen con la sintaxis de currying.
+	speak(_) := String
 ]
 
 speak(d: Dog) := String {
 	return "Woof"
 }
 
+-- Requiere manifestación explícita de la implementación.
 Animal canbe Dog
 
+-- Permite definir un valor por defecto.
 Animal defaultsto Dog
 ```
 
-> [!BUG] Pensar como se declaran las funciones que se requieren
+```
+Addable : Abstract = [
+	operator +(_, _) : _
+]
+```
 
-> [!BUG] Generics in abstracts
-> La sintaxis para conecta qué campo del abstract corresponde con qué campo del hijo no es muy buena.
-> Como sabe la funcion canbe lo que hay que saber.
+To use with generics:
+
+```
+List<t:Type> : Abstract = [
+	operator get[](_, _) := t
+	operator set[](_, _, t)
+]
+
+List<t> canbe DynamicArray<t>
+List<t> canbe StaticArray<t, Any>
+```
+
+To compose them:
+
+```
+Number : Abstract = [
+	Addable
+	Substractable
+	Multiplicable
+	...
+	-- You can mix functions and other abstract types here.
+]
+```
 
 
 ### Basic types

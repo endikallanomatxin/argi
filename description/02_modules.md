@@ -30,6 +30,11 @@ If it is just a name, then it is a module installed in the system.
 / are used to refer to modules inside other modules.
 
 
+## Protected modules
+
+Modules which name starts with _ are not visible outside the module. They are private to the module.
+
+
 ## Interpretation and imports
 
 Lua tiene:
