@@ -15,6 +15,16 @@ Hay dos tipos de threads:
 Ambos ofrecen una experiencia homogenea (aunque igual hay que hacer dos variantes de todos los primitivos)
 
 
+### Thread safety
+
+Para garantizar la thread safety, tendremos los punteros exclusivos ~&, que se debe garantizar que sean los únicos punteros a la memoria que apuntan.
+
+> Algo como lo de rust, solo que al hacer un nuevo tipo de puntero en lugar de extender esta norma a los punteros mutables normales, no perjudicamos tanto la ergonomía.
+
+A un thread solo se le pueden pasar punteros exclusivos, o referencias de solo lectura, o punteros a mutexes o canales.
+(Esto incluye las closures)
+
+
 ### OS threads
 
 ```
