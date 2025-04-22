@@ -32,91 +32,49 @@ No se puede hacer aritmética con punteros.
 Si quieres hacerlo, tienes que convertirlo en un tipo numérico, hacer la aritmética y luego volverlo a convertir en un puntero. Es suficientemente incómodo como para no hacerlo sin querer, te obliga a ser explícito para cagarla.
 (from zig)
 
-> [!IDEA] Pointer to many items
-> Zig además tiene un tipo de puntero que hace referencia a que apunta a una región de memoria de longitud desconocida. es util para interactuar con c.
-> pensar en si merece la pena implementarlo y como hacerlo.
-> en realidad seguramente no necesitemos.
-> 
-> ```
-> -- for arrays, strings...
-> LengthedPointer<#t: Type> : Type = [
-> 	.pointer : &t
-> 	.length  : Int
-> ]
-> 
-> 
-> -- mainly for c interop
-> UnknownLengthedPointer<t: Type> : Type = [
-> 	.pointer : &t
-> ]
-> 
-> AnyPointer<#t: Type> : Abstract = [
-> 	...
-> ]
-> 
-> AnyPointer<t> canbe [
-> 	&t
-> 	LengthedPointer<t>
-> 	UnknownLengthedPointer<t>
-> ]
-> 
-> AnyPointer defaultsto &t
-> ```
->
-
-
-> [!BUG] In-expression variable creation for pointer obtaining
-> En go, el resultado de una llamada a función no es una variable "addressable" (con dirección en memoria), por lo que no puedes tomar su dirección directamente con la sintaxis `&(función(...))`. debes asignar el resultado a una variable y luego tomar su dirección, como se mostró anteriormente. esto es parte de las reglas del lenguaje.
-> Eso no me gusta. deberías poder hacer a = &(function(...))
-> Aunque igual tiene sentido que no se pueda, claro; si no has definido ni la variable, como vas a tener un putero a esa variable.
-> No se igual simplemente que el compilador auto genere una variable igual es suficiente y lo hace más cómodo.
-> 
-> Pero entonces de qué mutabilidad es esa variable por ejemplo? eso es un dilema. nuestra notación de mutabilidad solo define la mutabilidad de la variable, no de a lo que apunta. igual se podría asumir que si es un solo un puntero, entonces si es & lo referenciado se considera constante, y si es !& lo referenciado se considera variable.
-> 
-> Si no permitimos esto jodemos el workflow de piping. Así que hay que pensar como hacerlo.
-> 
-> Pensar en como se puede coordinar con el memory management que propongo.
->
-> Chatgpt dice que use un box:
->
-> ```
-> myData
->  | step1
->  | step2 | Box|init(_)
->  | step3(&_)
->  | step4
-> ```
->
-> No se si me gusta mucho.
->
-> Summary of the Proposed Rules
-> 
-> - Default: &(functionCall()) is a compile‐time error unless:
->     - functionCall() returns an rtallocatedtype (already on the heap), or
->     - the user explicitly boxes the ephemeral with box(...) / ^(...).
-> - box(...) (or your chosen syntax) is how to heap‐allocate a by‐value result. Once boxed, you can safely form pointers to it, store them anywhere, etc. The reference‐tracker ensures it lives until no pointers remain.
-> - In ephemeral “borrowed” scenarios – i.e. fnCall(&someFunction()) where the pointer does not escape – you can either:
->     - Forbid it to keep the language simpler (the user must name the temporary or box it), or
->     - Add special ephemeral-lifetime rules (like a miniature borrow checker) so that the pointer is valid only inside that call and cannot be stored.
-> - Pipelining still works: just box the relevant stage before taking &_. Or, if the type is already an rtallocatedtype, no need to box at all – you can always safely do &_.
-> - Implementation: behind the scenes, box(...) calls your allocate(...), copies the value, and returns a handle that triggers register_reference(...). Taking the pointer to that handle’s payload also triggers or updates the GC’s knowledge of references.
-> This is consistent with your reference‐tracking logic, because now all pointer creations that might outlive the expression are happening in a “tracked” region. If the user wants something that is purely a stack variable, they can do so – but then they can’t form an escaping pointer to it without an explicit box(...).
-
-
-
 ## Memory management
 
-_es importante encontrar un sistema que permita el control manual para los expertos, pero que por defecto tenga una gestión automática._
+### HeapAllocation
 
-similar to zig, allocators are passed as arguments, and they are are used to allocate and free memory.
+Similar to zig,  and they are are used to allocate and deallocate memory.
 
-sin embargo, often the user doesn't have to worry about it. most heap allocated memory is automatically managed by default allocators. 
+```
+Allocator : Abstract = [
+	allocate(_, size: Int) : HeapAllocation
+	deallocate(_, ha: HeapAllocation)
+]
+```
 
+Allocators return a `HeapAllocation` struct, instead of a single pointer. This allows us to keep track of the size and the allocator used for the allocation, which is necessary for deallocateing the memory later.
+
+```
+HeapAllocation : Type = struct [
+	.data : &Byte
+	.size : Int  -- In bytes
+	.allocator : Allocator
+]
+```
+
+When initializing types, allocators are passed as arguments,
+For ergonomy, most init functions will have a default allocator, and the user can override it if needed.
+
+```
+init(#t                   == HeapBuffer,
+     size     : Int,
+     allocator: Allocator =  std.PageAllocator
+) := HeapBuffer {
+	.data = allocator|allocate(size)
+	.size = size
+	.allocator = allocator
+}
+```
+
+In a type:
 
 ```
 Hashmap(from: type, to: type) : type = struct [
 	allocator : Allocator
-	data      : Ponter?
+	data      : HeapAllocation
 ]
 
 
@@ -130,9 +88,11 @@ init(
 
 
 deinit := (hm: Hashmap) {
-	hm.allocator|free(hm.data)
+	hm.allocator|deallocate(hm.data)
 }
 ```
+
+So:
 
 ```
 my_map := ["a"=1, "b"=2]
@@ -146,291 +106,196 @@ my_map["a"] = 1
 my_map["b"] = 2
 ```
 
-And when calling init withou an allocator, it will use the default one, which hides the complexity of memory management.
+And when calling init without an allocator, it will use the default one, which hides the complexity of memory management.
 
 
-##### Reference tracking allocator
+### Variable deinitialization and keep keyword
 
-Necesita que se "notifiquen" algunos eventos
+Para que la gestión de la memoria en el heap sea consistente con la del stack, siempre se liberará la memoria al salir del scope.
 
-- La creación de referencias.
-- Duplicación de referencias.
-- La eliminación de referencias.
-- La salida de scope.
-
-Además, si distintos "objetos" se referencian entre sí, los allocators tienen que combinarse para poder identificar ciclos.
-
-Lo bueno es que como tipos no relacionados tienen allocators diferentes, no se tiene que comprobar la conectividad, hay que tener en cuenta menos referencias y es más eficiente.
-
-Para implementar la funcionalidad necesitamos crear referencias sin avisar que se crean, para eso usamos un símbolo para indicar que no se llame a las notificaciones. `$`, de silent, por ejemplo.
-
-
-Hay que registrar las referencias cuando se hace &objeto o cuando se usa el puntero.
+La palabra que usamos para referirnos a esto es `deinit` (que será lo contrario de `init`, `allocate / deallocate` y `init / deinit`).
 
 ```
-RTAllocatedType : Abstract = [
-	allocator : Allocator
-]
-
-
-init(
-	obj       : RTAllocatedType,
-	allocator : Allocator = std.RTAllocator
-) :=  {
-	obj.allocator = allocator
-	obj.data = allocator|allocate(...)
-}
-
-
-deinit := (obj: RTAllocatedType) {
-	obj.allocator|free(obj.data)
+{
+	buf := HeapAllocation|init(_, 1024)
+	-- El compilador siempre pone automáticamente:
+	defer buf|deinit
 }
 ```
 
+Tipos que contengan memoria alocada en el heap implementarán deinit.
+
 ```
-create_reference(obj: RTAllocatedType) := Pointer<RTAllocatedType> {
-	p = $&obj  -- Silent reference
-	if obj.allocator is RTAllocator {
-		obj.allocator|register_reference(&p)
-	}
-	return p
+deinit(buf: HeapAllocation) {
+	buf.allocator|deallocate(buf.data)
 }
 ```
 
-```
-copy(p: Pointer<RTAllocatedType>) := Pointer<RTAllocatedType> {
-	new_p = $p  -- Silent copy
-	if obj.allocator is RTAllocator {
-		obj.allocator|register_reference(&new_p)  -- Cuando se crea es directamente accesible.
-	}
-	return new_p
-}
-```
+Y habrá también una por defecto para cualquier struct que llama de forma recursiva a deinit en sus campos.
 
 ```
-exit_scope(obj: RTAllocatedType) {
-	if obj.allocator is RTAllocator {
-		obj.allocator|exit_scope(&obj)
-	}
-}
-
-exit_scope(p: Pointer<RTAllocatedType>) {
-	obj = @p
-	if obj.allocator is RTAllocator {
-		obj.allocator|exit_scope(&p)
+deinit(s: AnyStruct) {
+	-- Pensar en como hacer introspección. Qué tipo es un struct?
+	for field in my_struct|#get_fields {
+		field|deinit
 	}
 }
 ```
 
-
-Para los punteros a este tipo de dato:
+Para evitar que la memoria se autolibere, se puede usar el keyword `keep`:
 
 ```
-deinit(p: Pointer<RTAllocatedType>) := {
-	obj = @p
-	if obj.data != null {
-		obj.allocator|mark_unaccessible(p)
-		obj.allocator|free
-	}
-	obj.data = null
+{
+	buf := HeapAllocation|init(_, 1024)
+	keep buf
 }
 ```
 
-**Allocator**
+Si se hace kep sobre una variable en el stack, automáticamente la pasa al heap. Esto permite trabajar de forma coherente con el stack y el heap, y no tener que preocuparse de donde se encuentra la variable.
+
+Una vez hecho `keep` sobre una variable, el usuario es el responsable de liberar la memoria.
+
+
+#### Keep with a variable
+
+Lo habitual es que no quieras tener que estar pendiente de hacerlo y que su vida esté ligada a la de otra variable. Para esos casos, y lo que será lo más habitual, se puede hacer:
 
 ```
-RTAllocator : Type = struct [
-	tracked_allocations : Hashmap(AllocationReference->HashSet(Reference))
-	-- Allows for combination of allocators
-]
+{
+	MyType : Type = struct [
+		.field : &Int
+	]
+	my_instance : MyType
 
-AllocationReference : Type = struct [
-	-- Points directly to the location on the heap that has been allocated
-	-- Created at initialization
-	pointer                : HeapPrt
-	is_directly_accessible : Bool
-]
+	my_int := 5
+	my_instance.field = &my_int
+	keep my_int with my_instance
 
-Reference : Type = struct [
-	-- This is a pointer to anything containing a reference to the allocation
-	pointer                : Ptr<Any>
-	is_directly_accessible : Bool
-]
-```
-
-```
-allocate(a: RTAllocator) := Pointer {
-	p = a|allocate
-	a|track_allocation(p)
-	return p
-}
-
-free(a: RTAllocator, p: Ptr) {
-	a|free(p)
+	return my_instance  -- Se puede devolver la variable, porque no se ha liberado
 }
 ```
 
+Esto pospone la liberación de la memoria hasta justo antes de que se de la liberación de su variable padre.
+
+Si devuelves un puntero o cualquier variable que lo contenga y no has hecho `keep` el compilador dará un error.
+
+> Esto es algo parecido a rust pero sin el borrow checker, lo tienes que indicar tú.
+
+
+#### Keep with multiple variables
+
+Una variable puede ligar su vida a varias variables. En ese caso, se liberará cuando todas las variables que la referencian se liberen.
+
 ```
-track_allocation(a: RTAllocator, p: Ptr) := {
-	-- For new allocations, only called once
-	ar = AllocationReference(p, true)
-	hs = HashSet().init(page_allocator)
-	a.tracked_allocations[ar] = hs
+{
+	my_instance1 : MyType
+	my_instance2 : MyType
+	
+	my_int := 5
+
+	my_instance1.field = &my_int
+	my_instance2.field = &my_int
+	keep my_int with my_instance1, my_instance2
 }
-
-combine(a1: RTAllocator, a2: RTAllocator) := (c: RTAllocator) {
-	-- Should I initialize c? Automatic initialization cannot have a custom allocator...
-	for ap, hs in a1.tracked_allocations {
-		c.tracked_allocations[ap] = hs
-	}
-	for ap, hs in a2.tracked_allocations {
-		if ap in tracked_allocations {
-			c.tracked_allocations[ap]|combine(!&_, hs)
-		} else {
-			c.tracked_allocations[ap] = hs
-		}
-	}
-	return c
-}
-
-register_reference(a: RTAllocator, ap: HeapPtr, p: Ptr) := {
-	ar = AllocationReference(ap, true)  -- Esto no es correcto, porque va a sobreescribir con true
-	r = Reference(p, true)
-	a.tracked_allocations[ar]|append(r)
-}
-
-
-mark_not_directly_accessible(a: RTAllocator, ap: HeapPtr, p: Ptr) := {
-	ar = AllocationReference(ap, true)  -- Esto no es correcto, porque va a sobreescribir con true
-	r = Reference(p, true)
-	a.tracked_allocations[ar][r].is_directly_accesible = false
-
-	-- CHECK 1
-	-- Hay que checkear a ver si esto hace que la variable ya no sea accesible,
-	-- (ni directa ni indirectamente)
-
-	Encontrar las referencias que apuntan a p
-	For referencia in referencias
-		Subir aguas arriba, a ver si hay alguna directamente accesible
-		(detectando ciclos)
-		Si sí,
-			-- entonces solo hay que marcar p como no_directamente_accesible
-			-- pero no hay que liberar nada
-			continue
-		Si no,
-			-- significa que esta referencia hay que liberarla porque no es accesible
-			-- (ni directa, ni indirectamente)
-			a|remove_reference(ap, p)  -- Ahí ocurre el check 2
-}
-
-
-remove_reference(a: RTAllocator, ap: HeapPtr, p: Ptr) := {
-	a.tracked_references[ap]|remove(p)
-
-	if a.references|len == 0
-		-- p was the last reference
-		item = @ap  -- It gets the item referenced
-		item|deinit
-
-	-- CHECK 2
-	-- Igual hay que liberar algunas de las que se mantenían con vida por esta
-
-	references = encontrar_las_referencias_a_las_que_apuntaba_p
-	for r in references
-		Buscar qué otras referencias las referencian (aguas arriba)
-		hasta encontrar alguna que sea directamente accesible.
-		(Hay que poder detectar ciclos, para eso marcar las que se van visitando)
-
-		If se encuentra una directamente accesible,
-			entonces se mantiene
-		Else,
-			significa que esa referencia ya no es accesible (ni directa, ni indirectamente)
-			Y por lo tanto se puede liberar.
 ```
 
+> Aquí es donde divergimos de Rust, que solo permite un single owner.
 
-**Implementarlo en un tipo propio**
+En este caso, se creará un contador de referencias y se liberará cuando el contador llegue a 0.
 
-Para que un tipo propio pueda ser gestionado por el RTAllocator, simplemente:
+Es algo parecido a Swift, pero con la diferencia de que en Swift todos los objetos tienen un ARC, independientemente de que su vida no se extienda más allá de un scope y la gestión de la memoria sea trivial.
 
-```
-MyType : Type = struct [
-	...
-	allocator : RTAllocator
-]
+Ahora bien, el gran punto débil de ARC son los ciclos.
+El compilador no es capaz de detectar todos los casos. De todas formas, los que sí pueda detectar darán error de compilación y se le aconsejará al usuario que ligue la lifetime de las variables a una variable central o que use un arena allocator.
 
-RTAllocatedType canbe MyType
-```
+#### Resumen del sistema
 
+Con esto se consigue un sistema de la gestión de la memoria que, aunque manual, es extremadamente cómodo de usar.
 
+Seguramente los novatos no se encuentren con que tengan que hacer `keep` durante mucho tiempo, y cuando lo hagan será porque necesitan su comlejidad y será coherente con el resto del lenguaje.
 
-**Concurrency**: Si quieres concurrencia, lo metes todo en un mutex. Lo ibas a tener que hacer igual y así nos ahorramos tener que hacer los allocators thread safe.
-
-###### Removal
-
-El compilador debería dar herramientas para que pudieras comprobar si todas las variables son owned y así quitarle trabajo al gc.
-
-```
-lang check-signal-use main.l
-```
-
-si consigues que el uso sea cero, puedes quitarlo.
-
-```bash
-lang build main.l--no-signals
-```
-
-si no se usa el gc o no hay otras referencias a estas funciones, entonces no se emiten esos eventos.
+> Safety total?
+> No, pero en realidad ningún lenguaje lo es. Este me parece un buen compromiso entre seguridad y ergonomía.
 
 
-##### Box
+### In-expression variable creation
 
-Lo que hemos visto hace más cómodo trabajar con objetos que se almacenan en el heap.
-Pero a veces hay datos que se almacenan en el stack y que queremos que vivan más allá del scope en el que se han creado.
-Para eso, podemos usar un Box.
+En go (y en general en casi todos), el resultado de una llamada a función no es una variable "addressable" (con dirección en memoria), por lo que no puedes tomar su dirección directamente con la sintaxis `&(función(...))`. debes asignar el resultado a una variable y luego tomar su dirección, como se mostró anteriormente. esto es parte de las reglas del lenguaje.
+
+El problema con esto es que nos rompe el workflow de piping, ya que no puedes hacer algo como:
 
 ```
-Box(T: Type) := struct [
-	data : T
-]
+myData
+ | step1
+ | step2
+ | step3(&_)
+ | step4
 ```
 
-```plaintext
-b := Box(Int)
-b.data = 5
-```
+Eso es un problema.
 
-No estoy muy seguro de si merece la pena. Igual mejor que simplemente se haga a mano.
+Nuestro compilador debe ser capaz de inicializar variables intermedias a las que referirse, y que se limpien automáticamente al salir del scope.
 
-Igual esto?
+> [!BUG] Pero entonces como se compagina eso con el `keep`? Deben permanecer accesibles o liberarse?
+> Igual que se pueda pipear el keep? (Así sería algo como meterlo en una box)
+> Una función que sea inline_keep() que cree la variable y la mantenga y de alguna manera asocie su lifetime a lo que devuelva.
+> 
+> Propuesta de chatgpt:
+> Dos opciones:
+> A) La memoria se mantiene viva solo para que la función lea algo de ella. En esta caso la variable se libera al salir del scope.
+> B) La memoria se mantiene viva porque permanece en algo que la siguiente función devuelve. Para esto debe hacerse un box/keep explícito.
+>
+> Una idea:
+>
+> ```
+> image :=
+>     load_png("image.png") -- → DynamicArray<RGBA>
+>     | keep _ with image  -- la imagen vive hasta vaciar el stack
+>     | una_funcion_que_toma_los_pixels_y_devuelve_un_objeto_que_los_referencia(&_)
+> ```
+>
+> Pensar mejores ejemplos.
+> Pensar en como se compagina esto con threads.
 
-```
-variable|to_heap
-variable|to_stack
-variable|to_arena(arena)
-```
+Ejemplos:
 
-Funcionaría?
+Función que simplemente lee:
 
-O igual cuando hace return de algo que siempre recolecte las variables que estén relacionadas y si están en el stack, que las pase al stack del caller.
+> ```
+> tree := parse_expr("(+ 1 (* 2 3))")
+>     | build_ast(&_)
+> ```
 
-> [!IDEA]
-> Que RTAllocator sea un abstract y que sea muy fácil implementar en tus propios tipos.
-> Simplemente poner un campo .Allocator: Allocator, y decir RTAllocatedType canbe MyType
+Caso de builder pattern:
+
+> ```
+> body := SketchBuilder|init()
+>     | trapezoid(&_, 4, 3, 90)
+>     | fillet(&_, 0.25)
+>     | extrude(&_, 0.1)
+>```
+
+Función que necesita referencia para paralelizar:
+
+> ```
+> result := load_png("image.png")
+>     | keep _ with result
+>     | parallel_process_that_only_reads(&_)
+>     | parallel_process_that_writes(~&_)
+> ```
+
+> Si no pones nada, son variables que se eliminan al acabar el pipe.
+
+> [!BUG] Y como sabes si la función necesita crear referencias y keepearlas?
+> Igual esto requiere un tipo adicional de puntero?
+
+> [!BUG] Las variables creadas son variables o constantes?
+> Igual si la referencia creada es $& entonces es variable y si es & entonces constante?
 
 
-##### Arenas
-
-Hacer malloc y free requiere system calls, por lo que es lento.
-
-Una arena es básicamente alocar memoria por chunks (pages por ejemplo) para reducir el número de veces que se llama a malloc y free.
-
-Se puede usar también como una especie de stack dinámico. Por scopes. Con eso se puede conseguir evitar el garbage collector.
-
-Echarle un pensamiento, porque es bastante eficiente.
 
 
-### Alignment
+## Alignment
 
 ```
 MyStruct : Type = [

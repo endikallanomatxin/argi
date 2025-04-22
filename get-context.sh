@@ -17,14 +17,12 @@ fi
     echo "----- ls -T -----"
     ls -T
 
-    # Incluir recursivamente todos los archivos Markdown (.md)
     echo ""
     echo "----- Archivos Markdown Recursivos -----"
-    # Se usa 'find' para buscar todos los archivos con extensión .md en el directorio actual y sus subdirectorios
-    find . -type f -name "*.md" | while read mdfile; do
+    find . -type f \( -name "*.md" -o -name "*.rg" \) | while read file; do
         echo ""
-        echo "----- $mdfile -----"
-        cat "$mdfile"
+        echo "----- $file -----"
+        cat "$file"
     done
 } | $clipboard_cmd
 
