@@ -85,7 +85,6 @@ Uso:
 
 ```
 var   -- deep copy
-~var  -- shallow copy (valorarlo)
 &var  -- inmutable pointer
 $&var -- mutable pointer (s is for "side effect")
 ```
@@ -129,6 +128,45 @@ funcion_que_escribe($&datos)
 Hacer esto bien hace que no haga falta decir si las funciones son puras o tienen side effects.
 
 
+```
+funcion(
+
+  -- CONST DEEP COPY
+  a : Int
+  -- Solo tiene sentido para pequeños primitivos.
+  -- El compilador te permitirá ponerlo para otros tipos,
+  -- pero te advertirá del despilfarro.
+  -- Se te recomendará usar un puntero &.
+
+
+  -- VAR DEEP COPY
+  b :: Int
+  -- Para tipos pequeños, cuando se quieren modificar.
+  -- Para tipos más grandes, cuando se quiere modificar una copia del original.
+
+
+  -- CONST READ-ONLY POINTER
+  &c : Matrix
+  -- Es la más habitual para tipos grandes cuando no se quiere modificar el original.
+
+
+  -- VAR READ-ONLY POINTER
+  &d :: Matrix
+  -- NO PERMITIDO
+
+
+  -- CONST MUTABLE POINTER
+  $&e : Matrix,
+  -- NO TIENE SENTIDO. NO PERMITIDO.
+
+
+  -- VAR MUTABLE POINTER
+  $&f :: Matrix
+  -- Para cuando se quiere modificar el original in-place.
+
+)
+```
+
 
 #### Side effects
 
@@ -143,7 +181,7 @@ For example, accessing a database:
 ```rg
 import db
 
-main! := {
+main$ := {
 	-- Creamos una conexión a la base de datos
 	db_conn = db.open_database("my_db")
 
@@ -151,7 +189,7 @@ main! := {
 	user = query_user($&db_conn, 123)
 }
 
-query_user($&db_conn: $&DbConnection, user_id: Int) := User? {
+query_user($&db_conn: DbConnection, user_id: Int) := User? {
 	-- Acceso a la db
 	row = db_conn|execute(!&_, "SELECT * FROM user WHERE id = ?", user_id)
 	if row == null {
@@ -232,12 +270,12 @@ ignore print$("Hello, world")
 (también podría ser disregard o dismiss)
 
 
-
 El compilador podría decirte al hacer audit, si ve que hay muchas funciones con side effects, entonces te avisa de que hay un problema de diseño. Y que le eches un ojo a lo que es la dependency injection.
 
 (Hacer el printf debuggin un poco más complicado en realidad hará que la gente use más asserts. Pero el assert, a donde imprime?)
 
 > Assert debería ser una función pura? Yo creo que sí, porque tras modificar el estado crashea.
+> Igual no queremos que se pueda crashear?
 
 
 

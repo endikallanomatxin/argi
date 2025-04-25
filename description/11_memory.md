@@ -32,6 +32,7 @@ No se puede hacer aritmética con punteros.
 Si quieres hacerlo, tienes que convertirlo en un tipo numérico, hacer la aritmética y luego volverlo a convertir en un puntero. Es suficientemente incómodo como para no hacerlo sin querer, te obliga a ser explícito para cagarla.
 (from zig)
 
+
 ## Memory management
 
 ### HeapAllocation
@@ -72,7 +73,7 @@ init(#t                   == HeapBuffer,
 In a type:
 
 ```
-Hashmap(from: type, to: type) : type = struct [
+Hashmap(from: Type, to: Type) : Type = struct [
 	allocator : Allocator
 	data      : HeapAllocation
 ]
@@ -87,7 +88,7 @@ init(
 }
 
 
-deinit := (hm: Hashmap) {
+deinit := (&hm: Hashmap) {
 	hm.allocator|deallocate(hm.data)
 }
 ```
@@ -208,6 +209,18 @@ Es algo parecido a Swift, pero con la diferencia de que en Swift todos los objet
 Ahora bien, el gran punto débil de ARC son los ciclos.
 El compilador no es capaz de detectar todos los casos. De todas formas, los que sí pueda detectar darán error de compilación y se le aconsejará al usuario que ligue la lifetime de las variables a una variable central o que use un arena allocator.
 
+
+#### Interaction with function calls
+
+Keeping is usually done inside the function that creates de dependant variable. This is where it is more obvious the relationship between the two variables and it makes for a cleaner interface (lifetime encapsulation).
+
+This is critical for the ergonomics of piping, where keeping needs to be done automatically.
+
+For this to work correctly when keep the thing pointed by the input of the function, the compiler needs to be able to infer that you are keeping the original variable.
+
+Si un parámetro por referencia aparece en la salida o se guarda en un campo global, el analizador comprueba que existe un keep correlativo y si no, da error.
+
+
 #### Resumen del sistema
 
 Con esto se consigue un sistema de la gestión de la memoria que, aunque manual, es extremadamente cómodo de usar.
@@ -220,78 +233,37 @@ Seguramente los novatos no se encuentren con que tengan que hacer `keep` durante
 
 ### In-expression variable creation
 
-En go (y en general en casi todos), el resultado de una llamada a función no es una variable "addressable" (con dirección en memoria), por lo que no puedes tomar su dirección directamente con la sintaxis `&(función(...))`. debes asignar el resultado a una variable y luego tomar su dirección, como se mostró anteriormente. esto es parte de las reglas del lenguaje.
+En la mayoría de lenguajes, si anidas llamadas de funciones, no puedes pasarle a una como input una referencia al output de otra. Como esas variables intermedias no existe, no pueden crearse referencias.
+Pero esto le quita mucha ergonomía al lenguaje, sobre todo al piping de funciones.
 
-El problema con esto es que nos rompe el workflow de piping, ya que no puedes hacer algo como:
+En nuestro lenguaje, cuando hay funciones anidadas o pipeadas:
 
-```
-myData
- | step1
- | step2
- | step3(&_)
- | step4
-```
+- Las variables intermedias se crean automáticamente.
+- Si la función que las usa necesita una referencia &, entonces son constantes, si necesita una $&, entonces son variables.
+- Se desinicializan automáticamente al acabar el pipe (a no ser que alguna de las funciones haga keep sobre ellas).
 
-Eso es un problema.
-
-Nuestro compilador debe ser capaz de inicializar variables intermedias a las que referirse, y que se limpien automáticamente al salir del scope.
-
-> [!BUG] Pero entonces como se compagina eso con el `keep`? Deben permanecer accesibles o liberarse?
-> Igual que se pueda pipear el keep? (Así sería algo como meterlo en una box)
-> Una función que sea inline_keep() que cree la variable y la mantenga y de alguna manera asocie su lifetime a lo que devuelva.
-> 
-> Propuesta de chatgpt:
-> Dos opciones:
-> A) La memoria se mantiene viva solo para que la función lea algo de ella. En esta caso la variable se libera al salir del scope.
-> B) La memoria se mantiene viva porque permanece en algo que la siguiente función devuelve. Para esto debe hacerse un box/keep explícito.
->
-> Una idea:
->
-> ```
-> image :=
->     load_png("image.png") -- → DynamicArray<RGBA>
->     | keep _ with image  -- la imagen vive hasta vaciar el stack
->     | una_funcion_que_toma_los_pixels_y_devuelve_un_objeto_que_los_referencia(&_)
-> ```
->
-> Pensar mejores ejemplos.
-> Pensar en como se compagina esto con threads.
 
 Ejemplos:
 
-Función que simplemente lee:
-
-> ```
-> tree := parse_expr("(+ 1 (* 2 3))")
->     | build_ast(&_)
-> ```
-
 Caso de builder pattern:
 
-> ```
-> body := SketchBuilder|init()
->     | trapezoid(&_, 4, 3, 90)
->     | fillet(&_, 0.25)
->     | extrude(&_, 0.1)
->```
+```
+body :=
+      SketchBuilder|init()
+    | trapezoid(&_, 4, 3, 90)
+    | fillet(&_, 0.25)
+    | extrude(&_, 0.1)
+```
 
 Función que necesita referencia para paralelizar:
 
-> ```
-> result := load_png("image.png")
->     | keep _ with result
->     | parallel_process_that_only_reads(&_)
->     | parallel_process_that_writes(~&_)
-> ```
-
-> Si no pones nada, son variables que se eliminan al acabar el pipe.
-
-> [!BUG] Y como sabes si la función necesita crear referencias y keepearlas?
-> Igual esto requiere un tipo adicional de puntero?
-
-> [!BUG] Las variables creadas son variables o constantes?
-> Igual si la referencia creada es $& entonces es variable y si es & entonces constante?
-
+```
+result :=
+      load_png("image.png")
+    | keep _ with result
+    | parallel_process_that_only_reads(&_)
+    | parallel_process_that_writes(~&_)
+```
 
 
 
