@@ -19,6 +19,10 @@ Notes:
 - `x, y = y, x` se tiene que poder hacer.
 
 
+> [!TODO]
+> Comparación de Int32 con Int8. ¿Implícito? ¿Requiere cast?
+> Sub-typing de List<User> vs List<Person> (variancia).
+
 Inline declaration requires commas, but they can be ommited when using new lines.
 
 
@@ -164,6 +168,14 @@ Direction : Type = [
 
 >[!IDEA]
 >Pensar en como hacer para que tengan valores concretos. Igual poniendo un ` = ` tras cada campo.
+
+```
+HTTPCode : Type = [
+	..OK = 200
+	..NotFound = 404
+	..InternalServerError = 500
+]
+```
 
 
 #### Polymorfism. Abstract.

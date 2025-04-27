@@ -120,4 +120,23 @@ Para correr con CLI args:
 - `lang my_script.l arg1 arg2`
 - `my_exec arg1 arg2`
 
-CLI args are processed into a global constant `ARGS` (from julia)
+CLI arguments are passed to the main function as arguments, they are automatically parsed and converted to the appropriate types. If parsing fails, an error is raised before executing the main function.
+
+```
+main$(
+      load_model: os.Path
+      n_epochs: Int = 10
+      learning_rate: Float = 0.01
+) {
+	...
+}
+```
+
+
+
+### REPL
+
+> [!BUG]
+> Mezclar compilación AOT con “importar y ejecutar” recuerda al Python-import-time chaos. Decide:
+> O bien los side-effect‐free se compilan a .obj y sólo se ejecuta main.
+> O bien obligas a un guard estilo if __is_run__.
