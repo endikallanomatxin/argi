@@ -12,6 +12,9 @@ Hay dos tipos de threads:
 	Muchísimos más ligeros.
 	Requieren un runtime que multiplexe los recursos entre distintas tareas.
 
+> [!TODO]
+> Elección de preemtive vs cooperative en light threads.
+
 Ambos ofrecen una experiencia homogenea (aunque igual hay que hacer dos variantes de todos los primitivos)
 
 
@@ -23,6 +26,10 @@ Para garantizar la thread safety, tendremos los punteros exclusivos ~&, que se d
 
 A un thread solo se le pueden pasar punteros exclusivos, o referencias de solo lectura, o punteros a mutexes o canales.
 (Esto incluye las closures)
+
+> [!TODO]
+> Pensar como interactúan todos los elementos de threads con punteros, mutexes...
+> Darle una vuelta a este punto
 
 
 ### OS threads
@@ -70,7 +77,7 @@ lcr | spawn_thread ({
 ```
  Y ese runtime que lance unos threads y que se encargue de multiplexar.
  
- Está bien que sea una global. Así el acceso es fácil, pero quienes lo usen tendrán que marcar con un ! su función, porque tiene side effects.
+ Está bien que sea una global. Así el acceso es fácil, pero quienes lo usen tendrán que marcar con un $ su función, porque tiene side effects.
 
 ### Sintaxis
 
@@ -171,14 +178,14 @@ Lo ofrece el OS.
 ```
 estado : Mutex<Int>
 
-incrementar(!&estado) := {
+incrementar($&estado) := {
 	estado|lock
 	estado++
 	estado|unlock
 }
 
 for 1..10 spawn_thread({
-	incrementar(!&estado)
+	incrementar($&estado)
 })
 ```
 
@@ -186,12 +193,12 @@ for 1..10 spawn_thread({
 > ```
 > estado : AutoMutex<Int>
 > 
-> incrementar(!&estado) := {
+> incrementar($&estado) := {
 > 	estado++
 > }
 > 
 > for 1..10 spawn_thread({
-> 	incrementar(!&estado)
+> 	incrementar($&estado)
 > })
 > ```
 

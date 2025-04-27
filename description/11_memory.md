@@ -41,8 +41,8 @@ Similar to zig,  and they are are used to allocate and deallocate memory.
 
 ```
 Allocator : Abstract = [
-	allocate(_, size: Int) : HeapAllocation
-	deallocate(_, ha: HeapAllocation)
+	alloc(_, size: Int) : HeapAllocation
+	dealloc(_, ha: HeapAllocation)
 ]
 ```
 
@@ -63,7 +63,7 @@ For ergonomy, most init functions will have a default allocator, and the user ca
 init(#t                   == HeapBuffer,
      size     : Int,
      allocator: Allocator =  std.PageAllocator
-) := HeapBuffer {
+) := HeapAllocation {
 	.data = allocator|allocate(size)
 	.size = size
 	.allocator = allocator
@@ -240,7 +240,7 @@ En nuestro lenguaje, cuando hay funciones anidadas o pipeadas:
 
 - Las variables intermedias se crean automáticamente.
 - Si la función que las usa necesita una referencia &, entonces son constantes, si necesita una $&, entonces son variables.
-- Se desinicializan automáticamente al acabar el pipe (a no ser que alguna de las funciones haga keep sobre ellas).
+- Si no se hace keep de las variables dentro de la siguiente función, se desinicializan tras esa siguiente función.
 
 
 Ejemplos:

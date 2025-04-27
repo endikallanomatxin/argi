@@ -49,6 +49,12 @@ Se hace implicit return de la última línea, así se puede usar como paréntesi
 c = {a + b}^2
 ```
 
+> [!BUG]
+> Si haces return implícito incluso no poniendo tipo de retorno,
+> entonces no puedes usarlo para fors, ifs y demás porque siempre retornarán algo.
+> Igual puede hacerse que si lo último es una expresión se retorna, pero si es una declaración no?
+> Tiene sentido que se pueda retornar algo, sin haber puesto que retorna algo?
+
 Every code block has its own scope.
 
 This is also used for loops and conditional, so locally declared variables are not accessible outside the block.
@@ -132,4 +138,7 @@ MyGenericType<# t: Type> : Type = struct [
 > `Vector<Int64>` cumple `Vector<Number>`, aunque no sea un subtipo directamente, sino en sus campos.
 > Por lo general, si el generic del input tiene un valor que cuadra con el generic, entonces se toma como un requisito para cumplir el tipo. Si en cambio tiene una variable que no está asignada a nada, entonces en un parámetro de entrada adicional.
 
-
+> [!BUG]
+> El documento menciona “monomorfización” pero también AnyStruct e introspección; si mezclas open sum (choice) con dynamic dispatch los tiempos de compilación explotan.
+> Sugerencia
+> Decide un límites: todo lo que esté en genéricos → monomorfizado; todo lo que vaya por Abstract → tabla de v-funcs simple, no MRO complejo.
