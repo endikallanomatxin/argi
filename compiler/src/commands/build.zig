@@ -7,6 +7,7 @@ const c = llvm.c;
 const codegen = @import("../codegen.zig");
 const lexer = @import("../lexer.zig");
 const parser = @import("../parser.zig");
+const type_inference = @import("../type_inference.zig");
 
 pub fn compile(filename: []const u8) !void {
     std.debug.print("Compilando archivo: {s}\n", .{filename});
@@ -28,7 +29,10 @@ pub fn compile(filename: []const u8) !void {
     defer astList.deinit();
     p.printAST();
 
-    // 4. Generar IR a partir del AST.
+    // 4. Inferir tipos en el AST.
+    try type_inference.inferTypes(&allocator, astList);
+
+    // 5. Generar IR a partir del AST.
     var g = codegen.CodeGenerator.init(&allocator, astList) catch return;
     const module = try g.generate();
     const llvm_output_filename = "output.ll";
