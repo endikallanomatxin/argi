@@ -145,37 +145,118 @@ y queda muy limpio.
 
 ```
 Direction : Type = [
-	..north
+	=..north  -- Default
 	..east
 	..south
 	..west
 ]
-```
 
-`int(Directions..north) == 1`
+int(Directions..north) == 1
+```
 
 ```
 -- This suffices as a ChoiceLiteral for assignment
 ..north
 ```
 
->[!BUG]
-> Pensar en como hacer para que tengan otros tipos. Como una tagged union.
-
-> [!BUG]
-> Pensar en como hacer que tenga un valor por defecto. Igual un `=` por delante del campo?
-
-
->[!IDEA]
->Pensar en como hacer para que tengan valores concretos. Igual poniendo un ` = ` tras cada campo.
-
 ```
 HTTPCode : Type = [
-	..OK = 200
+	..OK = 200                   -- Specific underlying representation
 	..NotFound = 404
 	..InternalServerError = 500
+	-- Si poners uno, tienes que poner todos.
 ]
 ```
+
+```
+-- With other data types besides Int
+
+-- Strings
+Role : Type = [
+	..Admin = "admin"
+	..User = "user"
+	..Guest = "guest"
+]
+
+-- Floats
+Multiplyier : Type = [
+	..Mili = 0.001
+	..Centi = 0.01
+	..Deci = 0.1
+	..Base = 1
+	..Deca = 10
+	..Hecto = 100
+	..Kilo = 1000
+]
+```
+
+##### Payload
+
+Like a tagged union.
+
+```
+Errable<T, E> : Type = [
+	..ok(T)
+	..error(E)
+]
+```
+
+```
+Nullable<T> : Type = [
+	=..none
+	..some(T)
+]
+```
+
+##### Use
+
+###### Checking for them
+
+```
+x|is(..north)  -- Check if x is north
+```
+
+###### Getting a payload
+
+```
+x..ok
+```
+
+En rust (a parte del match) se puede hacer así:
+
+```
+// Ejemplo con Option
+let x: Option<i32> = Some(10);
+if let Some(v) = x {
+println!("Valor: {}", v);
+}
+```
+
+
+###### Matching
+
+```
+match x {
+	..north { println("North") }
+	..south { println("South") }
+	..east  { println("East") }
+	..west  { println("West") }
+}
+```
+
+With a payload
+
+```
+match x {
+	..ok(v) { println("Value: ", v) }
+	..error(e) { println("Error: ", e) }
+}
+```
+
+> [!NOTE] Eso es muy rust
+> No se si cuada mucho con nuestro lenguaje.
+> Igual hay que darle una vuelta a una sintaxis más general, que aplique más alla de los choice with payload.
+
 
 
 #### Polymorfism. Abstract.
