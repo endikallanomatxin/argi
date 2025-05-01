@@ -100,7 +100,7 @@ pub const Declaration = struct {
     name: []const u8,
     type: ?Type,
     mutability: Mutability,
-    args: []const Argument,
+    args: ?[]const Argument,
     value: ?*ASTNode,
 
     pub fn isFunction(self: Declaration) bool {
@@ -131,7 +131,7 @@ pub const CodeBlock = struct {
 pub const Argument = struct {
     name: []const u8,
     mutability: Mutability,
-    type: Type,
+    type: ?Type,
 };
 
 pub const TypeLiteral = struct {
@@ -450,6 +450,17 @@ pub const Parser = struct {
     fn parseDeclarationOrAssignment(self: *Parser) ParseError!*ASTNode {
         const name = try self.parseIdentifier();
 
+        var tipo: ?Type = null;
+        // Check for parenthesis
+        if (self.tokenIs(Token.open_parenthesis)) {
+            self.advance(); // consume '('
+            const args = try self.parseArguments();
+            std.debug.print("args: {any}\n", .{args});
+            if (!self.tokenIs(Token.close_parenthesis)) return ParseError.ExpectedRightParen;
+            self.advance(); // consume ')'
+            tipo = Type.Function;
+        }
+
         // Assignment
         if (self.tokenIs(Token.equal)) {
             self.advance(); // consume '='
@@ -470,7 +481,9 @@ pub const Parser = struct {
             }
             self.advance(); // consume ':' or '::'
 
-            const tipo = try self.parseType();
+            if (tipo == null) {
+                tipo = try self.parseType();
+            }
             var value: ?*ASTNode = null;
             if (!self.tokenIs(Token.new_line)) {
                 if (!self.tokenIs(Token.equal)) return ParseError.ExpectedEqual;
@@ -483,7 +496,7 @@ pub const Parser = struct {
             const args: []const Argument = undefined;
             decl.* = Declaration{
                 .name = name,
-                .type = tipo,
+                .type = tipo orelse null,
                 .mutability = mutability,
                 .args = args,
                 .value = value,
@@ -493,6 +506,22 @@ pub const Parser = struct {
         }
 
         return ParseError.ExpectedDeclarationOrAssignment;
+    }
+
+    fn parseArguments(self: *Parser) ParseError![]const Argument {
+        var args = std.ArrayList(Argument).init(self.allocator.*);
+        while (self.index < self.tokens.len and !self.tokenIs(Token.close_parenthesis)) {
+            const name = try self.parseIdentifier();
+            if (!self.tokenIs(Token.colon)) return ParseError.ExpectedColon;
+            self.advance(); // consume ':'
+            const tipo = try self.parseType();
+            const arg = Argument{ .name = name, .type = tipo orelse null, .mutability = Mutability.Var };
+            try args.append(arg);
+            if (self.tokenIs(Token.comma)) {
+                self.advance(); // consume ','
+            }
+        }
+        return args.items;
     }
 
     fn parseSentences(self: *Parser) !std.ArrayList(*ASTNode) {

@@ -19,6 +19,8 @@ pub const Token = union(enum) {
     open_brace: struct {},
     close_brace: struct {},
 
+    comma: struct {},
+
     // Keywords
     keyword_return: struct {},
 
@@ -245,6 +247,9 @@ pub fn printToken(token: Token) void {
         },
         .close_brace => {
             std.debug.print("close_brace\n", .{});
+        },
+        .comma => {
+            std.debug.print("comma\n", .{});
         },
         .keyword_return => {
             std.debug.print("keyword_return\n", .{});
