@@ -25,7 +25,10 @@ pub fn main() !void {
             std.debug.print("Error: Se necesita un archivo\n", .{});
             return;
         }
-        build_cmd.compile(args[2]) catch return;
+        build_cmd.compile(args[2]) catch |err| {
+            std.debug.print("Error al compilar: {any}\n", .{err});
+            return;
+        };
     } else if (std.mem.eql(u8, command, "run")) {
         if (args.len < 3) {
             std.debug.print("Error: Se necesita un archivo\n", .{});
