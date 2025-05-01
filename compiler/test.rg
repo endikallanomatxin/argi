@@ -1,12 +1,13 @@
 main := {
+    -- Separate declaration and assignment is implemented
     a :: Int
     a = 12
 
-    b :: Int
-    b = 32
+    -- Combined declaration and assignment also works
+    b ::= 32
 
-    c :: Int
-    c = a + b
+    -- Declaration of a constant from an expression also works
+    c := a + b
 
     return c
 }

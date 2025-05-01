@@ -4,6 +4,9 @@ pub const Token = union(enum) {
     eof: struct {},
     new_line: struct {},
 
+    // Comments
+    comment: []const u8,
+
     // Names
     identifier: []const u8,
 
@@ -80,6 +83,17 @@ pub const Lexer = struct {
 
         if (std.ascii.isWhitespace(c)) {
             self.index += 1;
+            return;
+        }
+
+        // Comments
+        if (c == '-' and self.index + 1 < self.source.len and self.source[self.index + 1] == '-') {
+            const start = self.index;
+            while (self.index < self.source.len and self.source[self.index] != '\n') {
+                self.index += 1;
+            }
+            const comment = self.source[start..self.index];
+            try self.tokens.append(Token{ .comment = comment });
             return;
         }
 
@@ -213,6 +227,9 @@ pub fn printToken(token: Token) void {
         },
         .new_line => {
             std.debug.print("new_line\n", .{});
+        },
+        .comment => |val| {
+            std.debug.print("comment: {s}\n", .{val});
         },
         .identifier => |val| {
             std.debug.print("identifier: {s}\n", .{val});
