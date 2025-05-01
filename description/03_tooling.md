@@ -107,6 +107,18 @@ lib := Library[
 lib|install
 ```
 
+### Kickstarter
+
+```
+argi init app
+```
+
+o
+
+```
+argi init lib
+```
+
 
 ### Targets
 
@@ -134,9 +146,19 @@ main$(
 
 
 
-### REPL
+### Scripting and REPL
+
+Pensar si merece la pena.
 
 > [!BUG]
 > Mezclar compilación AOT con “importar y ejecutar” recuerda al Python-import-time chaos. Decide:
 > O bien los side-effect‐free se compilan a .obj y sólo se ejecuta main.
 > O bien obligas a un guard estilo if __is_run__.
+
+
+Shebang?
+
+```
+#!/usr/bin/env argi
+```
+
