@@ -12,13 +12,20 @@ Nullable<#T : Type> : Type = choice [
 You can get the value inside an option with `.unwrap()`.
 If you unwrap a value that is `None`, the program will panic.
 
+Para evitar que paniquee, se puede usar unwrap_or("Valor alternativo").
+
+
+
 
 You can use `?` to declare a nullable type and to check if it is null.
 
 ```rg
 my_function(input: ?Int = ..null) {
-	if input? { // Do something }
-	// Do something else
+	if input? {
+		// Do something
+	} else {
+		// Do something else
+	}
 }
 ```
 

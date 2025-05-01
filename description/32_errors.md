@@ -35,6 +35,8 @@ An error set type and normal type can be combined with the ! binary operator to 
 `!Int` se convierte en `AnyErrorSet!Int`.
 
 
+#### Unwrapping
+
 The four methods to easily check are `.is_some()`, `is_none()`, `is_ok()`, and `is_error()`.
 You can unpack an Errable with `.unwrap()`.
 
@@ -50,11 +52,50 @@ If you are inside a function that returns an Errable() and you are calling a fun
 
 Para catchear el error, hay un método catch(). Que lo imprime por la terminal, con todo el trace, con colorines por defecto. Te imprime también las variables de input de la función que ha errado (siempre que su serialización sea menor que 1000 chars)
 
+
+#### Trying and catching
+
+A ver si el error es un Errable, se puede hacer simplemente un match con el resultado.
+
+```rg
+x_e = my_func()
+match x_e {
+	..Ok(x) => {
+		// Do something with x
+	}
+	..Error(e) => {
+		// Do something with e
+	}
+}
+```
+
+O con ifs para descartar errores.
+
+```rg
+x_e = my_func()
+if x_e|is(..Error) {
+	return x_e..Error
+}
+x = x_e..Ok
+```
+
+> [!NOTE] x = try expr() catch |err| { ... }
+> Zig tiene una sintaxis un poco más cómoda para hacer esto.
+> Pero básicamente es sintactic sugar para lo mismo. Así que no haciendo falta igual prefiero no usarlo.
+
+
+Eso es lo mismo que esto:
+
+```rg
+x = my_func()!
+```
+
+
+#### Other
+
 >[!QUESTION] Named return arguments
 >Hay que pensar como se declaran named return types dentro del Errable()
 >Que ArgumentList sea un  `#type`. Que Errable() usa para generar el struct Success.?
-
-
 
 
 ### Panic
