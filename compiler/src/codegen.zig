@@ -153,11 +153,23 @@ pub const CodeGenerator = struct {
         // Creamos la función en el módulo
         const func = c.LLVMAddFunction(self.module, c_name.ptr, fn_type);
 
+        try self.symbol_table.put(
+            decl.name,
+            Symbol{
+                .cname = c_name,
+                .mutability = parser.Mutability.Const,
+                .type_ref = fn_type,
+                .ref = func,
+            },
+        );
+
         // Creamos un bloque básico "entry"
         const entryBB = c.LLVMAppendBasicBlock(func, "entry");
         // Guardamos la posición previa del builder
         const oldBlock = c.LLVMGetInsertBlock(self.builder);
+        const oldSymbolTable = self.symbol_table;
 
+        self.symbol_table = std.StringHashMap(Symbol).init(self.allocator.*);
         // Posicionamos el builder al final de "entry"
         c.LLVMPositionBuilderAtEnd(self.builder, entryBB);
 
@@ -167,6 +179,9 @@ pub const CodeGenerator = struct {
         } else {
             return Error.ExpressionNotFound;
         }
+
+        self.symbol_table.deinit();
+        self.symbol_table = oldSymbolTable;
 
         // Restauramos la posición original del builder
         if (oldBlock) |ob| {
