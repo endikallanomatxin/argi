@@ -36,13 +36,6 @@ pub fn inferTypes(
         switch (nodePtr.*) {
             // Declaraciones: si no tienen tipo, tomamos el tipo de su inicializador
             parser.ASTNode.declaration => |declPtr| {
-                if (declPtr.isFunction()) {
-                    // Si lo deseas, márcalo explícitamente:
-                    declPtr.*.type = parser.Type.Function;
-                    _ = try varTypes.put(declPtr.*.name, parser.Type.Function);
-                    continue; // ← muy importante
-                }
-
                 if (declPtr.*.type == null) {
                     if (declPtr.*.value) |v| {
                         const inferred = try computeExprType(v, &literalTypes, &varTypes);
