@@ -31,7 +31,7 @@ ArenaAllocator : Type = struct [
     ---
 ]
 
-init(#t:==ArenaAllocator, child: Allocator = default) : ArenaAllocator {
+init(#t:==ArenaAllocator, child: Allocator = default) := ArenaAllocator {
     return ArenaAllocator{ ._child=child, .allocations=[], .index=0 }
 }
 
@@ -42,19 +42,19 @@ deinit(a: $&ArenaAllocator) {
     }
 }
 
-alloc(a: $&ArenaAllocator, size: Int, alignment: Alignment) : &Byte!HeapAllocationError {
+alloc(a: $&ArenaAllocator, size: Int, alignment: Alignment) := &Byte!HeapAllocationError {
     // 1) Si cabe en el último allocation, ajustar index y devolver ptr
     // 2) Si no, pedir un allocation nuevo via a._child|alloc(...)
     // 3) Guardar en a.allocations y resetear a.index
     …
 }
 
-resize(a: $&ArenaAllocator, ptr: &Byte, new_size: Int) : Bool {
+resize(a: $&ArenaAllocator, ptr: &Byte, new_size: Int) := Bool {
     // Sólo si `ptr` es la última asignación, podemos ajustar `index`
     …
 }
 
-dealloc(a: $&ArenaAllocator, ptr: &Byte) !HeapAllocationError {
+dealloc(a: $&ArenaAllocator, ptr: &Byte) =  !HeapAllocationError {
     // No op
 }
 
