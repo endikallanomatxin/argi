@@ -7,11 +7,11 @@ alloc(pa: $&PageAllocator, size: Int, alignment: Alignment) := &Byte!HeapAllocat
     return os.mmap(aligned_size)
 }
 
-resize(pa: $&PageAllocator, ptr: &Byte, new_size: Int) : Bool {
+resize(pa: $&PageAllocator, ptr: &Byte, new_size: Int) := Bool {
     return false  // no soportado
 }
 
-dealloc(pa: $&PageAllocator, ptr: &Byte) !HeapDeallocationError {
+dealloc(pa: $&PageAllocator, ptr: &Byte) := !HeapDeallocationError {
     os.munmap(ptr)
 }
 
