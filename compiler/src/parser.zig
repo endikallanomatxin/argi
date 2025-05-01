@@ -266,6 +266,10 @@ pub const Parser = struct {
                 Token.eof => true,
                 else => false,
             },
+            Token.comment => switch (expected) {
+                Token.comment => true,
+                else => false,
+            },
             Token.new_line => switch (expected) {
                 Token.new_line => true,
                 else => false,
@@ -320,14 +324,18 @@ pub const Parser = struct {
         return;
     }
 
-    fn ignoreNewLines(self: *Parser) void {
-        while (self.tokenIs(Token.new_line)) {
-            self.advance();
+    fn ignoreNewLinesAndComments(self: *Parser) void {
+        while (self.index < self.tokens.len) {
+            const tok = self.current();
+            if (tok == Token.new_line or tok == Token.comment) {
+                self.advance();
+            } else {
+                break;
+            }
         }
     }
 
     fn parseIdentifier(self: *Parser) ![]const u8 {
-        self.ignoreNewLines();
         const tok = self.current();
         return switch (tok) {
             Token.identifier => |name| {
@@ -490,19 +498,19 @@ pub const Parser = struct {
     fn parseSentences(self: *Parser) !std.ArrayList(*ASTNode) {
         var ast = std.ArrayList(*ASTNode).init(self.allocator.*);
         while (self.index < self.tokens.len and !self.tokenIs(Token.eof) and !self.tokenIs(Token.close_brace)) {
+            std.debug.print("Parsing sentence...\n", .{});
+            self.ignoreNewLinesAndComments();
             switch (self.current()) {
                 Token.keyword_return => {
                     const retNode = try self.parseReturn();
                     try ast.append(retNode);
-                },
-                Token.new_line => {
-                    self.advance();
                 },
                 else => {
                     const declNode = try self.parseDeclarationOrAssignment();
                     try ast.append(declNode);
                 },
             }
+            self.ignoreNewLinesAndComments();
         }
         return ast;
     }
