@@ -498,7 +498,6 @@ pub const Parser = struct {
     fn parseSentences(self: *Parser) !std.ArrayList(*ASTNode) {
         var ast = std.ArrayList(*ASTNode).init(self.allocator.*);
         while (self.index < self.tokens.len and !self.tokenIs(Token.eof) and !self.tokenIs(Token.close_brace)) {
-            std.debug.print("Parsing sentence...\n", .{});
             self.ignoreNewLinesAndComments();
             switch (self.current()) {
                 Token.keyword_return => {
