@@ -11,22 +11,17 @@ p = &x
 Para desreferenciar un puntero:
 
 ```
-x = @p
-
--- o
-
-&x = p
-
--- Que es syntactic sugar para lo anterior y se usa al pasar argumentos a funciones.
+x = p&
 ```
 
 Su tipo es:
 
 ```
-p: &int  -- que en realidad es algo como pointer<int>
+p: &Int
 ```
 
 No puede ser nulo. si se quiere hacer nulo, usar un nullable: `?&int`.
+
 
 No se puede hacer aritmética con punteros.
 Si quieres hacerlo, tienes que convertirlo en un tipo numérico, hacer la aritmética y luego volverlo a convertir en un puntero. Es suficientemente incómodo como para no hacerlo sin querer, te obliga a ser explícito para cagarla.

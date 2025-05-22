@@ -1,5 +1,8 @@
 # Dev tools
 
+Copiar cargo de rust, go, uv de python...
+
+
 ## Build /Run System: Compiler / Interpreter
 
 Usamos LLVM.
@@ -161,4 +164,20 @@ Shebang?
 ```
 #!/usr/bin/env argi
 ```
+
+
+## Packages
+
+```bash
+argi add <package>
+```
+
+```bash
+argi remove <package>
+```
+
+Se descargan todos en un entorno global. No se hacen entornos virtuales. Como NIX y como go.
+
+En el root del proyecto se tiene que guardar lo que iria en go.mod y go.sum
+
 

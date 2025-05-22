@@ -92,21 +92,8 @@ $&var -- mutable pointer (s is for "side effect")
 La sintaxis básica para pasar punteros 
 
 ```
-funcion_que_recibe_puntero(p_datos: &Map<String,Int>) := {
-	-- Aquí se usa: p_datos
-	-- Es un puntero
-	...
-}
-
-funcion_que_recibe_puntero(&datos)
-```
-
-Para hacer la de-referencia automática, se hace así:
-
-```
-funcion_que_lee(&datos: Map<String,Int>) := {
-	-- Aquí se usa: datos
-	-- Es un map
+funcion_que_lee(datos: &Map<String,Int>) := {
+	-- Usamos datos& para desreferenciar al usarlo.
 	...
 }
 
@@ -116,56 +103,19 @@ funcion_que_lee(&datos)
 Pero no deja mutar lo que hay al otro lado del puntero. Si se quiere mutar el valor hay que pasar con un indicador de que es una referencia mutable:
 
 ```
-funcion_que_escribe($&datos: Map<String,Int>) := {
-	-- Aquí se usa: datos
-	-- Es un map
+funcion_que_escribe(datos: $&Map<String,Int>) := {
+	-- Usamos datos& para desreferenciar al usarlo.
+	-- Pudiendo modificar el valor al que apunta.
 	...
 }
 
 funcion_que_escribe($&datos)
 ```
 
-Hacer esto bien hace que no haga falta decir si las funciones son puras o tienen side effects.
-
-
-```
-funcion(
-
-  -- CONST DEEP COPY
-  a : Int
-  -- Solo tiene sentido para pequeños primitivos.
-  -- El compilador te permitirá ponerlo para otros tipos,
-  -- pero te advertirá del despilfarro.
-  -- Se te recomendará usar un puntero &.
-
-
-  -- VAR DEEP COPY
-  b :: Int
-  -- Para tipos pequeños, cuando se quieren modificar.
-  -- Para tipos más grandes, cuando se quiere modificar una copia del original.
-
-
-  -- CONST READ-ONLY POINTER
-  &c : Matrix
-  -- Es la más habitual para tipos grandes cuando no se quiere modificar el original.
-
-
-  -- VAR READ-ONLY POINTER
-  &d :: Matrix
-  -- NO PERMITIDO
-
-
-  -- CONST MUTABLE POINTER
-  $&e : Matrix,
-  -- NO TIENE SENTIDO. NO PERMITIDO.
-
-
-  -- VAR MUTABLE POINTER
-  $&f :: Matrix
-  -- Para cuando se quiere modificar el original in-place.
-
-)
-```
+> [!BUG] Acabo de eliminar la sintaxis de dereferencia en los argumentos. Actualizar el resto del código.
+> Valorar si merece la pena que nuestro lenguaje hafa desreferencia automática al acceder a campos de un puntero.
+> Odin y go lo hacen.
+> Hace menos tedioso refactorizar, pero esconde lo que está pasando.
 
 
 #### Side effects
@@ -202,13 +152,24 @@ query_user($&db_conn: DbConnection, user_id: Int) := User? {
 
 ##### Closures
 
-Cuando una función accede a variables de un scope exterior, tiene que indicarlo con un `!`.
+
+Veo distintas formas de closures posibles:
+
+- Uso de variables de un scope exterior.
+
+	- Por valor, no problem. Se captura el dato en la función. No requiere indicación de side-effect.
+
+	- Por referencia, probablemente lo mismo.
+
+	- Por referencia mutable, REQUIERE INDICACIÓN DE SIDE EFFECT.
+
+- Reasignación de variables de un scope exterior. REQUIERE INDICACIÓN DE SIDE EFFECT.
 
 ```
 variable := 4
 
 contador$ := {
-	variable++
+	variable += 1
 }
 
 contador$()  -- variable = 5
@@ -216,13 +177,9 @@ contador$()  -- variable = 5
 
 Así queda claro (y con una sintaxis similar a la de los argumentos) si una función tiene side effects.
 
-Cuando se acceden constantes o definiciones de funciones exteriores, no hace falta indicarlo, es solo para variables. Así no es problema usar librerías, por ejemplo.
-
-_(En realidad, me gustaría prohibir las closures (me parecen un poco antipattern). Pero bueno, con identificarlas claramente igual vale.)_
-
-
->[!TODO] Si dentro capturas por referencia de solo lectura? Eso habría que indicarlo?
-> No, porque no es un side effect. Pero si lo haces, lo haces con un `&`.
+> [!BUG] Pensar si realmente queremos permitir closures con side effects.
+> Haskell, por ejemplo, no lo permite.
+> Y en realidad me parece bastatante anti-pattern.
 
 
 ##### The case for printing
@@ -291,6 +248,28 @@ Da error cuando hay ambigüedad en especificidad, pero se encarga el compilador 
 
 En go, no se puede definir métodos de struct de otros paquetes. Eso es una mierda!
 
+#### Multiple dispatch for default implementations
+
+Se puede usar para hacer implementaciones por defecto para cualquier struct por ejemplo (consiguiendo funcionalidades como los derive macros de rust)
+
+```rg
+to(&s: Struct, t: type == String) := (string: String) {
+	string = s.symbol_name + "["
+	for field in s.fields
+		string += field.name + ": " + field.value + ", "
+	string += "]"
+	return string
+}
+```
+
+> [!IDEA]
+> Para que algo sea hasheable todos sus campos tienen que ser hasheables. Si
+> esa verificación en una comptime function se puede usar para el lsp.
+> Igual se podría pensar como algo similar a una interface, pero que en lugar
+> de checkear que cuadra con el input de una función, lo que se puede hacer es
+> correr algo en comptime que depende de lo que devuelva cumpla o no la
+> interface.
+
 
 ### Operator overloading
 
@@ -330,5 +309,14 @@ Si se pasa por referencia:
 ```
 my_var|my_func(&_)
 my_var|my_func(&_, second_arg)
+```
+
+
+### Silently ignoring return values
+
+As in zig, you cannot silently ignore return values. You have to use `_` to ignore them.
+
+```zig
+_ = my_function()
 ```
 

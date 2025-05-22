@@ -202,11 +202,20 @@ for 1..10 spawn_thread({
 > })
 > ```
 
+#### RW Lock
 
-semaphores?
+En una charla de zig sobre concurrencia (https://www.youtube.com/watch?v=x1N9JPPPC18&list=WL&index=3) dice que es mejor usar RW locks que mutexes, porque los lectores solo bloquean a los escritores, y no a otros lectores.
 
 
-#### Wait groups
+#### Semaphores
+
+
+#### Lock and unlock
+
+Se podría hacer igual que con init y deinit y alloc y dealloc. Que todo lo que hagas lock tengas que hacer unlock.
+
+
+### Wait groups
 
 ```
 wg := lcr | new_waitgroup()  -- of type WaitGroupHandler
