@@ -29,4 +29,16 @@ my_function(input: ?Int = ..null) {
 }
 ```
 
+### Orelse
+
+En zig se puede hacer:
+
+```zig
+const display = c.XOpenDisplay("") orelse {
+	std.log.err("Could not open display");
+	return error.XOpenDisplayFailed;
+};
+```
+
+Pensar si queremos algo asi.
 

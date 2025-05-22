@@ -18,8 +18,8 @@ Nestable comments?
 ## Variable and constant declaration
 
 ```
-PI          : Float = 3.141592653  -- Declares a constant
-my_variable ::  Int   = 42           -- Declares a variable
+PI          :  Float = 3.141592653  -- Declares a constant
+my_variable :: Int   = 42           -- Declares a variable
 ```
 
 The declaration syntax has two delimeters:
@@ -36,7 +36,22 @@ The declaration syntax has two delimeters:
 > - Reassign its name
 > - Reassign its fields
 > - Create mutable pointers to it
-> Con eso debería valer, porque las funciones que lo modifiquen necesitan un puntero mutable a la struct.
+> Con eso debería valer, porque las funciones que lo modifiquen necesitan un
+> puntero mutable a la struct.
+
+> [!CHECK]
+> La sintaxis que usan odin y jai está bastante bien, porque `::` se interpreta
+> como promesas que le haces al compilador y cuando ves `=` ves que lo que
+> estás haciendo es una asignación, que es una instrucción. Esa diferencia me
+> gusta.
+>
+> Igual tengo que explorar como de distinto es:
+> - Declarar una función en top level, versus una variable que contiene una función
+> - Declarar una constante como promesa al compilador, versus como una variable
+>   normal que no se muta
+> Si esas cosas son muy diferentes, entonces la sintaxis de odin y jai me gusta
+> más.
+
 
 
 ## Code blocks
@@ -53,7 +68,7 @@ c = {a + b}^2
 > Si haces return implícito incluso no poniendo tipo de retorno,
 > entonces no puedes usarlo para fors, ifs y demás porque siempre retornarán algo.
 > Igual puede hacerse que si lo último es una expresión se retorna, pero si es una declaración no?
-> Tiene sentido que se pueda retornar algo, sin haber puesto que retorna algo?
+> Pero tiene sentido que se pueda retornar algo, sin haber puesto que retorna algo? Eso fastidia la sintaxis de las funciones.
 
 Every code block has its own scope.
 
