@@ -43,8 +43,35 @@ my_function
 }
 ```
 
+## Pipe operator
 
-#### Argument passing: By value and deep copied
+Llama a la función de la derecha con los argumentos devueltos por la función de la izquierda.
+A veces hay que usar currying para cuadrar argumentos.
+
+```
+my_var|my_func
+my_var|my_func(_, other_arg)
+my_var|my_func(_1, other_arg, _2)  -- Multiple piped arguments
+```
+
+> [!IDEA]
+> Si los output arguments son named, se pueden usar en lugar de los _1, _2...
+> Pensar en como hacerlo para que no colisione con los nombres de las variables.
+
+Si se pasa por referencia:
+
+```
+my_var|my_func(&_)
+my_var|my_func(&_, second_arg)
+```
+
+Permite emular la comodidad de los objetos.
+
+> [!FIX]
+> Si la función que opera sobre un "objeto" proviene me un módulo, habría que mencionar el módulo. Es un poco tedioso.
+
+
+## Argument passing: By value and deep copied
 
 **Everything is passed by value** (as in C, zig, odin...)
 
@@ -112,7 +139,7 @@ funcion_que_escribe(datos: $&Map<String,Int>) := {
 funcion_que_escribe($&datos)
 ```
 
-> [!BUG] Acabo de eliminar la sintaxis de dereferencia en los argumentos. Actualizar el resto del código.
+> [!FIX] Acabo de eliminar la sintaxis de dereferencia en los argumentos. Actualizar el resto del código.
 > Valorar si merece la pena que nuestro lenguaje hafa desreferencia automática al acceder a campos de un puntero.
 > Odin y go lo hacen.
 > Hace menos tedioso refactorizar, pero esconde lo que está pasando.
@@ -150,8 +177,8 @@ query_user($&db_conn: DbConnection, user_id: Int) := User? {
 }
 ```
 
-##### Closures
 
+##### Closures
 
 Veo distintas formas de closures posibles:
 
@@ -177,16 +204,206 @@ contador$()  -- variable = 5
 
 Así queda claro (y con una sintaxis similar a la de los argumentos) si una función tiene side effects.
 
-> [!BUG] Pensar si realmente queremos permitir closures con side effects.
+> [!FIX] Pensar si realmente queremos permitir closures con side effects.
 > Haskell, por ejemplo, no lo permite.
 > Y en realidad me parece bastatante anti-pattern.
 
 
+##### Capabilities
+
+Capabilities define what a function can do, and they have to be explicitly passed to the function.
+All of them are passed to the main function, and can be passed to other functions as needed.
+
+```
+main(system: System) := {
+	...
+}
+```
+
+System is a struct that contains all the capabilities of the system.
+
+```
+System : struct [
+  terminal : $& Terminal,
+  args     : $& Arguments,
+  env      : $& Env,
+  fs       : $& FileSystem,
+  net      : $& Network,
+  process  : $& ProcessManager,
+  time     : $& time.Clock,
+  rng      : $& random.Rng,
+]
+
+```
+
+Examples of use:
+
+```rg
+main(system: $&System) := {
+	-- Acceso a la consola
+	system.terminal|print($&_, "Hello, world")
+
+	-- Acceso a los argumentos de la línea de comandos
+        argsmap := args|parse
+        if argsmap|has(_, "name") {
+            greet_user(argsmap["name"], $&system.terminal.stdout)
+        }
+
+	-- Acceso a las variables de entorno
+	env_var = system.env|get("MY_ENV_VAR")
+
+	-- Acceso al sistema de archivos
+	file = system.fs|open_file(_,"my_file.txt", "r")
+	content = file|read_all()
+
+	-- Acceso a la red
+	response = system.net|http_get("https://example.com")
+
+	-- Acceso al proceso
+	system.process|run_command("ls -la")
+
+	-- Acceso al reloj
+	current_time = system.time|now()
+
+	-- Generación de números aleatorios
+	random_number = system.rng|next_int(1, 100)
+}
+```
+
+Capabilities are implemented as abstract types. Sometimes they can be empty structs, in which case they are ignored by the compiler when generating machine code.
+No se si es mejor abstract o structs.
+
+```rg
+Terminal : Type = [
+    .stdin  :  & io.InputStream,
+    .stdout : $& io.OutputStream,
+    .stderr : $& io.OutputStream,
+]
+-- o
+Terminal : Abstract = [
+    print(&_, message: String) -> Void
+    read_line(&_) -> String?
+    read_char(&_) -> Char?
+]
+```
+
+```rg
+Clock : Abstract = [
+    now(&_) : TimeStamp
+    sleep(&_, duration: Duration) -> Void
+    sleep_until(&_, ts: TimeStamp) -> Void
+]
+```
+
+```rg
+Rng : Abstract = [
+    next_int(min: Int, max: Int) -> Int
+    next_bytes(n: Int)           -> ByteSlice
+]
+```
+
+
+> [!IDEA]
+> Podría haber nombres de resevados, que si los usas automáticamente se pone el
+> input en todas las llamadas a funciones hasta llegar a main.
+> fs, in, out, clock, rng, logger
+> Así es cómodo meter un print por ejemplo.
+> Si guardas y algunas de estas no usaste, se borra del input.
+
+
+> Una buena guía para diseñar es pensar en todas las cosas para las que en
+> Haskell hay que usar el monad `IO` y pensar en como se pueden hacer con side
+> effects explícitos.
+>
+> - STDIOE:
+>    - Lectura y escritura en consola:
+>        - getLine :: IO String
+>        - getChar :: IO Char
+>        - putStrLn :: String -> IO ()
+>        - putChar :: Char -> IO ()
+>        - print :: Show a => a -> IO ()
+>    - Control del terminal:
+>        - hSetBuffering :: Handle -> BufferMode -> IO ()
+>        - hSetEcho :: Handle -> Bool -> IO ()
+>        - hFlush :: Handle -> IO ()
+>
+> - File system:
+>    - Archivos (System.IO):
+>       - openFile :: FilePath -> IOMode -> IO Handle
+>       - hGetContents :: Handle -> IO String
+>       - hClose :: Handle -> IO ()
+>       - hFlush :: Handle -> IO ()
+>       - readFile :: FilePath -> IO String
+>       - writeFile :: FilePath -> String -> IO ()
+>    - Directorios (System.Directory):
+>       - getCurrentDirectory :: IO FilePath
+>       - setCurrentDirectory :: FilePath -> IO ()
+>       - listDirectory :: FilePath -> IO [FilePath]
+>       - createDirectory :: FilePath -> IO ()
+>
+> - Parámetros de invocación:
+>    - getArgs :: IO [String]
+>    - getProgName :: IO String
+>
+> - Variables de entorno:
+>    - getEnv :: String -> IO String
+>    - lookupEnv :: String -> IO (Maybe String)
+>    - getEnvironment :: IO [(String, String)]
+>
+> - Processes:
+>    - callProcess :: FilePath -> [String] -> IO ()
+>    - readProcess :: FilePath -> [String] -> String -> IO String
+>    - createProcess :: CreateProcess -> IO (Maybe ProcessHandle)
+>    - terminateProcess :: ProcessHandle -> IO ()
+>
+> - Red y sockets:
+>   - socket :: Family -> SocketType -> ProtocolNumber -> IO Socket
+>   - connect :: Socket -> SockAddr -> IO ()
+>   - bind :: Socket -> SockAddr -> IO ()
+>   - listen :: Socket -> Int -> IO ()
+>   - accept :: Socket -> IO (Socket, SockAddr)
+>   - recv :: Socket -> Int -> IO ByteString
+>   - send :: Socket -> ByteString -> IO Int
+>
+> - Tiempo y temporización:
+>   - getCurrentTime :: IO UTCTime
+>   - getZonedTime :: IO ZonedTime
+>   - threadDelay :: Int -> IO () -- microsegundos
+>
+> - Aleatoriedad:
+>   - randomRIO :: Random a => (a,a) -> IO a
+>   - getStdRandom :: (StdGen -> (a,StdGen)) -> IO a
+>   - newStdGen :: IO StdGen
+>
+> - Concurrencia y sincronización:
+>   - forkIO :: IO () -> IO ThreadId
+>   - killThread :: ThreadId -> IO ()
+>   - newMVar :: a -> IO (MVar a)
+>   - takeMVar :: MVar a -> IO a
+>   - putMVar :: MVar a -> a -> IO ()
+>   - newIORef :: a -> IO (IORef a)
+>   - readIORef :: IORef a -> IO a
+>   - writeIORef :: IORef a -> a -> IO ()
+>
+> - Excepciones y manejo de errores:
+>   - throwIO :: Exception e => e -> IO a
+>   - catch :: IO a -> (e -> IO a) -> IO a
+>   - try :: IO a -> IO (Either e a)
+>
+> - Interoperabilidad y FFI:
+>   - foreign import ccall "func" c_func :: … -> IO …
+>   - Gestión de memoria externa:
+>     - mallocForeignPtrBytes :: Int -> IO (ForeignPtr a)
+>
+> - Otros sistemas y extensiones POSIX:
+>   - getFileStatus :: FilePath -> IO FileStatus
+>   - changeOwner :: FilePath -> UserID -> GroupID -> IO ()
+>   - forkProcess :: IO () -> IO ProcessID
+
+
+
 ##### The case for printing
 
-Printing to the terminal is writing to a file, so it is a side effect, and should be marked as such.
-
-So, as with the database, we can do dependency injecion, and use a file handle to print to the terminal or to a file.
 
 ```rg
 import io
@@ -207,33 +424,11 @@ do_something_pure(a: Int, $&log: Buffer? = null) := {
 }
 ```
 
-Una cosa buena es que hace fácil hacer todo el log a un archivo de logueo. Y deja claro donde ocurre el printing.
-
-However, this can be quite tedious, and it is not always necessary to have this level of control over the output, specially when debugging.
-
-If we just did something like:
-
-```rg
-print$("Hello, world")
-```
-
-That would be a side effect, and would require the side effect to be marked. And it would be propagated to the functions that call it. That would make the mark unhelpful.
-
-For that, we have a special keyword for ignoring side effects:
-
-```rg
-ignore print$("Hello, world")
-```
-(también podría ser disregard o dismiss)
 
 
-El compilador podría decirte al hacer audit, si ve que hay muchas funciones con side effects, entonces te avisa de que hay un problema de diseño. Y que le eches un ojo a lo que es la dependency injection.
+###### The case for halting the program
 
-(Hacer el printf debuggin un poco más complicado en realidad hará que la gente use más asserts. Pero el assert, a donde imprime?)
-
-> Assert debería ser una función pura? Yo creo que sí, porque tras modificar el estado crashea.
-> Igual no queremos que se pueda crashear?
-
+Halting is a capability.
 
 
 ### Dispatch
@@ -290,25 +485,6 @@ Una buena forma sería una sintaxis cómoda de hacer currying.
 
 ```
 mux|HandleFunc("pattern", my_function(_a, _b, database, templates))
-```
-
-
-### Pipe operator
-
-Llama a la función de la derecha con los argumentos devueltos por la función de la izquierda.
-A veces hay que usar currying para cuadrar argumentos.
-
-```
-my_var|my_func
-my_var|my_func(_, other_arg)
-my_var|my_func(_1, other_arg, _2)  -- Multiple piped arguments
-```
-
-Si se pasa por referencia:
-
-```
-my_var|my_func(&_)
-my_var|my_func(&_, second_arg)
 ```
 
 

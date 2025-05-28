@@ -12,16 +12,32 @@
 	No es necesario entender todos los detalles para empezar a usarlo, pero el propio compilador te guiará a aprenderlos según vayas buscando más control. Abstracción clara, dispuesta a explicarse a sí misma. de fácil descubrimiento.
 
 
-- SIMPLE
-
-	Not a lot of features.
-
-	Not a lot of ways to do the same thing.
-
-
 - CONSISTENT
 
-	Clear syntax. Every symbol represents only one thing.
+	Clear syntax that minimizes symbol reuse.
+
+
+- OPINIONATED
+
+	There is always one obvious way to do something.
+	The canonical way of doing things will sometimes even be imposed by the
+	compiler (naming conventions, reserved names, code formatting...).
+
+
+- EXPRESSIVE
+
+	Intent of the developer is clear.
+
+
+- SIMPLE BUT NOT TOO MUCH
+
+	As few features as possible, without sacrificing expressiveness.
+
+	> Having too few features can sometimes make the language less expressive.
+	>
+	> For example:
+	> - generics in zig, are stretching too far the comptime thing.
+	> - the lack of generics in go, made it hard to write reusable code.
 
 
 - GREAT TOOLING
@@ -32,16 +48,16 @@
 
 # Key characteristics
 
-- Multiple dispatch
+- Functions have multiple dispatch.
 
-- Side effects are always indicated
+- Side effects are always indicated.
+  (Capability based programming, dependency inyection).
 
-- Errable and Nullable types
+- Has Errable and Nullable types.
 
-- No objects
+- No objects. Structs.
 
-- No inheritance, but abstract types
+- No inheritance. Interface-like abstract types.
 
-- Has generics
-
+- Has generics.
 

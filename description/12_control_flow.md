@@ -34,6 +34,28 @@ match x [
 Rust creo que hace esto muy bien.
 Gleam también.
 
+> [!CHECK]
+>
+> En JAI un switch se hace como algo así:
+> 
+> ```
+> if bar == {
+>     case 1 {
+> 		...
+> 	}
+>     case 2 {
+> 		...
+> 	}
+>     case 3 {
+> 		...
+> 	}
+> }
+> ```
+> 
+> Eso es como multiplexar una == y me parece muy buena idea, es más potente todavía que un match.
+> 
+> Darle una vuelta.
+
 
 ## Loops
 
