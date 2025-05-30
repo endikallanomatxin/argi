@@ -8,6 +8,7 @@
 >	- Yew - frontend
 >	- Dioxus - frontend
 > Elm
+> Fresh2
 > grecha.js
 
 

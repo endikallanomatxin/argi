@@ -45,8 +45,8 @@ my_function
 
 ## Pipe operator
 
-Llama a la función de la derecha con los argumentos devueltos por la función de la izquierda.
-A veces hay que usar currying para cuadrar argumentos.
+Llama a la función de la derecha con los argumentos devueltos por la función de
+la izquierda. A veces hay que usar currying para cuadrar argumentos.
 
 ```
 my_var|my_func
@@ -67,45 +67,55 @@ my_var|my_func(&_, second_arg)
 
 Permite emular la comodidad de los objetos.
 
-> [!FIX]
-> Si la función que opera sobre un "objeto" proviene me un módulo, habría que mencionar el módulo. Es un poco tedioso.
+> [!FIX] Si la función que opera sobre un "objeto" proviene me un módulo,
+> habría que mencionar el módulo. Es un poco tedioso.
 
 
 ## Argument passing: By value and deep copied
 
 **Everything is passed by value** (as in C, zig, odin...)
 
-Es problema con pasar por valor, es que los tipos que contienen memoria alojada en el heap (por ejemplo un map de zig) se van a copiar los estructs que los modelizan con sus punteros, pero no se va a duplicar la memoria referenciada por sus punteros.
+Es problema con pasar por valor, es que los tipos que contienen memoria alojada
+en el heap (por ejemplo un map de zig) se van a copiar los estructs que los
+modelizan con sus punteros, pero no se va a duplicar la memoria referenciada
+por sus punteros.
 
 ```
-m1 = Map|init()
+m1 = Map|init
 m2 = m1
 m2.put("key", "value") -- Cambia el original
 
-m1.deinit()
-m2.deinit() -- Double free error
+m1|deinit($&_)
+m2|deinit($&_) -- Double free error
 ```
 
 Esto:
 - es bastante lío sobre todo para los nuevos.
-- obliga a conocer la implementación para poder usar el tipo adecuadamente. (por ejemplo tienes que sabe si es un struct con punteros a memoria)
+- obliga a conocer la implementación para poder usar el tipo adecuadamente.
+(por ejemplo tienes que sabe si es un struct con punteros a memoria)
 
-Para solucionar esto: Haremos deep_copy por defecto (donde deep_copy es un método que tiene que estar definido para el tipo de variable en cuestión).
+Para solucionar esto: Haremos deep_copy por defecto (donde deep_copy es un
+método que tiene que estar definido para el tipo de variable en cuestión).
 
 ```
-m1 = Map|init()
+m1 = Map|init
 m2 = m1  -- Aquí se hace m2 = m1|deep_copy
 ```
 
 Así todo se comporta como lo que se espera de primitivos.
 
-Algunos tipos (archivos, sockets, dispositivos de hardware, semáfores, GPU buffers...) no tiene sentido definir una deep copy. En estos casos, directamente no se puede pasar por valor, solo con un puntero. Así eres extra-explícito.
+Algunos tipos (archivos, sockets, dispositivos de hardware, semáfores, GPU
+buffers...) no tiene sentido definir una deep copy. En estos casos,
+directamente no se puede pasar por valor, solo con un puntero. Así eres
+extra-explícito.
 
-Gracias a que la copia requiera una implementación explícita, da la oportunidad de gestionarlo adecuadamente.
+Gracias a que la copia requiera una implementación explícita, da la oportunidad
+de gestionarlo adecuadamente.
 
 Uso:
 
-- Si no pones nada. Se llama al método deep_copy() para obtener la variable de entrada.
+- Si no pones nada. Se llama al método deep_copy() para obtener la variable de
+entrada.
 - Si pones ~ se hace una shallow copy y se pasa eso.
 - Si pasas un puntero &, te permite leer.
 - Si pasas un puntero &!, te permite leer y escribir.
@@ -119,19 +129,20 @@ $&var -- mutable pointer (s is for "side effect")
 La sintaxis básica para pasar punteros 
 
 ```
-funcion_que_lee(datos: &Map<String,Int>) := {
-	-- Usamos datos& para desreferenciar al usarlo.
+funcion_que_lee(datos_p: &Map<String,Int>) := {
+	-- Usamos datos_p& para desreferenciar al usarlo.
 	...
 }
 
 funcion_que_lee(&datos)
 ```
 
-Pero no deja mutar lo que hay al otro lado del puntero. Si se quiere mutar el valor hay que pasar con un indicador de que es una referencia mutable:
+Pero no deja mutar lo que hay al otro lado del puntero. Si se quiere mutar el
+valor hay que pasar con un indicador de que es una referencia mutable:
 
 ```
 funcion_que_escribe(datos: $&Map<String,Int>) := {
-	-- Usamos datos& para desreferenciar al usarlo.
+	-- Usamos datos_p& para desreferenciar al usarlo.
 	-- Pudiendo modificar el valor al que apunta.
 	...
 }
@@ -139,26 +150,54 @@ funcion_que_escribe(datos: $&Map<String,Int>) := {
 funcion_que_escribe($&datos)
 ```
 
-> [!FIX] Acabo de eliminar la sintaxis de dereferencia en los argumentos. Actualizar el resto del código.
-> Valorar si merece la pena que nuestro lenguaje hafa desreferencia automática al acceder a campos de un puntero.
-> Odin y go lo hacen.
-> Hace menos tedioso refactorizar, pero esconde lo que está pasando.
+
+#### Automatic dereferencing syntax
+
+Es habitual que dentro de la función que recibe los punteros, realmente
+querramos tratar el valor al que apunta el puntero como el propio valor.
+
+Para eso, se puede usar la sintaxis de dereferencia automática:
+
+```rg
+funcion_que_lee(datos: &Map<String,Int>&) := {
+	...
+}
+
+funcion_que_escribe($&datos: Map<String,Int>&) := {
+	...
+}
+```
+
+Esto hace que dentro de la función se pueda usar directamente `datos` y que se
+comporte como si hicieras `datos&`.
+
+Siempre que solo se use el valor y no se haga nada con el puntero en sí, el
+compilador te recomendará usar esta sintaxis. Así se garantiza que cuando se
+pasa un puntero a las funciones de dentro, se vea el &datos y el $&datos, y
+quede claro que estás pasando por referencia.
+
+> [!TODO] Actualizar el resto del código a esta sintaxis
 
 
 #### Side effects
 
-If a function has side effects, it requires marking with `$`, and it propagates.
+If a function has side effects, it requires marking with `$`, and it
+propagates.
 
-This allows to understand the effect of a function at a glance, avoiding unexpected side effects. This is in some way a capability-based programming style.
+This allows to understand the effect of a function at a glance, avoiding
+unexpected side effects. This is in some way a capability-based programming
+style.
 
-It encourages the use of pure functions, which are easier to reason about and test; and dependency injection, which allows for more explicit, flexible and modular code.
+It encourages the use of pure functions, which are easier to reason about and
+test; and dependency injection, which allows for more explicit, flexible and
+modular code.
 
 For example, accessing a database:
 
 ```rg
 import db
 
-main$ := {
+main(system: $&System&)->StatusCode := {
 	-- Creamos una conexión a la base de datos
 	db_conn = db.open_database("my_db")
 
@@ -184,13 +223,15 @@ Veo distintas formas de closures posibles:
 
 - Uso de variables de un scope exterior.
 
-	- Por valor, no problem. Se captura el dato en la función. No requiere indicación de side-effect.
+	- Por valor, no problem. Se captura el dato en la función. No requiere
+	indicación de side-effect.
 
 	- Por referencia, probablemente lo mismo.
 
 	- Por referencia mutable, REQUIERE INDICACIÓN DE SIDE EFFECT.
 
-- Reasignación de variables de un scope exterior. REQUIERE INDICACIÓN DE SIDE EFFECT.
+- Reasignación de variables de un scope exterior. REQUIERE INDICACIÓN DE SIDE
+EFFECT.
 
 ```
 variable := 4
@@ -202,36 +243,40 @@ contador$ := {
 contador$()  -- variable = 5
 ```
 
-Así queda claro (y con una sintaxis similar a la de los argumentos) si una función tiene side effects.
+Así queda claro (y con una sintaxis similar a la de los argumentos) si una
+función tiene side effects.
 
-> [!FIX] Pensar si realmente queremos permitir closures con side effects.
-> Haskell, por ejemplo, no lo permite.
-> Y en realidad me parece bastatante anti-pattern.
+> [!TODO] Pensar si realmente queremos permitir closures con side effects.
+> Haskell, por ejemplo, no lo permite. Y en realidad me parece bastatante
+> anti-pattern, igual es mejor prohibirlo. Así el lenguaje queda más limpio, y
+> encima $ colorea las funciones.
 
 
 ##### Capabilities
 
-Capabilities define what a function can do, and they have to be explicitly passed to the function.
-All of them are passed to the main function, and can be passed to other functions as needed.
+Capabilities define what a function can do, and they have to be explicitly
+passed to the function. All of them are passed to the main function, and can be
+passed to other functions as needed.
 
 ```
-main(system: System) := {
+main(system: $&System&) := {
 	...
 }
 ```
 
 System is a struct that contains all the capabilities of the system.
+(Inspired by Haskell's `IO` monad)
 
 ```
 System : struct [
   terminal : $& Terminal,
-  args     : $& Arguments,
-  env      : $& Env,
-  fs       : $& FileSystem,
-  net      : $& Network,
-  process  : $& ProcessManager,
-  time     : $& time.Clock,
-  rng      : $& random.Rng,
+  args     :  & Arguments,
+  env_vars : $& EnvironmentVariables,
+  file_sys : $& FileSystem,
+  network  : $& Network,
+  proc_man : $& ProcessManager,
+  clock    : $& time.Clock,
+  rand_gen : $& random.RandomNumberGenerator,
 ]
 
 ```
@@ -239,53 +284,43 @@ System : struct [
 Examples of use:
 
 ```rg
-main(system: $&System) := {
+main(system: $&System&) := {
 	-- Acceso a la consola
 	system.terminal|print($&_, "Hello, world")
 
 	-- Acceso a los argumentos de la línea de comandos
-        argsmap := args|parse
-        if argsmap|has(_, "name") {
+        argsmap := system.args|parse(&_)
+        if argsmap|has($&_, "name") {
             greet_user(argsmap["name"], $&system.terminal.stdout)
         }
 
 	-- Acceso a las variables de entorno
-	env_var = system.env|get("MY_ENV_VAR")
+	env_var = system.env_vars|get("MY_ENV_VAR")
 
 	-- Acceso al sistema de archivos
-	file = system.fs|open_file(_,"my_file.txt", "r")
-	content = file|read_all()
+	file1 = system.file_sys|open_file_for_read(&_,"my_file.txt")
+	content = file1|read_all(&_)
+	file2 = system.file_sys|open_file_for_write(&_,"output.txt")
+	file2|write($&_, content)
 
 	-- Acceso a la red
-	response = system.net|http_get("https://example.com")
+	response = system.network|http_get(&_, "https://example.com")
 
 	-- Acceso al proceso
-	system.process|run_command("ls -la")
+	system.proc_man|run_command(&_, "ls -l")
 
 	-- Acceso al reloj
-	current_time = system.time|now()
+	current_time = system.clock|now(&_)
 
 	-- Generación de números aleatorios
-	random_number = system.rng|next_int(1, 100)
+	system.rand_gen|set_seed($&_, 42)
+	random_number = system.rand_gen|next_int($&_, 1, 100)
 }
 ```
 
-Capabilities are implemented as abstract types. Sometimes they can be empty structs, in which case they are ignored by the compiler when generating machine code.
-No se si es mejor abstract o structs.
-
-```rg
-Terminal : Type = [
-    .stdin  :  & io.InputStream,
-    .stdout : $& io.OutputStream,
-    .stderr : $& io.OutputStream,
-]
--- o
-Terminal : Abstract = [
-    print(&_, message: String) -> Void
-    read_line(&_) -> String?
-    read_char(&_) -> Char?
-]
-```
+Capabilities are implemented as abstract types. Sometimes they can be empty
+structs, in which case they are ignored by the compiler when generating machine
+code. No se si es mejor abstract o structs.
 
 ```rg
 Clock : Abstract = [
@@ -297,8 +332,8 @@ Clock : Abstract = [
 
 ```rg
 Rng : Abstract = [
-    next_int(min: Int, max: Int) -> Int
-    next_bytes(n: Int)           -> ByteSlice
+    next_bytes($&_, size: Int) -> Array<Byte>
+    next_int($&_, min: Int, max: Int) -> Int
 ]
 ```
 
@@ -306,24 +341,14 @@ Rng : Abstract = [
 > [!IDEA]
 > Podría haber nombres de resevados, que si los usas automáticamente se pone el
 > input en todas las llamadas a funciones hasta llegar a main.
-> fs, in, out, clock, rng, logger
+> file_sys, terminal, env_vars, args, network
 > Así es cómodo meter un print por ejemplo.
 > Si guardas y algunas de estas no usaste, se borra del input.
 
 
-> Una buena guía para diseñar es pensar en todas las cosas para las que en
-> Haskell hay que usar el monad `IO` y pensar en como se pueden hacer con side
-> effects explícitos.
->
-> - STDIOE:
->    - Lectura y escritura en consola:
->        - getLine :: IO String
->        - getChar :: IO Char
->        - putStrLn :: String -> IO ()
->        - putChar :: Char -> IO ()
->        - print :: Show a => a -> IO ()
 >    - Control del terminal:
 >        - hSetBuffering :: Handle -> BufferMode -> IO ()
+>          Esta función pe
 >        - hSetEcho :: Handle -> Bool -> IO ()
 >        - hFlush :: Handle -> IO ()
 >
@@ -437,15 +462,19 @@ Multiple dispatch como Julia.
 
 Pero hay que ehacer monomorfización de las funciones en tiempo de compilación.
 
-Te permite funcionamiento similar al del static dispatch por objetos, pero de una forma más flexible.
+Te permite funcionamiento similar al del static dispatch por objetos, pero de
+una forma más flexible.
 
-Da error cuando hay ambigüedad en especificidad, pero se encarga el compilador de evitarlo.
+Da error cuando hay ambigüedad en especificidad, pero se encarga el compilador
+de evitarlo.
 
-En go, no se puede definir métodos de struct de otros paquetes. Eso es una mierda!
+En go, no se puede definir métodos de struct de otros paquetes. Eso es una
+mierda!
 
 #### Multiple dispatch for default implementations
 
-Se puede usar para hacer implementaciones por defecto para cualquier struct por ejemplo (consiguiendo funcionalidades como los derive macros de rust)
+Se puede usar para hacer implementaciones por defecto para cualquier struct por
+ejemplo (consiguiendo funcionalidades como los derive macros de rust)
 
 ```rg
 to(&s: Struct, t: type == String) := (string: String) {
