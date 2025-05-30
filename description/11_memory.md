@@ -20,7 +20,7 @@ Su tipo es:
 p: &Int
 ```
 
-No puede ser nulo. si se quiere hacer nulo, usar un nullable: `?&int`.
+No puede ser nulo. (Si se quiere hacer nulo, usar un nullable: `?&int`. Más adelante hay más sobre esto.)
 
 
 No se puede hacer aritmética con punteros.
@@ -83,7 +83,7 @@ init(
 }
 
 
-deinit := (&hm: Hashmap) {
+deinit(hm: $&Hashmap&) := {
 	hm.allocator|deallocate(hm.data)
 }
 ```
@@ -262,24 +262,63 @@ result :=
 
 
 
-## Alignment
+## Struct memory layout
+
+You can specify:
+- **alignment**: How the struct is aligned in memory.
+- **listing_behavior**: How the fields are listed in memory (AOS or SOA).
+
 
 ```
-MyStruct : Type = [
+MyStruct : Type = struct(
+    alignment: ..RespectOrder
+    listing_behavior: ..SOA
+)[
 	.a : u8
 	.b : u32
 	.c : u16
-]|layout(..Default)
+]
 ```
 
-Donde `layout()` puede tener valores como:
+AOS and SOA, are inspected when creating lists (taken care of in the core library).
 
-- **`default`**: El compilador optimiza para el menor padding posible.
-- **`explicit`**: Respeta el orden de los campos como están declarados.
-- **`packed`**: Minimiza el tamaño eliminando padding (puede penalizar rendimiento). Útil para comunicación.
-- **`aligned(n)`**: Alinea la estructura al límite especificado (`n` bytes).
-- **`c`**: Sigue el layout estándar de C (compatibilidad ABI). Respeta el orden de declaración de los campos en las estructuras y aplica padding únicamente para cumplir los requisitos de alineación.
-- `custom()`. Recibe un struct con una lista de offsets y un size.
+```
+StructListingBehaviour : Type = [
+    =..AOS
+    -- Array of Structures (AOS) layout.
+    -- Each element is a structure, and fields are stored together.
+
+    ..SOA
+    -- Structure of Arrays (SOA) layout.
+    -- Each field is stored in a separate array, optimizing memory access patterns.
+]
+```
+
+Struct layout is something that the compiler takes care of.
+
+```rg
+StructLayout : Type = [
+    =..Optimal
+    -- Compiler optimizes for minimal padding.
+
+    ..RespectOrder
+    -- Respects the order of fields as declared.
+
+    ..Packed
+    -- Minimizes size by removing padding (may penalize performance). Useful for communication.
+
+    ..Aligned(n)
+    -- Aligns the struct to the specified boundary (n bytes).
+
+    ..Custom(offsets: List[Int], size: Int)
+    -- Custom layout with specified offsets and size.
+
+    ..C
+    -- Follows the C standard layout (ABI compatibility). Respects the order of
+    -- field declaration in structures and applies padding only to meet alignment
+    -- requirements.
+]
+```
 
 Herramientas para inspeccionar layout:
 
@@ -307,8 +346,4 @@ El lenguaje debe proporcionar funciones estándar para interactuar con el layout
 - **`size_of`**: Devuelve el tamaño de un tipo.
 - **`offset_of`**: Devuelve el offset de un campo en una estructura.
 
-Conversión de layouts:
 
-```
-efficient_access_struct = packed_struct|layout(default)
-```

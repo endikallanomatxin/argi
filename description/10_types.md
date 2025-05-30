@@ -562,20 +562,17 @@ Several escape sequences are supported:
 
 Everything is public by default to make it easier for beginners.
 
-To make a variable or function private just use the word: `priv` in front of the definition.
+To make variables private, just use:
+- `_name_surname` for variables in snake_case
+- `nameSurname` for variables in PascalCase
 
-(similar to Odin)
-
-> [!TODO] Repensar esto. no me gusta que sea una keyword. Si es una keyword, que sea coherente con el resto de cosas similares que se puedan hacer.
-
+Naming conditions code! It is more comfortable than having to use a keyword.
 
 
 #### Type Casting
 
 ```
 x = 5
-y = x|float  -- The name has to be the same as the type but all lowercase
+y = x|to(_, Float)  
 ```
-
-
 
