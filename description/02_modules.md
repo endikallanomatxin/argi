@@ -17,7 +17,7 @@ Eso es para metaprogramación. Zig no tiene magia.
 Realmente vamos a permitir que se le de un uso a eso.
 No le vamos a meter magia? Seremos capacer de que sea coherente con el resto del lenguaje? 
 
-> [!BUG] Decidir esto
+> [!FIX] Decidir esto
 
 
 ## Locating modules

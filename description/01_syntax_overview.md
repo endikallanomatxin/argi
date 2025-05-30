@@ -53,43 +53,25 @@ The declaration syntax has two delimeters:
 > más.
 
 
-
 ## Code blocks
 
 Everything between `{ }` is considered a code block.
-
-Se hace implicit return de la última línea, así se puede usar como paréntesis para definir el orden de evaluación de las expresiones. (from gleam)
-
-```
-c = {a + b}^2
-```
-
-> [!BUG]
-> Si haces return implícito incluso no poniendo tipo de retorno,
-> entonces no puedes usarlo para fors, ifs y demás porque siempre retornarán algo.
-> Igual puede hacerse que si lo último es una expresión se retorna, pero si es una declaración no?
-> Pero tiene sentido que se pueda retornar algo, sin haber puesto que retorna algo? Eso fastidia la sintaxis de las funciones.
 
 Every code block has its own scope.
 
 This is also used for loops and conditional, so locally declared variables are not accessible outside the block.
 This forces the good practice of declaring variables before loops and conditionals, instead of inside them.
 
-If a code block has a return value, it has to be declared before the block inside ().
-
-```
-my_var := (a: Int, b: Int) {
-	a + b
-}
-```
-
-> [!BUG] This is not coherent with the {} as parentheses for the order of evaluation.
-> Igual hay que hacerlo opcional? Que sea inferido si no se pone nada?
-> No me gusta eso.
+> [!CHECK]
+> Valorar que los bloques de código no puedan tomar nada de fuera como en Jai.
+> Pero pensar una sintaxis cómoda para autollamar un bloque rollo función
+> anónima. Es todavía más higiénico, pero pensar en como hacerlo sencillo.
 
 > [!NOTE]
-> En go, si hacer `v1, v2 := ...` dentro de un bloque, eso no declara solo las no declaradas, sino todas, haciendo que si una existía de antes, se eclipse.
-> En nuestro lenguaje eso no debería pasar, si existe fuera, entonces no se re-declara si se hacen varias a la vez. Solo cuando se hace una.
+> En go, si hacer `v1, v2 := ...` dentro de un bloque, eso no declara solo las
+> no declaradas, sino todas, haciendo que si una existía de antes, se eclipse.
+> En nuestro lenguaje eso no debería pasar, si existe fuera, entonces no se
+> re-declara si se hacen varias a la vez. Solo cuando se hace una.
 
 
 ## Functions
@@ -107,11 +89,21 @@ my_function(a: Int) := {
 Return arguments go with the code block. They can be named.
 
 ```
-sum_two_numbers(A: Int, B: Int) := (C: Int) {
+sum_two_numbers(A: Int, B: Int):=(C: Int){
 	C = A + B
 	return C
 }
 ```
+
+> [!CHECK]
+> Igual lo mejor es poner también el return type en el nombre cuando se definen
+> variables.
+>  ```
+>  sum_two_numbers(A: Int, B: Int)->(C: Int) := {
+>  	C = A + B
+>  	return C
+>  }
+>  ```
 
 > [!NOTE]
 > They can be constant. Declaration and initialization can be done at once, or separately.
