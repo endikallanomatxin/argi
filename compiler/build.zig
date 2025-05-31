@@ -15,14 +15,14 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    const llvm_include_path = std.Build.LazyPath{ .cwd_relative = "/usr/local/Cellar/llvm/19.1.7_1/include" };
-    const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = "/usr/local/Cellar/llvm/19.1.7_1/lib" };
+    const llvm_include_path = std.Build.LazyPath{ .cwd_relative = "/usr/local/Cellar/llvm@19/19.1.7/include" };
+    const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = "/usr/local/Cellar/llvm@19/19.1.7/lib" };
 
     const lib = b.addStaticLibrary(.{
         .name = "argi_compiler",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
-        .root_source_file = b.path("src/root.zig"),
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -78,7 +78,7 @@ pub fn build(b: *std.Build) void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
     const lib_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/root.zig"),
+        .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
     });

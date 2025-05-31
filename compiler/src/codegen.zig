@@ -1,7 +1,7 @@
 const std = @import("std");
 const llvm = @import("llvm.zig");
 const c = llvm.c;
-const parser = @import("parser.zig");
+const sem = @import("semantic_graph.zig");
 
 pub const Error = error{
     ModuleCreationFailed,
@@ -20,7 +20,7 @@ pub const Error = error{
 /// Representa una entrada de símbolo (variable o función) en la tabla de símbolos.
 const Symbol = struct {
     cname: []u8,
-    mutability: parser.Mutability,
+    mutability: sem.Mutability,
     type_ref: llvm.c.LLVMTypeRef,
     ref: llvm.c.LLVMValueRef,
 };
@@ -33,13 +33,13 @@ const TypedValue = struct {
 /// CodeGenerator es el tipo que se encarga de producir IR a partir de un AST.
 pub const CodeGenerator = struct {
     allocator: *const std.mem.Allocator,
-    ast: std.ArrayList(*parser.ASTNode),
+    ast: std.ArrayList(*sem.SGNode),
     builder: llvm.c.LLVMBuilderRef,
     module: llvm.c.LLVMModuleRef,
     symbol_table: std.StringHashMap(Symbol),
 
     /// Crea un nuevo CodeGenerator, generando un módulo y un builder vacíos.
-    pub fn init(allocator: *const std.mem.Allocator, ast: std.ArrayList(*parser.ASTNode)) !CodeGenerator {
+    pub fn init(allocator: *const std.mem.Allocator, ast: std.ArrayList(*sem.SGNode)) !CodeGenerator {
         const module = c.LLVMModuleCreateWithName("dummy_module");
         if (module == null) {
             std.debug.print("Error al crear el módulo LLVM\n", .{});
@@ -92,7 +92,7 @@ pub const CodeGenerator = struct {
     }
 
     /// Visitamos un nodo del AST y generamos IR correspondiente.
-    fn visitNode(self: *CodeGenerator, node: *parser.ASTNode) Error!?TypedValue {
+    fn visitNode(self: *CodeGenerator, node: *sem.SGNode) Error!?TypedValue {
         switch (node.*) {
             .declaration => |declPtr| {
                 std.debug.print("Generating declaration\n", .{});
@@ -132,9 +132,9 @@ pub const CodeGenerator = struct {
     }
 
     /// Genera IR para una declaración: puede ser de variable/constante o de función top-level.
-    fn genDeclaration(self: *CodeGenerator, decl: *parser.Declaration) !void {
+    fn genDeclaration(self: *CodeGenerator, decl: *sem.Declaration) !void {
         // Si es una "const" y apunta a un bloque de código, asumimos que es una función.
-        if (decl.mutability == parser.Mutability.Const and decl.isFunction()) {
+        if (decl.mutability == sem.Mutability.Const and decl.isFunction()) {
             return try self.genTopLevelFunction(decl);
         } else {
             return try self.genVarOrConstDeclaration(decl);
@@ -142,7 +142,7 @@ pub const CodeGenerator = struct {
     }
 
     /// Genera IR para una declaración de función "top-level".
-    fn genTopLevelFunction(self: *CodeGenerator, decl: *parser.Declaration) !void {
+    fn genTopLevelFunction(self: *CodeGenerator, decl: *sem.Declaration) !void {
         // Creamos un tipo de función. Aquí se asume que es i32 sin parámetros.
         // TODO: soportar parámetros y otros tipos.
         const fn_type = c.LLVMFunctionType(c.LLVMInt32Type(), null, 0, 0);
@@ -157,7 +157,7 @@ pub const CodeGenerator = struct {
             decl.name,
             Symbol{
                 .cname = c_name,
-                .mutability = parser.Mutability.Const,
+                .mutability = sem.Mutability.Const,
                 .type_ref = fn_type,
                 .ref = func,
             },
@@ -190,7 +190,7 @@ pub const CodeGenerator = struct {
     }
 
     /// Genera IR para una variable o constante en ámbito local.
-    fn genVarOrConstDeclaration(self: *CodeGenerator, decl: *parser.Declaration) !void {
+    fn genVarOrConstDeclaration(self: *CodeGenerator, decl: *sem.Declaration) !void {
         const c_name = try self.dupZ(decl.name);
 
         if (self.symbol_table.contains(decl.name)) {
@@ -246,10 +246,10 @@ pub const CodeGenerator = struct {
     }
 
     /// Genera IR para una asignación: busca la variable y almacena el nuevo valor.
-    fn genAssignment(self: *CodeGenerator, assign: *parser.Assignment) !TypedValue {
+    fn genAssignment(self: *CodeGenerator, assign: *sem.Assignment) !TypedValue {
         const symbol_opt = self.symbol_table.get(assign.name);
         const symbol = symbol_opt orelse return Error.SymbolNotFound;
-        if (symbol.mutability == parser.Mutability.Const) {
+        if (symbol.mutability == sem.Mutability.Const) {
             return Error.ConstantReassignment;
         }
 
@@ -280,7 +280,7 @@ pub const CodeGenerator = struct {
     }
 
     /// Genera IR para una instrucción return: `return <expr?>`.
-    fn genReturn(self: *CodeGenerator, retStmt: *parser.ReturnStmt) !void {
+    fn genReturn(self: *CodeGenerator, retStmt: *sem.ReturnStmt) !void {
         if (retStmt.expression) |expr| {
             const val = try self.visitNode(expr);
             if (val) |v| {
@@ -296,7 +296,7 @@ pub const CodeGenerator = struct {
     }
 
     /// Genera IR para un bloque de código: secuencia de sentencias.
-    fn genCodeBlock(self: *CodeGenerator, block: *parser.CodeBlock) !void {
+    fn genCodeBlock(self: *CodeGenerator, block: *sem.CodeBlock) !void {
         for (block.items) |stmt| {
             _ = try self.visitNode(stmt);
             // No se realiza un control de flujo especial aquí (por ejemplo, un "return" temprano).
@@ -304,7 +304,7 @@ pub const CodeGenerator = struct {
     }
 
     /// Genera IR para un literal de valor (sólo entero, como demo).
-    fn genValueLiteral(self: *CodeGenerator, valLit: *parser.ValueLiteral) !TypedValue {
+    fn genValueLiteral(self: *CodeGenerator, valLit: *sem.ValueLiteral) !TypedValue {
         _ = self;
         switch (valLit.*) {
             .intLiteral => |intLitPtr| {
@@ -344,7 +344,7 @@ pub const CodeGenerator = struct {
     }
 
     /// Genera IR para una operación binaria aritmética.
-    fn genBinaryOperation(self: *CodeGenerator, binOpPtr: *parser.BinaryOperation) !TypedValue {
+    fn genBinaryOperation(self: *CodeGenerator, binOpPtr: *sem.BinaryOperation) !TypedValue {
         // Obtenemos los operandos con su tipo
         const left_opt = self.visitNode(binOpPtr.left) catch return Error.ValueNotFound;
         const right_opt = self.visitNode(binOpPtr.right) catch return Error.ValueNotFound;
@@ -417,10 +417,10 @@ pub const CodeGenerator = struct {
     }
 };
 
-fn toLLVMType(t: parser.Type) !llvm.c.LLVMTypeRef {
+fn toLLVMType(t: sem.Type) !llvm.c.LLVMTypeRef {
     switch (t) {
-        parser.Type.Int => return c.LLVMInt32Type(),
-        parser.Type.Float => return c.LLVMFloatType(),
+        sem.Type.Int => return c.LLVMInt32Type(),
+        sem.Type.Float => return c.LLVMFloatType(),
         else => return Error.InvalidType,
     }
 }
