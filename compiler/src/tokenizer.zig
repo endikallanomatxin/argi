@@ -1,5 +1,6 @@
 const std = @import("std");
 const tok = @import("token.zig");
+const tok_print = @import("token_print.zig");
 
 pub const TokenizerError = error{
     UnknownCharacter,
@@ -84,6 +85,11 @@ pub const Tokenizer = struct {
 
     pub fn lexNextToken(self: *Tokenizer) !void {
         const loc = self.location;
+        std.debug.print("Lexing at {s}:{d}:{d}\n", .{
+            loc.file,
+            loc.line,
+            loc.column,
+        });
 
         if (self.this() == '\n') {
             try self.addToken(tok.Content{ .new_line = .{} }, loc);
@@ -107,26 +113,76 @@ pub const Tokenizer = struct {
             return;
         }
 
-        // Literales enteros
+        // Literales
         if (std.ascii.isDigit(self.this())) {
             const start = self.location.offset;
-            var is_float = false;
-            while ((std.ascii.isDigit(self.this()) or self.this() == '.')) {
-                if (self.source[self.location.offset] == '.') {
-                    is_float = true;
+            var literal: tok.Literal = tok.Literal{ .decimal_int_literal = "" };
+            if (self.this() == '0') {
+                // Check for hexadecimal, octal or binary
+                try self.advanceOne(); // Avanzar el '0'
+                if (self.this() == 'x' or self.this() == 'X') {
+                    // Hexadecimal
+                    literal = tok.Literal{ .hexadecimal_int_literal = "" };
+                    try self.advanceOne();
+                    while (self.this() >= '0' and self.this() <= '9' or
+                        (self.this() >= 'a' and self.this() <= 'f') or
+                        (self.this() >= 'A' and self.this() <= 'F'))
+                    {
+                        try self.advanceOne();
+                    }
+                } else if (self.this() == 'b' or self.this() == 'B') {
+                    // Binary
+                    literal = tok.Literal{ .binary_int_literal = "" };
+                    try self.advanceOne();
+                    while (self.this() == '0' or self.this() == '1') {
+                        try self.advanceOne();
+                    }
+                } else if (self.this() == 'o' or self.this() == 'O') {
+                    // Octal
+                    literal = tok.Literal{ .octal_int_literal = "" };
+                    try self.advanceOne();
+                    while (self.this() >= '0' and self.this() <= '7') {
+                        try self.advanceOne();
+                    }
+                } else {
+                    // ESTO
+                    while ((std.ascii.isDigit(self.this()) or self.this() == '.') or
+                        self.this() == 'e' or self.this() == 'E')
+                    {
+                        if (self.this() == '.') {
+                            literal = tok.Literal{ .regular_float_literal = "" };
+                        }
+                        if (self.this() == 'e' or self.this() == 'E') {
+                            literal = tok.Literal{ .scientific_float_literal = "" };
+                        }
+                        try self.advanceOne();
+                    }
                 }
-                self.location.offset += 1;
+            } else {
+                // Y ESTO SON IGUALES
+                while ((std.ascii.isDigit(self.this()) or self.this() == '.') or
+                    self.this() == 'e' or self.this() == 'E')
+                {
+                    if (self.this() == '.') {
+                        literal = tok.Literal{ .regular_float_literal = "" };
+                    }
+                    if (self.this() == 'e' or self.this() == 'E') {
+                        literal = tok.Literal{ .scientific_float_literal = "" };
+                    }
+                    try self.advanceOne();
+                }
             }
             const num_str = self.source[start..self.location.offset];
+            literal = switch (literal) {
+                .decimal_int_literal => tok.Literal{ .decimal_int_literal = num_str },
+                .hexadecimal_int_literal => tok.Literal{ .hexadecimal_int_literal = num_str },
+                .octal_int_literal => tok.Literal{ .octal_int_literal = num_str },
+                .binary_int_literal => tok.Literal{ .binary_int_literal = num_str },
+                .regular_float_literal => tok.Literal{ .regular_float_literal = num_str },
+                .scientific_float_literal => tok.Literal{ .scientific_float_literal = num_str },
+                else => unreachable,
+            };
 
-            var literal: tok.Literal = undefined;
-            if (is_float) {
-                const number = try std.fmt.parseFloat(f64, num_str);
-                literal = tok.Literal{ .float_literal = number };
-            } else {
-                const number = try std.fmt.parseInt(i64, num_str, 10);
-                literal = tok.Literal{ .int_literal = number };
-            }
             try self.addToken(tok.Content{ .literal = literal }, loc);
             return;
         }
@@ -164,6 +220,7 @@ pub const Tokenizer = struct {
                 // Check for double colon
                 if (try self.next() == ':') {
                     try self.addToken(tok.Content{ .double_colon = .{} }, loc);
+                    try self.advanceOne(); // Avanzar el segundo ':'
                 } else {
                     try self.addToken(tok.Content{ .colon = .{} }, loc);
                 }
@@ -204,84 +261,8 @@ pub const Tokenizer = struct {
         var i: usize = 0;
         for (self.tokens.items) |token| {
             std.debug.print("{d}: ", .{i});
-            printToken(token);
+            tok_print.printToken(token);
             i += 1;
         }
     }
 };
-
-pub fn printToken(token: tok.Token) void {
-    switch (token.content) {
-        .eof => {
-            std.debug.print("eof\n", .{});
-        },
-        .new_line => {
-            std.debug.print("new_line\n", .{});
-        },
-        .comment => |val| {
-            std.debug.print("comment: {s}\n", .{val});
-        },
-        .identifier => |val| {
-            std.debug.print("identifier: {s}\n", .{val});
-        },
-        .open_parenthesis => {
-            std.debug.print("open_parenthesis\n", .{});
-        },
-        .close_parenthesis => {
-            std.debug.print("close_parenthesis\n", .{});
-        },
-        .open_brace => {
-            std.debug.print("open_brace\n", .{});
-        },
-        .close_brace => {
-            std.debug.print("close_brace\n", .{});
-        },
-        .comma => {
-            std.debug.print("comma\n", .{});
-        },
-        .keyword_return => {
-            std.debug.print("keyword_return\n", .{});
-        },
-        .literal => |lit| {
-            switch (lit) {
-                .int_literal => |val| {
-                    std.debug.print("literal: int_literal {d}\n", .{val});
-                },
-                .float_literal => |val| {
-                    std.debug.print("literal: float_literal {e}\n", .{val});
-                },
-                .string_literal => |val| {
-                    std.debug.print("literal: string_literal {s}\n", .{val});
-                },
-            }
-        },
-        .colon => {
-            std.debug.print("colon\n", .{});
-        },
-        .double_colon => {
-            std.debug.print("double_colon\n", .{});
-        },
-        .equal => {
-            std.debug.print("equal\n", .{});
-        },
-        .binary_operator => |op| {
-            switch (op) {
-                .addition => {
-                    std.debug.print("binary_operator: addition\n", .{});
-                },
-                .subtraction => {
-                    std.debug.print("binary_operator: subtraction\n", .{});
-                },
-                .multiplication => {
-                    std.debug.print("binary_operator: multiplication\n", .{});
-                },
-                .division => {
-                    std.debug.print("binary_operator: division\n", .{});
-                },
-                .modulo => {
-                    std.debug.print("binary_operator: modulo\n", .{});
-                },
-            }
-        },
-    }
-}

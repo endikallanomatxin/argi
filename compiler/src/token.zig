@@ -51,8 +51,17 @@ pub const Content = union(enum) {
 };
 
 pub const Literal = union(enum) {
-    int_literal: i64,
-    float_literal: f64,
+    bool_literal: bool,
+
+    decimal_int_literal: []const u8,
+    hexadecimal_int_literal: []const u8,
+    octal_int_literal: []const u8,
+    binary_int_literal: []const u8,
+
+    regular_float_literal: []const u8,
+    scientific_float_literal: []const u8,
+
+    char_literal: u8,
     string_literal: []const u8,
 };
 

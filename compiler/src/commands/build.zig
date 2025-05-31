@@ -7,8 +7,8 @@ const c = llvm.c;
 
 const codegen = @import("../codegen.zig");
 const tok = @import("../tokenizer.zig");
-// const syn = @import("../syntax_tree.zig");
-// const sem = @import("../semantics_graph.zig");
+const syn = @import("../syntaxer.zig");
+// const sem = @import("../semantizer.zig");
 
 pub fn compile(filename: []const u8) !void {
     std.debug.print("Compilando archivo: {s}\n", .{filename});
