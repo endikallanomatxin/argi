@@ -85,11 +85,6 @@ pub const Tokenizer = struct {
 
     pub fn lexNextToken(self: *Tokenizer) !void {
         const loc = self.location;
-        std.debug.print("Lexing at {s}:{d}:{d}\n", .{
-            loc.file,
-            loc.line,
-            loc.column,
-        });
 
         if (self.this() == '\n') {
             try self.addToken(tok.Content{ .new_line = .{} }, loc);

@@ -5,7 +5,7 @@ other_function() := {
 
 main() := {
     -- Separate declaration and assignment is implemented
-    a :: Float
+    a :: Float32
     a = 12
     a = 0x10
     a = 0o10

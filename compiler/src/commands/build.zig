@@ -25,10 +25,10 @@ pub fn compile(filename: []const u8) !void {
     tokenizer.printTokens();
 
     // 3. Parsear la lista de tokens para obtener el ST.
-    // var syntaxer = syn.Syntaxer.init(&allocator, tokensList.items);
-    // const stList = try syntaxer.parse();
-    // defer stList.deinit();
-    // syntaxer.printST();
+    var syntaxer = syn.Syntaxer.init(&allocator, tokensList.items);
+    const stList = try syntaxer.parse();
+    defer stList.deinit();
+    syntaxer.printST();
 
     // // 4. Analizar el st para generar el sg
     // var sematizer = sem.Semantizer.init(&allocator, stList);
