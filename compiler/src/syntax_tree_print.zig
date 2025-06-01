@@ -10,70 +10,71 @@ fn printIndent(indent: usize) void {
 }
 
 pub fn printNode(node: syn.STNode, indent: usize) void {
-    std.debug.print("STNode at {s}:{d}:{d}:\n", .{ node.location.file, node.location.line, node.location.column });
     printIndent(indent);
-    node.content.print(indent);
+    printContent(node.content, indent);
 }
 
 pub fn printContent(content: syn.Content, indent: usize) void {
     switch (content) {
         .declaration => |decl| {
-            std.debug.print("Declaration {s} ({s}) =\n", .{ decl.*.name, if (decl.*.mutability == .Var) "var" else "const" });
-            // Se incrementa el nivel de indentación para el nodo hijo.
-            if (decl.*.value) |v| {
-                v.print(indent + 1);
+            std.debug.print("Declaration {s} ({s}, {s}, {s}) =\n", .{
+                decl.name, if (decl.mutability == .variable) "var" else "const",
+                switch (decl.kind) {
+                    .function => "function",
+                    .type => "type",
+                    .binding => "binding",
+                },
+                // Type
+                if (decl.type) |typeName| typeName.name else "unknown type",
+            });
+            if (decl.value) |v| {
+                printNode(v.*, indent + 1);
             }
         },
         .assignment => |assign| {
-            std.debug.print("Assignment {s} =\n", .{assign.*.name});
+            std.debug.print("Assignment {s} =\n", .{assign.name});
             // Se incrementa el nivel de indentación para el nodo hijo.
-            assign.*.value.print(indent + 1);
+            printNode(assign.value.*, indent + 1);
         },
         .identifier => |ident| {
             std.debug.print("identifier: {s}\n", .{ident});
         },
-        .codeBlock => |codeBlock| {
+        .code_block => |code_block| {
             std.debug.print("code block:\n", .{});
-            for (codeBlock.*.items) |item| {
-                item.print(indent + 1);
+            for (code_block.items) |item| {
+                printNode(item.*, indent + 1);
             }
         },
-        .valueLiteral => |valueLiteral| {
-            switch (valueLiteral.*) {
-                .intLiteral => |intLit| {
-                    std.debug.print("IntLiteral {d}\n", .{intLit.value});
+        .literal => |literal| {
+            std.debug.print("literal: ", .{});
+            switch (literal) {
+                .bool_literal => |val| {
+                    std.debug.print("bool {s}\n", .{if (val) "true" else "false"});
                 },
-                .floatLiteral => |floatLit| {
-                    std.debug.print("FloatLiteral {}\n", .{floatLit.value});
-                },
-                .doubleLiteral => |doubleLit| {
-                    std.debug.print("DoubleLiteral {}\n", .{doubleLit.value});
-                },
-                .charLiteral => |charLit| {
-                    std.debug.print("CharLiteral {c}\n", .{charLit.value});
-                },
-                .boolLiteral => |boolLit| {
-                    std.debug.print("BoolLiteral {}\n", .{boolLit.value});
-                },
-                .stringLiteral => |stringLit| {
-                    std.debug.print("StringLiteral {s}\n", .{stringLit.value});
-                },
+                .decimal_int_literal => |val| std.debug.print("int {s}\n", .{val}),
+                .hexadecimal_int_literal => |val| std.debug.print("hex int {s}\n", .{val}),
+                .octal_int_literal => |val| std.debug.print("octal int {s}\n", .{val}),
+                .binary_int_literal => |val| std.debug.print("binary int {s}\n", .{val}),
+                .regular_float_literal => |val| std.debug.print("float {s}\n", .{val}),
+                .scientific_float_literal => |val| std.debug.print("scientific float {s}\n", .{val}),
+                .char_literal => |val| std.debug.print("char '{c}'\n", .{val}),
+                .string_literal => |val| std.debug.print("string \"{s}\"\n", .{val}),
             }
         },
-        .typeLiteral => |typeLiteral| {
-            std.debug.print("TypeLiteral {s}\n", .{typeLiteral.*.name});
+        .type_name => |type_name| {
+            std.debug.print("type_name {s}\n", .{type_name.name});
         },
-        .returnStmt => |returnStmt| {
+        .return_statement => |returnStmt| {
             std.debug.print("return\n", .{});
             if (returnStmt.expression) |expr| {
                 // Se incrementa la indentación para la expresión retornada.
-                expr.print(indent + 1);
+                printNode(expr.*, indent + 1);
             }
         },
-        .binaryOperation => |binOp| {
+        .binary_operation => |binOp| {
             std.debug.print("BinaryOperation\n", .{});
-            binOp.left.print(indent + 1);
-            binOp.right.print(indent + 1);
+            printNode(binOp.left.*, indent + 1);
+            printNode(binOp.right.*, indent + 1);
         },
     }
 }

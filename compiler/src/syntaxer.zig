@@ -161,30 +161,20 @@ pub const Syntaxer = struct {
         };
     }
 
-    fn parseType(self: *Syntaxer) SyntaxerError!?syn.TypeLiteral {
+    fn parseType(self: *Syntaxer) SyntaxerError!?syn.TypeName {
         if (self.tokenIs(.equal)) {
             return null;
         }
         const typeName = try self.parseIdentifier();
-        return syn.TypeLiteral{ .name = typeName };
+        return syn.TypeName{ .name = typeName };
     }
 
     fn parseLiteral(self: *Syntaxer) !*syn.STNode {
         const token = self.current();
-        var val_literal: syn.ValueLiteral = undefined;
-        switch (token.content.literal) {
-            .int_literal => |value| {
-                val_literal = syn.ValueLiteral{ .int_literal = syn.IntLiteral{ .value = value } };
-            },
-            .float_literal => |value| {
-                val_literal = syn.ValueLiteral{ .floatLiteral = syn.FloatLiteral{ .value = @floatCast(value) } };
-            },
-            else => return SyntaxerError.ExpectedIntLiteral,
-        }
-        self.advanceOne();
         const node = try self.allocator.create(syn.STNode);
-        node.*.content = syn.Content{ .value_literal = val_literal };
+        node.*.content = syn.Content{ .literal = token.content.literal };
         node.*.location = token.location;
+        self.advanceOne();
         return node;
     }
 
@@ -213,14 +203,12 @@ pub const Syntaxer = struct {
                 if (self.next().?.content == .binary_operator) {
                     const left = try self.parseSymbolOrLiteral();
 
-                    const op = self.current().binary_operator;
+                    const op = self.current().content.binary_operator;
                     self.advanceOne(); // consume binary operator
                     const right = try self.parseExpression();
 
                     const node = try self.allocator.create(syn.STNode);
-                    const binOp = try self.allocator.create(syn.BinaryOperation);
-                    binOp.* = syn.BinaryOperation{ .operator = op, .left = left, .right = right };
-                    node.*.content = syn.Content{ .binaryOperation = binOp };
+                    node.*.content = syn.Content{ .binary_operation = syn.BinaryOperation{ .operator = op, .left = left, .right = right } };
                     node.*.location = token.location;
                     return node;
                 }
@@ -245,7 +233,7 @@ pub const Syntaxer = struct {
     fn parseDeclarationOrAssignment(self: *Syntaxer) SyntaxerError!*syn.STNode {
         const name = try self.parseIdentifier();
 
-        var kind: ?syn.SymbolKind = null;
+        var kind: syn.SymbolKind = .binding;
         // Check for parenthesis
         if (self.tokenIs(.open_parenthesis)) {
             self.advanceOne(); // consume '('
@@ -253,7 +241,7 @@ pub const Syntaxer = struct {
             std.debug.print("args: {any}\n", .{args});
             if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
             self.advanceOne(); // consume ')'
-            kind = syn.SymbolKind.Function;
+            kind = .function;
         }
 
         // Assignment
@@ -261,24 +249,21 @@ pub const Syntaxer = struct {
             self.advanceOne(); // consume '='
             const value = try self.parseExpression();
             const node = try self.allocator.create(syn.STNode);
-            const assign = try self.allocator.create(syn.Assignment);
-            assign.* = syn.Assignment{ .name = name, .value = value };
-            node.*.content = syn.Content{ .assignment = assign };
+            node.*.content = syn.Content{ .assignment = syn.Assignment{ .name = name, .value = value } };
             node.*.location = self.tokenLocation();
             return node;
         }
 
-        var tipo: ?syn.TypeLiteral = null;
+        var tipo: ?syn.TypeName = null;
         // Declaration
         if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) {
-            // Check for another : indicating variable declaration (::)
-            var mutability = .constant;
+            var mutability: syn.Mutability = .constant;
             if (self.tokenIs(.double_colon)) {
                 mutability = .variable;
             }
             self.advanceOne(); // consume ':' or '::'
 
-            if (kind == null) {
+            if (kind != .function) {
                 tipo = try self.parseType();
             }
             var value: ?*syn.STNode = null;
@@ -288,12 +273,11 @@ pub const Syntaxer = struct {
                 value = try self.parseExpression();
             }
             const node = try self.allocator.create(syn.STNode);
-            const decl = try self.allocator.create(syn.Declaration);
             // Asumimos que no hay argumentos, por eso usamos undefined.
             const args: []const syn.Argument = undefined;
-            decl.* = syn.Declaration{
+            const decl = syn.Declaration{
                 .name = name,
-                .kind = kind orelse null,
+                .kind = kind,
                 .type = tipo orelse null,
                 .mutability = mutability,
                 .args = args,
@@ -314,7 +298,7 @@ pub const Syntaxer = struct {
             if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
             self.advanceOne(); // consume ':'
             const tipo = try self.parseType();
-            const arg = syn.Argument{ .name = name, .type = tipo orelse null, .mutability = syn.Mutability.Var };
+            const arg = syn.Argument{ .name = name, .type = tipo orelse null, .mutability = syn.Mutability.variable };
             try args.append(arg);
             if (self.tokenIs(.comma)) {
                 self.advanceOne(); // consume ','
@@ -349,9 +333,7 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.close_brace)) return SyntaxerError.ExpectedRightBrace;
         self.advanceOne(); // consume '}'
         const node = try self.allocator.create(syn.STNode);
-        const code_block = try self.allocator.create(syn.CodeBlock);
-        code_block.* = syn.CodeBlock{ .items = list.items };
-        node.*.content = syn.STNode{ .code_block = code_block };
+        node.*.content = syn.Content{ .code_block = syn.CodeBlock{ .items = list.items } };
         node.*.location = self.tokenLocation();
         return node;
     }
@@ -367,9 +349,7 @@ pub const Syntaxer = struct {
         const expr = try self.parseExpression();
 
         const node = try self.allocator.create(syn.STNode);
-        const retStmt = try self.allocator.create(syn.ReturnStmt);
-        retStmt.* = syn.ReturnStmt{ .expression = expr };
-        node.*.content = syn.STNode{ .returnStmt = retStmt };
+        node.*.content = syn.Content{ .return_statement = syn.ReturnStatement{ .expression = expr } };
         node.*.location = self.tokenLocation();
         return node;
     }
@@ -377,7 +357,7 @@ pub const Syntaxer = struct {
     pub fn printST(self: *Syntaxer) void {
         std.debug.print("\nst:\n", .{});
         for (self.st.items) |node| {
-            synp.print(node, 0);
+            synp.printNode(node.*, 0);
         }
     }
 };
