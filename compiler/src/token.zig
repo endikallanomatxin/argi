@@ -60,6 +60,7 @@ pub const Literal = union(enum) {
 
     regular_float_literal: []const u8,
     scientific_float_literal: []const u8,
+    // TODO: Usar una r como separador para periódicos.
 
     char_literal: u8,
     string_literal: []const u8,

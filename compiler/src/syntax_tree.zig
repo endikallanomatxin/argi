@@ -1,14 +1,15 @@
 const std = @import("std");
 const tok = @import("token.zig");
+const syn = @import("syntax_tree.zig");
 
-const Location = tok.Location;
+// Types used from token.zig
 
 pub const ST = struct {
     nodes: []const *STNode,
 };
 
 pub const STNode = struct {
-    location: Location,
+    location: tok.Location,
     content: Content,
 };
 
@@ -17,18 +18,18 @@ pub const Content = union(enum) {
     assignment: Assignment,
     identifier: []const u8,
     code_block: CodeBlock,
-    value_literal: tok.Literal,
-    type_literal: TypeLiteral,
+    literal: tok.Literal, // literals are not parsed until the type is known.
+    type_name: TypeName,
     return_statement: ReturnStatement,
     binary_operation: BinaryOperation,
 };
 
 pub const SymbolKind = enum {
     // Always const
-    Function,
-    Type,
+    function,
+    type,
     // Can be const or var
-    Binding,
+    binding,
     // Pero es importante que el error no lo de aquí sino más adelante,
     // para que puedan darse la mayor cantidad de errores en paralelo.
 };
@@ -36,7 +37,7 @@ pub const SymbolKind = enum {
 pub const Declaration = struct {
     kind: SymbolKind,
     name: []const u8,
-    type: ?TypeLiteral,
+    type: ?TypeName,
     mutability: Mutability,
     args: ?[]const Argument,
     value: ?*STNode,
@@ -69,10 +70,10 @@ pub const CodeBlock = struct {
 pub const Argument = struct {
     name: []const u8,
     mutability: Mutability,
-    type: ?TypeLiteral,
+    type: ?TypeName,
 };
 
-pub const TypeLiteral = struct {
+pub const TypeName = struct {
     name: []const u8,
 };
 
