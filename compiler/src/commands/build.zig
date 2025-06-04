@@ -8,7 +8,7 @@ const c = llvm.c;
 const codegen = @import("../codegen.zig");
 const tok = @import("../tokenizer.zig");
 const syn = @import("../syntaxer.zig");
-// const sem = @import("../semantizer.zig");
+const sem = @import("../semantizer.zig");
 
 pub fn compile(filename: []const u8) !void {
     std.debug.print("Compilando archivo: {s}\n", .{filename});
@@ -26,15 +26,15 @@ pub fn compile(filename: []const u8) !void {
 
     // 3. Parsear la lista de tokens para obtener el ST.
     var syntaxer = syn.Syntaxer.init(&allocator, tokensList.items);
-    const stList = try syntaxer.parse();
-    defer stList.deinit();
+    const st_nodes = try syntaxer.parse();
+    defer st_nodes.deinit();
     syntaxer.printST();
 
-    // // 4. Analizar el st para generar el sg
-    // var sematizer = sem.Semantizer.init(&allocator, stList);
-    // const sg = try sematizer.analyze();
-    // defer sg.deinit();
-    // sematizer.printSG();
+    // 4. Analizar el st para generar el sg
+    var sematizer = sem.Semantizer.init(&allocator, st_nodes.items);
+    const sg = try sematizer.analyze();
+    defer sg.deinit();
+    sematizer.printSG();
 
     // // 5. Generar IR a partir del AST.
     // var g = codegen.CodeGenerator.init(&allocator, sg) catch return;
