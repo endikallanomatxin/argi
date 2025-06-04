@@ -4,6 +4,8 @@ const std = @import("std");
 // declaratively construct a build graph that will be executed by an external
 // runner.
 pub fn build(b: *std.Build) void {
+
+
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
     // means any target is allowed, and the default is native. Other options
@@ -15,8 +17,12 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    const llvm_include_path = std.Build.LazyPath{ .cwd_relative = "/usr/local/Cellar/llvm@19/19.1.7/include" };
-    const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = "/usr/local/Cellar/llvm@19/19.1.7/lib" };
+    // Running: `llvm-config --includedir` and `llvm-config --libdir` will give you the
+    // correct paths to the LLVM include and library directories.
+    //const llvm_include_path = std.Build.LazyPath{ .cwd_relative = "/usr/local/Cellar/llvm@19/19.1.7/include" };
+    //const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = "/usr/local/Cellar/llvm@19/19.1.7/lib" };
+    const llvm_include_path = std.Build.LazyPath{ .cwd_relative = "/opt/homebrew/Cellar/llvm/20.1.6/include" };
+    const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = "/opt/homebrew/Cellar/llvm/20.1.6/lib" };
 
     const lib = b.addStaticLibrary(.{
         .name = "argi_compiler",
