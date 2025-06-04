@@ -1,4 +1,5 @@
 const std = @import("std");
+const tok = @import("token.zig");
 const syn = @import("syntax_tree.zig");
 
 pub const SemanticGraph = struct {
@@ -7,50 +8,56 @@ pub const SemanticGraph = struct {
 };
 
 pub const Scope = struct {
+    parent: ?*Scope,
     nodes: std.ArrayList(SGNode), // index == NodeId
 
     // These lists point to specific nodes in the `nodes` array.
-    typeDeclarations: std.ArrayList(*TypeDeclaration), // index == TypeId
-    functionDeclarations: std.ArrayList(*FunctionDeclaration), // index == FuncId
-    bindingDeclarations: std.ArrayList(*BindingDeclaration), // index == SymId
+    type_declarations: std.ArrayList(*TypeDeclaration), // index == TypeId
+    function_declarations: std.ArrayList(*FunctionDeclaration), // index == FuncId
+    binding_declarations: std.ArrayList(*BindingDeclaration), // index == SymId
 };
 
 pub const SGNode = union(enum) {
-    typeDeclaration: *TypeDeclaration,
-    functionDeclaration: *FunctionDeclaration,
-    bindingDeclaration: *BindingDeclaration,
+    type_declaration: *TypeDeclaration,
+    function_declaration: *FunctionDeclaration,
+    binding_declaration: *BindingDeclaration,
 
-    bindingAssignment: *Assignment,
-    functionCall: *FunctionCall,
-    codeBlock: *CodeBlock,
-    valueLiteral: syn.ValueLiteral, // int, float, char, string
-    binaryOperation: BinaryOperation,
-    returnStatement: *ReturnStatement,
-    ifStatement: *IfStatement,
-    whileStatement: *WhileStatement,
-    forStatement: *ForStatement,
-    switchStatement: *SwitchStatement,
-    breakStatement: struct {},
-    continueStatement: struct {},
+    binding_assignment: *Assignment,
+    function_call: *FunctionCall,
+    code_block: *CodeBlock,
+    value_literal: ValueLiteral,
+    binary_operation: BinaryOperation,
+    return_statement: *ReturnStatement,
+    if_statement: *IfStatement,
+    while_statement: *WhileStatement,
+    for_statement: *ForStatement,
+    switch_statement: *SwitchStatement,
+    break_statement: struct {},
+    continue_statement: struct {},
+};
+
+pub const Type = union(enum) {
+    builtin: BuiltinType, // tipos primitivos
+    custom: *const TypeDeclaration, // tipos definidos por el usuario (structs, enums, etc.)
 };
 
 pub const TypeDeclaration = struct {
     name: []const u8,
-    ty: syn.Type, // enum, struct, union, etc.
+    ty: Type, // enum, struct, union, etc.
     args: std.ArrayList(*BindingDeclaration), // index == TypeId
 };
 
 pub const FunctionDeclaration = struct {
     name: []const u8,
     params: std.ArrayList(*BindingDeclaration), // index == ParamId
-    returnType: ?syn.Type, // null si no hay retorno
+    return_type: ?Type, // null si no hay retorno
     body: *const CodeBlock,
 };
 
 pub const BindingDeclaration = struct {
     name: []const u8,
     mutability: syn.Mutability,
-    ty: syn.Type,
+    ty: Type,
 };
 
 pub const Assignment = struct {
@@ -64,11 +71,11 @@ pub const FunctionCall = struct {
 };
 
 pub const CodeBlock = struct {
-    nodes: std.ArrayList(SGNode), // nodos del bloque, index == NodeId
-    ret_val: ?SGNode, // valor de retorno (si aplica)
+    nodes: std.ArrayList(*SGNode), // nodos del bloque, index == NodeId
+    ret_val: ?*SGNode, // valor de retorno (si aplica)
 };
 
-pub const BuiltinTypes = enum {
+pub const BuiltinType = enum {
     Int8,
     Int16,
     Int32,
@@ -86,17 +93,18 @@ pub const BuiltinTypes = enum {
     Union,
     Pointer,
     Function,
+    Void, // tipo vacío, usado para funciones sin retorno
 };
 
 pub const ValueLiteral = union(enum) {
-    intLiteral: i64,
-    floatLiteral: f64,
-    charLiteral: u8,
-    stringLiteral: []const u8,
+    int_literal: i64,
+    float_literal: f64,
+    char_literal: u8,
+    string_literal: []const u8,
 };
 
 pub const BinaryOperation = struct {
-    operator: syn.BinaryOperator,
+    operator: tok.BinaryOperator,
     left: *const SGNode, // izquierdo
     right: *const SGNode, // derecho
 };
@@ -107,8 +115,8 @@ pub const ReturnStatement = struct {
 
 pub const IfStatement = struct {
     condition: *const SGNode, // condición del if
-    thenBlock: *const CodeBlock, // bloque si la condición es verdadera
-    elseBlock: ?*const CodeBlock, // bloque si la condición es falsa (null si no hay)
+    then_block: *const CodeBlock, // bloque si la condición es verdadera
+    else_block: ?*const CodeBlock, // bloque si la condición es falsa (null si no hay)
 };
 
 pub const WhileStatement = struct {
@@ -126,7 +134,7 @@ pub const ForStatement = struct {
 pub const SwitchStatement = struct {
     expression: *const SGNode, // expresión a evaluar
     cases: std.ArrayList(SwitchCase), // casos del switch
-    defaultCase: ?*const CodeBlock, // bloque por defecto (null si no hay)
+    default_case: ?*const CodeBlock, // bloque por defecto (null si no hay)
 };
 
 pub const SwitchCase = struct {
