@@ -19,11 +19,14 @@ pub const Scope = struct {
 
 pub const SGNode = union(enum) {
     type_declaration: *TypeDeclaration,
-    function_declaration: *FunctionDeclaration,
-    binding_declaration: *BindingDeclaration,
 
-    binding_assignment: *Assignment,
+    function_declaration: *FunctionDeclaration,
     function_call: *FunctionCall,
+
+    binding_declaration: *BindingDeclaration,
+    binding_use: *BindingDeclaration,
+    binding_assignment: *Assignment,
+
     code_block: *CodeBlock,
     value_literal: ValueLiteral,
     binary_operation: BinaryOperation,
