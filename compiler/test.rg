@@ -1,11 +1,9 @@
-other_function() := {
+other_function() -> Int32 := {
     c := 2
     return 0
 }
 
-main() := {
-    -- TODO: Make it mandatory to declare return types in functions
-
+main() -> Int32 := {
     -- Separate declaration and assignment is implemented
     a :: Float32
     a = 12

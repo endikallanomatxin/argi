@@ -38,6 +38,7 @@ pub const Content = union(enum) {
     colon: struct {},
     double_colon: struct {},
     equal: struct {},
+    arrow: struct {},
     binary_operator: BinaryOperator,
 
     // Pointers and dereferences
