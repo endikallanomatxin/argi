@@ -227,7 +227,14 @@ pub const Tokenizer = struct {
                 try self.addToken(tok.Content{ .binary_operator = .addition }, loc);
             },
             '-' => {
-                try self.addToken(tok.Content{ .binary_operator = .subtraction }, loc);
+                if (self.next() catch 0 == '>') {
+                    try self.addToken(tok.Content{ .arrow = .{} }, loc);
+                    try self.advanceOne();
+                    try self.advanceOne();
+                    return;
+                } else {
+                    try self.addToken(tok.Content{ .binary_operator = .subtraction }, loc);
+                }
             },
             '*' => {
                 try self.addToken(tok.Content{ .binary_operator = .multiplication }, loc);
