@@ -4,6 +4,8 @@ other_function() := {
 }
 
 main() := {
+    -- TODO: Make it mandatory to declare return types in functions
+
     -- Separate declaration and assignment is implemented
     a :: Float32
     a = 12
@@ -18,8 +20,7 @@ main() := {
     -- Declaration of a constant from an expression also works
     c := a + b
 
-    -- TODO: Allow function calling
-    -- d := other_function()
+    d := other_function()
 
     return 0
 }
