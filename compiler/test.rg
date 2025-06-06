@@ -19,9 +19,14 @@ main() -> Int32 := {
     c := a + b
 
     d := other_function()
-    if (d != 0) {
-        return d
+
+    e:Int32
+
+    if (d == 0) {
+        e := 0
+    } else {
+        e := 1
     }
 
-    return 0
+    return e
 }

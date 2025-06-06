@@ -23,6 +23,7 @@ pub const Content = union(enum) {
     type_name: TypeName,
     return_statement: ReturnStatement,
     binary_operation: BinaryOperation,
+    if_statement: IfStatement,
 };
 
 pub const SymbolKind = enum {
@@ -91,4 +92,10 @@ pub const BinaryOperation = struct {
     operator: tok.BinaryOperator,
     left: *STNode,
     right: *STNode,
+};
+
+pub const IfStatement = struct {
+    condition: *STNode,
+    then_block: *STNode,
+    else_block: ?*STNode,
 };

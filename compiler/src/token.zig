@@ -33,6 +33,8 @@ pub const Content = union(enum) {
 
     // Keywords
     keyword_return: struct {},
+    keyword_if: struct {},
+    keyword_else: struct {},
 
     // Operators
     colon: struct {},
@@ -77,4 +79,6 @@ pub const BinaryOperator = enum {
     multiplication,
     division,
     modulo,
+    equals,
+    not_equals,
 };

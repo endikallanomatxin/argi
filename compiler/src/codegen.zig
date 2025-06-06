@@ -28,6 +28,7 @@ fn builtinToLLVM(bt: sem.BuiltinType) CodegenError!llvm.c.LLVMTypeRef {
     return switch (bt) {
         .Int32 => c.LLVMInt32Type(),
         .Float32 => c.LLVMFloatType(),
+        .Bool => c.LLVMInt1Type(),
         else => CodegenError.InvalidType,
     };
 }
@@ -141,6 +142,11 @@ pub const CodeGenerator = struct {
             .binary_operation => |bo| {
                 std.debug.print("Generando operación binaria\n", .{});
                 return try self.genBinaryOp(&bo);
+            },
+            .if_statement => |ifs| {
+                std.debug.print("Generando if statement\n", .{});
+                try self.genIfStatement(ifs);
+                return null;
             },
             .function_call => |fc| {
                 std.debug.print("Generando llamada a función: {s}\n", .{fc.callee.name});
@@ -320,8 +326,60 @@ pub const CodeGenerator = struct {
                 c.LLVMBuildFRem(self.builder, lhs.value_ref, rhs.value_ref, "frem")
             else
                 c.LLVMBuildSRem(self.builder, lhs.value_ref, rhs.value_ref, "irem"),
+            .equals => if (is_float)
+                c.LLVMBuildFCmp(self.builder, c.LLVMRealOEQ, lhs.value_ref, rhs.value_ref, "feq")
+            else
+                c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, lhs.value_ref, rhs.value_ref, "ieq"),
+            .not_equals => if (is_float)
+                c.LLVMBuildFCmp(self.builder, c.LLVMRealONE, lhs.value_ref, rhs.value_ref, "fne")
+            else
+                c.LLVMBuildICmp(self.builder, c.LLVMIntNE, lhs.value_ref, rhs.value_ref, "ine"),
         };
-        return .{ .value_ref = val, .type_ref = lhs.type_ref };
+        const ty = switch (bo.operator) {
+            .equals, .not_equals => c.LLVMInt1Type(),
+            else => lhs.type_ref,
+        };
+        return .{ .value_ref = val, .type_ref = ty };
+    }
+
+    fn genIfStatement(self: *CodeGenerator, ifs: *const sem.IfStatement) !void {
+        const cond_tv = (try self.visitNode(ifs.condition)) orelse return CodegenError.ValueNotFound;
+        var cond_val = cond_tv.value_ref;
+        if (cond_tv.type_ref == c.LLVMFloatType()) {
+            const zero = c.LLVMConstReal(c.LLVMFloatType(), 0.0);
+            cond_val = c.LLVMBuildFCmp(self.builder, c.LLVMRealONE, cond_val, zero, "ifcond");
+        } else if (cond_tv.type_ref == c.LLVMInt32Type()) {
+            const zero = c.LLVMConstInt(c.LLVMInt32Type(), 0, 0);
+            cond_val = c.LLVMBuildICmp(self.builder, c.LLVMIntNE, cond_val, zero, "ifcond");
+        }
+
+        const current_bb = c.LLVMGetInsertBlock(self.builder);
+        const func = c.LLVMGetBasicBlockParent(current_bb);
+
+        const then_bb = c.LLVMAppendBasicBlock(func, "then");
+        const merge_bb = c.LLVMAppendBasicBlock(func, "ifend");
+
+        var else_bb: ?llvm.c.LLVMBasicBlockRef = null;
+        if (ifs.else_block) |_| {
+            else_bb = c.LLVMAppendBasicBlock(func, "else");
+            _ = c.LLVMBuildCondBr(self.builder, cond_val, then_bb, else_bb.?);
+        } else {
+            _ = c.LLVMBuildCondBr(self.builder, cond_val, then_bb, merge_bb);
+        }
+
+        c.LLVMPositionBuilderAtEnd(self.builder, then_bb);
+        try self.genCodeBlock(ifs.then_block);
+        if (c.LLVMGetBasicBlockTerminator(then_bb) == null)
+            _ = c.LLVMBuildBr(self.builder, merge_bb);
+
+        if (ifs.else_block) |eb| {
+            c.LLVMPositionBuilderAtEnd(self.builder, else_bb.?);
+            try self.genCodeBlock(eb);
+            if (c.LLVMGetBasicBlockTerminator(else_bb.?) == null)
+                _ = c.LLVMBuildBr(self.builder, merge_bb);
+        }
+
+        c.LLVMPositionBuilderAtEnd(self.builder, merge_bb);
     }
 
     // ─────────────────────────────────────────────────────────── return ──────
