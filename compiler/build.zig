@@ -1,9 +1,21 @@
 const std = @import("std");
 
+fn linkLlvm(step: *std.Build.Step.Compile, libs_str: []const u8) void {
+    var it = std.mem.tokenizeScalar(u8, libs_str, ' ');
+    while (it.next()) |tok| {
+        if (std.mem.startsWith(u8, tok, "-l")) {
+            step.linkSystemLibrary(tok[2..]);
+        }
+    }
+}
+
 // Although this function looks imperative, note that its job is to
 // declaratively construct a build graph that will be executed by an external
 // runner.
 pub fn build(b: *std.Build) void {
+    if (std.process.getEnvVarOwned(b.allocator, "PATH") catch null) |path| {
+        b.graph.env_map.put("PATH", path) catch @panic("OOM");
+    }
 
     // Standard target options allows the person running `zig build` to choose
     // what target to build for. Here we do not override the defaults, which
@@ -16,12 +28,30 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    // Running: `llvm-config --includedir` and `llvm-config --libdir` will give you the
-    // correct paths to the LLVM include and library directories.
-    const llvm_include_path = std.Build.LazyPath{ .cwd_relative = "/usr/local/Cellar/llvm@19/19.1.7/include" };
-    const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = "/usr/local/Cellar/llvm@19/19.1.7/lib" };
-    // const llvm_include_path = std.Build.LazyPath{ .cwd_relative = "/opt/homebrew/Cellar/llvm/20.1.6/include" };
-    // const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = "/opt/homebrew/Cellar/llvm/20.1.6/lib" };
+    // Obtain LLVM paths from the installed `llvm-config` tool.  This avoids
+    // hard-coding the version and makes the build portable across systems.
+    const llvm_config = blk: {
+        const names = &[_][]const u8{
+            "llvm-config",
+            "llvm-config-20",
+            "llvm-config-19",
+            "llvm-config-18",
+            "llvm-config-17",
+            "llvm-config-16",
+            "llvm-config-15",
+        };
+        for (names) |name| {
+            if (b.findProgram(&.{name}, &.{"/usr/bin"}) catch null) |path| break :blk path;
+        }
+        std.debug.panic("llvm-config not found; please install LLVM dev tools", .{});
+    };
+
+    const include_dir_raw = b.run(&.{ llvm_config, "--includedir" });
+    const lib_dir_raw = b.run(&.{ llvm_config, "--libdir" });
+    const libs_raw = std.mem.trimRight(u8, b.run(&.{ llvm_config, "--libs" }), "\n");
+
+    const llvm_include_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, include_dir_raw, " \n") };
+    const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, lib_dir_raw, " \n") };
 
     const lib = b.addStaticLibrary(.{
         .name = "argi_compiler",
@@ -34,7 +64,7 @@ pub fn build(b: *std.Build) void {
 
     lib.addIncludePath(llvm_include_path);
     lib.addLibraryPath(llvm_lib_path);
-    lib.linkSystemLibrary("LLVM");
+    linkLlvm(lib, libs_raw);
 
     // This declares intent for the library to be installed into the standard
     // location when the user invokes the "install" step (the default step when
@@ -50,7 +80,7 @@ pub fn build(b: *std.Build) void {
 
     exe.addIncludePath(llvm_include_path);
     exe.addLibraryPath(llvm_lib_path);
-    exe.linkSystemLibrary("LLVM");
+    linkLlvm(exe, libs_raw);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default

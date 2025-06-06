@@ -6,6 +6,10 @@ To make it run:
 zig build run -- build test.rg
 ```
 
+The build script uses `llvm-config` to locate LLVM headers and libraries. Make
+sure the LLVM development tools are installed and `llvm-config` is available in
+your `PATH`.
+
 
 ## References
 
