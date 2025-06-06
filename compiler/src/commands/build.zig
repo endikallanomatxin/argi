@@ -50,9 +50,12 @@ pub fn compile(filename: []const u8) !void {
     if (std.process.can_execv) {
         // 5. Compilar el IR a un ejecutable usando Clang.
         std.debug.print("\n\nCOMPILATION\n", .{});
+        var env = std.process.getEnvMap(allocator) catch return;
+        defer env.deinit();
         const result = std.process.Child.run(.{
             .allocator = allocator,
             .argv = &[_][]const u8{ "clang", llvm_output_filename, "-o", "output" },
+            .env_map = &env,
         }) catch return;
         _ = result;
 
