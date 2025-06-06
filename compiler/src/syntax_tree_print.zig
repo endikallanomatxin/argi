@@ -58,6 +58,15 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
 
             std.debug.print("Declaration: \"{s}\" {s} {s} {s}\n", .{ decl.name, kind_str, mut_str, type_str });
 
+            if (decl.kind == .function) {
+                indent(lvl + 1);
+                std.debug.print("Arguments:\n", .{});
+                for (decl.args.?) |arg| {
+                    indent(lvl + 2);
+                    std.debug.print("- {s} : {s} {s}\n", .{ arg.name, arg.type.?.name, if (arg.mutability == syn.Mutability.variable) "var" else "const" });
+                }
+            }
+
             if (decl.value) |v| {
                 printNode(v.*, lvl + 1);
             }
