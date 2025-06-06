@@ -17,6 +17,7 @@ pub const Content = union(enum) {
     declaration: Declaration,
     assignment: Assignment,
     identifier: []const u8,
+    function_call: FunctionCall,
     code_block: CodeBlock,
     literal: tok.Literal, // literals are not parsed until the type is known.
     type_name: TypeName,
@@ -55,6 +56,11 @@ pub const Declaration = struct {
 pub const Assignment = struct {
     name: []const u8,
     value: *STNode,
+};
+
+pub const FunctionCall = struct {
+    callee: []const u8,
+    args: []const *STNode,
 };
 
 pub const Mutability = enum {

@@ -28,7 +28,6 @@ fn builtinToLLVM(bt: sem.BuiltinType) CodegenError!llvm.c.LLVMTypeRef {
     return switch (bt) {
         .Int32 => c.LLVMInt32Type(),
         .Float32 => c.LLVMFloatType(),
-        // Amplía aquí cuando soportes más tipos
         else => CodegenError.InvalidType,
     };
 }
@@ -57,7 +56,7 @@ pub const CodeGenerator = struct {
     ast: std.ArrayList(*sem.SGNode), // nodos raíz
     module: llvm.c.LLVMModuleRef,
     builder: llvm.c.LLVMBuilderRef,
-    symbol_table: std.StringHashMap(Symbol), // «scope» actual
+    symbol_table: std.StringHashMap(Symbol), // tabla actual (global + locals)
 
     // ───── init / deinit ────────────────────────────────────────────────────
     pub fn init(alloc: *const std.mem.Allocator, ast: std.ArrayList(*sem.SGNode)) !CodeGenerator {
@@ -77,22 +76,23 @@ pub const CodeGenerator = struct {
     pub fn deinit(self: *CodeGenerator) void {
         if (self.builder) |b| c.LLVMDisposeBuilder(b);
         self.symbol_table.deinit();
-        // (No liberamos el módulo: déjalo al llamador).
     }
 
     // ───── public entry point ───────────────────────────────────────────────
     pub fn generate(self: *CodeGenerator) !llvm.c.LLVMModuleRef {
-        for (self.ast.items) |n|
+        // Recorremos todos los nodos top-level (incluye funciones y declaraciones globales)
+        for (self.ast.items) |n| {
             _ = self.visitNode(n) catch |e| {
                 std.debug.print("Error al compilar: {any}\n", .{e});
                 return CodegenError.CompilationFailed;
             };
+        }
 
         // Validación del IR
         var err_msg: [*c]u8 = null;
-        if (c.LLVMVerifyModule(self.module, c.LLVMPrintMessageAction, &err_msg) != 0)
+        if (c.LLVMVerifyModule(self.module, c.LLVMPrintMessageAction, &err_msg) != 0) {
             return CodegenError.ModuleCreationFailed;
-
+        }
         return self.module;
     }
 
@@ -102,28 +102,26 @@ pub const CodeGenerator = struct {
             .function_declaration => |fd| {
                 std.debug.print("Generando función: {s}\n", .{fd.name});
                 try self.genFunction(fd);
-                return null; // no devuelve valor
+                return null;
             },
             .binding_declaration => |bd| {
                 std.debug.print("Generando binding: {s}\n", .{bd.name});
                 if (self.symbol_table.contains(bd.name)) {
-                    // uso de la variable: cargamos ('load') y devolvemos TypedValue
+                    // Si ya está en la tabla → es un “uso” de variable
                     return try self.genBindingUse(bd);
                 } else {
-                    // primera vez: hacemos alloc y devolvemos null
+                    // Primera vez: hacemos alloca y lo insertamos en la tabla
                     try self.genBindingDecl(bd);
                     return null;
                 }
             },
-            .binding_assignment => |as| {
-                std.debug.print("Generando asignación: {s}\n", .{as.sym_id.name});
-                _ = try self.genAssignment(as);
+            .binding_assignment => |asgn| {
+                std.debug.print("Generando asignación: {s}\n", .{asgn.sym_id.name});
+                _ = try self.genAssignment(asgn);
                 return null;
             },
             .binding_use => |bu| {
                 std.debug.print("Generando uso de binding: {s}\n", .{bu.name});
-                // “bu” es un *BindingDeclaration que ya existe en la tabla de símbolos.
-                // GenBindingUse cargará (load) el valor y devolverá un TypedValue.
                 return try self.genBindingUse(bu);
             },
             .code_block => |cb| {
@@ -137,31 +135,35 @@ pub const CodeGenerator = struct {
                 return null;
             },
             .value_literal => |vl| {
+                std.debug.print("Generando literal de valor\n", .{});
                 return try self.genValueLiteral(&vl);
             },
             .binary_operation => |bo| {
+                std.debug.print("Generando operación binaria\n", .{});
                 return try self.genBinaryOp(&bo);
             },
-            .function_call, .if_statement, .while_statement, .for_statement, .switch_statement, .break_statement, .continue_statement => return CodegenError.NotYetImplemented,
+            .function_call => |fc| {
+                std.debug.print("Generando llamada a función: {s}\n", .{fc.callee.name});
+                return try self.genFunctionCall(fc);
+            },
             else => return CodegenError.UnknownNode,
         }
     }
 
     // ────────────────────────────────────────────────────────── functions ────
     fn genFunction(self: *CodeGenerator, fd: *sem.FunctionDeclaration) !void {
-        const ret_type = if (fd.return_type) |t|
-            switch (t) {
-                .builtin => |bt| try builtinToLLVM(bt),
-                else => return CodegenError.InvalidType,
-            }
-        else
-            c.LLVMVoidType();
+        // 1) calculamos el tipo de retorno
+        const ret_type = if (fd.return_type) |t| switch (t) {
+            .builtin => |bt| try builtinToLLVM(bt),
+            else => return CodegenError.InvalidType,
+        } else c.LLVMVoidType();
 
+        // 2) creamos el LLVMFunctionType
         const fn_type = c.LLVMFunctionType(ret_type, null, 0, 0);
         const c_name = try self.dupZ(fd.name);
         const fun_ref = c.LLVMAddFunction(self.module, c_name.ptr, fn_type);
 
-        // guarda símbolo global
+        // 3) guardamos la función en la tabla (global)
         try self.symbol_table.put(fd.name, .{
             .cname = c_name,
             .mutability = .constant,
@@ -169,19 +171,29 @@ pub const CodeGenerator = struct {
             .ref = fun_ref,
         });
 
-        // CREAMOS el bloque "entry":
-        const entry = c.LLVMAppendBasicBlock(fun_ref, "entry");
-        // NOTA: ya no guardamos/restauramos old_bb. Simplemente posicionamos el builder ahí:
-        c.LLVMPositionBuilderAtEnd(self.builder, entry);
+        // 4) creamos el bloque “entry” y posicionamos el builder ahí
+        const entry_bb = c.LLVMAppendBasicBlock(fun_ref, "entry");
+        c.LLVMPositionBuilderAtEnd(self.builder, entry_bb);
 
-        // scope local
-        const old_table = self.symbol_table;
-        self.symbol_table = std.StringHashMap(Symbol).init(self.allocator.*);
+        // 5) creamos una tabla local “vacía” y copiamos allí todas las entradas actuales
+        //    (de ese modo, dentro del cuerpo de la función seguiremos viendo las funciones top-level)
 
+        var old_table = self.symbol_table;
+        var new_table = std.StringHashMap(Symbol).init(self.allocator.*);
+        // copiamos cada par <clave,value> de old_table a new_table:
+        var it = old_table.iterator();
+        while (it.next()) |entry| {
+            // entry.key_ptr.* es el nombre; entry.value es la struct Symbol con LLVMValueRef, etc.
+            _ = try new_table.put(entry.key_ptr.*, entry.value_ptr.*);
+        }
+        // reemplazamos temporalmente la tabla global por la local “sembrada”
+        self.symbol_table = new_table;
+
+        // 6) generamos el cuerpo de la función (ya puede usar both globals + locals)
         try self.genCodeBlock(fd.body);
 
-        // Si el cuerpo no devuelve, añade un `ret void` o `ret undef`
-        if (c.LLVMGetBasicBlockTerminator(entry) == null) {
+        // 7) si no se emitió ningún return explícito, ponemos uno “por defecto”
+        if (c.LLVMGetBasicBlockTerminator(entry_bb) == null) {
             if (ret_type == c.LLVMVoidType()) {
                 _ = c.LLVMBuildRetVoid(self.builder);
             } else {
@@ -189,24 +201,22 @@ pub const CodeGenerator = struct {
             }
         }
 
-        // liberamos la simbol table local y restauramos la de nivel superior:
+        // 8) devolvemos la tabla antigua (global) y liberamos la local
         self.symbol_table.deinit();
         self.symbol_table = old_table;
     }
 
     // ────────────────────────────────────────────────────────── variables ────
     fn genBindingDecl(self: *CodeGenerator, bd: *sem.BindingDeclaration) !void {
-        if (self.symbol_table.contains(bd.name))
+        if (self.symbol_table.contains(bd.name)) {
             return CodegenError.SymbolAlreadyDefined;
-
+        }
         const llvm_ty = switch (bd.ty) {
             .builtin => |bt| try builtinToLLVM(bt),
             else => return CodegenError.InvalidType,
         };
-
         const c_name = try self.dupZ(bd.name);
         const alloca = c.LLVMBuildAlloca(self.builder, llvm_ty, c_name.ptr);
-
         try self.symbol_table.put(bd.name, .{
             .cname = c_name,
             .mutability = bd.mutability,
@@ -214,20 +224,17 @@ pub const CodeGenerator = struct {
             .ref = alloca,
         });
 
-        // inicialización implícita
+        // si hay inicialización implícita:
         if (bd.initialization) |init_node| {
-            // Evaluar la expresión del inicializador:
             const init_tv_opt = try self.visitNode(init_node);
             const init_tv = init_tv_opt orelse return CodegenError.ValueNotFound;
 
             var store_val = init_tv.value_ref;
-            // Si la variable es Float32 y el literal vino como Int32, hacemos SICast:
             if (llvm_ty == c.LLVMFloatType() and init_tv.type_ref == c.LLVMInt32Type()) {
                 store_val = c.LLVMBuildSIToFP(self.builder, init_tv.value_ref, llvm_ty, "int_to_float");
             } else if (init_tv.type_ref != llvm_ty) {
                 return CodegenError.InvalidType;
             }
-            // Ahora sí, “almacenamos” directamente el valor en el alloca recién creado:
             _ = c.LLVMBuildStore(self.builder, store_val, alloca);
         }
     }
@@ -239,33 +246,28 @@ pub const CodeGenerator = struct {
     }
 
     // ───────────────────────────────────────────────────────── assignment ────
-    fn genAssignment(self: *CodeGenerator, as: *sem.Assignment) !TypedValue {
-        const sym = self.symbol_table.get(as.sym_id.name) orelse return CodegenError.SymbolNotFound;
+    fn genAssignment(self: *CodeGenerator, asgn: *sem.Assignment) !TypedValue {
+        const sym = self.symbol_table.get(asgn.sym_id.name) orelse return CodegenError.SymbolNotFound;
 
-        if (sym.mutability == .constant)
+        if (sym.mutability == .constant) {
             return CodegenError.ConstantReassignment;
-
-        const rhs_tv_opt = try self.visitNode(as.value);
+        }
+        const rhs_tv_opt = try self.visitNode(asgn.value);
         const rhs_tv = rhs_tv_opt orelse return CodegenError.ValueNotFound;
 
         var final_val = rhs_tv.value_ref;
-
-        // cast implícito int→float
-        if (sym.type_ref == c.LLVMFloatType() and
-            rhs_tv.type_ref == c.LLVMInt32Type())
-        {
+        if (sym.type_ref == c.LLVMFloatType() and rhs_tv.type_ref == c.LLVMInt32Type()) {
             final_val = c.LLVMBuildSIToFP(self.builder, rhs_tv.value_ref, sym.type_ref, "int_to_float");
         } else if (sym.type_ref != rhs_tv.type_ref) {
             return CodegenError.InvalidType;
         }
-
         _ = c.LLVMBuildStore(self.builder, final_val, sym.ref);
         return .{ .value_ref = final_val, .type_ref = sym.type_ref };
     }
 
     // ────────────────────────────────────────────────────────── literals ─────
     fn genValueLiteral(self: *CodeGenerator, lit: *const sem.ValueLiteral) !TypedValue {
-        _ = self; // ← evitar “unused parameter”
+        _ = self; // unused
         return switch (lit.*) {
             .int_literal => |v| .{
                 .type_ref = c.LLVMInt32Type(),
@@ -284,17 +286,17 @@ pub const CodeGenerator = struct {
         var lhs = (try self.visitNode(bo.left)) orelse return CodegenError.ValueNotFound;
         var rhs = (try self.visitNode(bo.right)) orelse return CodegenError.ValueNotFound;
 
-        // promote int→float si hace falta
-        if (lhs.type_ref == c.LLVMFloatType() and rhs.type_ref == c.LLVMInt32Type())
+        if (lhs.type_ref == c.LLVMFloatType() and rhs.type_ref == c.LLVMInt32Type()) {
             rhs = .{
                 .type_ref = c.LLVMFloatType(),
                 .value_ref = c.LLVMBuildSIToFP(self.builder, rhs.value_ref, c.LLVMFloatType(), "int_to_float"),
-            }
-        else if (rhs.type_ref == c.LLVMFloatType() and lhs.type_ref == c.LLVMInt32Type())
+            };
+        } else if (rhs.type_ref == c.LLVMFloatType() and lhs.type_ref == c.LLVMInt32Type()) {
             lhs = .{
                 .type_ref = c.LLVMFloatType(),
                 .value_ref = c.LLVMBuildSIToFP(self.builder, lhs.value_ref, c.LLVMFloatType(), "int_to_float"),
             };
+        }
 
         const is_float = lhs.type_ref == c.LLVMFloatType();
         const val = switch (bo.operator) {
@@ -319,7 +321,6 @@ pub const CodeGenerator = struct {
             else
                 c.LLVMBuildSRem(self.builder, lhs.value_ref, rhs.value_ref, "irem"),
         };
-
         return .{ .value_ref = val, .type_ref = lhs.type_ref };
     }
 
@@ -336,9 +337,64 @@ pub const CodeGenerator = struct {
         _ = c.LLVMBuildRetVoid(self.builder);
     }
 
+    // ──────────────────────────────────────────────────────── function call ───
+    fn genFunctionCall(self: *CodeGenerator, fc: *const sem.FunctionCall) CodegenError!?TypedValue {
+        // Obtenemos el LLVMValueRef de la tabla de símbolos (ahora sí contiene
+        // tanto a otras funciones top-level como a las variables locales)
+        // Print the symbol name and the table
+        const sym = self.symbol_table.get(fc.callee.name) orelse {
+            // Print the symbol name and the table
+            std.debug.print("Symbol not found: {s}\n", .{fc.callee.name});
+            std.debug.print("Current symbol table:\n", .{});
+            var it = self.symbol_table.iterator();
+            while (it.next()) |entry| {
+                std.debug.print("  {s} -> {s}\n", .{ entry.key_ptr.*, entry.value_ptr.*.cname });
+            }
+            return CodegenError.SymbolNotFound;
+        };
+        const fun_ref = sym.ref;
+
+        // Sacamos el LLVMFunctionType y el tipo de retorno
+        const fn_type = c.LLVMGetElementType(c.LLVMTypeOf(fun_ref));
+        const ret_ty = c.LLVMGetReturnType(fn_type);
+
+        // Preparamos los argumentos (si los hay)
+        const argc: usize = fc.args.len;
+        var args_storage: []llvm.c.LLVMValueRef = try self.allocator.alloc(llvm.c.LLVMValueRef, argc);
+        if (argc != 0) {
+            var i: usize = 0;
+            for (fc.args) |arg_node| {
+                const tv_opt = try self.visitNode(&arg_node);
+                const tv = tv_opt orelse return CodegenError.ValueNotFound;
+                args_storage[i] = tv.value_ref;
+                i += 1;
+            }
+        }
+        const args_ptr: *llvm.c.LLVMValueRef = @ptrCast(args_storage.ptr);
+        defer self.allocator.free(args_storage);
+
+        // Emitimos la llamada
+        const call_val = c.LLVMBuildCall2(
+            self.builder,
+            fn_type,
+            fun_ref,
+            args_ptr,
+            @intCast(argc),
+            "calltmp",
+        );
+
+        // Si la función retorna void, devolvemos null
+        if (ret_ty == c.LLVMVoidType()) {
+            return null;
+        }
+        return .{ .value_ref = call_val, .type_ref = ret_ty };
+    }
+
     // ────────────────────────────────────────────────────────── code block ───
     fn genCodeBlock(self: *CodeGenerator, cb: *const sem.CodeBlock) !void {
-        for (cb.nodes.items) |n| _ = try self.visitNode(n);
+        for (cb.nodes.items) |n| {
+            _ = try self.visitNode(n);
+        }
     }
 
     // ────────────────────────────────────────────────────────── utilities ────

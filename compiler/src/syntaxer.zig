@@ -199,6 +199,40 @@ pub const Syntaxer = struct {
         const token = self.current();
         return switch (token.content) {
             .literal, .identifier => {
+                // call-expression?  <ident> '(' ...
+                if (token.content == .identifier and self.next().?.content == .open_parenthesis) {
+                    const callee = try self.parseIdentifier(); // consumed ident
+                    self.advanceOne(); // consume '('
+
+                    // --- parse comma-separated arg list -----------------------
+                    var arg_nodes = std.ArrayList(*syn.STNode).init(self.allocator.*);
+                    self.ignoreNewLinesAndComments();
+                    while (!self.tokenIs(.close_parenthesis)) {
+                        const arg = try self.parseExpression();
+                        try arg_nodes.append(arg);
+                        if (self.tokenIs(.comma)) {
+                            self.advanceOne(); // consume ','
+                            self.ignoreNewLinesAndComments();
+                        } else {
+                            break; // no more args
+                        }
+                    }
+                    if (!self.tokenIs(.close_parenthesis)) {
+                        return SyntaxerError.ExpectedRightParen;
+                    }
+                    self.advanceOne(); // consume ')'
+
+                    const node = try self.allocator.create(syn.STNode);
+                    node.*.location = token.location;
+                    node.*.content = syn.Content{
+                        .function_call = .{
+                            .callee = callee,
+                            .args = arg_nodes.items,
+                        },
+                    };
+                    return node;
+                }
+
                 // Check if the next token is a binary operator
                 if (self.next().?.content == .binary_operator) {
                     const left = try self.parseSymbolOrLiteral();

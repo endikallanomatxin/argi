@@ -65,6 +65,7 @@ pub const Semantizer = struct {
             .binary_operation => |b| self.handleBinaryOperation(b, scope),
             .return_statement => |r| self.handleReturnStatement(r, scope),
             .code_block => |blk| self.handleCodeBlock(blk, scope),
+            .function_call => |fc| self.handleFunctionCall(fc, n.location, scope),
 
             else => error.NotYetImplemented,
         };
@@ -122,6 +123,34 @@ pub const Semantizer = struct {
 
         const node = try self.makeNode(.{ .code_block = cb }, parent);
         return .{ .node = node, .ty = .Void }; // <- ".Void" is now legal
+    }
+
+    fn handleFunctionCall(self: *Semantizer, call: syn.FunctionCall, loc: tok.Location, scope: *Scope) SemErr!TypedExpr {
+        _ = loc; // unused for now
+        const fn_decl = scope.lookupFunction(call.callee) orelse return error.SymbolNotFound;
+
+        // resolve & type-check arguments (for now only arity)
+        if (call.args.len != fn_decl.params.items.len)
+            return error.InvalidType; // arity mismatch
+
+        var sg_args = try self.allocator.alloc(sem.SGNode, call.args.len);
+        var idx: usize = 0;
+        for (call.args) |arg_st| {
+            const te = try self.visitNode(arg_st.*, scope);
+            sg_args[idx] = te.node.*;
+            idx += 1;
+        }
+
+        const fc_ptr = try self.allocator.create(sem.FunctionCall);
+        fc_ptr.* = .{
+            .callee = fn_decl,
+            .args = sg_args,
+        };
+
+        const node_ptr = try self.makeNode(.{ .function_call = fc_ptr }, scope);
+        const ret_ty = fn_decl.return_type.?.builtin; // we only have Builtin for now
+
+        return .{ .node = node_ptr, .ty = ret_ty };
     }
 
     fn handleDeclaration(self: *Semantizer, decl: syn.Declaration, loc: tok.Location, scope: *Scope) SemErr!TypedExpr {
@@ -310,6 +339,12 @@ const Scope = struct {
     fn lookupBinding(self: *Scope, name: []const u8) ?*sem.BindingDeclaration {
         if (self.bindings.get(name)) |b| return b;
         if (self.parent) |p| return p.lookupBinding(name);
+        return null;
+    }
+
+    fn lookupFunction(self: *Scope, name: []const u8) ?*sem.FunctionDeclaration {
+        if (self.functions.get(name)) |f| return f;
+        if (self.parent) |p| return p.lookupFunction(name);
         return null;
     }
 
