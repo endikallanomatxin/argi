@@ -138,8 +138,10 @@ pub const Semantizer = struct {
         var builtin_ty: sem.BuiltinType = .Int32; // por defecto
         if (decl.type) |t|
             builtin_ty = try builtinFromName(t.name)
-        else if (decl.value) |val_node|
-            builtin_ty = (try self.visitNode(val_node.*, scope)).ty;
+        else if (decl.value) |val_node| {
+            const tmp = try self.visitNode(val_node.*, scope);
+            builtin_ty = tmp.ty;
+        }
 
         const binding_ptr = try self.allocator.create(sem.BindingDeclaration);
         binding_ptr.* = .{
@@ -155,7 +157,17 @@ pub const Semantizer = struct {
         if (scope.parent == null) try self.root_nodes.append(node_ptr);
 
         // inicializador implícito
-        if (decl.value) |v| _ = try self.handleAssignment(.{ .name = decl.name, .value = v }, loc, scope);
+        if (decl.value) |v| {
+            if (decl.mutability == .variable) {
+                // Primer write de una variable: sigue siendo un assignment
+                _ = try self.handleAssignment(.{ .name = decl.name, .value = v }, loc, scope);
+            } else {
+                // Const: la inicialización NO es un assignment,
+                // solo guardamos la expresión a evaluar más tarde.
+                const rhs = try self.visitNode(v.*, scope);
+                binding_ptr.initialization = rhs.node;
+            }
+        }
 
         return .{ .node = node_ptr, .ty = .Void };
     }
@@ -177,15 +189,18 @@ pub const Semantizer = struct {
             .value = rhs.node,
         };
 
-        const node_ptr = try self.makeNode(.{ .binding_assignment = assign_ptr }, scope);
+        const is_initial = (binding.initialization == null);
 
-        if (binding.initialization == null) {
-            binding.initialization = node_ptr; // guardar el nodo de inicialización
-            try scope.nodes.append(node_ptr); // añadir al scope
+        const node_ptr = try self.makeNode(.{ .binding_assignment = assign_ptr }, if (is_initial) null else scope); // ← ¡ojo aquí!
+
+        if (is_initial) {
+            binding.initialization = node_ptr; // sólo lo guardamos
         } else {
-            // ya estaba inicializado, no se puede reasignar si es constante
-            if (binding.mutability == .constant) return error.ConstantReassignment;
+            if (binding.mutability == .constant)
+                return error.ConstantReassignment; // reasignar const → error
+            try scope.nodes.append(node_ptr); // ya era var ⇒ sí lo añadimos
         }
+
         return .{ .node = node_ptr, .ty = .Void };
     }
 
