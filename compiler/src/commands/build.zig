@@ -36,7 +36,7 @@ pub fn compile(filename: []const u8) !void {
     defer sg.deinit();
     sematizer.printSG();
 
-    // // 5. Generar IR a partir del AST.
+    // 5. Generar IR a partir del AST.
     // var g = codegen.CodeGenerator.init(&allocator, sg) catch return;
     // const module = try g.generate();
     // const llvm_output_filename = "output.ll";
