@@ -28,48 +28,73 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    // Obtain LLVM paths from the installed `llvm-config` tool.  This avoids
-    // hard-coding the version and makes the build portable across systems.
-    const llvm_config = blk: {
-        const names = &[_][]const u8{
-            "llvm-config",
-            "llvm-config-20",
-            "llvm-config-19",
-            "llvm-config-18",
-            "llvm-config-17",
-            "llvm-config-16",
-            "llvm-config-15",
+    // Obtain LLVM paths. First try environment variables to avoid spawning
+    // `llvm-config` which might not be supported in restricted environments.
+    const env_include = std.process.getEnvVarOwned(b.allocator, "LLVM_INCLUDE_DIR") catch null;
+    const env_lib     = std.process.getEnvVarOwned(b.allocator, "LLVM_LIB_DIR") catch null;
+    const env_libs    = std.process.getEnvVarOwned(b.allocator, "LLVM_LIBS") catch null;
+
+    const include_dir_raw: []const u8 = if (env_include) |v| v else blk: {
+        // Fallback to using `llvm-config` when environment variables are not provided.
+        const llvm_config = blk2: {
+            const names = &[_][]const u8{
+                "llvm-config",
+                "llvm-config-20",
+                "llvm-config-19",
+                "llvm-config-18",
+                "llvm-config-17",
+                "llvm-config-16",
+                "llvm-config-15",
+            };
+            for (names) |name| {
+                if (b.findProgram(&.{name}, &.{"/usr/bin"}) catch null) |path| break :blk2 path;
+            }
+            std.debug.panic("llvm-config not found; please install LLVM dev tools", .{});
         };
-        for (names) |name| {
-            if (b.findProgram(&.{name}, &.{"/usr/bin"}) catch null) |path| break :blk path;
-        }
-        std.debug.panic("llvm-config not found; please install LLVM dev tools", .{});
+        break :blk b.run(&.{ llvm_config, "--includedir" });
     };
 
-    const include_dir_raw = b.run(&.{ llvm_config, "--includedir" });
-    const lib_dir_raw = b.run(&.{ llvm_config, "--libdir" });
-    const libs_raw = std.mem.trimRight(u8, b.run(&.{ llvm_config, "--libs" }), "\n");
+    const lib_dir_raw: []const u8 = if (env_lib) |v| v else blk: {
+        const llvm_config = blk2: {
+            const names = &[_][]const u8{
+                "llvm-config",
+                "llvm-config-20",
+                "llvm-config-19",
+                "llvm-config-18",
+                "llvm-config-17",
+                "llvm-config-16",
+                "llvm-config-15",
+            };
+            for (names) |name| {
+                if (b.findProgram(&.{name}, &.{"/usr/bin"}) catch null) |path| break :blk2 path;
+            }
+            std.debug.panic("llvm-config not found; please install LLVM dev tools", .{});
+        };
+        break :blk b.run(&.{ llvm_config, "--libdir" });
+    };
+
+    const libs_raw: []const u8 = if (env_libs) |v| v else blk: {
+        const llvm_config = blk2: {
+            const names = &[_][]const u8{
+                "llvm-config",
+                "llvm-config-20",
+                "llvm-config-19",
+                "llvm-config-18",
+                "llvm-config-17",
+                "llvm-config-16",
+                "llvm-config-15",
+            };
+            for (names) |name| {
+                if (b.findProgram(&.{name}, &.{"/usr/bin"}) catch null) |path| break :blk2 path;
+            }
+            std.debug.panic("llvm-config not found; please install LLVM dev tools", .{});
+        };
+        break :blk std.mem.trimRight(u8, b.run(&.{ llvm_config, "--libs" }), "\n");
+    };
 
     const llvm_include_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, include_dir_raw, " \n") };
     const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, lib_dir_raw, " \n") };
 
-    const lib = b.addStaticLibrary(.{
-        .name = "argi_compiler",
-        // In this case the main source file is merely a path, however, in more
-        // complicated build scripts, this could be a generated file.
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    lib.addIncludePath(llvm_include_path);
-    lib.addLibraryPath(llvm_lib_path);
-    linkLlvm(lib, libs_raw);
-
-    // This declares intent for the library to be installed into the standard
-    // location when the user invokes the "install" step (the default step when
-    // running `zig build`).
-    b.installArtifact(lib);
 
     const exe = b.addExecutable(.{
         .name = "argi_compiler",
