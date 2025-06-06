@@ -70,9 +70,15 @@ pub fn printToken(token: tok.Token) void {
         .double_colon => {
             std.debug.print("double_colon\n", .{});
         },
-       .equal => {
-           std.debug.print("equal\n", .{});
-       },
+        .equal => {
+            std.debug.print("equal\n", .{});
+        },
+        .check_equals => {
+            std.debug.print("check_equals\n", .{});
+        },
+        .check_not_equals => {
+            std.debug.print("check_not_equals\n", .{});
+        },
         .arrow => {
             std.debug.print("arrow\n", .{});
         },
