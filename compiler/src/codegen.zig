@@ -339,57 +339,45 @@ pub const CodeGenerator = struct {
 
     // ──────────────────────────────────────────────────────── function call ───
     fn genFunctionCall(self: *CodeGenerator, fc: *const sem.FunctionCall) CodegenError!?TypedValue {
-        // Obtenemos el LLVMValueRef de la tabla de símbolos (ahora sí contiene
-        // tanto a otras funciones top-level como a las variables locales)
-        // Print the symbol name and the table
-        const sym = self.symbol_table.get(fc.callee.name) orelse {
-            // Print the symbol name and the table
-            std.debug.print("Symbol not found: {s}\n", .{fc.callee.name});
-            std.debug.print("Current symbol table:\n", .{});
-            var it = self.symbol_table.iterator();
-            while (it.next()) |entry| {
-                std.debug.print("  {s} -> {s}\n", .{ entry.key_ptr.*, entry.value_ptr.*.cname });
-            }
-            return CodegenError.SymbolNotFound;
-        };
+        const sym = self.symbol_table.get(fc.callee.name) orelse return CodegenError.SymbolNotFound;
         const fun_ref = sym.ref;
 
-        // Sacamos el LLVMFunctionType y el tipo de retorno
-        const fn_type = c.LLVMGetElementType(c.LLVMTypeOf(fun_ref));
+        const fn_type = sym.type_ref;
         const ret_ty = c.LLVMGetReturnType(fn_type);
-
-        // Preparamos los argumentos (si los hay)
+        // --- preparar argumentos ----------------------------------------
         const argc: usize = fc.args.len;
-        var args_storage: []llvm.c.LLVMValueRef = try self.allocator.alloc(llvm.c.LLVMValueRef, argc);
-        if (argc != 0) {
-            var i: usize = 0;
-            for (fc.args) |arg_node| {
-                const tv_opt = try self.visitNode(&arg_node);
-                const tv = tv_opt orelse return CodegenError.ValueNotFound;
-                args_storage[i] = tv.value_ref;
-                i += 1;
-            }
-        }
-        const args_ptr: *llvm.c.LLVMValueRef = @ptrCast(args_storage.ptr);
-        defer self.allocator.free(args_storage);
 
-        // Emitimos la llamada
+        // Por defecto NULL para cumplir contrato de LLVM
+        var args_ptr: ?[*]llvm.c.LLVMValueRef = null;
+
+        if (argc > 0) {
+            // Sólo alocamos si de verdad hay argumentos
+            var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, argc);
+            defer self.allocator.free(argv);
+
+            for (fc.args, 0..) |arg_node, i| {
+                const tv = (try self.visitNode(&arg_node)) orelse
+                    return CodegenError.ValueNotFound;
+                argv[i] = tv.value_ref;
+            }
+            args_ptr = @ptrCast(argv.ptr); // ahora sí
+        }
+
+        // --- emitir llamada ---------------------------------------------
         const call_val = c.LLVMBuildCall2(
             self.builder,
             fn_type,
             fun_ref,
-            args_ptr,
+            args_ptr orelse null, // NULL cuando argc == 0
             @intCast(argc),
             "calltmp",
         );
 
-        // Si la función retorna void, devolvemos null
-        if (ret_ty == c.LLVMVoidType()) {
+        if (ret_ty == c.LLVMVoidType())
             return null;
-        }
+
         return .{ .value_ref = call_val, .type_ref = ret_ty };
     }
-
     // ────────────────────────────────────────────────────────── code block ───
     fn genCodeBlock(self: *CodeGenerator, cb: *const sem.CodeBlock) !void {
         for (cb.nodes.items) |n| {
