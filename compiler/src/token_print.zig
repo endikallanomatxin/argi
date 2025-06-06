@@ -70,8 +70,11 @@ pub fn printToken(token: tok.Token) void {
         .double_colon => {
             std.debug.print("double_colon\n", .{});
         },
-        .equal => {
-            std.debug.print("equal\n", .{});
+       .equal => {
+           std.debug.print("equal\n", .{});
+       },
+        .arrow => {
+            std.debug.print("arrow\n", .{});
         },
         .binary_operator => |op| {
             switch (op) {

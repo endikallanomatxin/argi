@@ -94,6 +94,10 @@ pub const Syntaxer = struct {
                 .double_colon => true,
                 else => false,
             },
+            .arrow => switch (expected) {
+                .arrow => true,
+                else => false,
+            },
             .equal => switch (expected) {
                 .equal => true,
                 else => false,
@@ -268,7 +272,8 @@ pub const Syntaxer = struct {
         const name = try self.parseIdentifier();
 
         var kind: syn.SymbolKind = .binding;
-        // Check for parenthesis
+        var ret_type: ?syn.TypeName = null;
+        // Check for parenthesis (function)
         if (self.tokenIs(.open_parenthesis)) {
             self.advanceOne(); // consume '('
             const args = try self.parseArguments();
@@ -276,6 +281,11 @@ pub const Syntaxer = struct {
             if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
             self.advanceOne(); // consume ')'
             kind = .function;
+
+            if (self.tokenIs(.arrow)) {
+                self.advanceOne(); // consume '->'
+                ret_type = try self.parseType();
+            }
         }
 
         // Assignment
@@ -288,7 +298,7 @@ pub const Syntaxer = struct {
             return node;
         }
 
-        var tipo: ?syn.TypeName = null;
+        var tipo: ?syn.TypeName = if (kind == .function) ret_type else null;
         // Declaration
         if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) {
             var mutability: syn.Mutability = .constant;

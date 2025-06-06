@@ -272,10 +272,12 @@ pub const Semantizer = struct {
 
         // 2) Creamos la FunctionDeclaration y apuntamos su `body` al CodeBlock del SGNode
         const func_ptr = try self.allocator.create(sem.FunctionDeclaration);
+        const declared_rt = decl.type orelse return error.InvalidType;
+        const builtin_rt = try builtinFromName(declared_rt.name);
         func_ptr.* = .{
             .name = decl.name,
             .params = std.ArrayList(*sem.BindingDeclaration).init(self.allocator.*), // (aún sin params)
-            .return_type = .{ .builtin = child.inferredReturnType orelse .Int32 },
+            .return_type = .{ .builtin = builtin_rt },
             // body es un *const CodeBlock; en el SGNode .code_block está ese pointer
             .body = body_sg_node.*.code_block,
         };
