@@ -33,7 +33,12 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
                 else
                     "void",
             });
-            // the body is not linked yet – nothing else to print here.
+            // TODO:
+            // std.debug.print("  Body:\n", .{});
+            // const sg_node = sem.SGNode{
+            //     .code_block = @constCast(f.body),
+            // };
+            // printNode(&sg_node, lvl + 1);
         },
 
         // ───────────────────────────────────────────────────────────── assignments
