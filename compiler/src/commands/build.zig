@@ -37,15 +37,15 @@ pub fn compile(filename: []const u8) !void {
     sematizer.printSG();
 
     // 5. Generar IR a partir del AST.
-    // var g = codegen.CodeGenerator.init(&allocator, sg) catch return;
-    // const module = try g.generate();
-    // const llvm_output_filename = "output.ll";
-    // var err_msg: [*c]u8 = null;
-    // if (c.LLVMPrintModuleToFile(module, llvm_output_filename, &err_msg) != 0) {
-    //     std.debug.print("Error al escribir el módulo LLVM: {s}\n", .{err_msg});
-    //     return error.WriteFailed;
-    // }
-    // std.debug.print("Código LLVM IR guardado en {s}\n", .{llvm_output_filename});
+    var g = codegen.CodeGenerator.init(&allocator, sg) catch return;
+    const module = try g.generate();
+    const llvm_output_filename = "output.ll";
+    var err_msg: [*c]u8 = null;
+    if (c.LLVMPrintModuleToFile(module, llvm_output_filename, &err_msg) != 0) {
+        std.debug.print("Error al escribir el módulo LLVM: {s}\n", .{err_msg});
+        return error.WriteFailed;
+    }
+    std.debug.print("Código LLVM IR guardado en {s}\n", .{llvm_output_filename});
 
     // // 5. Compilar el IR a un ejecutable usando Clang.
     // std.debug.print("\n\nCOMPILATION\n", .{});

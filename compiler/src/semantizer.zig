@@ -103,7 +103,7 @@ pub const Semantizer = struct {
     // ------- identifiers ----------------------------------------------------
     fn handleIdentifier(self: *Semantizer, name: []const u8, scope: *Scope) SemErr!TypedExpr {
         const binding = scope.lookupBinding(name) orelse return error.SymbolNotFound;
-        const node = try self.makeNode(.{ .binding_declaration = binding }, null);
+        const node = try self.makeNode(.{ .binding_use = binding }, null);
         return .{ .node = node, .ty = binding.ty.builtin };
     }
 
