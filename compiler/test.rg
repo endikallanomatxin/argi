@@ -19,6 +19,9 @@ main() -> Int32 := {
     c := a + b
 
     d := other_function()
+    if (d != 0) {
+        return d
+    }
 
     return 0
 }

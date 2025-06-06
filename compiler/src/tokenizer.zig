@@ -221,7 +221,21 @@ pub const Tokenizer = struct {
                 }
             },
             '=' => {
-                try self.addToken(tok.Content{ .equal = .{} }, loc);
+                if (try self.next() == '=') {
+                    try self.addToken(tok.Content{ .check_equals = .{} }, loc);
+                    try self.advanceOne(); // Avanzar el segundo '='
+                } else {
+                    try self.addToken(tok.Content{ .equal = .{} }, loc);
+                }
+            },
+            '!' => {
+                if (try self.next() == '=') {
+                    try self.addToken(tok.Content{ .check_not_equals = .{} }, loc);
+                    try self.advanceOne(); // Avanzar el segundo '!'
+                } else {
+                    std.debug.print("Unknown character: {c}\n", .{self.this()});
+                    return TokenizerError.UnknownCharacter;
+                }
             },
             '+' => {
                 try self.addToken(tok.Content{ .binary_operator = .addition }, loc);
