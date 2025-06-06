@@ -47,13 +47,20 @@ pub fn compile(filename: []const u8) !void {
     }
     std.debug.print("Código LLVM IR guardado en {s}\n", .{llvm_output_filename});
 
-    // 5. Compilar el IR a un ejecutable usando Clang.
-    std.debug.print("\n\nCOMPILATION\n", .{});
-    const result = std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = &[_][]const u8{ "clang", llvm_output_filename, "-o", "output" },
-    }) catch return;
-    _ = result;
+    if (std.process.can_execv) {
+        // 5. Compilar el IR a un ejecutable usando Clang.
+        std.debug.print("\n\nCOMPILATION\n", .{});
+        const result = std.process.Child.run(.{
+            .allocator = allocator,
+            .argv = &[_][]const u8{ "clang", llvm_output_filename, "-o", "output" },
+        }) catch return;
+        _ = result;
 
-    std.debug.print("Compilación completada. Ejecutable generado: ./output\n", .{});
+        std.debug.print("Compilación completada. Ejecutable generado: ./output\n", .{});
+    } else {
+        std.debug.print("No se puede ejecutar el comando de compilación, porque no se soporta en este sistema.\n", .{});
+        std.debug.print("Ejecute el comando manualmente:\n", .{});
+        std.debug.print("  clang {s} -o output\n", .{llvm_output_filename});
+        return error.UnsupportedPlatform;
+    }
 }
