@@ -91,6 +91,8 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
                 .multiplication => "*",
                 .division => "/",
                 .modulo => "%",
+                .equals => "==",
+                .not_equals => "!=",
             };
             std.debug.print("BinaryOperation: \"{s}\"\n", .{op_str});
             indent(lvl + 1);
