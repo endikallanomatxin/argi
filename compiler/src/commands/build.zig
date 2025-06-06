@@ -47,13 +47,13 @@ pub fn compile(filename: []const u8) !void {
     }
     std.debug.print("Código LLVM IR guardado en {s}\n", .{llvm_output_filename});
 
-    // // 5. Compilar el IR a un ejecutable usando Clang.
-    // std.debug.print("\n\nCOMPILATION\n", .{});
-    // const result = std.process.Child.run(.{
-    //     .allocator = allocator,
-    //     .argv = &[_][]const u8{ "clang", llvm_output_filename, "-o", "output" },
-    // }) catch return;
-    // _ = result;
+    // 5. Compilar el IR a un ejecutable usando Clang.
+    std.debug.print("\n\nCOMPILATION\n", .{});
+    const result = std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{ "clang", llvm_output_filename, "-o", "output" },
+    }) catch return;
+    _ = result;
 
-    // std.debug.print("Compilación completada. Ejecutable generado: ./output\n", .{});
+    std.debug.print("Compilación completada. Ejecutable generado: ./output\n", .{});
 }
