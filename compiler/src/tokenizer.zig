@@ -191,6 +191,10 @@ pub const Tokenizer = struct {
             const word = self.source[start..self.location.offset];
             if (std.mem.eql(u8, word, "return")) {
                 try self.addToken(tok.Content{ .keyword_return = .{} }, loc);
+            } else if (std.mem.eql(u8, word, "if")) {
+                try self.addToken(tok.Content{ .keyword_if = .{} }, loc);
+            } else if (std.mem.eql(u8, word, "else")) {
+                try self.addToken(tok.Content{ .keyword_else = .{} }, loc);
             } else {
                 try self.addToken(tok.Content{ .identifier = word }, loc);
             }

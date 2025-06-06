@@ -19,6 +19,7 @@ pub const SyntaxerError = error{
     ExpectedDeclarationOrAssignment,
     ExpectedFuncAssignment,
     ExpectedKeywordReturn,
+    ExpectedKeywordIf,
     OutOfMemory,
 };
 
@@ -120,6 +121,14 @@ pub const Syntaxer = struct {
             },
             .keyword_return => switch (expected) {
                 .keyword_return => true,
+                else => false,
+            },
+            .keyword_if => switch (expected) {
+                .keyword_if => true,
+                else => false,
+            },
+            .keyword_else => switch (expected) {
+                .keyword_else => true,
                 else => false,
             },
             else => false,
@@ -238,11 +247,21 @@ pub const Syntaxer = struct {
                 }
 
                 // Check if the next token is a binary operator
-                if (self.next().?.content == .binary_operator) {
+                if (self.next().?.content == .binary_operator or
+                    self.next().?.content == .check_equals or
+                    self.next().?.content == .check_not_equals)
+                {
                     const left = try self.parseSymbolOrLiteral();
 
-                    const op = self.current().content.binary_operator;
-                    self.advanceOne(); // consume binary operator
+                    const op_token = self.current();
+                    var op: tok.BinaryOperator = undefined;
+                    switch (op_token.content) {
+                        .binary_operator => |bop| op = bop,
+                        .check_equals => op = tok.BinaryOperator.equals,
+                        .check_not_equals => op = tok.BinaryOperator.not_equals,
+                        else => unreachable,
+                    }
+                    self.advanceOne(); // consume operator
                     const right = try self.parseExpression();
 
                     const node = try self.allocator.create(syn.STNode);
@@ -360,6 +379,10 @@ pub const Syntaxer = struct {
                     const retNode = try self.parseReturn();
                     try st.append(retNode);
                 },
+                .keyword_if => {
+                    const ifNode = try self.parseIf();
+                    try st.append(ifNode);
+                },
                 else => {
                     const declNode = try self.parseDeclarationOrAssignment();
                     try st.append(declNode);
@@ -379,6 +402,34 @@ pub const Syntaxer = struct {
         const node = try self.allocator.create(syn.STNode);
         node.*.content = syn.Content{ .code_block = syn.CodeBlock{ .items = list.items } };
         node.*.location = self.tokenLocation();
+        return node;
+    }
+
+    fn parseIf(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        if (!self.tokenIs(.keyword_if)) return SyntaxerError.ExpectedKeywordIf;
+        const loc = self.tokenLocation();
+        self.advanceOne(); // consume 'if'
+
+        const condition = try self.parseExpression();
+        const then_block = try self.parseCodeBlock();
+
+        var else_block: ?*syn.STNode = null;
+        if (self.tokenIs(.keyword_else)) {
+            self.advanceOne();
+            if (self.tokenIs(.keyword_if)) {
+                else_block = try self.parseIf();
+            } else {
+                else_block = try self.parseCodeBlock();
+            }
+        }
+
+        const node = try self.allocator.create(syn.STNode);
+        node.*.content = syn.Content{ .if_statement = syn.IfStatement{
+            .condition = condition,
+            .then_block = then_block,
+            .else_block = else_block,
+        } };
+        node.*.location = loc;
         return node;
     }
 

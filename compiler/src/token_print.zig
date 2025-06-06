@@ -33,6 +33,12 @@ pub fn printToken(token: tok.Token) void {
         .keyword_return => {
             std.debug.print("keyword_return\n", .{});
         },
+        .keyword_if => {
+            std.debug.print("keyword_if\n", .{});
+        },
+        .keyword_else => {
+            std.debug.print("keyword_else\n", .{});
+        },
         .literal => |lit| {
             switch (lit) {
                 .bool_literal => |val| {
@@ -98,6 +104,12 @@ pub fn printToken(token: tok.Token) void {
                 },
                 .modulo => {
                     std.debug.print("binary_operator: modulo\n", .{});
+                },
+                .equals => {
+                    std.debug.print("binary_operator: equals\n", .{});
+                },
+                .not_equals => {
+                    std.debug.print("binary_operator: not_equals\n", .{});
                 },
             }
         },

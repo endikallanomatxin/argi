@@ -114,6 +114,8 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
                 .multiplication => "*",
                 .division => "/",
                 .modulo => "%",
+                .equals => "==",
+                .not_equals => "!=",
             };
             std.debug.print("BinaryOp: \"{s}\"\n", .{op_str});
             indent(lvl + 1);

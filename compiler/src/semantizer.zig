@@ -64,6 +64,7 @@ pub const Semantizer = struct {
             .literal => |l| self.handleLiteral(l, scope),
             .binary_operation => |b| self.handleBinaryOperation(b, scope),
             .return_statement => |r| self.handleReturnStatement(r, scope),
+            .if_statement => |ifs| self.handleIfStatement(ifs, scope),
             .code_block => |blk| self.handleCodeBlock(blk, scope),
             .function_call => |fc| self.handleFunctionCall(fc, n.location, scope),
 
@@ -244,7 +245,11 @@ pub const Semantizer = struct {
         const rhs = try self.visitNode(bin.right.*, scope);
 
         var out_ty: sem.BuiltinType = .Int32;
-        if (lhs.ty == .Float32 or rhs.ty == .Float32) out_ty = .Float32;
+        if (bin.operator == .equals or bin.operator == .not_equals) {
+            out_ty = .Bool;
+        } else if (lhs.ty == .Float32 or rhs.ty == .Float32) {
+            out_ty = .Float32;
+        }
 
         const bin_ptr = try self.allocator.create(sem.BinaryOperation);
         bin_ptr.* = .{
@@ -255,6 +260,29 @@ pub const Semantizer = struct {
 
         const node_ptr = try self.makeNode(.{ .binary_operation = bin_ptr.* }, scope);
         return .{ .node = node_ptr, .ty = out_ty };
+    }
+
+    fn handleIfStatement(self: *Semantizer, ifs: syn.IfStatement, scope: *Scope) SemErr!TypedExpr {
+        const cond = try self.visitNode(ifs.condition.*, scope);
+        const then_te = try self.visitNode(ifs.then_block.*, scope);
+        if (then_te.node.* != .code_block) return error.InvalidType;
+
+        var else_cb: ?*sem.CodeBlock = null;
+        if (ifs.else_block) |eb| {
+            const else_te = try self.visitNode(eb.*, scope);
+            if (else_te.node.* != .code_block) return error.InvalidType;
+            else_cb = else_te.node.*.code_block;
+        }
+
+        const if_ptr = try self.allocator.create(sem.IfStatement);
+        if_ptr.* = .{
+            .condition = cond.node,
+            .then_block = then_te.node.*.code_block,
+            .else_block = else_cb,
+        };
+
+        const node_ptr = try self.makeNode(.{ .if_statement = if_ptr }, scope);
+        return .{ .node = node_ptr, .ty = .Void };
     }
 
     // ---------- función ---------------------------------------------------
