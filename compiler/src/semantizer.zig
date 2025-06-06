@@ -129,16 +129,18 @@ pub const Semantizer = struct {
         _ = loc; // unused for now
         const fn_decl = scope.lookupFunction(call.callee) orelse return error.SymbolNotFound;
 
-        // resolve & type-check arguments (for now only arity)
+        // resolve & type-check arguments
         if (call.args.len != fn_decl.params.items.len)
             return error.InvalidType; // arity mismatch
 
         var sg_args = try self.allocator.alloc(sem.SGNode, call.args.len);
-        var idx: usize = 0;
-        for (call.args) |arg_st| {
+        for (call.args, 0..) |arg_st, i| {
             const te = try self.visitNode(arg_st.*, scope);
-            sg_args[idx] = te.node.*;
-            idx += 1;
+            const param = fn_decl.params.items[i];
+            const expected = param.ty.builtin;
+            if (te.ty != expected and !(expected == .Float32 and te.ty == .Int32))
+                return error.InvalidType;
+            sg_args[i] = te.node.*;
         }
 
         const fc_ptr = try self.allocator.create(sem.FunctionCall);
@@ -262,23 +264,41 @@ pub const Semantizer = struct {
         _ = loc;
         if (parent.functions.contains(decl.name)) return error.SymbolAlreadyDefined;
 
-        // 1) Crear alcance hijo para la función y procesar el bloque
+        // 1) Crear alcance hijo para la función
         var child = try Scope.init(self.allocator, parent);
+
+        // 2) Procesar parámetros y registrarlos en el scope hijo
+        var params = std.ArrayList(*sem.BindingDeclaration).init(self.allocator.*);
+        if (decl.args) |arg_list| {
+            for (arg_list) |a| {
+                var builtin_ty: sem.BuiltinType = .Int32;
+                if (a.type) |t| builtin_ty = try builtinFromName(t.name);
+                const bd_ptr = try self.allocator.create(sem.BindingDeclaration);
+                bd_ptr.* = .{
+                    .name = a.name,
+                    .mutability = a.mutability,
+                    .ty = .{ .builtin = builtin_ty },
+                    .initialization = null,
+                };
+                try params.append(bd_ptr);
+                try child.bindings.put(a.name, bd_ptr);
+            }
+        }
+
         const body_ptr = decl.value.?; // punto al STNode que es code_block
 
         // Visitamos ese STNode de tipo code_block; devolvemos TypedExpr
         const body_te = try self.visitNode(body_ptr.*, &child);
         const body_sg_node = body_te.node; // *SGNode de variante .code_block
 
-        // 2) Creamos la FunctionDeclaration y apuntamos su `body` al CodeBlock del SGNode
+        // 3) Creamos la FunctionDeclaration y apuntamos su `body` al CodeBlock del SGNode
         const func_ptr = try self.allocator.create(sem.FunctionDeclaration);
         const declared_rt = decl.type orelse return error.InvalidType;
         const builtin_rt = try builtinFromName(declared_rt.name);
         func_ptr.* = .{
             .name = decl.name,
-            .params = std.ArrayList(*sem.BindingDeclaration).init(self.allocator.*), // (aún sin params)
+            .params = params,
             .return_type = .{ .builtin = builtin_rt },
-            // body es un *const CodeBlock; en el SGNode .code_block está ese pointer
             .body = body_sg_node.*.code_block,
         };
 

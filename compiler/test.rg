@@ -1,6 +1,6 @@
-other_function() -> Int32 := {
-    c := 2
-    return 0
+other_function(x: Int32) -> Int32 := {
+    c := x + 2
+    return c
 }
 
 main() -> Int32 := {
@@ -18,7 +18,7 @@ main() -> Int32 := {
     -- Declaration of a constant from an expression also works
     c := a + b
 
-    d := other_function()
+    d := other_function(10)
     if (d != 0) {
         return d
     }

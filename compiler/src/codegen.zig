@@ -158,8 +158,26 @@ pub const CodeGenerator = struct {
             else => return CodegenError.InvalidType,
         } else c.LLVMVoidType();
 
-        // 2) creamos el LLVMFunctionType
-        const fn_type = c.LLVMFunctionType(ret_type, null, 0, 0);
+        // 2) creamos el LLVMFunctionType con parámetros
+        const param_count: usize = fd.params.items.len;
+        var param_types: ?[*]llvm.c.LLVMTypeRef = null;
+        if (param_count > 0) {
+            var tmp = try self.allocator.alloc(llvm.c.LLVMTypeRef, param_count);
+            defer self.allocator.free(tmp);
+            for (fd.params.items, 0..) |p, i| {
+                tmp[i] = switch (p.ty) {
+                    .builtin => |bt| try builtinToLLVM(bt),
+                    else => return CodegenError.InvalidType,
+                };
+            }
+            param_types = @ptrCast(tmp.ptr);
+        }
+        const fn_type = c.LLVMFunctionType(
+            ret_type,
+            param_types orelse null,
+            @intCast(param_count),
+            0,
+        );
         const c_name = try self.dupZ(fd.name);
         const fun_ref = c.LLVMAddFunction(self.module, c_name.ptr, fn_type);
 
@@ -189,10 +207,31 @@ pub const CodeGenerator = struct {
         // reemplazamos temporalmente la tabla global por la local “sembrada”
         self.symbol_table = new_table;
 
-        // 6) generamos el cuerpo de la función (ya puede usar both globals + locals)
+        // 6) registrar parámetros en la tabla local
+        var idx_param: usize = 0;
+        for (fd.params.items) |p| {
+            const llvm_ty = switch (p.ty) {
+                .builtin => |bt| try builtinToLLVM(bt),
+                else => return CodegenError.InvalidType,
+            };
+            const llvm_param = c.LLVMGetParam(fun_ref, @intCast(idx_param));
+            const c_pname = try self.dupZ(p.name);
+            c.LLVMSetValueName2(llvm_param, c_pname.ptr, c_pname.len);
+            const alloca = c.LLVMBuildAlloca(self.builder, llvm_ty, c_pname.ptr);
+            _ = c.LLVMBuildStore(self.builder, llvm_param, alloca);
+            try self.symbol_table.put(p.name, .{
+                .cname = c_pname,
+                .mutability = p.mutability,
+                .type_ref = llvm_ty,
+                .ref = alloca,
+            });
+            idx_param += 1;
+        }
+
+        // 7) generamos el cuerpo de la función (ya puede usar both globals + locals)
         try self.genCodeBlock(fd.body);
 
-        // 7) si no se emitió ningún return explícito, ponemos uno “por defecto”
+        // 8) si no se emitió ningún return explícito, ponemos uno “por defecto”
         if (c.LLVMGetBasicBlockTerminator(entry_bb) == null) {
             if (ret_type == c.LLVMVoidType()) {
                 _ = c.LLVMBuildRetVoid(self.builder);
@@ -201,7 +240,7 @@ pub const CodeGenerator = struct {
             }
         }
 
-        // 8) devolvemos la tabla antigua (global) y liberamos la local
+        // 9) devolvemos la tabla antigua (global) y liberamos la local
         self.symbol_table.deinit();
         self.symbol_table = old_table;
     }
