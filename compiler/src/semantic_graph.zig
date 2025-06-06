@@ -58,6 +58,7 @@ pub const BindingDeclaration = struct {
     name: []const u8,
     mutability: syn.Mutability,
     ty: Type,
+    initialization: ?*const SGNode, // null si no hay inicialización
 };
 
 pub const Assignment = struct {
