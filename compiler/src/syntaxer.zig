@@ -292,6 +292,7 @@ pub const Syntaxer = struct {
 
         var kind: syn.SymbolKind = .binding;
         var ret_type: ?syn.TypeName = null;
+        var fn_args: ?[]const syn.Argument = null;
         // Check for parenthesis (function)
         if (self.tokenIs(.open_parenthesis)) {
             self.advanceOne(); // consume '('
@@ -299,6 +300,7 @@ pub const Syntaxer = struct {
             std.debug.print("args: {any}\n", .{args});
             if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
             self.advanceOne(); // consume ')'
+            fn_args = args;
             kind = .function;
 
             if (self.tokenIs(.arrow)) {
@@ -336,14 +338,12 @@ pub const Syntaxer = struct {
                 value = try self.parseExpression();
             }
             const node = try self.allocator.create(syn.STNode);
-            // Asumimos que no hay argumentos, por eso usamos undefined.
-            const args: []const syn.Argument = undefined;
             const decl = syn.Declaration{
                 .name = name,
                 .kind = kind,
                 .type = tipo orelse null,
                 .mutability = mutability,
-                .args = args,
+                .args = if (kind == .function) fn_args else null,
                 .value = value,
             };
             node.*.content = syn.Content{ .declaration = decl };

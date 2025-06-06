@@ -60,6 +60,15 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             const ret_str = if (f.return_type) |rt| typeToString(rt) else "void";
             std.debug.print("Function: \"{s}\" -> {s}\n", .{ f.name, ret_str });
 
+            // Argumentos (BindingDeclaration)
+            indent(lvl + 1);
+            std.debug.print("Arguments:\n", .{});
+            for (f.params.items) |param| {
+                const mut_str = if (param.mutability == .variable) "var" else "const";
+                const ty_str = typeToString(param.ty);
+                std.debug.print("  - \"{s}\" {s} : {s}\n", .{ param.name, mut_str, ty_str });
+            }
+
             // Cuerpo (CodeBlock)
             indent(lvl + 1);
             std.debug.print("Body:\n", .{});
