@@ -41,6 +41,10 @@ pub const Content = union(enum) {
     arrow: struct {},
     binary_operator: BinaryOperator,
 
+    // Equations
+    check_equals: struct {},
+    check_not_equals: struct {},
+
     // Pointers and dereferences
     // amperstand: struct {},
 
