@@ -18,7 +18,6 @@ main() := {
     -- Declaration of a constant from an expression also works
     c := a + b
 
-
     -- TODO: Allow function calling
     -- d := other_function()
 
