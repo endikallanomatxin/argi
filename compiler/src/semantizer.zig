@@ -39,8 +39,9 @@ pub const Semantizer = struct {
     pub fn analyze(self: *Semantizer) SemErr!std.ArrayList(*sem.SGNode) {
         var global = try Scope.init(self.allocator, null);
 
-        for (self.st_nodes) |st_ptr|
+        for (self.st_nodes) |st_ptr| {
             _ = try self.visitNode(st_ptr.*, &global);
+        }
 
         return self.root_nodes;
     }
@@ -145,6 +146,7 @@ pub const Semantizer = struct {
             .name = decl.name,
             .mutability = decl.mutability,
             .ty = .{ .builtin = builtin_ty },
+            .initialization = null, // se asigna más adelante si hay inicializador
         };
 
         try scope.bindings.put(decl.name, binding_ptr);
@@ -163,7 +165,6 @@ pub const Semantizer = struct {
         _ = loc;
 
         const binding = scope.lookupBinding(asg.name) orelse return error.SymbolNotFound;
-        if (binding.mutability == .constant) return error.ConstantReassignment;
 
         const rhs = try self.visitNode(asg.value.*, scope);
 
@@ -177,6 +178,14 @@ pub const Semantizer = struct {
         };
 
         const node_ptr = try self.makeNode(.{ .binding_assignment = assign_ptr }, scope);
+
+        if (binding.initialization == null) {
+            binding.initialization = node_ptr; // guardar el nodo de inicialización
+            try scope.nodes.append(node_ptr); // añadir al scope
+        } else {
+            // ya estaba inicializado, no se puede reasignar si es constante
+            if (binding.mutability == .constant) return error.ConstantReassignment;
+        }
         return .{ .node = node_ptr, .ty = .Void };
     }
 
