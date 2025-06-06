@@ -100,10 +100,12 @@ pub const CodeGenerator = struct {
     fn visitNode(self: *CodeGenerator, node: *const sem.SGNode) CodegenError!?TypedValue {
         switch (node.*) {
             .function_declaration => |fd| {
+                std.debug.print("Generando función: {s}\n", .{fd.name});
                 try self.genFunction(fd);
                 return null; // no devuelve valor
             },
             .binding_declaration => |bd| {
+                std.debug.print("Generando binding: {s}\n", .{bd.name});
                 if (self.symbol_table.contains(bd.name)) {
                     // uso de la variable: cargamos ('load') y devolvemos TypedValue
                     return try self.genBindingUse(bd);
@@ -114,14 +116,23 @@ pub const CodeGenerator = struct {
                 }
             },
             .binding_assignment => |as| {
+                std.debug.print("Generando asignación: {s}\n", .{as.sym_id.name});
                 _ = try self.genAssignment(as);
                 return null;
             },
+            .binding_use => |bu| {
+                std.debug.print("Generando uso de binding: {s}\n", .{bu.name});
+                // “bu” es un *BindingDeclaration que ya existe en la tabla de símbolos.
+                // GenBindingUse cargará (load) el valor y devolverá un TypedValue.
+                return try self.genBindingUse(bu);
+            },
             .code_block => |cb| {
+                std.debug.print("Generando bloque de código\n", .{});
                 try self.genCodeBlock(cb);
                 return null;
             },
             .return_statement => |rs| {
+                std.debug.print("Generando retorno\n", .{});
                 try self.genReturn(rs);
                 return null;
             },
@@ -205,7 +216,19 @@ pub const CodeGenerator = struct {
 
         // inicialización implícita
         if (bd.initialization) |init_node| {
-            _ = try self.visitNode(init_node);
+            // Evaluar la expresión del inicializador:
+            const init_tv_opt = try self.visitNode(init_node);
+            const init_tv = init_tv_opt orelse return CodegenError.ValueNotFound;
+
+            var store_val = init_tv.value_ref;
+            // Si la variable es Float32 y el literal vino como Int32, hacemos SICast:
+            if (llvm_ty == c.LLVMFloatType() and init_tv.type_ref == c.LLVMInt32Type()) {
+                store_val = c.LLVMBuildSIToFP(self.builder, init_tv.value_ref, llvm_ty, "int_to_float");
+            } else if (init_tv.type_ref != llvm_ty) {
+                return CodegenError.InvalidType;
+            }
+            // Ahora sí, “almacenamos” directamente el valor en el alloca recién creado:
+            _ = c.LLVMBuildStore(self.builder, store_val, alloca);
         }
     }
 

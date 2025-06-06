@@ -48,11 +48,11 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             std.debug.print("Decl: \"{s}\" {s} : {s}\n", .{ b.name, mut_str, ty_str });
 
             // Si hay inicialización, imprimirla
-            if (b.initialization) |init_node| {
-                indent(lvl + 1);
-                std.debug.print("Initial value:\n", .{});
-                printNode(init_node, lvl + 2);
-            }
+            // if (b.initialization) |init_node| {
+            //     indent(lvl + 1);
+            //     std.debug.print("Initial value:\n", .{});
+            //     printNode(init_node, lvl + 2);
+            // }
         },
 
         // ─────────────────────────────────────────────────────────── declaraciones de función
