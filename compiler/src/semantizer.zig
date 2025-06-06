@@ -213,23 +213,27 @@ pub const Semantizer = struct {
         _ = loc;
         if (parent.functions.contains(decl.name)) return error.SymbolAlreadyDefined;
 
+        // 1) Crear alcance hijo para la función y procesar el bloque
         var child = try Scope.init(self.allocator, parent);
-        const body_ptr = decl.value.?; // garantizado por el parser
-        _ = try self.visitNode(body_ptr.*, &child);
+        const body_ptr = decl.value.?; // punto al STNode que es code_block
 
+        // Visitamos ese STNode de tipo code_block; devolvemos TypedExpr
+        const body_te = try self.visitNode(body_ptr.*, &child);
+        const body_sg_node = body_te.node; // *SGNode de variante .code_block
+
+        // 2) Creamos la FunctionDeclaration y apuntamos su `body` al CodeBlock del SGNode
         const func_ptr = try self.allocator.create(sem.FunctionDeclaration);
         func_ptr.* = .{
             .name = decl.name,
-            .params = std.ArrayList(*sem.BindingDeclaration).init(self.allocator.*), // (sin params aún)
+            .params = std.ArrayList(*sem.BindingDeclaration).init(self.allocator.*), // (aún sin params)
             .return_type = .{ .builtin = child.inferredReturnType orelse .Int32 },
-            .body = undefined, // se podría apuntar al SG del body si lo necesitas
+            // body es un *const CodeBlock; en el SGNode .code_block está ese pointer
+            .body = body_sg_node.*.code_block,
         };
 
         try parent.functions.put(decl.name, func_ptr);
-
         const node_ptr = try self.makeNode(.{ .function_declaration = func_ptr }, parent);
         if (parent.parent == null) try self.root_nodes.append(node_ptr);
-
         return .{ .node = node_ptr, .ty = .Void };
     }
 
