@@ -189,17 +189,22 @@ pub const Semantizer = struct {
             .value = rhs.node,
         };
 
-        const is_initial = (binding.initialization == null);
+        const is_first_write = (binding.initialization == null);
 
-        const node_ptr = try self.makeNode(.{ .binding_assignment = assign_ptr }, if (is_initial) null else scope); // ← ¡ojo aquí!
-
-        if (is_initial) {
-            binding.initialization = node_ptr; // sólo lo guardamos
-        } else {
-            if (binding.mutability == .constant)
-                return error.ConstantReassignment; // reasignar const → error
-            try scope.nodes.append(node_ptr); // ya era var ⇒ sí lo añadimos
+        // ─── Caso 1: CONST  →  la primera escritura es la inicialización
+        if (is_first_write and binding.mutability == .constant) {
+            // Guardamos solo la *expresión*, no el assignment
+            binding.initialization = rhs.node;
+            return .{ .node = rhs.node, .ty = .Void };
         }
+
+        // ─── Caso 2: VAR (o reasignación)
+        if (binding.mutability == .constant)
+            return error.ConstantReassignment;
+
+        // Todas las escrituras a var (incluida la primera) se materializan
+        const node_ptr = try self.makeNode(.{ .binding_assignment = assign_ptr }, scope);
+        try scope.nodes.append(node_ptr);
 
         return .{ .node = node_ptr, .ty = .Void };
     }
