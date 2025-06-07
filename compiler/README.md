@@ -45,4 +45,11 @@ You can run the tests in `test/` by doing:
 zig build test
 ```
 
+If testing doesn't work, the same can be checked by compiling the files
+independently:
+
+```bash
+zig build
+./zig-out/bin/argi specific_test_file.rg
+```
 
