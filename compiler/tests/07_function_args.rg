@@ -1,5 +1,5 @@
 add_one(a: Int32) -> Int32 := {
-    return a+1
+    return a + 1
 }
 
 main() -> Int32 := {

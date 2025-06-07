@@ -169,7 +169,6 @@ pub const CodeGenerator = struct {
         var param_types: ?[*]llvm.c.LLVMTypeRef = null;
         if (param_count > 0) {
             var tmp = try self.allocator.alloc(llvm.c.LLVMTypeRef, param_count);
-            defer self.allocator.free(tmp);
             for (fd.params.items, 0..) |p, i| {
                 tmp[i] = switch (p.ty) {
                     .builtin => |bt| try builtinToLLVM(bt),
@@ -450,7 +449,6 @@ pub const CodeGenerator = struct {
         if (argc > 0) {
             // Sólo alocamos si de verdad hay argumentos
             var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, argc);
-            defer self.allocator.free(argv);
 
             for (fc.args, 0..) |arg_node, i| {
                 const tv = (try self.visitNode(&arg_node)) orelse
