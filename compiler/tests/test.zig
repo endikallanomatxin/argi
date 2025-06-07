@@ -18,7 +18,7 @@ fn build(name: []const u8) !void {
     // Ejecutar el comando de compilación
     _ = try std.process.Child.run(.{
         .allocator = allocator,
-        .argv = &[_][]const u8{ "zig", "build", "run", "--", "build", name },
+        .argv = &[_][]const u8{ "./zig-out/bin/argi", "build", name },
     });
 }
 
@@ -27,13 +27,6 @@ fn run() !void {
     _ = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = &[_][]const u8{"./output"},
-    });
-}
-
-test "just_build" {
-    _ = try std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = &[_][]const u8{ "zig", "build" },
     });
 }
 
