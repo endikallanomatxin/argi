@@ -1,38 +1,69 @@
 const std = @import("std");
 
-fn linkLlvm(step: *std.Build.Step.Compile, libs_str: []const u8) void {
-    var it = std.mem.tokenizeScalar(u8, libs_str, ' ');
-    while (it.next()) |tok| {
-        if (std.mem.startsWith(u8, tok, "-l")) {
-            step.linkSystemLibrary(tok[2..]);
-        }
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const llvm_include_path, const llvm_lib_path, const llvm_libs_raw = prepareLlvm(b) catch |err| {
+        std.debug.print("Error preparing LLVM paths: {s}\n", .{err});
+        return;
+    };
+
+    //
+    // INSTALL EXECUTABLE (default step) --------------------------------------
+
+    const exe = b.addExecutable(.{
+        .name = "argi",
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    exe.addIncludePath(llvm_include_path);
+    exe.addLibraryPath(llvm_lib_path);
+    linkLlvm(exe, llvm_libs_raw);
+
+    b.installArtifact(exe);
+
+    //
+    // INSTALL AND RUN EXECUTABLE ---------------------------------------------
+
+    const run_cmd = b.addRunArtifact(exe);
+    run_cmd.step.dependOn(b.getInstallStep());
+    // Allow argument passing: `zig build run -- arg1 arg2 etc`
+    if (b.args) |args| {
+        run_cmd.addArgs(args);
     }
+
+    const run_step = b.step("run", "Run the app");
+    run_step.dependOn(&run_cmd.step);
+
+    //
+    // TEST -------------------------------------------------------------------
+
+    const exe_tests = b.addTest(.{
+        .root_source_file = b.path("tests/test.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_exe_tests = b.addRunArtifact(exe_tests);
+    run_exe_tests.step.dependOn(b.getInstallStep());
+
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_exe_tests.step);
+    test_step.dependOn(b.getInstallStep());
 }
 
-// Although this function looks imperative, note that its job is to
-// declaratively construct a build graph that will be executed by an external
-// runner.
-pub fn build(b: *std.Build) void {
+fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, []const u8 } {
     if (std.process.getEnvVarOwned(b.allocator, "PATH") catch null) |path| {
         b.graph.env_map.put("PATH", path) catch @panic("OOM");
     }
 
-    // Standard target options allows the person running `zig build` to choose
-    // what target to build for. Here we do not override the defaults, which
-    // means any target is allowed, and the default is native. Other options
-    // for restricting supported target set are available.
-    const target = b.standardTargetOptions(.{});
-
-    // Standard optimization options allow the person running `zig build` to select
-    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
-    // set a preferred release mode, allowing the user to decide how to optimize.
-    const optimize = b.standardOptimizeOption(.{});
-
     // Obtain LLVM paths. First try environment variables to avoid spawning
     // `llvm-config` which might not be supported in restricted environments.
     const env_include = std.process.getEnvVarOwned(b.allocator, "LLVM_INCLUDE_DIR") catch null;
-    const env_lib     = std.process.getEnvVarOwned(b.allocator, "LLVM_LIB_DIR") catch null;
-    const env_libs    = std.process.getEnvVarOwned(b.allocator, "LLVM_LIBS") catch null;
+    const env_lib = std.process.getEnvVarOwned(b.allocator, "LLVM_LIB_DIR") catch null;
+    const env_libs = std.process.getEnvVarOwned(b.allocator, "LLVM_LIBS") catch null;
 
     const include_dir_raw: []const u8 = if (env_include) |v| v else blk: {
         // Fallback to using `llvm-config` when environment variables are not provided.
@@ -73,7 +104,7 @@ pub fn build(b: *std.Build) void {
         break :blk b.run(&.{ llvm_config, "--libdir" });
     };
 
-    const libs_raw: []const u8 = if (env_libs) |v| v else blk: {
+    const llvm_libs_raw: []const u8 = if (env_libs) |v| v else blk: {
         const llvm_config = blk2: {
             const names = &[_][]const u8{
                 "llvm-config",
@@ -95,68 +126,14 @@ pub fn build(b: *std.Build) void {
     const llvm_include_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, include_dir_raw, " \n") };
     const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, lib_dir_raw, " \n") };
 
+    return .{ llvm_include_path, llvm_lib_path, llvm_libs_raw };
+}
 
-    const exe = b.addExecutable(.{
-        .name = "argi_compiler",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    exe.addIncludePath(llvm_include_path);
-    exe.addLibraryPath(llvm_lib_path);
-    linkLlvm(exe, libs_raw);
-
-    // This declares intent for the executable to be installed into the
-    // standard location when the user invokes the "install" step (the default
-    // step when running `zig build`).
-    b.installArtifact(exe);
-
-    // This *creates* a Run step in the build graph, to be executed when another
-    // step is evaluated that depends on it. The next line below will establish
-    // such a dependency.
-    const run_cmd = b.addRunArtifact(exe);
-
-    // By making the run step depend on the install step, it will be run from the
-    // installation directory rather than directly from within the cache directory.
-    // This is not necessary, however, if the application depends on other installed
-    // files, this ensures they will be present and in the expected location.
-    run_cmd.step.dependOn(b.getInstallStep());
-
-    // This allows the user to pass arguments to the application in the build
-    // command itself, like this: `zig build run -- arg1 arg2 etc`
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
+fn linkLlvm(step: *std.Build.Step.Compile, libs_str: []const u8) void {
+    var it = std.mem.tokenizeScalar(u8, libs_str, ' ');
+    while (it.next()) |tok| {
+        if (std.mem.startsWith(u8, tok, "-l")) {
+            step.linkSystemLibrary(tok[2..]);
+        }
     }
-
-    // This creates a build step. It will be visible in the `zig build --help` menu,
-    // and can be selected like this: `zig build run`
-    // This will evaluate the `run` step rather than the default, which is "install".
-    const run_step = b.step("run", "Run the app");
-    run_step.dependOn(&run_cmd.step);
-
-    // Creates a step for unit testing. This only builds the test executable
-    // but does not run it.
-    const lib_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
-
-    const exe_unit_tests = b.addTest(.{
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = optimize,
-    });
-
-    const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
-
-    // Similar to creating the run step earlier, this exposes a `test` step to
-    // the `zig build --help` menu, providing a way for the user to request
-    // running the unit tests.
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_lib_unit_tests.step);
-    test_step.dependOn(&run_exe_unit_tests.step);
 }
