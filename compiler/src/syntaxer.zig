@@ -218,16 +218,21 @@ pub const Syntaxer = struct {
                     self.advanceOne(); // consume '('
 
                     // --- parse comma-separated arg list -----------------------
-                    var arg_nodes = std.ArrayList(*syn.STNode).init(self.allocator.*);
+                    var arg_nodes = std.ArrayList(syn.CallArgument).init(self.allocator.*);
                     self.ignoreNewLinesAndComments();
                     while (!self.tokenIs(.close_parenthesis)) {
-                        const arg = try self.parseExpression();
-                        try arg_nodes.append(arg);
+                        var name: ?[]const u8 = null;
+                        if (self.current().content == .identifier and self.next().?.content == .colon) {
+                            name = try self.parseIdentifier();
+                            self.advanceOne(); // consume ':'
+                        }
+                        const val = try self.parseExpression();
+                        try arg_nodes.append(.{ .name = name, .value = val });
                         if (self.tokenIs(.comma)) {
-                            self.advanceOne(); // consume ','
+                            self.advanceOne();
                             self.ignoreNewLinesAndComments();
                         } else {
-                            break; // no more args
+                            break;
                         }
                     }
                     if (!self.tokenIs(.close_parenthesis)) {
