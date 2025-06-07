@@ -135,8 +135,8 @@ pub const Semantizer = struct {
             return error.InvalidType; // arity mismatch
 
         var sg_args = try self.allocator.alloc(sem.SGNode, call.args.len);
-        for (call.args, 0..) |arg_st, i| {
-            const te = try self.visitNode(arg_st.*, scope);
+        for (call.args, 0..) |arg, i| {
+            const te = try self.visitNode(arg.value.*, scope);
             const param = fn_decl.params.items[i];
             const expected = param.ty.builtin;
             if (te.ty != expected and !(expected == .Float32 and te.ty == .Int32))

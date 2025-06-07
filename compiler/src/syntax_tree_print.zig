@@ -111,6 +111,17 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             std.debug.print("Right:\n", .{});
             printNode(binOp.right.*, lvl + 2);
         },
+        .function_call => |fc| {
+            std.debug.print("FunctionCall: {s}\n", .{fc.callee});
+            for (fc.args) |a| {
+                indent(lvl + 1);
+                if (a.name) |n|
+                    std.debug.print("{s}:\n", .{n})
+                else
+                    std.debug.print("arg:\n", .{});
+                printNode(a.value.*, lvl + 2);
+            }
+        },
 
         else => {
             // Cualquier otro caso que no se haya manejado
