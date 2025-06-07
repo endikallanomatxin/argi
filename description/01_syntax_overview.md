@@ -13,7 +13,12 @@ Multiline comments for lengthier explanations
 --*
 Nestable comments?
 *--
+
+--- Doc comments, like zig
 ```
+
+Hacer que no haya comentarios multilinea podría hacer que se
+pueda tokenizar todo en paralelo.
 
 ## Variable and constant declaration
 
