@@ -130,19 +130,39 @@ pub const Semantizer = struct {
         _ = loc; // unused for now
         const fn_decl = scope.lookupFunction(call.callee) orelse return error.SymbolNotFound;
 
-        // resolve & type-check arguments
-        if (call.args.len != fn_decl.params.items.len)
-            return error.InvalidType; // arity mismatch
+        const param_count = fn_decl.params.items.len;
+        var sg_args = try self.allocator.alloc(sem.SGNode, param_count);
+        var provided = try self.allocator.alloc(bool, param_count);
+        defer self.allocator.free(provided);
+        @memset(provided, false);
 
-        var sg_args = try self.allocator.alloc(sem.SGNode, call.args.len);
-        for (call.args, 0..) |arg, i| {
+        for (call.args, 0..) |arg, idx_call| {
+            var idx_param: usize = idx_call;
+            if (arg.name) |n| {
+                var found = false;
+                for (fn_decl.params.items, 0..) |p, j| {
+                    if (std.mem.eql(u8, p.name, n)) {
+                        idx_param = j;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) return error.SymbolNotFound;
+            }
+            if (idx_param >= param_count or provided[idx_param])
+                return error.InvalidType;
+
             const te = try self.visitNode(arg.value.*, scope);
-            const param = fn_decl.params.items[i];
+            const param = fn_decl.params.items[idx_param];
             const expected = param.ty.builtin;
             if (te.ty != expected and !(expected == .Float32 and te.ty == .Int32))
                 return error.InvalidType;
-            sg_args[i] = te.node.*;
+            sg_args[idx_param] = te.node.*;
+            provided[idx_param] = true;
         }
+
+        for (provided) |p|
+            if (!p) return error.InvalidType; // missing argument
 
         const fc_ptr = try self.allocator.create(sem.FunctionCall);
         fc_ptr.* = .{

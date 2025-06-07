@@ -60,7 +60,6 @@ pub const Syntaxer = struct {
     }
 
     fn advanceOne(self: *Syntaxer) void {
-        std.debug.print("Parseado token: ", .{});
         tokp.printToken(self.current());
         if (self.index < self.tokens.len) self.index += 1;
     }
