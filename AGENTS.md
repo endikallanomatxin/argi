@@ -38,4 +38,4 @@ This avoids issues in restricted environments.
 - Keep commits focused and descriptive.
 - Include a short summary and any relevant test output in your PR body.
 - Follow the existing Zig coding style (spaces, snake_case names, etc.).
-
+- If you think some important information is missing from this guide, please add it.

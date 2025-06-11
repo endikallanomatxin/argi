@@ -214,10 +214,13 @@ pub const Semantizer = struct {
                 // Primer write de una variable: sigue siendo un assignment
                 _ = try self.handleAssignment(.{ .name = decl.name, .value = v }, loc, scope);
             } else {
-                // Const: la inicialización NO es un assignment,
-                // solo guardamos la expresión a evaluar más tarde.
+                const prev_len = scope.nodes.items.len;
                 const rhs = try self.visitNode(v.*, scope);
                 binding_ptr.initialization = rhs.node;
+                // si la visita añadió el nodo como sentencia, lo quitamos
+                if (scope.nodes.items.len > prev_len) {
+                    _ = scope.nodes.pop();
+                }
             }
         }
 
