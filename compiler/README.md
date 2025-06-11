@@ -42,7 +42,7 @@ zig build run -- build file.rg
 You can run the tests in `test/` by doing:
 
 ```bash
-zig build test
+zig build test --summary all
 ```
 
 If testing doesn't work, the same can be checked by compiling the files

@@ -221,7 +221,7 @@ pub const CodeGenerator = struct {
             };
             const llvm_param = c.LLVMGetParam(fun_ref, @intCast(idx_param));
             const c_pname = try self.dupZ(p.name);
-            c.LLVMSetValueName2(llvm_param, c_pname.ptr, c_pname.len);
+            c.LLVMSetValueName2(llvm_param, c_pname.ptr, p.name.len);
             const alloca = c.LLVMBuildAlloca(self.builder, llvm_ty, c_pname.ptr);
             _ = c.LLVMBuildStore(self.builder, llvm_param, alloca);
             try self.symbol_table.put(p.name, .{
