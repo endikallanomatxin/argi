@@ -31,6 +31,9 @@ match x [
 ]
 ```
 
+> [!NOTE]
+> Aquí, como hemos quitado () para representar las funciones, podríamos usarlas para mejorar la sintaxis si fuera necesario.
+
 Rust creo que hace esto muy bien.
 Gleam también.
 
@@ -119,14 +122,17 @@ Se puede hacer a través de abstrascts:
 
 ```
 Iterable : Abstract = [
-    to(_, #a:==Iterator) : Iterator
+    cast _ -> Iterator<_>
 ]
 
-Iterator : Abstract = [
-    next(_) : T
-    has_next(_) : Bool
+Iterator<T> : Abstract = [
+    next _ -> T
+    has_next _ -> Bool
 ]
 ```
+
+> [!CHECK]
+> Aquí como deberíamos gestionar abstract con generics?
 
 
 En rust hay tres tipos: iter (inmutable), iter_mut (mutable), into_iter(pasando ownership)
@@ -149,28 +155,29 @@ Y para hacer que tu tipo pueda ser iterable:
 
 ```
 MyType : Type = struct [
-    data: List<Int>
+    .data: List<Int>
 ]
 
-to(collection: MyType, #t:==Iterator) := MyTypeIterator {
-    return MyTypeIterator(collection)
+cast MyType -> MyTypeIterator := {
+    return MyTypeIterator [.data = in.data, .index = 0]
 }
 
 MyTypeIterator : Type = struct [
-    data: &MyType
-    index: Int
+    .data: &MyType
+    .index: Int
 ]
 
-next(mti: MyTypeIterator) := Int {
-    mti.index += 1
-    return mti.data[mti.index-1]
+next MyTypeIterator -> Int := {
+    if in.index >= in.data|len {
+        throw "No more elements"
+    }
+    in.index += 1
+    out = in.data[in.index-1]
 }
 
-has_next(mti: MyTypeIterator) := Bool {
-    return mti.index < mti.data|len
+has_next MyTypeIterator -> Bool := {
+    return in.index < in.data|len
 }
-
-Indexable canbe MyType
 ```
 
 
@@ -181,7 +188,7 @@ for element in my_collection {
 
 -- Se podría escribir como:
 
-iter = my_collection|to(Iterator)
+iter : Iterator = my_collection | cast  -- Se puede castear a un abstract?
 while iter|has_next {
     element = iter|next
     print(element)

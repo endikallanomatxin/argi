@@ -2,23 +2,39 @@
 
 Functions are first class citizen.
 
+All functions are unary.
+
+
 ## Function definition syntax
 
 ```
-add(a: Int, b: Int) := Int {
-	return a+b
+add [ .a: Int, .b: Int ] -> Int := {
+    out = in.a + in.b          -- `in` y `out` son structs implícitos
 }
+
+square Int -> Int := {out = in^2}
 ```
+
+- Todos los parámetros viajan en un único struct de entrada (in).
+- Todos los resultados se devuelven en un único struct de salida (out).
+
 
 return variables are initialized (to zero) if named.
 
 ```
-calculate_stats(list: List) := (mean: Float, standard_deviation: Float) {
-	for element in list
+calculate_stats List -> [.mean: Float, .standard_deviation: Float] := {
+	for element in in{
 		...
-	return (mean, standard_deviation)
+	}
+	out := [mean, standard_deviation]
 }
 ```
+
+> [!CHECK]
+> Los argumentos de salida, cuando se inicializan?
+> Usan su init? O simplemente son el struct que los representa, sin campos.
+> Igual esperan a su primera asignación para llamar a init.
+
 
 Most extended syntax to add documentation
 
@@ -27,21 +43,31 @@ my_function
 	---
 	Explanation of what the function does
 	---
-(
-	a: int  -- Short description of a
-	b: bool
+[
+	.a: int  -- Short description of a
+	.b: bool
 	---
 	Longer description of b
 	---
-	verbose: bool = False  -- Default value
-) := (
-	result_one: bool
-	result_two: int
-){
+	.verbose: bool = False  -- Default value
+] -> [
+	.result_one: bool
+	.result_two: int
+] {
 	...
-	return x
 }
 ```
+
+The empty struct literal is like saying void:
+
+```
+my_function [] -> [] := {
+	-- No recibe ni devuelve nada
+}
+```
+
+> [!CHECK] Can you ommit things?
+
 
 ## Pipe operator
 
@@ -49,9 +75,9 @@ Llama a la función de la derecha con los argumentos devueltos por la función d
 la izquierda. A veces hay que usar currying para cuadrar argumentos.
 
 ```
-my_var|my_func
-my_var|my_func(_, other_arg)
-my_var|my_func(_1, other_arg, _2)  -- Multiple piped arguments
+my_var | my_func
+my_var | my_func [_, other_arg]
+my_var | my_func [_.a, other_arg, _.b]  -- Multiple piped arguments
 ```
 
 > [!IDEA]
@@ -61,8 +87,8 @@ my_var|my_func(_1, other_arg, _2)  -- Multiple piped arguments
 Si se pasa por referencia:
 
 ```
-my_var|my_func(&_)
-my_var|my_func(&_, second_arg)
+my_var | my_func &_
+my_var | my_func [&_, second_arg]
 ```
 
 Permite emular la comodidad de los objetos.
@@ -81,12 +107,12 @@ modelizan con sus punteros, pero no se va a duplicar la memoria referenciada
 por sus punteros.
 
 ```
-m1 = Map|init
-m2 = m1
-m2.put("key", "value") -- Cambia el original
+m1 : Map = []
+m2 := m1
+m2 | put [$&_, "key", "value"] -- Cambia el original
 
-m1|deinit($&_)
-m2|deinit($&_) -- Double free error
+m1 | deinit $&_
+m2 | deinit $&_ -- Double free error
 ```
 
 Esto:
@@ -98,7 +124,7 @@ Para solucionar esto: Haremos deep_copy por defecto (donde deep_copy es un
 método que tiene que estar definido para el tipo de variable en cuestión).
 
 ```
-m1 = Map|init
+m1 : Map = []
 m2 = m1  -- Aquí se hace m2 = m1|deep_copy
 ```
 
@@ -118,7 +144,7 @@ Uso:
 entrada.
 - Si pones ~ se hace una shallow copy y se pasa eso.
 - Si pasas un puntero &, te permite leer.
-- Si pasas un puntero &!, te permite leer y escribir.
+- Si pasas un puntero $&, te permite leer y escribir.
 
 ```
 var   -- deep copy
@@ -129,25 +155,25 @@ $&var -- mutable pointer (s is for "side effect")
 La sintaxis básica para pasar punteros 
 
 ```
-funcion_que_lee(datos_p: &Map<String,Int>) := {
-	-- Usamos datos_p& para desreferenciar al usarlo.
+funcion_que_lee &Map<String,Int> -> [] := {
+	-- Usamos in& para desreferenciar al usarlo.
 	...
 }
 
-funcion_que_lee(&datos)
+funcion_que_lee &datos
 ```
 
 Pero no deja mutar lo que hay al otro lado del puntero. Si se quiere mutar el
 valor hay que pasar con un indicador de que es una referencia mutable:
 
 ```
-funcion_que_escribe(datos: $&Map<String,Int>) := {
-	-- Usamos datos_p& para desreferenciar al usarlo.
+funcion_que_escribe $&Map<String,Int> := {
+	-- Usamos in& para desreferenciar al usarlo.
 	-- Pudiendo modificar el valor al que apunta.
 	...
 }
 
-funcion_que_escribe($&datos)
+funcion_que_escribe $&datos
 ```
 
 
@@ -159,14 +185,15 @@ querramos tratar el valor al que apunta el puntero como el propio valor.
 Para eso, se puede usar la sintaxis de dereferencia automática:
 
 ```rg
-funcion_que_lee(datos: &Map<String,Int>&) := {
+funcion_que_lee &Map<String,Int>& := {
 	...
 }
 
-funcion_que_escribe($&datos: Map<String,Int>&) := {
+funcion_que_escribe $&Map<String,Int>& := {
 	...
 }
 ```
+
 
 Esto hace que dentro de la función se pueda usar directamente `datos` y que se
 comporte como si hicieras `datos&`.
@@ -197,7 +224,7 @@ For example, accessing a database:
 ```rg
 import db
 
-main(system: $&System&)->StatusCode := {
+main system:$&System -> sc:StatusCode := {
 	-- Creamos una conexión a la base de datos
 	db_conn = db.open_database("my_db")
 
@@ -205,7 +232,7 @@ main(system: $&System&)->StatusCode := {
 	user = query_user($&db_conn, 123)
 }
 
-query_user($&db_conn: DbConnection, user_id: Int) := User? {
+query_user [.db_conn: $&DbConnection, .user_id: Int] -> ?User {
 	-- Acceso a la db
 	row = db_conn|execute(!&_, "SELECT * FROM user WHERE id = ?", user_id)
 	if row == null {
@@ -215,6 +242,9 @@ query_user($&db_conn: DbConnection, user_id: Int) := User? {
 	return user
 }
 ```
+
+> [!NOTE] Igual hemos dado con una buena sintaxis para nombrar a los argumentos si queremos.
+> Y si no ponemos nada, que sean in y out, para tener una sintaxis cómoda para lambdas rápidas.
 
 
 ##### Closures
@@ -236,12 +266,14 @@ EFFECT.
 ```
 variable := 4
 
-contador$ := {
+contador$ [] -> [] := {
 	variable += 1
 }
 
-contador$()  -- variable = 5
+contador$ [] -- variable = 5
 ```
+
+> [!CHECK] Es así como debe llamarse a una función sin argumentos de entrada?
 
 Así queda claro (y con una sintaxis similar a la de los argumentos) si una
 función tiene side effects.
@@ -284,37 +316,37 @@ System : struct [
 Examples of use:
 
 ```rg
-main(system: $&System&) := {
+main system:$&System& -> sc:StatusCode := {
 	-- Acceso a la consola
-	system.terminal|print($&_, "Hello, world")
+	system.terminal | print [$&_, "Hello, world"]
 
 	-- Acceso a los argumentos de la línea de comandos
-        argsmap := system.args|parse(&_)
-        if argsmap|has($&_, "name") {
-            greet_user(argsmap["name"], $&system.terminal.stdout)
+        argsmap := system.args | parse &_
+        if argsmap has [$&_, "name"] {
+            greet_user [argsmap["name"], $&system.terminal.stdout]
         }
 
 	-- Acceso a las variables de entorno
-	env_var = system.env_vars|get("MY_ENV_VAR")
+	env_var = system.env_vars | get [&_, "MY_ENV_VAR"]
 
 	-- Acceso al sistema de archivos
-	file1 = system.file_sys|open_file_for_read(&_,"my_file.txt")
-	content = file1|read_all(&_)
-	file2 = system.file_sys|open_file_for_write(&_,"output.txt")
-	file2|write($&_, content)
+	file1 = system.file_sys | open_file_for_read [&_,"my_file.txt"]
+	content = file1 | read_all &_
+	file2 = system.file_sys | open_file_for_write [$&_,"output.txt"]
+	file2 | write [$&_, content]
 
 	-- Acceso a la red
-	response = system.network|http_get(&_, "https://example.com")
+	response = system.network | http_get [&_, "https://example.com"]
 
 	-- Acceso al proceso
-	system.proc_man|run_command(&_, "ls -l")
+	system.proc_man | run_command [&_, "ls -l"]
 
 	-- Acceso al reloj
-	current_time = system.clock|now(&_)
+	current_time = system.clock | now &_
 
 	-- Generación de números aleatorios
-	system.rand_gen|set_seed($&_, 42)
-	random_number = system.rand_gen|next_int($&_, 1, 100)
+	system.rand_gen | set_seed [$&_, 42]
+	random_number = system.rand_gen | next_int [$&_, 1, 100]
 }
 ```
 
@@ -324,16 +356,16 @@ code. No se si es mejor abstract o structs.
 
 ```rg
 Clock : Abstract = [
-    now(&_) : TimeStamp
-    sleep(&_, duration: Duration) -> Void
-    sleep_until(&_, ts: TimeStamp) -> Void
+    now         &_              -> TimeStamp
+    sleep       [&_, Duration]  -> []
+    sleep_until [&_, TimeStamp] -> []
 ]
 ```
 
 ```rg
 Rng : Abstract = [
-    next_bytes($&_, size: Int) -> Array<Byte>
-    next_int($&_, min: Int, max: Int) -> Int
+    next_bytes [$&_, Int]                -> Array<Byte>
+    next_int   [$&_, min: Int, max: Int] -> Int
 ]
 ```
 

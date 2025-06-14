@@ -48,7 +48,9 @@
 
 # Key characteristics
 
-- Functions have multiple dispatch.
+- Functions take only one argument and return only one value. Usually it is a struct.
+
+- Functions have multiple dispatch, considering the types of the fields inside the struct.
 
 - Side effects are always indicated.
   (Capability based programming, dependency inyection).
