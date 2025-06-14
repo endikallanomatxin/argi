@@ -56,6 +56,7 @@ The declaration syntax has two delimeters:
 >   normal que no se muta
 > Si esas cosas son muy diferentes, entonces la sintaxis de odin y jai me gusta
 > más.
+> Darle una vuelta.
 
 
 ## Code blocks
@@ -83,52 +84,50 @@ This forces the good practice of declaring variables before loops and conditiona
 
 Functions are declared similar to variables or constants.
 
-It just has `(...)` after the name, with the arguments inside.
+They just contain a couple of structs after the name, separated by an arrow:
 
 ```
-my_function(a: Int) := {
-	...
+add [.a: Int, .b: Int] -> [.c: Int] := {
+	c = a + b
+	return c
 }
 ```
 
-Return arguments go with the code block. They can be named.
+> [!TODO] En el cuerpo deberíamos usar c o .c?
+
+When a function is called, you can omit the names of the fields when you specify all of them in the correct order:
 
 ```
-sum_two_numbers(A: Int, B: Int):=(C: Int){
-	C = A + B
-	return C
-}
+result = add [1, 2]
 ```
 
-> [!CHECK]
-> Igual lo mejor es poner también el return type en el nombre cuando se definen
-> variables.
->  ```
->  sum_two_numbers(A: Int, B: Int)->(C: Int) := {
->  	C = A + B
->  	return C
->  }
->  ```
+> [!FIX] Como diferenciamos entonces entre un struct literal y un list literal?
+> Igual que no exista list literal, y cuando crees una lista siempre parta de un struct literal?
+> Pensar como solucionar esto para que no haya que poner siempre el nombre de los campos.
 
-> [!NOTE]
-> They can be constant. Declaration and initialization can be done at once, or separately.
-> It rust this can be done for example. You just have to not use the variable before its initialization.
 
-If we had to say it, the type of the function would be: ` Func<Int, Int -> Int> `
+The type of the function would be: ` Function [Int, Int] -> [Int] `.
 
 Anonymous functions can be defined like here:
 
 ```
 some_function_that_needs_another_function(
-	(a: Int, b: Int) := (c: Int) {
+	[.a: Int, .b: Int] -> [.c: Int] := {
 		c = a + b
 	},
 	"Some other argument"
 )
 ```
 
-> [!TODO] Pensar si queremos queremos permitir esta sintaxis.
-> Si una variable tiene parámetros, pero no es un type, en realidad es una función, que devuelve el valor parametrizado que tiene en la derecha. Por lo que siempre que veas () despues de un nombre en una declaración, sabes que se trata de una función.
+>[!IDEA] in and out reserved words for the input and output of the function.
+> Podría dar lugar a una sintaxis muy cómoda para operaciones simples en funciones unarias.
+> ```
+> some_function_that_needs_another_function(
+>     Int -> Int := { out = in^2 },
+>     "Some other argument"
+> )
+> ```
+> Gracias a eso, igual podríamos directamente no usar nunca `return` a no ser que quieras hacerlo en medio del programa.
 
 
 ## Generics

@@ -93,41 +93,30 @@ MyStruct := [
 	._z :: Int = 0
 ]
 
-init(#t:==MyStruct, x: Int, y: Int, z: Int) : MyStruct {
+init [x: Int, y: Int, z: Int] -> MyStruct := {
 	return MyStruct(x, y, z)
 }
 ```
 
-We use dynamic dispatch by value (from Haskell) to create the initializer.
-
-Así se hace como si fuera un método estático.
-
-```
-MyType|init(_, a, b, c)
-```
-
-Si init toma un solo argumento, entonces se puede usar esta otra sintaxis:
+We use dynamic dispatch by return type to create the initializer.
 
 ```
 my_var : MyType = [1, 2, 3]
 ```
 
-Esto se convierte en:
+Esto realmente es:
 
 ```
-my_var := MyType|init(_, [1, 2, 3])
+my_var : MyType = init [1, 2, 3]
 ```
 
 y queda muy limpio.
-
-> Podríamos extenderlo para que valiera también con varios?
-
 
 
 > [!IDEA] Struct field types
 > Cuando tienes una app web en go por ejemplo, tienes structs para tus models que tienen un montón de campos que más adelante no vas a usar siempre al completo.
 > A veces aunque solo tengas que usar el campo del ID pasas el struct entero para al menos mantener la semántica.
-> Igual se podría hacer que cuando se define un structu también se definen tipos nuevos.
+> Igual se podría hacer que cuando se define un struct también se definen tipos nuevos.
 > 
 > Por ejemplo:
 >
