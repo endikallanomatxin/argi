@@ -13,6 +13,7 @@ call(pc: $&ProcessCaller&, command: String) : !ProcessHandle {
 
 
 read(ph: $&ProcessHandle&) : !String {
+    -- Igual debería tener streams el handle para esto.
     ...
 }
 

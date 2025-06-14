@@ -40,3 +40,8 @@ set_working_directory($&FileSystem&, path: String) : ! {
     ...
 }
 
+list_directory($&FileSystem&, path: String) : ![String] {
+    ...
+}
+
+

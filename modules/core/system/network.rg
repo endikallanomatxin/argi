@@ -4,6 +4,7 @@
 Network : Type = []
 -- Capability
 
+---
 socket :: Family → SocketType → ProtocolNumber → IO Socket
 Crea un socket de bajo nivel.
 connect :: Socket → SockAddr → IO ()
@@ -18,3 +19,4 @@ recv :: Socket → Int → IO ByteString
 Recibe hasta N bytes del socket.
 send :: Socket → ByteString → IO Int
 Envía datos por el socket; devuelve cuántos bytes se enviaron.
+---
