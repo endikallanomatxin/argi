@@ -61,6 +61,8 @@ data := [
 ]
 ```
 
+Structs' types are structural only when anonymous.
+
 
 ##### Protected fields
 
