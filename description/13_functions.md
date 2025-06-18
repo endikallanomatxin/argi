@@ -378,7 +378,6 @@ Rng : Abstract = [
 > Si guardas y algunas de estas no usaste, se borra del input.
 
 
-
 ##### The case for printing
 
 
@@ -387,9 +386,9 @@ import io
 import fs
 
 
-main$ := {
+main system:$&System& -> sc:StatusCode := {
 	-- Creamos un archivo de IO
-	stdo = io.std.get_stdo()
+	stdo = system.terminal.stdout
 
 	-- Llamada a una función pura que imprime
 	do_something_pure(123, log = $&stdo)
