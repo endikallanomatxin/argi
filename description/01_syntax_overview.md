@@ -44,20 +44,6 @@ The declaration syntax has two delimeters:
 > Con eso debería valer, porque las funciones que lo modifiquen necesitan un
 > puntero mutable a la struct.
 
-> [!CHECK]
-> La sintaxis que usan odin y jai está bastante bien, porque `::` se interpreta
-> como promesas que le haces al compilador y cuando ves `=` ves que lo que
-> estás haciendo es una asignación, que es una instrucción. Esa diferencia me
-> gusta.
->
-> Igual tengo que explorar como de distinto es:
-> - Declarar una función en top level, versus una variable que contiene una función
-> - Declarar una constante como promesa al compilador, versus como una variable
->   normal que no se muta
-> Si esas cosas son muy diferentes, entonces la sintaxis de odin y jai me gusta
-> más.
-> Darle una vuelta.
-
 
 ## Code blocks
 
@@ -101,9 +87,8 @@ When a function is called, you can omit the names of the fields when you specify
 result = add [1, 2]
 ```
 
-> [!FIX] Como diferenciamos entonces entre un struct literal y un list literal?
-> Igual que no exista list literal, y cuando crees una lista siempre parta de un struct literal?
-> Pensar como solucionar esto para que no haya que poner siempre el nombre de los campos.
+> [!NOTE] Como diferenciamos entonces entre un struct literal y un list literal?
+> Es un collection literal, que se puede _interpretar_ como un list, struct, map o choice literal.
 
 
 The type of the function would be: ` Function [Int, Int] -> [Int] `.
