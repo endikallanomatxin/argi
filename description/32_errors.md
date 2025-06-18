@@ -91,13 +91,6 @@ x = my_func()!
 ```
 
 
-#### Other
-
->[!QUESTION] Named return arguments
->Hay que pensar como se declaran named return types dentro del Errable()
->Que ArgumentList sea un  `#type`. Que Errable() usa para generar el struct Success.?
-
-
 ### Panic
 
 Más bien para desarollo.

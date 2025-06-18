@@ -55,12 +55,12 @@ When initializing types, allocators are passed as arguments,
 For ergonomy, most init functions will have a default allocator, and the user can override it if needed.
 
 ```
-init(#t                   == HeapBuffer,
-     size     : Int,
-     allocator: Allocator =  std.PageAllocator
-) := HeapAllocation {
-	.data = allocator|allocate(size)
-	.size = size
+init [
+    size     : Int,
+    allocator: Allocator =  std.PageAllocator
+] -> HeapAllocation := {
+	.data      = allocator|allocate(size)
+	.size      = size
 	.allocator = allocator
 }
 ```
@@ -68,25 +68,28 @@ init(#t                   == HeapBuffer,
 In a type:
 
 ```
-Hashmap(from: Type, to: Type) : Type = struct [
+Hashmap <from: Type, to: Type> : Type = struct [
 	allocator : Allocator
 	data      : HeapAllocation
 ]
 
 
-init(
-	hm: Hasmap,
-	allocator: Allocator = std.RTAllocator
-) :=  {
-	hm.allocator = allocator
-	hm.data = allocator|allocate(...)
+init[.allocator: Allocator = std.RTAllocato] -> HashMap <from, to> :=  {
+	out : Hashmap <from, to>
+	out.allocator = allocator
+	out.data = allocator|allocate(...)
 }
 
 
-deinit(hm: $&Hashmap&) := {
-	hm.allocator|deallocate(hm.data)
+deinit $&Hashmap& -> [] := {
+	in.allocator|deallocate(hm.data)
 }
 ```
+
+> [!FIX] Pensar en la sintaxis apropiada para generics.
+> from y to serían argumentos de entrada? Hay que definirlos al crear el tipo? Asumo que sí.
+> El output hay que inicializarlo? O viene inicializado por defecto?
+> Como se especifica la mutabilidad si solo hay un tipo? Igual deberíamos obligar a que siempre fuera un struct.
 
 So:
 
@@ -97,10 +100,10 @@ my_map := ["a"=1, "b"=2]
 Will expand to:
 
 ```
-my_map = Hashmap<String, Int>|init
-my_map["a"] = 1
-my_map["b"] = 2
+my_map : hashmap<string, int> = init [.content = ["a"=1, "b"=2], .allocator = std.rtallocator]
 ```
+
+> [!FIX] Pensar en la sintaxis apropiada para crear un hashmap.
 
 And when calling init without an allocator, it will use the default one, which hides the complexity of memory management.
 
@@ -113,26 +116,26 @@ La palabra que usamos para referirnos a esto es `deinit` (que será lo contrario
 
 ```
 {
-	buf := HeapAllocation|init(_, 1024)
+	buf : HeapAllocation = init 1024
 	-- El compilador siempre pone automáticamente:
-	defer buf|deinit
+	defer buf | deinit
 }
 ```
 
 Tipos que contengan memoria alocada en el heap implementarán deinit.
 
 ```
-deinit(buf: HeapAllocation) {
-	buf.allocator|deallocate(buf.data)
+deinit HeapAllocation {
+	in.allocator | deallocate [_, in.data]
 }
 ```
 
 Y habrá también una por defecto para cualquier struct que llama de forma recursiva a deinit en sus campos.
 
 ```
-deinit(s: AnyStruct) {
+deinit AnyStruct -> [] := {
 	-- Pensar en como hacer introspección. Qué tipo es un struct?
-	for field in my_struct|#get_fields {
+	for field in in | #get_fields {
 		field|deinit
 	}
 }
@@ -142,7 +145,7 @@ Para evitar que la memoria se autolibere, se puede usar el keyword `keep`:
 
 ```
 {
-	buf := HeapAllocation|init(_, 1024)
+	buf : HeapAllocation = 1024
 	keep buf
 }
 ```
@@ -158,7 +161,7 @@ Lo habitual es que no quieras tener que estar pendiente de hacerlo y que su vida
 
 ```
 {
-	MyType : Type = struct [
+	MyType : Type = [
 		.field : &Int
 	]
 	my_instance : MyType
@@ -323,7 +326,7 @@ StructLayout : Type = [
 Herramientas para inspeccionar layout:
 
 ```
-inspect_layout(MyStruct)
+inspect_layout MyStruct
 ```
 
 ```
