@@ -1,11 +1,32 @@
 ## Types
 
+### Managing types
+
+#### Type casting
+
+Types are casted using the cast function.
+
+```
+cast MyType -> String := {
+    ...
+}
+
+print ("My type:" + my_var|cast)
+```
+
+Se resuelve gracias al multiple dispatch.
+
+
+#### Type checking
+
 Checking type:
 
 ```
-some_variable is Int    -- Abstract types
-some_variable is Int32  -- Concrete types
+type some_variable == Int32
+implements [some_variable, Int]
 ```
+
+It is checked at compiletime.
 
 >[!BUG]
 >Pensar en una sintaxis buena para hacer comprobación y conversión de tipo
@@ -343,7 +364,7 @@ Number defaultsto Exact
 - Underscores can be added to numbers for clarity. For example, `1000000` can be tricky to read quickly, while `1_000_000` can be easier.
 - Ints can be written in binary, octal, or hexadecimal formats using the `0b`, `0o`, and `0x`prefixes respectively.
 - Floats can be written in a scientific notation.
- 
+
 >[!BUG] Pensar
 > Cuando haces == entre Int64 y Int8, o Int32 y DynamicInt... debería dejarse comparar variables de distintos tipos?
 

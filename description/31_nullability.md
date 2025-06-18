@@ -5,40 +5,42 @@ Los tipos no pueden ser nulos. En su lugar, se utilizan enums.
 ```
 Nullable<#T : Type> : Type = choice [
 	..null
-	..some(T)
+	..some T
 ]
 ```
 
-You can get the value inside an option with `.unwrap()`.
-If you unwrap a value that is `None`, the program will panic.
+```rg
+my_nullable? -- Returns true or false
+```
 
-Para evitar que paniquee, se puede usar unwrap_or("Valor alternativo").
-
-
-
-
-You can use `?` to declare a nullable type and to check if it is null.
+Se puede hacer matching:
 
 ```rg
-my_function(input: ?Int = ..null) {
-	if input? {
-		// Do something
-	} else {
-		// Do something else
-	}
+match my_nullable {
+  ..some v => {
+	// `v` es un Int
+	use v;
+  }
+  ..null => {
+	// gestionar el caso nulo
+  }
 }
 ```
 
-### Orelse
+También se puede unwrapear:
 
-En zig se puede hacer:
-
-```zig
-const display = c.XOpenDisplay("") orelse {
-	std.log.err("Could not open display");
-	return error.XOpenDisplayFailed;
-};
+```rg
+my_value = my_nullable unwrap_or 0
 ```
 
-Pensar si queremos algo asi.
+```rg
+my_value = my_nullable unwrap_or_do {
+	// gestionar el caso nulo
+	return 0
+}
+```
+
+(Como el orelse de Zig)
+
+Son operadores, porque si se plantean como funciones, el piping queda muy tedioso.
 

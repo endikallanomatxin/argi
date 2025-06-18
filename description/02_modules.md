@@ -1,6 +1,8 @@
 # Modules and imports
 
-Folders as modules, como Go y odin. El nombre del módulo es el nombre de la carpeta.
+Folders as modules, como Go y odin. El nombre del módulo es el nombre de la
+carpeta.
+
 Every file in a directory can see each other, same namespace.
 
 Todo es un módulo y se importa como en Python:
@@ -11,13 +13,29 @@ Todo es un módulo y se importa como en Python:
 
 O igual mejor como zig:
 
-- `m := import module`
+- `m := import "module"`
 
 Eso es para metaprogramación. Zig no tiene magia.
 Realmente vamos a permitir que se le de un uso a eso.
-No le vamos a meter magia? Seremos capacer de que sea coherente con el resto del lenguaje? 
+No le vamos a meter magia? Seremos capacer de que sea coherente con el resto
+del lenguaje? 
 
 > [!FIX] Decidir esto
+
+> [!FIX] Necesidad de nombrar el namespace del que importamos incluso con "objetos"
+> El piping syntax suple las necesidades de los objetos, pero si tenemos que
+> mencionar el módulo del que vienen las funciones... ahí ya oop gana.
+> Por ejemplo,
+> ```rg
+> m = import std.math
+> matrix : Matrix = [[1, 2], [3, 4]]
+> determinant = matrix | m.determinant
+> ```
+> o igual
+> ```rg
+> determinant = import std.math.determinant
+> det = matrix | determinant
+> ```
 
 
 ## Locating modules
@@ -32,7 +50,8 @@ If it is just a name, then it is a module installed in the system.
 
 ## Protected modules
 
-Modules which name starts with _ are not visible outside the module. They are private to the module.
+Modules which name starts with _ are not visible outside the module. They are
+private to the module.
 
 
 ## Interpretation and imports
@@ -52,9 +71,9 @@ Podríamos hacer:
 - `import(module)`
 
 
-Igual es buena idea también separar los archivos que se pueden correr, de los que se pueden importar:
+Igual es buena idea también separar los archivos que se pueden correr, de los
+que se pueden importar:
 
 - Files inside a module: `script.rg`
 - Scripts: `script.rgs`
-
 

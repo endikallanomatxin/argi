@@ -86,8 +86,12 @@ print my_vec|cast
 
 ### Indexables
 
-> [!CHECK] No se si deberíamos permitir esta sintaxis desde que hicimos los structs tan importantes.
-> Se va a confundir
+> [!CHECK]
+> No se si deberíamos permitir esta sintaxis desde que hicimos los structs tan
+> importantes.
+> Se va a confundir.
+> Valorar usar () para todo lo que usamos \[\] ahora, para poder usar \[\] para
+> indexables.
 
 Como ofrecer la sintaxis de \[\], para que la gente la implemente en sus tipos.
 En python es \_\_getitem\_\_ y \_\_setitem\_\_. Para numpy por ejemplo.
