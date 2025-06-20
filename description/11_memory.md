@@ -35,30 +35,30 @@ Si quieres hacerlo, tienes que convertirlo en un tipo numérico, hacer la aritm�
 Similar to zig,  and they are are used to allocate and deallocate memory.
 
 ```
-Allocator : Abstract = [
+Allocator : Abstract = (
 	alloc(_, size: Int) : HeapAllocation
 	dealloc(_, ha: HeapAllocation)
-]
+)
 ```
 
 Allocators return a `HeapAllocation` struct, instead of a single pointer. This allows us to keep track of the size and the allocator used for the allocation, which is necessary for deallocateing the memory later.
 
 ```
-HeapAllocation : Type = struct [
+HeapAllocation : Type = struct (
 	.data : &Byte
 	.size : Int  -- In bytes
 	.allocator : Allocator
-]
+)
 ```
 
 When initializing types, allocators are passed as arguments,
 For ergonomy, most init functions will have a default allocator, and the user can override it if needed.
 
 ```
-init [
+init (
     size     : Int,
     allocator: Allocator =  std.PageAllocator
-] -> HeapAllocation := {
+) -> HeapAllocation := {
 	.data      = allocator|allocate(size)
 	.size      = size
 	.allocator = allocator
@@ -68,20 +68,20 @@ init [
 In a type:
 
 ```
-Hashmap <from: Type, to: Type> : Type = struct [
+Hashmap <from: Type, to: Type> : Type = struct (
 	allocator : Allocator
 	data      : HeapAllocation
-]
+)
 
 
-init[.allocator: Allocator = std.RTAllocato] -> HashMap <from, to> :=  {
+init(.allocator: Allocator = std.RTAllocato) -> HashMap <from, to> :=  {
 	out : Hashmap <from, to>
 	out.allocator = allocator
 	out.data = allocator|allocate(...)
 }
 
 
-deinit $&Hashmap& -> [] := {
+deinit $&Hashmap& -> () := {
 	in.allocator|deallocate(hm.data)
 }
 ```
@@ -94,13 +94,13 @@ deinit $&Hashmap& -> [] := {
 So:
 
 ```
-my_map := ["a"=1, "b"=2]
+my_map := ("a"=1, "b"=2)
 ```
 
 Will expand to:
 
 ```
-my_map : hashmap<string, int> = init [.content = ["a"=1, "b"=2], .allocator = std.rtallocator]
+my_map : hashmap<string, int> = init (.content = ("a"=1, "b"=2), .allocator = std.rtallocator)
 ```
 
 > [!FIX] Pensar en la sintaxis apropiada para crear un hashmap.
@@ -126,14 +126,14 @@ Tipos que contengan memoria alocada en el heap implementarán deinit.
 
 ```
 deinit HeapAllocation {
-	in.allocator | deallocate [_, in.data]
+	in.allocator | deallocate (_, in.data)
 }
 ```
 
 Y habrá también una por defecto para cualquier struct que llama de forma recursiva a deinit en sus campos.
 
 ```
-deinit AnyStruct -> [] := {
+deinit AnyStruct -> () := {
 	-- Pensar en como hacer introspección. Qué tipo es un struct?
 	for field in in | #get_fields {
 		field|deinit
@@ -161,9 +161,9 @@ Lo habitual es que no quieras tener que estar pendiente de hacerlo y que su vida
 
 ```
 {
-	MyType : Type = [
+	MyType : Type = (
 		.field : &Int
-	]
+	)
 	my_instance : MyType
 
 	my_int := 5
@@ -276,17 +276,17 @@ You can specify:
 MyStruct : Type = struct(
     alignment: ..RespectOrder
     listing_behavior: ..SOA
-)[
+)(
 	.a : u8
 	.b : u32
 	.c : u16
-]
+)
 ```
 
 AOS and SOA, are inspected when creating lists (taken care of in the core library).
 
 ```
-StructListingBehaviour : Type = [
+StructListingBehaviour : Type = (
     =..AOS
     -- Array of Structures (AOS) layout.
     -- Each element is a structure, and fields are stored together.
@@ -294,13 +294,13 @@ StructListingBehaviour : Type = [
     ..SOA
     -- Structure of Arrays (SOA) layout.
     -- Each field is stored in a separate array, optimizing memory access patterns.
-]
+)
 ```
 
 Struct layout is something that the compiler takes care of.
 
 ```rg
-StructLayout : Type = [
+StructLayout : Type = (
     =..Optimal
     -- Compiler optimizes for minimal padding.
 
@@ -313,14 +313,14 @@ StructLayout : Type = [
     ..Aligned(n)
     -- Aligns the struct to the specified boundary (n bytes).
 
-    ..Custom(offsets: List[Int], size: Int)
+    ..Custom(offsets: List(Int), size: Int)
     -- Custom layout with specified offsets and size.
 
     ..C
     -- Follows the C standard layout (ABI compatibility). Respects the order of
     -- field declaration in structures and applies padding only to meet alignment
     -- requirements.
-]
+)
 ```
 
 Herramientas para inspeccionar layout:

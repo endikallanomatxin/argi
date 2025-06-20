@@ -42,7 +42,7 @@ th := spawn_thread {  -- type is ThreadHandler
 th | wait
 
 -- Con funciones
-th := spawn_thread [my_function, [x, y, z]]
+th := spawn_thread (my_function, (x, y, z))
 
 -- Lanzar un bucle infinito
 th := spawn_thread {
@@ -68,11 +68,11 @@ El runtime se encarga de:
 - **Sincronización:** Proveer primitivas (como wait groups o canales) para coordinar tareas y recoger resultados.
 
 ```
-lcr := LightConcurrencyRuntime [.threads = 4]
+lcr := LightConcurrencyRuntime (.threads = 4)
 
-lcr | spawn_thread [_, {
+lcr | spawn_thread (_, {
 	...
-}]
+})
 ```
  Y ese runtime que lance unos threads y que se encargue de multiplexar.
  
@@ -99,9 +99,9 @@ Channel<#T: Type> : Type
 ```
 
 ```
-funcion_enviadora c:Channel -> [] := {
-	time | sleep [&_, 1000]
-	c | send [_, 42]
+funcion_enviadora c:Channel -> () := {
+	time | sleep (&_, 1000)
+	c | send (_, 42)
 }
 
 canal : Channel<Int>
@@ -125,26 +125,26 @@ Igual haría que hubiera tres tipos:
 - Stack (LIFO)
 
 ```
-Channel<T> : Abstract = [
+Channel<T> : Abstract = (
     put(T)
     get() -> T
-]
-Channel canbe [Spot, Queue, Stack]
+)
+Channel canbe (Spot, Queue, Stack)
 Channel defaults Spot
 
 
-Queue<T> : Abstract = [
-	put T -> []
-	get [] -> T
-]
-Queue canbe [DynamicQueue, StaticQueue<n>]
+Queue<T> : Abstract = (
+	put T -> ()
+	get [) -> T
+)
+Queue canbe (DynamicQueue, StaticQueue<n>)
 Queue defaults DynamicQueue
 
-Stack<T> : Abstract = [
-	put T -> []
-	get [] -> T
-]
-Stack canbe [DynamicStack, StaticStack<n>]
+Stack<T> : Abstract = (
+	put T -> [)
+	get () -> T
+)
+Stack canbe (DynamicStack, StaticStack<n>)
 Stack defaults DynamicStack
 
 ```

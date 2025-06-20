@@ -3,10 +3,10 @@
 Los tipos no pueden ser nulos. En su lugar, se utilizan enums.
 
 ```
-Nullable<#T : Type> : Type = choice [
+Nullable<#T : Type> : Type = choice (
 	..null
 	..some T
-]
+)
 ```
 
 ```rg

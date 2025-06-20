@@ -28,7 +28,7 @@ del lenguaje?
 > Por ejemplo,
 > ```rg
 > m = import std.math
-> matrix : Matrix = [[1, 2], [3, 4]]
+> matrix : Matrix = ((1, 2), (3, 4))
 > determinant = matrix | m.determinant
 > ```
 > o igual
