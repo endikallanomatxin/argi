@@ -8,7 +8,7 @@ All functions are unary.
 ## Function definition syntax
 
 ```
-add [ .a: Int, .b: Int ] -> Int := {
+add ( .a: Int, .b: Int ) -> Int := {
     out = in.a + in.b          -- `in` y `out` son structs implícitos
 }
 
@@ -22,11 +22,11 @@ square Int -> Int := {out = in^2}
 return variables are initialized (to zero) if named.
 
 ```
-calculate_stats List -> [.mean: Float, .standard_deviation: Float] := {
+calculate_stats List -> (.mean: Float, .standard_deviation: Float) := {
 	for element in in{
 		...
 	}
-	out := [mean, standard_deviation]
+	out := (mean, standard_deviation)
 }
 ```
 
@@ -43,17 +43,17 @@ my_function
 	---
 	Explanation of what the function does
 	---
-[
+(
 	.a: int  -- Short description of a
 	.b: bool
 	---
 	Longer description of b
 	---
 	.verbose: bool = False  -- Default value
-] -> [
+) -> (
 	.result_one: bool
 	.result_two: int
-] {
+) {
 	...
 }
 ```
@@ -61,7 +61,7 @@ my_function
 The empty struct literal is like saying void:
 
 ```
-my_function [] -> [] := {
+my_function () -> () := {
 	-- No recibe ni devuelve nada
 }
 ```
@@ -76,8 +76,8 @@ la izquierda. A veces hay que usar currying para cuadrar argumentos.
 
 ```
 my_var | my_func
-my_var | my_func [_, other_arg]
-my_var | my_func [_.a, other_arg, _.b]  -- Multiple piped arguments
+my_var | my_func (_, other_arg)
+my_var | my_func (_.a, other_arg, _.b)  -- Multiple piped arguments
 ```
 
 > [!IDEA]
@@ -88,7 +88,7 @@ Si se pasa por referencia:
 
 ```
 my_var | my_func &_
-my_var | my_func [&_, second_arg]
+my_var | my_func (&_, second_arg)
 ```
 
 Permite emular la comodidad de los objetos.
@@ -107,9 +107,9 @@ modelizan con sus punteros, pero no se va a duplicar la memoria referenciada
 por sus punteros.
 
 ```
-m1 : Map = []
+m1 : Map = ()
 m2 := m1
-m2 | put [$&_, "key", "value"] -- Cambia el original
+m2 | put ($&_, "key", "value") -- Cambia el original
 
 m1 | deinit $&_
 m2 | deinit $&_ -- Double free error
@@ -124,7 +124,7 @@ Para solucionar esto: Haremos deep_copy por defecto (donde deep_copy es un
 método que tiene que estar definido para el tipo de variable en cuestión).
 
 ```
-m1 : Map = []
+m1 : Map = ()
 m2 = m1  -- Aquí se hace m2 = m1|deep_copy
 ```
 
@@ -155,7 +155,7 @@ $&var -- mutable pointer (s is for "side effect")
 La sintaxis básica para pasar punteros 
 
 ```
-funcion_que_lee &Map<String,Int> -> [] := {
+funcion_que_lee &Map<String,Int> -> () := {
 	-- Usamos in& para desreferenciar al usarlo.
 	...
 }
@@ -232,9 +232,9 @@ main system:$&System -> sc:StatusCode := {
 	user = query_user($&db_conn, 123)
 }
 
-query_user [.db_conn: $&DbConnection, .user_id: Int] -> ?User {
+query_user (.db_conn: $&DbConnection, .user_id: Int) -> ?User {
 	-- Acceso a la db
-	row = db_conn|execute(!&_, "SELECT * FROM user WHERE id = ?", user_id)
+	row = db_conn|execute($&_, "SELECT * FROM user WHERE id = ?", user_id)
 	if row == null {
 		return null
 	}
@@ -266,11 +266,11 @@ EFFECT.
 ```
 variable := 4
 
-contador$ [] -> [] := {
+contador$ () -> () := {
 	variable += 1
 }
 
-contador$ [] -- variable = 5
+contador$ () -- variable = 5
 ```
 
 > [!CHECK] Es así como debe llamarse a una función sin argumentos de entrada?
@@ -300,7 +300,7 @@ System is a struct that contains all the capabilities of the system.
 (Inspired by Haskell's `IO` monad)
 
 ```
-System : struct [
+System : struct (
   terminal : $& Terminal,
   args     :  & Arguments,
   env_vars : $& EnvironmentVariables,
@@ -309,7 +309,7 @@ System : struct [
   proc_man : $& ProcessManager,
   clock    : $& time.Clock,
   rand_gen : $& random.RandomNumberGenerator,
-]
+)
 
 ```
 
@@ -318,35 +318,35 @@ Examples of use:
 ```rg
 main system:$&System& -> sc:StatusCode := {
 	-- Acceso a la consola
-	system.terminal | print [$&_, "Hello, world"]
+	system.terminal | print ($&_, "Hello, world")
 
 	-- Acceso a los argumentos de la línea de comandos
         argsmap := system.args | parse &_
-        if argsmap has [$&_, "name"] {
-            greet_user [argsmap["name"], $&system.terminal.stdout]
+        if argsmap has ($&_, "name") {
+            greet_user (argsmap("name"), $&system.terminal.stdout)
         }
 
 	-- Acceso a las variables de entorno
-	env_var = system.env_vars | get [&_, "MY_ENV_VAR"]
+	env_var = system.env_vars | get (&_, "MY_ENV_VAR")
 
 	-- Acceso al sistema de archivos
-	file1 = system.file_sys | open_file_for_read [&_,"my_file.txt"]
+	file1 = system.file_sys | open_file_for_read (&_,"my_file.txt")
 	content = file1 | read_all &_
-	file2 = system.file_sys | open_file_for_write [$&_,"output.txt"]
-	file2 | write [$&_, content]
+	file2 = system.file_sys | open_file_for_write ($&_,"output.txt")
+	file2 | write ($&_, content)
 
 	-- Acceso a la red
-	response = system.network | http_get [&_, "https://example.com"]
+	response = system.network | http_get (&_, "https://example.com")
 
 	-- Acceso al proceso
-	system.proc_man | run_command [&_, "ls -l"]
+	system.proc_man | run_command (&_, "ls -l")
 
 	-- Acceso al reloj
 	current_time = system.clock | now &_
 
 	-- Generación de números aleatorios
-	system.rand_gen | set_seed [$&_, 42]
-	random_number = system.rand_gen | next_int [$&_, 1, 100]
+	system.rand_gen | set_seed ($&_, 42)
+	random_number = system.rand_gen | next_int ($&_, 1, 100)
 }
 ```
 
@@ -355,18 +355,18 @@ structs, in which case they are ignored by the compiler when generating machine
 code. No se si es mejor abstract o structs.
 
 ```rg
-Clock : Abstract = [
+Clock : Abstract = (
     now         &_              -> TimeStamp
-    sleep       [&_, Duration]  -> []
-    sleep_until [&_, TimeStamp] -> []
-]
+    sleep       (&_, Duration)  -> ()
+    sleep_until (&_, TimeStamp) -> ()
+)
 ```
 
 ```rg
-Rng : Abstract = [
-    next_bytes [$&_, Int]                -> Array<Byte>
-    next_int   [$&_, min: Int, max: Int] -> Int
-]
+Rng : Abstract = (
+    next_bytes ($&_, Int)                -> Array<Byte>
+    next_int   ($&_, min: Int, max: Int) -> Int
+)
 ```
 
 
@@ -429,10 +429,10 @@ ejemplo (consiguiendo funcionalidades como los derive macros de rust)
 
 ```rg
 to(&s: Struct, t: type == String) := (string: String) {
-	string = s.symbol_name + "["
+	string = s.symbol_name + "("
 	for field in s.fields
 		string += field.name + ": " + field.value + ", "
-	string += "]"
+	string += ")"
 	return string
 }
 ```

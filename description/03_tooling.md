@@ -47,19 +47,19 @@ target := standardTargetConfig
 optimization := standardOptimizationConfig 
 
 -- For example, using a library
-llvm : Library = [
-	.llvm_include_path : std.Build.LazyPath = [.cwd_relative = "/usr/.../llvm/includ"],
-	.llvm_lib_path : std.Build.LazyPath = [.cwd_relative = "/usr/.../llvm/lib" ],
-]
+llvm : Library = (
+	.llvm_include_path : std.Build.LazyPath = (.cwd_relative = "/usr/.../llvm/includ"),
+	.llvm_lib_path : std.Build.LazyPath = (.cwd_relative = "/usr/.../llvm/lib" ),
+)
 
 -- To create an executable
-exe : ExecutableConfig = [
+exe : ExecutableConfig = (
 	.name             = "argi_compiler"
 	.root_source_file = b.path("src/main.zig")
 	.target           = target
 	.optimize         = optimize
-	.libraries        = [llvm]
-]
+	.libraries        = (llvm)
+)
 
 exe | build
 ```
@@ -69,19 +69,19 @@ run.rg
 from build import exe
 
 exe | build
-exe | run [.executable = _, .args = ["arg1", "arg2"]]
+exe | run (.executable = _, .args = ("arg1", "arg2"))
 ```
 
 test.rg
 ```
 from build import target, optimize, llvm
 
-tests : Tests = [
+tests : Tests = (
     .root_source_file = "..."
     .target = target,
     .optimize = optimize,
-    .libraries = [llvm]
-]
+    .libraries = (llvm)
+)
 tests | build
 tests | run
 ```
@@ -101,13 +101,13 @@ install.rg (o lo que quiera que se haga con una librería)
 ```
 from build import target, optimize, llvm
 
-lib : Library = [
+lib : Library = (
     name             = "argi_compiler",
     root_source_file = b.path("src/root.zig"),
-	target           = target,
-	optimize         = optimize,
-	libraries        := [llvm]
-]
+    target           = target,
+    optimize         = optimize,
+    libraries        = (llvm)
+)
 lib | install
 ```
 

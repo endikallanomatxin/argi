@@ -23,7 +23,7 @@ Checking type:
 
 ```
 type some_variable == Int32
-implements [some_variable, Int]
+implements (some_variable, Int)
 ```
 
 It is checked at compiletime.
@@ -54,32 +54,32 @@ Inline declaration requires commas, but they can be ommited when using new lines
 This declares a new struct type:
 
 ```
-Pokemon : Type = [
+Pokemon : Type = (
 	.ID   :: Int64  = 0    -- It allows default values
 	.Name :: String = ""
-]
+)
 ```
 
 
 This declares a new struct (with no named type):
 
 ```
-data : [
+data : (
 	.ID   :: Int64
 	.Name :: String
-] = [
+) = (
 	.ID = 0
 	.Name = ""
-]
+)
 ```
 
 Or as a shorthand:
 
 ```
-data := [
+data := (
 	.ID   :: Int64 = 0
 	.Name :: String = ""
-]
+)
 ```
 
 Structs' types are structural only when anonymous.
@@ -94,9 +94,9 @@ Los campos que empiecen por _ serán privados y no podrán ser accedidos desde f
 Por ejemplo:
 
 ```
-MyStruct : Type = [
+MyStruct : Type = (
 	._x :: Int = 0
-]
+)
 
 get_x(s: MyStruct) := Int {
 	return s._x
@@ -110,13 +110,13 @@ set_x(s: MyStruct, x: Int) {
 También puede ser útil para garantizar que un struct se inicializa correctamente.
 
 ```
-MyStruct := [
+MyStruct := (
 	._x :: Int = 0
 	._y :: Int = 0
 	._z :: Int = 0
-]
+)
 
-init [x: Int, y: Int, z: Int] -> MyStruct := {
+init (x: Int, y: Int, z: Int) -> MyStruct := {
 	return MyStruct(x, y, z)
 }
 ```
@@ -124,13 +124,13 @@ init [x: Int, y: Int, z: Int] -> MyStruct := {
 We use dynamic dispatch by return type to create the initializer.
 
 ```
-my_var : MyType = [1, 2, 3]
+my_var : MyType = (1, 2, 3)
 ```
 
 Esto realmente es:
 
 ```
-my_var : MyType = init [1, 2, 3]
+my_var : MyType = init (1, 2, 3)
 ```
 
 y queda muy limpio.
@@ -144,10 +144,10 @@ y queda muy limpio.
 > Por ejemplo:
 >
 >	```
->	User := [
+>	User := (
 >		ID    :: Int64
 >		Name  :: String
->	]
+>	)
 >	userIDs : List(User.ID)  -- En lugar de Users, o simplemente Int64
 >	```
 >
@@ -157,12 +157,12 @@ y queda muy limpio.
 #### Choice
 
 ```
-Direction : Type = [
+Direction : Type = (
 	=..north  -- Default
 	..east
 	..south
 	..west
-]
+)
 
 int(Directions..north) == 1
 ```
@@ -173,26 +173,26 @@ int(Directions..north) == 1
 ```
 
 ```
-HTTPCode : Type = [
+HTTPCode : Type = (
 	..OK = 200                   -- Specific underlying representation
 	..NotFound = 404
 	..InternalServerError = 500
 	-- Si poners uno, tienes que poner todos.
-]
+)
 ```
 
 ```
 -- With other data types besides Int
 
 -- Strings
-Role : Type = [
+Role : Type = (
 	..Admin = "admin"
 	..User = "user"
 	..Guest = "guest"
-]
+)
 
 -- Floats
-Multiplyier : Type = [
+Multiplyier : Type = (
 	..Mili = 0.001
 	..Centi = 0.01
 	..Deci = 0.1
@@ -200,7 +200,7 @@ Multiplyier : Type = [
 	..Deca = 10
 	..Hecto = 100
 	..Kilo = 1000
-]
+)
 ```
 
 ##### Payload
@@ -208,17 +208,17 @@ Multiplyier : Type = [
 Like a tagged union.
 
 ```
-Errable<T, E> : Type = [
+Errable<T, E> : Type = (
 	..ok(T)
 	..error(E)
-]
+)
 ```
 
 ```
-Nullable<T> : Type = [
+Nullable<T> : Type = (
 	=..none
 	..some(T)
-]
+)
 ```
 
 ##### Use
@@ -289,10 +289,10 @@ Los abstract types:
 Así se declara un tipo abstracto:
 
 ```
-Animal : Abstract = [
+Animal : Abstract = (
 	-- Las funciones se definen con la sintaxis de currying.
 	speak(_) := String
-]
+)
 
 speak(d: Dog) := String {
 	return "Woof"
@@ -306,18 +306,18 @@ Animal defaultsto Dog
 ```
 
 ```
-Addable : Abstract = [
+Addable : Abstract = (
 	operator +(_, _) : _
-]
+)
 ```
 
 To use with generics:
 
 ```
-List<t:Type> : Abstract = [
-	operator get[](_, _) := t
-	operator set[](_, _, t)
-]
+List<t:Type> : Abstract = (
+	operator get()(_, _) := t
+	operator set()(_, _, t)
+)
 
 List<t> canbe DynamicArray<t>
 List<t> canbe StaticArray<t, Any>
@@ -326,13 +326,13 @@ List<t> canbe StaticArray<t, Any>
 To compose them:
 
 ```
-Number : Abstract = [
+Number : Abstract = (
 	Addable
 	Substractable
 	Multiplicable
 	...
 	-- You can mix functions and other abstract types here.
-]
+)
 ```
 
 
@@ -349,14 +349,14 @@ Literals are:
 #### Numbers
 
 ```
-Number : Abstract = [
+Number : Abstract = (
 	...
-]
+)
 
-Number canbe [
+Number canbe (
 	Int
 	Float
-]
+)
 
 Number defaultsto Exact
 ```
@@ -401,7 +401,7 @@ Number  (Abstract Type)
 #### Integers
 
 ```
-Int : Abstract = [
+Int : Abstract = (
 	float(_) : Float
 	operator +(_, _) : Int
 	operator -(_, _) : Int
@@ -410,9 +410,9 @@ Int : Abstract = [
 	operator %(_, _) : Int
 	operator ^(_, _) : Int
 	...
-]
+)
 
-Int canbe [
+Int canbe (
 	-- Automatically changes size according to the value. Never overflows.
 	DynamicInt
 
@@ -420,7 +420,7 @@ Int canbe [
 	CustomInt(N)
 	Int8, Int16, Int32, Int64, Int128
 	UInt8, UInt16, UInt32, UInt64, UInt128
-]
+)
 
 Int defaultsto DynamicInt
 ```
@@ -430,16 +430,16 @@ Int defaultsto DynamicInt
 #### Floats
 
 ```
-Float : Type : abstract [
+Float : Type : abstract (
 	operator +(_, _) : _
 	operator -(_, _) : _
 	operator *(_, _) : _
 	operator /(_, _) : _
 	operator ^(_, _) : _
 	...
-]
+)
 
-Float canbe [Float8, Float16, Float32, Float64, Float128]
+Float canbe (Float8, Float16, Float32, Float64, Float128)
 Float defaultsto Float32
 Number canbe Float
 ```
@@ -479,13 +479,13 @@ What we have is literals for them:
 - List literals
 
 ```
-l := [1, 2, 3]
+l := (1, 2, 3)
 ```
 
 - Map literals
 
 ```
-m := ["a"=1, "b"=2]
+m := ("a"=1, "b"=2)
 ```
 
 These types are only special in the sense that they are the default types infered from their literals.
@@ -495,17 +495,17 @@ More info on collection types in `../library/collections/`
 The easy default: definition of a heap allocated dynamic array:
 
 ```
-l := [1, 2, 3]
+l := (1, 2, 3)
 
 -- Turns into:
 
-l : DynamicArray<Int> = DynamicArray|init(_, [1, 2, 3])
+l : DynamicArray<Int> = DynamicArray|init(_, (1, 2, 3))
 ```
 
 For the low-level-seeking ones: Definition of a stack-allocated array:
 
 ```
-l : StackArray<Int, 3> = [1, 2, 3]
+l : StackArray<Int, 3> = (1, 2, 3)
 ```
 
 > [!TODO] Pensar una forma de definir longitud de forma automática.
@@ -532,7 +532,7 @@ Two literals:
 Una lista string, se debería poder "ver" como una lista de chars o una lista de bytes. Un char puede ser de múltiples bytes (UTF8)
 
 ```
-my_string[5]            -- The fifth character
+my_string(5)            -- The fifth character
 my_string|bytes_get(&_, 4)  -- The fourth byte
 ```
 

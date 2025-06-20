@@ -17,7 +17,7 @@ if a == 2 {
 De odin: cada case es su propio scope, `implicit break` por defecto, y si en lugar de eso quieres que siga le pones un `fallthrough` o algo así.
 
 ```
-match x [
+match x (
 
 	a {
 		...
@@ -28,7 +28,7 @@ match x [
 	}
 
 	...
-]
+)
 ```
 
 > [!NOTE]
@@ -99,7 +99,7 @@ loop
 No me gustan, pero son muy cómodos para cosas pequeñas y no creo que tengan mucho riesgo de usarse mal en exceso. No pasa nada por implementarlos.
 
 ```
-[i*2 for i in 1.10]
+(i*2 for i in 1.10)
 ```
 
 O igual del revés:
@@ -107,9 +107,9 @@ O igual del revés:
 - Queda más limpio para multiples líneas,
 
 ```
-evens = [for i in 1..10 {yield i*2}]
+evens = (for i in 1..10 {yield i*2})
 
-evens = [for i in 1..10; i*2]
+evens = (for i in 1..10; i*2)
 ```
 
 >[!TODO] Darle una vuelta a la sintaxis.
@@ -121,14 +121,14 @@ Los `Iterator` gestionan como se recorren o procesan las colecciones, pero defin
 Se puede hacer a través de abstrascts:
 
 ```
-Iterable : Abstract = [
+Iterable : Abstract = (
     cast _ -> Iterator<_>
-]
+)
 
-Iterator<T> : Abstract = [
+Iterator<T> : Abstract = (
     next _ -> T
     has_next _ -> Bool
-]
+)
 ```
 
 > [!CHECK]
@@ -154,25 +154,25 @@ _(Pensar en una forma de que esto sirva para vectorizar funciones. Que si la fun
 Y para hacer que tu tipo pueda ser iterable:
 
 ```
-MyType : Type = struct [
+MyType : Type = struct (
     .data: List<Int>
-]
+)
 
 cast MyType -> MyTypeIterator := {
-    return MyTypeIterator [.data = in.data, .index = 0]
+    return MyTypeIterator (.data = in.data, .index = 0)
 }
 
-MyTypeIterator : Type = struct [
+MyTypeIterator : Type = struct (
     .data: &MyType
     .index: Int
-]
+)
 
 next MyTypeIterator -> Int := {
     if in.index >= in.data|len {
         throw "No more elements"
     }
     in.index += 1
-    out = in.data[in.index-1]
+    out = in.data(in.index-1)
 }
 
 has_next MyTypeIterator -> Bool := {
