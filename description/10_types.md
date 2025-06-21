@@ -7,11 +7,11 @@
 Types are casted using the cast function.
 
 ```
-cast MyType -> String := {
+cast (t: MyType) -> (s: String) := {
     ...
 }
 
-print ("My type:" + my_var|cast)
+print( "My type:" + my_var|cast(_) )
 ```
 
 Se resuelve gracias al multiple dispatch.
@@ -47,6 +47,15 @@ Notes:
 Inline declaration requires commas, but they can be ommited when using new lines.
 
 
+#### Private vs. Public
+
+Everything is public by default to make it easier for beginners.
+
+To make variables private, just use:
+- `_name_surname` for variables in snake_case
+- `nameSurname` for variables in PascalCase
+
+
 ### Data modelling types
 
 #### Structs
@@ -55,18 +64,18 @@ This declares a new struct type:
 
 ```
 Pokemon : Type = (
-	.ID   :: Int64  = 0    -- It allows default values
-	.Name :: String = ""
+	.ID   : Int64  = 0    -- It allows default values
+	.Name : String = ""
 )
 ```
 
 
-This declares a new struct (with no named type):
+This declares a new anonymous struct:
 
 ```
 data : (
-	.ID   :: Int64
-	.Name :: String
+	.ID   : Int64
+	.Name : String
 ) = (
 	.ID = 0
 	.Name = ""
@@ -77,8 +86,8 @@ Or as a shorthand:
 
 ```
 data := (
-	.ID   :: Int64 = 0
-	.Name :: String = ""
+	.ID   : Int64 = 0
+	.Name : String = ""
 )
 ```
 
@@ -186,20 +195,20 @@ HTTPCode : Type = (
 
 -- Strings
 Role : Type = (
-	..Admin = "admin"
-	..User = "user"
-	..Guest = "guest"
+	..admin = "admin"
+	..user = "user"
+	..guest = "guest"
 )
 
 -- Floats
 Multiplyier : Type = (
-	..Mili = 0.001
-	..Centi = 0.01
-	..Deci = 0.1
-	..Base = 1
-	..Deca = 10
-	..Hecto = 100
-	..Kilo = 1000
+	..mili = 0.001
+	..centi = 0.01
+	..deci = 0.1
+	..base = 1
+	..deca = 10
+	..hecto = 100
+	..kilo = 1000
 )
 ```
 
@@ -294,7 +303,7 @@ Animal : Abstract = (
 	speak(_) := String
 )
 
-speak(d: Dog) := String {
+speak (d: Dog) -> (s: String) := {
 	return "Woof"
 }
 
@@ -349,100 +358,33 @@ Literals are:
 #### Numbers
 
 ```
-Number : Abstract = (
-	...
-)
-
-Number canbe (
-	Int
-	Float
-)
-
-Number defaultsto Exact
+RealNumber (Abstract)
+├── Int (Abstract)
+    ├── DynamicInt (default)
+    ├── CustomInt(N)
+    ├── Int8
+    ├── Int16
+    ├── Int32
+    ├── Int64
+    ├── Int128
+    ├── UInt8
+    ├── UInt16
+    ├── UInt32
+    ├── UInt64
+    └── UInt128
+└── Float (Abstract)
+    ├── Float8
+    ├── Float16
+    ├── Float32 (default)
+    ├── Float64
+    └── Float128
 ```
 
-- Underscores can be added to numbers for clarity. For example, `1000000` can be tricky to read quickly, while `1_000_000` can be easier.
-- Ints can be written in binary, octal, or hexadecimal formats using the `0b`, `0o`, and `0x`prefixes respectively.
+- Numbers only allow operatiions and comparisons between same types, so, if you want python-like behaviour, use DynamicInt, DynamicFloat, DynamicNumber...
+
+- Underscores can be added to numbers for clarity (`1_000_000`).
+- Ints can be written in binary, octal, or hexadecimal formats using the prefixes `0b`, `0o`, and `0x` respectively.
 - Floats can be written in a scientific notation.
-
->[!BUG] Pensar
-> Cuando haces == entre Int64 y Int8, o Int32 y DynamicInt... debería dejarse comparar variables de distintos tipos?
-
-
-From Julia:
-
-Number  (Abstract Type)
-├─ Complex
-└─ Real  (Abstract Type)
-   ├─ AbstractFloat  (Abstract Type)
-   │  ├─ Float16
-   │  ├─ Float32
-   │  ├─ Float64
-   │  └─ BigFloat
-   ├─ Integer  (Abstract Type)
-   │  ├─ Bool
-   │  ├─ Signed  (Abstract Type)
-   │  │  ├─ Int8
-   │  │  ├─ Int16
-   │  │  ├─ Int32
-   │  │  ├─ Int64
-   │  │  ├─ Int128
-   │  │  └─ BigInt
-   │  └─ Unsigned  (Abstract Type)
-   │     ├─ UInt8
-   │     ├─ UInt16
-   │     ├─ UInt32
-   │     ├─ UInt64
-   │     └─ UInt128
-   ├─ Rational
-   └─ AbstractIrrational  (Abstract Type)
-      └─ Irrational
-
-#### Integers
-
-```
-Int : Abstract = (
-	float(_) : Float
-	operator +(_, _) : Int
-	operator -(_, _) : Int
-	operator *(_, _) : Int
-	operator /(_, _) : Int
-	operator %(_, _) : Int
-	operator ^(_, _) : Int
-	...
-)
-
-Int canbe (
-	-- Automatically changes size according to the value. Never overflows.
-	DynamicInt
-
-	-- Fixed size integers. They overflow. No undefined behavior.
-	CustomInt(N)
-	Int8, Int16, Int32, Int64, Int128
-	UInt8, UInt16, UInt32, UInt64, UInt128
-)
-
-Int defaultsto DynamicInt
-```
-
->[!TODO] Darle alguna vuelta a como se gestiona el /0.
-
-#### Floats
-
-```
-Float : Type : abstract (
-	operator +(_, _) : _
-	operator -(_, _) : _
-	operator *(_, _) : _
-	operator /(_, _) : _
-	operator ^(_, _) : _
-	...
-)
-
-Float canbe (Float8, Float16, Float32, Float64, Float128)
-Float defaultsto Float32
-Number canbe Float
-```
 
 
 #### Alias
@@ -519,7 +461,6 @@ l : StackArray<Int, 3> = (1, 2, 3)
 > [!TODO] Pensar en otra sintaxis, que el punto se usa para otras cosas.
 
 
-
 ### Strings
 
 ThePrimeagen dice que go string handling is mid, rust is amazing.
@@ -533,7 +474,7 @@ Una lista string, se debería poder "ver" como una lista de chars o una lista de
 
 ```
 my_string(5)            -- The fifth character
-my_string|bytes_get(&_, 4)  -- The fourth byte
+my_string | bytes_get(&_, 4)  -- The fourth byte
 ```
 
 
@@ -560,31 +501,12 @@ my_query :="""sql
 
 Several escape sequences are supported:
 
-- `\"` - double quote
-- `\\` - backslash
-- `\f` - form feed
-- `\n` - newline
-- `\r` - carriage return
-- `\t` - tab
-- `\u{xxxxxx}` - unicode codepoint
+- `\"` - double quote
+- `\\` - backslash
+- `\f` - form feed
+- `\n` - newline
+- `\r` - carriage return
+- `\t` - tab
+- `\u{xxxxxx}` - unicode codepoint
 
-
-
-#### Private vs. Public
-
-Everything is public by default to make it easier for beginners.
-
-To make variables private, just use:
-- `_name_surname` for variables in snake_case
-- `nameSurname` for variables in PascalCase
-
-Naming conditions code! It is more comfortable than having to use a keyword.
-
-
-#### Type Casting
-
-```
-x = 5
-y = x|to(_, Float)  
-```
 

@@ -8,11 +8,11 @@ All functions are unary.
 ## Function definition syntax
 
 ```
-add ( .a: Int, .b: Int ) -> Int := {
-    out = in.a + in.b          -- `in` y `out` son structs implícitos
+add ( .a: Int, .b: Int ) -> (.o: Int) := {
+    o = a + b
 }
 
-square Int -> Int := {out = in^2}
+square (i:Int) -> (o:Int) := {o = i^2}
 ```
 
 - Todos los parámetros viajan en un único struct de entrada (in).
@@ -22,11 +22,12 @@ square Int -> Int := {out = in^2}
 return variables are initialized (to zero) if named.
 
 ```
-calculate_stats List -> (.mean: Float, .standard_deviation: Float) := {
+calculate_stats (.l: List) -> (.mean: Float, .standard_deviation: Float) := {
 	for element in in{
 		...
 	}
-	out := (mean, standard_deviation)
+	mean = sum / count
+	standard_deviation = sqrt(sum_of_squares / count - mean^2)
 }
 ```
 
@@ -109,10 +110,10 @@ por sus punteros.
 ```
 m1 : Map = ()
 m2 := m1
-m2 | put ($&_, "key", "value") -- Cambia el original
+m2 | put($&_, "key", "value") -- Cambia el original
 
-m1 | deinit $&_
-m2 | deinit $&_ -- Double free error
+m1 | deinit($&_)
+m2 | deinit($&_) -- Double free error
 ```
 
 Esto:
@@ -160,7 +161,7 @@ funcion_que_lee &Map<String,Int> -> () := {
 	...
 }
 
-funcion_que_lee &datos
+funcion_que_lee(&datos)
 ```
 
 Pero no deja mutar lo que hay al otro lado del puntero. Si se quiere mutar el
@@ -173,7 +174,7 @@ funcion_que_escribe $&Map<String,Int> := {
 	...
 }
 
-funcion_que_escribe $&datos
+funcion_que_escribe($&datos)
 ```
 
 
@@ -232,14 +233,11 @@ main system:$&System -> sc:StatusCode := {
 	user = query_user($&db_conn, 123)
 }
 
-query_user (.db_conn: $&DbConnection, .user_id: Int) -> ?User {
+query_user (.db_conn: $&DbConnection, .user_id: Int) -> (.user: ?User) := {
 	-- Acceso a la db
 	row = db_conn|execute($&_, "SELECT * FROM user WHERE id = ?", user_id)
-	if row == null {
-		return null
-	}
+	if row == null { user = null }
 	user = parse_user(row)
-	return user
 }
 ```
 
@@ -291,8 +289,9 @@ passed to the function. All of them are passed to the main function, and can be
 passed to other functions as needed.
 
 ```
-main(system: $&System&) := {
-	...
+main (system: $&System&) -> (status_code: $&StatusCode&) := {
+    -- Aquí se puede usar system para acceder a las capacidades del sistema
+    ...
 }
 ```
 
@@ -300,7 +299,7 @@ System is a struct that contains all the capabilities of the system.
 (Inspired by Haskell's `IO` monad)
 
 ```
-System : struct (
+System : Type = (
   terminal : $& Terminal,
   args     :  & Arguments,
   env_vars : $& EnvironmentVariables,
@@ -316,7 +315,7 @@ System : struct (
 Examples of use:
 
 ```rg
-main system:$&System& -> sc:StatusCode := {
+main (system: $&System&) -> (status_code: $&StatusCode&) := {
 	-- Acceso a la consola
 	system.terminal | print ($&_, "Hello, world")
 
@@ -347,6 +346,8 @@ main system:$&System& -> sc:StatusCode := {
 	-- Generación de números aleatorios
 	system.rand_gen | set_seed ($&_, 42)
 	random_number = system.rand_gen | next_int ($&_, 1, 100)
+
+	status_code = ..OK
 }
 ```
 
@@ -356,7 +357,7 @@ code. No se si es mejor abstract o structs.
 
 ```rg
 Clock : Abstract = (
-    now         &_              -> TimeStamp
+    now         (&_)            -> (TimeStamp)
     sleep       (&_, Duration)  -> ()
     sleep_until (&_, TimeStamp) -> ()
 )
@@ -364,8 +365,8 @@ Clock : Abstract = (
 
 ```rg
 Rng : Abstract = (
-    next_bytes ($&_, Int)                -> Array<Byte>
-    next_int   ($&_, min: Int, max: Int) -> Int
+    next_bytes ($&_, Int)                -> (Array<Byte>)
+    next_int   ($&_, min: Int, max: Int) -> (Int)
 )
 ```
 
@@ -386,7 +387,7 @@ import io
 import fs
 
 
-main system:$&System& -> sc:StatusCode := {
+main (system: $&System&) -> (status_code: $&StatusCode&) := {
 	-- Creamos un archivo de IO
 	stdo = system.terminal.stdout
 
@@ -395,7 +396,7 @@ main system:$&System& -> sc:StatusCode := {
 }
 
 -- Podemos usar el hecho de que tome stdo para controlar si queremos que imprima
-do_something_pure(a: Int, $&log: Buffer? = null) := {
+do_something_pure(a: Int, $&log: Buffer? = null) -> () := {
 	if log { log|write($&_, "Hello, world\n") }
 }
 ```
@@ -428,12 +429,11 @@ Se puede usar para hacer implementaciones por defecto para cualquier struct por
 ejemplo (consiguiendo funcionalidades como los derive macros de rust)
 
 ```rg
-to(&s: Struct, t: type == String) := (string: String) {
+to(&s: Struct, t: type == String) -> (string: String) := {
 	string = s.symbol_name + "("
 	for field in s.fields
 		string += field.name + ": " + field.value + ", "
 	string += ")"
-	return string
 }
 ```
 
@@ -454,6 +454,18 @@ operator + (&v1: Vector, &v2: Vector) := Vector {
 }
 ```
 
+```
+operator - (&v1: Vector, &v2: Vector) := Vector {
+    return Vector(v1.x - v2.x, v1.y - v2.y)
+}
+```
+
+```
+operator - (&v: Vector) := Vector {
+    return Vector(-v.x, -v.y)
+}
+```
+
 
 ### Currying
 
@@ -464,8 +476,10 @@ Por ejemplo en go, http.HandleFunc("patron", funcion) requiere que la función t
 Una buena forma sería una sintaxis cómoda de hacer currying.
 
 ```
-mux|HandleFunc("pattern", my_function(_a, _b, database, templates))
+mux | HandleFunc($&_, "pattern", my_function(_a, _b, database, templates))
 ```
+
+> [!CHECK] Pensar en como se lleva la sintaxis de currying con la nueva sintaxis de funciones.
 
 
 ### Silently ignoring return values

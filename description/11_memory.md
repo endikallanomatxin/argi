@@ -36,15 +36,15 @@ Similar to zig,  and they are are used to allocate and deallocate memory.
 
 ```
 Allocator : Abstract = (
-	alloc(_, size: Int) : HeapAllocation
-	dealloc(_, ha: HeapAllocation)
+	alloc (_, size: Int) -> HeapAllocation
+	dealloc (_, ha: HeapAllocation) -> ()
 )
 ```
 
 Allocators return a `HeapAllocation` struct, instead of a single pointer. This allows us to keep track of the size and the allocator used for the allocation, which is necessary for deallocateing the memory later.
 
 ```
-HeapAllocation : Type = struct (
+HeapAllocation : Type = (
 	.data : &Byte
 	.size : Int  -- In bytes
 	.allocator : Allocator
@@ -58,31 +58,34 @@ For ergonomy, most init functions will have a default allocator, and the user ca
 init (
     size     : Int,
     allocator: Allocator =  std.PageAllocator
-) -> HeapAllocation := {
-	.data      = allocator|allocate(size)
-	.size      = size
-	.allocator = allocator
+) -> (.ha: HeapAllocation) := {
+	ha = HeapAllocation (
+		.data      = allocator|allocate(size)
+		.size      = size
+		.allocator = allocator
+	)
 }
 ```
+
 
 In a type:
 
 ```
-Hashmap <from: Type, to: Type> : Type = struct (
-	allocator : Allocator
-	data      : HeapAllocation
+Hashmap <from: Type, to: Type> : Type = (
+	.allocator : Allocator
+	.data      : HeapAllocation
 )
 
 
-init(.allocator: Allocator = std.RTAllocato) -> HashMap <from, to> :=  {
-	out : Hashmap <from, to>
-	out.allocator = allocator
-	out.data = allocator|allocate(...)
+init(.allocator: Allocator = std.RTAllocato) -> (.hm: HashMap<from, to>) :=  {
+	hm : Hashmap <from, to>
+	hm.allocator = allocator
+	hm.data = allocator|allocate(...)
 }
 
 
-deinit $&Hashmap& -> () := {
-	in.allocator|deallocate(hm.data)
+deinit (.hm:$&Hashmap&) -> () := {
+	hm.allocator|deallocate(hm.data)
 }
 ```
 
