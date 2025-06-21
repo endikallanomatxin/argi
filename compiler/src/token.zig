@@ -29,6 +29,7 @@ pub const Content = union(enum) {
     open_brace: struct {},
     close_brace: struct {},
 
+    dot: struct {},
     comma: struct {},
 
     // Keywords

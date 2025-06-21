@@ -32,6 +32,7 @@ pub const SGNode = union(enum) {
     binary_operation: BinaryOperation,
     return_statement: *ReturnStatement,
     if_statement: *IfStatement,
+    struct_literal: *StructLiteral,
     while_statement: *WhileStatement,
     for_statement: *ForStatement,
     switch_statement: *SwitchStatement,
@@ -144,4 +145,13 @@ pub const SwitchStatement = struct {
 pub const SwitchCase = struct {
     value: *const SGNode, // valor del caso
     body: *const CodeBlock, // bloque del caso
+};
+
+pub const StructField = struct {
+    name: []const u8,
+    value: *const SGNode,
+};
+
+pub const StructLiteral = struct {
+    fields: []const StructField,
 };

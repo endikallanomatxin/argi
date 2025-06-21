@@ -67,6 +67,7 @@ pub const Semantizer = struct {
             .if_statement => |ifs| self.handleIfStatement(ifs, scope),
             .code_block => |blk| self.handleCodeBlock(blk, scope),
             .function_call => |fc| self.handleFunctionCall(fc, n.location, scope),
+            .struct_literal => |sl| self.handleStructLiteral(sl, scope),
 
             else => error.NotYetImplemented,
         };
@@ -372,6 +373,18 @@ pub const Semantizer = struct {
 
         const node_ptr = try self.makeNode(.{ .return_statement = ret_ptr }, scope);
         return .{ .node = node_ptr, .ty = .Void };
+    }
+
+    fn handleStructLiteral(self: *Semantizer, sl: syn.StructLiteral, scope: *Scope) SemErr!TypedExpr {
+        var fields = try self.allocator.alloc(sem.StructField, sl.fields.len);
+        for (sl.fields, 0..) |f, i| {
+            const tv = try self.visitNode(f.value.*, scope);
+            fields[i] = .{ .name = f.name, .value = tv.node };
+        }
+        const sl_ptr = try self.allocator.create(sem.StructLiteral);
+        sl_ptr.* = .{ .fields = fields };
+        const node_ptr = try self.makeNode(.{ .struct_literal = sl_ptr }, scope);
+        return .{ .node = node_ptr, .ty = .Struct };
     }
 
     // ========================================================================
