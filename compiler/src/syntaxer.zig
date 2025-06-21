@@ -257,10 +257,15 @@ pub const Syntaxer = struct {
             if (!self.tokenIs(.dot)) return SyntaxerError.ExpectedIdentifier;
             self.advanceOne();
             const fname = try self.parseIdentifier();
-            if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
-            self.advanceOne();
-            if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
-            self.advanceOne();
+            if (self.tokenIs(.colon)) {
+                self.advanceOne();
+                if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
+                self.advanceOne();
+            } else if (self.tokenIs(.equal)) {
+                self.advanceOne();
+            } else {
+                return SyntaxerError.ExpectedEqual;
+            }
             const val = try self.parseExpression();
             try fields.append(.{ .name = fname, .value = val });
             self.ignoreNewLinesAndComments();

@@ -4,14 +4,14 @@ main () -> (Int32) := {
         .a: Int32
         .b: Int32
     ) = (
-        .a:= 1
-        .b:= 2
+        .a = 1
+        .b = 2
     )
 
     -- Declaring an anonymous struct from a literal through type inference
     another_struct := (
-        .a:= 1
-        .b:= 2
+        .a := 1
+        .b := 2
     )
 
     return 0
