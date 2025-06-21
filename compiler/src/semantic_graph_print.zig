@@ -220,6 +220,14 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
         .continue_statement => |_| {
             std.debug.print("ContinueStatement\n", .{});
         },
+        .struct_literal => |sl| {
+            std.debug.print("StructLiteral:\n", .{});
+            for (sl.fields) |f| {
+                indent(lvl + 1);
+                std.debug.print(".{s}:\n", .{f.name});
+                printNode(f.value, lvl + 2);
+            }
+        },
 
         // ───────────────────────────────────────────────────────────── caso por defecto
         else => {

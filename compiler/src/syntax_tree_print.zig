@@ -81,6 +81,14 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
         .literal => |lit| {
             printLiteral(lit);
         },
+        .struct_literal => |sl| {
+            std.debug.print("StructLiteral:\n", .{});
+            for (sl.fields) |f| {
+                indent(lvl + 1);
+                std.debug.print(".{s}:\n", .{f.name});
+                printNode(f.value.*, lvl + 2);
+            }
+        },
         .code_block => |code_block| {
             std.debug.print("CodeBlock:\n", .{});
             for (code_block.items) |child| {

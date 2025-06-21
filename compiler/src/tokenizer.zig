@@ -108,6 +108,20 @@ pub const Tokenizer = struct {
             return;
         }
 
+        // Dot
+        if (self.this() == '.') {
+            try self.addToken(tok.Content{ .dot = .{} }, loc);
+            try self.advanceOne();
+            return;
+        }
+
+        // Comma
+        if (self.this() == ',') {
+            try self.addToken(tok.Content{ .comma = .{} }, loc);
+            try self.advanceOne();
+            return;
+        }
+
         // Literales
         if (std.ascii.isDigit(self.this())) {
             const start = self.location.offset;

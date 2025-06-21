@@ -29,6 +29,8 @@ fn builtinToLLVM(bt: sem.BuiltinType) CodegenError!llvm.c.LLVMTypeRef {
         .Int32 => c.LLVMInt32Type(),
         .Float32 => c.LLVMFloatType(),
         .Bool => c.LLVMInt1Type(),
+        .Void => c.LLVMVoidType(),
+        .Struct => c.LLVMStructType(null, 0, 0),
         else => CodegenError.InvalidType,
     };
 }
@@ -152,6 +154,10 @@ pub const CodeGenerator = struct {
                 std.debug.print("Generando llamada a función: {s}\n", .{fc.callee.name});
                 return try self.genFunctionCall(fc);
             },
+            .struct_literal => |sl| {
+                std.debug.print("Generando struct literal\n", .{});
+                return try self.genStructLiteral(sl);
+            },
             else => return CodegenError.UnknownNode,
         }
     }
@@ -252,13 +258,31 @@ pub const CodeGenerator = struct {
 
     // ────────────────────────────────────────────────────────── variables ────
     fn genBindingDecl(self: *CodeGenerator, bd: *sem.BindingDeclaration) !void {
-        if (self.symbol_table.contains(bd.name)) {
+        if (self.symbol_table.contains(bd.name))
             return CodegenError.SymbolAlreadyDefined;
+
+        // ── 1.  ¿Hay inicialización?  primero la visitamos ────────────────
+        var init_tv_opt: ?TypedValue = null;
+        if (bd.initialization) |init_node| {
+            init_tv_opt = try self.visitNode(init_node); // ← ①
         }
-        const llvm_ty = switch (bd.ty) {
-            .builtin => |bt| try builtinToLLVM(bt),
+
+        // ── 2.  Deducir el tipo LLVM ──────────────────────────────────────
+        const llvm_ty: llvm.c.LLVMTypeRef = switch (bd.ty) {
+            .builtin => |bt| blk: {
+                if (bt == .Struct) {
+                    // Si existe inicializador, reaprovechamos SU type_ref.
+                    if (init_tv_opt) |tv| {
+                        break :blk tv.type_ref; // ← usa el mismo tipo
+                    }
+                }
+                // Para cualquier otro caso delegamos al helper.
+                break :blk try builtinToLLVM(bt);
+            },
             else => return CodegenError.InvalidType,
         };
+
+        // ── 3.  Reserva y registra en la tabla de símbolos ────────────────
         const c_name = try self.dupZ(bd.name);
         const alloca = c.LLVMBuildAlloca(self.builder, llvm_ty, c_name.ptr);
         try self.symbol_table.put(bd.name, .{
@@ -268,18 +292,9 @@ pub const CodeGenerator = struct {
             .ref = alloca,
         });
 
-        // si hay inicialización implícita:
-        if (bd.initialization) |init_node| {
-            const init_tv_opt = try self.visitNode(init_node);
-            const init_tv = init_tv_opt orelse return CodegenError.ValueNotFound;
-
-            var store_val = init_tv.value_ref;
-            if (llvm_ty == c.LLVMFloatType() and init_tv.type_ref == c.LLVMInt32Type()) {
-                store_val = c.LLVMBuildSIToFP(self.builder, init_tv.value_ref, llvm_ty, "int_to_float");
-            } else if (init_tv.type_ref != llvm_ty) {
-                return CodegenError.InvalidType;
-            }
-            _ = c.LLVMBuildStore(self.builder, store_val, alloca);
+        // ── 4.  Si había inicialización, almacenar el valor ───────────────
+        if (init_tv_opt) |tv| {
+            _ = c.LLVMBuildStore(self.builder, tv.value_ref, alloca);
         }
     }
 
@@ -472,6 +487,25 @@ pub const CodeGenerator = struct {
             return null;
 
         return .{ .value_ref = call_val, .type_ref = ret_ty };
+    }
+
+    fn genStructLiteral(self: *CodeGenerator, sl: *const sem.StructLiteral) CodegenError!?TypedValue {
+        const field_count: usize = sl.fields.len;
+        if (field_count == 0) {
+            const ty = c.LLVMStructType(null, 0, 0);
+            const val = c.LLVMGetUndef(ty);
+            return .{ .value_ref = val, .type_ref = ty };
+        }
+        var vals = try self.allocator.alloc(llvm.c.LLVMValueRef, field_count);
+        var types = try self.allocator.alloc(llvm.c.LLVMTypeRef, field_count);
+        for (sl.fields, 0..) |f, i| {
+            const tv = (try self.visitNode(f.value)) orelse return CodegenError.ValueNotFound;
+            vals[i] = tv.value_ref;
+            types[i] = tv.type_ref;
+        }
+        const ty = c.LLVMStructType(types.ptr, @intCast(field_count), 0);
+        const val = c.LLVMConstNamedStruct(ty, vals.ptr, @intCast(field_count));
+        return .{ .value_ref = val, .type_ref = ty };
     }
     // ────────────────────────────────────────────────────────── code block ───
     fn genCodeBlock(self: *CodeGenerator, cb: *const sem.CodeBlock) !void {

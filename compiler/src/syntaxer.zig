@@ -86,6 +86,14 @@ pub const Syntaxer = struct {
                 .literal => true,
                 else => false,
             },
+            .dot => switch (expected) {
+                .dot => true,
+                else => false,
+            },
+            .comma => switch (expected) {
+                .comma => true,
+                else => false,
+            },
             .colon => switch (expected) {
                 .colon => true,
                 else => false,
@@ -130,7 +138,18 @@ pub const Syntaxer = struct {
                 .keyword_else => true,
                 else => false,
             },
-            else => false,
+            .binary_operator => switch (expected) {
+                .binary_operator => true,
+                else => false,
+            },
+            .check_equals => switch (expected) {
+                .check_equals => true,
+                else => false,
+            },
+            .check_not_equals => switch (expected) {
+                .check_not_equals => true,
+                else => false,
+            },
         };
     }
 
@@ -207,6 +226,29 @@ pub const Syntaxer = struct {
         };
     }
 
+    fn parseStructLiteral(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        var fields = std.ArrayList(syn.StructField).init(self.allocator.*);
+        while (!self.tokenIs(.close_parenthesis)) {
+            self.ignoreNewLinesAndComments();
+            if (!self.tokenIs(.dot)) return SyntaxerError.ExpectedIdentifier;
+            self.advanceOne();
+            const fname = try self.parseIdentifier();
+            if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
+            self.advanceOne();
+            if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
+            self.advanceOne();
+            const val = try self.parseExpression();
+            try fields.append(.{ .name = fname, .value = val });
+            self.ignoreNewLinesAndComments();
+        }
+        if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+        self.advanceOne();
+        const node = try self.allocator.create(syn.STNode);
+        node.*.content = syn.Content{ .struct_literal = .{ .fields = fields.items } };
+        node.*.location = self.tokenLocation();
+        return node;
+    }
+
     fn parseExpression(self: *Syntaxer) !*syn.STNode {
         const token = self.current();
         return switch (token.content) {
@@ -279,6 +321,11 @@ pub const Syntaxer = struct {
             },
             .open_parenthesis => {
                 self.advanceOne();
+                self.ignoreNewLinesAndComments();
+                if (self.tokenIs(.dot)) {
+                    const struct_node = try self.parseStructLiteral();
+                    return struct_node;
+                }
                 const expr = try self.parseExpression();
                 if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
                 self.advanceOne();
