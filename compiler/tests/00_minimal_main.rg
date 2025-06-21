@@ -1,3 +1,3 @@
-main() -> Int32 := {
+main () -> (Int32) := {
     return 0
 }
