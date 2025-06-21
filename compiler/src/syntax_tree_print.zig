@@ -10,6 +10,13 @@ fn indent(lvl: usize) void {
     }
 }
 
+fn typeNameToStr(tn: syn.TypeName) []const u8 {
+    return switch (tn) {
+        .identifier => |id| id,
+        .struct_type => |_| "(struct)",
+    };
+}
+
 /// Formatea el contenido de un literal para imprimirlo con su tipo.
 fn printLiteral(lit: tok.Literal) void {
     switch (lit) {
@@ -54,7 +61,7 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
                 .type => "type",
                 .binding => "binding",
             };
-            const type_str = if (decl.type) |t| t.name else "<?>";
+            const type_str = if (decl.type) |t| typeNameToStr(t) else "<?>";
 
             std.debug.print("Declaration: \"{s}\" {s} {s} {s}\n", .{ decl.name, kind_str, mut_str, type_str });
 
@@ -63,7 +70,7 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
                 std.debug.print("Arguments:\n", .{});
                 for (decl.args.?) |arg| {
                     indent(lvl + 2);
-                    std.debug.print("- {s} : {s} {s}\n", .{ arg.name, arg.type.?.name, if (arg.mutability == syn.Mutability.variable) "var" else "const" });
+                    std.debug.print("- {s} : {s} {s}\n", .{ arg.name, typeNameToStr(arg.type.?), if (arg.mutability == syn.Mutability.variable) "var" else "const" });
                 }
             }
 

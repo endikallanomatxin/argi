@@ -78,7 +78,7 @@ pub const Semantizer = struct {
     // ========================================================================
 
     // ------- literals -------------------------------------------------------
-    fn handleLiteral(self: *Semantizer, lit: tok.Literal, scope: *Scope) SemErr!TypedExpr {
+    fn handleLiteral(self: *Semantizer, lit: tok.Literal, _: *Scope) SemErr!TypedExpr {
         var sg_val: sem.ValueLiteral = undefined;
         var ty: sem.BuiltinType = undefined;
 
@@ -98,7 +98,7 @@ pub const Semantizer = struct {
 
         const lit_ptr = try self.allocator.create(sem.ValueLiteral);
         lit_ptr.* = sg_val;
-        const sg_node_ptr = try self.makeNode(.{ .value_literal = lit_ptr.* }, scope);
+        const sg_node_ptr = try self.makeNode(.{ .value_literal = lit_ptr.* }, null);
 
         return .{ .node = sg_node_ptr, .ty = ty };
     }
@@ -190,7 +190,7 @@ pub const Semantizer = struct {
         // deducir tipo -----------------------------------------------------
         var builtin_ty: sem.BuiltinType = .Int32; // por defecto
         if (decl.type) |t|
-            builtin_ty = try builtinFromName(t.name)
+            builtin_ty = try builtinFromTypeName(t)
         else if (decl.value) |val_node| {
             const tmp = try self.visitNode(val_node.*, scope);
             builtin_ty = tmp.ty;
@@ -218,8 +218,7 @@ pub const Semantizer = struct {
                 const prev_len = scope.nodes.items.len;
                 const rhs = try self.visitNode(v.*, scope);
                 binding_ptr.initialization = rhs.node;
-                // si la visita añadió el nodo como sentencia, lo quitamos
-                if (scope.nodes.items.len > prev_len) {
+                while (scope.nodes.items.len > prev_len) {
                     _ = scope.nodes.pop();
                 }
             }
@@ -324,7 +323,7 @@ pub const Semantizer = struct {
         if (decl.args) |arg_list| {
             for (arg_list) |a| {
                 var builtin_ty: sem.BuiltinType = .Int32;
-                if (a.type) |t| builtin_ty = try builtinFromName(t.name);
+                if (a.type) |t| builtin_ty = try builtinFromTypeName(t);
                 const bd_ptr = try self.allocator.create(sem.BindingDeclaration);
                 bd_ptr.* = .{
                     .name = a.name,
@@ -346,7 +345,7 @@ pub const Semantizer = struct {
         // 3) Creamos la FunctionDeclaration y apuntamos su `body` al CodeBlock del SGNode
         const func_ptr = try self.allocator.create(sem.FunctionDeclaration);
         const declared_rt = decl.type orelse return error.InvalidType;
-        const builtin_rt = try builtinFromName(declared_rt.name);
+        const builtin_rt = try builtinFromTypeName(declared_rt);
         func_ptr.* = .{
             .name = decl.name,
             .params = params,
@@ -375,15 +374,15 @@ pub const Semantizer = struct {
         return .{ .node = node_ptr, .ty = .Void };
     }
 
-    fn handleStructLiteral(self: *Semantizer, sl: syn.StructLiteral, scope: *Scope) SemErr!TypedExpr {
+    fn handleStructLiteral(self: *Semantizer, sl: syn.StructLiteral, _scope: *Scope) SemErr!TypedExpr {
         var fields = try self.allocator.alloc(sem.StructField, sl.fields.len);
         for (sl.fields, 0..) |f, i| {
-            const tv = try self.visitNode(f.value.*, scope);
+            const tv = try self.visitNode(f.value.*, _scope);
             fields[i] = .{ .name = f.name, .value = tv.node };
         }
         const sl_ptr = try self.allocator.create(sem.StructLiteral);
         sl_ptr.* = .{ .fields = fields };
-        const node_ptr = try self.makeNode(.{ .struct_literal = sl_ptr }, scope);
+        const node_ptr = try self.makeNode(.{ .struct_literal = sl_ptr }, null);
         return .{ .node = node_ptr, .ty = .Struct };
     }
 
@@ -399,6 +398,14 @@ pub const Semantizer = struct {
 
     fn builtinFromName(name: []const u8) SemErr!sem.BuiltinType {
         return std.meta.stringToEnum(sem.BuiltinType, name) orelse error.InvalidType;
+    }
+
+    fn builtinFromTypeName(tn: syn.TypeName) SemErr!sem.BuiltinType {
+        return switch (tn) {
+            .identifier => |n| builtinFromName(n),
+            .struct_type => |_|
+                sem.BuiltinType.Struct,
+        };
     }
 };
 
