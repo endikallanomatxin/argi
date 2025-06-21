@@ -95,8 +95,18 @@ pub const Argument = struct {
     type: ?TypeName,
 };
 
-pub const TypeName = struct {
+pub const StructType = struct {
+    fields: []const StructTypeField,
+};
+
+pub const StructTypeField = struct {
     name: []const u8,
+    type: TypeName,
+};
+
+pub const TypeName = union(enum) {
+    identifier: []const u8,
+    struct_type: StructType,
 };
 
 pub const ReturnStatement = struct {

@@ -155,3 +155,12 @@ pub const StructField = struct {
 pub const StructLiteral = struct {
     fields: []const StructField,
 };
+
+pub const StructTypeField = struct {
+    name: []const u8,
+    ty: BuiltinType,
+};
+
+pub const StructType = struct {
+    fields: []const StructTypeField,
+};

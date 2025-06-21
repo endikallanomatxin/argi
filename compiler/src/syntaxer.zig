@@ -192,12 +192,36 @@ pub const Syntaxer = struct {
         };
     }
 
+    fn parseStructType(self: *Syntaxer) SyntaxerError!syn.StructType {
+        var fields = std.ArrayList(syn.StructTypeField).init(self.allocator.*);
+        while (!self.tokenIs(.close_parenthesis)) {
+            self.ignoreNewLinesAndComments();
+            if (!self.tokenIs(.dot)) return SyntaxerError.ExpectedIdentifier;
+            self.advanceOne();
+            const fname = try self.parseIdentifier();
+            if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
+            self.advanceOne();
+            const ftype = (try self.parseType()) orelse return SyntaxerError.ExpectedIdentifier;
+            try fields.append(.{ .name = fname, .type = ftype });
+            self.ignoreNewLinesAndComments();
+        }
+        if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+        self.advanceOne();
+        return syn.StructType{ .fields = fields.items };
+    }
+
     fn parseType(self: *Syntaxer) SyntaxerError!?syn.TypeName {
         if (self.tokenIs(.equal)) {
             return null;
         }
+        if (self.tokenIs(.open_parenthesis)) {
+            self.advanceOne();
+            self.ignoreNewLinesAndComments();
+            const st = try self.parseStructType();
+            return syn.TypeName{ .struct_type = st };
+        }
         const typeName = try self.parseIdentifier();
-        return syn.TypeName{ .name = typeName };
+        return syn.TypeName{ .identifier = typeName };
     }
 
     fn parseLiteral(self: *Syntaxer) !*syn.STNode {
