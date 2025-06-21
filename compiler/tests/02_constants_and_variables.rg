@@ -1,4 +1,4 @@
-main() -> Int32 := {
+main () -> (Int32) := {
     -- This file tests
     -- constant and variable declarations
     -- combined and separate assignments

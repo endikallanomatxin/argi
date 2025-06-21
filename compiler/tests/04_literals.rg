@@ -1,4 +1,4 @@
-main() -> Int32 := {
+main () -> (Int32) := {
     -- Int literals in different formats
     a :: Int32
     a = 12

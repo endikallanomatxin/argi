@@ -1,4 +1,4 @@
-main() -> Int32 := {
+main () -> (Int32) := {
     -- Test comment
     return 0
 }

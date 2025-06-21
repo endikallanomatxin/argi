@@ -309,7 +309,15 @@ pub const Syntaxer = struct {
 
             if (self.tokenIs(.arrow)) {
                 self.advanceOne(); // consume '->'
+                if (!self.tokenIs(.open_parenthesis)) {
+                    return SyntaxerError.ExpectedLeftParen;
+                }
+                self.advanceOne(); // consume '('
                 ret_type = try self.parseType();
+                if (!self.tokenIs(.close_parenthesis)) {
+                    return SyntaxerError.ExpectedRightParen;
+                }
+                self.advanceOne(); // consume ')'
             }
         }
 
