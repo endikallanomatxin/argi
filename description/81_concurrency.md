@@ -34,26 +34,30 @@ A un thread solo se le pueden pasar punteros exclusivos, o referencias de solo l
 
 ### OS threads
 
-```
-th := spawn_thread {  -- type is ThreadHandler
-	...
-}
 
-th | wait
+```
+th := system.process_manager | spawn_thread($&_, {  -- type is ThreadHandler
+	...
+})
+
+th | wait(_)
 
 -- Con funciones
-th := spawn_thread (my_function, (x, y, z))
+th := system.process_manager | spawn_thread($&_, my_function, (x, y, z))
 
 -- Lanzar un bucle infinito
-th := spawn_thread {
+th := system.process_manager | spawn_thread($&_,  {
 	loop {
 
 	}
-}
+})
 
 -- Lanzar múltiples procesos en bucle
 for i in 1..10 {
-	spawn_thread{...}
+	system.process_manager | spawn_thread($&_, {
+		-- Aquí puedes usar i
+		...
+	})
 }
 
 wait_all_threads
@@ -70,7 +74,7 @@ El runtime se encarga de:
 ```
 lcr := LightConcurrencyRuntime (.threads = 4)
 
-lcr | spawn_thread (_, {
+lcr | spawn_thread ($&_, {
 	...
 })
 ```
@@ -99,7 +103,7 @@ Channel<#T: Type> : Type
 ```
 
 ```
-funcion_enviadora c:Channel -> () := {
+funcion_enviadora (c:Channel) -> () := {
 	time | sleep (&_, 1000)
 	c | send (_, 42)
 }
@@ -107,7 +111,7 @@ funcion_enviadora c:Channel -> () := {
 canal : Channel<Int>
 
 for i in 1..10 {
-	branch funcion_enviadora canal
+	lcr | spawn_thread ($&_, funcion_enviadora, (canal))
 }
 
 loop {

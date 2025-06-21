@@ -34,6 +34,8 @@ Int canbe [
 	-- They do not autocast
 	Int8, Int16, Int32, Int64, Int128
 	UInt8, UInt16, UInt32, UInt64, UInt128
+	-- TODO: Think if having SignedInteger and UnsignedInteger as abstracts
+	-- is a good idea. I think it is not very useful. But consider.
 
 	--- For specific protocols
 	CustomLengthedInt<N>
@@ -41,4 +43,5 @@ Int canbe [
 ]
 
 Int defaultsto DynamicInt
+
 

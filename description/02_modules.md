@@ -29,12 +29,12 @@ del lenguaje?
 > ```rg
 > m = import std.math
 > matrix : Matrix = ((1, 2), (3, 4))
-> determinant = matrix | m.determinant
+> determinant = matrix | m.determinant (_)
 > ```
 > o igual
 > ```rg
 > determinant = import std.math.determinant
-> det = matrix | determinant
+> det = matrix | determinant (_)
 > ```
 
 
