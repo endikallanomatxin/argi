@@ -1,15 +1,13 @@
 main () -> (.status_code: Int32) := {
-    -- Declaring an anonymous struct with explicit type
-    one_struct : (
+    anonymous_struct_declared_with_explicit_type : (
         .a: Int32
-        .b: Int32
+        .b: Float32
     ) = (
         .a = 1
-        .b = 2
+        .b = 2.0
     )
 
-    -- Declaring an anonymous struct from a literal through type inference
-    another_struct := (
+    anonymous_struct_declared_with_type_inference := (
         .a := 1
         .b := 2
     )
