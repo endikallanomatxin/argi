@@ -7,5 +7,4 @@ main () -> (.status_code: Int32) := {
     b := add_one(a)
 
     status_code = b
-    return status_code
 }

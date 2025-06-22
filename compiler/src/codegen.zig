@@ -239,32 +239,42 @@ pub const CodeGenerator = struct {
             idx_param += 1;
         }
 
-        // allocate return parameters
+        // allocate return parameters (with defaults if any)
         for (fd.return_params.items) |p| {
-            const llvm_ty = switch (p.ty) {
-                .builtin => |bt| try builtinToLLVM(bt),
-                else => return CodegenError.InvalidType,
-            };
-            const c_pname = try self.dupZ(p.name);
-            const alloca = c.LLVMBuildAlloca(self.builder, llvm_ty, c_pname.ptr);
-            _ = c.LLVMBuildStore(self.builder, c.LLVMGetUndef(llvm_ty), alloca);
-            try self.symbol_table.put(p.name, .{
-                .cname = c_pname,
-                .mutability = p.mutability,
-                .type_ref = llvm_ty,
-                .ref = alloca,
-            });
+            try self.genBindingDecl(p);
         }
 
         // 7) generamos el cuerpo de la función (ya puede usar both globals + locals)
         try self.genCodeBlock(fd.body);
 
-        // 8) si no se emitió ningún return explícito, ponemos uno “por defecto”
-        if (c.LLVMGetBasicBlockTerminator(entry_bb) == null) {
-            if (ret_type == c.LLVMVoidType()) {
-                _ = c.LLVMBuildRetVoid(self.builder);
+        // 8) si no se emitió ningún return explícito, usamos los parámetros de retorno
+        if (c.LLVMGetBasicBlockTerminator(c.LLVMGetInsertBlock(self.builder)) == null) {
+            if (fd.return_params.items.len == 0) {
+                if (ret_type == c.LLVMVoidType()) {
+                    _ = c.LLVMBuildRetVoid(self.builder);
+                } else {
+                    _ = c.LLVMBuildRet(self.builder, c.LLVMGetUndef(ret_type));
+                }
+            } else if (fd.return_params.items.len == 1) {
+                const rp = fd.return_params.items[0];
+                const sym = self.symbol_table.get(rp.name) orelse return CodegenError.SymbolNotFound;
+                const val = c.LLVMBuildLoad2(self.builder, sym.type_ref, sym.ref, sym.cname.ptr);
+                _ = c.LLVMBuildRet(self.builder, val);
             } else {
-                _ = c.LLVMBuildRet(self.builder, c.LLVMGetUndef(ret_type));
+                const count: usize = fd.return_params.items.len;
+                var vals = try self.allocator.alloc(llvm.c.LLVMValueRef, count);
+                var types = try self.allocator.alloc(llvm.c.LLVMTypeRef, count);
+                for (fd.return_params.items, 0..) |rp, i| {
+                    const sym = self.symbol_table.get(rp.name) orelse return CodegenError.SymbolNotFound;
+                    vals[i] = c.LLVMBuildLoad2(self.builder, sym.type_ref, sym.ref, sym.cname.ptr);
+                    types[i] = sym.type_ref;
+                }
+                const struct_ty = c.LLVMStructType(types.ptr, @intCast(count), 0);
+                var agg = c.LLVMGetUndef(struct_ty);
+                for (vals, 0..) |v, i| {
+                    agg = c.LLVMBuildInsertValue(self.builder, agg, v, @intCast(i), "retfld");
+                }
+                _ = c.LLVMBuildRet(self.builder, agg);
             }
         }
 
