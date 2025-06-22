@@ -34,6 +34,7 @@ pub const Tokenizer = struct {
     /// Llama a `lexNextToken` repetidas veces hasta terminar, y devuelve
     /// el slice de `Token` generado.
     pub fn tokenize(self: *Tokenizer) !std.ArrayList(tok.Token) {
+        std.debug.print("\n\ntokenizing...\n", .{});
         while (self.location.offset < self.source.len) {
             lexNextToken(self) catch |err| {
                 if (err == error.ReachedEOF) {
