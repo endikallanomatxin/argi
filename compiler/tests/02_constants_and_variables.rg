@@ -1,4 +1,4 @@
-main () -> (Int32) := {
+main () -> (.status_code: Int32) := {
     -- This file tests
     -- constant and variable declarations
     -- combined and separate assignments
@@ -28,5 +28,6 @@ main () -> (Int32) := {
     variable_float_separate = 3.14159
     variable_float_separate = 2.71828
 
-    return 0
+    status_code = 0
+    return status_code
 }

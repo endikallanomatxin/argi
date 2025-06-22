@@ -54,6 +54,7 @@ pub const TypeDeclaration = struct {
 pub const FunctionDeclaration = struct {
     name: []const u8,
     params: std.ArrayList(*BindingDeclaration), // index == ParamId
+    return_params: std.ArrayList(*BindingDeclaration), // named return params
     return_type: ?Type, // null si no hay retorno
     body: *const CodeBlock,
 };

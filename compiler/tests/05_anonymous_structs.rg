@@ -1,4 +1,4 @@
-main () -> (Int32) := {
+main () -> (.status_code: Int32) := {
     -- Declaring an anonymous struct with explicit type
     one_struct : (
         .a: Int32
@@ -14,5 +14,6 @@ main () -> (Int32) := {
         .b := 2
     )
 
-    return 0
+    status_code = 0
+    return status_code
 }

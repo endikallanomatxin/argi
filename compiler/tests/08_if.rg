@@ -1,12 +1,10 @@
-main () -> (Int32) := {
-
-    e:Int32
+main () -> (.status_code: Int32) := {
 
     if (0 == 0) {
-        e := 0
+        status_code = 0
     } else {
-        e := 1
+        status_code = 1
     }
 
-    return e
+    return status_code
 }

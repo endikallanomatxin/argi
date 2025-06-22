@@ -320,6 +320,7 @@ pub const Semantizer = struct {
 
         // 2) Procesar parámetros y registrarlos en el scope hijo
         var params = std.ArrayList(*sem.BindingDeclaration).init(self.allocator.*);
+        var ret_params = std.ArrayList(*sem.BindingDeclaration).init(self.allocator.*);
         if (decl.args) |arg_list| {
             for (arg_list) |a| {
                 var builtin_ty: sem.BuiltinType = .Int32;
@@ -336,6 +337,23 @@ pub const Semantizer = struct {
             }
         }
 
+        if (decl.type) |rt| {
+            if (rt == .struct_type) {
+                for (rt.struct_type.fields) |f| {
+                    const builtin_ty: sem.BuiltinType = try builtinFromTypeName(f.type);
+                    const bd_ptr = try self.allocator.create(sem.BindingDeclaration);
+                    bd_ptr.* = .{
+                        .name = f.name,
+                        .mutability = syn.Mutability.variable,
+                        .ty = .{ .builtin = builtin_ty },
+                        .initialization = null,
+                    };
+                    try ret_params.append(bd_ptr);
+                    try child.bindings.put(f.name, bd_ptr);
+                }
+            }
+        }
+
         const body_ptr = decl.value.?; // punto al STNode que es code_block
 
         // Visitamos ese STNode de tipo code_block; devolvemos TypedExpr
@@ -349,6 +367,7 @@ pub const Semantizer = struct {
         func_ptr.* = .{
             .name = decl.name,
             .params = params,
+            .return_params = ret_params,
             .return_type = .{ .builtin = builtin_rt },
             .body = body_sg_node.*.code_block,
         };
@@ -403,8 +422,12 @@ pub const Semantizer = struct {
     fn builtinFromTypeName(tn: syn.TypeName) SemErr!sem.BuiltinType {
         return switch (tn) {
             .identifier => |n| builtinFromName(n),
-            .struct_type => |_|
-                sem.BuiltinType.Struct,
+            .struct_type => |st| blk: {
+                if (st.fields.len == 1) {
+                    break :blk builtinFromTypeName(st.fields[0].type);
+                }
+                break :blk sem.BuiltinType.Struct;
+            },
         };
     }
 };

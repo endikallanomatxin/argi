@@ -377,7 +377,6 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.open_parenthesis)) {
             self.advanceOne(); // consume '('
             const args = try self.parseArguments();
-            std.debug.print("args: {any}\n", .{args});
             if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
             self.advanceOne(); // consume ')'
             fn_args = args;
@@ -385,15 +384,7 @@ pub const Syntaxer = struct {
 
             if (self.tokenIs(.arrow)) {
                 self.advanceOne(); // consume '->'
-                if (!self.tokenIs(.open_parenthesis)) {
-                    return SyntaxerError.ExpectedLeftParen;
-                }
-                self.advanceOne(); // consume '('
                 ret_type = try self.parseType();
-                if (!self.tokenIs(.close_parenthesis)) {
-                    return SyntaxerError.ExpectedRightParen;
-                }
-                self.advanceOne(); // consume ')'
             }
         }
 
@@ -445,6 +436,8 @@ pub const Syntaxer = struct {
     fn parseArguments(self: *Syntaxer) SyntaxerError![]const syn.Argument {
         var args = std.ArrayList(syn.Argument).init(self.allocator.*);
         while (self.index < self.tokens.len and !self.tokenIs(.close_parenthesis)) {
+            if (!self.tokenIs(.dot)) return SyntaxerError.ExpectedIdentifier;
+            self.advanceOne(); // consume '.'
             const name = try self.parseIdentifier();
             if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
             self.advanceOne(); // consume ':'
