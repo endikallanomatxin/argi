@@ -103,12 +103,12 @@ pub const CodeGenerator = struct {
     fn visitNode(self: *CodeGenerator, node: *const sem.SGNode) CodegenError!?TypedValue {
         switch (node.*) {
             .function_declaration => |fd| {
-                std.debug.print("Generando función: {s}\n", .{fd.name});
+                // std.debug.print("Generando función: {s}\n", .{fd.name});
                 try self.genFunction(fd);
                 return null;
             },
             .binding_declaration => |bd| {
-                std.debug.print("Generando binding: {s}\n", .{bd.name});
+                // std.debug.print("Generando binding: {s}\n", .{bd.name});
                 if (self.symbol_table.contains(bd.name)) {
                     // Si ya está en la tabla → es un “uso” de variable
                     return try self.genBindingUse(bd);
@@ -119,43 +119,43 @@ pub const CodeGenerator = struct {
                 }
             },
             .binding_assignment => |asgn| {
-                std.debug.print("Generando asignación: {s}\n", .{asgn.sym_id.name});
+                // std.debug.print("Generando asignación: {s}\n", .{asgn.sym_id.name});
                 _ = try self.genAssignment(asgn);
                 return null;
             },
             .binding_use => |bu| {
-                std.debug.print("Generando uso de binding: {s}\n", .{bu.name});
+                // std.debug.print("Generando uso de binding: {s}\n", .{bu.name});
                 return try self.genBindingUse(bu);
             },
             .code_block => |cb| {
-                std.debug.print("Generando bloque de código\n", .{});
+                // std.debug.print("Generando bloque de código\n", .{});
                 try self.genCodeBlock(cb);
                 return null;
             },
             .return_statement => |rs| {
-                std.debug.print("Generando retorno\n", .{});
+                // std.debug.print("Generando retorno\n", .{});
                 try self.genReturn(rs);
                 return null;
             },
             .value_literal => |vl| {
-                std.debug.print("Generando literal de valor\n", .{});
+                // std.debug.print("Generando literal de valor\n", .{});
                 return try self.genValueLiteral(&vl);
             },
             .binary_operation => |bo| {
-                std.debug.print("Generando operación binaria\n", .{});
+                // std.debug.print("Generando operación binaria\n", .{});
                 return try self.genBinaryOp(&bo);
             },
             .if_statement => |ifs| {
-                std.debug.print("Generando if statement\n", .{});
+                // std.debug.print("Generando if statement\n", .{});
                 try self.genIfStatement(ifs);
                 return null;
             },
             .function_call => |fc| {
-                std.debug.print("Generando llamada a función: {s}\n", .{fc.callee.name});
+                // std.debug.print("Generando llamada a función: {s}\n", .{fc.callee.name});
                 return try self.genFunctionCall(fc);
             },
             .struct_literal => |sl| {
-                std.debug.print("Generando struct literal\n", .{});
+                // std.debug.print("Generando struct literal\n", .{});
                 return try self.genStructLiteral(sl);
             },
             else => return CodegenError.UnknownNode,
@@ -237,6 +237,23 @@ pub const CodeGenerator = struct {
                 .ref = alloca,
             });
             idx_param += 1;
+        }
+
+        // allocate return parameters
+        for (fd.return_params.items) |p| {
+            const llvm_ty = switch (p.ty) {
+                .builtin => |bt| try builtinToLLVM(bt),
+                else => return CodegenError.InvalidType,
+            };
+            const c_pname = try self.dupZ(p.name);
+            const alloca = c.LLVMBuildAlloca(self.builder, llvm_ty, c_pname.ptr);
+            _ = c.LLVMBuildStore(self.builder, c.LLVMGetUndef(llvm_ty), alloca);
+            try self.symbol_table.put(p.name, .{
+                .cname = c_pname,
+                .mutability = p.mutability,
+                .type_ref = llvm_ty,
+                .ref = alloca,
+            });
         }
 
         // 7) generamos el cuerpo de la función (ya puede usar both globals + locals)

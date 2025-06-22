@@ -69,6 +69,13 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
                 std.debug.print("  - \"{s}\" {s} : {s}\n", .{ param.name, mut_str, ty_str });
             }
 
+            indent(lvl + 1);
+            std.debug.print("Return Args:\n", .{});
+            for (f.return_params.items) |param| {
+                const ty_str = typeToString(param.ty);
+                std.debug.print("  - \"{s}\" : {s}\n", .{ param.name, ty_str });
+            }
+
             // Cuerpo (CodeBlock)
             indent(lvl + 1);
             std.debug.print("Body:\n", .{});

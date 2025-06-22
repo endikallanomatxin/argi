@@ -1,9 +1,11 @@
-other_function () -> (Int32) := {
+other_function () -> (.status_code: Int32) := {
     a := 1
     return 0
 }
 
-main () -> (Int32) := {
+main () -> (.status_code: Int32) := {
     b := other_function()
-    return b
+
+    status_code = b
+    return status_code
 }
