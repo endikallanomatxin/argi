@@ -12,5 +12,13 @@ main () -> (.status_code: Int32) := {
         .b := 2
     )
 
+    -- TODO: This still doesn't work
+    anonymous_struct_with_default_values : (
+        .a: Int32
+        .b: Float32 = 2.0
+    ) = (
+        .a = 1
+    )
+
     status_code = 0
 }

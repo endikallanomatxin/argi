@@ -89,12 +89,6 @@ pub const StructField = struct {
     value: *STNode,
 };
 
-pub const Argument = struct {
-    name: []const u8,
-    mutability: Mutability,
-    type: ?TypeName,
-};
-
 pub const StructType = struct {
     fields: []const StructTypeField,
 };
@@ -102,6 +96,13 @@ pub const StructType = struct {
 pub const StructTypeField = struct {
     name: []const u8,
     type: TypeName,
+    default_value: ?*STNode, // Optional default value for the field
+};
+
+pub const Argument = struct {
+    name: []const u8,
+    mutability: Mutability,
+    type: ?TypeName,
 };
 
 pub const TypeName = union(enum) {

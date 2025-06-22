@@ -40,7 +40,7 @@ pub const Syntaxer = struct {
     }
 
     pub fn parse(self: *Syntaxer) !std.ArrayList(*syn.STNode) {
-        std.debug.print("\n\nPARSING\n", .{});
+        std.debug.print("\n\nsyntaxing...\n", .{});
         self.st = parseSentences(self) catch |err| {
             std.debug.print("Error al parsear: {any}\n", .{err});
             return err;
@@ -60,7 +60,7 @@ pub const Syntaxer = struct {
     }
 
     fn advanceOne(self: *Syntaxer) void {
-        tokp.printToken(self.current());
+        // tokp.printToken(self.current());
         if (self.index < self.tokens.len) self.index += 1;
     }
 
@@ -202,7 +202,14 @@ pub const Syntaxer = struct {
             if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
             self.advanceOne();
             const ftype = (try self.parseType()) orelse return SyntaxerError.ExpectedIdentifier;
-            try fields.append(.{ .name = fname, .type = ftype });
+            self.ignoreNewLinesAndComments();
+            var def_val: ?*syn.STNode = null;
+            if (self.tokenIs(.equal)) {
+                self.advanceOne();
+                def_val = try self.parseExpression();
+                self.ignoreNewLinesAndComments();
+            }
+            try fields.append(.{ .name = fname, .type = ftype, .default_value = def_val });
             self.ignoreNewLinesAndComments();
         }
         if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
@@ -531,7 +538,7 @@ pub const Syntaxer = struct {
     }
 
     pub fn printST(self: *Syntaxer) void {
-        std.debug.print("\nst:\n", .{});
+        std.debug.print("\nSYNTAX TREE\n", .{});
         for (self.st.items) |node| {
             synp.printNode(node.*, 0);
         }

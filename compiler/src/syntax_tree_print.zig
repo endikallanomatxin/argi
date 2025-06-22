@@ -10,10 +10,24 @@ fn indent(lvl: usize) void {
     }
 }
 
-fn typeNameToStr(tn: syn.TypeName) []const u8 {
+fn printType(tn: syn.TypeName) void {
     return switch (tn) {
-        .identifier => |id| id,
-        .struct_type => |_| "(struct)",
+        .identifier => |id| {
+            std.debug.print("{s}", .{id});
+        },
+        .struct_type => |st| {
+            std.debug.print("struct (", .{});
+            for (st.fields) |f| {
+                std.debug.print(".{s} : ", .{f.name});
+                printType(f.type);
+                std.debug.print(" ", .{});
+                if (f.default_value) |dv| {
+                    std.debug.print("= ", .{});
+                    printNode(dv.*, 0);
+                }
+            }
+            std.debug.print(")", .{});
+        },
     };
 }
 
@@ -21,31 +35,31 @@ fn typeNameToStr(tn: syn.TypeName) []const u8 {
 fn printLiteral(lit: tok.Literal) void {
     switch (lit) {
         .bool_literal => |val| {
-            std.debug.print("bool: {s}\n", .{if (val) "true" else "false"});
+            std.debug.print("bool:{s}", .{if (val) "true" else "false"});
         },
         .decimal_int_literal => |val| {
-            std.debug.print("int (decimal): {s}\n", .{val});
+            std.debug.print("int:{s}", .{val});
         },
         .hexadecimal_int_literal => |val| {
-            std.debug.print("int (hex): {s}\n", .{val});
+            std.debug.print("int(hex): {s}", .{val});
         },
         .octal_int_literal => |val| {
-            std.debug.print("int (octal): {s}\n", .{val});
+            std.debug.print("int(oct): {s}", .{val});
         },
         .binary_int_literal => |val| {
-            std.debug.print("int (binary): {s}\n", .{val});
+            std.debug.print("int(bin): {s}", .{val});
         },
         .regular_float_literal => |val| {
-            std.debug.print("float (normal): {s}\n", .{val});
+            std.debug.print("float: {s}", .{val});
         },
         .scientific_float_literal => |val| {
-            std.debug.print("float (scientific): {s}\n", .{val});
+            std.debug.print("float(sci): {s}", .{val});
         },
         .char_literal => |val| {
-            std.debug.print("char: '{c}'\n", .{val});
+            std.debug.print("char: '{c}'", .{val});
         },
         .string_literal => |val| {
-            std.debug.print("string: \"{s}\"\n", .{val});
+            std.debug.print("string: \"{s}\"", .{val});
         },
     }
 }
@@ -61,16 +75,22 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
                 .type => "type",
                 .binding => "binding",
             };
-            const type_str = if (decl.type) |t| typeNameToStr(t) else "<?>";
-
-            std.debug.print("Declaration: \"{s}\" {s} {s} {s}\n", .{ decl.name, kind_str, mut_str, type_str });
+            std.debug.print("Declaration: \"{s}\" {s} {s}", .{ decl.name, kind_str, mut_str });
+            if (decl.type) |t| {
+                std.debug.print(" : ", .{});
+                printType(t);
+            } else {
+                std.debug.print(" : unknown type", .{});
+            }
 
             if (decl.kind == .function) {
                 indent(lvl + 1);
                 std.debug.print("Arguments:\n", .{});
                 for (decl.args.?) |arg| {
                     indent(lvl + 2);
-                    std.debug.print("- {s} : {s} {s}\n", .{ arg.name, typeNameToStr(arg.type.?), if (arg.mutability == syn.Mutability.variable) "var" else "const" });
+                    std.debug.print("- {s} : ", .{arg.name});
+                    printType(arg.type.?);
+                    std.debug.print(" ({s})\n", .{if (arg.mutability == syn.Mutability.variable) "var" else "const"});
                 }
             }
 
@@ -89,11 +109,14 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             printLiteral(lit);
         },
         .struct_literal => |sl| {
+            std.debug.print("\n", .{});
+            indent(lvl + 1);
             std.debug.print("StructLiteral:\n", .{});
             for (sl.fields) |f| {
-                indent(lvl + 1);
-                std.debug.print(".{s}:\n", .{f.name});
+                indent(lvl + 2);
+                std.debug.print(".{s}:", .{f.name});
                 printNode(f.value.*, lvl + 2);
+                std.debug.print("\n", .{});
             }
         },
         .code_block => |code_block| {

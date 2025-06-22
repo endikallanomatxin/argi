@@ -38,6 +38,7 @@ pub const Semantizer = struct {
 
     /// Public API – drive the semantic analysis and obtain the SG roots.
     pub fn analyze(self: *Semantizer) SemErr!std.ArrayList(*sem.SGNode) {
+        std.debug.print("\n\nsemantizing...\n", .{});
         var global = try Scope.init(self.allocator, null);
 
         for (self.st_nodes) |st_ptr| {
