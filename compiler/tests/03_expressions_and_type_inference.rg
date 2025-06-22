@@ -4,5 +4,4 @@ main () -> (.status_code: Int32) := {
     c := a + b
 
     status_code = c
-    return status_code
 }

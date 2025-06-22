@@ -9,6 +9,7 @@ const SemErr = error{
     SymbolNotFound,
     ConstantReassignment,
     InvalidType,
+    MissingReturnValue,
     NotYetImplemented,
     OutOfMemory,
 };
@@ -371,6 +372,9 @@ pub const Semantizer = struct {
             .return_type = .{ .builtin = builtin_rt },
             .body = body_sg_node.*.code_block,
         };
+
+        // TODO: Ensure that all the return params have been initialized before
+        // returning
 
         try parent.functions.put(decl.name, func_ptr);
         const node_ptr = try self.makeNode(.{ .function_declaration = func_ptr }, parent);

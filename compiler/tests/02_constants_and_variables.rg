@@ -29,5 +29,4 @@ main () -> (.status_code: Int32) := {
     variable_float_separate = 2.71828
 
     status_code = 0
-    return status_code
 }

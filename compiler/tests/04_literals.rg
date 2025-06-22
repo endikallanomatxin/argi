@@ -11,6 +11,5 @@ main () -> (.status_code: Int32) := {
     b = 1e10
 
     status_code = 0
-    return status_code
 }
 
