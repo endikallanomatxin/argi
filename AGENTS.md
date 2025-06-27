@@ -19,7 +19,7 @@ Do **not** run `zig build test` (it is not possible within your environment and 
 ```bash
 cd compiler
 zig build
-./zig-out/bin/argi tests/example_test.rg
+./zig-out/bin/argi build tests/example_test.rg
 ```
 
 This avoids issues in restricted environments.

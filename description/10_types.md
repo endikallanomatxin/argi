@@ -74,20 +74,11 @@ This declares a new anonymous struct:
 
 ```
 data : (
-	.ID   : Int64
+	.ID   : Int64    -- Struct type literal
 	.Name : String
 ) = (
-	.ID = 0
+	.ID = 0          -- Struct value literal
 	.Name = ""
-)
-```
-
-Or as a shorthand:
-
-```
-data := (
-	.ID   : Int64 = 0
-	.Name : String = ""
 )
 ```
 
