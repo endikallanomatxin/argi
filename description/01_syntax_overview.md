@@ -74,41 +74,69 @@ They just contain a couple of structs after the name, separated by an arrow:
 
 ```
 add (.a: Int, .b: Int) -> (.c: Int) := {
-	c = a + b
-	return c
+    c = a + b
+}
+
+divmod (.n:Int, .d:Int) -> (.quot:Int, .rem:Int) := {
+    quot = n / d
+    rem  = n % d
 }
 ```
 
-> [!TODO] En el cuerpo deberíamos usar c o .c?
+When calling functions:
 
-When a function is called, you can omit the names of the fields when you specify all of them in the correct order:
+- you can omit the names of the fields when you specify all of them in the correct order.
+- output structs with a single field are automatically unpacked (to avoid unnecessary verbosity).
 
 ```
-result = add (1, 2)
+result = add(1, 2) + add(3, 4)
+```
+
+When a function has multiple fields in the output struct, you get the struct.
+
+```
+-- Without unpacking:
+r = divmod(7, 3)
+
+-- Para extraer sólo un campo:
+quot, _ = divmod(7, 3)
+-- o
+quot = divmod(7, 3).quot
+
+-- Para extraer ambos:
+quot, rem = divmod(7, 3)
 ```
 
 > [!NOTE] Como diferenciamos entonces entre un struct literal y un list literal?
-> Es un collection literal, que se puede _interpretar_ como un list, struct, map o choice literal.
+> Es un collection literal, que se puede _interpretar_ como un list, struct,
+> map o choice literal.
 
-
-The type of the function would be: ` Function (Int, Int) -> (Int) `.
 
 Anonymous functions can be defined like here:
 
 ```
 some_function_that_needs_another_function(
-	(.a: Int, .b: Int) -> (.c: Int) := {
-		c = a + b
-	},
+	(.a: Int, .b: Int) -> (.c: Int) := { c = a + b },
 	"Some other argument"
 )
 ```
 
+
+### Pipe operator
+
+The pipe operator calls the right hand side function, substituting the _ symbol
+with the full left hand side expression, if it is a function it contains the
+return struct without unpacking.
+
 ```
-some_function_that_needs_another_function(
-    (.i:Int) -> (.o:Int) := { o = i^2 },
-    "Some other argument"
-)
+my_var | my_func (_, other_arg)  -- Single piped argument
+my_var | my_func (_.a, other_arg, _.b)  -- Multiple piped arguments
+```
+
+Se puede pasar por referencia sin necesidad de crear las variables intermedias.
+
+```
+my_var | my_func (&_, second_arg)
 ```
 
 

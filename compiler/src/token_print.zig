@@ -27,6 +27,12 @@ pub fn printToken(token: tok.Token) void {
         .close_brace => {
             std.debug.print("close_brace\n", .{});
         },
+        .open_bracket => {
+            std.debug.print("open_bracket\n", .{});
+        },
+        .close_bracket => {
+            std.debug.print("close_bracket\n", .{});
+        },
         .dot => {
             std.debug.print("dot\n", .{});
         },

@@ -2,137 +2,174 @@ const std = @import("std");
 const syn = @import("syntax_tree.zig");
 const tok = @import("token.zig");
 
-/// Imprime `lvl` niveles de indentación (dos espacios cada nivel).
+//──────────────────────────────────────────────────────────────────────────────
+// Utilidades
+//──────────────────────────────────────────────────────────────────────────────
+
 fn indent(lvl: usize) void {
     var i: usize = 0;
-    while (i < lvl) : (i += 1) {
-        std.debug.print("  ", .{});
+    while (i < lvl) : (i += 1) std.debug.print("  ", .{});
+}
+
+// ── impresión de tipos ──────────────────────────────────────────────────────
+fn printType(t: syn.Type, lvl: usize) void {
+    switch (t) {
+        .type_name => |id| std.debug.print("{s}", .{id}),
+        .struct_type_literal => |st| printStructTypeLiteral(st, lvl),
     }
 }
 
-fn printType(tn: syn.TypeName) void {
-    return switch (tn) {
-        .identifier => |id| {
-            std.debug.print("{s}", .{id});
-        },
-        .struct_type => |st| {
-            std.debug.print("struct (", .{});
-            for (st.fields) |f| {
-                std.debug.print(".{s} : ", .{f.name});
-                printType(f.type);
-                std.debug.print(" ", .{});
-                if (f.default_value) |dv| {
-                    std.debug.print("= ", .{});
-                    printNode(dv.*, 0);
-                }
-            }
-            std.debug.print(")", .{});
-        },
-    };
+fn printStructTypeLiteral(st: syn.StructTypeLiteral, lvl: usize) void {
+    std.debug.print("struct (\n", .{});
+    for (st.fields) |f| {
+        indent(lvl + 1);
+        std.debug.print(".{s}", .{f.name});
+
+        if (f.type) |fty| {
+            std.debug.print(" : ", .{});
+            printType(fty, lvl + 1);
+        }
+
+        if (f.default_value) |dv| {
+            std.debug.print(" = ", .{});
+            printNode(dv.*, 0);
+        }
+        std.debug.print("\n", .{});
+    }
+    indent(lvl);
+    std.debug.print(")", .{});
 }
 
-/// Formatea el contenido de un literal para imprimirlo con su tipo.
+// ── impresión de literales de valor ─────────────────────────────────────────
+fn printStructValueLiteral(sl: syn.StructValueLiteral, lvl: usize) void {
+    std.debug.print("(\n", .{});
+    for (sl.fields) |f| {
+        indent(lvl + 1);
+        std.debug.print(".{s} = ", .{f.name});
+        printNode(f.value.*, lvl + 1);
+        std.debug.print("\n", .{});
+    }
+    indent(lvl);
+    std.debug.print(")", .{});
+}
+
 fn printLiteral(lit: tok.Literal) void {
     switch (lit) {
-        .bool_literal => |val| {
-            std.debug.print("bool:{s}", .{if (val) "true" else "false"});
-        },
-        .decimal_int_literal => |val| {
-            std.debug.print("int:{s}", .{val});
-        },
-        .hexadecimal_int_literal => |val| {
-            std.debug.print("int(hex): {s}", .{val});
-        },
-        .octal_int_literal => |val| {
-            std.debug.print("int(oct): {s}", .{val});
-        },
-        .binary_int_literal => |val| {
-            std.debug.print("int(bin): {s}", .{val});
-        },
-        .regular_float_literal => |val| {
-            std.debug.print("float: {s}", .{val});
-        },
-        .scientific_float_literal => |val| {
-            std.debug.print("float(sci): {s}", .{val});
-        },
-        .char_literal => |val| {
-            std.debug.print("char: '{c}'", .{val});
-        },
-        .string_literal => |val| {
-            std.debug.print("string: \"{s}\"", .{val});
-        },
+        .bool_literal => |v| std.debug.print("bool:{s}", .{if (v) "true" else "false"}),
+        .decimal_int_literal => |v| std.debug.print("int:{s}", .{v}),
+        .hexadecimal_int_literal => |v| std.debug.print("int(hex):{s}", .{v}),
+        .octal_int_literal => |v| std.debug.print("int(oct):{s}", .{v}),
+        .binary_int_literal => |v| std.debug.print("int(bin):{s}", .{v}),
+        .regular_float_literal => |v| std.debug.print("float:{s}", .{v}),
+        .scientific_float_literal => |v| std.debug.print("float(sci):{s}", .{v}),
+        .char_literal => |c| std.debug.print("char:'{c}'", .{c}),
+        .string_literal => |s| std.debug.print("string:\"{s}\"", .{s}),
     }
 }
 
-/// Imprime un nodo STNode recursivamente, mostrando tipo y detalles.
+//──────────────────────────────────────────────────────────────────────────────
+//  VISOR PRINCIPAL
+//──────────────────────────────────────────────────────────────────────────────
 pub fn printNode(node: syn.STNode, lvl: usize) void {
     indent(lvl);
+
     switch (node.content) {
-        .declaration => |decl| {
-            const mut_str = if (decl.mutability == syn.Mutability.variable) "var" else "const";
-            const kind_str = switch (decl.kind) {
-                .function => "function",
-                .type => "type",
-                .binding => "binding",
-            };
-            std.debug.print("Declaration: \"{s}\" {s} {s}", .{ decl.name, kind_str, mut_str });
-            if (decl.type) |t| {
+        // ── SYMBOL DECLARATION ────────────────────────────────────────────
+        .symbol_declaration => |d| {
+            const mut = if (d.mutability == .variable) "var" else "const";
+            std.debug.print("SymbolDecl \"{s}\" ({s})", .{ d.name, mut });
+
+            if (d.type) |ty| {
                 std.debug.print(" : ", .{});
-                printType(t);
+                printType(ty, lvl);
             } else {
-                std.debug.print(" : unknown type", .{});
+                std.debug.print(" : ?", .{});
             }
-
-            if (decl.kind == .function) {
-                indent(lvl + 1);
-                std.debug.print("Arguments:\n", .{});
-                for (decl.args.?) |arg| {
-                    indent(lvl + 2);
-                    std.debug.print("- {s} : ", .{arg.name});
-                    printType(arg.type.?);
-                    std.debug.print(" ({s})\n", .{if (arg.mutability == syn.Mutability.variable) "var" else "const"});
-                }
-            }
-
-            if (decl.value) |v| {
-                printNode(v.*, lvl + 1);
-            }
-        },
-        .assignment => |assign| {
-            std.debug.print("Assignment: \"{s}\"\n", .{assign.name});
-            printNode(assign.value.*, lvl + 1);
-        },
-        .identifier => |ident| {
-            std.debug.print("Identifier: \"{s}\"\n", .{ident});
-        },
-        .literal => |lit| {
-            printLiteral(lit);
-        },
-        .struct_literal => |sl| {
             std.debug.print("\n", .{});
+
+            if (d.value) |v| printNode(v.*, lvl + 1);
+        },
+
+        // ── TYPE DECLARATION ──────────────────────────────────────────────
+        .type_declaration => |td| {
+            std.debug.print("TypeDecl  \"{s}\"\n", .{td.name});
+            printNode(td.value.*, lvl + 1); // el valor es un struct_type_literal
+        },
+
+        // ── FUNCTION DECLARATION ──────────────────────────────────────────
+        .function_declaration => |fd| {
+            std.debug.print("FuncDecl \"{s}\"\n", .{fd.name});
+
             indent(lvl + 1);
-            std.debug.print("StructLiteral:\n", .{});
-            for (sl.fields) |f| {
-                indent(lvl + 2);
-                std.debug.print(".{s}:", .{f.name});
-                printNode(f.value.*, lvl + 2);
-                std.debug.print("\n", .{});
+            std.debug.print("input : ", .{});
+            printStructTypeLiteral(fd.input, lvl + 1);
+            std.debug.print("\n", .{});
+
+            indent(lvl + 1);
+            std.debug.print("output: ", .{});
+            printStructTypeLiteral(fd.output, lvl + 1);
+            std.debug.print("\n", .{});
+
+            indent(lvl + 1);
+            std.debug.print("body  :\n", .{});
+            printNode(fd.body.*, lvl + 2);
+        },
+
+        // ── ASSIGNMENT ────────────────────────────────────────────────────
+        .assignment => |a| {
+            std.debug.print("Assignment \"{s}\"\n", .{a.name});
+            printNode(a.value.*, lvl + 1);
+        },
+
+        // ── IDENTIFIER & LITERAL ─────────────────────────────────────────
+        .identifier => |id| std.debug.print("Identifier \"{s}\"\n", .{id}),
+        .literal => |lit| printLiteral(lit),
+
+        // ── STRUCT TYPE LITERAL (stand-alone) ────────────────────────────
+        .struct_type_literal => |st| {
+            std.debug.print("StructTypeLiteral ", .{});
+            printStructTypeLiteral(st, lvl);
+            std.debug.print("\n", .{});
+        },
+
+        // ── STRUCT VALUE LITERAL ─────────────────────────────────────────
+        .struct_value_literal => |sv| {
+            std.debug.print("StructValueLiteral ", .{});
+            printStructValueLiteral(sv, lvl);
+            std.debug.print("\n", .{});
+        },
+
+        // ── CODE-BLOCK ───────────────────────────────────────────────────
+        .code_block => |cb| {
+            std.debug.print("CodeBlock\n", .{});
+            for (cb.items) |n| printNode(n.*, lvl + 1);
+        },
+
+        // ── RETURN ───────────────────────────────────────────────────────
+        .return_statement => |ret| {
+            std.debug.print("Return\n", .{});
+            if (ret.expression) |e| printNode(e.*, lvl + 1);
+        },
+
+        // ── IF ───────────────────────────────────────────────────────────
+        .if_statement => |ifs| {
+            std.debug.print("If\n", .{});
+            indent(lvl + 1);
+            std.debug.print("cond:\n", .{});
+            printNode(ifs.condition.*, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("then:\n", .{});
+            printNode(ifs.then_block.*, lvl + 2);
+            if (ifs.else_block) |eb| {
+                indent(lvl + 1);
+                std.debug.print("else:\n", .{});
+                printNode(eb.*, lvl + 2);
             }
         },
-        .code_block => |code_block| {
-            std.debug.print("CodeBlock:\n", .{});
-            for (code_block.items) |child| {
-                printNode(child.*, lvl + 1);
-            }
-        },
-        .return_statement => |retStmt| {
-            std.debug.print("ReturnStatement\n", .{});
-            if (retStmt.expression) |expr| {
-                printNode(expr.*, lvl + 1);
-            }
-        },
-        .binary_operation => |binOp| {
-            const op_str = switch (binOp.operator) {
+
+        // ── BINARY OP ────────────────────────────────────────────────────
+        .binary_operation => |bo| {
+            const op = switch (bo.operator) {
                 .addition => "+",
                 .subtraction => "-",
                 .multiplication => "*",
@@ -141,29 +178,23 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
                 .equals => "==",
                 .not_equals => "!=",
             };
-            std.debug.print("BinaryOperation: \"{s}\"\n", .{op_str});
+            std.debug.print("BinaryOp \"{s}\"\n", .{op});
             indent(lvl + 1);
-            std.debug.print("Left:\n", .{});
-            printNode(binOp.left.*, lvl + 2);
+            std.debug.print("lhs:\n", .{});
+            printNode(bo.left.*, lvl + 2);
             indent(lvl + 1);
-            std.debug.print("Right:\n", .{});
-            printNode(binOp.right.*, lvl + 2);
-        },
-        .function_call => |fc| {
-            std.debug.print("FunctionCall: {s}\n", .{fc.callee});
-            for (fc.args) |a| {
-                indent(lvl + 1);
-                if (a.name) |n|
-                    std.debug.print("{s}:\n", .{n})
-                else
-                    std.debug.print("arg:\n", .{});
-                printNode(a.value.*, lvl + 2);
-            }
+            std.debug.print("rhs:\n", .{});
+            printNode(bo.right.*, lvl + 2);
         },
 
-        else => {
-            // Cualquier otro caso que no se haya manejado
-            std.debug.print("Unknown AST node: {any}\n", .{node.content});
+        // ── FUNCTION CALL ────────────────────────────────────────────────
+        .function_call => |fc| {
+            std.debug.print("Call {s}\n", .{fc.callee});
+            for (fc.args) |arg| {
+                indent(lvl + 1);
+                if (arg.name) |n| std.debug.print("{s} =\n", .{n}) else std.debug.print("arg =\n", .{});
+                printNode(arg.value.*, lvl + 2);
+            }
         },
     }
 }

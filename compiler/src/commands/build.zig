@@ -20,20 +20,17 @@ pub fn compile(filename: []const u8) !void {
 
     // 2. Lexear el contenido para obtener la lista de tokens.
     var tokenizer = tok.Tokenizer.init(&allocator, source, filename);
-    var tokensList = try tokenizer.tokenize();
-    defer tokensList.deinit();
+    const tokensList = try tokenizer.tokenize();
     tokenizer.printTokens();
 
     // 3. Parsear la lista de tokens para obtener el ST.
-    var syntaxer = syn.Syntaxer.init(&allocator, tokensList.items);
+    var syntaxer = syn.Syntaxer.init(&allocator, tokensList);
     const st_nodes = try syntaxer.parse();
-    defer st_nodes.deinit();
     syntaxer.printST();
 
     // 4. Analizar el st para generar el sg
-    var sematizer = sem.Semantizer.init(&allocator, st_nodes.items);
+    var sematizer = sem.Semantizer.init(&allocator, st_nodes);
     const sg = try sematizer.analyze();
-    defer sg.deinit();
     sematizer.printSG();
 
     // 5. Generar IR a partir del AST.

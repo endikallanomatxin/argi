@@ -26,6 +26,8 @@ pub const Content = union(enum) {
     // Delimiters
     open_parenthesis: struct {},
     close_parenthesis: struct {},
+    open_bracket: struct {},
+    close_bracket: struct {},
     open_brace: struct {},
     close_brace: struct {},
 

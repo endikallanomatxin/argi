@@ -2,7 +2,7 @@ const std = @import("std");
 const tok = @import("token.zig");
 const syn = @import("syntax_tree.zig");
 const sem = @import("semantic_graph.zig");
-const sgp = @import("semantic_graph_print.zig"); // <-- NEW
+const sgp = @import("semantic_graph_print.zig");
 
 const SemErr = error{
     SymbolAlreadyDefined,
@@ -12,294 +12,348 @@ const SemErr = error{
     MissingReturnValue,
     NotYetImplemented,
     OutOfMemory,
+    OptionalUnwrap,
 };
 
 const TypedExpr = struct {
     node: *sem.SGNode,
-    ty: sem.BuiltinType,
+    ty: sem.Type,
 };
 
-/// ──────────────────────────────────────────────────────────────────────────────
-/// SEMANTIZER
-/// ──────────────────────────────────────────────────────────────────────────────
+//──────────────────────────────────────────────────────────────────────────────
+//  SEMANTIZER
+//──────────────────────────────────────────────────────────────────────────────
 pub const Semantizer = struct {
     allocator: *const std.mem.Allocator,
-    st_nodes: []const *syn.STNode, // input
-    root_nodes: std.ArrayList(*sem.SGNode), // output (top-level SG nodes)
+    st_nodes: []const *syn.STNode, // entrada
+    root_list: std.ArrayList(*sem.SGNode), // buffer mut
+    root_nodes: []const *sem.SGNode = &.{}, // slice final
 
-    // ───── constructor ────────────────────────────────────────────────────────
-    pub fn init(alloc: *const std.mem.Allocator, st_nodes: []const *syn.STNode) Semantizer {
+    pub fn init(alloc: *const std.mem.Allocator, st: []const *syn.STNode) Semantizer {
         return .{
             .allocator = alloc,
-            .st_nodes = st_nodes,
-            .root_nodes = std.ArrayList(*sem.SGNode).init(alloc.*),
+            .st_nodes = st,
+            .root_list = std.ArrayList(*sem.SGNode).init(alloc.*),
         };
     }
 
-    /// Public API – drive the semantic analysis and obtain the SG roots.
-    pub fn analyze(self: *Semantizer) SemErr!std.ArrayList(*sem.SGNode) {
-        std.debug.print("\n\nsemantizing...\n", .{});
-        var global = try Scope.init(self.allocator, null);
+    pub fn analyze(self: *Semantizer) SemErr![]const *sem.SGNode {
+        std.debug.print("\n\nsemantizing ...\n", .{});
+        var global = try Scope.init(self.allocator, null, null);
 
-        for (self.st_nodes) |st_ptr| {
-            _ = try self.visitNode(st_ptr.*, &global);
-        }
+        for (self.st_nodes) |n|
+            _ = try self.visitNode(n.*, &global);
 
+        self.root_nodes = try self.root_list.toOwnedSlice();
+        self.root_list.deinit();
         return self.root_nodes;
     }
 
-    /// Extra helper so that `build.zig` can dump the graph:
-    pub fn printSG(self: *Semantizer) void { // <-- NEW
-        std.debug.print("\nSEMANTIC GRAPH\n", .{});
-        for (self.root_nodes.items) |n|
-            sgp.printNode(n, 0);
+    pub fn printSG(self: *Semantizer) void {
+        std.debug.print("\nSEMANTIC GRAPH:\n", .{});
+        for (self.root_nodes) |n| sgp.printNode(n, 0);
     }
 
-    // ========================================================================
-    //  Visitors  (dispatcher)
-    // ========================================================================
-    fn visitNode(self: *Semantizer, n: syn.STNode, scope: *Scope) SemErr!TypedExpr {
+    //────────────────────────────────────────────────────────────────── visitors
+    fn visitNode(self: *Semantizer, n: syn.STNode, s: *Scope) SemErr!TypedExpr {
         return switch (n.content) {
-            .declaration => |d| self.handleDeclaration(d, n.location, scope),
-            .assignment => |a| self.handleAssignment(a, n.location, scope),
-            .identifier => |id| self.handleIdentifier(id, scope),
-            .literal => |l| self.handleLiteral(l, scope),
-            .binary_operation => |b| self.handleBinaryOperation(b, scope),
-            .return_statement => |r| self.handleReturnStatement(r, scope),
-            .if_statement => |ifs| self.handleIfStatement(ifs, scope),
-            .code_block => |blk| self.handleCodeBlock(blk, scope),
-            .function_call => |fc| self.handleFunctionCall(fc, n.location, scope),
-            .struct_literal => |sl| self.handleStructLiteral(sl, scope),
-
+            .symbol_declaration => |d| self.handleSymbolDecl(d, s),
+            .type_declaration => |d| self.handleTypeDecl(d, s),
+            .function_declaration => |d| self.handleFuncDecl(d, s),
+            .assignment => |a| self.handleAssignment(a, s),
+            .identifier => |id| self.handleIdentifier(id, s),
+            .literal => |l| self.handleLiteral(l),
+            .struct_value_literal => |sl| self.handleStructValLit(sl, s),
+            .function_call => |fc| self.handleCall(fc, s),
+            .code_block => |blk| self.handleCodeBlock(blk, s),
+            .binary_operation => |bo| self.handleBinOp(bo, s),
+            .return_statement => |r| self.handleReturn(r, s),
+            .if_statement => |ifs| self.handleIf(ifs, s),
             else => error.NotYetImplemented,
         };
     }
 
-    // ========================================================================
-    //  Handlers
-    // ========================================================================
-
-    // ------- literals -------------------------------------------------------
-    fn handleLiteral(self: *Semantizer, lit: tok.Literal, _: *Scope) SemErr!TypedExpr {
-        var sg_val: sem.ValueLiteral = undefined;
-        var ty: sem.BuiltinType = undefined;
+    //─────────────────────────────────────────────────────────  LITERALS
+    fn handleLiteral(self: *Semantizer, lit: tok.Literal) SemErr!TypedExpr {
+        var sg: sem.ValueLiteral = undefined;
+        var ty: sem.Type = .{ .builtin = .Int32 };
 
         switch (lit) {
             .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => |txt| {
-                const v = std.fmt.parseInt(i64, txt, 0) catch 0;
-                sg_val = .{ .int_literal = v };
-                ty = .Int32;
+                sg = .{ .int_literal = std.fmt.parseInt(i64, txt, 0) catch 0 };
             },
             .regular_float_literal, .scientific_float_literal => |txt| {
-                const f = std.fmt.parseFloat(f64, txt) catch 0.0;
-                sg_val = .{ .float_literal = f };
-                ty = .Float32;
+                ty = .{ .builtin = .Float32 };
+                sg = .{ .float_literal = std.fmt.parseFloat(f64, txt) catch 0.0 };
             },
             else => return error.NotYetImplemented,
         }
 
-        const lit_ptr = try self.allocator.create(sem.ValueLiteral);
-        lit_ptr.* = sg_val;
-        const sg_node_ptr = try self.makeNode(.{ .value_literal = lit_ptr.* }, null);
-
-        return .{ .node = sg_node_ptr, .ty = ty };
+        const ptr = try self.allocator.create(sem.ValueLiteral);
+        ptr.* = sg;
+        const n = try self.makeNode(.{ .value_literal = ptr.* }, null);
+        return .{ .node = n, .ty = ty };
     }
 
-    // ------- identifiers ----------------------------------------------------
-    fn handleIdentifier(self: *Semantizer, name: []const u8, scope: *Scope) SemErr!TypedExpr {
-        const binding = scope.lookupBinding(name) orelse return error.SymbolNotFound;
-        const node = try self.makeNode(.{ .binding_use = binding }, null);
-        return .{ .node = node, .ty = binding.ty.builtin };
+    //─────────────────────────────────────────────────────────  IDENTIFIER
+    fn handleIdentifier(self: *Semantizer, name: []const u8, s: *Scope) SemErr!TypedExpr {
+        const b = s.lookupBinding(name) orelse return error.SymbolNotFound;
+        const n = try self.makeNode(.{ .binding_use = b }, null);
+        return .{ .node = n, .ty = b.ty };
     }
 
-    // ------- blocks ---------------------------------------------------------
+    //─────────────────────────────────────────────────────────  CODE BLOCK
     fn handleCodeBlock(self: *Semantizer, blk: syn.CodeBlock, parent: *Scope) SemErr!TypedExpr {
-        var child = try Scope.init(self.allocator, parent);
+        var child = try Scope.init(self.allocator, parent, null);
 
-        for (blk.items) |item_ptr|
-            _ = try self.visitNode(item_ptr.*, &child);
+        for (blk.items) |st|
+            _ = try self.visitNode(st.*, &child);
+
+        const slice = try child.nodes.toOwnedSlice();
+        child.nodes.deinit();
 
         const cb = try self.allocator.create(sem.CodeBlock);
-        cb.* = .{
-            .nodes = child.nodes,
-            .ret_val = null,
-        };
+        cb.* = .{ .nodes = slice, .ret_val = null };
 
-        const node = try self.makeNode(.{ .code_block = cb }, parent);
-        return .{ .node = node, .ty = .Void }; // <- ".Void" is now legal
+        const n = try self.makeNode(.{ .code_block = cb }, parent);
+        return .{ .node = n, .ty = .{ .builtin = .Void } };
     }
 
-    fn handleFunctionCall(self: *Semantizer, call: syn.FunctionCall, loc: tok.Location, scope: *Scope) SemErr!TypedExpr {
-        _ = loc; // unused for now
-        const fn_decl = scope.lookupFunction(call.callee) orelse return error.SymbolNotFound;
+    //──────────────────────────────────────────────────── SYMBOL DECLARATION
+    fn handleSymbolDecl(self: *Semantizer, d: syn.SymbolDeclaration, s: *Scope) SemErr!TypedExpr {
+        if (s.bindings.contains(d.name))
+            return error.SymbolAlreadyDefined;
 
-        const param_count = fn_decl.params.items.len;
-        var sg_args = try self.allocator.alloc(sem.SGNode, param_count);
-        var provided = try self.allocator.alloc(bool, param_count);
-        defer self.allocator.free(provided);
-        @memset(provided, false);
+        var ty: sem.Type = .{ .builtin = .Int32 };
+        if (d.type) |t|
+            ty = try self.resolveType(t, s)
+        else if (d.value) |v|
+            ty = (try self.visitNode(v.*, s)).ty;
 
-        for (call.args, 0..) |arg, idx_call| {
-            var idx_param: usize = idx_call;
-            if (arg.name) |n| {
-                var found = false;
-                for (fn_decl.params.items, 0..) |p, j| {
-                    if (std.mem.eql(u8, p.name, n)) {
-                        idx_param = j;
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) return error.SymbolNotFound;
-            }
-            if (idx_param >= param_count or provided[idx_param])
-                return error.InvalidType;
-
-            const te = try self.visitNode(arg.value.*, scope);
-            const param = fn_decl.params.items[idx_param];
-            const expected = param.ty.builtin;
-            if (te.ty != expected and !(expected == .Float32 and te.ty == .Int32))
-                return error.InvalidType;
-            sg_args[idx_param] = te.node.*;
-            provided[idx_param] = true;
-        }
-
-        for (provided) |p|
-            if (!p) return error.InvalidType; // missing argument
-
-        const fc_ptr = try self.allocator.create(sem.FunctionCall);
-        fc_ptr.* = .{
-            .callee = fn_decl,
-            .args = sg_args,
+        const bd = try self.allocator.create(sem.BindingDeclaration);
+        bd.* = .{
+            .name = d.name,
+            .mutability = d.mutability,
+            .ty = ty,
+            .initialization = null,
         };
 
-        const node_ptr = try self.makeNode(.{ .function_call = fc_ptr }, scope);
-        const ret_ty = fn_decl.return_type.?.builtin; // we only have Builtin for now
+        try s.bindings.put(d.name, bd);
+        const n = try self.makeNode(.{ .binding_declaration = bd }, s);
+        if (s.parent == null) try self.root_list.append(n);
 
-        return .{ .node = node_ptr, .ty = ret_ty };
+        if (d.value) |v|
+            bd.initialization = (try self.visitNode(v.*, s)).node;
+
+        return .{ .node = n, .ty = .{ .builtin = .Void } };
     }
 
-    fn handleDeclaration(self: *Semantizer, decl: syn.Declaration, loc: tok.Location, scope: *Scope) SemErr!TypedExpr {
-        return if (decl.kind == .function)
-            self.handleFunctionDeclaration(decl, loc, scope)
-        else
-            self.handleBindingDeclaration(decl, loc, scope);
+    //──────────────────────────────────────────────────── TYPE DECLARATION
+    fn handleTypeDecl(self: *Semantizer, d: syn.TypeDeclaration, s: *Scope) SemErr!TypedExpr {
+        const st_lit = d.value.*.content.struct_type_literal;
+        const st_ptr = try self.structTypeFromLiteral(st_lit, s);
+
+        const td = try self.allocator.create(sem.TypeDeclaration);
+        td.* = .{ .name = d.name, .ty = .{ .struct_type = st_ptr } };
+
+        try s.types.put(d.name, td);
+        const n = try self.makeNode(.{ .type_declaration = td }, s);
+        if (s.parent == null) try self.root_list.append(n);
+        return .{ .node = n, .ty = .{ .builtin = .Void } };
     }
 
-    fn handleBindingDeclaration(self: *Semantizer, decl: syn.Declaration, loc: tok.Location, scope: *Scope) SemErr!TypedExpr {
-        if (scope.bindings.contains(decl.name)) return error.SymbolAlreadyDefined;
+    //──────────────────────────────────────────────────── FUNCTION DECLARATION
+    fn handleFuncDecl(self: *Semantizer, f: syn.FunctionDeclaration, p: *Scope) SemErr!TypedExpr {
+        if (p.functions.contains(f.name))
+            return error.SymbolAlreadyDefined;
 
-        // deducir tipo -----------------------------------------------------
-        var builtin_ty: sem.BuiltinType = .Int32; // por defecto
-        if (decl.type) |t|
-            builtin_ty = try builtinFromTypeName(t)
-        else if (decl.value) |val_node| {
-            const tmp = try self.visitNode(val_node.*, scope);
-            builtin_ty = tmp.ty;
+        var child = try Scope.init(self.allocator, p, null);
+
+        // -------- argumentos de entrada ---------------------------------
+        var in_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+        for (f.input.fields) |fld| {
+            const ty = try self.resolveType(fld.type.?, &child);
+            const dvp = if (fld.default_value) |n| (try self.visitNode(n.*, &child)).node else null;
+
+            try in_fields.append(.{
+                .name = fld.name,
+                .ty = ty,
+                .default_value = dvp,
+            });
+
+            // binding para uso interno
+            const bd = try self.allocator.create(sem.BindingDeclaration);
+            bd.* = .{ .name = fld.name, .mutability = .variable, .ty = ty, .initialization = dvp };
+            try child.bindings.put(fld.name, bd);
         }
+        const in_slice = try in_fields.toOwnedSlice();
+        in_fields.deinit();
+        const in_struct = sem.StructType{ .fields = in_slice };
 
-        const binding_ptr = try self.allocator.create(sem.BindingDeclaration);
-        binding_ptr.* = .{
-            .name = decl.name,
-            .mutability = decl.mutability,
-            .ty = .{ .builtin = builtin_ty },
-            .initialization = null, // se asigna más adelante si hay inicializador
+        // -------- parámetros de salida ----------------------------------
+        var out_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+        for (f.output.fields) |fld| {
+            const ty = try self.resolveType(fld.type.?, &child);
+            const dvp = if (fld.default_value) |n| (try self.visitNode(n.*, &child)).node else null;
+
+            try out_fields.append(.{
+                .name = fld.name,
+                .ty = ty,
+                .default_value = dvp,
+            });
+
+            // binding para retorno nombrado
+            const bd = try self.allocator.create(sem.BindingDeclaration);
+            bd.* = .{ .name = fld.name, .mutability = .variable, .ty = ty, .initialization = dvp };
+            try child.bindings.put(fld.name, bd);
+        }
+        const out_slice = try out_fields.toOwnedSlice();
+        out_fields.deinit();
+        const out_struct = sem.StructType{ .fields = out_slice };
+
+        // -------- cuerpo -------------------------------------------------
+        const body_te = try self.visitNode(f.body.*, &child);
+        const body_cb = body_te.node.*.code_block;
+
+        const fn_ptr = try self.allocator.create(sem.FunctionDeclaration);
+        fn_ptr.* = .{
+            .name = f.name,
+            .input = in_struct,
+            .output = out_struct,
+            .body = body_cb,
         };
 
-        try scope.bindings.put(decl.name, binding_ptr);
-
-        const node_ptr = try self.makeNode(.{ .binding_declaration = binding_ptr }, scope);
-        if (scope.parent == null) try self.root_nodes.append(node_ptr);
-
-        // inicializador implícito
-        if (decl.value) |v| {
-            if (decl.mutability == .variable) {
-                // Primer write de una variable: sigue siendo un assignment
-                _ = try self.handleAssignment(.{ .name = decl.name, .value = v }, loc, scope);
-            } else {
-                const prev_len = scope.nodes.items.len;
-                const rhs = try self.visitNode(v.*, scope);
-                binding_ptr.initialization = rhs.node;
-                while (scope.nodes.items.len > prev_len) {
-                    _ = scope.nodes.pop();
-                }
-            }
-        }
-
-        return .{ .node = node_ptr, .ty = .Void };
+        try p.functions.put(f.name, fn_ptr);
+        const n = try self.makeNode(.{ .function_declaration = fn_ptr }, p);
+        if (p.parent == null) try self.root_list.append(n);
+        return .{ .node = n, .ty = .{ .builtin = .Void } };
     }
 
-    // ---------- asignación -----------------------------------------------
-    fn handleAssignment(self: *Semantizer, asg: syn.Assignment, loc: tok.Location, scope: *Scope) SemErr!TypedExpr {
-        _ = loc;
-
-        const binding = scope.lookupBinding(asg.name) orelse return error.SymbolNotFound;
-
-        const rhs = try self.visitNode(asg.value.*, scope);
-
-        if (rhs.ty != binding.ty.builtin and !(binding.ty.builtin == .Float32 and rhs.ty == .Int32))
-            return error.InvalidType;
-
-        const assign_ptr = try self.allocator.create(sem.Assignment);
-        assign_ptr.* = .{
-            .sym_id = binding,
-            .value = rhs.node,
-        };
-
-        const is_first_write = (binding.initialization == null);
-
-        // ─── Caso 1: CONST  →  la primera escritura es la inicialización
-        if (is_first_write and binding.mutability == .constant) {
-            // Guardamos solo la *expresión*, no el assignment
-            binding.initialization = rhs.node;
-            return .{ .node = rhs.node, .ty = .Void };
-        }
-
-        // ─── Caso 2: VAR (o reasignación)
-        if (binding.mutability == .constant)
+    //──────────────────────────────────────────────────── ASSIGNMENT
+    fn handleAssignment(self: *Semantizer, a: syn.Assignment, s: *Scope) SemErr!TypedExpr {
+        const b = s.lookupBinding(a.name) orelse return error.SymbolNotFound;
+        if (b.mutability == .constant and b.initialization != null)
             return error.ConstantReassignment;
 
-        // Todas las escrituras a var (incluida la primera) se materializan
-        const node_ptr = try self.makeNode(.{ .binding_assignment = assign_ptr }, scope);
-        try scope.nodes.append(node_ptr);
+        const rhs = try self.visitNode(a.value.*, s);
 
-        return .{ .node = node_ptr, .ty = .Void };
+        const asg = try self.allocator.create(sem.Assignment);
+        asg.* = .{ .sym_id = b, .value = rhs.node };
+
+        const n = try self.makeNode(.{ .binding_assignment = asg }, s);
+        return .{ .node = n, .ty = .{ .builtin = .Void } };
     }
 
-    // ---------- binaria (+, -, …) ----------------------------------------
-    fn handleBinaryOperation(self: *Semantizer, bin: syn.BinaryOperation, scope: *Scope) SemErr!TypedExpr {
-        const lhs = try self.visitNode(bin.left.*, scope);
-        const rhs = try self.visitNode(bin.right.*, scope);
+    //──────────────────────────────────────────────────── STRUCT VALUE LITERAL
+    fn handleStructValLit(self: *Semantizer, sl: syn.StructValueLiteral, s: *Scope) SemErr!TypedExpr {
+        var fields_buf = std.ArrayList(sem.StructValueLiteralField).init(self.allocator.*);
 
-        var out_ty: sem.BuiltinType = .Int32;
-        if (bin.operator == .equals or bin.operator == .not_equals) {
-            out_ty = .Bool;
-        } else if (lhs.ty == .Float32 or rhs.ty == .Float32) {
-            out_ty = .Float32;
+        for (sl.fields) |f| {
+            const tv = try self.visitNode(f.value.*, s);
+            try fields_buf.append(.{ .name = f.name, .value = tv.node });
         }
 
-        const bin_ptr = try self.allocator.create(sem.BinaryOperation);
-        bin_ptr.* = .{
-            .operator = bin.operator,
-            .left = lhs.node,
-            .right = rhs.node,
-        };
+        const fields = try fields_buf.toOwnedSlice();
+        fields_buf.deinit();
 
-        const node_ptr = try self.makeNode(.{ .binary_operation = bin_ptr.* }, scope);
-        return .{ .node = node_ptr, .ty = out_ty };
+        const st_ptr = try self.structTypeFromVal(sl, s);
+
+        const lit = try self.allocator.create(sem.StructValueLiteral);
+        lit.* = .{ .fields = fields, .ty = .{ .struct_type = st_ptr } };
+
+        const n = try self.makeNode(.{ .struct_value_literal = lit }, null);
+        return .{ .node = n, .ty = .{ .struct_type = st_ptr } };
     }
 
-    fn handleIfStatement(self: *Semantizer, ifs: syn.IfStatement, scope: *Scope) SemErr!TypedExpr {
-        const cond = try self.visitNode(ifs.condition.*, scope);
-        const then_te = try self.visitNode(ifs.then_block.*, scope);
-        if (then_te.node.* != .code_block) return error.InvalidType;
+    //────────────────────────────────────────────────────  AUX STRUCT TYPES
+    fn structTypeFromLiteral(self: *Semantizer, st: syn.StructTypeLiteral, s: *Scope) SemErr!*sem.StructType {
+        var buf = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
 
-        var else_cb: ?*sem.CodeBlock = null;
-        if (ifs.else_block) |eb| {
-            const else_te = try self.visitNode(eb.*, scope);
-            if (else_te.node.* != .code_block) return error.InvalidType;
-            else_cb = else_te.node.*.code_block;
+        for (st.fields) |f| {
+            const ty = try self.resolveType(f.type.?, s);
+            const dvp = if (f.default_value) |n| (try self.visitNode(n.*, s)).node else null;
+            try buf.append(.{ .name = f.name, .ty = ty, .default_value = dvp });
         }
+
+        const slice = try buf.toOwnedSlice();
+        buf.deinit();
+
+        const ptr = try self.allocator.create(sem.StructType);
+        ptr.* = .{ .fields = slice };
+        return ptr;
+    }
+
+    fn structTypeFromVal(self: *Semantizer, sv: syn.StructValueLiteral, s: *Scope) SemErr!*sem.StructType {
+        var buf = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+
+        for (sv.fields) |f| {
+            const tv = try self.visitNode(f.value.*, s);
+            try buf.append(.{ .name = f.name, .ty = tv.ty, .default_value = null });
+        }
+
+        const slice = try buf.toOwnedSlice();
+        buf.deinit();
+
+        const ptr = try self.allocator.create(sem.StructType);
+        ptr.* = .{ .fields = slice };
+        return ptr;
+    }
+
+    //──────────────────────────────────────────────────── FUNCTION CALL
+    fn handleCall(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!TypedExpr {
+        const fnc = s.lookupFunction(call.callee) orelse return error.SymbolNotFound;
+
+        var args_buf = std.ArrayList(sem.SGNode).init(self.allocator.*);
+        for (call.args) |a|
+            try args_buf.append((try self.visitNode(a.value.*, s)).node.*);
+
+        const args_slice = try args_buf.toOwnedSlice();
+        args_buf.deinit();
+
+        const result_ty: sem.Type = if (fnc.output.fields.len == 0)
+            .{ .builtin = .Void }
+        else
+            .{ .struct_type = &fnc.output };
+
+        const fc = try self.allocator.create(sem.FunctionCall);
+        fc.* = .{ .callee = fnc, .args = args_slice };
+
+        const n = try self.makeNode(.{ .function_call = fc }, s);
+        return .{ .node = n, .ty = result_ty };
+    }
+
+    //──────────────────────────────────────────────────── BINARY OP
+    fn handleBinOp(self: *Semantizer, bo: syn.BinaryOperation, s: *Scope) SemErr!TypedExpr {
+        const lhs = try self.visitNode(bo.left.*, s);
+        const rhs = try self.visitNode(bo.right.*, s);
+
+        const bin = try self.allocator.create(sem.BinaryOperation);
+        bin.* = .{ .operator = bo.operator, .left = lhs.node, .right = rhs.node };
+
+        const n = try self.makeNode(.{ .binary_operation = bin.* }, s);
+        return .{ .node = n, .ty = lhs.ty };
+    }
+
+    //──────────────────────────────────────────────────── RETURN
+    fn handleReturn(self: *Semantizer, r: syn.ReturnStatement, s: *Scope) SemErr!TypedExpr {
+        const e = if (r.expression) |ex| (try self.visitNode(ex.*, s)) else null;
+
+        const rs = try self.allocator.create(sem.ReturnStatement);
+        rs.* = .{ .expression = if (e) |te| te.node else null };
+
+        const n = try self.makeNode(.{ .return_statement = rs }, s);
+        return .{ .node = n, .ty = .{ .builtin = .Void } };
+    }
+
+    //──────────────────────────────────────────────────── IF
+    fn handleIf(self: *Semantizer, ifs: syn.IfStatement, s: *Scope) SemErr!TypedExpr {
+        const cond = try self.visitNode(ifs.condition.*, s);
+        const then_te = try self.visitNode(ifs.then_block.*, s);
+
+        const else_cb = if (ifs.else_block) |eb|
+            (try self.visitNode(eb.*, s)).node.*.code_block
+        else
+            null;
 
         const if_ptr = try self.allocator.create(sem.IfStatement);
         if_ptr.* = .{
@@ -308,173 +362,61 @@ pub const Semantizer = struct {
             .else_block = else_cb,
         };
 
-        const node_ptr = try self.makeNode(.{ .if_statement = if_ptr }, scope);
-        return .{ .node = node_ptr, .ty = .Void };
+        const n = try self.makeNode(.{ .if_statement = if_ptr }, s);
+        return .{ .node = n, .ty = .{ .builtin = .Void } };
     }
 
-    // ---------- función ---------------------------------------------------
-    fn handleFunctionDeclaration(self: *Semantizer, decl: syn.Declaration, loc: tok.Location, parent: *Scope) SemErr!TypedExpr {
-        _ = loc;
-        if (parent.functions.contains(decl.name)) return error.SymbolAlreadyDefined;
+    //──────────────────────────────────────────────────── HELPERS
+    fn makeNode(self: *Semantizer, v: sem.SGNode, s: ?*Scope) !*sem.SGNode {
+        const p = try self.allocator.create(sem.SGNode);
+        p.* = v;
+        if (s) |sc| try sc.nodes.append(p);
+        return p;
+    }
 
-        // 1) Crear alcance hijo para la función
-        var child = try Scope.init(self.allocator, parent);
-
-        // 2) Procesar parámetros y registrarlos en el scope hijo
-        var params = std.ArrayList(*sem.BindingDeclaration).init(self.allocator.*);
-        var ret_params = std.ArrayList(*sem.BindingDeclaration).init(self.allocator.*);
-        if (decl.args) |arg_list| {
-            for (arg_list) |a| {
-                var builtin_ty: sem.BuiltinType = .Int32;
-                if (a.type) |t| builtin_ty = try builtinFromTypeName(t);
-                const bd_ptr = try self.allocator.create(sem.BindingDeclaration);
-                bd_ptr.* = .{
-                    .name = a.name,
-                    .mutability = a.mutability,
-                    .ty = .{ .builtin = builtin_ty },
-                    .initialization = null,
-                };
-                try params.append(bd_ptr);
-                try child.bindings.put(a.name, bd_ptr);
-            }
-        }
-
-        if (decl.type) |rt| {
-            if (rt == .struct_type) {
-                for (rt.struct_type.fields) |f| {
-                    const builtin_ty: sem.BuiltinType = try builtinFromTypeName(f.type);
-                    const bd_ptr = try self.allocator.create(sem.BindingDeclaration);
-                    bd_ptr.* = .{
-                        .name = f.name,
-                        .mutability = syn.Mutability.variable,
-                        .ty = .{ .builtin = builtin_ty },
-                        .initialization = null,
-                    };
-                    try ret_params.append(bd_ptr);
-                    try child.bindings.put(f.name, bd_ptr);
-                }
-            }
-        }
-
-        const body_ptr = decl.value.?; // punto al STNode que es code_block
-
-        // Visitamos ese STNode de tipo code_block; devolvemos TypedExpr
-        const body_te = try self.visitNode(body_ptr.*, &child);
-        const body_sg_node = body_te.node; // *SGNode de variante .code_block
-
-        // 3) Creamos la FunctionDeclaration y apuntamos su `body` al CodeBlock del SGNode
-        const func_ptr = try self.allocator.create(sem.FunctionDeclaration);
-        const declared_rt = decl.type orelse return error.InvalidType;
-        const builtin_rt = try builtinFromTypeName(declared_rt);
-        func_ptr.* = .{
-            .name = decl.name,
-            .params = params,
-            .return_params = ret_params,
-            .return_type = .{ .builtin = builtin_rt },
-            .body = body_sg_node.*.code_block,
+    fn resolveType(self: *Semantizer, t: syn.Type, s: *Scope) !sem.Type {
+        return switch (t) {
+            .type_name => |id| .{ .builtin = try builtinFromName(id) },
+            .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
         };
-
-        // TODO: Ensure that all the return params have been initialized before
-        // returning
-
-        try parent.functions.put(decl.name, func_ptr);
-        const node_ptr = try self.makeNode(.{ .function_declaration = func_ptr }, parent);
-        if (parent.parent == null) try self.root_nodes.append(node_ptr);
-        return .{ .node = node_ptr, .ty = .Void };
     }
 
-    // ---------- return ----------------------------------------------------
-    fn handleReturnStatement(self: *Semantizer, ret: syn.ReturnStatement, scope: *Scope) SemErr!TypedExpr {
-        const expr_opt = if (ret.expression) |e| try self.visitNode(e.*, scope) else null;
-
-        if (expr_opt) |te| scope.setReturnType(te.ty);
-
-        const ret_ptr = try self.allocator.create(sem.ReturnStatement);
-        ret_ptr.* = .{
-            .expression = if (expr_opt) |te| te.node else null,
-        };
-
-        const node_ptr = try self.makeNode(.{ .return_statement = ret_ptr }, scope);
-        return .{ .node = node_ptr, .ty = .Void };
-    }
-
-    fn handleStructLiteral(self: *Semantizer, sl: syn.StructLiteral, _scope: *Scope) SemErr!TypedExpr {
-        var fields = try self.allocator.alloc(sem.StructField, sl.fields.len);
-        for (sl.fields, 0..) |f, i| {
-            const tv = try self.visitNode(f.value.*, _scope);
-            fields[i] = .{ .name = f.name, .value = tv.node };
-        }
-        const sl_ptr = try self.allocator.create(sem.StructLiteral);
-        sl_ptr.* = .{ .fields = fields };
-        const node_ptr = try self.makeNode(.{ .struct_literal = sl_ptr }, null);
-        return .{ .node = node_ptr, .ty = .Struct };
-    }
-
-    // ========================================================================
-    //  Helpers
-    // ========================================================================
-    fn makeNode(self: *Semantizer, val: sem.SGNode, scope: ?*Scope) SemErr!*sem.SGNode {
-        const ptr = try self.allocator.create(sem.SGNode);
-        ptr.* = val;
-        if (scope) |s| try s.nodes.append(ptr);
-        return ptr;
-    }
-
-    fn builtinFromName(name: []const u8) SemErr!sem.BuiltinType {
+    fn builtinFromName(name: []const u8) !sem.BuiltinType {
         return std.meta.stringToEnum(sem.BuiltinType, name) orelse error.InvalidType;
-    }
-
-    fn builtinFromTypeName(tn: syn.TypeName) SemErr!sem.BuiltinType {
-        return switch (tn) {
-            .identifier => |n| builtinFromName(n),
-            .struct_type => |st| blk: {
-                if (st.fields.len == 1) {
-                    break :blk builtinFromTypeName(st.fields[0].type);
-                }
-                break :blk sem.BuiltinType.Struct;
-            },
-        };
     }
 };
 
+//────────────────────────────────────────────────────────────────────── BUILDER SCOPE
 const Scope = struct {
     parent: ?*Scope,
-    nodes: std.ArrayList(*sem.SGNode),
 
+    nodes: std.ArrayList(*sem.SGNode),
     bindings: std.StringHashMap(*sem.BindingDeclaration),
     functions: std.StringHashMap(*sem.FunctionDeclaration),
     types: std.StringHashMap(*sem.TypeDeclaration),
 
-    inferredReturnType: ?sem.BuiltinType = null,
+    current_fn: ?*sem.FunctionDeclaration,
 
-    fn init(alloc: *const std.mem.Allocator, parent: ?*Scope) SemErr!Scope {
+    fn init(a: *const std.mem.Allocator, p: ?*Scope, fnc: ?*sem.FunctionDeclaration) !Scope {
         return .{
-            .parent = parent,
-            .nodes = std.ArrayList(*sem.SGNode).init(alloc.*),
-            .bindings = std.StringHashMap(*sem.BindingDeclaration).init(alloc.*),
-            .functions = std.StringHashMap(*sem.FunctionDeclaration).init(alloc.*),
-            .types = std.StringHashMap(*sem.TypeDeclaration).init(alloc.*),
+            .parent = p,
+            .nodes = std.ArrayList(*sem.SGNode).init(a.*),
+            .bindings = std.StringHashMap(*sem.BindingDeclaration).init(a.*),
+            .functions = std.StringHashMap(*sem.FunctionDeclaration).init(a.*),
+            .types = std.StringHashMap(*sem.TypeDeclaration).init(a.*),
+            .current_fn = fnc,
         };
     }
 
-    fn lookupBinding(self: *Scope, name: []const u8) ?*sem.BindingDeclaration {
-        if (self.bindings.get(name)) |b| return b;
-        if (self.parent) |p| return p.lookupBinding(name);
+    fn lookupBinding(self: *Scope, n: []const u8) ?*sem.BindingDeclaration {
+        if (self.bindings.get(n)) |b| return b;
+        if (self.parent) |p| return p.lookupBinding(n);
         return null;
     }
 
-    fn lookupFunction(self: *Scope, name: []const u8) ?*sem.FunctionDeclaration {
-        if (self.functions.get(name)) |f| return f;
-        if (self.parent) |p| return p.lookupFunction(name);
+    fn lookupFunction(self: *Scope, n: []const u8) ?*sem.FunctionDeclaration {
+        if (self.functions.get(n)) |f| return f;
+        if (self.parent) |p| return p.lookupFunction(n);
         return null;
-    }
-
-    fn setReturnType(self: *Scope, ty: sem.BuiltinType) void {
-        if (self.inferredReturnType) |cur| {
-            if (cur == .Float32 and ty == .Int32) return;
-            if (cur == .Int32 and ty == .Float32) self.inferredReturnType = .Float32;
-        } else {
-            self.inferredReturnType = ty;
-        }
     }
 };
