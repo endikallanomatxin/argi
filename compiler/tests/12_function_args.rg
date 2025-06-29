@@ -1,5 +1,5 @@
-add_one (.a: Int32) -> (.result: Int32) := {
-    return a + 1
+add_one (.i: Int32) -> (.o: Int32) := {
+    o = i + 1
 }
 
 main () -> (.status_code: Int32) := {

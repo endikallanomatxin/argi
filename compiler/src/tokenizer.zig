@@ -33,7 +33,7 @@ pub const Tokenizer = struct {
 
     /// Llama a `lexNextToken` repetidas veces hasta terminar, y devuelve
     /// el slice de `Token` generado.
-    pub fn tokenize(self: *Tokenizer) !std.ArrayList(tok.Token) {
+    pub fn tokenize(self: *Tokenizer) ![]tok.Token {
         std.debug.print("\n\ntokenizing...\n", .{});
         while (self.location.offset < self.source.len) {
             lexNextToken(self) catch |err| {
@@ -47,7 +47,7 @@ pub const Tokenizer = struct {
         }
         // Añadir el token EOF al final
         try self.addToken(tok.Content{ .eof = .{} }, self.location);
-        return self.tokens;
+        return self.tokens.items;
     }
 
     /// Añade un token a la lista de tokens, actualizando la ubicación actual.
@@ -223,6 +223,12 @@ pub const Tokenizer = struct {
             },
             ')' => {
                 try self.addToken(tok.Content{ .close_parenthesis = .{} }, loc);
+            },
+            '[' => {
+                try self.addToken(tok.Content{ .open_bracket = .{} }, loc);
+            },
+            ']' => {
+                try self.addToken(tok.Content{ .close_bracket = .{} }, loc);
             },
             '{' => {
                 try self.addToken(tok.Content{ .open_brace = .{} }, loc);

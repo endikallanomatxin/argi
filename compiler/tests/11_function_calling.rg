@@ -1,10 +1,9 @@
-other_function () -> (.status_code: Int32) := {
-    a := 1
-    return 0
+other_function () -> (.r: Int32) := {
+    r = 42
 }
 
 main () -> (.status_code: Int32) := {
-    b := other_function()
+    r := other_function()
 
-    status_code = b
+    status_code = r
 }

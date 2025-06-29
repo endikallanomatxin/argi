@@ -14,45 +14,43 @@ pub const STNode = struct {
 };
 
 pub const Content = union(enum) {
-    declaration: Declaration,
+    symbol_declaration: SymbolDeclaration,
+    type_declaration: TypeDeclaration,
+    function_declaration: FunctionDeclaration,
     assignment: Assignment,
     identifier: []const u8,
     function_call: FunctionCall,
     code_block: CodeBlock,
     literal: tok.Literal, // literals are not parsed until the type is known.
-    struct_literal: StructLiteral,
-    type_name: TypeName,
+    struct_type_literal: StructTypeLiteral,
+    struct_value_literal: StructValueLiteral,
     return_statement: ReturnStatement,
     binary_operation: BinaryOperation,
     if_statement: IfStatement,
 };
 
-pub const SymbolKind = enum {
-    // Always const
-    function,
-    type,
-    // Can be const or var
-    binding,
-    // Pero es importante que el error no lo de aquí sino más adelante,
-    // para que puedan darse la mayor cantidad de errores en paralelo.
+pub const Type = union(enum) {
+    type_name: []const u8,
+    struct_type_literal: StructTypeLiteral,
 };
 
-pub const Declaration = struct {
-    kind: SymbolKind,
+pub const SymbolDeclaration = struct {
     name: []const u8,
-    type: ?TypeName,
+    type: ?Type,
     mutability: Mutability,
-    args: ?[]const Argument,
     value: ?*STNode,
+};
 
-    pub fn isFunction(self: Declaration) bool {
-        const v = self.value orelse return false;
-        // if the value points to a code block, then it's a function
-        switch (v.*) {
-            STNode.codeBlock => return true,
-            else => return false,
-        }
-    }
+pub const TypeDeclaration = struct {
+    name: []const u8,
+    value: *STNode, // StructTypeLiteral
+};
+
+pub const FunctionDeclaration = struct {
+    name: []const u8,
+    input: StructTypeLiteral, // Arguments
+    output: StructTypeLiteral, // Named return params
+    body: *STNode, // CodeBlock
 };
 
 pub const Assignment = struct {
@@ -80,38 +78,23 @@ pub const CodeBlock = struct {
     // Return args in the future.
 };
 
-pub const StructLiteral = struct {
-    fields: []const StructField,
+pub const StructTypeLiteral = struct {
+    fields: []const StructTypeLiteralField,
 };
 
-pub const StructField = struct {
+pub const StructTypeLiteralField = struct {
     name: []const u8,
-    value: *STNode,
-};
-
-pub const StructType = struct {
-    fields: []const StructTypeField,
-};
-
-pub const StructTypeField = struct {
-    name: []const u8,
-    type: TypeName,
+    type: ?Type,
     default_value: ?*STNode, // Optional default value for the field
 };
 
-pub const Argument = struct {
+pub const StructValueLiteral = struct {
+    fields: []const StructValueLiteralField,
+};
+
+pub const StructValueLiteralField = struct {
     name: []const u8,
-    mutability: Mutability,
-    type: ?TypeName,
-};
-
-pub const TypeName = union(enum) {
-    identifier: []const u8,
-    struct_type: StructType,
-};
-
-pub const ReturnStatement = struct {
-    expression: ?*STNode,
+    value: *STNode,
 };
 
 pub const BinaryOperation = struct {
@@ -124,4 +107,8 @@ pub const IfStatement = struct {
     condition: *STNode,
     then_block: *STNode,
     else_block: ?*STNode,
+};
+
+pub const ReturnStatement = struct {
+    expression: ?*STNode,
 };
