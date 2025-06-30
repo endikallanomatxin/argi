@@ -88,6 +88,13 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             }
         },
 
+        .struct_field_access => |sfa| {
+            std.debug.print("FieldAccess \"{s}\" (index: {d})\n", .{ sfa.field_name, sfa.field_index });
+            indent(lvl + 1);
+            std.debug.print("Struct:\n", .{});
+            printNode(sfa.struct_value, lvl + 2);
+        },
+
         .binary_operation => |bo| {
             const op = switch (bo.operator) {
                 .addition => "+",

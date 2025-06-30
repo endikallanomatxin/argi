@@ -24,6 +24,7 @@ pub const Content = union(enum) {
     literal: tok.Literal, // literals are not parsed until the type is known.
     struct_type_literal: StructTypeLiteral,
     struct_value_literal: StructValueLiteral,
+    struct_field_access: StructFieldAccess,
     return_statement: ReturnStatement,
     binary_operation: BinaryOperation,
     if_statement: IfStatement,
@@ -95,6 +96,11 @@ pub const StructValueLiteral = struct {
 pub const StructValueLiteralField = struct {
     name: []const u8,
     value: *STNode,
+};
+
+pub const StructFieldAccess = struct {
+    struct_value: *STNode,
+    field_name: []const u8,
 };
 
 pub const BinaryOperation = struct {

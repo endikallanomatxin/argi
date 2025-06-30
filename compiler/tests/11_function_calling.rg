@@ -3,7 +3,5 @@ other_function () -> (.r: Int32) := {
 }
 
 main () -> (.status_code: Int32) := {
-    r := other_function()
-
-    status_code = r
+    status_code = other_function().r
 }

@@ -139,6 +139,16 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             std.debug.print("\n", .{});
         },
 
+        // ── STRUCT FIELD ACCESS ──────────────────────────────────────────
+        .struct_field_access => |sfa| {
+            std.debug.print("StructFieldAccess \n", .{});
+            indent(lvl + 1);
+            std.debug.print("Struct: ", .{});
+            printNode(sfa.struct_value.*, 0);
+            indent(lvl + 1);
+            std.debug.print("Field:  .{s}\n", .{sfa.field_name});
+        },
+
         // ── CODE-BLOCK ───────────────────────────────────────────────────
         .code_block => |cb| {
             std.debug.print("CodeBlock\n", .{});

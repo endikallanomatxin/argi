@@ -27,6 +27,7 @@ pub const SGNode = union(enum) {
     code_block: *CodeBlock,
     value_literal: ValueLiteral,
     struct_value_literal: *const StructValueLiteral,
+    struct_field_access: *const StructFieldAccess,
     binary_operation: BinaryOperation,
     return_statement: *ReturnStatement,
     if_statement: *IfStatement,
@@ -91,6 +92,12 @@ pub const StructValueLiteral = struct {
 pub const StructValueLiteralField = struct {
     name: []const u8,
     value: *const SGNode,
+};
+
+pub const StructFieldAccess = struct {
+    struct_value: *const SGNode,
+    field_name: []const u8,
+    field_index: u32,
 };
 
 //
