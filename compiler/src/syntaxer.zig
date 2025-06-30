@@ -48,14 +48,10 @@ pub const Syntaxer = struct {
             std.debug.print("Error al parsear: {any}\n", .{err});
             return err;
         };
-
-        // Convert to const slice
-        return self.st.items;
+        return self.st.items; // slice inmutable a devolver
     }
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    // token helpers
-    // ─────────────────────────────────────────────────────────────────────────────
+    // ───────────────────────────────── token helpers ─────────────────────────
     fn current(self: *Syntaxer) tok.Token {
         return self.tokens[self.index];
     }
@@ -82,9 +78,7 @@ pub const Syntaxer = struct {
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    // Node helpers
-    // ─────────────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────── node helpers ────────────────────────────
     fn makeNode(self: *Syntaxer, c: syn.Content, l: tok.Location) !*syn.STNode {
         const n = try self.allocator.create(syn.STNode);
         n.*.content = c;
@@ -92,9 +86,7 @@ pub const Syntaxer = struct {
         return n;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  Basic atoms
-    // ─────────────────────────────────────────────────────────────────────────────
+    // ───────────────────────────────  atoms ──────────────────────────────────
     fn parseIdentifier(self: *Syntaxer) SyntaxerError![]const u8 {
         const t = self.current();
         if (t.content != .identifier) return SyntaxerError.ExpectedIdentifier;
@@ -103,11 +95,9 @@ pub const Syntaxer = struct {
         return name;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  TYPE  ( Type = ident | struct-type-literal )
-    // ─────────────────────────────────────────────────────────────────────────────
+    // ────────────────────────────  TYPE ANNOTATIONS ──────────────────────────
     fn parseType(self: *Syntaxer) SyntaxerError!?syn.Type {
-        // type annotation may be omitted
+        // permitimos omitir la anotación
         if (self.tokenIs(.equal) or self.tokenIs(.comma) or self.tokenIs(.close_parenthesis))
             return null;
 
@@ -163,9 +153,7 @@ pub const Syntaxer = struct {
         return .{ .fields = fields.items };
     }
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  Struct VALUE literal (same syntax, but all fields are value-expressions)
-    // ─────────────────────────────────────────────────────────────────────────────
+    // ─────── struct VALUE literal  (p.e.  (.x=1, .y=2) ) ─────────────────────
     fn parseStructValueLiteral(self: *Syntaxer) SyntaxerError!*syn.STNode {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         self.advanceOne();
@@ -199,16 +187,30 @@ pub const Syntaxer = struct {
         );
     }
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  Expressions  (subset-- only what changed)
-    // ─────────────────────────────────────────────────────────────────────────────
+    // ────────────────────────── postfix “.campo” chain ───────────────────────
+    fn parsePostfix(self: *Syntaxer, mut: *syn.STNode) !*syn.STNode {
+        var new_mut = mut;
+        while (self.tokenIs(.dot)) {
+            const dot_loc = self.tokenLocation();
+            self.advanceOne(); // consume '.'
+            const fld_name = try self.parseIdentifier();
+            new_mut = try self.makeNode(
+                .{ .struct_field_access = .{ .struct_value = mut, .field_name = fld_name } },
+                dot_loc,
+            );
+        }
+        return new_mut;
+    }
+
+    // ─────────────────────────────  EXPRESSIONS  ─────────────────────────────
+    /// [primary] {'.' fld}  (bin-op rhs)?
     fn parsePrimary(self: *Syntaxer) !*syn.STNode {
         const t = self.current();
-        return switch (t.content) {
+        const base: *syn.STNode = switch (t.content) {
+            // ─── ident  /  call ─────────────────────────────────────────────
             .identifier => blk: {
-                // Could be call or bare identifier
                 const name = try self.parseIdentifier();
-                if (self.tokenIs(.open_parenthesis)) { // call
+                if (self.tokenIs(.open_parenthesis)) { // llamada
                     self.advanceOne();
                     self.skipNewLinesAndComments();
                     var args = std.ArrayList(syn.CallArgument).init(self.allocator.*);
@@ -225,7 +227,8 @@ pub const Syntaxer = struct {
                             self.skipNewLinesAndComments();
                         }
                     }
-                    if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+                    if (!self.tokenIs(.close_parenthesis))
+                        return SyntaxerError.ExpectedRightParen;
                     self.advanceOne();
 
                     break :blk try self.makeNode(
@@ -233,40 +236,43 @@ pub const Syntaxer = struct {
                         t.location,
                     );
                 }
-
                 break :blk try self.makeNode(.{ .identifier = name }, t.location);
             },
 
+            // ─── literal ────────────────────────────────────────────────────
             .literal => |lit| blk: {
                 self.advanceOne();
                 break :blk try self.makeNode(.{ .literal = lit }, t.location);
             },
 
+            // ─── struct value literal ───────────────────────────────────────
             .open_parenthesis => try self.parseStructValueLiteral(),
 
+            // ─── [expr] en corchetes ────────────────────────────────────────
             .open_bracket => blk: {
                 self.advanceOne();
                 const e = try self.parseExpression();
-                if (!self.tokenIs(.close_bracket)) {
+                if (!self.tokenIs(.close_bracket))
                     return SyntaxerError.ExpectedRightBracket;
-                }
                 self.advanceOne();
                 break :blk e;
             },
 
+            // ─── bloque `{}` embebido ───────────────────────────────────────
             .open_brace => try self.parseCodeBlock(),
-            else => SyntaxerError.ExpectedIntLiteral,
+
+            else => return SyntaxerError.ExpectedIntLiteral,
         };
+
+        // aplica cadenas de “.campo”
+        return try self.parsePostfix(base);
     }
 
     fn parseExpression(self: *Syntaxer) SyntaxerError!*syn.STNode {
-        // De momento: sin precedencia completa – igual que antes.
-        // Solo binario simple   <prim> <op> <expr>?
         const lhs = try self.parsePrimary();
-        if (self.current().content == .binary_operator or
-            self.current().content == .check_equals or
-            self.current().content == .check_not_equals)
-        {
+
+        // (solo bin-op derecha-recursivo por ahora)
+        if (self.current().content == .binary_operator or self.current().content == .check_equals or self.current().content == .check_not_equals) {
             const op_tok = self.current();
             var op: tok.BinaryOperator = undefined;
             switch (op_tok.content) {
@@ -285,9 +291,7 @@ pub const Syntaxer = struct {
         return lhs;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  Declarations, assignments, etc.
-    // ─────────────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────  STATEMENTS  ──────────────────────────────
     fn parseStatement(self: *Syntaxer) SyntaxerError!*syn.STNode {
         self.skipNewLinesAndComments();
 
@@ -300,9 +304,8 @@ pub const Syntaxer = struct {
         const id_loc = self.tokenLocation();
         const name = try self.parseIdentifier();
 
-        // ---------- FUNCTION DECLARATION ----------
+        // ----------- FUNCTION DECLARATION ----------------------------------
         if (self.tokenIs(.open_parenthesis)) {
-            // parse input struct-type-literal
             const input = try self.parseStructTypeLiteral();
             if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
             self.advanceOne();
@@ -312,7 +315,6 @@ pub const Syntaxer = struct {
             if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
             self.advanceOne();
 
-            // body
             const body = try self.parseCodeBlock();
 
             const fn_decl = syn.FunctionDeclaration{
@@ -324,7 +326,7 @@ pub const Syntaxer = struct {
             return try self.makeNode(.{ .function_declaration = fn_decl }, id_loc);
         }
 
-        // ---------- ASSIGNMENT ----------
+        // ----------- ASSIGNMENT --------------------------------------------
         if (self.tokenIs(.equal)) {
             self.advanceOne();
             const val = try self.parseExpression();
@@ -334,17 +336,12 @@ pub const Syntaxer = struct {
             );
         }
 
-        // ---------- TYPE DECLARATION  ( Foo = (<struct-type-literal>) ) ----------
-        if (self.tokenIs(.equal)) unreachable; // already handled
+        // ----------- SYMBOL / TYPE DECLARATION -----------------------------
         if (self.tokenIs(.colon) or self.tokenIs(.double_colon) or self.tokenIs(.open_parenthesis)) {
-            // SYMBOL DECLARATION or TYPE DECLARATION
             var mut: syn.Mutability = .constant;
-            if (self.tokenIs(.double_colon)) {
-                mut = .variable;
-            }
+            if (self.tokenIs(.double_colon)) mut = .variable;
             if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) self.advanceOne();
 
-            // type annotation MAY be omitted for symbols
             const ty_opt = try self.parseType();
 
             var rhs: ?*syn.STNode = null;
@@ -362,7 +359,7 @@ pub const Syntaxer = struct {
             return try self.makeNode(.{ .symbol_declaration = sym }, id_loc);
         }
 
-        // ---------- TYPE DECLARATION (Foo = (.x:Int) afuera) ----------
+        // ----------- TYPE Foo = (struct literal)  ---------------------------
         if (self.tokenIs(.equal)) {
             self.advanceOne();
             if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
@@ -379,11 +376,10 @@ pub const Syntaxer = struct {
         return SyntaxerError.ExpectedDeclarationOrAssignment;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────────
-    //  Higher-level constructs (unchanged except for node tags)
-    // ─────────────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────  SENTENCES  ──────────────────────────────
     fn parseSentences(self: *Syntaxer) !std.ArrayList(*syn.STNode) {
         var list = std.ArrayList(*syn.STNode).init(self.allocator.*);
+
         while (!self.tokenIs(.eof) and !self.tokenIs(.close_brace)) {
             switch (self.current().content) {
                 .new_line, .comment => self.skipNewLinesAndComments(),
@@ -417,7 +413,10 @@ pub const Syntaxer = struct {
             self.advanceOne();
             elseB = if (self.tokenIs(.keyword_if)) try self.parseIf() else try self.parseCodeBlock();
         }
-        return try self.makeNode(.{ .if_statement = .{ .condition = cond, .then_block = thenB, .else_block = elseB } }, start);
+        return try self.makeNode(
+            .{ .if_statement = .{ .condition = cond, .then_block = thenB, .else_block = elseB } },
+            start,
+        );
     }
 
     fn parseReturn(self: *Syntaxer) SyntaxerError!*syn.STNode {
@@ -428,7 +427,7 @@ pub const Syntaxer = struct {
         return try self.makeNode(.{ .return_statement = .{ .expression = expr } }, start);
     }
 
-    // ─────────────────────────────────────────────────────────────────────────────
+    // ─────────────────────────────  DEBUG  ──────────────────────────────────
     pub fn printST(self: *Syntaxer) void {
         std.debug.print("\nSYNTAX TREE\n", .{});
         for (self.st.items) |n| synp.printNode(n.*, 0);

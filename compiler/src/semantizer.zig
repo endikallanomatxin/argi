@@ -64,6 +64,7 @@ pub const Semantizer = struct {
             .identifier => |id| self.handleIdentifier(id, s),
             .literal => |l| self.handleLiteral(l),
             .struct_value_literal => |sl| self.handleStructValLit(sl, s),
+            .struct_field_access => |sfa| self.handleStructFieldAccess(sfa, s),
             .function_call => |fc| self.handleCall(fc, s),
             .code_block => |blk| self.handleCodeBlock(blk, s),
             .binary_operation => |bo| self.handleBinOp(bo, s),
@@ -263,6 +264,36 @@ pub const Semantizer = struct {
 
         const n = try self.makeNode(.{ .struct_value_literal = lit }, null);
         return .{ .node = n, .ty = .{ .struct_type = st_ptr } };
+    }
+
+    //──────────────────────────────────────────────────── STRUCT FIELD ACCESS
+    fn handleStructFieldAccess(self: *Semantizer, ma: syn.StructFieldAccess, s: *Scope) SemErr!TypedExpr {
+        const base = try self.visitNode(ma.struct_value.*, s);
+
+        // solo structs
+        if (base.ty != .struct_type) return error.InvalidType;
+        const st = base.ty.struct_type;
+
+        var idx: ?u32 = null;
+        var fty: sem.Type = undefined;
+        for (st.fields, 0..) |f, i| {
+            if (std.mem.eql(u8, f.name, ma.field_name)) {
+                idx = @intCast(i);
+                fty = f.ty;
+                break;
+            }
+        }
+        if (idx == null) return error.SymbolNotFound;
+
+        const fa = try self.allocator.create(sem.StructFieldAccess);
+        fa.* = .{
+            .struct_value = base.node,
+            .field_name = ma.field_name,
+            .field_index = idx.?,
+        };
+
+        const n = try self.makeNode(.{ .struct_field_access = fa }, null);
+        return .{ .node = n, .ty = fty };
     }
 
     //────────────────────────────────────────────────────  AUX STRUCT TYPES

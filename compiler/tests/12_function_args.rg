@@ -3,8 +3,5 @@ add_one (.i: Int32) -> (.o: Int32) := {
 }
 
 main () -> (.status_code: Int32) := {
-    a := 1
-    b := add_one(a)
-
-    status_code = b
+    status_code = add_one(1).o
 }

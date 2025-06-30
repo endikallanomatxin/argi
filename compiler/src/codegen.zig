@@ -107,6 +107,7 @@ pub const CodeGenerator = struct {
             },
             .function_call => |fc| try self.genFunctionCall(fc),
             .struct_value_literal => |sl| try self.genStructValueLiteral(sl),
+            .struct_field_access => |sfa| try self.genStructFieldAccess(sfa),
             else => CodegenError.UnknownNode,
         };
     }
@@ -242,26 +243,78 @@ pub const CodeGenerator = struct {
         if (self.symbol_table.contains(b.name))
             return CodegenError.SymbolAlreadyDefined;
 
+        // 1) posible inicialización
         var init_tv: ?TypedValue = null;
-        if (b.initialization) |n| init_tv = try self.visitNode(n);
+        if (b.initialization) |n|
+            init_tv = try self.visitNode(n);
 
-        const llvm_ty = if (init_tv) |tv|
-            tv.type_ref
-        else
-            try self.toLLVMType(b.ty);
+        // 2) tipo declarado (siempre está resuelto por el semantizador)
+        const llvm_decl_ty = try self.toLLVMType(b.ty);
 
+        // 3) reserva de espacio
         const cname = try self.dupZ(b.name);
-        const alloca = c.LLVMBuildAlloca(self.builder, llvm_ty, cname.ptr);
-        const already_initialized = init_tv != null;
+        const alloca = c.LLVMBuildAlloca(self.builder, llvm_decl_ty, cname.ptr);
+
+        // 4) registrar en la tabla
         try self.symbol_table.put(b.name, .{
             .cname = cname,
             .mutability = b.mutability,
-            .type_ref = llvm_ty,
+            .type_ref = llvm_decl_ty,
             .ref = alloca,
-            .initialized = already_initialized,
+            .initialized = init_tv != null,
         });
 
-        if (init_tv) |tv| _ = c.LLVMBuildStore(self.builder, tv.value_ref, alloca);
+        // 5) almacenar valor inicial, manejando struct-parciales
+        if (init_tv) |tv| {
+            if (tv.type_ref == llvm_decl_ty) {
+                // tipos idénticos → copiar tal cual
+                _ = c.LLVMBuildStore(self.builder, tv.value_ref, alloca);
+            } else if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMStructTypeKind and
+                c.LLVMGetTypeKind(llvm_decl_ty) == c.LLVMStructTypeKind)
+            {
+                // El literal proporciona solo un subconjunto de campos:
+                // construimos un agregado del tamaño correcto, rellenando
+                // con `undef` los campos faltantes.
+                var agg = c.LLVMGetUndef(llvm_decl_ty);
+
+                const provided_cnt = c.LLVMCountStructElementTypes(tv.type_ref);
+                var idx: u32 = 0;
+                while (idx < provided_cnt) : (idx += 1) {
+                    const elem = c.LLVMBuildExtractValue(
+                        self.builder,
+                        tv.value_ref,
+                        idx,
+                        "init.extract",
+                    );
+                    agg = c.LLVMBuildInsertValue(
+                        self.builder,
+                        agg,
+                        elem,
+                        idx,
+                        "init.insert",
+                    );
+                }
+
+                // después de haber copiado los que sí aporta el literal…
+                var i: u32 = provided_cnt;
+                while (i < c.LLVMCountStructElementTypes(llvm_decl_ty)) : (i += 1) {
+                    // 1) buscamos si el campo i tiene default_value semántico
+                    const field_sem = b.ty.struct_type.fields[i];
+                    if (field_sem.default_value) |dflt_node| {
+                        // evaluamos el nodo (debería dar un TypedValue constante)
+                        const tv_default = (try self.visitNode(dflt_node)).?;
+                        agg = c.LLVMBuildInsertValue(self.builder, agg, tv_default.value_ref, i, "init.default");
+                    } else {
+                        // 2) si no hay default explícito ya dejamos el `undef` (comporta‐miento previo)
+                        agg = c.LLVMBuildInsertValue(self.builder, agg, c.LLVMGetUndef(c.LLVMStructGetTypeAtIndex(llvm_decl_ty, i)), i, "init.undef");
+                    }
+                }
+
+                _ = c.LLVMBuildStore(self.builder, agg, alloca);
+            } else {
+                return CodegenError.InvalidType;
+            }
+        }
     }
 
     fn genBindingUse(self: *CodeGenerator, b: *sem.BindingDeclaration) !TypedValue {
@@ -442,6 +495,19 @@ pub const CodeGenerator = struct {
         const ty = try self.toLLVMType(sl.ty);
         const val = c.LLVMConstNamedStruct(ty, vals.ptr, @intCast(cnt));
         return .{ .value_ref = val, .type_ref = ty };
+    }
+
+    // ────────────────────────────────────────── struct field access ──
+    fn genStructFieldAccess(self: *CodeGenerator, fa: *const sem.StructFieldAccess) !TypedValue {
+        const base = (try self.visitNode(fa.struct_value)) orelse
+            return CodegenError.ValueNotFound;
+
+        // el índice ya viene resuelto por el semantizador
+        const val = c.LLVMBuildExtractValue(self.builder, base.value_ref, fa.field_index, "fld");
+
+        const field_ty = c.LLVMStructGetTypeAtIndex(base.type_ref, fa.field_index);
+
+        return .{ .value_ref = val, .type_ref = field_ty };
     }
 
     // ────────────────────────────────────────── misc helpers ──
