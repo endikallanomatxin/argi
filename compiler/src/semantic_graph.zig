@@ -140,7 +140,7 @@ pub const Assignment = struct {
 
 pub const FunctionCall = struct {
     callee: *const FunctionDeclaration,
-    args: []const SGNode,
+    input: *const SGNode, // Arguments
 };
 
 //

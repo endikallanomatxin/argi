@@ -124,3 +124,11 @@ pub fn printToken(token: tok.Token) void {
         },
     }
 }
+
+pub fn printTokenWithLocation(token: tok.Token, location: tok.Location) void {
+    printToken(token);
+    std.debug.print("at {d}:{d}\n", .{
+        location.line,
+        location.column,
+    });
+}

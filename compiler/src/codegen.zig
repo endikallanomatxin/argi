@@ -196,6 +196,18 @@ pub const CodeGenerator = struct {
             try self.genBindingDecl(&binding_declaration);
         }
 
+        // 7) extraer los parámetros de entrada
+        const param_agg = c.LLVMGetParam(fn_ref, 0);
+        for (f.input.fields, 0..) |field, idx| {
+            const sym_ptr = self.symbol_table.getPtr(field.name) orelse
+                return CodegenError.SymbolNotFound;
+
+            const elem =
+                c.LLVMBuildExtractValue(self.builder, param_agg, @intCast(idx), "arg.extract");
+            _ = c.LLVMBuildStore(self.builder, elem, sym_ptr.*.ref);
+            sym_ptr.*.initialized = true; // ahora sí está inicializado
+        }
+
         // 8) registrar args de retorno en la tabla local
         for (f.output.fields) |field| {
             // Generate binding declaration for each output parameter
@@ -460,29 +472,28 @@ pub const CodeGenerator = struct {
 
     // ────────────────────────────────────────── call ──
     fn genFunctionCall(self: *CodeGenerator, fc: *const sem.FunctionCall) CodegenError!?TypedValue {
-        const sym = self.symbol_table.get(fc.callee.name) orelse return CodegenError.SymbolNotFound;
+        const sym = self.symbol_table.get(fc.callee.name) orelse
+            return CodegenError.SymbolNotFound;
         const fn_ty = sym.type_ref;
         const ret_ty = c.LLVMGetReturnType(fn_ty);
 
-        const argc = fc.args.len;
-        var argv_ptr: ?[*]llvm.c.LLVMValueRef = null;
-        if (argc == 0 and c.LLVMCountParamTypes(fn_ty) == 1) {
-            // el callee espera el agregado vacío → pasamos undef del tipo correcto
-            const param_types: []llvm.c.LLVMTypeRef = try self.allocator.alloc(llvm.c.LLVMTypeRef, 1);
-            c.LLVMGetParamTypes(fn_ty, @ptrCast(param_types.ptr));
-            var dummy = c.LLVMGetUndef(param_types[0]);
-            argv_ptr = @ptrCast(&dummy);
-        } else if (argc > 0) {
-            var tmp = try self.allocator.alloc(llvm.c.LLVMValueRef, argc);
-            for (fc.args, 0..) |arg, i|
-                tmp[i] = (try self.visitNode(&arg)).?.value_ref;
-            argv_ptr = @ptrCast(tmp.ptr);
-        }
+        // único parámetro
+        var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, 1);
+        argv[0] = (try self.visitNode(fc.input)).?.value_ref;
 
-        const call_val = c.LLVMBuildCall2(self.builder, fn_ty, sym.ref, argv_ptr orelse null, @intCast(argc), "call");
+        const call_val = c.LLVMBuildCall2(
+            self.builder,
+            fn_ty,
+            sym.ref,
+            argv.ptr,
+            1,
+            "call",
+        );
 
-        if (ret_ty == c.LLVMVoidType()) return null;
-        return .{ .value_ref = call_val, .type_ref = ret_ty };
+        return if (ret_ty == c.LLVMVoidType())
+            null
+        else
+            .{ .value_ref = call_val, .type_ref = ret_ty };
     }
 
     // ────────────────────────────────────────── struct literal ──

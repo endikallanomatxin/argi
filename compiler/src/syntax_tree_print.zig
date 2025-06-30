@@ -200,11 +200,9 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
         // ── FUNCTION CALL ────────────────────────────────────────────────
         .function_call => |fc| {
             std.debug.print("Call {s}\n", .{fc.callee});
-            for (fc.args) |arg| {
-                indent(lvl + 1);
-                if (arg.name) |n| std.debug.print("{s} =\n", .{n}) else std.debug.print("arg =\n", .{});
-                printNode(arg.value.*, lvl + 2);
-            }
+            indent(lvl + 1);
+            std.debug.print("input:\n", .{});
+            printNode(fc.input.*, lvl + 2);
         },
     }
 }

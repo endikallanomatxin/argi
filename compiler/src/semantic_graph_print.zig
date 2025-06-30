@@ -65,11 +65,7 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
 
         .function_call => |fc| {
             std.debug.print("Call \"{s}\"\n", .{fc.callee.name});
-            if (fc.args.len > 0) {
-                indent(lvl + 1);
-                std.debug.print("Args:\n", .{});
-                for (fc.args) |arg| printNode(&arg, lvl + 2);
-            }
+            printNode(fc.input, lvl + 1);
         },
 
         .code_block => |blk| {
