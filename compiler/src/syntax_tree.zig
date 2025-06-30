@@ -61,12 +61,7 @@ pub const Assignment = struct {
 
 pub const FunctionCall = struct {
     callee: []const u8,
-    args: []const CallArgument,
-};
-
-pub const CallArgument = struct {
-    name: ?[]const u8,
-    value: *STNode,
+    input: *const STNode, // Arguments
 };
 
 pub const Mutability = enum {

@@ -15,6 +15,7 @@ pub const SyntaxerError = error{
     ExpectedRightBracket,
     ExpectedLeftBrace,
     ExpectedRightBrace,
+    ExpectedStructField,
     ExpectedArrow,
     ExpectedDoubleColon,
     ExpectedAssignment,
@@ -89,7 +90,11 @@ pub const Syntaxer = struct {
     // ───────────────────────────────  atoms ──────────────────────────────────
     fn parseIdentifier(self: *Syntaxer) SyntaxerError![]const u8 {
         const t = self.current();
-        if (t.content != .identifier) return SyntaxerError.ExpectedIdentifier;
+        if (t.content != .identifier) {
+            std.debug.print("Expected identifier, found:\n", .{});
+            tokp.printTokenWithLocation(t, self.tokenLocation());
+            return SyntaxerError.ExpectedIdentifier;
+        }
         const name = t.content.identifier;
         self.advanceOne();
         return name;
@@ -119,7 +124,11 @@ pub const Syntaxer = struct {
         var fields = std.ArrayList(syn.StructTypeLiteralField).init(self.allocator.*);
 
         while (!self.tokenIs(.close_parenthesis)) {
-            if (!self.tokenIs(.dot)) return SyntaxerError.ExpectedIdentifier;
+            if (!self.tokenIs(.dot)) {
+                std.debug.print("Expected struct field, found:\n", .{});
+                tokp.printToken(self.current());
+                return SyntaxerError.ExpectedStructField;
+            }
             self.advanceOne();
             const fname = try self.parseIdentifier();
 
@@ -162,7 +171,11 @@ pub const Syntaxer = struct {
         var fields = std.ArrayList(syn.StructValueLiteralField).init(self.allocator.*);
 
         while (!self.tokenIs(.close_parenthesis)) {
-            if (!self.tokenIs(.dot)) return SyntaxerError.ExpectedIdentifier;
+            if (!self.tokenIs(.dot)) {
+                std.debug.print("Expected struct field, found:\n", .{});
+                tokp.printTokenWithLocation(self.current(), self.tokenLocation());
+                return SyntaxerError.ExpectedStructField;
+            }
             self.advanceOne();
             const fname = try self.parseIdentifier();
 
@@ -211,28 +224,9 @@ pub const Syntaxer = struct {
             .identifier => blk: {
                 const name = try self.parseIdentifier();
                 if (self.tokenIs(.open_parenthesis)) { // llamada
-                    self.advanceOne();
-                    self.skipNewLinesAndComments();
-                    var args = std.ArrayList(syn.CallArgument).init(self.allocator.*);
-                    while (!self.tokenIs(.close_parenthesis)) {
-                        var arg_name: ?[]const u8 = null;
-                        if (self.current().content == .identifier and self.next().?.content == .colon) {
-                            arg_name = try self.parseIdentifier();
-                            self.advanceOne(); // ':'
-                        }
-                        const val = try self.parseExpression();
-                        try args.append(.{ .name = arg_name, .value = val });
-                        if (self.tokenIs(.comma)) {
-                            self.advanceOne();
-                            self.skipNewLinesAndComments();
-                        }
-                    }
-                    if (!self.tokenIs(.close_parenthesis))
-                        return SyntaxerError.ExpectedRightParen;
-                    self.advanceOne();
-
+                    const struct_value_literal = try self.parseStructValueLiteral();
                     break :blk try self.makeNode(
-                        .{ .function_call = .{ .callee = name, .args = args.items } },
+                        .{ .function_call = .{ .callee = name, .input = struct_value_literal } },
                         t.location,
                     );
                 }

@@ -334,22 +334,26 @@ pub const Semantizer = struct {
     fn handleCall(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!TypedExpr {
         const fnc = s.lookupFunction(call.callee) orelse return error.SymbolNotFound;
 
-        var args_buf = std.ArrayList(sem.SGNode).init(self.allocator.*);
-        for (call.args) |a|
-            try args_buf.append((try self.visitNode(a.value.*, s)).node.*);
+        // ── procesamos el literal que se pasa como input
+        const tv_in = try self.visitNode(call.input.*, s);
 
-        const args_slice = try args_buf.toOwnedSlice();
-        args_buf.deinit();
+        // debe ser un struct
+        if (tv_in.ty != .struct_type) return error.InvalidType;
+
+        // chequeo estructural contra la firma del callee
+        const expected_ty: sem.Type = .{ .struct_type = &fnc.input };
+        if (!typesStructurallyEqual(expected_ty, tv_in.ty)) return error.InvalidType;
+
+        // SG node
+        const fc_ptr = try self.allocator.create(sem.FunctionCall);
+        fc_ptr.* = .{ .callee = fnc, .input = tv_in.node };
+
+        const n = try self.makeNode(.{ .function_call = fc_ptr }, s);
 
         const result_ty: sem.Type = if (fnc.output.fields.len == 0)
             .{ .builtin = .Void }
         else
             .{ .struct_type = &fnc.output };
-
-        const fc = try self.allocator.create(sem.FunctionCall);
-        fc.* = .{ .callee = fnc, .args = args_slice };
-
-        const n = try self.makeNode(.{ .function_call = fc }, s);
         return .{ .node = n, .ty = result_ty };
     }
 
@@ -451,3 +455,45 @@ const Scope = struct {
         return null;
     }
 };
+
+//──────────────────────────────────────────────────────────── TYPE EQUALITY HELPER
+/// Dos tipos son estructuralmente iguales cuando:
+///   * Ambos son builtin idénticos, **o**
+///   * Ambos son structs anónimos con el mismo nº de campos y,
+///     para cada índice `i`,   `fields[i].name`  y  `fields[i].ty`
+///     son respectivamente iguales y estructuralmente iguales.
+///
+///  *No* se compara `default_value`, puesto que no forma parte del tipo.
+fn typesStructurallyEqual(a: sem.Type, b: sem.Type) bool {
+    return switch (a) {
+        .builtin => |ab| switch (b) {
+            .builtin => |bb| ab == bb,
+            else => false,
+        },
+
+        .struct_type => |ast| switch (b) {
+            .builtin => false,
+
+            .struct_type => |bst| blk: {
+                // mismo nº de campos
+                if (ast.fields.len != bst.fields.len) break :blk false;
+
+                // comparar cada campo
+                var i: usize = 0;
+                while (i < ast.fields.len) : (i += 1) {
+                    const fa = ast.fields[i];
+                    const fb = bst.fields[i];
+
+                    // nombre idéntico
+                    if (!std.mem.eql(u8, fa.name, fb.name))
+                        break :blk false;
+
+                    // tipo del campo estructuralmente igual
+                    if (!typesStructurallyEqual(fa.ty, fb.ty))
+                        break :blk false;
+                }
+                break :blk true; // todos los campos coinciden
+            },
+        },
+    };
+}
