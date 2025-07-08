@@ -87,7 +87,10 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             }
             std.debug.print("\n", .{});
 
-            if (d.value) |v| printNode(v.*, lvl + 1);
+            if (d.value) |v| {
+                printNode(v.*, lvl + 1);
+                std.debug.print("\n", .{});
+            }
         },
 
         // ── TYPE DECLARATION ──────────────────────────────────────────────
