@@ -32,32 +32,84 @@ const TypedValue = struct {
     type_ref: llvm.c.LLVMTypeRef,
 };
 
+const Scope = struct {
+    parent: ?*Scope,
+    symbols: std.StringHashMap(Symbol),
+
+    fn init(a: *const std.mem.Allocator, parent: ?*Scope) !*Scope {
+        const p = try a.create(Scope);
+        p.* = .{
+            .parent = parent,
+            .symbols = std.StringHashMap(Symbol).init(a.*),
+        };
+        return p;
+    }
+
+    fn deinit(self: *Scope) void {
+        self.symbols.deinit(); // libera sólo sus claves
+        // el objeto Scope se libera desde quien lo haya creado
+    }
+
+    /// Búsqueda recursiva
+    fn lookup(self: *Scope, name: []const u8) ?*Symbol {
+        if (self.symbols.getPtr(name)) |s| return s;
+        if (self.parent) |p| return p.lookup(name);
+        return null;
+    }
+};
+
 // ────────────────────────────────────────────── CodeGenerator ──
 pub const CodeGenerator = struct {
     allocator: *const std.mem.Allocator,
     ast: []const *sem.SGNode,
+
     module: llvm.c.LLVMModuleRef,
     builder: llvm.c.LLVMBuilderRef,
-    symbol_table: std.StringHashMap(Symbol),
-    current_ret_type: ?llvm.c.LLVMTypeRef = null, // para funciones
+    current_return_type: ?llvm.c.LLVMTypeRef = null,
 
-    // ── init / deinit ─────────────────────────
+    global_scope: *Scope, // nunca se destruye hasta el final
+    current_scope: *Scope, // apunta al scope donde estamos ahora
+
     pub fn init(a: *const std.mem.Allocator, ast: []const *sem.SGNode) !CodeGenerator {
         const m = c.LLVMModuleCreateWithName("argi_module");
         if (m == null) return CodegenError.ModuleCreationFailed;
+
         const b = c.LLVMCreateBuilder();
+        const gscope = try Scope.init(a, null);
+
         return .{
             .allocator = a,
             .ast = ast,
             .module = m,
             .builder = b,
-            .symbol_table = std.StringHashMap(Symbol).init(a.*),
+            .global_scope = gscope,
+            .current_scope = gscope,
         };
     }
 
     pub fn deinit(self: *CodeGenerator) void {
         if (self.builder) |b| c.LLVMDisposeBuilder(b);
-        self.symbol_table.deinit();
+
+        // Recorremos la cadena y liberamos cada scope
+        var s: ?*Scope = self.current_scope;
+        while (s) |sc| {
+            const prev = sc.parent;
+            sc.deinit();
+            self.allocator.destroy(sc);
+            s = prev;
+        }
+    }
+
+    // ──── Scope helpers ─────────────────────────────────────────
+    fn pushScope(self: *CodeGenerator) !void {
+        self.current_scope = try Scope.init(self.allocator, self.current_scope);
+    }
+
+    fn popScope(self: *CodeGenerator) void {
+        const old = self.current_scope;
+        self.current_scope = old.parent.?; // global nunca se “pop-ea”
+        old.deinit();
+        self.allocator.destroy(old);
     }
 
     // ── top-level drive ───────────────────────
@@ -81,7 +133,7 @@ pub const CodeGenerator = struct {
                 return null;
             },
             .binding_declaration => |b| {
-                if (self.symbol_table.contains(b.name))
+                if (self.current_scope.lookup(b.name) != null)
                     return try self.genBindingUse(b);
                 try self.genBindingDecl(b);
                 return null;
@@ -165,24 +217,27 @@ pub const CodeGenerator = struct {
         );
         const cname = try self.dupZ(f.name);
         const fn_ref = c.LLVMAddFunction(self.module, cname.ptr, fn_ty);
-        try self.symbol_table.put(f.name, .{ .cname = cname, .mutability = .constant, .type_ref = fn_ty, .ref = fn_ref });
+        try self.current_scope.symbols.put(f.name, .{ .cname = cname, .mutability = .constant, .type_ref = fn_ty, .ref = fn_ref });
 
         // 4) entry-bb & builder
         const entry_bb = c.LLVMAppendBasicBlock(fn_ref, "entry");
         c.LLVMPositionBuilderAtEnd(self.builder, entry_bb);
 
-        // 5) tabla de símbolos local (copia de la global)
-        var previous_symbol_table = self.symbol_table;
-        var local_symbol_table = std.StringHashMap(Symbol).init(self.allocator.*);
-        var it = previous_symbol_table.iterator();
-        while (it.next()) |e| _ = try local_symbol_table.put(e.key_ptr.*, e.value_ptr.*);
-        self.symbol_table = local_symbol_table;
-        defer self.symbol_table = previous_symbol_table;
-        // defer local_symbol_table.deinit();
+        try self.current_scope.symbols.put(f.name, .{
+            .cname = cname,
+            .mutability = .constant,
+            .type_ref = fn_ty,
+            .ref = fn_ref,
+            .initialized = true, // función ya está definida
+        });
 
-        const prev_rt = self.current_ret_type;
-        self.current_ret_type = return_type;
-        defer self.current_ret_type = prev_rt;
+        // 5) abre un scope nuevo para las variables locales y parámetros
+        try self.pushScope();
+        defer self.popScope();
+
+        const prev_rt = self.current_return_type;
+        self.current_return_type = return_type;
+        defer self.current_return_type = prev_rt;
 
         // 6) registrar args en la tabla local
         for (f.input.fields) |field| {
@@ -199,7 +254,7 @@ pub const CodeGenerator = struct {
         // 7) extraer los parámetros de entrada
         const param_agg = c.LLVMGetParam(fn_ref, 0);
         for (f.input.fields, 0..) |field, idx| {
-            const sym_ptr = self.symbol_table.getPtr(field.name) orelse
+            const sym_ptr = self.current_scope.lookup(field.name) orelse
                 return CodegenError.SymbolNotFound;
 
             const elem =
@@ -234,7 +289,7 @@ pub const CodeGenerator = struct {
                 var vals = try self.allocator.alloc(llvm.c.LLVMValueRef, field_cnt);
 
                 for (f.output.fields, 0..) |fld, i| {
-                    const sym = self.symbol_table.get(fld.name) orelse
+                    const sym = self.current_scope.lookup(fld.name) orelse
                         return CodegenError.SymbolNotFound;
                     vals[i] = c.LLVMBuildLoad2(self.builder, sym.type_ref, sym.ref, sym.cname.ptr);
                 }
@@ -248,11 +303,14 @@ pub const CodeGenerator = struct {
                 _ = c.LLVMBuildRet(self.builder, ret_val);
             }
         }
+
+        if (c.LLVMVerifyFunction(fn_ref, c.LLVMPrintMessageAction) != 0)
+            return CodegenError.ModuleCreationFailed;
     }
 
     // ────────────────────────────────────────── bindings ──
     fn genBindingDecl(self: *CodeGenerator, b: *const sem.BindingDeclaration) !void {
-        if (self.symbol_table.contains(b.name))
+        if (self.current_scope.lookup(b.name) != null)
             return CodegenError.SymbolAlreadyDefined;
 
         // 1) posible inicialización
@@ -268,7 +326,7 @@ pub const CodeGenerator = struct {
         const alloca = c.LLVMBuildAlloca(self.builder, llvm_decl_ty, cname.ptr);
 
         // 4) registrar en la tabla
-        try self.symbol_table.put(b.name, .{
+        try self.current_scope.symbols.put(b.name, .{
             .cname = cname,
             .mutability = b.mutability,
             .type_ref = llvm_decl_ty,
@@ -330,56 +388,52 @@ pub const CodeGenerator = struct {
     }
 
     fn genBindingUse(self: *CodeGenerator, b: *sem.BindingDeclaration) !TypedValue {
-        const sym = self.symbol_table.get(b.name) orelse return CodegenError.SymbolNotFound;
+        const sym = self.current_scope.lookup(b.name) orelse
+            return CodegenError.SymbolNotFound;
         const val = c.LLVMBuildLoad2(self.builder, sym.type_ref, sym.ref, sym.cname.ptr);
         return .{ .value_ref = val, .type_ref = sym.type_ref };
     }
 
     // ────────────────────────────────────────── assignment ──
     fn genAssignment(self: *CodeGenerator, a: *sem.Assignment) !TypedValue {
-        const sym_ptr = self.symbol_table.getPtr(a.sym_id.name) orelse return CodegenError.SymbolNotFound;
+        const sym_ptr = self.current_scope.lookup(a.sym_id.name) orelse
+            return CodegenError.SymbolNotFound;
 
-        // Const solo falla si ya estaba inicializado
+        // Const sólo falla si *ya* estaba inicializado
         if (sym_ptr.*.mutability == .constant and sym_ptr.*.initialized)
             return CodegenError.ConstantReassignment;
 
-        const rhs_tv = (try self.visitNode(a.value)) orelse
-            return CodegenError.ValueNotFound;
+        const rhs = (try self.visitNode(a.value)) orelse return CodegenError.ValueNotFound;
+        var rhs_val = rhs.value_ref;
+        var rhs_ty = rhs.type_ref;
 
-        //  A partir de aquí usamos siempre rhs_val / rhs_ty
-        //  (pueden cambiar si hacemos extract o cast)
-        var rhs_val = rhs_tv.value_ref;
-        var rhs_ty = rhs_tv.type_ref;
-
-        // ¿Extraemos un campo de un literal-struct?
         if (sym_ptr.*.type_ref != rhs_ty and
             c.LLVMGetTypeKind(rhs_ty) == c.LLVMStructTypeKind)
         {
-            const n = c.LLVMCountStructElementTypes(rhs_ty);
+            const field_count = c.LLVMCountStructElementTypes(rhs_ty);
+
             var i: u32 = 0;
-            while (i < n) : (i += 1) {
+            var extracted: bool = false;
+            while (i < field_count) : (i += 1) {
                 const fty = c.LLVMStructGetTypeAtIndex(rhs_ty, i);
                 if (fty == sym_ptr.*.type_ref) {
                     rhs_val = c.LLVMBuildExtractValue(self.builder, rhs_val, i, "tmp.unpack");
                     rhs_ty = fty;
+                    extracted = true;
                     break;
                 }
             }
-        }
 
-        // ¿Necesitamos un cast int→float?
-        if (sym_ptr.*.type_ref == c.LLVMFloatType() and rhs_ty == c.LLVMInt32Type()) {
-            rhs_val = c.LLVMBuildSIToFP(self.builder, rhs_val, c.LLVMFloatType(), "int_to_float");
-            rhs_ty = c.LLVMFloatType();
+            // Si no encontramos ninguno que coincida dejamos que la comprobación
+            // de tipo más abajo lance `InvalidType`.
+            if (!extracted) {}
         }
 
         if (sym_ptr.*.type_ref != rhs_ty)
             return CodegenError.InvalidType;
 
-        // -------------  ¡valor definitivo!  ----------------
         _ = c.LLVMBuildStore(self.builder, rhs_val, sym_ptr.*.ref);
         sym_ptr.*.initialized = true;
-
         return .{ .value_ref = rhs_val, .type_ref = sym_ptr.*.type_ref };
     }
 
@@ -451,7 +505,8 @@ pub const CodeGenerator = struct {
         if (r.expression) |e| {
             const tv = (try self.visitNode(e)) orelse return CodegenError.ValueNotFound;
 
-            const ret_ty = self.current_ret_type orelse return CodegenError.InvalidType;
+            const ret_ty = self.current_return_type orelse
+                return CodegenError.InvalidType;
 
             // caso “coincide tal cual”
             if (ret_ty == tv.type_ref) {
@@ -478,7 +533,7 @@ pub const CodeGenerator = struct {
 
     // ────────────────────────────────────────── call ──
     fn genFunctionCall(self: *CodeGenerator, fc: *const sem.FunctionCall) CodegenError!?TypedValue {
-        const sym = self.symbol_table.get(fc.callee.name) orelse
+        const sym = self.current_scope.lookup(fc.callee.name) orelse
             return CodegenError.SymbolNotFound;
         const fn_ty = sym.type_ref;
         const ret_ty = c.LLVMGetReturnType(fn_ty);
