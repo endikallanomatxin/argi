@@ -27,6 +27,7 @@ pub const Content = union(enum) {
     struct_field_access: StructFieldAccess,
     return_statement: ReturnStatement,
     binary_operation: BinaryOperation,
+    comparison: Comparison,
     if_statement: IfStatement,
 };
 
@@ -100,6 +101,12 @@ pub const StructFieldAccess = struct {
 
 pub const BinaryOperation = struct {
     operator: tok.BinaryOperator,
+    left: *STNode,
+    right: *STNode,
+};
+
+pub const Comparison = struct {
+    operator: tok.ComparisonOperator,
     left: *STNode,
     right: *STNode,
 };

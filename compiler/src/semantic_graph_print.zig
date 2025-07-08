@@ -98,8 +98,6 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
                 .multiplication => "*",
                 .division => "/",
                 .modulo => "%",
-                .equals => "==",
-                .not_equals => "!=",
             };
             std.debug.print("BinaryOp \"{s}\"\n", .{op});
             indent(lvl + 1);
@@ -108,6 +106,24 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             indent(lvl + 1);
             std.debug.print("Right:\n", .{});
             printNode(bo.right, lvl + 2);
+        },
+
+        .comparison => |c| {
+            const op = switch (c.operator) {
+                .equal => "==",
+                .not_equal => "!=",
+                .less_than => "<",
+                .greater_than => ">",
+                .less_than_or_equal => "<=",
+                .greater_than_or_equal => ">=",
+            };
+            std.debug.print("Comparison \"{s}\"\n", .{op});
+            indent(lvl + 1);
+            std.debug.print("Left:\n", .{});
+            printNode(c.left, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("Right:\n", .{});
+            printNode(c.right, lvl + 2);
         },
 
         .return_statement => |r| {

@@ -68,6 +68,7 @@ pub const Semantizer = struct {
             .function_call => |fc| self.handleCall(fc, s),
             .code_block => |blk| self.handleCodeBlock(blk, s),
             .binary_operation => |bo| self.handleBinOp(bo, s),
+            .comparison => |c| self.handleComparison(c, s),
             .return_statement => |r| self.handleReturn(r, s),
             .if_statement => |ifs| self.handleIf(ifs, s),
             else => error.NotYetImplemented,
@@ -367,6 +368,23 @@ pub const Semantizer = struct {
 
         const n = try self.makeNode(.{ .binary_operation = bin.* }, s);
         return .{ .node = n, .ty = lhs.ty };
+    }
+
+    //──────────────────────────────────────────────────── COMPARISON
+    fn handleComparison(self: *Semantizer, c: syn.Comparison, s: *Scope) SemErr!TypedExpr {
+        const lhs = try self.visitNode(c.left.*, s);
+        const rhs = try self.visitNode(c.right.*, s);
+        const op = c.operator;
+
+        const cmp_ptr = try self.allocator.create(sem.Comparison);
+        cmp_ptr.* = .{
+            .operator = op,
+            .left = lhs.node,
+            .right = rhs.node,
+        };
+
+        const node_ptr = try self.makeNode(.{ .comparison = cmp_ptr.* }, s);
+        return .{ .node = node_ptr, .ty = .{ .builtin = .Bool } };
     }
 
     //──────────────────────────────────────────────────── RETURN

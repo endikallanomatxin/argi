@@ -29,6 +29,7 @@ pub const SGNode = union(enum) {
     struct_value_literal: *const StructValueLiteral,
     struct_field_access: *const StructFieldAccess,
     binary_operation: BinaryOperation,
+    comparison: Comparison,
     return_statement: *ReturnStatement,
     if_statement: *IfStatement,
 
@@ -148,6 +149,12 @@ pub const FunctionCall = struct {
 
 pub const BinaryOperation = struct {
     operator: tok.BinaryOperator,
+    left: *const SGNode,
+    right: *const SGNode,
+};
+
+pub const Comparison = struct {
+    operator: tok.ComparisonOperator,
     left: *const SGNode,
     right: *const SGNode,
 };

@@ -266,19 +266,27 @@ pub const Syntaxer = struct {
         const lhs = try self.parsePrimary();
 
         // (solo bin-op derecha-recursivo por ahora)
-        if (self.current().content == .binary_operator or self.current().content == .check_equals or self.current().content == .check_not_equals) {
+        if (self.current().content == .binary_operator) {
             const op_tok = self.current();
-            var op: tok.BinaryOperator = undefined;
+            self.advanceOne();
+            const rhs = try self.parseExpression();
+            return try self.makeNode(
+                .{ .binary_operation = .{ .operator = op_tok.content.binary_operator, .left = lhs, .right = rhs } },
+                op_tok.location,
+            );
+        }
+
+        if (self.current().content == .comparison_operator) {
+            const op_tok = self.current();
+            var op: tok.ComparisonOperator = undefined;
             switch (op_tok.content) {
-                .binary_operator => |b| op = b,
-                .check_equals => op = .equals,
-                .check_not_equals => op = .not_equals,
+                .comparison_operator => |c| op = c,
                 else => unreachable,
             }
             self.advanceOne();
             const rhs = try self.parseExpression();
             return try self.makeNode(
-                .{ .binary_operation = .{ .operator = op, .left = lhs, .right = rhs } },
+                .{ .comparison = .{ .operator = op, .left = lhs, .right = rhs } },
                 op_tok.location,
             );
         }

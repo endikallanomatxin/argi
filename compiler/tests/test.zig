@@ -77,3 +77,15 @@ test "12_function_args" {
     try build("tests/12_function_args.rg");
     try run();
 }
+
+test "21_named_struct_types" {
+    try clean();
+    try build("tests/21_named_struct_types.rg");
+    try run();
+}
+
+test "22_pointers" {
+    try clean();
+    try build("tests/22_pointers.rg");
+    try run();
+}

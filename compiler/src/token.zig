@@ -39,22 +39,28 @@ pub const Content = union(enum) {
     keyword_if: struct {},
     keyword_else: struct {},
 
-    // Operators
+    // Variables and constants
     colon: struct {},
     double_colon: struct {},
+
+    // Assignment operators
     equal: struct {},
     arrow: struct {},
+
+    // Function operators
+    pipe: struct {}, // |
+
+    // Arithmetic operators
     binary_operator: BinaryOperator,
 
     // Equations
-    check_equals: struct {},
-    check_not_equals: struct {},
+    comparison_operator: ComparisonOperator,
 
     // Pointers and dereferences
-    // amperstand: struct {},
+    ampersand: struct {}, // &
 
     // Side-effect indicator
-    // dollar: struct {},
+    dollar: struct {},
 
     // Comptime
     // comptime_run: struct {},
@@ -82,6 +88,13 @@ pub const BinaryOperator = enum {
     multiplication,
     division,
     modulo,
-    equals,
-    not_equals,
+};
+
+pub const ComparisonOperator = enum {
+    equal,
+    not_equal,
+    less_than,
+    greater_than,
+    less_than_or_equal,
+    greater_than_or_equal,
 };
