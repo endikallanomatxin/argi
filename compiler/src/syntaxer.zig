@@ -331,12 +331,29 @@ pub const Syntaxer = struct {
         }
 
         // ----------- SYMBOL / TYPE DECLARATION -----------------------------
-        if (self.tokenIs(.colon) or self.tokenIs(.double_colon) or self.tokenIs(.open_parenthesis)) {
+        if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) {
             var mut: syn.Mutability = .constant;
             if (self.tokenIs(.double_colon)) mut = .variable;
-            if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) self.advanceOne();
+            self.advanceOne();
 
             const ty_opt = try self.parseType();
+
+            // Check for type declaration
+            if (ty_opt) |ty| {
+                if (ty == .type_name and std.mem.eql(u8, ty.type_name, "Type")) {
+                    if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
+                    self.advanceOne();
+                    if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+                    const stlit = try self.parseStructTypeLiteral();
+                    const lit_node = try self.makeNode(.{ .struct_type_literal = stlit }, id_loc);
+
+                    const tdecl = syn.TypeDeclaration{
+                        .name = name,
+                        .value = lit_node,
+                    };
+                    return try self.makeNode(.{ .type_declaration = tdecl }, id_loc);
+                }
+            }
 
             var rhs: ?*syn.STNode = null;
             if (self.tokenIs(.equal)) {
@@ -351,20 +368,6 @@ pub const Syntaxer = struct {
                 .value = rhs,
             };
             return try self.makeNode(.{ .symbol_declaration = sym }, id_loc);
-        }
-
-        // ----------- TYPE Foo = (struct literal)  ---------------------------
-        if (self.tokenIs(.equal)) {
-            self.advanceOne();
-            if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
-            const stlit = try self.parseStructTypeLiteral();
-            const lit_node = try self.makeNode(.{ .struct_type_literal = stlit }, id_loc);
-
-            const tdecl = syn.TypeDeclaration{
-                .name = name,
-                .value = lit_node,
-            };
-            return try self.makeNode(.{ .type_declaration = tdecl }, id_loc);
         }
 
         return SyntaxerError.ExpectedDeclarationOrAssignment;
