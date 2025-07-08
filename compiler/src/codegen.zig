@@ -156,6 +156,7 @@ pub const CodeGenerator = struct {
             },
             .value_literal => |v| try self.genValueLiteral(&v),
             .binary_operation => |bo| try self.genBinaryOp(&bo),
+            .comparison => |comp| try self.genComparison(&comp),
             .if_statement => |ifs| {
                 try self.genIfStatement(ifs);
                 return null;
@@ -462,15 +463,52 @@ pub const CodeGenerator = struct {
             .multiplication => if (is_float) c.LLVMBuildFMul(self.builder, lhs.value_ref, rhs.value_ref, "mul") else c.LLVMBuildMul(self.builder, lhs.value_ref, rhs.value_ref, "mul"),
             .division => if (is_float) c.LLVMBuildFDiv(self.builder, lhs.value_ref, rhs.value_ref, "div") else c.LLVMBuildSDiv(self.builder, lhs.value_ref, rhs.value_ref, "div"),
             .modulo => if (is_float) c.LLVMBuildFRem(self.builder, lhs.value_ref, rhs.value_ref, "rem") else c.LLVMBuildSRem(self.builder, lhs.value_ref, rhs.value_ref, "rem"),
-            .equals => if (is_float) c.LLVMBuildFCmp(self.builder, c.LLVMRealOEQ, lhs.value_ref, rhs.value_ref, "eq") else c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, lhs.value_ref, rhs.value_ref, "eq"),
-            .not_equals => if (is_float) c.LLVMBuildFCmp(self.builder, c.LLVMRealONE, lhs.value_ref, rhs.value_ref, "ne") else c.LLVMBuildICmp(self.builder, c.LLVMIntNE, lhs.value_ref, rhs.value_ref, "ne"),
         };
 
-        const out_ty = switch (bo.operator) {
-            .equals, .not_equals => c.LLVMInt1Type(),
-            else => lhs.type_ref,
+        return .{ .value_ref = val, .type_ref = lhs.type_ref };
+    }
+
+    // ────────────────────────────────────────── comparison ──
+    fn genComparison(self: *CodeGenerator, co: *const sem.Comparison) !TypedValue {
+        const lhs = (try self.visitNode(co.left)) orelse return CodegenError.ValueNotFound;
+        const rhs = (try self.visitNode(co.right)) orelse return CodegenError.ValueNotFound;
+
+        // promociones int→float como antes …
+        const is_float = lhs.type_ref == c.LLVMFloatType();
+
+        const val = switch (co.operator) {
+            .equal => if (is_float)
+                c.LLVMBuildFCmp(self.builder, c.LLVMRealOEQ, lhs.value_ref, rhs.value_ref, "feq")
+            else
+                c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, lhs.value_ref, rhs.value_ref, "ieq"),
+
+            .not_equal => if (is_float)
+                c.LLVMBuildFCmp(self.builder, c.LLVMRealONE, lhs.value_ref, rhs.value_ref, "fne")
+            else
+                c.LLVMBuildICmp(self.builder, c.LLVMIntNE, lhs.value_ref, rhs.value_ref, "ine"),
+
+            .less_than => if (is_float)
+                c.LLVMBuildFCmp(self.builder, c.LLVMRealOLT, lhs.value_ref, rhs.value_ref, "flt")
+            else
+                c.LLVMBuildICmp(self.builder, c.LLVMIntSLT, lhs.value_ref, rhs.value_ref, "ilt"),
+
+            .greater_than => if (is_float)
+                c.LLVMBuildFCmp(self.builder, c.LLVMRealOGT, lhs.value_ref, rhs.value_ref, "fgt")
+            else
+                c.LLVMBuildICmp(self.builder, c.LLVMIntSGT, lhs.value_ref, rhs.value_ref, "igt"),
+
+            .less_than_or_equal => if (is_float)
+                c.LLVMBuildFCmp(self.builder, c.LLVMRealOLE, lhs.value_ref, rhs.value_ref, "fle")
+            else
+                c.LLVMBuildICmp(self.builder, c.LLVMIntSLE, lhs.value_ref, rhs.value_ref, "ile"),
+
+            .greater_than_or_equal => if (is_float)
+                c.LLVMBuildFCmp(self.builder, c.LLVMRealOGE, lhs.value_ref, rhs.value_ref, "fge")
+            else
+                c.LLVMBuildICmp(self.builder, c.LLVMIntSGE, lhs.value_ref, rhs.value_ref, "ige"),
         };
-        return .{ .value_ref = val, .type_ref = out_ty };
+
+        return .{ .value_ref = val, .type_ref = c.LLVMInt1Type() };
     }
 
     // ────────────────────────────────────────── if ──

@@ -247,7 +247,7 @@ pub const Tokenizer = struct {
             },
             '=' => {
                 if (try self.next() == '=') {
-                    try self.addToken(tok.Content{ .check_equals = .{} }, loc);
+                    try self.addToken(tok.Content{ .comparison_operator = .equal }, loc);
                     try self.advanceOne(); // Avanzar el segundo '='
                 } else {
                     try self.addToken(tok.Content{ .equal = .{} }, loc);
@@ -255,13 +255,30 @@ pub const Tokenizer = struct {
             },
             '!' => {
                 if (try self.next() == '=') {
-                    try self.addToken(tok.Content{ .check_not_equals = .{} }, loc);
+                    try self.addToken(tok.Content{ .comparison_operator = .not_equal }, loc);
                     try self.advanceOne(); // Avanzar el segundo '!'
                 } else {
                     std.debug.print("Unknown character: {c}\n", .{self.this()});
                     return TokenizerError.UnknownCharacter;
                 }
             },
+            '<' => {
+                if (try self.next() == '=') {
+                    try self.addToken(tok.Content{ .comparison_operator = .less_than_or_equal }, loc);
+                    try self.advanceOne(); // Avanzar el '='
+                } else {
+                    try self.addToken(tok.Content{ .comparison_operator = .less_than }, loc);
+                }
+            },
+            '>' => {
+                if (try self.next() == '=') {
+                    try self.addToken(tok.Content{ .comparison_operator = .greater_than_or_equal }, loc);
+                    try self.advanceOne(); // Avanzar el '='
+                } else {
+                    try self.addToken(tok.Content{ .comparison_operator = .greater_than }, loc);
+                }
+            },
+
             '+' => {
                 try self.addToken(tok.Content{ .binary_operator = .addition }, loc);
             },
@@ -283,6 +300,12 @@ pub const Tokenizer = struct {
             },
             '%' => {
                 try self.addToken(tok.Content{ .binary_operator = .modulo }, loc);
+            },
+            '&' => {
+                try self.addToken(tok.Content{ .ampersand = .{} }, loc);
+            },
+            '|' => {
+                try self.addToken(tok.Content{ .pipe = .{} }, loc);
             },
             else => {
                 std.debug.print("Unknown character: {c}\n", .{self.this()});
