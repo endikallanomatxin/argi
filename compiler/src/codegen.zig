@@ -178,7 +178,7 @@ pub const CodeGenerator = struct {
         while (it.next()) |e| _ = try local_symbol_table.put(e.key_ptr.*, e.value_ptr.*);
         self.symbol_table = local_symbol_table;
         defer self.symbol_table = previous_symbol_table;
-        defer local_symbol_table.deinit();
+        // defer local_symbol_table.deinit();
 
         const prev_rt = self.current_ret_type;
         self.current_ret_type = return_type;
@@ -339,42 +339,48 @@ pub const CodeGenerator = struct {
     fn genAssignment(self: *CodeGenerator, a: *sem.Assignment) !TypedValue {
         const sym_ptr = self.symbol_table.getPtr(a.sym_id.name) orelse return CodegenError.SymbolNotFound;
 
-        // Const sólo falla si *ya* estaba inicializado
+        // Const solo falla si ya estaba inicializado
         if (sym_ptr.*.mutability == .constant and sym_ptr.*.initialized)
             return CodegenError.ConstantReassignment;
 
-        const rhs = (try self.visitNode(a.value)) orelse return CodegenError.ValueNotFound;
-        var rhs_val = rhs.value_ref;
-        var rhs_ty = rhs.type_ref;
+        const rhs_tv = (try self.visitNode(a.value)) orelse
+            return CodegenError.ValueNotFound;
 
+        //  A partir de aquí usamos siempre rhs_val / rhs_ty
+        //  (pueden cambiar si hacemos extract o cast)
+        var rhs_val = rhs_tv.value_ref;
+        var rhs_ty = rhs_tv.type_ref;
+
+        // ¿Extraemos un campo de un literal-struct?
         if (sym_ptr.*.type_ref != rhs_ty and
             c.LLVMGetTypeKind(rhs_ty) == c.LLVMStructTypeKind)
         {
-            const field_count = c.LLVMCountStructElementTypes(rhs_ty);
-
+            const n = c.LLVMCountStructElementTypes(rhs_ty);
             var i: u32 = 0;
-            var extracted: bool = false;
-            while (i < field_count) : (i += 1) {
+            while (i < n) : (i += 1) {
                 const fty = c.LLVMStructGetTypeAtIndex(rhs_ty, i);
                 if (fty == sym_ptr.*.type_ref) {
                     rhs_val = c.LLVMBuildExtractValue(self.builder, rhs_val, i, "tmp.unpack");
                     rhs_ty = fty;
-                    extracted = true;
                     break;
                 }
             }
+        }
 
-            // Si no encontramos ninguno que coincida dejamos que la comprobación
-            // de tipo más abajo lance `InvalidType`.
-            if (!extracted) {}
+        // ¿Necesitamos un cast int→float?
+        if (sym_ptr.*.type_ref == c.LLVMFloatType() and rhs_ty == c.LLVMInt32Type()) {
+            rhs_val = c.LLVMBuildSIToFP(self.builder, rhs_val, c.LLVMFloatType(), "int_to_float");
+            rhs_ty = c.LLVMFloatType();
         }
 
         if (sym_ptr.*.type_ref != rhs_ty)
             return CodegenError.InvalidType;
 
-        _ = c.LLVMBuildStore(self.builder, rhs.value_ref, sym_ptr.*.ref);
-        sym_ptr.*.initialized = true; // primera y única escritura para const
-        return .{ .value_ref = rhs.value_ref, .type_ref = sym_ptr.*.type_ref };
+        // -------------  ¡valor definitivo!  ----------------
+        _ = c.LLVMBuildStore(self.builder, rhs_val, sym_ptr.*.ref);
+        sym_ptr.*.initialized = true;
+
+        return .{ .value_ref = rhs_val, .type_ref = sym_ptr.*.type_ref };
     }
 
     // ────────────────────────────────────────── literals ──
