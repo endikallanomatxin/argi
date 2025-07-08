@@ -411,7 +411,12 @@ pub const Semantizer = struct {
 
     fn resolveType(self: *Semantizer, t: syn.Type, s: *Scope) !sem.Type {
         return switch (t) {
-            .type_name => |id| .{ .builtin = try builtinFromName(id) },
+            .type_name => |id| {
+                if (s.lookupType(id)) |td| {
+                    return td.ty;
+                }
+                return .{ .builtin = try builtinFromName(id) };
+            },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
         };
     }
@@ -452,6 +457,12 @@ const Scope = struct {
     fn lookupFunction(self: *Scope, n: []const u8) ?*sem.FunctionDeclaration {
         if (self.functions.get(n)) |f| return f;
         if (self.parent) |p| return p.lookupFunction(n);
+        return null;
+    }
+
+    fn lookupType(self: *Scope, n: []const u8) ?*sem.TypeDeclaration {
+        if (self.types.get(n)) |t| return t;
+        if (self.parent) |p| return p.lookupType(n);
         return null;
     }
 };

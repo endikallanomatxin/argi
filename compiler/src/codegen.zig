@@ -132,6 +132,9 @@ pub const CodeGenerator = struct {
                 try self.genFunction(f);
                 return null;
             },
+            .type_declaration => |_| {
+                return null;
+            },
             .binding_declaration => |b| {
                 if (self.current_scope.lookup(b.name) != null)
                     return try self.genBindingUse(b);
