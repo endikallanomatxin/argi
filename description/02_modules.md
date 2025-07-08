@@ -5,37 +5,19 @@ carpeta.
 
 Every file in a directory can see each other, same namespace.
 
-Todo es un módulo y se importa como en Python:
+- `m := #import("./module/")`
 
-- `import module` (module.función)
-- `import module as m` (m.función)
-- `import module asinplace` (función)
+- `some_function := #import("./module/").some_function`
 
-O igual mejor como zig:
+- `(one, two) := #import("./module/").(one, two)`
 
-- `m := import "module"`
+    o
 
-Eso es para metaprogramación. Zig no tiene magia.
-Realmente vamos a permitir que se le de un uso a eso.
-No le vamos a meter magia? Seremos capacer de que sea coherente con el resto
-del lenguaje? 
+    `one = m.one`
+    `two = m.two`
 
-> [!FIX] Decidir esto
-
-> [!FIX] Necesidad de nombrar el namespace del que importamos incluso con "objetos"
-> El piping syntax suple las necesidades de los objetos, pero si tenemos que
-> mencionar el módulo del que vienen las funciones... ahí ya oop gana.
-> Por ejemplo,
-> ```rg
-> m = import std.math
-> matrix : Matrix = ((1, 2), (3, 4))
-> determinant = matrix | m.determinant (_)
-> ```
-> o igual
-> ```rg
-> determinant = import std.math.determinant
-> det = matrix | determinant (_)
-> ```
+(que sea una sintaxis acorde al código normal permite programar imports en
+compile time)
 
 
 ## Locating modules
