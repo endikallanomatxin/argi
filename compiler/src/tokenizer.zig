@@ -308,20 +308,48 @@ pub const Tokenizer = struct {
                 try self.addToken(tok.Content{ .pipe = .{} }, loc);
             },
             '\'' => {
-                // Char literal
-                try self.advanceOne(); // Avanzar el primer '\''
-                if (self.this() == '\'') {
-                    std.debug.print("Empty char literal\n", .{});
-                    return TokenizerError.UnknownCharacter;
+                // Salta la comilla de apertura
+                try self.advanceOne();
+
+                // 1. ¿escape (`\`) o carácter directo?
+                var char_val: u8 = undefined;
+                if (self.this() == '\\') { // -- escape --
+                    try self.advanceOne(); // salta la '\'
+
+                    const esc = self.this();
+                    char_val = switch (esc) {
+                        'n' => '\n', // salto de línea
+                        't' => '\t', // tabulador
+                        'r' => '\r', // retorno de carro
+                        '\\' => '\\', // barra invertida
+                        '\'' => '\'', // comilla simple
+                        '0' => 0, // NUL
+                        else => {
+                            std.debug.print("Escape no soportado: \\{c}\n", .{esc});
+                            return TokenizerError.UnknownCharacter;
+                        },
+                    };
+                    try self.advanceOne(); // salta la letra de escape
+                } else { // -- carácter simple --
+                    if (self.this() == '\'') {
+                        std.debug.print("Char literal vacío\n", .{});
+                        return TokenizerError.UnknownCharacter;
+                    }
+                    char_val = self.this();
+                    try self.advanceOne();
                 }
-                const char_literal = self.this();
-                try self.advanceOne(); // Avanzar el carácter
+
+                // 2. debe venir la comilla de cierre
                 if (self.this() != '\'') {
-                    std.debug.print("Unterminated char literal\n", .{});
+                    std.debug.print("Char literal sin cerrar\n", .{});
                     return TokenizerError.UnknownCharacter;
                 }
-                try self.advanceOne(); // Avanzar el segundo '\''
-                try self.addToken(tok.Content{ .literal = tok.Literal{ .char_literal = char_literal } }, loc);
+                try self.advanceOne(); // salta la comilla de cierre
+
+                try self.addToken(
+                    tok.Content{ .literal = tok.Literal{ .char_literal = char_val } },
+                    loc,
+                );
                 return;
             },
             else => {
