@@ -1,23 +1,23 @@
 # Modules and imports
 
-Folders as modules, como Go y odin. El nombre del módulo es el nombre de la carpeta.
+Folders as modules, como Go y odin. El nombre del módulo es el nombre de la
+carpeta.
+
 Every file in a directory can see each other, same namespace.
 
-Todo es un módulo y se importa como en Python:
+- `m := #import("./module/")`
 
-- `import module` (module.función)
-- `import module as m` (m.función)
-- `import module asinplace` (función)
+- `some_function := #import("./module/").some_function`
 
-O igual mejor como zig:
+- `(one, two) := #import("./module/").(one, two)`
 
-- `m := import module`
+    o
 
-Eso es para metaprogramación. Zig no tiene magia.
-Realmente vamos a permitir que se le de un uso a eso.
-No le vamos a meter magia? Seremos capacer de que sea coherente con el resto del lenguaje? 
+    `one = m.one`
+    `two = m.two`
 
-> [!FIX] Decidir esto
+(que sea una sintaxis acorde al código normal permite programar imports en
+compile time)
 
 
 ## Locating modules
@@ -32,7 +32,8 @@ If it is just a name, then it is a module installed in the system.
 
 ## Protected modules
 
-Modules which name starts with _ are not visible outside the module. They are private to the module.
+Modules which name starts with _ are not visible outside the module. They are
+private to the module.
 
 
 ## Interpretation and imports
@@ -52,9 +53,9 @@ Podríamos hacer:
 - `import(module)`
 
 
-Igual es buena idea también separar los archivos que se pueden correr, de los que se pueden importar:
+Igual es buena idea también separar los archivos que se pueden correr, de los
+que se pueden importar:
 
 - Files inside a module: `script.rg`
 - Scripts: `script.rgs`
-
 

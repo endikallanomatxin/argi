@@ -1,4 +1,4 @@
-main() -> Int32 := {
+main () -> (.status_code: Int32) := {
     -- Test comment
-    return 0
+    status_code = 0
 }

@@ -11,452 +11,490 @@ pub const SyntaxerError = error{
     ExpectedIntLiteral,
     ExpectedLeftParen,
     ExpectedRightParen,
+    ExpectedLeftBracket,
+    ExpectedRightBracket,
     ExpectedLeftBrace,
     ExpectedRightBrace,
-    ExpectedTypeAnnotation,
+    ExpectedStructField,
+    ExpectedArrow,
     ExpectedDoubleColon,
     ExpectedAssignment,
     ExpectedDeclarationOrAssignment,
-    ExpectedFuncAssignment,
     ExpectedKeywordReturn,
     ExpectedKeywordIf,
     OutOfMemory,
 };
 
-/// Estado del syntaxer
+// ─────────────────────────────────────────────────────────────────────────────
+// Syntaxer state
+// ─────────────────────────────────────────────────────────────────────────────
 pub const Syntaxer = struct {
     tokens: []const tok.Token,
     index: usize,
     allocator: *const std.mem.Allocator,
     st: std.ArrayList(*syn.STNode),
 
-    pub fn init(allocator: *const std.mem.Allocator, tokens: []const tok.Token) Syntaxer {
-        return Syntaxer{
-            .tokens = tokens,
+    pub fn init(alloc: *const std.mem.Allocator, toks: []const tok.Token) Syntaxer {
+        return .{
+            .tokens = toks,
             .index = 0,
-            .allocator = allocator,
-            .st = std.ArrayList(*syn.STNode).init(allocator.*),
+            .allocator = alloc,
+            .st = std.ArrayList(*syn.STNode).init(alloc.*),
         };
     }
 
-    pub fn parse(self: *Syntaxer) !std.ArrayList(*syn.STNode) {
-        std.debug.print("\n\nPARSING\n", .{});
+    pub fn parse(self: *Syntaxer) ![]const *syn.STNode {
+        std.debug.print("\n\nsyntaxing...\n", .{});
         self.st = parseSentences(self) catch |err| {
             std.debug.print("Error al parsear: {any}\n", .{err});
             return err;
         };
-        return self.st;
+        return self.st.items; // slice inmutable a devolver
     }
 
+    // ───────────────────────────────── token helpers ─────────────────────────
     fn current(self: *Syntaxer) tok.Token {
         return self.tokens[self.index];
     }
-
     fn next(self: *Syntaxer) ?tok.Token {
-        if (self.tokenIs(tok.Content.eof)) {
-            return null;
-        }
-        return self.tokens[self.index + 1];
+        return if (self.index + 1 < self.tokens.len) self.tokens[self.index + 1] else null;
     }
-
     fn advanceOne(self: *Syntaxer) void {
-        tokp.printToken(self.current());
         if (self.index < self.tokens.len) self.index += 1;
     }
-
-    fn tokenIs(self: *Syntaxer, expected: tok.Content) bool {
-        return switch (self.current().content) {
-            .eof => switch (expected) {
-                .eof => true,
-                else => false,
-            },
-            .comment => switch (expected) {
-                .comment => true,
-                else => false,
-            },
-            .new_line => switch (expected) {
-                .new_line => true,
-                else => false,
-            },
-            .identifier => switch (expected) {
-                .identifier => true,
-                else => false,
-            },
-            .literal => switch (expected) {
-                .literal => true,
-                else => false,
-            },
-            .colon => switch (expected) {
-                .colon => true,
-                else => false,
-            },
-            .double_colon => switch (expected) {
-                .double_colon => true,
-                else => false,
-            },
-            .arrow => switch (expected) {
-                .arrow => true,
-                else => false,
-            },
-            .equal => switch (expected) {
-                .equal => true,
-                else => false,
-            },
-            .open_brace => switch (expected) {
-                .open_brace => true,
-                else => false,
-            },
-            .close_brace => switch (expected) {
-                .close_brace => true,
-                else => false,
-            },
-            .open_parenthesis => switch (expected) {
-                .open_parenthesis => true,
-                else => false,
-            },
-            .close_parenthesis => switch (expected) {
-                .close_parenthesis => true,
-                else => false,
-            },
-            .keyword_return => switch (expected) {
-                .keyword_return => true,
-                else => false,
-            },
-            .keyword_if => switch (expected) {
-                .keyword_if => true,
-                else => false,
-            },
-            .keyword_else => switch (expected) {
-                .keyword_else => true,
-                else => false,
-            },
-            else => false,
-        };
-    }
-
     fn tokenLocation(self: *Syntaxer) tok.Location {
         return self.current().location;
     }
 
-    fn expect(self: *Syntaxer, expected: tok.Token) !SyntaxerError {
-        if (!self.tokenIs(expected)) return SyntaxerError.ExpectedAssignment;
-        self.advanceOne();
-        return;
+    fn tokenIs(self: *Syntaxer, tag: tok.Content) bool {
+        return std.meta.activeTag(self.current().content) == std.meta.activeTag(tag);
     }
 
-    fn ignoreNewLinesAndComments(self: *Syntaxer) void {
+    fn skipNewLinesAndComments(self: *Syntaxer) void {
         while (self.index < self.tokens.len) {
-            const token = self.current();
-            if (token.content == .new_line or token.content == .comment) {
-                self.advanceOne();
-            } else {
-                break;
+            switch (self.current().content) {
+                .new_line, .comment => self.advanceOne(),
+                else => break,
             }
         }
     }
 
-    fn newNode(self: *Syntaxer, content: syn.Content, location: tok.Location) !*syn.STNode {
-        const node = try self.allocator.create(syn.STNode);
-        node.*.content = content;
-        node.*.location = location;
-        return node;
+    // ─────────────────────────────── node helpers ────────────────────────────
+    fn makeNode(self: *Syntaxer, c: syn.Content, l: tok.Location) !*syn.STNode {
+        const n = try self.allocator.create(syn.STNode);
+        n.*.content = c;
+        n.*.location = l;
+        return n;
     }
 
-    fn parseIdentifier(self: *Syntaxer) ![]const u8 {
-        const token = self.current();
-        return switch (token.content) {
-            .identifier => |name| {
-                self.advanceOne();
-                return name;
-            },
-            else => return SyntaxerError.ExpectedIdentifier,
-        };
-    }
-
-    fn parseType(self: *Syntaxer) SyntaxerError!?syn.TypeName {
-        if (self.tokenIs(.equal)) {
-            return null;
+    // ───────────────────────────────  atoms ──────────────────────────────────
+    fn parseIdentifier(self: *Syntaxer) SyntaxerError![]const u8 {
+        const t = self.current();
+        if (t.content != .identifier) {
+            std.debug.print("Expected identifier, found:\n", .{});
+            tokp.printTokenWithLocation(t, self.tokenLocation());
+            return SyntaxerError.ExpectedIdentifier;
         }
-        const typeName = try self.parseIdentifier();
-        return syn.TypeName{ .name = typeName };
-    }
-
-    fn parseLiteral(self: *Syntaxer) !*syn.STNode {
-        const token = self.current();
-        const node = try self.allocator.create(syn.STNode);
-        node.*.content = syn.Content{ .literal = token.content.literal };
-        node.*.location = token.location;
+        const name = t.content.identifier;
         self.advanceOne();
-        return node;
+        return name;
     }
 
-    fn parseSymbolOrLiteral(self: *Syntaxer) !*syn.STNode {
-        const token = self.current();
-        return switch (token.content) {
-            .identifier => |_| {
+    // ────────────────────────────  TYPE ANNOTATIONS ──────────────────────────
+    fn parseType(self: *Syntaxer) SyntaxerError!?syn.Type {
+        // permitimos omitir la anotación
+        if (self.tokenIs(.equal) or self.tokenIs(.comma) or self.tokenIs(.close_parenthesis))
+            return null;
+
+        if (self.tokenIs(.ampersand)) { // &T
+            self.advanceOne();
+            const base_ty = (try self.parseType()).?; // recursivo
+
+            // guardar el sub-tipo en heap: debe vivir más que esta llamada
+            const ptr_inner = try self.allocator.create(syn.Type);
+            ptr_inner.* = base_ty;
+
+            return syn.Type{ .pointer_type = ptr_inner };
+        } else if (self.tokenIs(.open_parenthesis)) {
+            const lit = try self.parseStructTypeLiteral();
+            return syn.Type{ .struct_type_literal = lit };
+        }
+
+        const name = try self.parseIdentifier();
+        return syn.Type{ .type_name = name };
+    }
+
+    // ( .field : Type? (= expr)? , ... )
+    fn parseStructTypeLiteral(self: *Syntaxer) SyntaxerError!syn.StructTypeLiteral {
+        if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        var fields = std.ArrayList(syn.StructTypeLiteralField).init(self.allocator.*);
+
+        while (!self.tokenIs(.close_parenthesis)) {
+            if (!self.tokenIs(.dot)) {
+                std.debug.print("Expected struct field, found:\n", .{});
+                tokp.printToken(self.current());
+                return SyntaxerError.ExpectedStructField;
+            }
+            self.advanceOne();
+            const fname = try self.parseIdentifier();
+
+            var ftype: ?syn.Type = null;
+            if (self.tokenIs(.colon)) {
+                self.advanceOne();
+                ftype = try self.parseType();
+            }
+
+            var def_val: ?*syn.STNode = null;
+            if (self.tokenIs(.equal)) {
+                self.advanceOne();
+                def_val = try self.parseExpression();
+            }
+
+            try fields.append(.{
+                .name = fname,
+                .type = ftype,
+                .default_value = def_val,
+            });
+
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            }
+        }
+        if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+        self.advanceOne();
+
+        return .{ .fields = fields.items };
+    }
+
+    // ─────── struct VALUE literal  (p.e.  (.x=1, .y=2) ) ─────────────────────
+    fn parseStructValueLiteral(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        var fields = std.ArrayList(syn.StructValueLiteralField).init(self.allocator.*);
+
+        while (!self.tokenIs(.close_parenthesis)) {
+            if (!self.tokenIs(.dot)) {
+                std.debug.print("Expected struct field, found:\n", .{});
+                tokp.printTokenWithLocation(self.current(), self.tokenLocation());
+                return SyntaxerError.ExpectedStructField;
+            }
+            self.advanceOne();
+            const fname = try self.parseIdentifier();
+
+            if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
+            self.advanceOne();
+
+            const val = try self.parseExpression();
+            try fields.append(.{ .name = fname, .value = val });
+
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            }
+        }
+        if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+        self.advanceOne();
+
+        return try self.makeNode(
+            .{ .struct_value_literal = .{ .fields = fields.items } },
+            self.tokenLocation(),
+        );
+    }
+
+    // ────────────────────────── postfix “.campo” chain ───────────────────────
+    fn parsePostfix(self: *Syntaxer, mut: *syn.STNode) !*syn.STNode {
+        var new_mut = mut;
+        while (true) {
+            if (self.tokenIs(.dot)) {
+                const dot_loc = self.tokenLocation();
+                self.advanceOne(); // consume '.'
+                const fld_name = try self.parseIdentifier();
+                new_mut = try self.makeNode(
+                    .{ .struct_field_access = .{ .struct_value = mut, .field_name = fld_name } },
+                    dot_loc,
+                );
+            } else if (self.tokenIs(.ampersand)) {
+                // POST-FIX `&`  ==>  **dereference**
+                const amp_loc = self.tokenLocation();
+                self.advanceOne(); // consume '&'
+                new_mut = try self.makeNode(.{ .dereference = new_mut }, amp_loc);
+            } else break;
+        }
+        return new_mut;
+    }
+
+    // ─────────────────────────────  EXPRESSIONS  ─────────────────────────────
+    /// [primary] {'.' fld}  (bin-op rhs)?
+    fn parsePrimary(self: *Syntaxer) !*syn.STNode {
+        const t = self.current();
+
+        if (self.tokenIs(.ampersand)) {
+            const loc = t.location;
+            self.advanceOne();
+            const inner = try self.parsePrimary(); // recursivo
+            return try self.makeNode(.{ .address_of = inner }, loc);
+        }
+
+        const base: *syn.STNode = switch (t.content) {
+            // ─── ident  /  call ─────────────────────────────────────────────
+            .identifier => blk: {
                 const name = try self.parseIdentifier();
-                const node = try self.allocator.create(syn.STNode);
-                node.*.content = syn.Content{ .identifier = name };
-                node.*.location = token.location;
-                return node;
+                if (self.tokenIs(.open_parenthesis)) { // llamada
+                    const struct_value_literal = try self.parseStructValueLiteral();
+                    break :blk try self.makeNode(
+                        .{ .function_call = .{ .callee = name, .input = struct_value_literal } },
+                        t.location,
+                    );
+                }
+                break :blk try self.makeNode(.{ .identifier = name }, t.location);
             },
-            .literal => {
-                return self.parseLiteral();
+
+            // ─── literal ────────────────────────────────────────────────────
+            .literal => |lit| blk: {
+                self.advanceOne();
+                break :blk try self.makeNode(.{ .literal = lit }, t.location);
             },
+
+            // ─── struct value literal ───────────────────────────────────────
+            .open_parenthesis => try self.parseStructValueLiteral(),
+
+            // ─── [expr] en corchetes ────────────────────────────────────────
+            .open_bracket => blk: {
+                self.advanceOne();
+                const e = try self.parseExpression();
+                if (!self.tokenIs(.close_bracket))
+                    return SyntaxerError.ExpectedRightBracket;
+                self.advanceOne();
+                break :blk e;
+            },
+
+            // ─── bloque `{}` embebido ───────────────────────────────────────
+            .open_brace => try self.parseCodeBlock(),
+
             else => return SyntaxerError.ExpectedIntLiteral,
         };
+
+        // aplica cadenas de “.campo”
+        return try self.parsePostfix(base);
     }
 
-    fn parseExpression(self: *Syntaxer) !*syn.STNode {
-        const token = self.current();
-        return switch (token.content) {
-            .literal, .identifier => {
-                // call-expression?  <ident> '(' ...
-                if (token.content == .identifier and self.next().?.content == .open_parenthesis) {
-                    const callee = try self.parseIdentifier(); // consumed ident
-                    self.advanceOne(); // consume '('
+    fn parseExpression(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        const lhs = try self.parsePrimary();
 
-                    // --- parse comma-separated arg list -----------------------
-                    var arg_nodes = std.ArrayList(syn.CallArgument).init(self.allocator.*);
-                    self.ignoreNewLinesAndComments();
-                    while (!self.tokenIs(.close_parenthesis)) {
-                        var name: ?[]const u8 = null;
-                        if (self.current().content == .identifier and self.next().?.content == .colon) {
-                            name = try self.parseIdentifier();
-                            self.advanceOne(); // consume ':'
-                        }
-                        const val = try self.parseExpression();
-                        try arg_nodes.append(.{ .name = name, .value = val });
-                        if (self.tokenIs(.comma)) {
-                            self.advanceOne();
-                            self.ignoreNewLinesAndComments();
-                        } else {
-                            break;
-                        }
-                    }
-                    if (!self.tokenIs(.close_parenthesis)) {
-                        return SyntaxerError.ExpectedRightParen;
-                    }
-                    self.advanceOne(); // consume ')'
+        // (solo bin-op derecha-recursivo por ahora)
+        if (self.current().content == .binary_operator) {
+            const op_tok = self.current();
+            self.advanceOne();
+            const rhs = try self.parseExpression();
+            return try self.makeNode(
+                .{ .binary_operation = .{ .operator = op_tok.content.binary_operator, .left = lhs, .right = rhs } },
+                op_tok.location,
+            );
+        }
 
-                    const node = try self.allocator.create(syn.STNode);
-                    node.*.location = token.location;
-                    node.*.content = syn.Content{
-                        .function_call = .{
-                            .callee = callee,
-                            .args = arg_nodes.items,
-                        },
-                    };
-                    return node;
-                }
-
-                // Check if the next token is a binary operator
-                if (self.next().?.content == .binary_operator or
-                    self.next().?.content == .check_equals or
-                    self.next().?.content == .check_not_equals)
-                {
-                    const left = try self.parseSymbolOrLiteral();
-
-                    const op_token = self.current();
-                    var op: tok.BinaryOperator = undefined;
-                    switch (op_token.content) {
-                        .binary_operator => |bop| op = bop,
-                        .check_equals => op = tok.BinaryOperator.equals,
-                        .check_not_equals => op = tok.BinaryOperator.not_equals,
-                        else => unreachable,
-                    }
-                    self.advanceOne(); // consume operator
-                    const right = try self.parseExpression();
-
-                    const node = try self.allocator.create(syn.STNode);
-                    node.*.content = syn.Content{ .binary_operation = syn.BinaryOperation{ .operator = op, .left = left, .right = right } };
-                    node.*.location = token.location;
-                    return node;
-                }
-
-                const node = try parseSymbolOrLiteral(self);
-                return node;
-            },
-            .open_parenthesis => {
-                self.advanceOne();
-                const expr = try self.parseExpression();
-                if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
-                self.advanceOne();
-                return expr;
-            },
-            .open_brace => {
-                return self.parseCodeBlock();
-            },
-            else => return SyntaxerError.ExpectedIntLiteral,
-        };
+        if (self.current().content == .comparison_operator) {
+            const op_tok = self.current();
+            var op: tok.ComparisonOperator = undefined;
+            switch (op_tok.content) {
+                .comparison_operator => |c| op = c,
+                else => unreachable,
+            }
+            self.advanceOne();
+            const rhs = try self.parseExpression();
+            return try self.makeNode(
+                .{ .comparison = .{ .operator = op, .left = lhs, .right = rhs } },
+                op_tok.location,
+            );
+        }
+        return lhs;
     }
 
-    fn parseDeclarationOrAssignment(self: *Syntaxer) SyntaxerError!*syn.STNode {
+    // ─────────────────────────────  STATEMENTS  ──────────────────────────────
+    fn parseStatement(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        self.skipNewLinesAndComments();
+
+        switch (self.current().content) {
+            .keyword_return => return self.parseReturn(),
+            .keyword_if => return self.parseIf(),
+            else => {},
+        }
+
+        const id_loc = self.tokenLocation();
         const name = try self.parseIdentifier();
 
-        var kind: syn.SymbolKind = .binding;
-        var ret_type: ?syn.TypeName = null;
-        var fn_args: ?[]const syn.Argument = null;
-        // Check for parenthesis (function)
+        // ----------- function declaration or call ------------
         if (self.tokenIs(.open_parenthesis)) {
-            self.advanceOne(); // consume '('
-            const args = try self.parseArguments();
-            std.debug.print("args: {any}\n", .{args});
-            if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
-            self.advanceOne(); // consume ')'
-            fn_args = args;
-            kind = .function;
+            const input = try self.parseStructTypeLiteral();
 
             if (self.tokenIs(.arrow)) {
-                self.advanceOne(); // consume '->'
-                ret_type = try self.parseType();
-            }
-        }
+                self.advanceOne();
+                const output = try self.parseStructTypeLiteral();
+                if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
+                self.advanceOne();
 
-        // Assignment
-        if (self.tokenIs(.equal)) {
-            self.advanceOne(); // consume '='
-            const value = try self.parseExpression();
-            const node = try self.allocator.create(syn.STNode);
-            node.*.content = syn.Content{ .assignment = syn.Assignment{ .name = name, .value = value } };
-            node.*.location = self.tokenLocation();
-            return node;
-        }
+                // Si tras el identificador viene un paréntesis, puede ser
+                // una declaración de función (normal o extern).
 
-        var tipo: ?syn.TypeName = if (kind == .function) ret_type else null;
-        // Declaration
-        if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) {
-            var mutability: syn.Mutability = .constant;
-            if (self.tokenIs(.double_colon)) {
-                mutability = .variable;
-            }
-            self.advanceOne(); // consume ':' or '::'
+                // caso ExternFunction
+                switch (self.current().content) {
+                    .identifier => |ident_name| {
+                        if (std.mem.eql(u8, ident_name, "ExternFunction")) {
+                            // Consumimos la palabra clave
+                            self.advanceOne();
+                            // Construimos el nodo
+                            const ef = syn.FunctionDeclaration{
+                                .name = name,
+                                .input = input,
+                                .output = output,
+                                .body = null, // Extern functions do not have a body
+                            };
+                            return try self.makeNode(.{ .function_declaration = ef }, id_loc);
+                        }
+                    },
+                    else => {},
+                }
 
-            if (kind != .function) {
-                tipo = try self.parseType();
-            }
-            var value: ?*syn.STNode = null;
-            if (!self.tokenIs(.new_line)) {
+                // caso normal: ":= { ... }"
                 if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
-                self.advanceOne(); // consume '='
-                value = try self.parseExpression();
+                self.advanceOne();
+                const body = try self.parseCodeBlock();
+
+                const fn_decl = syn.FunctionDeclaration{
+                    .name = name,
+                    .input = input,
+                    .output = output,
+                    .body = body,
+                };
+                return try self.makeNode(.{ .function_declaration = fn_decl }, id_loc);
+            } else {
+                // Si no hay flecha, es una llamada a función.
+                const input_node = try self.makeNode(
+                    .{ .struct_type_literal = input },
+                    id_loc,
+                );
+                return try self.makeNode(
+                    .{ .function_call = .{ .callee = name, .input = input_node } },
+                    id_loc,
+                );
             }
-            const node = try self.allocator.create(syn.STNode);
-            const decl = syn.Declaration{
+        }
+
+        // ----------- ASSIGNMENT --------------------------------------------
+        if (self.tokenIs(.equal)) {
+            self.advanceOne();
+            const val = try self.parseExpression();
+            return try self.makeNode(
+                .{ .assignment = .{ .name = name, .value = val } },
+                id_loc,
+            );
+        }
+
+        // ----------- SYMBOL / TYPE DECLARATION -----------------------------
+        if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) {
+            var mut: syn.Mutability = .constant;
+            if (self.tokenIs(.double_colon)) mut = .variable;
+            self.advanceOne();
+
+            const ty_opt = try self.parseType();
+
+            // Check for type declaration
+            if (ty_opt) |ty| {
+                if (ty == .type_name and std.mem.eql(u8, ty.type_name, "Type")) {
+                    if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
+                    self.advanceOne();
+                    if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+                    const stlit = try self.parseStructTypeLiteral();
+                    const lit_node = try self.makeNode(.{ .struct_type_literal = stlit }, id_loc);
+
+                    const tdecl = syn.TypeDeclaration{
+                        .name = name,
+                        .value = lit_node,
+                    };
+                    return try self.makeNode(.{ .type_declaration = tdecl }, id_loc);
+                }
+            }
+
+            var rhs: ?*syn.STNode = null;
+            if (self.tokenIs(.equal)) {
+                self.advanceOne();
+                rhs = try self.parseExpression();
+            }
+
+            const sym = syn.SymbolDeclaration{
                 .name = name,
-                .kind = kind,
-                .type = tipo orelse null,
-                .mutability = mutability,
-                .args = if (kind == .function) fn_args else null,
-                .value = value,
+                .type = ty_opt,
+                .mutability = mut,
+                .value = rhs,
             };
-            node.*.content = syn.Content{ .declaration = decl };
-            node.*.location = self.tokenLocation();
-            return node;
+            return try self.makeNode(.{ .symbol_declaration = sym }, id_loc);
         }
 
         return SyntaxerError.ExpectedDeclarationOrAssignment;
     }
 
-    fn parseArguments(self: *Syntaxer) SyntaxerError![]const syn.Argument {
-        var args = std.ArrayList(syn.Argument).init(self.allocator.*);
-        while (self.index < self.tokens.len and !self.tokenIs(.close_parenthesis)) {
-            const name = try self.parseIdentifier();
-            if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
-            self.advanceOne(); // consume ':'
-            const tipo = try self.parseType();
-            const arg = syn.Argument{ .name = name, .type = tipo orelse null, .mutability = syn.Mutability.variable };
-            try args.append(arg);
-            if (self.tokenIs(.comma)) {
-                self.advanceOne(); // consume ','
-            }
-        }
-        return args.items;
-    }
-
+    // ─────────────────────────────  SENTENCES  ──────────────────────────────
     fn parseSentences(self: *Syntaxer) !std.ArrayList(*syn.STNode) {
-        var st = std.ArrayList(*syn.STNode).init(self.allocator.*);
-        while (self.index < self.tokens.len and !self.tokenIs(tok.Content.eof) and !self.tokenIs(.close_brace)) {
-            self.ignoreNewLinesAndComments();
+        var list = std.ArrayList(*syn.STNode).init(self.allocator.*);
+
+        while (!self.tokenIs(.eof) and !self.tokenIs(.close_brace)) {
             switch (self.current().content) {
-                .keyword_return => {
-                    const retNode = try self.parseReturn();
-                    try st.append(retNode);
-                },
-                .keyword_if => {
-                    const ifNode = try self.parseIf();
-                    try st.append(ifNode);
-                },
+                .new_line, .comment => self.skipNewLinesAndComments(),
                 else => {
-                    const declNode = try self.parseDeclarationOrAssignment();
-                    try st.append(declNode);
+                    const stmt = try self.parseStatement();
+                    try list.append(stmt);
                 },
             }
-            self.ignoreNewLinesAndComments();
+            self.skipNewLinesAndComments();
         }
-        return st;
+        return list;
     }
 
     fn parseCodeBlock(self: *Syntaxer) SyntaxerError!*syn.STNode {
         if (!self.tokenIs(.open_brace)) return SyntaxerError.ExpectedLeftBrace;
-        self.advanceOne(); // consume '{'
-        const list = try self.parseSentences();
+        self.advanceOne();
+        const items = try self.parseSentences();
         if (!self.tokenIs(.close_brace)) return SyntaxerError.ExpectedRightBrace;
-        self.advanceOne(); // consume '}'
-        const node = try self.allocator.create(syn.STNode);
-        node.*.content = syn.Content{ .code_block = syn.CodeBlock{ .items = list.items } };
-        node.*.location = self.tokenLocation();
-        return node;
+        self.advanceOne();
+        return try self.makeNode(.{ .code_block = .{ .items = items.items } }, self.tokenLocation());
     }
 
     fn parseIf(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        const start = self.tokenLocation();
         if (!self.tokenIs(.keyword_if)) return SyntaxerError.ExpectedKeywordIf;
-        const loc = self.tokenLocation();
-        self.advanceOne(); // consume 'if'
-
-        const condition = try self.parseExpression();
-        const then_block = try self.parseCodeBlock();
-
-        var else_block: ?*syn.STNode = null;
+        self.advanceOne();
+        const cond = try self.parseExpression();
+        const thenB = try self.parseCodeBlock();
+        var elseB: ?*syn.STNode = null;
         if (self.tokenIs(.keyword_else)) {
             self.advanceOne();
-            if (self.tokenIs(.keyword_if)) {
-                else_block = try self.parseIf();
-            } else {
-                else_block = try self.parseCodeBlock();
-            }
+            elseB = if (self.tokenIs(.keyword_if)) try self.parseIf() else try self.parseCodeBlock();
         }
-
-        const node = try self.allocator.create(syn.STNode);
-        node.*.content = syn.Content{ .if_statement = syn.IfStatement{
-            .condition = condition,
-            .then_block = then_block,
-            .else_block = else_block,
-        } };
-        node.*.location = loc;
-        return node;
+        return try self.makeNode(
+            .{ .if_statement = .{ .condition = cond, .then_block = thenB, .else_block = elseB } },
+            start,
+        );
     }
 
     fn parseReturn(self: *Syntaxer) SyntaxerError!*syn.STNode {
-        // Verificar que el token actual es 'keyword_return'
-        if (!self.tokenIs(.keyword_return)) {
-            return SyntaxerError.ExpectedKeywordReturn;
-        }
-        self.advanceOne(); // consume 'keyword_return'
-
-        // Intentamos parsear una expresión que se retorne.
+        const start = self.tokenLocation();
+        if (!self.tokenIs(.keyword_return)) return SyntaxerError.ExpectedKeywordReturn;
+        self.advanceOne();
         const expr = try self.parseExpression();
-
-        const node = try self.allocator.create(syn.STNode);
-        node.*.content = syn.Content{ .return_statement = syn.ReturnStatement{ .expression = expr } };
-        node.*.location = self.tokenLocation();
-        return node;
+        return try self.makeNode(.{ .return_statement = .{ .expression = expr } }, start);
     }
 
+    // ─────────────────────────────  DEBUG  ──────────────────────────────────
     pub fn printST(self: *Syntaxer) void {
-        std.debug.print("\nst:\n", .{});
-        for (self.st.items) |node| {
-            synp.printNode(node.*, 0);
-        }
+        std.debug.print("\nSYNTAX TREE\n", .{});
+        for (self.st.items) |n| synp.printNode(n.*, 0);
+        std.debug.print("\n", .{});
     }
 };

@@ -27,13 +27,21 @@ Int : Abstract = [
 
 Int canbe [
 	-- Automatically changes size according to the value. Never overflows.
+	-- No need to cast when operating with it.
 	DynamicInt
 
 	-- Fixed size integers. They overflow. No undefined behavior.
-	CustomInt(N)
+	-- They do not autocast
 	Int8, Int16, Int32, Int64, Int128
 	UInt8, UInt16, UInt32, UInt64, UInt128
+	-- TODO: Think if having SignedInteger and UnsignedInteger as abstracts
+	-- is a good idea. I think it is not very useful. But consider.
+
+	--- For specific protocols
+	CustomLengthedInt<N>
+	CustomLengthedUInt<N>
 ]
 
 Int defaultsto DynamicInt
+
 

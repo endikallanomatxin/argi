@@ -1,11 +1,32 @@
 ## Types
 
+### Managing types
+
+#### Type casting
+
+Types are casted using the cast function.
+
+```
+cast (t: MyType) -> (s: String) := {
+    ...
+}
+
+print( "My type:" + my_var|cast(_) )
+```
+
+Se resuelve gracias al multiple dispatch.
+
+
+#### Type checking
+
 Checking type:
 
 ```
-some_variable is Int    -- Abstract types
-some_variable is Int32  -- Concrete types
+type some_variable == Int32
+implements (some_variable, Int)
 ```
+
+It is checked at compiletime.
 
 >[!BUG]
 >Pensar en una sintaxis buena para hacer comprobación y conversión de tipo
@@ -26,6 +47,15 @@ Notes:
 Inline declaration requires commas, but they can be ommited when using new lines.
 
 
+#### Private vs. Public
+
+Everything is public by default to make it easier for beginners.
+
+To make variables private, just use:
+- `_name_surname` for variables in snake_case
+- `nameSurname` for variables in PascalCase
+
+
 ### Data modelling types
 
 #### Structs
@@ -33,33 +63,26 @@ Inline declaration requires commas, but they can be ommited when using new lines
 This declares a new struct type:
 
 ```
-Pokemon : Type = [
-	.ID   :: Int64  = 0    -- It allows default values
-	.Name :: String = ""
-]
+Pokemon : Type = (
+	.ID   : Int64  = 0    -- It allows default values
+	.Name : String = ""
+)
 ```
 
 
-This declares a new struct (with no named type):
+This declares a new anonymous struct:
 
 ```
-data : [
-	.ID   :: Int64
-	.Name :: String
-] = [
-	.ID = 0
+data : (
+	.ID   : Int64    -- Struct type literal
+	.Name : String
+) = (
+	.ID = 0          -- Struct value literal
 	.Name = ""
-]
+)
 ```
 
-Or as a shorthand:
-
-```
-data := [
-	.ID   :: Int64 = 0
-	.Name :: String = ""
-]
-```
+Structs' types are structural only when anonymous.
 
 
 ##### Protected fields
@@ -71,9 +94,9 @@ Los campos que empiecen por _ serán privados y no podrán ser accedidos desde f
 Por ejemplo:
 
 ```
-MyStruct : Type = [
+MyStruct : Type = (
 	._x :: Int = 0
-]
+)
 
 get_x(s: MyStruct) := Int {
 	return s._x
@@ -87,55 +110,44 @@ set_x(s: MyStruct, x: Int) {
 También puede ser útil para garantizar que un struct se inicializa correctamente.
 
 ```
-MyStruct := [
+MyStruct := (
 	._x :: Int = 0
 	._y :: Int = 0
 	._z :: Int = 0
-]
+)
 
-init(#t:==MyStruct, x: Int, y: Int, z: Int) : MyStruct {
+init (x: Int, y: Int, z: Int) -> MyStruct := {
 	return MyStruct(x, y, z)
 }
 ```
 
-We use dynamic dispatch by value (from Haskell) to create the initializer.
-
-Así se hace como si fuera un método estático.
+We use dynamic dispatch by return type to create the initializer.
 
 ```
-MyType|init(_, a, b, c)
+my_var : MyType = (1, 2, 3)
 ```
 
-Si init toma un solo argumento, entonces se puede usar esta otra sintaxis:
+Esto realmente es:
 
 ```
-my_var : MyType = [1, 2, 3]
-```
-
-Esto se convierte en:
-
-```
-my_var := MyType|init(_, [1, 2, 3])
+my_var : MyType = init (1, 2, 3)
 ```
 
 y queda muy limpio.
-
-> Podríamos extenderlo para que valiera también con varios?
-
 
 
 > [!IDEA] Struct field types
 > Cuando tienes una app web en go por ejemplo, tienes structs para tus models que tienen un montón de campos que más adelante no vas a usar siempre al completo.
 > A veces aunque solo tengas que usar el campo del ID pasas el struct entero para al menos mantener la semántica.
-> Igual se podría hacer que cuando se define un structu también se definen tipos nuevos.
+> Igual se podría hacer que cuando se define un struct también se definen tipos nuevos.
 > 
 > Por ejemplo:
 >
 >	```
->	User := [
+>	User := (
 >		ID    :: Int64
 >		Name  :: String
->	]
+>	)
 >	userIDs : List(User.ID)  -- En lugar de Users, o simplemente Int64
 >	```
 >
@@ -145,12 +157,12 @@ y queda muy limpio.
 #### Choice
 
 ```
-Direction : Type = [
+Direction : Type = (
 	=..north  -- Default
 	..east
 	..south
 	..west
-]
+)
 
 int(Directions..north) == 1
 ```
@@ -161,34 +173,34 @@ int(Directions..north) == 1
 ```
 
 ```
-HTTPCode : Type = [
+HTTPCode : Type = (
 	..OK = 200                   -- Specific underlying representation
 	..NotFound = 404
 	..InternalServerError = 500
 	-- Si poners uno, tienes que poner todos.
-]
+)
 ```
 
 ```
 -- With other data types besides Int
 
 -- Strings
-Role : Type = [
-	..Admin = "admin"
-	..User = "user"
-	..Guest = "guest"
-]
+Role : Type = (
+	..admin = "admin"
+	..user = "user"
+	..guest = "guest"
+)
 
 -- Floats
-Multiplyier : Type = [
-	..Mili = 0.001
-	..Centi = 0.01
-	..Deci = 0.1
-	..Base = 1
-	..Deca = 10
-	..Hecto = 100
-	..Kilo = 1000
-]
+Multiplyier : Type = (
+	..mili = 0.001
+	..centi = 0.01
+	..deci = 0.1
+	..base = 1
+	..deca = 10
+	..hecto = 100
+	..kilo = 1000
+)
 ```
 
 ##### Payload
@@ -196,17 +208,17 @@ Multiplyier : Type = [
 Like a tagged union.
 
 ```
-Errable<T, E> : Type = [
+Errable<T, E> : Type = (
 	..ok(T)
 	..error(E)
-]
+)
 ```
 
 ```
-Nullable<T> : Type = [
+Nullable<T> : Type = (
 	=..none
 	..some(T)
-]
+)
 ```
 
 ##### Use
@@ -277,12 +289,12 @@ Los abstract types:
 Así se declara un tipo abstracto:
 
 ```
-Animal : Abstract = [
+Animal : Abstract = (
 	-- Las funciones se definen con la sintaxis de currying.
 	speak(_) := String
-]
+)
 
-speak(d: Dog) := String {
+speak (d: Dog) -> (s: String) := {
 	return "Woof"
 }
 
@@ -294,18 +306,18 @@ Animal defaultsto Dog
 ```
 
 ```
-Addable : Abstract = [
+Addable : Abstract = (
 	operator +(_, _) : _
-]
+)
 ```
 
 To use with generics:
 
 ```
-List<t:Type> : Abstract = [
-	operator get[](_, _) := t
-	operator set[](_, _, t)
-]
+List<t:Type> : Abstract = (
+	operator get()(_, _) := t
+	operator set()(_, _, t)
+)
 
 List<t> canbe DynamicArray<t>
 List<t> canbe StaticArray<t, Any>
@@ -314,13 +326,13 @@ List<t> canbe StaticArray<t, Any>
 To compose them:
 
 ```
-Number : Abstract = [
+Number : Abstract = (
 	Addable
 	Substractable
 	Multiplicable
 	...
 	-- You can mix functions and other abstract types here.
-]
+)
 ```
 
 
@@ -337,100 +349,33 @@ Literals are:
 #### Numbers
 
 ```
-Number : Abstract = [
-	...
-]
-
-Number canbe [
-	Int
-	Float
-]
-
-Number defaultsto Exact
+RealNumber (Abstract)
+├── Int (Abstract)
+    ├── DynamicInt (default)
+    ├── CustomInt(N)
+    ├── Int8
+    ├── Int16
+    ├── Int32
+    ├── Int64
+    ├── Int128
+    ├── UInt8
+    ├── UInt16
+    ├── UInt32
+    ├── UInt64
+    └── UInt128
+└── Float (Abstract)
+    ├── Float8
+    ├── Float16
+    ├── Float32 (default)
+    ├── Float64
+    └── Float128
 ```
 
-- Underscores can be added to numbers for clarity. For example, `1000000` can be tricky to read quickly, while `1_000_000` can be easier.
-- Ints can be written in binary, octal, or hexadecimal formats using the `0b`, `0o`, and `0x`prefixes respectively.
+- Numbers only allow operatiions and comparisons between same types, so, if you want python-like behaviour, use DynamicInt, DynamicFloat, DynamicNumber...
+
+- Underscores can be added to numbers for clarity (`1_000_000`).
+- Ints can be written in binary, octal, or hexadecimal formats using the prefixes `0b`, `0o`, and `0x` respectively.
 - Floats can be written in a scientific notation.
- 
->[!BUG] Pensar
-> Cuando haces == entre Int64 y Int8, o Int32 y DynamicInt... debería dejarse comparar variables de distintos tipos?
-
-
-From Julia:
-
-Number  (Abstract Type)
-├─ Complex
-└─ Real  (Abstract Type)
-   ├─ AbstractFloat  (Abstract Type)
-   │  ├─ Float16
-   │  ├─ Float32
-   │  ├─ Float64
-   │  └─ BigFloat
-   ├─ Integer  (Abstract Type)
-   │  ├─ Bool
-   │  ├─ Signed  (Abstract Type)
-   │  │  ├─ Int8
-   │  │  ├─ Int16
-   │  │  ├─ Int32
-   │  │  ├─ Int64
-   │  │  ├─ Int128
-   │  │  └─ BigInt
-   │  └─ Unsigned  (Abstract Type)
-   │     ├─ UInt8
-   │     ├─ UInt16
-   │     ├─ UInt32
-   │     ├─ UInt64
-   │     └─ UInt128
-   ├─ Rational
-   └─ AbstractIrrational  (Abstract Type)
-      └─ Irrational
-
-#### Integers
-
-```
-Int : Abstract = [
-	float(_) : Float
-	operator +(_, _) : Int
-	operator -(_, _) : Int
-	operator *(_, _) : Int
-	operator /(_, _) : Int
-	operator %(_, _) : Int
-	operator ^(_, _) : Int
-	...
-]
-
-Int canbe [
-	-- Automatically changes size according to the value. Never overflows.
-	DynamicInt
-
-	-- Fixed size integers. They overflow. No undefined behavior.
-	CustomInt(N)
-	Int8, Int16, Int32, Int64, Int128
-	UInt8, UInt16, UInt32, UInt64, UInt128
-]
-
-Int defaultsto DynamicInt
-```
-
->[!TODO] Darle alguna vuelta a como se gestiona el /0.
-
-#### Floats
-
-```
-Float : Type : abstract [
-	operator +(_, _) : _
-	operator -(_, _) : _
-	operator *(_, _) : _
-	operator /(_, _) : _
-	operator ^(_, _) : _
-	...
-]
-
-Float canbe [Float8, Float16, Float32, Float64, Float128]
-Float defaultsto Float32
-Number canbe Float
-```
 
 
 #### Alias
@@ -467,13 +412,13 @@ What we have is literals for them:
 - List literals
 
 ```
-l := [1, 2, 3]
+l := (1, 2, 3)
 ```
 
 - Map literals
 
 ```
-m := ["a"=1, "b"=2]
+m := ("a"=1, "b"=2)
 ```
 
 These types are only special in the sense that they are the default types infered from their literals.
@@ -483,17 +428,17 @@ More info on collection types in `../library/collections/`
 The easy default: definition of a heap allocated dynamic array:
 
 ```
-l := [1, 2, 3]
+l := (1, 2, 3)
 
 -- Turns into:
 
-l : DynamicArray<Int> = DynamicArray|init(_, [1, 2, 3])
+l : DynamicArray<Int> = DynamicArray|init(_, (1, 2, 3))
 ```
 
 For the low-level-seeking ones: Definition of a stack-allocated array:
 
 ```
-l : StackArray<Int, 3> = [1, 2, 3]
+l : StackArray<Int, 3> = (1, 2, 3)
 ```
 
 > [!TODO] Pensar una forma de definir longitud de forma automática.
@@ -505,7 +450,6 @@ l : StackArray<Int, 3> = [1, 2, 3]
 `2..5` y `2.2.10`
 
 > [!TODO] Pensar en otra sintaxis, que el punto se usa para otras cosas.
-
 
 
 ### Strings
@@ -520,8 +464,8 @@ Two literals:
 Una lista string, se debería poder "ver" como una lista de chars o una lista de bytes. Un char puede ser de múltiples bytes (UTF8)
 
 ```
-my_string[5]            -- The fifth character
-my_string|bytes_get(&_, 4)  -- The fourth byte
+my_string(5)            -- The fifth character
+my_string | bytes_get(&_, 4)  -- The fourth byte
 ```
 
 
@@ -548,31 +492,12 @@ my_query :="""sql
 
 Several escape sequences are supported:
 
-- `\"` - double quote
-- `\\` - backslash
-- `\f` - form feed
-- `\n` - newline
-- `\r` - carriage return
-- `\t` - tab
-- `\u{xxxxxx}` - unicode codepoint
+- `\"` - double quote
+- `\\` - backslash
+- `\f` - form feed
+- `\n` - newline
+- `\r` - carriage return
+- `\t` - tab
+- `\u{xxxxxx}` - unicode codepoint
 
-
-
-#### Private vs. Public
-
-Everything is public by default to make it easier for beginners.
-
-To make variables private, just use:
-- `_name_surname` for variables in snake_case
-- `nameSurname` for variables in PascalCase
-
-Naming conditions code! It is more comfortable than having to use a keyword.
-
-
-#### Type Casting
-
-```
-x = 5
-y = x|to(_, Float)  
-```
 

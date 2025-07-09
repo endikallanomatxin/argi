@@ -630,6 +630,24 @@ AOS and SOA pointers can be automatically casted.
 
 
 
+## [Demo: Run-time (and compile time) type information](https://youtu.be/JoNkttD_MUs?si=REPgtvNieUCQhWNn)
 
+Any type sirve para las llamadas de las funciones que polimorficas en runtime.
+
+```jai
+Any :: struct {
+    type: Type;
+    data: ^void;
+};
+
+```
+
+Varargs se hacen unpackeando listas: ..list
+
+```jai
+function_with_varargs :: (args: ..) {
+    ...
+}
+```
 
 

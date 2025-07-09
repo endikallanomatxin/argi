@@ -16,3 +16,7 @@ Float : Type : abstract [
 
 Float canbe [Float8, Float16, Float32, Float64, Float128]
 Float defaultsto Float32
+
+-- You cannot customize that layout from within standard LLVM IR
+-- So it doesn't make sense to have a CustomLengthedFloat<N> type
+
