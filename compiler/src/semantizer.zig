@@ -402,6 +402,8 @@ pub const Semantizer = struct {
 
     //──────────────────────────────────────────────────── IF
     fn handleIf(self: *Semantizer, ifs: syn.IfStatement, s: *Scope) SemErr!TypedExpr {
+        const start_len = s.nodes.items.len;
+
         const cond = try self.visitNode(ifs.condition.*, s);
         const then_te = try self.visitNode(ifs.then_block.*, s);
 
@@ -409,6 +411,8 @@ pub const Semantizer = struct {
             (try self.visitNode(eb.*, s)).node.*.code_block
         else
             null;
+
+        s.nodes.items.len = start_len;
 
         const if_ptr = try self.allocator.create(sem.IfStatement);
         if_ptr.* = .{
