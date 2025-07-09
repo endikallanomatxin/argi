@@ -45,40 +45,16 @@ pub fn compile(filename: []const u8) !void {
     }
     std.debug.print("Código LLVM IR guardado en {s}\n", .{llvm_output_filename});
 
-    if (std.process.can_execv) {
-        // 5. Compilar el IR a un ejecutable usando Clang.
-        std.debug.print("\n\nCOMPILATION\n", .{});
-        var env = std.process.getEnvMap(allocator) catch return;
-        defer env.deinit();
+    // 5. Compilar el IR a un ejecutable usando Clang.
+    std.debug.print("\n\nCOMPILATION\n", .{});
+    var env = std.process.getEnvMap(allocator) catch return;
+    defer env.deinit();
 
-        const triple_cstr = c.LLVMGetDefaultTargetTriple();
-        defer c.LLVMDisposeMessage(triple_cstr);
-        const triple = std.mem.span(triple_cstr);
+    const triple_cstr = c.LLVMGetDefaultTargetTriple();
+    defer c.LLVMDisposeMessage(triple_cstr);
+    const triple = std.mem.span(triple_cstr);
 
-        const out_path = "output"; // binario final
-        try link.linkWithLibc(module, triple, out_path, &allocator);
-        std.debug.print("✔ Generado {s}\n", .{out_path});
-
-        const result = std.process.Child.run(.{
-            .allocator = allocator,
-            .argv = &[_][]const u8{ "clang", llvm_output_filename, "-o", "output" },
-            .env_map = &env,
-        }) catch |err| {
-            std.debug.print("Error al ejecutar el comando de compilación: {}\n", .{err});
-            return err;
-        };
-        if (result.term.Exited != 0) {
-            std.debug.print("El comando de compilación falló con código de salida: {}\n", .{result.term.Exited});
-            std.debug.print("STDOUT:\n{s}\n", .{result.stdout});
-            std.debug.print("STDERR:\n{s}\n", .{result.stderr});
-            return error.CompilationFailed;
-        }
-
-        std.debug.print("Compilación completada. Ejecutable generado: ./output\n", .{});
-    } else {
-        std.debug.print("No se puede ejecutar el comando de compilación, porque no se soporta en este sistema.\n", .{});
-        std.debug.print("Ejecute el comando manualmente:\n", .{});
-        std.debug.print("  clang {s} -o output\n", .{llvm_output_filename});
-        return error.UnsupportedPlatform;
-    }
+    const out_path = "output"; // binario final
+    try link.linkWithLibc(module, triple, out_path, &allocator);
+    std.debug.print("✔ Generado {s}\n", .{out_path});
 }
