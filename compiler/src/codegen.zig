@@ -264,118 +264,146 @@ pub const CodeGenerator = struct {
     }
 
     fn genFunction(self: *CodeGenerator, f: *sem.FunctionDeclaration) !void {
-        // 1) Input and return types
-        const input_type = try self.toLLVMType(.{ .struct_type = &f.input });
-        const return_type = try self.toLLVMType(.{ .struct_type = &f.output });
+        const is_extern = (f.body == null);
 
-        // 3) creación de la función
-        const fn_ty = c.LLVMFunctionType(
-            return_type,
-            blk: {
-                var arr = try self.allocator.alloc(llvm.c.LLVMTypeRef, 1);
-                arr[0] = input_type;
-                break :blk arr.ptr;
-            },
-            1,
-            0,
-        );
-        const cname = try self.dupZ(f.name);
-        const fn_ref = c.LLVMAddFunction(self.module, cname.ptr, fn_ty);
-        try self.current_scope.symbols.put(f.name, .{ .cname = cname, .mutability = .constant, .type_ref = fn_ty, .ref = fn_ref });
+        var fn_ty: llvm.c.LLVMTypeRef = undefined;
+        var return_ty: llvm.c.LLVMTypeRef = undefined;
+        var uses_sret = false;
 
-        if (f.body == null) {
-            // Si no hay cuerpo, es una declaración de función externa
-            // No hacemos nada más aquí, ya que no hay código que generar.
-            return;
+        // ─── signatura ───────────────────────────────────────────────────
+        if (is_extern) {
+            const sig = try self.makeExternSignature(f);
+            fn_ty = sig.fn_ty;
+            return_ty = sig.ret_ty;
+            uses_sret = sig.sret;
+        } else {
+            const input_ty = try self.toLLVMType(.{ .struct_type = &f.input });
+            return_ty = try self.toLLVMType(.{ .struct_type = &f.output });
+            fn_ty = c.LLVMFunctionType(
+                return_ty,
+                blk: {
+                    var a = try self.allocator.alloc(llvm.c.LLVMTypeRef, 1);
+                    a[0] = input_ty;
+                    break :blk a.ptr;
+                },
+                1,
+                0,
+            );
         }
 
-        // 4) entry-bb & builder
-        const entry_bb = c.LLVMAppendBasicBlock(fn_ref, "entry");
-        c.LLVMPositionBuilderAtEnd(self.builder, entry_bb);
+        // ─── creación / tabla de símbolos ────────────────────────────────
+        const cname = try self.dupZ(f.name);
+        const fn_ref = c.LLVMAddFunction(self.module, cname.ptr, fn_ty);
 
-        try self.current_scope.symbols.put(f.name, .{
-            .cname = cname,
-            .mutability = .constant,
-            .type_ref = fn_ty,
-            .ref = fn_ref,
-            .initialized = true, // función ya está definida
-        });
+        if (is_extern and uses_sret) {
+            const kind = c.LLVMGetEnumAttributeKindForName("sret", 4);
+            const attr = c.LLVMCreateEnumAttribute(c.LLVMGetGlobalContext(), kind, 0);
+            c.LLVMAddAttributeAtIndex(fn_ref, 1, attr); // 1-based
+        }
 
-        // 5) abre un scope nuevo para las variables locales y parámetros
+        try self.current_scope.symbols.put(
+            f.name,
+            .{ .cname = cname, .mutability = .constant, .type_ref = fn_ty, .ref = fn_ref },
+        );
+
+        // ─── funciones externas: ¡nada más que hacer! ────────────────────
+        if (is_extern) return;
+
+        // ─── a partir de aquí es tu código original (cuerpo interno) ─────
+        const entry = c.LLVMAppendBasicBlock(fn_ref, "entry");
+        c.LLVMPositionBuilderAtEnd(self.builder, entry);
+
         try self.pushScope();
         defer self.popScope();
 
         const prev_rt = self.current_return_type;
-        self.current_return_type = return_type;
+        self.current_return_type = return_ty;
         defer self.current_return_type = prev_rt;
 
-        // 6) registrar args en la tabla local
-        for (f.input.fields) |field| {
-            // Generate binding declaration for each input parameter
-            const binding_declaration = sem.BindingDeclaration{
-                .name = field.name,
+        // registrar parámetros de entrada
+        for (f.input.fields) |fld| {
+            const bd = sem.BindingDeclaration{
+                .name = fld.name,
                 .mutability = syn.Mutability.constant,
-                .ty = field.ty,
-                .initialization = null, // No initialization for input params
+                .ty = fld.ty,
+                .initialization = null,
             };
-            try self.genBindingDecl(&binding_declaration);
+            try self.genBindingDecl(&bd);
         }
 
-        // 7) extraer los parámetros de entrada
+        // extraer struct-input
         const param_agg = c.LLVMGetParam(fn_ref, 0);
-        for (f.input.fields, 0..) |field, idx| {
-            const sym_ptr = self.current_scope.lookup(field.name) orelse
-                return CodegenError.SymbolNotFound;
-
-            const elem =
-                c.LLVMBuildExtractValue(self.builder, param_agg, @intCast(idx), "arg.extract");
-            _ = c.LLVMBuildStore(self.builder, elem, sym_ptr.*.ref);
-            sym_ptr.*.initialized = true; // ahora sí está inicializado
+        for (f.input.fields, 0..) |fld, i| {
+            const sym = self.current_scope.lookup(fld.name).?;
+            const v = c.LLVMBuildExtractValue(self.builder, param_agg, @intCast(i), "arg");
+            _ = c.LLVMBuildStore(self.builder, v, sym.ref);
+            sym.initialized = true;
         }
 
-        // 8) registrar args de retorno en la tabla local
-        for (f.output.fields) |field| {
-            // Generate binding declaration for each output parameter
-            const binding_declaration = sem.BindingDeclaration{
-                .name = field.name,
+        // registrar parámetros de salida
+        for (f.output.fields) |fld| {
+            const bd = sem.BindingDeclaration{
+                .name = fld.name,
                 .mutability = syn.Mutability.variable,
-                .ty = field.ty,
-                .initialization = null, // No initialization for output params
+                .ty = fld.ty,
+                .initialization = null,
             };
-            try self.genBindingDecl(&binding_declaration);
+            try self.genBindingDecl(&bd);
         }
 
-        // 7) código del cuerpo
+        // cuerpo del usuario
         try self.genCodeBlock(f.body.?);
 
-        // 8) Gestionar la ausencia de return explícito
+        // return implícito si falta
         const cur_bb = c.LLVMGetInsertBlock(self.builder);
         if (c.LLVMGetBasicBlockTerminator(cur_bb) == null) {
-            if (return_type == c.LLVMVoidType()) {
+            if (return_ty == c.LLVMVoidType()) {
                 _ = c.LLVMBuildRetVoid(self.builder);
             } else {
-                // Construir el struct de retorno a partir de los parámetros de salida
-                const field_cnt = f.output.fields.len;
-                var vals = try self.allocator.alloc(llvm.c.LLVMValueRef, field_cnt);
-
+                var agg = c.LLVMGetUndef(return_ty);
                 for (f.output.fields, 0..) |fld, i| {
-                    const sym = self.current_scope.lookup(fld.name) orelse
-                        return CodegenError.SymbolNotFound;
-                    vals[i] = c.LLVMBuildLoad2(self.builder, sym.type_ref, sym.ref, sym.cname.ptr);
+                    const sym = self.current_scope.lookup(fld.name).?;
+                    const v = c.LLVMBuildLoad2(self.builder, sym.type_ref, sym.ref, "");
+                    agg = c.LLVMBuildInsertValue(self.builder, agg, v, @intCast(i), "");
                 }
-
-                // LLVM no permite crear un struct "const" con valores en tiempo de
-                // ejecución, así que construimos uno dinámicamente:
-                var ret_val = c.LLVMGetUndef(return_type);
-                for (vals, 0..) |v, i| {
-                    ret_val = c.LLVMBuildInsertValue(self.builder, ret_val, v, @intCast(i), "ret.agg");
-                }
-                _ = c.LLVMBuildRet(self.builder, ret_val);
+                _ = c.LLVMBuildRet(self.builder, agg);
             }
         }
+    }
 
-        if (c.LLVMVerifyFunction(fn_ref, c.LLVMPrintMessageAction) != 0)
-            return CodegenError.ModuleCreationFailed;
+    // ────────────────────────── extern helpers ──
+    /// Construye la signatura LLVM correcta para una función *extern*
+    /// usando la ABI de C:
+    ///   · cada campo de `input` → parámetro independiente
+    ///   · 0 retornos → `void`
+    ///   · 1 retorno  → ese tipo
+    ///   · ≥2 retornos → `void` + primer parámetro `sret` (&struct)
+    fn makeExternSignature(self: *CodeGenerator, f: *const sem.FunctionDeclaration) !struct { fn_ty: llvm.c.LLVMTypeRef, ret_ty: llvm.c.LLVMTypeRef, sret: bool } {
+        const need_sret = f.output.fields.len > 1;
+        const total: usize = f.input.fields.len + (if (need_sret) @as(usize, 1) else @as(usize, 0));
+
+        var arg_tys = try self.allocator.alloc(llvm.c.LLVMTypeRef, total);
+        var idx: usize = 0;
+
+        if (need_sret) {
+            const sret_ty = try self.toLLVMType(.{ .struct_type = &f.output });
+            arg_tys[0] = c.LLVMPointerType(sret_ty, 0);
+            idx = 1;
+        }
+        for (f.input.fields, 0..) |fld, i|
+            arg_tys[idx + i] = try self.toLLVMType(fld.ty);
+
+        var ret_ty: llvm.c.LLVMTypeRef = c.LLVMVoidType();
+        if (f.output.fields.len == 1)
+            ret_ty = try self.toLLVMType(f.output.fields[0].ty);
+
+        const fn_ty = c.LLVMFunctionType(
+            ret_ty,
+            if (total == 0) null else arg_tys.ptr,
+            @intCast(total),
+            0,
+        );
+        return .{ .fn_ty = fn_ty, .ret_ty = ret_ty, .sret = need_sret };
     }
 
     // ────────────────────────────────────────── bindings ──
@@ -643,26 +671,97 @@ pub const CodeGenerator = struct {
     fn genFunctionCall(self: *CodeGenerator, fc: *const sem.FunctionCall) CodegenError!?TypedValue {
         const sym = self.current_scope.lookup(fc.callee.name) orelse
             return CodegenError.SymbolNotFound;
-        const fn_ty = sym.type_ref;
-        const ret_ty = c.LLVMGetReturnType(fn_ty);
+        const callee_decl = fc.callee;
+        const is_extern = (callee_decl.body == null);
 
-        // único parámetro
-        var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, 1);
-        argv[0] = (try self.visitNode(fc.input)).?.value_ref;
+        // ─────── llamadas INTERNAS (idénticas a antes) ───────────────────
+        if (!is_extern) {
+            const fn_ty = sym.type_ref;
+            const ret_ty = c.LLVMGetReturnType(fn_ty);
 
-        const call_val = c.LLVMBuildCall2(
+            var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, 1);
+            argv[0] = (try self.visitNode(fc.input)).?.value_ref;
+
+            const call_val = c.LLVMBuildCall2(
+                self.builder,
+                fn_ty,
+                sym.ref,
+                argv.ptr,
+                1,
+                "call",
+            );
+
+            return if (ret_ty == c.LLVMVoidType())
+                null
+            else
+                .{ .value_ref = call_val, .type_ref = ret_ty };
+        }
+
+        // ─────── llamadas EXTERN ─────────────────────────────────────────
+        const in_tv = (try self.visitNode(fc.input)).?;
+        const in_val = in_tv.value_ref;
+
+        const need_sret = callee_decl.output.fields.len > 1;
+        const total: usize = callee_decl.input.fields.len + (if (need_sret) @as(usize, 1) else @as(usize, 0));
+        var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, total);
+
+        var idx: usize = 0;
+        var sret_tmp: llvm.c.LLVMValueRef = null;
+        var sret_ty: llvm.c.LLVMTypeRef = c.LLVMVoidType();
+
+        if (need_sret) {
+            sret_ty = try self.toLLVMType(.{ .struct_type = &callee_decl.output });
+            sret_tmp = c.LLVMBuildAlloca(self.builder, sret_ty, "sret");
+            argv[0] = sret_tmp;
+            idx = 1;
+        }
+
+        // aplanar struct-input
+        for (callee_decl.input.fields, 0..) |fld, i| {
+            const raw = c.LLVMBuildExtractValue(self.builder, in_val, @intCast(i), "");
+            const pty = try self.toLLVMType(fld.ty);
+
+            // cast típico i8→i32 (ej. putchar)
+            const val =
+                if (pty == c.LLVMInt32Type() and c.LLVMTypeOf(raw) == c.LLVMInt8Type())
+                    c.LLVMBuildSExt(self.builder, raw, pty, "sext")
+                else
+                    raw;
+
+            argv[idx] = val;
+            idx += 1;
+        }
+
+        _ = c.LLVMBuildCall2(
             self.builder,
-            fn_ty,
+            sym.type_ref,
             sym.ref,
             argv.ptr,
-            1,
-            "call",
+            @intCast(idx),
+            "",
         );
 
-        return if (ret_ty == c.LLVMVoidType())
-            null
-        else
-            .{ .value_ref = call_val, .type_ref = ret_ty };
+        // retorno según nº de campos
+        switch (callee_decl.output.fields.len) {
+            0 => return null,
+            1 => {
+                // el valor ya está retornado por la instrucción `call`
+                const ret_ty = c.LLVMGetReturnType(sym.type_ref);
+                const call_val = c.LLVMBuildCall2(
+                    self.builder,
+                    sym.type_ref,
+                    sym.ref,
+                    argv.ptr,
+                    @intCast(idx),
+                    "calltmp",
+                );
+                return .{ .value_ref = call_val, .type_ref = ret_ty };
+            },
+            else => {
+                const loaded = c.LLVMBuildLoad2(self.builder, sret_ty, sret_tmp, "ret");
+                return .{ .value_ref = loaded, .type_ref = sret_ty };
+            },
+        }
     }
 
     // ────────────────────────────────────────── struct literal ──
