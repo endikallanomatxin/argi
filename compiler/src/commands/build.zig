@@ -51,10 +51,13 @@ pub fn compile(filename: []const u8) !void {
         var env = std.process.getEnvMap(allocator) catch return;
         defer env.deinit();
 
-        //const triple = env.get("TARGET_TRIPLE") orelse "x86_64-pc-linux-gnu";
-        // const output_file_path = "output";
-        // try link.linkWithLibc(module, triple, output_file_path, &allocator);
-        // std.debug.print("✔ Generado {s}\n", .{output_file_path});
+        const triple_cstr = c.LLVMGetDefaultTargetTriple();
+        defer c.LLVMDisposeMessage(triple_cstr);
+        const triple = std.mem.span(triple_cstr);
+
+        const out_path = "output"; // binario final
+        try link.linkWithLibc(module, triple, out_path, &allocator);
+        std.debug.print("✔ Generado {s}\n", .{out_path});
 
         const result = std.process.Child.run(.{
             .allocator = allocator,

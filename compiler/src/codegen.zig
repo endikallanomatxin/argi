@@ -77,22 +77,6 @@ pub const CodeGenerator = struct {
         const b = c.LLVMCreateBuilder();
         const gscope = try Scope.init(a, null);
 
-        // prototipo de printf -------------------------------------------------
-        const i8ptr = c.LLVMPointerType(c.LLVMInt8Type(), 0);
-
-        // ①  Array mutable (no-const)
-        var param_types = [_]llvm.c.LLVMTypeRef{i8ptr};
-
-        // ②  &param_types[0]  ⇒  *LLVMTypeRef  (compatible con [*c]LLVMTypeRef)
-        const printf_ty = c.LLVMFunctionType(
-            c.LLVMInt32Type(),
-            &param_types[0],
-            @intCast(param_types.len),
-            1, // variádico
-        );
-
-        _ = c.LLVMAddFunction(m, "printf", printf_ty);
-
         return .{
             .allocator = a,
             .ast = ast,
@@ -298,6 +282,12 @@ pub const CodeGenerator = struct {
         const cname = try self.dupZ(f.name);
         const fn_ref = c.LLVMAddFunction(self.module, cname.ptr, fn_ty);
         try self.current_scope.symbols.put(f.name, .{ .cname = cname, .mutability = .constant, .type_ref = fn_ty, .ref = fn_ref });
+
+        if (f.body == null) {
+            // Si no hay cuerpo, es una declaración de función externa
+            // No hacemos nada más aquí, ya que no hay código que generar.
+            return;
+        }
 
         // 4) entry-bb & builder
         const entry_bb = c.LLVMAppendBasicBlock(fn_ref, "entry");
@@ -683,8 +673,13 @@ pub const CodeGenerator = struct {
             vals[i] = (try self.visitNode(f.value)).?.value_ref;
 
         const ty = try self.toLLVMType(sl.ty);
-        const val = c.LLVMConstNamedStruct(ty, vals.ptr, @intCast(cnt));
-        return .{ .value_ref = val, .type_ref = ty };
+
+        // construir el agregado en tiempo de ejecución
+        var agg = c.LLVMGetUndef(ty);
+        for (vals, 0..) |v, i|
+            agg = c.LLVMBuildInsertValue(self.builder, agg, v, @intCast(i), "lit.insert");
+
+        return .{ .value_ref = agg, .type_ref = ty };
     }
 
     // ────────────────────────────────────────── struct field access ──

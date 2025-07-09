@@ -1,6 +1,6 @@
-println ( .msg : &Char ) -> () : ExternFunction
+putchar ( .c : Char ) -> () : ExternFunction
 
 main () -> (.status_code: Int32) := {
     a := 'a'
-    println(.msg = &a)
+    putchar(.c = a)
 }

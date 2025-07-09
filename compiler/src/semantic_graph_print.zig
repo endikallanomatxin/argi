@@ -51,8 +51,13 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
 
             indent(lvl + 1);
             std.debug.print("Body:\n", .{});
-            const tmp: sem.SGNode = .{ .code_block = @constCast(f.body.?) };
-            printNode(&tmp, lvl + 2);
+            if (f.body) |cb| {
+                const tmp: sem.SGNode = .{ .code_block = @constCast(cb) };
+                printNode(&tmp, lvl + 2);
+            } else {
+                indent(lvl + 2);
+                std.debug.print("(extern function)\n", .{});
+            }
         },
 
         .binding_assignment => |a| {
