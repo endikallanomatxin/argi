@@ -9,6 +9,7 @@ const codegen = @import("../codegen.zig");
 const tok = @import("../tokenizer.zig");
 const syn = @import("../syntaxer.zig");
 const sem = @import("../semantizer.zig");
+const link = @import("../link.zig");
 
 pub fn compile(filename: []const u8) !void {
     std.debug.print("Compilando archivo: {s}\n", .{filename});
@@ -49,6 +50,12 @@ pub fn compile(filename: []const u8) !void {
         std.debug.print("\n\nCOMPILATION\n", .{});
         var env = std.process.getEnvMap(allocator) catch return;
         defer env.deinit();
+
+        //const triple = env.get("TARGET_TRIPLE") orelse "x86_64-pc-linux-gnu";
+        // const output_file_path = "output";
+        // try link.linkWithLibc(module, triple, output_file_path, &allocator);
+        // std.debug.print("✔ Generado {s}\n", .{output_file_path});
+
         const result = std.process.Child.run(.{
             .allocator = allocator,
             .argv = &[_][]const u8{ "clang", llvm_output_filename, "-o", "output" },

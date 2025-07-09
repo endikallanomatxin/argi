@@ -55,7 +55,8 @@ pub const FunctionDeclaration = struct {
     name: []const u8,
     input: StructTypeLiteral, // Arguments
     output: StructTypeLiteral, // Named return params
-    body: *STNode, // CodeBlock
+    body: ?*STNode, // CodeBlock
+    // If it has no body, it is an extern function.
 };
 
 pub const Assignment = struct {

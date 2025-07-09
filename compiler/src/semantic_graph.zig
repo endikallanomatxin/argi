@@ -117,7 +117,7 @@ pub const FunctionDeclaration = struct {
     name: []const u8,
     input: StructType, // Arguments
     output: StructType, // Named return params
-    body: *const CodeBlock,
+    body: ?*const CodeBlock,
 };
 
 pub const BindingDeclaration = struct {
