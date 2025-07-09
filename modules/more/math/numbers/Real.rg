@@ -1,4 +1,4 @@
-Number : Abstract = [
+Real : Abstract = [
 	operator +(_, _) : Int
 	operator -(_, _) : Int
 	operator *(_, _) : Int
@@ -8,4 +8,5 @@ Number : Abstract = [
 	...
 ]
 
-Number canbe [Int, Float]
+Real canbe [Int, Float]
+

@@ -27,6 +27,15 @@ pub fn printToken(token: tok.Token) void {
         .close_brace => {
             std.debug.print("close_brace\n", .{});
         },
+        .open_bracket => {
+            std.debug.print("open_bracket\n", .{});
+        },
+        .close_bracket => {
+            std.debug.print("close_bracket\n", .{});
+        },
+        .dot => {
+            std.debug.print("dot\n", .{});
+        },
         .comma => {
             std.debug.print("comma\n", .{});
         },
@@ -79,11 +88,27 @@ pub fn printToken(token: tok.Token) void {
         .equal => {
             std.debug.print("equal\n", .{});
         },
-        .check_equals => {
-            std.debug.print("check_equals\n", .{});
-        },
-        .check_not_equals => {
-            std.debug.print("check_not_equals\n", .{});
+        .comparison_operator => |op| {
+            switch (op) {
+                .equal => {
+                    std.debug.print("comparison_operator: equal\n", .{});
+                },
+                .not_equal => {
+                    std.debug.print("comparison_operator: not_equal\n", .{});
+                },
+                .less_than => {
+                    std.debug.print("comparison_operator: less_than\n", .{});
+                },
+                .greater_than => {
+                    std.debug.print("comparison_operator: greater_than\n", .{});
+                },
+                .less_than_or_equal => {
+                    std.debug.print("comparison_operator: less_than_or_equal\n", .{});
+                },
+                .greater_than_or_equal => {
+                    std.debug.print("comparison_operator: greater_than_or_equal\n", .{});
+                },
+            }
         },
         .arrow => {
             std.debug.print("arrow\n", .{});
@@ -105,13 +130,24 @@ pub fn printToken(token: tok.Token) void {
                 .modulo => {
                     std.debug.print("binary_operator: modulo\n", .{});
                 },
-                .equals => {
-                    std.debug.print("binary_operator: equals\n", .{});
-                },
-                .not_equals => {
-                    std.debug.print("binary_operator: not_equals\n", .{});
-                },
             }
         },
+        .ampersand => {
+            std.debug.print("ampersand\n", .{});
+        },
+        .dollar => {
+            std.debug.print("dollar\n", .{});
+        },
+        .pipe => {
+            std.debug.print("pipe\n", .{});
+        },
     }
+}
+
+pub fn printTokenWithLocation(token: tok.Token, location: tok.Location) void {
+    printToken(token);
+    std.debug.print("at {d}:{d}\n", .{
+        location.line,
+        location.column,
+    });
 }

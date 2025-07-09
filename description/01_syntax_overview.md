@@ -44,19 +44,6 @@ The declaration syntax has two delimeters:
 > Con eso debería valer, porque las funciones que lo modifiquen necesitan un
 > puntero mutable a la struct.
 
-> [!CHECK]
-> La sintaxis que usan odin y jai está bastante bien, porque `::` se interpreta
-> como promesas que le haces al compilador y cuando ves `=` ves que lo que
-> estás haciendo es una asignación, que es una instrucción. Esa diferencia me
-> gusta.
->
-> Igual tengo que explorar como de distinto es:
-> - Declarar una función en top level, versus una variable que contiene una función
-> - Declarar una constante como promesa al compilador, versus como una variable
->   normal que no se muta
-> Si esas cosas son muy diferentes, entonces la sintaxis de odin y jai me gusta
-> más.
-
 
 ## Code blocks
 
@@ -83,52 +70,74 @@ This forces the good practice of declaring variables before loops and conditiona
 
 Functions are declared similar to variables or constants.
 
-It just has `(...)` after the name, with the arguments inside.
+They just contain a couple of structs after the name, separated by an arrow:
 
 ```
-my_function(a: Int) := {
-	...
+add (.a: Int, .b: Int) -> (.c: Int) := {
+    c = a + b
+}
+
+divmod (.n:Int, .d:Int) -> (.quot:Int, .rem:Int) := {
+    quot = n / d
+    rem  = n % d
 }
 ```
 
-Return arguments go with the code block. They can be named.
+When calling functions:
+
+- you can omit the names of the fields when you specify all of them in the correct order.
+- output structs with a single field are automatically unpacked (to avoid unnecessary verbosity).
 
 ```
-sum_two_numbers(A: Int, B: Int):=(C: Int){
-	C = A + B
-	return C
-}
+result = add(1, 2) + add(3, 4)
 ```
 
-> [!CHECK]
-> Igual lo mejor es poner también el return type en el nombre cuando se definen
-> variables.
->  ```
->  sum_two_numbers(A: Int, B: Int)->(C: Int) := {
->  	C = A + B
->  	return C
->  }
->  ```
+When a function has multiple fields in the output struct, you get the struct.
 
-> [!NOTE]
-> They can be constant. Declaration and initialization can be done at once, or separately.
-> It rust this can be done for example. You just have to not use the variable before its initialization.
+```
+-- Without unpacking:
+r = divmod(7, 3)
 
-If we had to say it, the type of the function would be: ` Func<Int, Int -> Int> `
+-- Para extraer sólo un campo:
+quot, _ = divmod(7, 3)
+-- o
+quot = divmod(7, 3).quot
+
+-- Para extraer ambos:
+quot, rem = divmod(7, 3)
+```
+
+> [!NOTE] Como diferenciamos entonces entre un struct literal y un list literal?
+> Es un collection literal, que se puede _interpretar_ como un list, struct,
+> map o choice literal.
+
 
 Anonymous functions can be defined like here:
 
 ```
 some_function_that_needs_another_function(
-	(a: Int, b: Int) := (c: Int) {
-		c = a + b
-	},
+	(.a: Int, .b: Int) -> (.c: Int) := { c = a + b },
 	"Some other argument"
 )
 ```
 
-> [!TODO] Pensar si queremos queremos permitir esta sintaxis.
-> Si una variable tiene parámetros, pero no es un type, en realidad es una función, que devuelve el valor parametrizado que tiene en la derecha. Por lo que siempre que veas () despues de un nombre en una declaración, sabes que se trata de una función.
+
+### Pipe operator
+
+The pipe operator calls the right hand side function, substituting the _ symbol
+with the full left hand side expression, if it is a function it contains the
+return struct without unpacking.
+
+```
+my_var | my_func (_, other_arg)  -- Single piped argument
+my_var | my_func (_.a, other_arg, _.b)  -- Multiple piped arguments
+```
+
+Se puede pasar por referencia sin necesidad de crear las variables intermedias.
+
+```
+my_var | my_func (&_, second_arg)
+```
 
 
 ## Generics
@@ -138,19 +147,15 @@ The language has generics.
 Generics are different from functions in that they do not have multiple dispatch.
 
 ```
-MyGenericType<# t: Type> : Type = struct [
-	datos : List(t)
-]
+MyGenericType<# t: Type> : Type = (
+	.datos : List<t>
+)
 ```
 
 > [!TODO] Pensar en la sintaxis de inicialización de instancias de tipos.
 
-> [!BUG] Tipos con generics en el input de una función
+> [!NOTE] Tipos con generics en el input de una función
 > El lenguaje tiene que ser lo suficientemente inteligente para saber que:
 > `Vector<Int64>` cumple `Vector<Number>`, aunque no sea un subtipo directamente, sino en sus campos.
 > Por lo general, si el generic del input tiene un valor que cuadra con el generic, entonces se toma como un requisito para cumplir el tipo. Si en cambio tiene una variable que no está asignada a nada, entonces en un parámetro de entrada adicional.
 
-> [!BUG]
-> El documento menciona “monomorfización” pero también AnyStruct e introspección; si mezclas open sum (choice) con dynamic dispatch los tiempos de compilación explotan.
-> Sugerencia
-> Decide un límites: todo lo que esté en genéricos → monomorfizado; todo lo que vaya por Abstract → tabla de v-funcs simple, no MRO complejo.

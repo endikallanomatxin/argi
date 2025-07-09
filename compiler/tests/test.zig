@@ -60,20 +60,32 @@ test "04_literals" {
     try run();
 }
 
-test "06_function_calling" {
+test "05_anonymous_structs" {
     try clean();
-    try build("tests/06_function_calling.rg");
+    try build("tests/05_anonymous_structs.rg");
     try run();
 }
 
-test "07_function_args.rg" {
+test "11_function_calling" {
     try clean();
-    try build("tests/07_function_args.rg");
+    try build("tests/11_function_calling.rg");
     try run();
 }
 
-test "08_if.rg" {
+test "12_function_args" {
     try clean();
-    try build("tests/08_if.rg");
+    try build("tests/12_function_args.rg");
+    try run();
+}
+
+test "21_named_struct_types" {
+    try clean();
+    try build("tests/21_named_struct_types.rg");
+    try run();
+}
+
+test "22_pointers" {
+    try clean();
+    try build("tests/22_pointers.rg");
     try run();
 }

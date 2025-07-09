@@ -35,72 +35,78 @@ Si quieres hacerlo, tienes que convertirlo en un tipo numérico, hacer la aritm�
 Similar to zig,  and they are are used to allocate and deallocate memory.
 
 ```
-Allocator : Abstract = [
-	alloc(_, size: Int) : HeapAllocation
-	dealloc(_, ha: HeapAllocation)
-]
+Allocator : Abstract = (
+	alloc (_, size: Int) -> HeapAllocation
+	dealloc (_, ha: HeapAllocation) -> ()
+)
 ```
 
 Allocators return a `HeapAllocation` struct, instead of a single pointer. This allows us to keep track of the size and the allocator used for the allocation, which is necessary for deallocateing the memory later.
 
 ```
-HeapAllocation : Type = struct [
+HeapAllocation : Type = (
 	.data : &Byte
 	.size : Int  -- In bytes
 	.allocator : Allocator
-]
+)
 ```
 
 When initializing types, allocators are passed as arguments,
 For ergonomy, most init functions will have a default allocator, and the user can override it if needed.
 
 ```
-init(#t                   == HeapBuffer,
-     size     : Int,
-     allocator: Allocator =  std.PageAllocator
-) := HeapAllocation {
-	.data = allocator|allocate(size)
-	.size = size
-	.allocator = allocator
+init (
+    size     : Int,
+    allocator: Allocator =  std.PageAllocator
+) -> (.ha: HeapAllocation) := {
+	ha = HeapAllocation (
+		.data      = allocator|allocate(size)
+		.size      = size
+		.allocator = allocator
+	)
 }
 ```
+
 
 In a type:
 
 ```
-Hashmap(from: Type, to: Type) : Type = struct [
-	allocator : Allocator
-	data      : HeapAllocation
-]
+Hashmap <from: Type, to: Type> : Type = (
+	.allocator : Allocator
+	.data      : HeapAllocation
+)
 
 
-init(
-	hm: Hasmap,
-	allocator: Allocator = std.RTAllocator
-) :=  {
+init(.allocator: Allocator = std.RTAllocato) -> (.hm: HashMap<from, to>) :=  {
+	hm : Hashmap <from, to>
 	hm.allocator = allocator
 	hm.data = allocator|allocate(...)
 }
 
 
-deinit(hm: $&Hashmap&) := {
+deinit (.hm:$&Hashmap&) -> () := {
 	hm.allocator|deallocate(hm.data)
 }
 ```
 
+> [!FIX] Pensar en la sintaxis apropiada para generics.
+> from y to serían argumentos de entrada? Hay que definirlos al crear el tipo? Asumo que sí.
+> El output hay que inicializarlo? O viene inicializado por defecto?
+> Como se especifica la mutabilidad si solo hay un tipo? Igual deberíamos obligar a que siempre fuera un struct.
+
 So:
 
 ```
-my_map := ["a"=1, "b"=2]
+my_map := ("a"=1, "b"=2)
 ```
 
 Will expand to:
 
 ```
-my_map = Hashmap<String, Int>|init
-my_map["a"] = 1
-my_map["b"] = 2
+my_map : hashmap<string, int> = init (.content = ("a"=1, "b"=2), .allocator = std.rtallocator)
 ```
+
+> [!FIX] Pensar en la sintaxis apropiada para crear un hashmap.
 
 And when calling init without an allocator, it will use the default one, which hides the complexity of memory management.
 
@@ -113,26 +119,26 @@ La palabra que usamos para referirnos a esto es `deinit` (que será lo contrario
 
 ```
 {
-	buf := HeapAllocation|init(_, 1024)
+	buf : HeapAllocation = init 1024
 	-- El compilador siempre pone automáticamente:
-	defer buf|deinit
+	defer buf | deinit
 }
 ```
 
 Tipos que contengan memoria alocada en el heap implementarán deinit.
 
 ```
-deinit(buf: HeapAllocation) {
-	buf.allocator|deallocate(buf.data)
+deinit HeapAllocation {
+	in.allocator | deallocate (_, in.data)
 }
 ```
 
 Y habrá también una por defecto para cualquier struct que llama de forma recursiva a deinit en sus campos.
 
 ```
-deinit(s: AnyStruct) {
+deinit AnyStruct -> () := {
 	-- Pensar en como hacer introspección. Qué tipo es un struct?
-	for field in my_struct|#get_fields {
+	for field in in | #get_fields {
 		field|deinit
 	}
 }
@@ -142,7 +148,7 @@ Para evitar que la memoria se autolibere, se puede usar el keyword `keep`:
 
 ```
 {
-	buf := HeapAllocation|init(_, 1024)
+	buf : HeapAllocation = 1024
 	keep buf
 }
 ```
@@ -158,9 +164,9 @@ Lo habitual es que no quieras tener que estar pendiente de hacerlo y que su vida
 
 ```
 {
-	MyType : Type = struct [
+	MyType : Type = (
 		.field : &Int
-	]
+	)
 	my_instance : MyType
 
 	my_int := 5
@@ -273,17 +279,17 @@ You can specify:
 MyStruct : Type = struct(
     alignment: ..RespectOrder
     listing_behavior: ..SOA
-)[
+)(
 	.a : u8
 	.b : u32
 	.c : u16
-]
+)
 ```
 
 AOS and SOA, are inspected when creating lists (taken care of in the core library).
 
 ```
-StructListingBehaviour : Type = [
+StructListingBehaviour : Type = (
     =..AOS
     -- Array of Structures (AOS) layout.
     -- Each element is a structure, and fields are stored together.
@@ -291,13 +297,13 @@ StructListingBehaviour : Type = [
     ..SOA
     -- Structure of Arrays (SOA) layout.
     -- Each field is stored in a separate array, optimizing memory access patterns.
-]
+)
 ```
 
 Struct layout is something that the compiler takes care of.
 
 ```rg
-StructLayout : Type = [
+StructLayout : Type = (
     =..Optimal
     -- Compiler optimizes for minimal padding.
 
@@ -310,20 +316,20 @@ StructLayout : Type = [
     ..Aligned(n)
     -- Aligns the struct to the specified boundary (n bytes).
 
-    ..Custom(offsets: List[Int], size: Int)
+    ..Custom(offsets: List(Int), size: Int)
     -- Custom layout with specified offsets and size.
 
     ..C
     -- Follows the C standard layout (ABI compatibility). Respects the order of
     -- field declaration in structures and applies padding only to meet alignment
     -- requirements.
-]
+)
 ```
 
 Herramientas para inspeccionar layout:
 
 ```
-inspect_layout(MyStruct)
+inspect_layout MyStruct
 ```
 
 ```

@@ -17,7 +17,7 @@ if a == 2 {
 De odin: cada case es su propio scope, `implicit break` por defecto, y si en lugar de eso quieres que siga le pones un `fallthrough` o algo así.
 
 ```
-match x [
+match x (
 
 	a {
 		...
@@ -28,8 +28,11 @@ match x [
 	}
 
 	...
-]
+)
 ```
+
+> [!NOTE]
+> Aquí, como hemos quitado () para representar las funciones, podríamos usarlas para mejorar la sintaxis si fuera necesario.
 
 Rust creo que hace esto muy bien.
 Gleam también.
@@ -96,7 +99,7 @@ loop
 No me gustan, pero son muy cómodos para cosas pequeñas y no creo que tengan mucho riesgo de usarse mal en exceso. No pasa nada por implementarlos.
 
 ```
-[i*2 for i in 1.10]
+(i*2 for i in 1.10)
 ```
 
 O igual del revés:
@@ -104,9 +107,9 @@ O igual del revés:
 - Queda más limpio para multiples líneas,
 
 ```
-evens = [for i in 1..10 {yield i*2}]
+evens = (for i in 1..10 {yield i*2})
 
-evens = [for i in 1..10; i*2]
+evens = (for i in 1..10; i*2)
 ```
 
 >[!TODO] Darle una vuelta a la sintaxis.
@@ -118,15 +121,18 @@ Los `Iterator` gestionan como se recorren o procesan las colecciones, pero defin
 Se puede hacer a través de abstrascts:
 
 ```
-Iterable : Abstract = [
-    to(_, #a:==Iterator) : Iterator
-]
+Iterable : Abstract = (
+    cast _ -> Iterator<_>
+)
 
-Iterator : Abstract = [
-    next(_) : T
-    has_next(_) : Bool
-]
+Iterator<T> : Abstract = (
+    next _ -> T
+    has_next _ -> Bool
+)
 ```
+
+> [!CHECK]
+> Aquí como deberíamos gestionar abstract con generics?
 
 
 En rust hay tres tipos: iter (inmutable), iter_mut (mutable), into_iter(pasando ownership)
@@ -148,29 +154,30 @@ _(Pensar en una forma de que esto sirva para vectorizar funciones. Que si la fun
 Y para hacer que tu tipo pueda ser iterable:
 
 ```
-MyType : Type = struct [
-    data: List<Int>
-]
+MyType : Type = struct (
+    .data: List<Int>
+)
 
-to(collection: MyType, #t:==Iterator) := MyTypeIterator {
-    return MyTypeIterator(collection)
+cast MyType -> MyTypeIterator := {
+    return MyTypeIterator (.data = in.data, .index = 0)
 }
 
-MyTypeIterator : Type = struct [
-    data: &MyType
-    index: Int
-]
+MyTypeIterator : Type = struct (
+    .data: &MyType
+    .index: Int
+)
 
-next(mti: MyTypeIterator) := Int {
-    mti.index += 1
-    return mti.data[mti.index-1]
+next MyTypeIterator -> Int := {
+    if in.index >= in.data|len {
+        throw "No more elements"
+    }
+    in.index += 1
+    out = in.data(in.index-1)
 }
 
-has_next(mti: MyTypeIterator) := Bool {
-    return mti.index < mti.data|len
+has_next MyTypeIterator -> Bool := {
+    return in.index < in.data|len
 }
-
-Indexable canbe MyType
 ```
 
 
@@ -181,7 +188,7 @@ for element in my_collection {
 
 -- Se podría escribir como:
 
-iter = my_collection|to(Iterator)
+iter : Iterator = my_collection | cast  -- Se puede castear a un abstract?
 while iter|has_next {
     element = iter|next
     print(element)

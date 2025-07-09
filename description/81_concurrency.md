@@ -34,30 +34,33 @@ A un thread solo se le pueden pasar punteros exclusivos, o referencias de solo l
 
 ### OS threads
 
+
 ```
-th := spawn_thread({  -- type is ThreadHandler
+th := system.process_manager | spawn_thread($&_, {  -- type is ThreadHandler
 	...
 })
 
-th | wait()
+th | wait(_)
 
 -- Con funciones
-th := spawn_thread(my_function(x, y, z))
+th := system.process_manager | spawn_thread($&_, my_function, (x, y, z))
 
 -- Lanzar un bucle infinito
-th := spawn_thread(
+th := system.process_manager | spawn_thread($&_,  {
 	loop {
 
 	}
-)
+})
 
 -- Lanzar múltiples procesos en bucle
 for i in 1..10 {
-	spawn_thread(
-		{...}
-	)
+	system.process_manager | spawn_thread($&_, {
+		-- Aquí puedes usar i
+		...
+	})
 }
-wait_all_threads()
+
+wait_all_threads
 ```
 
 
@@ -69,9 +72,9 @@ El runtime se encarga de:
 - **Sincronización:** Proveer primitivas (como wait groups o canales) para coordinar tareas y recoger resultados.
 
 ```
-lcr := LightConcurrencyRuntime(threads = 4)
+lcr := LightConcurrencyRuntime (.threads = 4)
 
-lcr | spawn_thread ({
+lcr | spawn_thread ($&_, {
 	...
 })
 ```
@@ -100,15 +103,15 @@ Channel<#T: Type> : Type
 ```
 
 ```
-funcion_enviadora(canal: Channel) := {
-	time|wait(1)
-	canal|send("done")
+funcion_enviadora (c:Channel) -> () := {
+	time | sleep (&_, 1000)
+	c | send (_, 42)
 }
 
-canal : Channel<int>
+canal : Channel<Int>
 
 for i in 1..10 {
-	branch funcion_enviadora(canal)
+	lcr | spawn_thread ($&_, funcion_enviadora, (canal))
 }
 
 loop {
@@ -126,26 +129,26 @@ Igual haría que hubiera tres tipos:
 - Stack (LIFO)
 
 ```
-Channel<T> : Abstract = [
+Channel<T> : Abstract = (
     put(T)
     get() -> T
-]
-Channel canbe [Spot, Queue, Stack]
+)
+Channel canbe (Spot, Queue, Stack)
 Channel defaults Spot
 
 
-Queue<T> : Abstract = [
-	put(T)
-	get() -> T
-]
-Queue canbe [DynamicQueue, StaticQueue<n>]
+Queue<T> : Abstract = (
+	put T -> ()
+	get [) -> T
+)
+Queue canbe (DynamicQueue, StaticQueue<n>)
 Queue defaults DynamicQueue
 
-Stack<T> : Abstract = [
-	put(T)
-	get() -> T
-]
-Stack canbe [DynamicStack, StaticStack<n>]
+Stack<T> : Abstract = (
+	put T -> [)
+	get () -> T
+)
+Stack canbe (DynamicStack, StaticStack<n>)
 Stack defaults DynamicStack
 
 ```
@@ -160,12 +163,12 @@ print(channel|get)
 ```
 a: Spot(Int)
 branch {
-	a|put(funcion(1))
+	a|put funcion 1
 }
 
 b: Spot(Int)
 branch {
-	b|put(funcion(2))
+	b|put funcion 2
 }
 
 c = a|get + b|get

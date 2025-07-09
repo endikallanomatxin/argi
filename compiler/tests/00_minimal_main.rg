@@ -1,3 +1,3 @@
-main() -> Int32 := {
-    return 0
+main () -> (.status_code: Int32) := {
+    status_code = 0
 }

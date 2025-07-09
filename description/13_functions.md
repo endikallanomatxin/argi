@@ -2,23 +2,40 @@
 
 Functions are first class citizen.
 
+All functions are unary.
+
+
 ## Function definition syntax
 
 ```
-add(a: Int, b: Int) := Int {
-	return a+b
+add ( .a: Int, .b: Int ) -> (.o: Int) := {
+    o = a + b
 }
+
+square (i:Int) -> (o:Int) := {o = i^2}
 ```
+
+- Todos los parámetros viajan en un único struct de entrada (in).
+- Todos los resultados se devuelven en un único struct de salida (out).
+
 
 return variables are initialized (to zero) if named.
 
 ```
-calculate_stats(list: List) := (mean: Float, standard_deviation: Float) {
-	for element in list
+calculate_stats (.l: List) -> (.mean: Float, .standard_deviation: Float) := {
+	for element in in{
 		...
-	return (mean, standard_deviation)
+	}
+	mean = sum / count
+	standard_deviation = sqrt(sum_of_squares / count - mean^2)
 }
 ```
+
+> [!CHECK]
+> Los argumentos de salida, cuando se inicializan?
+> Usan su init? O simplemente son el struct que los representa, sin campos.
+> Igual esperan a su primera asignación para llamar a init.
+
 
 Most extended syntax to add documentation
 
@@ -28,20 +45,30 @@ my_function
 	Explanation of what the function does
 	---
 (
-	a: int  -- Short description of a
-	b: bool
+	.a: int  -- Short description of a
+	.b: bool
 	---
 	Longer description of b
 	---
-	verbose: bool = False  -- Default value
-) := (
-	result_one: bool
-	result_two: int
-){
+	.verbose: bool = False  -- Default value
+) -> (
+	.result_one: bool
+	.result_two: int
+) {
 	...
-	return x
 }
 ```
+
+The empty struct literal is like saying void:
+
+```
+my_function () -> () := {
+	-- No recibe ni devuelve nada
+}
+```
+
+> [!CHECK] Can you ommit things?
+
 
 ## Pipe operator
 
@@ -49,9 +76,9 @@ Llama a la función de la derecha con los argumentos devueltos por la función d
 la izquierda. A veces hay que usar currying para cuadrar argumentos.
 
 ```
-my_var|my_func
-my_var|my_func(_, other_arg)
-my_var|my_func(_1, other_arg, _2)  -- Multiple piped arguments
+my_var | my_func
+my_var | my_func (_, other_arg)
+my_var | my_func (_.a, other_arg, _.b)  -- Multiple piped arguments
 ```
 
 > [!IDEA]
@@ -61,8 +88,8 @@ my_var|my_func(_1, other_arg, _2)  -- Multiple piped arguments
 Si se pasa por referencia:
 
 ```
-my_var|my_func(&_)
-my_var|my_func(&_, second_arg)
+my_var | my_func &_
+my_var | my_func (&_, second_arg)
 ```
 
 Permite emular la comodidad de los objetos.
@@ -81,12 +108,12 @@ modelizan con sus punteros, pero no se va a duplicar la memoria referenciada
 por sus punteros.
 
 ```
-m1 = Map|init
-m2 = m1
-m2.put("key", "value") -- Cambia el original
+m1 : Map = ()
+m2 := m1
+m2 | put($&_, "key", "value") -- Cambia el original
 
-m1|deinit($&_)
-m2|deinit($&_) -- Double free error
+m1 | deinit($&_)
+m2 | deinit($&_) -- Double free error
 ```
 
 Esto:
@@ -98,7 +125,7 @@ Para solucionar esto: Haremos deep_copy por defecto (donde deep_copy es un
 método que tiene que estar definido para el tipo de variable en cuestión).
 
 ```
-m1 = Map|init
+m1 : Map = ()
 m2 = m1  -- Aquí se hace m2 = m1|deep_copy
 ```
 
@@ -118,7 +145,7 @@ Uso:
 entrada.
 - Si pones ~ se hace una shallow copy y se pasa eso.
 - Si pasas un puntero &, te permite leer.
-- Si pasas un puntero &!, te permite leer y escribir.
+- Si pasas un puntero $&, te permite leer y escribir.
 
 ```
 var   -- deep copy
@@ -129,8 +156,8 @@ $&var -- mutable pointer (s is for "side effect")
 La sintaxis básica para pasar punteros 
 
 ```
-funcion_que_lee(datos_p: &Map<String,Int>) := {
-	-- Usamos datos_p& para desreferenciar al usarlo.
+funcion_que_lee &Map<String,Int> -> () := {
+	-- Usamos in& para desreferenciar al usarlo.
 	...
 }
 
@@ -141,8 +168,8 @@ Pero no deja mutar lo que hay al otro lado del puntero. Si se quiere mutar el
 valor hay que pasar con un indicador de que es una referencia mutable:
 
 ```
-funcion_que_escribe(datos: $&Map<String,Int>) := {
-	-- Usamos datos_p& para desreferenciar al usarlo.
+funcion_que_escribe $&Map<String,Int> := {
+	-- Usamos in& para desreferenciar al usarlo.
 	-- Pudiendo modificar el valor al que apunta.
 	...
 }
@@ -159,14 +186,15 @@ querramos tratar el valor al que apunta el puntero como el propio valor.
 Para eso, se puede usar la sintaxis de dereferencia automática:
 
 ```rg
-funcion_que_lee(datos: &Map<String,Int>&) := {
+funcion_que_lee &Map<String,Int>& := {
 	...
 }
 
-funcion_que_escribe($&datos: Map<String,Int>&) := {
+funcion_que_escribe $&Map<String,Int>& := {
 	...
 }
 ```
+
 
 Esto hace que dentro de la función se pueda usar directamente `datos` y que se
 comporte como si hicieras `datos&`.
@@ -197,7 +225,7 @@ For example, accessing a database:
 ```rg
 import db
 
-main(system: $&System&)->StatusCode := {
+main system:$&System -> sc:StatusCode := {
 	-- Creamos una conexión a la base de datos
 	db_conn = db.open_database("my_db")
 
@@ -205,16 +233,16 @@ main(system: $&System&)->StatusCode := {
 	user = query_user($&db_conn, 123)
 }
 
-query_user($&db_conn: DbConnection, user_id: Int) := User? {
+query_user (.db_conn: $&DbConnection, .user_id: Int) -> (.user: ?User) := {
 	-- Acceso a la db
-	row = db_conn|execute(!&_, "SELECT * FROM user WHERE id = ?", user_id)
-	if row == null {
-		return null
-	}
+	row = db_conn|execute($&_, "SELECT * FROM user WHERE id = ?", user_id)
+	if row == null { user = null }
 	user = parse_user(row)
-	return user
 }
 ```
+
+> [!NOTE] Igual hemos dado con una buena sintaxis para nombrar a los argumentos si queremos.
+> Y si no ponemos nada, que sean in y out, para tener una sintaxis cómoda para lambdas rápidas.
 
 
 ##### Closures
@@ -236,12 +264,14 @@ EFFECT.
 ```
 variable := 4
 
-contador$ := {
+contador$ () -> () := {
 	variable += 1
 }
 
-contador$()  -- variable = 5
+contador$ () -- variable = 5
 ```
+
+> [!CHECK] Es así como debe llamarse a una función sin argumentos de entrada?
 
 Así queda claro (y con una sintaxis similar a la de los argumentos) si una
 función tiene side effects.
@@ -259,8 +289,9 @@ passed to the function. All of them are passed to the main function, and can be
 passed to other functions as needed.
 
 ```
-main(system: $&System&) := {
-	...
+main (system: $&System&) -> (status_code: $&StatusCode&) := {
+    -- Aquí se puede usar system para acceder a las capacidades del sistema
+    ...
 }
 ```
 
@@ -268,7 +299,7 @@ System is a struct that contains all the capabilities of the system.
 (Inspired by Haskell's `IO` monad)
 
 ```
-System : struct [
+System : Type = (
   terminal : $& Terminal,
   args     :  & Arguments,
   env_vars : $& EnvironmentVariables,
@@ -277,44 +308,46 @@ System : struct [
   proc_man : $& ProcessManager,
   clock    : $& time.Clock,
   rand_gen : $& random.RandomNumberGenerator,
-]
+)
 
 ```
 
 Examples of use:
 
 ```rg
-main(system: $&System&) := {
+main (system: $&System&) -> (status_code: $&StatusCode&) := {
 	-- Acceso a la consola
-	system.terminal|print($&_, "Hello, world")
+	system.terminal | print ($&_, "Hello, world")
 
 	-- Acceso a los argumentos de la línea de comandos
-        argsmap := system.args|parse(&_)
-        if argsmap|has($&_, "name") {
-            greet_user(argsmap["name"], $&system.terminal.stdout)
+        argsmap := system.args | parse &_
+        if argsmap has ($&_, "name") {
+            greet_user (argsmap("name"), $&system.terminal.stdout)
         }
 
 	-- Acceso a las variables de entorno
-	env_var = system.env_vars|get("MY_ENV_VAR")
+	env_var = system.env_vars | get (&_, "MY_ENV_VAR")
 
 	-- Acceso al sistema de archivos
-	file1 = system.file_sys|open_file_for_read(&_,"my_file.txt")
-	content = file1|read_all(&_)
-	file2 = system.file_sys|open_file_for_write(&_,"output.txt")
-	file2|write($&_, content)
+	file1 = system.file_sys | open_file_for_read (&_,"my_file.txt")
+	content = file1 | read_all &_
+	file2 = system.file_sys | open_file_for_write ($&_,"output.txt")
+	file2 | write ($&_, content)
 
 	-- Acceso a la red
-	response = system.network|http_get(&_, "https://example.com")
+	response = system.network | http_get (&_, "https://example.com")
 
 	-- Acceso al proceso
-	system.proc_man|run_command(&_, "ls -l")
+	system.proc_man | run_command (&_, "ls -l")
 
 	-- Acceso al reloj
-	current_time = system.clock|now(&_)
+	current_time = system.clock | now &_
 
 	-- Generación de números aleatorios
-	system.rand_gen|set_seed($&_, 42)
-	random_number = system.rand_gen|next_int($&_, 1, 100)
+	system.rand_gen | set_seed ($&_, 42)
+	random_number = system.rand_gen | next_int ($&_, 1, 100)
+
+	status_code = ..OK
 }
 ```
 
@@ -323,18 +356,18 @@ structs, in which case they are ignored by the compiler when generating machine
 code. No se si es mejor abstract o structs.
 
 ```rg
-Clock : Abstract = [
-    now(&_) : TimeStamp
-    sleep(&_, duration: Duration) -> Void
-    sleep_until(&_, ts: TimeStamp) -> Void
-]
+Clock : Abstract = (
+    now         (&_)            -> (TimeStamp)
+    sleep       (&_, Duration)  -> ()
+    sleep_until (&_, TimeStamp) -> ()
+)
 ```
 
 ```rg
-Rng : Abstract = [
-    next_bytes($&_, size: Int) -> Array<Byte>
-    next_int($&_, min: Int, max: Int) -> Int
-]
+Rng : Abstract = (
+    next_bytes ($&_, Int)                -> (Array<Byte>)
+    next_int   ($&_, min: Int, max: Int) -> (Int)
+)
 ```
 
 
@@ -346,87 +379,6 @@ Rng : Abstract = [
 > Si guardas y algunas de estas no usaste, se borra del input.
 
 
->    - Control del terminal:
->        - hSetBuffering :: Handle -> BufferMode -> IO ()
->          Esta función pe
->        - hSetEcho :: Handle -> Bool -> IO ()
->        - hFlush :: Handle -> IO ()
->
-> - File system:
->    - Archivos (System.IO):
->       - openFile :: FilePath -> IOMode -> IO Handle
->       - hGetContents :: Handle -> IO String
->       - hClose :: Handle -> IO ()
->       - hFlush :: Handle -> IO ()
->       - readFile :: FilePath -> IO String
->       - writeFile :: FilePath -> String -> IO ()
->    - Directorios (System.Directory):
->       - getCurrentDirectory :: IO FilePath
->       - setCurrentDirectory :: FilePath -> IO ()
->       - listDirectory :: FilePath -> IO [FilePath]
->       - createDirectory :: FilePath -> IO ()
->
-> - Parámetros de invocación:
->    - getArgs :: IO [String]
->    - getProgName :: IO String
->
-> - Variables de entorno:
->    - getEnv :: String -> IO String
->    - lookupEnv :: String -> IO (Maybe String)
->    - getEnvironment :: IO [(String, String)]
->
-> - Processes:
->    - callProcess :: FilePath -> [String] -> IO ()
->    - readProcess :: FilePath -> [String] -> String -> IO String
->    - createProcess :: CreateProcess -> IO (Maybe ProcessHandle)
->    - terminateProcess :: ProcessHandle -> IO ()
->
-> - Red y sockets:
->   - socket :: Family -> SocketType -> ProtocolNumber -> IO Socket
->   - connect :: Socket -> SockAddr -> IO ()
->   - bind :: Socket -> SockAddr -> IO ()
->   - listen :: Socket -> Int -> IO ()
->   - accept :: Socket -> IO (Socket, SockAddr)
->   - recv :: Socket -> Int -> IO ByteString
->   - send :: Socket -> ByteString -> IO Int
->
-> - Tiempo y temporización:
->   - getCurrentTime :: IO UTCTime
->   - getZonedTime :: IO ZonedTime
->   - threadDelay :: Int -> IO () -- microsegundos
->
-> - Aleatoriedad:
->   - randomRIO :: Random a => (a,a) -> IO a
->   - getStdRandom :: (StdGen -> (a,StdGen)) -> IO a
->   - newStdGen :: IO StdGen
->
-> - Concurrencia y sincronización:
->   - forkIO :: IO () -> IO ThreadId
->   - killThread :: ThreadId -> IO ()
->   - newMVar :: a -> IO (MVar a)
->   - takeMVar :: MVar a -> IO a
->   - putMVar :: MVar a -> a -> IO ()
->   - newIORef :: a -> IO (IORef a)
->   - readIORef :: IORef a -> IO a
->   - writeIORef :: IORef a -> a -> IO ()
->
-> - Excepciones y manejo de errores:
->   - throwIO :: Exception e => e -> IO a
->   - catch :: IO a -> (e -> IO a) -> IO a
->   - try :: IO a -> IO (Either e a)
->
-> - Interoperabilidad y FFI:
->   - foreign import ccall "func" c_func :: … -> IO …
->   - Gestión de memoria externa:
->     - mallocForeignPtrBytes :: Int -> IO (ForeignPtr a)
->
-> - Otros sistemas y extensiones POSIX:
->   - getFileStatus :: FilePath -> IO FileStatus
->   - changeOwner :: FilePath -> UserID -> GroupID -> IO ()
->   - forkProcess :: IO () -> IO ProcessID
-
-
-
 ##### The case for printing
 
 
@@ -435,16 +387,16 @@ import io
 import fs
 
 
-main$ := {
+main (system: $&System&) -> (status_code: $&StatusCode&) := {
 	-- Creamos un archivo de IO
-	stdo = io.std.get_stdo()
+	stdo = system.terminal.stdout
 
 	-- Llamada a una función pura que imprime
 	do_something_pure(123, log = $&stdo)
 }
 
 -- Podemos usar el hecho de que tome stdo para controlar si queremos que imprima
-do_something_pure(a: Int, $&log: Buffer? = null) := {
+do_something_pure(a: Int, $&log: Buffer? = null) -> () := {
 	if log { log|write($&_, "Hello, world\n") }
 }
 ```
@@ -477,12 +429,11 @@ Se puede usar para hacer implementaciones por defecto para cualquier struct por
 ejemplo (consiguiendo funcionalidades como los derive macros de rust)
 
 ```rg
-to(&s: Struct, t: type == String) := (string: String) {
-	string = s.symbol_name + "["
+to(&s: Struct, t: type == String) -> (string: String) := {
+	string = s.symbol_name + "("
 	for field in s.fields
 		string += field.name + ": " + field.value + ", "
-	string += "]"
-	return string
+	string += ")"
 }
 ```
 
@@ -503,6 +454,18 @@ operator + (&v1: Vector, &v2: Vector) := Vector {
 }
 ```
 
+```
+operator - (&v1: Vector, &v2: Vector) := Vector {
+    return Vector(v1.x - v2.x, v1.y - v2.y)
+}
+```
+
+```
+operator - (&v: Vector) := Vector {
+    return Vector(-v.x, -v.y)
+}
+```
+
 
 ### Currying
 
@@ -513,8 +476,10 @@ Por ejemplo en go, http.HandleFunc("patron", funcion) requiere que la función t
 Una buena forma sería una sintaxis cómoda de hacer currying.
 
 ```
-mux|HandleFunc("pattern", my_function(_a, _b, database, templates))
+mux | HandleFunc($&_, "pattern", my_function(_a, _b, database, templates))
 ```
+
+> [!CHECK] Pensar en como se lleva la sintaxis de currying con la nueva sintaxis de funciones.
 
 
 ### Silently ignoring return values

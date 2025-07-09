@@ -47,42 +47,43 @@ target := standardTargetConfig
 optimization := standardOptimizationConfig 
 
 -- For example, using a library
-llvm := Library[
-	llvm_include_path := std.Build.LazyPath{ .cwd_relative = "/usr/.../llvm/includ" },
-	llvm_lib_path     := std.Build.LazyPath{ .cwd_relative = "/usr/.../llvm/lib" },
-]
+llvm : Library = (
+	.llvm_include_path : std.Build.LazyPath = (.cwd_relative = "/usr/.../llvm/includ"),
+	.llvm_lib_path : std.Build.LazyPath = (.cwd_relative = "/usr/.../llvm/lib" ),
+)
 
 -- To create an executable
-exe := ExecutableConfig[
-	name             := "argi_compiler"
-	root_source_file := b.path("src/main.zig")
-	target           := target
-	optimize         := optimize
-	libraries        := [llvm]
-]
-exe|build
+exe : ExecutableConfig = (
+	.name             = "argi_compiler"
+	.root_source_file = b.path("src/main.zig")
+	.target           = target
+	.optimize         = optimize
+	.libraries        = (llvm)
+)
+
+exe | build
 ```
 
 run.rg
 ```
 from build import exe
 
-exe|build
-exe|run(args)
+exe | build
+exe | run (.executable = _, .args = ("arg1", "arg2"))
 ```
 
 test.rg
 ```
 from build import target, optimize, llvm
 
-tests := Tests[
-    root_source_file = "..."
-    target = target,
-    optimize = optimize,
-    libraries = [llvm]
-]
-tests|build
-tests|run
+tests : Tests = (
+    .root_source_file = "..."
+    .target = target,
+    .optimize = optimize,
+    .libraries = (llvm)
+)
+tests | build
+tests | run
 ```
 
 O para una librería:
@@ -100,15 +101,21 @@ install.rg (o lo que quiera que se haga con una librería)
 ```
 from build import target, optimize, llvm
 
-lib := Library[
+lib : Library = (
     name             = "argi_compiler",
     root_source_file = b.path("src/root.zig"),
-	target           = target,
-	optimize         = optimize,
-	libraries        := [llvm]
-]
-lib|install
+    target           = target,
+    optimize         = optimize,
+    libraries        = (llvm)
+)
+lib | install
 ```
+
+> [!IDEA] Gestión de dependencias externas.
+> Lo mismo que conda puede asegurarse de que dispones de ciertas librerías, el
+> sistema de build podría asegurarse de que tienes instalaciones concretas.
+> Podría funcionar ruteando en función de la plataforma y probar a instalar con
+> apt, brew, dnf...
 
 ### Kickstarter
 
@@ -127,25 +134,6 @@ argi init lib
 
 Estaría bien que se pudiera compilar para microcontroladores, sistemas embedidos... Rust puede.
 Que se pudiera compilar a JS o algo así para que permita hacer movidas de web?
-
-
-### CLI args
-
-Para correr con CLI args:
-- `lang my_script.l arg1 arg2`
-- `my_exec arg1 arg2`
-
-CLI arguments are passed to the main function as arguments, they are automatically parsed and converted to the appropriate types. If parsing fails, an error is raised before executing the main function.
-
-```
-main$(
-      load_model: os.Path
-      n_epochs: Int = 10
-      learning_rate: Float = 0.01
-) {
-	...
-}
-```
 
 
 

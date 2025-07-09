@@ -9,4 +9,9 @@ System : struct [
   rand_gen : $& random.RandomNumberGenerator,
 ]
 
-
+---
+> - Otros sistemas y extensiones POSIX:
+>   - getFileStatus :: FilePath -> IO FileStatus
+>   - changeOwner :: FilePath -> UserID -> GroupID -> IO ()
+>   - forkProcess :: IO () -> IO ProcessID
+---

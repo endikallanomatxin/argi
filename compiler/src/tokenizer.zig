@@ -33,7 +33,8 @@ pub const Tokenizer = struct {
 
     /// Llama a `lexNextToken` repetidas veces hasta terminar, y devuelve
     /// el slice de `Token` generado.
-    pub fn tokenize(self: *Tokenizer) !std.ArrayList(tok.Token) {
+    pub fn tokenize(self: *Tokenizer) ![]tok.Token {
+        std.debug.print("\n\ntokenizing...\n", .{});
         while (self.location.offset < self.source.len) {
             lexNextToken(self) catch |err| {
                 if (err == error.ReachedEOF) {
@@ -46,7 +47,7 @@ pub const Tokenizer = struct {
         }
         // Añadir el token EOF al final
         try self.addToken(tok.Content{ .eof = .{} }, self.location);
-        return self.tokens;
+        return self.tokens.items;
     }
 
     /// Añade un token a la lista de tokens, actualizando la ubicación actual.
@@ -105,6 +106,20 @@ pub const Tokenizer = struct {
             }
             const comment = self.source[start..self.location.offset];
             try self.addToken(tok.Content{ .comment = comment }, loc);
+            return;
+        }
+
+        // Dot
+        if (self.this() == '.') {
+            try self.addToken(tok.Content{ .dot = .{} }, loc);
+            try self.advanceOne();
+            return;
+        }
+
+        // Comma
+        if (self.this() == ',') {
+            try self.addToken(tok.Content{ .comma = .{} }, loc);
+            try self.advanceOne();
             return;
         }
 
@@ -209,6 +224,12 @@ pub const Tokenizer = struct {
             ')' => {
                 try self.addToken(tok.Content{ .close_parenthesis = .{} }, loc);
             },
+            '[' => {
+                try self.addToken(tok.Content{ .open_bracket = .{} }, loc);
+            },
+            ']' => {
+                try self.addToken(tok.Content{ .close_bracket = .{} }, loc);
+            },
             '{' => {
                 try self.addToken(tok.Content{ .open_brace = .{} }, loc);
             },
@@ -226,7 +247,7 @@ pub const Tokenizer = struct {
             },
             '=' => {
                 if (try self.next() == '=') {
-                    try self.addToken(tok.Content{ .check_equals = .{} }, loc);
+                    try self.addToken(tok.Content{ .comparison_operator = .equal }, loc);
                     try self.advanceOne(); // Avanzar el segundo '='
                 } else {
                     try self.addToken(tok.Content{ .equal = .{} }, loc);
@@ -234,13 +255,30 @@ pub const Tokenizer = struct {
             },
             '!' => {
                 if (try self.next() == '=') {
-                    try self.addToken(tok.Content{ .check_not_equals = .{} }, loc);
+                    try self.addToken(tok.Content{ .comparison_operator = .not_equal }, loc);
                     try self.advanceOne(); // Avanzar el segundo '!'
                 } else {
                     std.debug.print("Unknown character: {c}\n", .{self.this()});
                     return TokenizerError.UnknownCharacter;
                 }
             },
+            '<' => {
+                if (try self.next() == '=') {
+                    try self.addToken(tok.Content{ .comparison_operator = .less_than_or_equal }, loc);
+                    try self.advanceOne(); // Avanzar el '='
+                } else {
+                    try self.addToken(tok.Content{ .comparison_operator = .less_than }, loc);
+                }
+            },
+            '>' => {
+                if (try self.next() == '=') {
+                    try self.addToken(tok.Content{ .comparison_operator = .greater_than_or_equal }, loc);
+                    try self.advanceOne(); // Avanzar el '='
+                } else {
+                    try self.addToken(tok.Content{ .comparison_operator = .greater_than }, loc);
+                }
+            },
+
             '+' => {
                 try self.addToken(tok.Content{ .binary_operator = .addition }, loc);
             },
@@ -262,6 +300,57 @@ pub const Tokenizer = struct {
             },
             '%' => {
                 try self.addToken(tok.Content{ .binary_operator = .modulo }, loc);
+            },
+            '&' => {
+                try self.addToken(tok.Content{ .ampersand = .{} }, loc);
+            },
+            '|' => {
+                try self.addToken(tok.Content{ .pipe = .{} }, loc);
+            },
+            '\'' => {
+                // Salta la comilla de apertura
+                try self.advanceOne();
+
+                // 1. ¿escape (`\`) o carácter directo?
+                var char_val: u8 = undefined;
+                if (self.this() == '\\') { // -- escape --
+                    try self.advanceOne(); // salta la '\'
+
+                    const esc = self.this();
+                    char_val = switch (esc) {
+                        'n' => '\n', // salto de línea
+                        't' => '\t', // tabulador
+                        'r' => '\r', // retorno de carro
+                        '\\' => '\\', // barra invertida
+                        '\'' => '\'', // comilla simple
+                        '0' => 0, // NUL
+                        else => {
+                            std.debug.print("Escape no soportado: \\{c}\n", .{esc});
+                            return TokenizerError.UnknownCharacter;
+                        },
+                    };
+                    try self.advanceOne(); // salta la letra de escape
+                } else { // -- carácter simple --
+                    if (self.this() == '\'') {
+                        std.debug.print("Char literal vacío\n", .{});
+                        return TokenizerError.UnknownCharacter;
+                    }
+                    char_val = self.this();
+                    try self.advanceOne();
+                }
+
+                // 2. debe venir la comilla de cierre
+                if (self.this() != '\'') {
+                    std.debug.print("Char literal sin cerrar\n", .{});
+                    return TokenizerError.UnknownCharacter;
+                }
+                try self.advanceOne(); // salta la comilla de cierre
+
+                try self.addToken(
+                    tok.Content{ .literal = tok.Literal{ .char_literal = char_val } },
+                    loc,
+                );
+                return;
             },
             else => {
                 std.debug.print("Unknown character: {c}\n", .{self.this()});
