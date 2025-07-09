@@ -694,19 +694,14 @@ pub const CodeGenerator = struct {
         return .{ .value_ref = sym.ref, .type_ref = ptr_ty };
     }
 
-    fn genDereference(self: *CodeGenerator, inner: *const sem.SGNode) !TypedValue {
-        const tv = (try self.visitNode(inner)) orelse return CodegenError.ValueNotFound;
-        const ptr_ty = c.LLVMTypeOf(tv.value_ref);
+    fn genDereference(self: *CodeGenerator, d: *const sem.Dereference) !TypedValue {
+        const tv = (try self.visitNode(d.pointer)) orelse return CodegenError.ValueNotFound;
 
-        if (c.LLVMGetTypeKind(ptr_ty) != c.LLVMPointerTypeKind)
-            return CodegenError.InvalidType;
+        // El tipo LLVM lo sacamos del result_ty semántico
+        const pointee_ty = try self.toLLVMType(d.ty);
 
-        const pointee = c.LLVMGetElementType(ptr_ty);
-        if (pointee == null or pointee == c.LLVMVoidType())
-            return CodegenError.InvalidType; // no se puede desreferenciar void
-
-        const deref_val = c.LLVMBuildLoad2(self.builder, pointee, tv.value_ref, "deref");
-        return .{ .value_ref = deref_val, .type_ref = pointee };
+        const deref_val = c.LLVMBuildLoad2(self.builder, pointee_ty, tv.value_ref, "deref");
+        return .{ .value_ref = deref_val, .type_ref = pointee_ty };
     }
 
     // ────────────────────────────────────────── misc helpers ──

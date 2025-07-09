@@ -40,7 +40,7 @@ pub const SGNode = union(enum) {
     continue_statement: struct {},
 
     address_of: *const SGNode,
-    dereference: *const SGNode,
+    dereference: *const Dereference,
 };
 
 //
@@ -197,4 +197,11 @@ pub const SwitchStatement = struct {
 pub const SwitchCase = struct {
     value: *const SGNode,
     body: *const CodeBlock,
+};
+
+//
+// Pointers
+pub const Dereference = struct {
+    pointer: *const SGNode,
+    ty: Type,
 };

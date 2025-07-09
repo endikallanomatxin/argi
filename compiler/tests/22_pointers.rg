@@ -6,5 +6,9 @@ main () -> (.status_code: Int32) := {
     -- 2. Declare a pointer 'p' and assign it the address of 'a'.
     p : &Int32 = &a
 
-    status_code = 0
+    -- 3. Declare another integer 'b' and assign it the dereferenced value of 'p'.
+    b :: Int32 = p&
+
+    -- 4. Return the value of 'b' as the status code.
+    status_code = b
 }
