@@ -439,11 +439,21 @@ pub const Semantizer = struct {
 
     fn handleDereference(self: *Semantizer, inner: *syn.STNode, s: *Scope) SemErr!TypedExpr {
         const te = try self.visitNode(inner.*, s);
+
+        // comprobamos que `te.ty` sea &T
         if (te.ty != .pointer_type) return error.InvalidType;
 
-        const base_ty = te.ty.pointer_type.*; // el tipo apuntado
-        const deref_node = try self.makeNode(.{ .dereference = te.node }, null);
-        return .{ .node = deref_node, .ty = base_ty };
+        const base_ty = te.ty.pointer_type.*; // T
+
+        // armamos el nodo SG
+        const der_ptr = try self.allocator.create(sem.Dereference);
+        der_ptr.* = .{
+            .pointer = te.node,
+            .ty = base_ty,
+        };
+
+        const n = try self.makeNode(.{ .dereference = der_ptr }, null);
+        return .{ .node = n, .ty = base_ty };
     }
 
     //──────────────────────────────────────────────────── HELPERS

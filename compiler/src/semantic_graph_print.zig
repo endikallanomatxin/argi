@@ -160,9 +160,11 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             printNode(ao, lvl + 1);
         },
 
-        .dereference => |deref| {
+        .dereference => |d| {
             std.debug.print("Dereference\n", .{});
-            printNode(deref, lvl + 1);
+            indent(lvl + 1);
+            std.debug.print("result_ty: {s}\n", .{@tagName(d.ty)});
+            printNode(d.pointer, lvl + 1);
         },
 
         else => std.debug.print("Unknown SG node\n", .{}),
