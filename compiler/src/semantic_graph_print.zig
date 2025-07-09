@@ -21,6 +21,7 @@ fn printValueLiteral(lit: *const sem.ValueLiteral, lvl: usize) void {
         .float_literal => |f| std.debug.print("Literal float: {d}\n", .{f}),
         .char_literal => |c| std.debug.print("Literal char: '{c}'\n", .{c}),
         .string_literal => |s| std.debug.print("Literal string: \"{s}\"\n", .{s}),
+        .bool_literal => |b| std.debug.print("Literal bool: {s}\n", .{if (b) "true" else "false"}),
     }
 }
 

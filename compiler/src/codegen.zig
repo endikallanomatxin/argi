@@ -537,11 +537,25 @@ pub const CodeGenerator = struct {
 
     // ────────────────────────────────────────── literals ──
     fn genValueLiteral(self: *CodeGenerator, l: *const sem.ValueLiteral) !TypedValue {
-        _ = self;
         return switch (l.*) {
             .int_literal => |v| .{ .type_ref = c.LLVMInt32Type(), .value_ref = c.LLVMConstInt(c.LLVMInt32Type(), @intCast(v), 0) },
             .float_literal => |f| .{ .type_ref = c.LLVMFloatType(), .value_ref = c.LLVMConstReal(c.LLVMFloatType(), f) },
             .char_literal => |ch| .{ .type_ref = c.LLVMInt8Type(), .value_ref = c.LLVMConstInt(c.LLVMInt8Type(), @intCast(ch), 0) },
+            .string_literal => |str| blk: {
+                // TODO: For now, we will use c-like strings.
+                // Later on, this should be a proper string type.
+
+                // Crea un global interno y recibe el i8* a su inicio
+                const gptr = c.LLVMBuildGlobalStringPtr(
+                    self.builder,
+                    str.ptr, // bytes tal cual (ya con escapes resueltos)
+                    "strlit",
+                );
+                break :blk .{
+                    .type_ref = c.LLVMPointerType(c.LLVMInt8Type(), 0),
+                    .value_ref = gptr,
+                };
+            },
             else => CodegenError.NotYetImplemented,
         };
     }

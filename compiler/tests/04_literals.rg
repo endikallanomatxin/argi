@@ -13,6 +13,9 @@ main () -> (.status_code: Int32) := {
     -- Char literals
     c := 'a'
 
+    -- String literals
+    d := "hello world!"
+
     status_code = 0
 }
 
