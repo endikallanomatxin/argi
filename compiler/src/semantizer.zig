@@ -90,6 +90,11 @@ pub const Semantizer = struct {
                 ty = .{ .builtin = .Float32 };
                 sg = .{ .float_literal = std.fmt.parseFloat(f64, txt) catch 0.0 };
             },
+            .char_literal => |c| {
+                // reconoce el char y lo tipa como Char
+                ty = .{ .builtin = .Char };
+                sg = .{ .char_literal = c };
+            },
             else => return error.NotYetImplemented,
         }
 

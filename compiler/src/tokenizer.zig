@@ -307,6 +307,23 @@ pub const Tokenizer = struct {
             '|' => {
                 try self.addToken(tok.Content{ .pipe = .{} }, loc);
             },
+            '\'' => {
+                // Char literal
+                try self.advanceOne(); // Avanzar el primer '\''
+                if (self.this() == '\'') {
+                    std.debug.print("Empty char literal\n", .{});
+                    return TokenizerError.UnknownCharacter;
+                }
+                const char_literal = self.this();
+                try self.advanceOne(); // Avanzar el carácter
+                if (self.this() != '\'') {
+                    std.debug.print("Unterminated char literal\n", .{});
+                    return TokenizerError.UnknownCharacter;
+                }
+                try self.advanceOne(); // Avanzar el segundo '\''
+                try self.addToken(tok.Content{ .literal = tok.Literal{ .char_literal = char_literal } }, loc);
+                return;
+            },
             else => {
                 std.debug.print("Unknown character: {c}\n", .{self.this()});
                 return TokenizerError.UnknownCharacter;

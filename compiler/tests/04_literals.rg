@@ -10,6 +10,9 @@ main () -> (.status_code: Int32) := {
     b ::= 32.0
     b = 1e10
 
+    -- Char literals
+    c := 'a'
+
     status_code = 0
 }
 

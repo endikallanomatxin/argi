@@ -507,6 +507,7 @@ pub const CodeGenerator = struct {
         return switch (l.*) {
             .int_literal => |v| .{ .type_ref = c.LLVMInt32Type(), .value_ref = c.LLVMConstInt(c.LLVMInt32Type(), @intCast(v), 0) },
             .float_literal => |f| .{ .type_ref = c.LLVMFloatType(), .value_ref = c.LLVMConstReal(c.LLVMFloatType(), f) },
+            .char_literal => |ch| .{ .type_ref = c.LLVMInt8Type(), .value_ref = c.LLVMConstInt(c.LLVMInt8Type(), @intCast(ch), 0) },
             else => CodegenError.NotYetImplemented,
         };
     }
