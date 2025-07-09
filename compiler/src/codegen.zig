@@ -114,14 +114,20 @@ pub const CodeGenerator = struct {
 
     // ── top-level drive ───────────────────────
     pub fn generate(self: *CodeGenerator) !llvm.c.LLVMModuleRef {
+        std.debug.print("\n\nGenerating LLVM IR...\n", .{});
+
         for (self.ast) |n|
             _ = self.visitNode(n) catch |e| {
                 std.debug.print("codegen error: {any}\n", .{e});
                 return CodegenError.CompilationFailed;
             };
 
-        if (c.LLVMVerifyModule(self.module, c.LLVMPrintMessageAction, null) != 0)
+        var msg: [*c]u8 = null;
+        if (c.LLVMVerifyModule(self.module, c.LLVMReturnStatusAction, &msg) != 0) {
+            std.debug.print("LLVM verification failed: {s}\n", .{msg});
+            c.LLVMDisposeMessage(msg);
             return CodegenError.ModuleCreationFailed;
+        }
         return self.module;
     }
 
@@ -129,7 +135,10 @@ pub const CodeGenerator = struct {
     fn visitNode(self: *CodeGenerator, n: *const sem.SGNode) CodegenError!?TypedValue {
         return switch (n.*) {
             .function_declaration => |f| {
-                try self.genFunction(f);
+                self.genFunction(f) catch |e| {
+                    std.debug.print("Error generating function {s}: {any}\n", .{ f.name, e });
+                    return e;
+                };
                 return null;
             },
             .type_declaration => |_| {
@@ -137,33 +146,80 @@ pub const CodeGenerator = struct {
             },
             .binding_declaration => |b| {
                 if (self.current_scope.lookup(b.name) != null)
-                    return try self.genBindingUse(b);
-                try self.genBindingDecl(b);
+                    return self.genBindingUse(b) catch |e| {
+                        std.debug.print("Error generating binding {s}: {any}\n", .{ b.name, e });
+                        return e;
+                    };
+                self.genBindingDecl(b) catch |e| {
+                    std.debug.print("Error generating binding declaration {s}: {any}\n", .{ b.name, e });
+                    return e;
+                };
                 return null;
             },
             .binding_assignment => |a| {
-                _ = try self.genAssignment(a);
+                _ = self.genAssignment(a) catch |e| {
+                    std.debug.print("Error generating assignment for {s}: {any}\n", .{ a.sym_id.name, e });
+                    return e;
+                };
                 return null;
             },
-            .binding_use => |b| try self.genBindingUse(b),
+            .binding_use => |b| self.genBindingUse(b) catch |e| {
+                std.debug.print("Error generating binding use {s}: {any}\n", .{ b.name, e });
+                return e;
+            },
             .code_block => |cb| {
-                try self.genCodeBlock(cb);
+                self.genCodeBlock(cb) catch |e| {
+                    std.debug.print("Error generating code block: {any}\n", .{e});
+                    return e;
+                };
                 return null;
             },
             .return_statement => |r| {
-                try self.genReturn(r);
+                self.genReturn(r) catch |e| {
+                    std.debug.print("Error generating return statement: {any}\n", .{e});
+                    return e;
+                };
                 return null;
             },
-            .value_literal => |v| try self.genValueLiteral(&v),
-            .binary_operation => |bo| try self.genBinaryOp(&bo),
-            .comparison => |comp| try self.genComparison(&comp),
+            .value_literal => |v| self.genValueLiteral(&v) catch |e| {
+                std.debug.print("Error generating value literal: {any}\n", .{e});
+                return e;
+            },
+            .binary_operation => |bo| self.genBinaryOp(&bo) catch |e| {
+                std.debug.print("Error generating binary operation: {any}\n", .{e});
+                return e;
+            },
+            .comparison => |comp| self.genComparison(&comp) catch |e| {
+                std.debug.print("Error generating comparison: {any}\n", .{e});
+                return e;
+            },
             .if_statement => |ifs| {
-                try self.genIfStatement(ifs);
+                self.genIfStatement(ifs) catch |e| {
+                    std.debug.print("Error generating if statement: {any}\n", .{e});
+                    return e;
+                };
                 return null;
             },
-            .function_call => |fc| try self.genFunctionCall(fc),
-            .struct_value_literal => |sl| try self.genStructValueLiteral(sl),
-            .struct_field_access => |sfa| try self.genStructFieldAccess(sfa),
+            .function_call => |fc| self.genFunctionCall(fc) catch |e| {
+                std.debug.print("Error generating function call: {any}\n", .{e});
+                return e;
+            },
+            .struct_value_literal => |sl| self.genStructValueLiteral(sl) catch |e| {
+                std.debug.print("Error generating struct value literal: {any}\n", .{e});
+                return e;
+            },
+            .struct_field_access => |sfa| self.genStructFieldAccess(sfa) catch |e| {
+                std.debug.print("Error generating struct field access: {any}\n", .{e});
+                return e;
+            },
+            .address_of => |a| self.genAddressOf(a) catch |e| {
+                std.debug.print("Error generating address of: {any}\n", .{e});
+                return e;
+            },
+            .dereference => |d| self.genDereference(d) catch |e| {
+                std.debug.print("Error generating dereference: {any}\n", .{e});
+                return e;
+            },
             else => CodegenError.UnknownNode,
         };
     }
@@ -199,6 +255,10 @@ pub const CodeGenerator = struct {
                     c.LLVMStructSetBody(struct_ty, fields.ptr, @intCast(st.fields.len), 0);
                 }
                 break :blk struct_ty;
+            },
+            .pointer_type => |sub| blk: {
+                const sub_ty = try self.toLLVMType(sub.*);
+                break :blk c.LLVMPointerType(sub_ty, 0);
             },
         };
     }
@@ -621,6 +681,32 @@ pub const CodeGenerator = struct {
         const field_ty = c.LLVMStructGetTypeAtIndex(base.type_ref, fa.field_index);
 
         return .{ .value_ref = val, .type_ref = field_ty };
+    }
+
+    // ────────────────────────────────────────── address-of ──
+    fn genAddressOf(self: *CodeGenerator, node: *const sem.SGNode) !TypedValue {
+        // node es el SG del binding_use
+        const bu = node.*.binding_use;
+        const sym = self.current_scope.lookup(bu.name) orelse
+            return CodegenError.SymbolNotFound;
+
+        const ptr_ty = c.LLVMPointerType(sym.type_ref, 0);
+        return .{ .value_ref = sym.ref, .type_ref = ptr_ty };
+    }
+
+    fn genDereference(self: *CodeGenerator, inner: *const sem.SGNode) !TypedValue {
+        const tv = (try self.visitNode(inner)) orelse return CodegenError.ValueNotFound;
+        const ptr_ty = c.LLVMTypeOf(tv.value_ref);
+
+        if (c.LLVMGetTypeKind(ptr_ty) != c.LLVMPointerTypeKind)
+            return CodegenError.InvalidType;
+
+        const pointee = c.LLVMGetElementType(ptr_ty);
+        if (pointee == null or pointee == c.LLVMVoidType())
+            return CodegenError.InvalidType; // no se puede desreferenciar void
+
+        const deref_val = c.LLVMBuildLoad2(self.builder, pointee, tv.value_ref, "deref");
+        return .{ .value_ref = deref_val, .type_ref = pointee };
     }
 
     // ────────────────────────────────────────── misc helpers ──

@@ -106,7 +106,16 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.equal) or self.tokenIs(.comma) or self.tokenIs(.close_parenthesis))
             return null;
 
-        if (self.tokenIs(.open_parenthesis)) {
+        if (self.tokenIs(.ampersand)) { // &T
+            self.advanceOne();
+            const base_ty = (try self.parseType()).?; // recursivo
+
+            // guardar el sub-tipo en heap: debe vivir más que esta llamada
+            const ptr_inner = try self.allocator.create(syn.Type);
+            ptr_inner.* = base_ty;
+
+            return syn.Type{ .pointer_type = ptr_inner };
+        } else if (self.tokenIs(.open_parenthesis)) {
             const lit = try self.parseStructTypeLiteral();
             return syn.Type{ .struct_type_literal = lit };
         }
@@ -203,14 +212,21 @@ pub const Syntaxer = struct {
     // ────────────────────────── postfix “.campo” chain ───────────────────────
     fn parsePostfix(self: *Syntaxer, mut: *syn.STNode) !*syn.STNode {
         var new_mut = mut;
-        while (self.tokenIs(.dot)) {
-            const dot_loc = self.tokenLocation();
-            self.advanceOne(); // consume '.'
-            const fld_name = try self.parseIdentifier();
-            new_mut = try self.makeNode(
-                .{ .struct_field_access = .{ .struct_value = mut, .field_name = fld_name } },
-                dot_loc,
-            );
+        while (true) {
+            if (self.tokenIs(.dot)) {
+                const dot_loc = self.tokenLocation();
+                self.advanceOne(); // consume '.'
+                const fld_name = try self.parseIdentifier();
+                new_mut = try self.makeNode(
+                    .{ .struct_field_access = .{ .struct_value = mut, .field_name = fld_name } },
+                    dot_loc,
+                );
+            } else if (self.tokenIs(.ampersand)) {
+                // POST-FIX `&`  ==>  **dereference**
+                const amp_loc = self.tokenLocation();
+                self.advanceOne(); // consume '&'
+                new_mut = try self.makeNode(.{ .dereference = new_mut }, amp_loc);
+            } else break;
         }
         return new_mut;
     }
@@ -219,6 +235,14 @@ pub const Syntaxer = struct {
     /// [primary] {'.' fld}  (bin-op rhs)?
     fn parsePrimary(self: *Syntaxer) !*syn.STNode {
         const t = self.current();
+
+        if (self.tokenIs(.ampersand)) {
+            const loc = t.location;
+            self.advanceOne();
+            const inner = try self.parsePrimary(); // recursivo
+            return try self.makeNode(.{ .address_of = inner }, loc);
+        }
+
         const base: *syn.STNode = switch (t.content) {
             // ─── ident  /  call ─────────────────────────────────────────────
             .identifier => blk: {

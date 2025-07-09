@@ -29,11 +29,14 @@ pub const Content = union(enum) {
     binary_operation: BinaryOperation,
     comparison: Comparison,
     if_statement: IfStatement,
+    address_of: *STNode,
+    dereference: *STNode,
 };
 
 pub const Type = union(enum) {
     type_name: []const u8,
     struct_type_literal: StructTypeLiteral,
+    pointer_type: *Type,
 };
 
 pub const SymbolDeclaration = struct {

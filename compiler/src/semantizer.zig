@@ -71,6 +71,8 @@ pub const Semantizer = struct {
             .comparison => |c| self.handleComparison(c, s),
             .return_statement => |r| self.handleReturn(r, s),
             .if_statement => |ifs| self.handleIf(ifs, s),
+            .address_of => |p| self.handleAddressOf(p, s),
+            .dereference => |p| self.handleDereference(p, s),
             else => error.NotYetImplemented,
         };
     }
@@ -419,6 +421,31 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = .{ .builtin = .Void } };
     }
 
+    //──────────────────────────────────────────────────── ADDRESS OF
+    fn handleAddressOf(self: *Semantizer, inner: *syn.STNode, s: *Scope) SemErr!TypedExpr {
+        const te = try self.visitNode(inner.*, s);
+
+        // solo permitimos obtener dirección de un binding_use por simplicidad
+        if (te.node.* != .binding_use) return error.InvalidType;
+
+        const ptr_ty = try self.allocator.create(sem.Type);
+        ptr_ty.* = te.ty; // copia del tipo base
+
+        const out_ty: sem.Type = .{ .pointer_type = ptr_ty };
+
+        const addr_node = try self.makeNode(.{ .address_of = te.node }, null);
+        return .{ .node = addr_node, .ty = out_ty };
+    }
+
+    fn handleDereference(self: *Semantizer, inner: *syn.STNode, s: *Scope) SemErr!TypedExpr {
+        const te = try self.visitNode(inner.*, s);
+        if (te.ty != .pointer_type) return error.InvalidType;
+
+        const base_ty = te.ty.pointer_type.*; // el tipo apuntado
+        const deref_node = try self.makeNode(.{ .dereference = te.node }, null);
+        return .{ .node = deref_node, .ty = base_ty };
+    }
+
     //──────────────────────────────────────────────────── HELPERS
     fn makeNode(self: *Semantizer, v: sem.SGNode, s: ?*Scope) !*sem.SGNode {
         const p = try self.allocator.create(sem.SGNode);
@@ -436,6 +463,12 @@ pub const Semantizer = struct {
                 return .{ .builtin = try builtinFromName(id) };
             },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
+            .pointer_type => |inner| blk: {
+                const inner_ty = try self.resolveType(inner.*, s);
+                const ptr = try self.allocator.create(sem.Type);
+                ptr.* = inner_ty;
+                break :blk .{ .pointer_type = ptr };
+            },
         };
     }
 
@@ -523,6 +556,12 @@ fn typesStructurallyEqual(a: sem.Type, b: sem.Type) bool {
                 }
                 break :blk true; // todos los campos coinciden
             },
+            .pointer_type => false, // no son iguales
+        },
+        .pointer_type => |apt| switch (b) {
+            .builtin => false,
+            .struct_type => false,
+            .pointer_type => |bpt| typesStructurallyEqual(apt.*, bpt.*),
         },
     };
 }
