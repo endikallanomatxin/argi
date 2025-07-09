@@ -38,6 +38,9 @@ pub const SGNode = union(enum) {
     switch_statement: *SwitchStatement,
     break_statement: struct {},
     continue_statement: struct {},
+
+    address_of: *const SGNode,
+    dereference: *const SGNode,
 };
 
 //
@@ -46,6 +49,7 @@ pub const SGNode = union(enum) {
 pub const Type = union(enum) {
     builtin: BuiltinType,
     struct_type: *const StructType,
+    pointer_type: *const Type,
 };
 
 pub const BuiltinType = enum {

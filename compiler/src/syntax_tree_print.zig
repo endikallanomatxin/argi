@@ -16,6 +16,10 @@ fn printType(t: syn.Type, lvl: usize) void {
     switch (t) {
         .type_name => |id| std.debug.print("{s}", .{id}),
         .struct_type_literal => |st| printStructTypeLiteral(st, lvl),
+        .pointer_type => |pt| {
+            std.debug.print("&", .{});
+            printType(pt.*, lvl);
+        },
     }
 }
 
@@ -170,6 +174,7 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             indent(lvl + 1);
             std.debug.print("cond:\n", .{});
             printNode(ifs.condition.*, lvl + 2);
+            std.debug.print("\n", .{});
             indent(lvl + 1);
             std.debug.print("then:\n", .{});
             printNode(ifs.then_block.*, lvl + 2);
@@ -223,6 +228,22 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             indent(lvl + 1);
             std.debug.print("input:\n", .{});
             printNode(fc.input.*, lvl + 2);
+        },
+
+        // ── ADDRESS OF ────────────────────────────────────────────────
+        .address_of => |ao| {
+            std.debug.print("AddressOf\n", .{});
+            indent(lvl + 1);
+            std.debug.print("value:\n", .{});
+            printNode(ao.*, lvl + 2);
+        },
+
+        // ── DEREFERENCE ────────────────────────────────────────────────
+        .dereference => |deref| {
+            std.debug.print("Dereference\n", .{});
+            indent(lvl + 1);
+            std.debug.print("value:\n", .{});
+            printNode(deref.*, lvl + 2);
         },
     }
 }

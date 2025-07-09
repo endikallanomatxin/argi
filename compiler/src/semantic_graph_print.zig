@@ -10,6 +10,7 @@ fn typeToString(t: sem.Type) []const u8 {
     return switch (t) {
         .builtin => |b| @tagName(b),
         .struct_type => |_| "struct",
+        .pointer_type => |_| "&",
     };
 }
 
@@ -153,6 +154,16 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
         .switch_statement => |_| std.debug.print("SwitchStatement\n", .{}),
         .break_statement => |_| std.debug.print("Break\n", .{}),
         .continue_statement => |_| std.debug.print("Continue\n", .{}),
+
+        .address_of => |ao| {
+            std.debug.print("AddressOf\n", .{});
+            printNode(ao, lvl + 1);
+        },
+
+        .dereference => |deref| {
+            std.debug.print("Dereference\n", .{});
+            printNode(deref, lvl + 1);
+        },
 
         else => std.debug.print("Unknown SG node\n", .{}),
     }
