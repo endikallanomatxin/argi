@@ -352,6 +352,46 @@ pub const Tokenizer = struct {
                 );
                 return;
             },
+
+            '"' => {
+                // saltamos la comilla inicial
+                try self.advanceOne();
+
+                var buf = std.ArrayList(u8).init(self.allocator.*);
+                defer buf.deinit();
+
+                // recopilamos caracteres, gestionando escapes
+                while (self.this() != '"') : (try self.advanceOne()) {
+                    if (self.this() == '\\') {
+                        try self.advanceOne(); // salta '\'
+                        const esc = self.this();
+                        const ch: u8 = switch (esc) { // escapes comunes
+                            'n' => '\n',
+                            't' => '\t',
+                            'r' => '\r',
+                            '\\' => '\\',
+                            '"' => '"',
+                            '0' => 0,
+                            else => return TokenizerError.UnknownCharacter,
+                        };
+                        try buf.append(ch);
+                    } else {
+                        try buf.append(self.this());
+                    }
+                }
+                // cerramos comilla
+                try self.advanceOne();
+
+                // copiamos a memoria propia (slice independiente del source)
+                const data = try self.allocator.alloc(u8, buf.items.len);
+                std.mem.copyForwards(u8, data, buf.items);
+
+                try self.addToken(
+                    tok.Content{ .literal = tok.Literal{ .string_literal = data } },
+                    loc,
+                );
+                return;
+            },
             else => {
                 std.debug.print("Unknown character: {c}\n", .{self.this()});
                 return TokenizerError.UnknownCharacter;

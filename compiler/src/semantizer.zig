@@ -95,7 +95,19 @@ pub const Semantizer = struct {
                 ty = .{ .builtin = .Char };
                 sg = .{ .char_literal = c };
             },
-            else => return error.NotYetImplemented,
+            .string_literal => |s| {
+                // El literal se representa como &Char  (i8*)
+                const char_ty: sem.Type = .{ .builtin = .Char };
+                const ptr = try self.allocator.create(sem.Type);
+                ptr.* = char_ty;
+
+                ty = .{ .pointer_type = ptr };
+                sg = .{ .string_literal = s };
+            },
+            .bool_literal => |b| {
+                ty = .{ .builtin = .Bool };
+                sg = .{ .bool_literal = b };
+            },
         }
 
         const ptr = try self.allocator.create(sem.ValueLiteral);

@@ -87,6 +87,7 @@ pub const ValueLiteral = union(enum) {
     float_literal: f64,
     char_literal: u8,
     string_literal: []const u8,
+    bool_literal: bool,
 };
 
 pub const StructValueLiteral = struct {
