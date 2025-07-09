@@ -117,7 +117,11 @@ pub const FunctionDeclaration = struct {
     name: []const u8,
     input: StructType, // Arguments
     output: StructType, // Named return params
-    body: *const CodeBlock,
+    body: ?*const CodeBlock,
+
+    pub fn isExtern(self: *const FunctionDeclaration) bool {
+        return self.body == null;
+    }
 };
 
 pub const BindingDeclaration = struct {

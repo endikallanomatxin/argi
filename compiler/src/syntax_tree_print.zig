@@ -119,7 +119,11 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
 
             indent(lvl + 1);
             std.debug.print("body  :\n", .{});
-            printNode(fd.body.*, lvl + 2);
+            if (fd.body) |body| {
+                printNode(body.*, lvl + 2);
+            } else {
+                std.debug.print("  (extern function)\n", .{});
+            }
         },
 
         // ── ASSIGNMENT ────────────────────────────────────────────────────

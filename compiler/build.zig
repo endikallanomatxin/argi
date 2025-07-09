@@ -23,6 +23,8 @@ pub fn build(b: *std.Build) void {
     exe.addLibraryPath(llvm_lib_path);
     linkLlvm(exe, llvm_libs_raw);
 
+    exe.linkSystemLibrary("c");
+
     b.installArtifact(exe);
 
     //

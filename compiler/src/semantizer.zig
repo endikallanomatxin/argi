@@ -64,6 +64,7 @@ pub const Semantizer = struct {
             .identifier => |id| self.handleIdentifier(id, s),
             .literal => |l| self.handleLiteral(l),
             .struct_value_literal => |sl| self.handleStructValLit(sl, s),
+            .struct_type_literal => |st| self.handleStructTypeLit(st, s),
             .struct_field_access => |sfa| self.handleStructFieldAccess(sfa, s),
             .function_call => |fc| self.handleCall(fc, s),
             .code_block => |blk| self.handleCodeBlock(blk, s),
@@ -73,7 +74,6 @@ pub const Semantizer = struct {
             .if_statement => |ifs| self.handleIf(ifs, s),
             .address_of => |p| self.handleAddressOf(p, s),
             .dereference => |p| self.handleDereference(p, s),
-            else => error.NotYetImplemented,
         };
     }
 
@@ -221,8 +221,11 @@ pub const Semantizer = struct {
         const out_struct = sem.StructType{ .fields = out_slice };
 
         // -------- cuerpo -------------------------------------------------
-        const body_te = try self.visitNode(f.body.*, &child);
-        const body_cb = body_te.node.*.code_block;
+        var body_cb: ?*sem.CodeBlock = null;
+        if (f.body) |body_node| {
+            const body_te = try self.visitNode(body_node.*, &child);
+            body_cb = body_te.node.*.code_block;
+        }
 
         const fn_ptr = try self.allocator.create(sem.FunctionDeclaration);
         fn_ptr.* = .{
@@ -272,6 +275,38 @@ pub const Semantizer = struct {
 
         const n = try self.makeNode(.{ .struct_value_literal = lit }, null);
         return .{ .node = n, .ty = .{ .struct_type = st_ptr } };
+    }
+
+    fn handleStructTypeLit(self: *Semantizer, st: syn.StructTypeLiteral, s: *Scope) SemErr!TypedExpr {
+        // 1) procesar cada campo:  tomamos el `= expr`
+        var val_fields = std.ArrayList(sem.StructValueLiteralField).init(self.allocator.*);
+        var ty_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+
+        for (st.fields) |fld| {
+            if (fld.default_value == null)
+                return error.NotYetImplemented; // aún no soportamos huecos
+
+            const tv = try self.visitNode(fld.default_value.?.*, s);
+
+            try val_fields.append(.{ .name = fld.name, .value = tv.node });
+            try ty_fields.append(.{ .name = fld.name, .ty = tv.ty, .default_value = null });
+        }
+
+        const vals = try val_fields.toOwnedSlice();
+        const tys = try ty_fields.toOwnedSlice();
+        val_fields.deinit();
+        ty_fields.deinit();
+
+        // 2) construimos el tipo semántico anónimo
+        const st_ptr = try self.allocator.create(sem.StructType);
+        st_ptr.* = .{ .fields = tys };
+
+        // 3) y el literal de valor
+        const lit_ptr = try self.allocator.create(sem.StructValueLiteral);
+        lit_ptr.* = .{ .fields = vals, .ty = .{ .struct_type = st_ptr } };
+
+        const node_ptr = try self.makeNode(.{ .struct_value_literal = lit_ptr }, null);
+        return .{ .node = node_ptr, .ty = .{ .struct_type = st_ptr } };
     }
 
     //──────────────────────────────────────────────────── STRUCT FIELD ACCESS
