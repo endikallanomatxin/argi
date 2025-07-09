@@ -77,6 +77,22 @@ pub const CodeGenerator = struct {
         const b = c.LLVMCreateBuilder();
         const gscope = try Scope.init(a, null);
 
+        // prototipo de printf -------------------------------------------------
+        const i8ptr = c.LLVMPointerType(c.LLVMInt8Type(), 0);
+
+        // ①  Array mutable (no-const)
+        var param_types = [_]llvm.c.LLVMTypeRef{i8ptr};
+
+        // ②  &param_types[0]  ⇒  *LLVMTypeRef  (compatible con [*c]LLVMTypeRef)
+        const printf_ty = c.LLVMFunctionType(
+            c.LLVMInt32Type(),
+            &param_types[0],
+            @intCast(param_types.len),
+            1, // variádico
+        );
+
+        _ = c.LLVMAddFunction(m, "printf", printf_ty);
+
         return .{
             .allocator = a,
             .ast = ast,
@@ -340,7 +356,7 @@ pub const CodeGenerator = struct {
         }
 
         // 7) código del cuerpo
-        try self.genCodeBlock(f.body);
+        try self.genCodeBlock(f.body.?);
 
         // 8) Gestionar la ausencia de return explícito
         const cur_bb = c.LLVMGetInsertBlock(self.builder);

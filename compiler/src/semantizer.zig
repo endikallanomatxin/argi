@@ -221,7 +221,7 @@ pub const Semantizer = struct {
         const out_struct = sem.StructType{ .fields = out_slice };
 
         // -------- cuerpo -------------------------------------------------
-        const body_te = try self.visitNode(f.body.*, &child);
+        const body_te = try self.visitNode(f.body.?.*, &child);
         const body_cb = body_te.node.*.code_block;
 
         const fn_ptr = try self.allocator.create(sem.FunctionDeclaration);

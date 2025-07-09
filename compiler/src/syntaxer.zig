@@ -330,26 +330,61 @@ pub const Syntaxer = struct {
         const id_loc = self.tokenLocation();
         const name = try self.parseIdentifier();
 
-        // ----------- FUNCTION DECLARATION ----------------------------------
+        // ----------- function declaration or call ------------
         if (self.tokenIs(.open_parenthesis)) {
             const input = try self.parseStructTypeLiteral();
-            if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
-            self.advanceOne();
-            const output = try self.parseStructTypeLiteral();
-            if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
-            self.advanceOne();
-            if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
-            self.advanceOne();
 
-            const body = try self.parseCodeBlock();
+            if (self.tokenIs(.arrow)) {
+                self.advanceOne();
+                const output = try self.parseStructTypeLiteral();
+                if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
+                self.advanceOne();
 
-            const fn_decl = syn.FunctionDeclaration{
-                .name = name,
-                .input = input,
-                .output = output,
-                .body = body,
-            };
-            return try self.makeNode(.{ .function_declaration = fn_decl }, id_loc);
+                // Si tras el identificador viene un paréntesis, puede ser
+                // una declaración de función (normal o extern).
+
+                // caso ExternFunction
+                switch (self.current().content) {
+                    .identifier => |ident_name| {
+                        if (std.mem.eql(u8, ident_name, "ExternFunction")) {
+                            // Consumimos la palabra clave
+                            self.advanceOne();
+                            // Construimos el nodo
+                            const ef = syn.FunctionDeclaration{
+                                .name = name,
+                                .input = input,
+                                .output = output,
+                                .body = null, // Extern functions do not have a body
+                            };
+                            return try self.makeNode(.{ .function_declaration = ef }, id_loc);
+                        }
+                    },
+                    else => {},
+                }
+
+                // caso normal: ":= { ... }"
+                if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
+                self.advanceOne();
+                const body = try self.parseCodeBlock();
+
+                const fn_decl = syn.FunctionDeclaration{
+                    .name = name,
+                    .input = input,
+                    .output = output,
+                    .body = body,
+                };
+                return try self.makeNode(.{ .function_declaration = fn_decl }, id_loc);
+            } else {
+                // Si no hay flecha, es una llamada a función.
+                const input_node = try self.makeNode(
+                    .{ .struct_type_literal = input },
+                    id_loc,
+                );
+                return try self.makeNode(
+                    .{ .function_call = .{ .callee = name, .input = input_node } },
+                    id_loc,
+                );
+            }
         }
 
         // ----------- ASSIGNMENT --------------------------------------------

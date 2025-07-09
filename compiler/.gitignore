@@ -2,4 +2,5 @@
 .zig-cache
 zig-out
 output.ll
+output.o
 output
