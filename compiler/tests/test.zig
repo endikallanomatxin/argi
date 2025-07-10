@@ -89,3 +89,9 @@ test "22_pointers" {
     try build("tests/22_pointers.rg");
     try run();
 }
+
+test "30_libc" {
+    try clean();
+    try build("tests/30_libc.rg");
+    try run();
+}

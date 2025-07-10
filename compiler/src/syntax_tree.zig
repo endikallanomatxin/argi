@@ -31,6 +31,7 @@ pub const Content = union(enum) {
     if_statement: IfStatement,
     address_of: *STNode,
     dereference: *STNode,
+    pointer_assignment: PointerAssignment,
 };
 
 pub const Type = union(enum) {
@@ -123,4 +124,9 @@ pub const IfStatement = struct {
 
 pub const ReturnStatement = struct {
     expression: ?*STNode,
+};
+
+pub const PointerAssignment = struct {
+    target: *STNode, // Dereference node
+    value: *STNode, // Value to assign
 };

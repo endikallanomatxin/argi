@@ -74,6 +74,7 @@ pub const Semantizer = struct {
             .if_statement => |ifs| self.handleIf(ifs, s),
             .address_of => |p| self.handleAddressOf(p, s),
             .dereference => |p| self.handleDereference(p, s),
+            .pointer_assignment => |pa| self.handlePointerAssignment(pa, s),
         };
     }
 
@@ -137,7 +138,7 @@ pub const Semantizer = struct {
         cb.* = .{ .nodes = slice, .ret_val = null };
 
         const n = try self.makeNode(.{ .code_block = cb }, parent);
-        return .{ .node = n, .ty = .{ .builtin = .Void } };
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
     //──────────────────────────────────────────────────── SYMBOL DECLARATION
@@ -166,7 +167,7 @@ pub const Semantizer = struct {
         if (d.value) |v|
             bd.initialization = (try self.visitNode(v.*, s)).node;
 
-        return .{ .node = n, .ty = .{ .builtin = .Void } };
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
     //──────────────────────────────────────────────────── TYPE DECLARATION
@@ -180,7 +181,7 @@ pub const Semantizer = struct {
         try s.types.put(d.name, td);
         const n = try self.makeNode(.{ .type_declaration = td }, s);
         if (s.parent == null) try self.root_list.append(n);
-        return .{ .node = n, .ty = .{ .builtin = .Void } };
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
     //──────────────────────────────────────────────────── FUNCTION DECLARATION
@@ -250,7 +251,7 @@ pub const Semantizer = struct {
         try p.functions.put(f.name, fn_ptr);
         const n = try self.makeNode(.{ .function_declaration = fn_ptr }, p);
         if (p.parent == null) try self.root_list.append(n);
-        return .{ .node = n, .ty = .{ .builtin = .Void } };
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
     //──────────────────────────────────────────────────── ASSIGNMENT
@@ -265,7 +266,7 @@ pub const Semantizer = struct {
         asg.* = .{ .sym_id = b, .value = rhs.node };
 
         const n = try self.makeNode(.{ .binding_assignment = asg }, s);
-        return .{ .node = n, .ty = .{ .builtin = .Void } };
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
     //──────────────────────────────────────────────────── STRUCT VALUE LITERAL
@@ -405,8 +406,15 @@ pub const Semantizer = struct {
 
         const n = try self.makeNode(.{ .function_call = fc_ptr }, s);
 
-        const result_ty: sem.Type = if (fnc.output.fields.len == 0)
-            .{ .builtin = .Void }
+        // Extern fns with exactly 1 return field return that field directly
+        const result_ty: sem.Type = if (fnc.isExtern())
+            switch (fnc.output.fields.len) {
+                0 => .{ .builtin = .Any },
+                1 => fnc.output.fields[0].ty,
+                else => .{ .struct_type = &fnc.output },
+            }
+        else if (fnc.output.fields.len == 0)
+            .{ .builtin = .Any }
         else
             .{ .struct_type = &fnc.output };
         return .{ .node = n, .ty = result_ty };
@@ -449,7 +457,7 @@ pub const Semantizer = struct {
         rs.* = .{ .expression = if (e) |te| te.node else null };
 
         const n = try self.makeNode(.{ .return_statement = rs }, s);
-        return .{ .node = n, .ty = .{ .builtin = .Void } };
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
     //──────────────────────────────────────────────────── IF
@@ -474,7 +482,7 @@ pub const Semantizer = struct {
         };
 
         const n = try self.makeNode(.{ .if_statement = if_ptr }, s);
-        return .{ .node = n, .ty = .{ .builtin = .Void } };
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
     //──────────────────────────────────────────────────── ADDRESS OF
@@ -508,8 +516,28 @@ pub const Semantizer = struct {
             .ty = base_ty,
         };
 
-        const n = try self.makeNode(.{ .dereference = der_ptr }, null);
+        const n = try self.makeNode(.{ .dereference = der_ptr.* }, null);
         return .{ .node = n, .ty = base_ty };
+    }
+
+    //────────────────────────────────────────────────── POINTER ASSIGNMENT
+    fn handlePointerAssignment(self: *Semantizer, pa: syn.PointerAssignment, s: *Scope) SemErr!TypedExpr {
+        // RHS
+        const rhs = try self.visitNode(pa.value.*, s);
+
+        // LHS debe ser un dereference (…)&
+        if (pa.target.*.content != .dereference) return error.InvalidType;
+
+        const tgt_te = try self.visitNode(pa.target.*, s);
+        const deref_sg = tgt_te.node.*.dereference;
+
+        // El tipo al que apunta debe coincidir con RHS
+        if (!typesStructurallyEqual(deref_sg.ty, rhs.ty))
+            return error.InvalidType;
+
+        // SG node
+        const n = try self.makeNode(.{ .pointer_assignment = .{ .pointer = deref_sg.pointer, .value = rhs.node } }, s);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
     //──────────────────────────────────────────────────── HELPERS
@@ -523,10 +551,11 @@ pub const Semantizer = struct {
     fn resolveType(self: *Semantizer, t: syn.Type, s: *Scope) !sem.Type {
         return switch (t) {
             .type_name => |id| {
-                if (s.lookupType(id)) |td| {
+                if (builtinFromName(id)) |bt|
+                    return .{ .builtin = bt };
+                if (s.lookupType(id)) |td|
                     return td.ty;
-                }
-                return .{ .builtin = try builtinFromName(id) };
+                return error.InvalidType;
             },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
             .pointer_type => |inner| blk: {
@@ -538,8 +567,8 @@ pub const Semantizer = struct {
         };
     }
 
-    fn builtinFromName(name: []const u8) !sem.BuiltinType {
-        return std.meta.stringToEnum(sem.BuiltinType, name) orelse error.InvalidType;
+    fn builtinFromName(name: []const u8) ?sem.BuiltinType {
+        return std.meta.stringToEnum(sem.BuiltinType, name);
     }
 };
 
@@ -625,9 +654,24 @@ fn typesStructurallyEqual(a: sem.Type, b: sem.Type) bool {
             .pointer_type => false, // no son iguales
         },
         .pointer_type => |apt| switch (b) {
-            .builtin => false,
-            .struct_type => false,
-            .pointer_type => |bpt| typesStructurallyEqual(apt.*, bpt.*),
+            .pointer_type => |bpt| blk: {
+                const sub_a = apt.*;
+                const sub_b = bpt.*;
+
+                // &Any es compatible con cualquier otro puntero
+                if (isAny(sub_a) or isAny(sub_b))
+                    break :blk true;
+
+                break :blk typesStructurallyEqual(sub_a, sub_b);
+            },
+            else => false,
         },
+    };
+}
+
+fn isAny(t: sem.Type) bool {
+    return switch (t) {
+        .builtin => |bt| bt == .Any,
+        else => false,
     };
 }

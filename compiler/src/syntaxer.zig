@@ -330,7 +330,31 @@ pub const Syntaxer = struct {
         const id_loc = self.tokenLocation();
         const name = try self.parseIdentifier();
 
-        // ----------- function declaration or call ------------
+        // Build identifier node and (optionally) consume postfix chains so
+        // we can detect pointer‑dereference assignments like `p& = 0`.
+        const ident_node = try self.makeNode(.{ .identifier = name }, id_loc);
+        const lhs_with_postfix = try self.parsePostfix(ident_node);
+
+        // ─── Assignment (simple or pointer) ───────────────────
+        if (self.tokenIs(.equal)) {
+            self.advanceOne();
+            const rhs_expr = try self.parseExpression();
+
+            if (lhs_with_postfix == ident_node) {
+                // Regular binding reassignment
+                return try self.makeNode(
+                    .{ .assignment = .{ .name = name, .value = rhs_expr } },
+                    id_loc,
+                );
+            } else {
+                // Store through dereference or field
+                return try self.makeNode(
+                    .{ .pointer_assignment = .{ .target = lhs_with_postfix, .value = rhs_expr } },
+                    id_loc,
+                );
+            }
+        }
+
         if (self.tokenIs(.open_parenthesis)) {
             const input = try self.parseStructTypeLiteral();
 
@@ -482,13 +506,31 @@ pub const Syntaxer = struct {
             start,
         );
     }
-
     fn parseReturn(self: *Syntaxer) SyntaxerError!*syn.STNode {
         const start = self.tokenLocation();
-        if (!self.tokenIs(.keyword_return)) return SyntaxerError.ExpectedKeywordReturn;
-        self.advanceOne();
+        if (!self.tokenIs(.keyword_return))
+            return SyntaxerError.ExpectedKeywordReturn;
+
+        self.advanceOne(); // consume 'return'
+
+        // ── ¿hay algo más en la línea?  --------------------------
+        // Si lo siguiente es fin de línea, un '}', o EOF, NO hay expresión.
+        switch (self.current().content) {
+            .new_line, .close_brace, .eof => {
+                return try self.makeNode(
+                    .{ .return_statement = .{ .expression = null } },
+                    start,
+                );
+            },
+            else => {},
+        }
+
+        // ── otherwise parse the expression -----------------------
         const expr = try self.parseExpression();
-        return try self.makeNode(.{ .return_statement = .{ .expression = expr } }, start);
+        return try self.makeNode(
+            .{ .return_statement = .{ .expression = expr } },
+            start,
+        );
     }
 
     // ─────────────────────────────  DEBUG  ──────────────────────────────────
