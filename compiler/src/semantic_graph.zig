@@ -15,7 +15,12 @@ pub const Scope = struct {
     binding_declarations: []const *BindingDeclaration,
 };
 
-pub const SGNode = union(enum) {
+pub const SGNode = struct {
+    location: tok.Location,
+    content: Content,
+};
+
+pub const Content = union(enum) {
     type_declaration: *TypeDeclaration,
     function_declaration: *FunctionDeclaration,
 

@@ -27,7 +27,7 @@ fn printValueLiteral(lit: *const sem.ValueLiteral, lvl: usize) void {
 
 pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
     indent(lvl);
-    switch (node.*) {
+    switch (node.content) {
         .binding_declaration => |b| {
             const mut = if (b.mutability == .variable) "var" else "const";
             std.debug.print("Decl \"{s}\" {s} : {s}\n", .{ b.name, mut, typeToString(b.ty) });
@@ -53,7 +53,7 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             indent(lvl + 1);
             std.debug.print("Body:\n", .{});
             if (f.body) |cb| {
-                const tmp: sem.SGNode = .{ .code_block = @constCast(cb) };
+                const tmp: sem.SGNode = .{ .location = node.location, .content = .{ .code_block = @constCast(cb) } };
                 printNode(&tmp, lvl + 2);
             } else {
                 indent(lvl + 2);
@@ -145,12 +145,18 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             printNode(ifs.condition, lvl + 2);
             indent(lvl + 1);
             std.debug.print("Then:\n", .{});
-            const t: sem.SGNode = .{ .code_block = @constCast(ifs.then_block) };
+            const t: sem.SGNode = .{
+                .location = node.location,
+                .content = .{ .code_block = @constCast(ifs.then_block) },
+            };
             printNode(&t, lvl + 2);
             if (ifs.else_block) |eb| {
                 indent(lvl + 1);
                 std.debug.print("Else:\n", .{});
-                const e: sem.SGNode = .{ .code_block = @constCast(eb) };
+                const e: sem.SGNode = .{
+                    .location = node.location,
+                    .content = .{ .code_block = @constCast(eb) },
+                };
                 printNode(&e, lvl + 2);
             }
         },

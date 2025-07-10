@@ -3,6 +3,7 @@ const tok = @import("token.zig");
 const tokp = @import("token_print.zig");
 const syn = @import("syntax_tree.zig");
 const synp = @import("syntax_tree_print.zig");
+const diagnostic = @import("diagnostic.zig");
 
 pub const SyntaxerError = error{
     ExpectedIdentifier,
@@ -33,20 +34,26 @@ pub const Syntaxer = struct {
     index: usize,
     allocator: *const std.mem.Allocator,
     st: std.ArrayList(*syn.STNode),
+    diags: *diagnostic.Diagnostics,
 
-    pub fn init(alloc: *const std.mem.Allocator, toks: []const tok.Token) Syntaxer {
+    pub fn init(alloc: *const std.mem.Allocator, toks: []const tok.Token, diags: *diagnostic.Diagnostics) Syntaxer {
         return .{
             .tokens = toks,
             .index = 0,
             .allocator = alloc,
             .st = std.ArrayList(*syn.STNode).init(alloc.*),
+            .diags = diags,
         };
     }
 
     pub fn parse(self: *Syntaxer) ![]const *syn.STNode {
-        std.debug.print("\n\nsyntaxing...\n", .{});
         self.st = parseSentences(self) catch |err| {
-            std.debug.print("Error al parsear: {any}\n", .{err});
+            if (err == SyntaxerError.OutOfMemory) {
+                try self.diags.add(self.tokenLocation(), .internal, "error de memoria al parsear", .{});
+            } else {
+                try self.diags.add(self.tokenLocation(), .syntax, "error de sintaxis: {s}", .{@errorName(err)});
+            }
+            std.debug.print("Error al parsear: {s}\n", .{@errorName(err)});
             return err;
         };
         return self.st.items; // slice inmutable a devolver
@@ -91,8 +98,7 @@ pub const Syntaxer = struct {
     fn parseIdentifier(self: *Syntaxer) SyntaxerError![]const u8 {
         const t = self.current();
         if (t.content != .identifier) {
-            std.debug.print("Expected identifier, found:\n", .{});
-            tokp.printTokenWithLocation(t, self.tokenLocation());
+            try self.diags.add(self.tokenLocation(), .syntax, "se esperaba identificador, se encontró '{s}'", .{@tagName(self.current().content)});
             return SyntaxerError.ExpectedIdentifier;
         }
         const name = t.content.identifier;
@@ -134,8 +140,7 @@ pub const Syntaxer = struct {
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
-                std.debug.print("Expected struct field, found:\n", .{});
-                tokp.printToken(self.current());
+                try self.diags.add(self.tokenLocation(), .syntax, "se esperaba un campo de struct, se encontró '{s}'", .{@tagName(self.current().content)});
                 return SyntaxerError.ExpectedStructField;
             }
             self.advanceOne();
@@ -181,8 +186,7 @@ pub const Syntaxer = struct {
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
-                std.debug.print("Expected struct field, found:\n", .{});
-                tokp.printTokenWithLocation(self.current(), self.tokenLocation());
+                try self.diags.add(self.tokenLocation(), .syntax, "se esperaba un campo de struct, se encontró '{s}'", .{@tagName(self.current().content)});
                 return SyntaxerError.ExpectedStructField;
             }
             self.advanceOne();

@@ -3,6 +3,7 @@ const llvm = @import("llvm.zig");
 const c = llvm.c;
 const sem = @import("semantic_graph.zig");
 const syn = @import("syntax_tree.zig");
+const diagnostic = @import("diagnostic.zig");
 
 pub const CodegenError = error{
     ModuleCreationFailed,
@@ -62,6 +63,7 @@ const Scope = struct {
 pub const CodeGenerator = struct {
     allocator: *const std.mem.Allocator,
     ast: []const *sem.SGNode,
+    diags: *diagnostic.Diagnostics,
 
     module: llvm.c.LLVMModuleRef,
     builder: llvm.c.LLVMBuilderRef,
@@ -71,7 +73,7 @@ pub const CodeGenerator = struct {
     global_scope: *Scope, // nunca se destruye hasta el final
     current_scope: *Scope, // apunta al scope donde estamos ahora
 
-    pub fn init(a: *const std.mem.Allocator, ast: []const *sem.SGNode) !CodeGenerator {
+    pub fn init(a: *const std.mem.Allocator, ast: []const *sem.SGNode, diags: *diagnostic.Diagnostics) !CodeGenerator {
         const m = c.LLVMModuleCreateWithName("argi_module");
         if (m == null) return CodegenError.ModuleCreationFailed;
 
@@ -81,6 +83,7 @@ pub const CodeGenerator = struct {
         return .{
             .allocator = a,
             .ast = ast,
+            .diags = diags,
             .module = m,
             .builder = b,
             .global_scope = gscope,
@@ -115,26 +118,24 @@ pub const CodeGenerator = struct {
 
     // ── top-level drive ───────────────────────
     pub fn generate(self: *CodeGenerator) !llvm.c.LLVMModuleRef {
-        std.debug.print("\n\nGenerating LLVM IR...\n", .{});
-
-        for (self.ast) |n|
-            _ = self.visitNode(n) catch |e| {
-                std.debug.print("codegen error: {any}\n", .{e});
+        for (self.ast) |n| {
+            _ = self.visitNode(n) catch |err| {
+                try self.diags.add(n.location, .codegen, "error al generar el código: {s}", .{@errorName(err)});
                 return CodegenError.CompilationFailed;
             };
+        }
 
         var msg: [*c]u8 = null;
         const failed = c.LLVMVerifyModule(self.module, c.LLVMReturnStatusAction, &msg) != 0;
         if (failed) {
             const ir_cstr = c.LLVMPrintModuleToString(self.module);
-            std.debug.print("{s}\n", .{std.mem.span(ir_cstr)});
             c.LLVMDisposeMessage(ir_cstr);
             if (msg != null) {
                 const txt = std.mem.span(msg);
-                std.debug.print("LLVM verification failed: {s}\n", .{txt});
+                try self.diags.add(self.ast[0].location, .codegen, "la verificación de LLVM falló: {s}", .{txt});
                 c.LLVMDisposeMessage(msg);
             } else {
-                std.debug.print("LLVM verification failed (no message)\n", .{});
+                try self.diags.add(self.ast[0].location, .codegen, "la verificación de LLVM falló (sin mensaje)", .{});
             }
             return CodegenError.ModuleCreationFailed;
         }
@@ -144,10 +145,10 @@ pub const CodeGenerator = struct {
 
     // ────────────────────────────────────────── visitor dispatch ──
     fn visitNode(self: *CodeGenerator, n: *const sem.SGNode) CodegenError!?TypedValue {
-        return switch (n.*) {
+        return switch (n.content) {
             .function_declaration => |f| {
                 self.genFunction(f) catch |e| {
-                    std.debug.print("Error generating function {s}: {any}\n", .{ f.name, e });
+                    try self.diags.add(n.location, .codegen, "error al generar la función {s}: {s}", .{ f.name, @errorName(e) });
                     return e;
                 };
                 return null;
@@ -158,82 +159,82 @@ pub const CodeGenerator = struct {
             .binding_declaration => |b| {
                 if (self.current_scope.lookup(b.name) != null)
                     return self.genBindingUse(b) catch |e| {
-                        std.debug.print("Error generating binding {s}: {any}\n", .{ b.name, e });
+                        try self.diags.add(n.location, .codegen, "error al generar el enlace {s}: {s}", .{ b.name, @errorName(e) });
                         return e;
                     };
                 self.genBindingDecl(b) catch |e| {
-                    std.debug.print("Error generating binding declaration {s}: {any}\n", .{ b.name, e });
+                    try self.diags.add(n.location, .codegen, "error al generar la declaración del enlace {s}: {s}", .{ b.name, @errorName(e) });
                     return e;
                 };
                 return null;
             },
             .binding_assignment => |a| {
                 _ = self.genAssignment(a) catch |e| {
-                    std.debug.print("Error generating assignment for {s}: {any}\n", .{ a.sym_id.name, e });
+                    try self.diags.add(n.location, .codegen, "error al generar la asignación para {s}: {s}", .{ a.sym_id.name, @errorName(e) });
                     return e;
                 };
                 return null;
             },
             .binding_use => |b| self.genBindingUse(b) catch |e| {
-                std.debug.print("Error generating binding use {s}: {any}\n", .{ b.name, e });
+                try self.diags.add(n.location, .codegen, "error al generar el uso del enlace {s}: {s}", .{ b.name, @errorName(e) });
                 return e;
             },
             .code_block => |cb| {
                 self.genCodeBlock(cb) catch |e| {
-                    std.debug.print("Error generating code block: {any}\n", .{e});
+                    try self.diags.add(n.location, .codegen, "error al generar el bloque de código: {s}", .{@errorName(e)});
                     return e;
                 };
                 return null;
             },
             .return_statement => |r| {
                 self.genReturn(r) catch |e| {
-                    std.debug.print("Error generating return statement: {any}\n", .{e});
+                    try self.diags.add(n.location, .codegen, "error al generar la sentencia de retorno: {s}", .{@errorName(e)});
                     return e;
                 };
                 return null;
             },
             .value_literal => |v| self.genValueLiteral(&v) catch |e| {
-                std.debug.print("Error generating value literal: {any}\n", .{e});
+                try self.diags.add(n.location, .codegen, "error al generar el literal de valor: {s}", .{@errorName(e)});
                 return e;
             },
             .binary_operation => |bo| self.genBinaryOp(&bo) catch |e| {
-                std.debug.print("Error generating binary operation: {any}\n", .{e});
+                try self.diags.add(n.location, .codegen, "error al generar la operación binaria: {s}", .{@errorName(e)});
                 return e;
             },
             .comparison => |comp| self.genComparison(&comp) catch |e| {
-                std.debug.print("Error generating comparison: {any}\n", .{e});
+                try self.diags.add(n.location, .codegen, "error al generar la comparación: {s}", .{@errorName(e)});
                 return e;
             },
             .if_statement => |ifs| {
                 self.genIfStatement(ifs) catch |e| {
-                    std.debug.print("Error generating if statement: {any}\n", .{e});
+                    try self.diags.add(n.location, .codegen, "error al generar la sentencia if: {s}", .{@errorName(e)});
                     return e;
                 };
                 return null;
             },
             .function_call => |fc| self.genFunctionCall(fc) catch |e| {
-                std.debug.print("Error generating function call: {any}\n", .{e});
+                try self.diags.add(n.location, .codegen, "error al generar la llamada a la función: {s}", .{@errorName(e)});
                 return e;
             },
             .struct_value_literal => |sl| self.genStructValueLiteral(sl) catch |e| {
-                std.debug.print("Error generating struct value literal: {any}\n", .{e});
+                try self.diags.add(n.location, .codegen, "error al generar el literal de valor de struct: {s}", .{@errorName(e)});
                 return e;
             },
             .struct_field_access => |sfa| self.genStructFieldAccess(sfa) catch |e| {
-                std.debug.print("Error generating struct field access: {any}\n", .{e});
+                try self.diags.add(n.location, .codegen, "error al generar el acceso al campo de struct: {s}", .{@errorName(e)});
                 return e;
             },
             .address_of => |a| self.genAddressOf(a) catch |e| {
-                std.debug.print("Error generating address of: {any}\n", .{e});
+                try self.diags.add(n.location, .codegen, "error al generar la operación address-of: {s}", .{@errorName(e)});
                 return e;
             },
             .dereference => |d| self.genDereference(&d) catch |e| {
-                std.debug.print("Error generating dereference: {any}\n", .{e});
+                try self.diags.add(n.location, .codegen, "error al generar la operación de desreferencia: {s}", .{@errorName(e)});
                 return e;
             },
             .pointer_assignment => |pa| {
                 self.genPointerAssignment(pa) catch |e| {
-                    std.debug.print("Error generating pointer assignment: {any}\n", .{e});
+                    try self.diags.add(n.location, .codegen, "error al generar la asignación de puntero: {s}", .{@errorName(e)});
                     return e;
                 };
                 return null;
@@ -864,7 +865,7 @@ pub const CodeGenerator = struct {
     // ────────────────────────────────────────── address-of ──
     fn genAddressOf(self: *CodeGenerator, node: *const sem.SGNode) !TypedValue {
         // node es el SG del binding_use
-        const bu = node.*.binding_use;
+        const bu = node.content.binding_use;
         const sym = self.current_scope.lookup(bu.name) orelse
             return CodegenError.SymbolNotFound;
 
