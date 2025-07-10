@@ -42,7 +42,10 @@ pub const Semantizer = struct {
         var global = try Scope.init(self.allocator, null, null);
 
         for (self.st_nodes) |n|
-            _ = try self.visitNode(n.*, &global);
+            _ = self.visitNode(n.*, &global) catch |err| {
+                std.debug.print("Error: {}\n", .{err});
+                return err;
+            };
 
         self.root_nodes = try self.root_list.toOwnedSlice();
         self.root_list.deinit();
@@ -57,24 +60,78 @@ pub const Semantizer = struct {
     //────────────────────────────────────────────────────────────────── visitors
     fn visitNode(self: *Semantizer, n: syn.STNode, s: *Scope) SemErr!TypedExpr {
         return switch (n.content) {
-            .symbol_declaration => |d| self.handleSymbolDecl(d, s),
-            .type_declaration => |d| self.handleTypeDecl(d, s),
-            .function_declaration => |d| self.handleFuncDecl(d, s),
-            .assignment => |a| self.handleAssignment(a, s),
-            .identifier => |id| self.handleIdentifier(id, s),
-            .literal => |l| self.handleLiteral(l),
-            .struct_value_literal => |sl| self.handleStructValLit(sl, s),
-            .struct_type_literal => |st| self.handleStructTypeLit(st, s),
-            .struct_field_access => |sfa| self.handleStructFieldAccess(sfa, s),
-            .function_call => |fc| self.handleCall(fc, s),
-            .code_block => |blk| self.handleCodeBlock(blk, s),
-            .binary_operation => |bo| self.handleBinOp(bo, s),
-            .comparison => |c| self.handleComparison(c, s),
-            .return_statement => |r| self.handleReturn(r, s),
-            .if_statement => |ifs| self.handleIf(ifs, s),
-            .address_of => |p| self.handleAddressOf(p, s),
-            .dereference => |p| self.handleDereference(p, s),
-            .pointer_assignment => |pa| self.handlePointerAssignment(pa, s),
+            .symbol_declaration => |d| self.handleSymbolDecl(d, s) catch |err| {
+                std.debug.print("Error in symbol declaration '{s}': {any}\n", .{ d.name, err });
+                return err;
+            },
+            .type_declaration => |d| self.handleTypeDecl(d, s) catch |err| {
+                std.debug.print("Error in type declaration '{s}': {any}\n", .{ d.name, err });
+                return err;
+            },
+            .function_declaration => |d| self.handleFuncDecl(d, s) catch |err| {
+                std.debug.print("Error in function declaration '{s}': {any}\n", .{ d.name, err });
+                return err;
+            },
+            .assignment => |a| self.handleAssignment(a, s) catch |err| {
+                std.debug.print("Error in assignment '{any}': {any}\n", .{ a.name, err });
+                return err;
+            },
+            .identifier => |id| self.handleIdentifier(id, s) catch |err| {
+                std.debug.print("Error in identifier '{any}': {any}\n", .{ id, err });
+                return err;
+            },
+            .literal => |l| self.handleLiteral(l) catch |err| {
+                std.debug.print("Error in literal '{any}': {any}\n", .{ l, err });
+                return err;
+            },
+            .struct_value_literal => |sl| self.handleStructValLit(sl, s) catch |err| {
+                std.debug.print("Error in struct value literal: {any}\n", .{err});
+                return err;
+            },
+            .struct_type_literal => |st| self.handleStructTypeLit(st, s) catch |err| {
+                std.debug.print("Error in struct type literal: {any}\n", .{err});
+                return err;
+            },
+            .struct_field_access => |sfa| self.handleStructFieldAccess(sfa, s) catch |err| {
+                std.debug.print("Error in struct field access '{any}': {any}\n", .{ sfa.field_name, err });
+                return err;
+            },
+            .function_call => |fc| self.handleCall(fc, s) catch |err| {
+                std.debug.print("Error in function call '{s}': {any}\n", .{ fc.callee, err });
+                return err;
+            },
+            .code_block => |blk| self.handleCodeBlock(blk, s) catch |err| {
+                std.debug.print("Error in code block: {any}\n", .{err});
+                return err;
+            },
+            .binary_operation => |bo| self.handleBinOp(bo, s) catch |err| {
+                std.debug.print("Error in binary operation '{any}': {any}\n", .{ bo.operator, err });
+                return err;
+            },
+            .comparison => |c| self.handleComparison(c, s) catch |err| {
+                std.debug.print("Error in comparison '{any}': {any}\n", .{ c.operator, err });
+                return err;
+            },
+            .return_statement => |r| self.handleReturn(r, s) catch |err| {
+                std.debug.print("Error in return statement: {any}\n", .{err});
+                return err;
+            },
+            .if_statement => |ifs| self.handleIf(ifs, s) catch |err| {
+                std.debug.print("Error in if statement: {any}\n", .{err});
+                return err;
+            },
+            .address_of => |p| self.handleAddressOf(p, s) catch |err| {
+                std.debug.print("Error in address of: {any}\n", .{err});
+                return err;
+            },
+            .dereference => |p| self.handleDereference(p, s) catch |err| {
+                std.debug.print("Error in dereference: {any}\n", .{err});
+                return err;
+            },
+            .pointer_assignment => |pa| self.handlePointerAssignment(pa, s) catch |err| {
+                std.debug.print("Error in pointer assignment: {any}\n", .{err});
+                return err;
+            },
         };
     }
 
