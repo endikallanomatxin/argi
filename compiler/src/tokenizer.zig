@@ -1,6 +1,7 @@
 const std = @import("std");
 const tok = @import("token.zig");
 const tok_print = @import("token_print.zig");
+const diag = @import("diagnostic.zig");
 
 pub const TokenizerError = error{
     UnknownCharacter,
@@ -8,6 +9,7 @@ pub const TokenizerError = error{
 
 pub const Tokenizer = struct {
     allocator: *const std.mem.Allocator,
+    diagnostics: *diag.Diagnostics,
     source: []const u8,
     tokens: std.ArrayList(tok.Token),
 
@@ -15,11 +17,13 @@ pub const Tokenizer = struct {
 
     pub fn init(
         allocator: *const std.mem.Allocator,
+        diagnostics: *diag.Diagnostics,
         source: []const u8,
         file_name: []const u8,
     ) Tokenizer {
         return Tokenizer{
             .allocator = allocator,
+            .diagnostics = diagnostics,
             .source = source,
             .tokens = std.ArrayList(tok.Token).init(allocator.*),
             .location = tok.Location{
@@ -34,13 +38,11 @@ pub const Tokenizer = struct {
     /// Llama a `lexNextToken` repetidas veces hasta terminar, y devuelve
     /// el slice de `Token` generado.
     pub fn tokenize(self: *Tokenizer) ![]tok.Token {
-        std.debug.print("\n\ntokenizing...\n", .{});
         while (self.location.offset < self.source.len) {
             lexNextToken(self) catch |err| {
                 if (err == error.ReachedEOF) {
                     break;
                 } else {
-                    std.debug.print("Error al lexear: {any}\n", .{err});
                     return err;
                 }
             };
@@ -258,8 +260,9 @@ pub const Tokenizer = struct {
                     try self.addToken(tok.Content{ .comparison_operator = .not_equal }, loc);
                     try self.advanceOne(); // Avanzar el segundo '!'
                 } else {
-                    std.debug.print("Unknown character: {c}\n", .{self.this()});
-                    return TokenizerError.UnknownCharacter;
+                    try self.diagnostics.add(loc, .syntax, "carácter no reconocido: '{c}'", .{self.this()});
+                    try self.advanceOne(); // saltamos y seguimos
+                    return;
                 }
             },
             '<' => {
@@ -325,14 +328,14 @@ pub const Tokenizer = struct {
                         '\'' => '\'', // comilla simple
                         '0' => 0, // NUL
                         else => {
-                            std.debug.print("Escape no soportado: \\{c}\n", .{esc});
+                            try self.diagnostics.add(loc, .syntax, "Escape no soportado: \\{c}", .{esc});
                             return TokenizerError.UnknownCharacter;
                         },
                     };
                     try self.advanceOne(); // salta la letra de escape
                 } else { // -- carácter simple --
                     if (self.this() == '\'') {
-                        std.debug.print("Char literal vacío\n", .{});
+                        try self.diagnostics.add(loc, .syntax, "Char literal vacío", .{});
                         return TokenizerError.UnknownCharacter;
                     }
                     char_val = self.this();
@@ -341,7 +344,7 @@ pub const Tokenizer = struct {
 
                 // 2. debe venir la comilla de cierre
                 if (self.this() != '\'') {
-                    std.debug.print("Char literal sin cerrar\n", .{});
+                    try self.diagnostics.add(loc, .syntax, "Char literal sin cerrar", .{});
                     return TokenizerError.UnknownCharacter;
                 }
                 try self.advanceOne(); // salta la comilla de cierre
@@ -393,8 +396,9 @@ pub const Tokenizer = struct {
                 return;
             },
             else => {
-                std.debug.print("Unknown character: {c}\n", .{self.this()});
-                return TokenizerError.UnknownCharacter;
+                try self.diagnostics.add(loc, .syntax, "carácter no reconocido: '{c}'", .{self.this()});
+                try self.advanceOne(); // saltamos y seguimos
+                return;
             },
         }
         try self.advanceOne();
