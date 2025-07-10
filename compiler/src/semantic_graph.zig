@@ -40,7 +40,8 @@ pub const SGNode = union(enum) {
     continue_statement: struct {},
 
     address_of: *const SGNode,
-    dereference: *const Dereference,
+    dereference: Dereference,
+    pointer_assignment: PointerAssignment,
 };
 
 //
@@ -66,7 +67,7 @@ pub const BuiltinType = enum {
     Float64,
     Char,
     Bool,
-    Void,
+    Any,
 };
 
 pub const StructType = struct {
@@ -209,4 +210,9 @@ pub const SwitchCase = struct {
 pub const Dereference = struct {
     pointer: *const SGNode,
     ty: Type,
+};
+
+pub const PointerAssignment = struct {
+    pointer: *const SGNode, // expresión que produce &T
+    value: *const SGNode, // Value to assign
 };

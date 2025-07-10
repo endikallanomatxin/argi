@@ -249,5 +249,14 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             std.debug.print("value:\n", .{});
             printNode(deref.*, lvl + 2);
         },
+        .pointer_assignment => |pa| {
+            std.debug.print("PointerAssignment\n", .{});
+            indent(lvl + 1);
+            std.debug.print("target:\n", .{});
+            printNode(pa.target.*, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("value:\n", .{});
+            printNode(pa.value.*, lvl + 2);
+        },
     }
 }

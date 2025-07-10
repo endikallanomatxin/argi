@@ -66,6 +66,7 @@ pub const CodeGenerator = struct {
     module: llvm.c.LLVMModuleRef,
     builder: llvm.c.LLVMBuilderRef,
     current_return_type: ?llvm.c.LLVMTypeRef = null,
+    current_fn_decl: ?*sem.FunctionDeclaration = null,
 
     global_scope: *Scope, // nunca se destruye hasta el final
     current_scope: *Scope, // apunta al scope donde estamos ahora
@@ -123,11 +124,21 @@ pub const CodeGenerator = struct {
             };
 
         var msg: [*c]u8 = null;
-        if (c.LLVMVerifyModule(self.module, c.LLVMReturnStatusAction, &msg) != 0) {
-            std.debug.print("LLVM verification failed: {s}\n", .{msg});
-            c.LLVMDisposeMessage(msg);
+        const failed = c.LLVMVerifyModule(self.module, c.LLVMReturnStatusAction, &msg) != 0;
+        if (failed) {
+            const ir_cstr = c.LLVMPrintModuleToString(self.module);
+            std.debug.print("{s}\n", .{std.mem.span(ir_cstr)});
+            c.LLVMDisposeMessage(ir_cstr);
+            if (msg != null) {
+                const txt = std.mem.span(msg);
+                std.debug.print("LLVM verification failed: {s}\n", .{txt});
+                c.LLVMDisposeMessage(msg);
+            } else {
+                std.debug.print("LLVM verification failed (no message)\n", .{});
+            }
             return CodegenError.ModuleCreationFailed;
         }
+
         return self.module;
     }
 
@@ -216,9 +227,16 @@ pub const CodeGenerator = struct {
                 std.debug.print("Error generating address of: {any}\n", .{e});
                 return e;
             },
-            .dereference => |d| self.genDereference(d) catch |e| {
+            .dereference => |d| self.genDereference(&d) catch |e| {
                 std.debug.print("Error generating dereference: {any}\n", .{e});
                 return e;
+            },
+            .pointer_assignment => |pa| {
+                self.genPointerAssignment(pa) catch |e| {
+                    std.debug.print("Error generating pointer assignment: {any}\n", .{e});
+                    return e;
+                };
+                return null;
             },
             else => CodegenError.UnknownNode,
         };
@@ -240,7 +258,7 @@ pub const CodeGenerator = struct {
                 .Float64 => c.LLVMDoubleType(),
                 .Char => c.LLVMInt8Type(),
                 .Bool => c.LLVMInt1Type(),
-                .Void => c.LLVMVoidType(),
+                .Any => c.LLVMInt8Type(), // &Any es i8*
             },
             .struct_type => |st| blk: {
                 // Anonymous struct generation with the given fields
@@ -256,14 +274,29 @@ pub const CodeGenerator = struct {
                 }
                 break :blk struct_ty;
             },
-            .pointer_type => |sub| blk: {
+            .pointer_type => |sub| {
+                // ¿el pointee es nuestro 'Any' (= builtin.Void)?
+                const is_any = switch (sub.*) {
+                    .builtin => |bt| bt == .Any,
+                    else => false,
+                };
+
+                if (is_any) {
+                    // &Any  ≡  i8*
+                    return c.LLVMPointerType(c.LLVMInt8Type(), 0);
+                }
+
                 const sub_ty = try self.toLLVMType(sub.*);
-                break :blk c.LLVMPointerType(sub_ty, 0);
+                return c.LLVMPointerType(sub_ty, 0);
             },
         };
     }
 
     fn genFunction(self: *CodeGenerator, f: *sem.FunctionDeclaration) !void {
+        const prev_fn = self.current_fn_decl;
+        self.current_fn_decl = f;
+        defer self.current_fn_decl = prev_fn;
+
         const is_extern = (f.body == null);
 
         var fn_ty: llvm.c.LLVMTypeRef = undefined;
@@ -434,9 +467,17 @@ pub const CodeGenerator = struct {
 
         // 5) almacenar valor inicial, manejando struct-parciales
         if (init_tv) |tv| {
+            const value_ref = tv.value_ref;
+            const target_ty = llvm_decl_ty;
+
             if (tv.type_ref == llvm_decl_ty) {
                 // tipos idénticos → copiar tal cual
                 _ = c.LLVMBuildStore(self.builder, tv.value_ref, alloca);
+            } else if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMPointerTypeKind and
+                c.LLVMGetTypeKind(target_ty) == c.LLVMGetTypeKind(tv.type_ref))
+            {
+                const casted = c.LLVMBuildBitCast(self.builder, value_ref, target_ty, "ptr.cast");
+                _ = c.LLVMBuildStore(self.builder, casted, alloca);
             } else if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMStructTypeKind and
                 c.LLVMGetTypeKind(llvm_decl_ty) == c.LLVMStructTypeKind)
             {
@@ -652,23 +693,20 @@ pub const CodeGenerator = struct {
 
     // ────────────────────────────────────────── return ──
     fn genReturn(self: *CodeGenerator, r: *sem.ReturnStatement) !void {
+        const ret_ty = self.current_return_type.?;
+
+        // ─── caso "return expr;" ────────────────────────────────────────────
         if (r.expression) |e| {
-            const tv = (try self.visitNode(e)) orelse return CodegenError.ValueNotFound;
+            const tv = (try self.visitNode(e)) orelse
+                return CodegenError.ValueNotFound;
 
-            const ret_ty = self.current_return_type orelse
-                return CodegenError.InvalidType;
-
-            // caso “coincide tal cual”
             if (ret_ty == tv.type_ref) {
                 _ = c.LLVMBuildRet(self.builder, tv.value_ref);
                 return;
             }
 
-            // caso “struct de 1 campo” y ese campo coincide
-            if (c.LLVMGetTypeKind(ret_ty) == c.LLVMStructTypeKind and
-                c.LLVMCountStructElementTypes(ret_ty) == 1 and
-                c.LLVMStructGetTypeAtIndex(ret_ty, 0) == tv.type_ref)
-            {
+            // struct-de-1-campo compactado
+            if (c.LLVMGetTypeKind(ret_ty) == c.LLVMStructTypeKind and c.LLVMCountStructElementTypes(ret_ty) == 1 and c.LLVMStructGetTypeAtIndex(ret_ty, 0) == tv.type_ref) {
                 var agg = c.LLVMGetUndef(ret_ty);
                 agg = c.LLVMBuildInsertValue(self.builder, agg, tv.value_ref, 0, "ret.pack");
                 _ = c.LLVMBuildRet(self.builder, agg);
@@ -678,7 +716,22 @@ pub const CodeGenerator = struct {
             return CodegenError.InvalidType;
         }
 
-        _ = c.LLVMBuildRetVoid(self.builder);
+        // ─── caso "return;"  →  empaquetar los named returns ────────────────
+        if (ret_ty == c.LLVMVoidType()) {
+            _ = c.LLVMBuildRetVoid(self.builder);
+            return;
+        }
+
+        // necesitamos saber los campos de salida declarados
+        const fdecl = self.current_fn_decl orelse return CodegenError.InvalidType;
+
+        var agg = c.LLVMGetUndef(ret_ty);
+        for (fdecl.output.fields, 0..) |fld, i| {
+            const sym = self.current_scope.lookup(fld.name).?;
+            const v = c.LLVMBuildLoad2(self.builder, sym.type_ref, sym.ref, "");
+            agg = c.LLVMBuildInsertValue(self.builder, agg, v, @intCast(i), "");
+        }
+        _ = c.LLVMBuildRet(self.builder, agg);
     }
 
     // ────────────────────────────────────────── call ──
@@ -829,6 +882,14 @@ pub const CodeGenerator = struct {
         return .{ .value_ref = deref_val, .type_ref = pointee_ty };
     }
 
+    //──────────────────────────────────────── pointer store ──
+    fn genPointerAssignment(self: *CodeGenerator, pa: sem.PointerAssignment) !void {
+        const ptr_tv = (try self.visitNode(pa.pointer)) orelse return CodegenError.ValueNotFound;
+        const rhs_tv = (try self.visitNode(pa.value)) orelse return CodegenError.ValueNotFound;
+
+        // Basta con emitir la instrucción: tipos ya verificados antes.
+        _ = c.LLVMBuildStore(self.builder, rhs_tv.value_ref, ptr_tv.value_ref);
+    }
     // ────────────────────────────────────────── misc helpers ──
     fn genCodeBlock(self: *CodeGenerator, cb: *const sem.CodeBlock) !void {
         for (cb.nodes) |n| _ = try self.visitNode(n);
