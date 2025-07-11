@@ -7,11 +7,10 @@ Every file in a directory can see each other, same namespace.
 
 ## Project layout
 
-There is a layout convention:
+There is two layout conventions:
 
 ```
--- Simple layout for libraries
-library_project/
+simple_module/
 ├── README.md
 ├── module.rgstruct
 ├── submodule/
@@ -23,37 +22,52 @@ library_project/
     ├── file2.rg
     └── file3.rg
 
--- Complex layout for applications
-project_to_compile/
+project/
+│
 ├── README.md
+│
 ├── project.rgstruct
-├── src/
-│   ├── module_that_becomes_executable/
-│   │   ├── file1.rg
-│   │   ├── file2.rg
-│   │   └── file3.rg
-│   └── module_that_gets_imported/
+│
+├── entrypoints/              -- required for executable creation (optional otherwise)
+│   └── module_to_compile/
 │       ├── file1.rg
 │       ├── file2.rg
 │       └── file3.rg
-│    -- Los módulos se comportan como si estuvieran directamente en la raíz.
-│    -- igual hacer que dentro de src/ haya un entrypoints/, internal/ y external/?
-│    -- O igual con usar la _ para la privacidad ya es suficiente?
-│    -- O mejor todo plano fuera?
 │
-└── bin/
-    └── module_that_becomes_executable
-
+├── public/                   -- required for libraries (optional otherwise)
+│   ├── module1/
+│   │   ├── file1.rg
+│   │   ├── file2.rg
+│   │   └── file3.rg
+│   └── module2/
+│       ├── file1.rg
+│       ├── file2.rg
+│       └── file3.rg
+│
+├── private/                  -- always optional
+│   ├── module1/
+│   │   ├── file1.rg
+│   │   ├── file2.rg
+│   │   └── file3.rg
+│   └── module2/
+│       ├── file1.rg
+│       ├── file2.rg
+│       └── file3.rg
+│
+└── results/
+    └── bin/                  -- When compiling for yourself.
+    │   └── module_that_becomes_executable
+    └── dist/                 -- When distributing the project.
+        ├── linux_x86_64_installer
+        ├── linux_arm64_installer
+        ├── macos_x86_64_installer
+        ├── macos_arm64_installer
+        ├── windows_x86_64_installer
+        └── windows_arm64_installer
+    └── .gitignore
 ```
 
-> [!TODO] Pensar en una forma de poner dependencias, que igual estaría bien definir la versión en un sitio común y luego los archivos en ese módulo que puedan acceder a ese módulo.
-
-> [!IDEA] Separar módulos entre:
-> - entrypoints/
-> - internal_modules/
-> - external_modules/
-> Se puede hacer que si hay ese layout entonces solo exporta external_modules
-
+No se si private/public o internal/external es mejor.
 
 ## Building
 
@@ -98,9 +112,12 @@ project.rgstruct
 )
 
 .commands = (
+
+    -- Deben poder correr at compile time
+
     "build" = default_executable_creation (.module = "./entrypoints/main")
-    -- o para librerías:
-    "build" = default_library_creation (.module = "./external/some_library")
+    -- o para librerías estáticamente linkadas.
+    -- "build" = default_dynamically_linked_library_creation (.module = ".")
 
     "test"  = default_testing (.all_inside_folder = ".")
 
@@ -113,6 +130,10 @@ project.rgstruct
         -- Aquí procedural
     }
 
+    "distribute" = (.ct: CommandContext) -> () {
+        -- llena la carpeta dist/ con los compilados para todas las plataformas
+    }
+
     "custom" = (.ct: CommandContext) -> () {
         -- Aquí procedural
     }
@@ -120,37 +141,22 @@ project.rgstruct
 ```
 
 
-Si no también puede hacerse que sea una función:
+## Importing modules
 
-```rg
-project () -> (.config: ProjectConfig) := {
-    config = (
-	...
-    )
-}
-```
+`m := #import("module_path")`
 
-Igual obligar a que tenga una valor at compile time.
+If it is just a name, it is checked in the dependencies table of the closest root.
 
+If the module starts with a . then it is relative to the current module. (inside)
+If it starts with .. then it is relative to the parent module. (outside)
+If it starts with / then it is relative to the root of the project.
 
-> [!IDEA] Declaración de cuerpos de funciones en otros archivos
-> 
-> ```rg
-> project () -> (.config: ProjectConfig) := {
->     #file("./project_config.rg")
-> }
-> ```
-> Así se podría usar un archivo así para la config o build o lo que sea.
+/ are used to refer to modules inside other modules.
 
 
-Igual rgs es el camino si hiciéramos eso.
+## Importing stuff from modules
 
-
-## Importing
-
-To import from other modules:
-
-- `m := #import("./module/")`
+To import stuff from other modules:
 
 - `some_function := #import("./module/").some_function`
 
@@ -162,55 +168,34 @@ To import from other modules:
     `two = m.two`
 
 (que sea una sintaxis acorde al código normal permite programar imports en
-compile time)
+compile time. No se hasta qué punto puede perjudicar, respecto a algo más
+simple como go)
 
 
-## Locating modules
+## C import
 
-If it is just a name, then it can be:
-- a locally defined module alias.
-- a global module installed in the system.
+To import C code, you can use the `#c_import` directive:
 
-If the module starts with a . then it is relative to the current module. (inside)
-If it starts with .. then it is relative to the parent module. (outside)
+```rg
+some_c_lib = #c_import("c_module.h")
+```
 
-/ are used to refer to modules inside other modules.
+It automatically converts C types to argi types:
 
-> [!IDEA] Que import reciba un enum con el tipo de import que es.
-> Por ejemplo:
->  ```rg
->  m := #import("./module/", ..Relative)
->  m := #import("module", ..Global)
->  m := #import("module", ..Local)
->  ```
+- Function calls accept structs and return structs, with the names as arguments.
+- ..
 
+A lot of the standard more library depends on external libraries as:
 
-## Protected modules
+- `blas`/`lapack` for linear algebra.
+- `openssl` for cryptography.
+- `zlib` for compression.
+- `ffmpeg` for codecs.
 
-Modules which name starts with _ are not visible outside the module. They are
-private to the module.
+If the library is not recognized when compiling a module using any of those, it
+will throw an error requiring to install the library and link it properly.
 
+También tiene que haber una opción para que al distribuir se incluyan las
+librerías que necesita cada arquitectura, eso estaría bien.
 
-## Interpretation and imports
-
-Lua tiene:
-- require corre si no ha corrido ya (cache)
-- dofile corre sin considerar el cache
-- loadfile importa sin correr. Se puede correr a posteriori
-
-Python por defecto corre todo lo importado linea a linea, y hay que hacer `if __name__ == "__main__":` para que no corra si se importa.
-
-Tiene sentido que se pueda importar "scripts"?
-
-Podríamos hacer:
-- `run_if_not_yet(module)`
-- `run(module)`
-- `import(module)`
-
-
-Igual es buena idea también separar los archivos que se pueden correr, de los
-que se pueden importar:
-
-- Files inside a module: `script.rg`
-- Scripts: `script.rgs`
 
