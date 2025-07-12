@@ -1,4 +1,5 @@
 const std = @import("std");
+const sf = @import("source_files.zig");
 const tok = @import("token.zig");
 
 pub const Kind = enum {
@@ -17,11 +18,20 @@ pub const Diagnostic = struct {
 /// Pequeño *bag* que vive en un `Allocator` (arena está bien)
 pub const Diagnostics = struct {
     arena: *const std.mem.Allocator,
+    source_files: []const sf.SourceFile, // slice inmutable
     list: std.ArrayList(Diagnostic),
 
-    pub fn init(a: *const std.mem.Allocator) Diagnostics {
-        return .{ .arena = a, .list = std.ArrayList(Diagnostic).init(a.*) };
+    pub fn init(
+        a: *const std.mem.Allocator,
+        files: []const sf.SourceFile,
+    ) Diagnostics {
+        return .{
+            .arena = a,
+            .source_files = files,
+            .list = std.ArrayList(Diagnostic).init(a.*),
+        };
     }
+
     pub fn deinit(self: *const Diagnostics) void {
         self.list.deinit();
     }
@@ -34,26 +44,29 @@ pub const Diagnostics = struct {
         return self.list.items.len != 0;
     }
 
-    pub fn dump(self: *Diagnostics, source: []const u8, file: []const u8) !void {
-        var lines_it = std.mem.splitAny(u8, source, "\n");
+    pub fn dump(self: *Diagnostics) !void {
+        for (self.source_files) |f| {
+            // pre-split en líneas para subrayado
+            var lines_it = std.mem.splitAny(u8, f.code, "\n");
+            var lines = std.ArrayList([]const u8).init(std.heap.page_allocator);
+            defer lines.deinit();
+            while (lines_it.next()) |l| lines.append(l) catch {};
 
-        var lines = std.ArrayList([]const u8).init(std.heap.page_allocator);
-        defer lines.deinit();
-        while (lines_it.next()) |l| {
-            lines.append(l) catch {};
-        }
+            for (self.list.items) |d| {
+                if (!std.mem.eql(u8, d.loc.file, f.path)) continue;
+                std.debug.print(
+                    "{s}:{d}:{d}: error: {s}\n",
+                    .{ f.path, d.loc.line, d.loc.column, d.msg },
+                );
 
-        for (self.list.items) |d| {
-            std.debug.print("{s}:{d}:{d}: error: {s}\n", .{ file, d.loc.line, d.loc.column, d.msg });
-
-            // línea de código + sub-rayado (opcional)
-            if (d.loc.line - 1 < lines.items.len) {
-                const code = lines.items[d.loc.line - 1];
-                std.debug.print("  {s}\n", .{code});
-                const indent_len = @min(code.len, d.loc.column - 1);
-                std.debug.print("  ", .{});
-                indent(indent_len);
-                std.debug.print("^\n", .{});
+                if (d.loc.line - 1 < lines.items.len) {
+                    const code = lines.items[d.loc.line - 1];
+                    std.debug.print("  {s}\n", .{code});
+                    const indent_len = @min(code.len, d.loc.column - 1);
+                    std.debug.print("  ", .{});
+                    indent(indent_len);
+                    std.debug.print("^\n", .{});
+                }
             }
         }
     }
