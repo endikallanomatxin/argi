@@ -5,72 +5,84 @@ const allocator = std.heap.page_allocator;
 const llvm = @import("../llvm.zig");
 const c = llvm.c;
 
-const codegen = @import("../codegen.zig");
-const tok = @import("../tokenizer.zig");
+const sf = @import("../source_files.zig");
+const diag = @import("../diagnostic.zig");
+const token = @import("../token.zig");
+const tokzr = @import("../tokenizer.zig");
 const syn = @import("../syntaxer.zig");
 const sem = @import("../semantizer.zig");
 const link = @import("../link.zig");
-const diag = @import("../diagnostic.zig");
+const codegen = @import("../codegen.zig");
 
-pub fn compile(filename: []const u8) !void {
-    var diagnostics = diag.Diagnostics.init(&allocator);
+pub fn compile(user_path: []const u8) !void {
+    // 1. Reunir ficheros ──────────────────────────────────────────────────
+    var files = try sf.collect(&allocator, "core", user_path);
+    defer sf.freeList(&allocator, &files);
+
+    // 2. Diagnósticos globales ────────────────────────────────────────────
+    var diagnostics = diag.Diagnostics.init(&allocator, files.items);
     defer diagnostics.deinit();
 
-    // 1. Leer el archivo fuente.
-    var file = try fs.cwd().openFile(filename, .{});
-    const source = try file.readToEndAlloc(allocator, std.math.maxInt(usize));
-    defer allocator.free(source);
+    // 3. Tokenizar todos (fusionando EOF) ─────────────────────────────────
+    var all_tokens = std.ArrayList(token.Token).init(allocator);
+    defer all_tokens.deinit();
 
-    // 2. Lexear el contenido para obtener la lista de tokens.
-    var tokenizer = tok.Tokenizer.init(&allocator, &diagnostics, source, filename);
-    const tokensList = tokenizer.tokenize() catch {
-        tokenizer.printTokens();
-        if (diagnostics.hasErrors()) {
-            try diagnostics.dump(source, filename);
-        }
-        return error.CompilationFailed;
-    };
+    for (files.items, 0..) |f, idx| {
+        var tokenizer = tokzr.Tokenizer.init(
+            &allocator,
+            &diagnostics,
+            f.code,
+            f.path,
+        );
+        const toks = tokenizer.tokenize() catch {
+            tokenizer.printTokens();
+            diagnostics.dump() catch {};
+            return error.CompilationFailed;
+        };
 
-    // 3. Parsear la lista de tokens para obtener el ST.
-    var syntaxer = syn.Syntaxer.init(&allocator, tokensList, &diagnostics);
+        // Elimina el EOF salvo en el último fichero
+        const slice = if (idx == files.items.len - 1)
+            toks
+        else
+            toks[0 .. toks.len - 1];
+
+        try all_tokens.appendSlice(slice);
+    }
+
+    // 4. Sintaxis ──────────────────────────────────────────────────────────
+    var syntaxer = syn.Syntaxer.init(&allocator, all_tokens.items, &diagnostics);
     const st_nodes = syntaxer.parse() catch {
-        tokenizer.printTokens();
         syntaxer.printST();
-        if (diagnostics.hasErrors()) {
-            try diagnostics.dump(source, filename);
-        }
+        diagnostics.dump() catch {};
         return error.CompilationFailed;
     };
 
-    // 4. Analizar el st para generar el sg
+    // 5. Semántica ────────────────────────────────────────────────────────
     var semantizer = sem.Semantizer.init(&allocator, st_nodes, &diagnostics);
     const sg = semantizer.analyze() catch {
         syntaxer.printST();
         semantizer.printSG();
-        if (diagnostics.hasErrors()) {
-            try diagnostics.dump(source, filename);
-        }
+        diagnostics.dump() catch {};
         return error.CompilationFailed;
     };
 
-    // 5. Generar IR a partir del AST.
-    var g = codegen.CodeGenerator.init(&allocator, sg, &diagnostics) catch return;
-    const module = g.generate() catch {
+    // 6. Generación de código ──────────────────────────────────────────────
+    var gen = codegen.CodeGenerator.init(&allocator, sg, &diagnostics) catch return;
+    const module = gen.generate() catch {
         semantizer.printSG();
-        if (diagnostics.hasErrors()) {
-            try diagnostics.dump(source, filename);
-        }
+        diagnostics.dump() catch {};
         return error.CompilationFailed;
     };
 
-    const llvm_output_filename = "output.ll";
+    // 7. Escribir el módulo LLVM a un fichero .ll ──────────────────────
+    const ir_path = "output.ll";
     var err_msg: [*c]u8 = null;
-    if (c.LLVMPrintModuleToFile(module, llvm_output_filename, &err_msg) != 0) {
+    if (c.LLVMPrintModuleToFile(module, ir_path, &err_msg) != 0) {
         std.debug.print("Error al escribir el módulo LLVM: {s}\n", .{err_msg});
         return error.WriteFailed;
     }
 
-    // 5. Compilar el IR a un ejecutable usando Clang.
+    // 8. Enlazar con libc y generar el binario final ──────────────────────
     var env = std.process.getEnvMap(allocator) catch return;
     defer env.deinit();
 
@@ -78,6 +90,6 @@ pub fn compile(filename: []const u8) !void {
     defer c.LLVMDisposeMessage(triple_cstr);
     const triple = std.mem.span(triple_cstr);
 
-    const out_path = "output"; // binario final
-    try link.linkWithLibc(module, triple, out_path, &allocator);
+    try link.linkWithLibc(module, triple, "output", &allocator);
+    std.debug.print("✔ Compilación completada\n", .{});
 }
