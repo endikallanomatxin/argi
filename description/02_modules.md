@@ -1,4 +1,4 @@
-# Modules and imports
+# Modules and project layout
 
 Folders as modules, como Go y odin. El nombre del módulo es el nombre de la
 carpeta.
@@ -69,77 +69,6 @@ project/
 
 No se si private/public o internal/external es mejor.
 
-## Building
-
-- Es más limpio que sea declarativo (pyproject.toml)
-
-- Es más versátil que sea procedural (build.zig)
-
-Hay que encontrar un balance entre ambos.
-
-project.rgstruct
-
-```rg
-.name                 = "Project Name"
-
-.version              = "1.0.0"
-
-.description          = "A brief description of the project."
-
-.readme               = "README.md"
-
-.minimum_argi_version = "0.1.0"
-
-.authors = (
-    "Jhon Snow"
-    "Arya Stark"
-)
-
-.license = ..MIT
-
-.dependencies = (
-    "module_one" = (
-        .path      = "http://example.com/module_one/"
-        .version   = ">1.2.3"
-        .lock_hash = "abcd1234efgh5678ijkl9012mnop3456qrst7890uvwx"
-    )
-    "module_two" = (
-        .path      = "https://example.com/module_two/"
-        .version   = ">2"
-        .lock_hash = "wxyz1234abcd5678efgh9012ijkl3456mnop7890qrst"
-    )
-    -- TODO: Pensar si separa los locks en otro archivo.
-)
-
-.commands = (
-
-    -- Deben poder correr at compile time
-
-    "build" = default_executable_creation (.module = "./entrypoints/main")
-    -- o para librerías estáticamente linkadas.
-    -- "build" = default_dynamically_linked_library_creation (.module = ".")
-
-    "test"  = default_testing (.all_inside_folder = ".")
-
-    "install" = (.ct: CommandContext) -> () {
-        ct.do("build")
-        -- Aquí procedural
-    }
-
-    "uninstall" = (.ct: CommandContext) -> () {
-        -- Aquí procedural
-    }
-
-    "distribute" = (.ct: CommandContext) -> () {
-        -- llena la carpeta dist/ con los compilados para todas las plataformas
-    }
-
-    "custom" = (.ct: CommandContext) -> () {
-        -- Aquí procedural
-    }
-)
-```
-
 
 ## Importing modules
 
@@ -199,3 +128,28 @@ También tiene que haber una opción para que al distribuir se incluyan las
 librerías que necesita cada arquitectura, eso estaría bien.
 
 
+## Packages
+
+```bash
+argi add <package>
+```
+
+```bash
+argi remove <package>
+```
+
+Se descargan todos en un entorno global. No se hacen entornos virtuales. Como NIX y como go.
+
+En el root del proyecto se tiene que guardar lo que iria en go.mod y go.sum
+
+## Kickstarter
+
+```
+argi init app
+```
+
+o
+
+```
+argi init lib
+```

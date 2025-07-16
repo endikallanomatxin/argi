@@ -36,13 +36,13 @@ The declaration syntax has two delimeters:
 
 - Second, the value assignment delimeter. Always ` = `.
 
-> [!NOTE]
-> When a struct is constant, you are not allowed to:
-> - Reassign its name
-> - Reassign its fields
-> - Create mutable pointers to it
-> Con eso debería valer, porque las funciones que lo modifiquen necesitan un
-> puntero mutable a la struct.
+
+On constant structs: When a struct is constant, you are not allowed to:
+- Reassign its name
+- Reassign its fields
+- Create mutable pointers to it
+That is enough, because any modification would require a mutable pointer to the
+struct.
 
 
 ## Code blocks
@@ -129,7 +129,7 @@ with the full left hand side expression, if it is a function it contains the
 return struct without unpacking.
 
 ```
-my_var | my_func (_, other_arg)  -- Single piped argument
+my_var | my_func (_, other_arg)         -- Single piped argument
 my_var | my_func (_.a, other_arg, _.b)  -- Multiple piped arguments
 ```
 
@@ -140,22 +140,71 @@ my_var | my_func (&_, second_arg)
 ```
 
 
-## Generics
+## Initialization of types
 
-The language has generics.
+Builtins initialize to 0 values. (from Odin)
 
-Generics are different from functions in that they do not have multiple dispatch.
+All types have to methods:
+- `init` to create an instance of the type.
+- `deinit` to destroy the instance of the type.
+
+When you delcare a new instance:
 
 ```
-MyGenericType<# t: Type> : Type = (
+my_thing : MyType = "something"
+-- or
+my_thing : MyType = ("something", 12, true)
+```
+
+What it really does is:
+
+```
+my_thing : MyType = init("something")
+```
+
+The init function is automatically called and resolved with the multiple
+dispatch.
+
+On scope exit, `deinit` is automatically called for all types that are not in the result struct.
+
+That way, everything behaves as if it were a stack variable.
+
+
+## Keeping
+
+If you want to avoid the destruction of a variable, yo can use the `keep` keyword:
+
+```
+my_thing := 42
+my_pointer := &my_thing
+keep my_thing with my_pointer
+```
+
+This is a very confortable way of manual memory management. Almost automatic.
+
+
+## Generics
+
+- Monomorphized at compile time.
+
+- Do not have multiple dispatch.
+
+- Use structs for their arguments.
+
+```
+MyGenericType#(.t: Type) : Type = (
 	.datos : List<t>
 )
 ```
 
-> [!TODO] Pensar en la sintaxis de inicialización de instancias de tipos.
-
 > [!NOTE] Tipos con generics en el input de una función
+>
 > El lenguaje tiene que ser lo suficientemente inteligente para saber que:
-> `Vector<Int64>` cumple `Vector<Number>`, aunque no sea un subtipo directamente, sino en sus campos.
-> Por lo general, si el generic del input tiene un valor que cuadra con el generic, entonces se toma como un requisito para cumplir el tipo. Si en cambio tiene una variable que no está asignada a nada, entonces en un parámetro de entrada adicional.
+> `Vector#(Int64)` cumple `Vector#(Number)`, aunque no sea un subtipo
+> directamente, sino en sus campos.
+>
+> Por lo general, si el generic del input tiene un valor que cuadra con el
+> generic, entonces se toma como un requisito para cumplir el tipo. Si en
+> cambio tiene una variable que no está asignada a nada, entonces en un
+> parámetro de entrada adicional.
 
