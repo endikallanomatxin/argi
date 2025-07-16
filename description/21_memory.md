@@ -41,7 +41,9 @@ Allocator : Abstract = (
 )
 ```
 
-Allocators return a `HeapAllocation` struct, instead of a single pointer. This allows us to keep track of the size and the allocator used for the allocation, which is necessary for deallocateing the memory later.
+Allocators return a `HeapAllocation` struct, instead of a single pointer. This
+allows us to keep track of the size and the allocator used for the allocation,
+which is necessary for deallocateing the memory later.
 
 ```
 HeapAllocation : Type = (
@@ -230,6 +232,47 @@ Seguramente los novatos no se encuentren con que tengan que hacer `keep` durante
 
 > Safety total?
 > No, pero en realidad ningún lenguaje lo es. Este me parece un buen compromiso entre seguridad y ergonomía.
+
+
+#### PROBLEMAS CON KEEP
+
+```
+Outer : Type = struct (
+    .inner_heap : HeapAlloacation
+    .inner_stack : Int32
+    .inner_stackref : &Int32
+)
+```
+
+Realmente keep es como meter el descriptor en una box y postponer el deinit
+(del outer e inners) hasta que se libere el otro al que está ligado.
+
+>[!BUG] KEEP TIENE QUE MOVER COSAS AL HEAP DE FORMA AUTOMÁTICA
+> No es solo postponer el deinit
+
+Luego, es tu responsabilidad hacer el keep necesario para que .inner_stackref
+no se libere antes de tiempo.
+
+Lo que sí es útil es lo de que se ligue su lifetime al de otra variable, pero
+igual para que funcione bien HeapAllocation tendría que ser una especie de
+builtin
+
+
+IDEA:
+
+Que en lugar de Heap Allocation se añada al return y se quede en el stack el
+descriptor outer. Eso puede funcionar.
+
+Al final es como si dijeras, si alguien llama a esta función, va a prealocar X
+bytes para que esto pueda perdurar tras el return.
+
+
+CONCLUSIÓN:
+
+- Si usar el call frame de las funciones para pasar variables y que perduren es
+buena idea, entonces usar keep.
+- Si no, usamos Box/HeapAllocation y en lugar de keep, y que se haga siempre al
+generar el puntero, que tampoco es para tanto. Encima puede tomar un allocator.
 
 
 ### In-expression variable creation

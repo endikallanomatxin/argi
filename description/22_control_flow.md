@@ -122,11 +122,11 @@ Se puede hacer a través de abstrascts:
 
 ```
 Iterable : Abstract = (
-    cast _ -> Iterator<_>
+    cast _ -> Iterator#(_)
 )
 
-Iterator<T> : Abstract = (
-    next _ -> T
+Iterator#(t: Type) : Abstract = (
+    next _ -> t
     has_next _ -> Bool
 )
 ```
@@ -155,7 +155,7 @@ Y para hacer que tu tipo pueda ser iterable:
 
 ```
 MyType : Type = struct (
-    .data: List<Int>
+    .data: List#(Int)
 )
 
 cast MyType -> MyTypeIterator := {

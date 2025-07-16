@@ -32,9 +32,9 @@ error from a superset to a subset.
 ## Error unions
 
 ```
-Errable<#T: Type, #E: Type> : Type = (
-	..Ok    (T)  -- Success
-	..Error (E)  -- Fail
+Errable#(.t: Type, .e: Type) : Type = (
+	..Ok    (t)  -- Success
+	..Error (e)  -- Fail
 )
 ```
 

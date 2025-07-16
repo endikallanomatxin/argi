@@ -12,6 +12,8 @@ https://github.com/Ivo-Balbaert/The_Way_to_Jai/blob/main/book/26A_Metaprogrammin
 
 Sí:
 
+- `name#(.param = value)` to define generics that will be monomorphized at compile time.
+
 - `#run` para ejecutar código en tiempo de compilación.
 
 - `#import` para importar código de otros archivos, como un include en C.
