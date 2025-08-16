@@ -75,3 +75,13 @@ If you are inside a function that returns an Errable and you are calling a funct
 		Incluye siempre un stack trace y las variables que han dado lugar a ese error.
 - If you do:`my_func () !! "Something"` you can add some context. (like anyhow rust crate)
 
+
+## Errable as a monad
+
+pensar en concatenar operaciones sobre errables (andthen, orelse…)
+podria ser
+and then: “|>”
+or else: “|<“ o “|!”
+
+Darle una vuelta.
+
