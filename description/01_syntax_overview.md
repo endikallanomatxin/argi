@@ -44,6 +44,35 @@ On constant structs: When a struct is constant, you are not allowed to:
 That is enough, because any modification would require a mutable pointer to the
 struct.
 
+## Pointers
+
+Para obtener la referencia a una variable (como en c, go, rust...):
+
+```
+p = &x
+```
+
+Para desreferenciar un puntero:
+
+```
+x = p&
+```
+
+Su tipo es:
+
+```
+p: &Int
+```
+
+- No puede ser nulo.
+(Si se quiere hacer nulo, usar un nullable: `?&int`. Más adelante hay más sobre
+esto.)
+
+- No se puede hacer aritmética con punteros.
+Si quieres hacerlo, tienes que convertirlo en un tipo numérico, hacer la
+aritmética y luego volverlo a convertir en un puntero. Es suficientemente
+incómodo como para no hacerlo sin querer, te obliga a ser explícito para
+cagarla.
 
 ## Code blocks
 

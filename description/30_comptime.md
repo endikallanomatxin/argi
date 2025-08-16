@@ -39,6 +39,17 @@ Sí:
     >Pensar en una forma de usar esto para que las librerías puedan levantar
     >errores de compilación o avisos en el lsp cuando no se usan bien.
 
+>[!IDEA] Ergonomy for allocator, stdio, async...
+> #bringsystemallocator, #bringsystemstdo, #bringsystemasync
+> When the file is saved, the necessary declarations will be modified to bring
+> the required system resource.
+> It deletes itself at save time.
+>
+> (Aunque eso mas que compile time es como save time) Igual podría plantearse
+> una version distinta del #, que en lugar de al compilar, sea al
+> guardar/analizar con el lsp. y sirva para macros de auto-reescritura del
+> archivo al guardar
+
 
 No se:
 
@@ -66,3 +77,13 @@ No me gusta:
 > Eso es una mierda.
 
 https://www.scottredig.com/blog/bonkers_comptime/
+
+
+> [!CHECK]
+> En un video de entrevista al de Odin y al de Elixir, de Primeagen y TJ,
+> ginger bill dice que la metaprogramación suele reflejar carencias del
+> lenguaje y que cuando se usa, el programa se vuelve muy difícil de debugear.
+> Así que igual es interesante ver qué pasa con ello en Zig y Jai antes de
+> implementarlo.
+
+
