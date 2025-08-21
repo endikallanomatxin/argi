@@ -41,3 +41,6 @@ Numbers only allow operatiions and comparisons between same types, so, if you wa
 - Floats can be written in a scientific notation.
 
 
+## Characters and Strings
+
+

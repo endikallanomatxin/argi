@@ -95,3 +95,9 @@ test "30_libc" {
     try build("tests/30_libc.rg");
     try run();
 }
+
+test "31_core" {
+    try clean();
+    try build("tests/31_core.rg");
+    try run();
+}

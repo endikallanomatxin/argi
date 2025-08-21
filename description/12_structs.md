@@ -1,4 +1,4 @@
-## Structs
+# Structs
 
 This declares a new struct type:
 
@@ -8,14 +8,6 @@ Pokemon : Type = (
 	.Name : String = ""
 )
 ```
-
-> [!IDEA] Burning default values
-> When you define default values, they are auto-filled in the creation call.
-> This way, there are never hidden defaults.
-> It makes code resistant to default value changes. Improving retro-compatibility.
->
-> X: it hides programmer's intent. As filling only what you want, conveys
-> information.
 
 
 This declares a new anonymous struct:
@@ -33,11 +25,12 @@ data : (
 Structs' types are structural only when anonymous.
 
 
-##### Protected fields
+## Protected fields
 
 Es importante proteger algunos campos para conseguir una mejor encapsulación.
 
-Los campos que empiecen por _ serán privados y no podrán ser accedidos desde fuera del package.
+Los campos que empiecen por _ serán privados y no podrán ser accedidos desde
+fuera del package.
 
 Por ejemplo:
 
@@ -102,7 +95,7 @@ y queda muy limpio.
 > Con esto ganamos la información semántica de a qué corresponde lo que estamos usando, sin pagar el precio de pasar todo el struct.
 
 
-### Struct memory layout
+## Memory layout
 
 You can specify:
 - **alignment**: How the struct is aligned in memory.
@@ -185,124 +178,5 @@ El lenguaje debe proporcionar funciones estándar para interactuar con el layout
 - **`align_of`**: Devuelve la alineación de un tipo.
 - **`size_of`**: Devuelve el tamaño de un tipo.
 - **`offset_of`**: Devuelve el offset de un campo en una estructura.
-
-
-
-## Choice
-
-```
-Direction : Type = (
-	=..north  -- Default
-	..east
-	..south
-	..west
-)
-
-int(Directions..north) == 1
-```
-
-```
--- This suffices as a ChoiceLiteral for assignment
-..north
-```
-
-```
-HTTPCode : Type = (
-	..OK = 200                   -- Specific underlying representation
-	..NotFound = 404
-	..InternalServerError = 500
-	-- Si poners uno, tienes que poner todos.
-)
-```
-
-```
--- With other data types besides Int
-
--- Strings
-Role : Type = (
-	..admin = "admin"
-	..user = "user"
-	..guest = "guest"
-)
-
--- Floats
-Multiplyier : Type = (
-	..mili = 0.001
-	..centi = 0.01
-	..deci = 0.1
-	..base = 1
-	..deca = 10
-	..hecto = 100
-	..kilo = 1000
-)
-```
-
-##### Payload
-
-Like a tagged union.
-
-```
-Errable#(.t: Type, .e: Error) : Type = (
-	..ok(t)
-	..error(e)
-)
-```
-
-```
-Nullable#(.t: Type) : Type = (
-	=..none
-	..some(t)
-)
-```
-
-##### Use
-
-###### Checking for them
-
-```
-x|is(..north)  -- Check if x is north
-```
-
-###### Getting a payload
-
-```
-x..ok
-```
-
-En rust (a parte del match) se puede hacer así:
-
-```
-// Ejemplo con Option
-let x: Option#(Int32) = Some(10);
-if let Some(v) = x {
-println!("Valor: {}", v);
-}
-```
-
-
-###### Matching
-
-```
-match x {
-	..north { println("North") }
-	..south { println("South") }
-	..east  { println("East") }
-	..west  { println("West") }
-}
-```
-
-With a payload
-
-```
-match x {
-	..ok(v) { println("Value: ", v) }
-	..error(e) { println("Error: ", e) }
-}
-```
-
-> [!NOTE] Eso es muy rust
-> No se si cuada mucho con nuestro lenguaje.
-> Igual hay que darle una vuelta a una sintaxis más general, que aplique más alla de los choice with payload.
-
 
 
