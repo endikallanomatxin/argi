@@ -313,3 +313,7 @@ result :=
 
 >[!idea] Garbage collector puede ser un allocator que toma Async.
 
+---
+
+> [!check] ginger bill dice: I don't want to define my lifetimes based on my value, I want to be based on control flow (this loop, this function)
+
