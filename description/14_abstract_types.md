@@ -1,13 +1,8 @@
-# Traits for polymorphism
-
-Pensando en separar esto en interfaces y typesets.
-(traits sería la combinación de ambas)
-
-Los traits:
+# Abstract types
 
 - Permiten definir qué funciones deben poder llamarse sobre un tipo.
 
-- Obligan a especificar explícitamente qué tipos implementan el trait.
+- Obligan a especificar explícitamente qué tipos subyacen al abstract type.
 
 - Permiten definir un tipo por defecto, que será el que se inicialice si se usa
   como tipo al ser declarado.
@@ -50,10 +45,10 @@ Dos implementaciones posibles (se elige automáticamente):
 	> proceso que lo convierta en una interface y ahí se mete el allocator.
 
 
-Así se declara un trait:
+Así se declara un abstract:
 
 ```
-Animal : Trait = (
+Animal : Abstract = (
 	-- Las funciones se definen con la sintaxis de currying.
 	speak(_) := String
 )
@@ -70,7 +65,8 @@ Animal defaultsto Dog
 ```
 
 ```
-Addable : Trait = (
+Addable : Abstract
+= (
 	operator +(_, _) : _
 )
 ```
@@ -78,7 +74,8 @@ Addable : Trait = (
 To use with generics:
 
 ```
-List#(t: Type) : Trait = (
+List#(t: Type) : Abstract
+= (
 	operator get[](_, _) -> (t)
 	operator set[](_, _, t) -> ()
 )
@@ -90,18 +87,20 @@ List#(t) canbe StaticArray#(t, Any)
 To compose them:
 
 ```
-Number : Trait = (
+Number : Abstract = (
 	Addable
 	Substractable
 	Multiplicable
 	...
-	-- You can mix functions and other traits here.
+	-- You can mix functions and other Abstract here.
 )
 ```
 
+> [!CHECK] Vtables with multiple dispatch?
+
 
 > [!CHECK]
-> Si defines una función que toma un par de traits, ints por ejemplo, tienen
+> Si defines una función que toma un par de Abstracts, ints por ejemplo, tienen
 > que ser el mismo tipo? Como se desambigua eso?
 
 Estático (monomorfización, cero overhead):
