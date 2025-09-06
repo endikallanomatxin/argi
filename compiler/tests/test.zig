@@ -78,6 +78,12 @@ test "12_function_args" {
     try run();
 }
 
+test "13_multiple_dispatch" {
+    try clean();
+    try build("tests/13_multiple_dispatch.rg");
+    try run();
+}
+
 test "21_named_struct_types" {
     try clean();
     try build("tests/21_named_struct_types.rg");

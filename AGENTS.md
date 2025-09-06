@@ -27,6 +27,9 @@ This repository contains a compiler for a new programming language written in Zi
 - To add new feature:
     1. create a `.rg` test that demonstrates the feature in `compiler/tests/`
     2. implement the feature in `compiler/src/` until it compiles.
+    3. ensure all tests pass after the change one by one, and that the generated llvm code is correct.
+    4. add the test to the test.zig file.
+
 
 - Follow Zig coding style:
     - spaces, snake_case for variables/functions/files, descriptive names.
