@@ -1,3 +1,3 @@
-Data and Time
+Date and Time
 	time
 	tz

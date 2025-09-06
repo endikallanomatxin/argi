@@ -137,7 +137,7 @@ unexpected side effects. This is in some way a capability-based programming
 style.
 
 It encourages the use of pure functions, which are easier to reason about and
-test; and dependency injection, which allows for more explicit, flexible and
+test; and dependency inyection, which allows for more explicit, flexible and
 modular code.
 
 For example, accessing a database:

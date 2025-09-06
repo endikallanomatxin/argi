@@ -58,7 +58,7 @@ We will only try to find a good solution for memory (85% solution).
 
 Exceptions are silly
 
-Exceptions inject a lot of complexity into the language.
+Exceptions inyect a lot of complexity into the language.
 
 Go does errors right.
 
