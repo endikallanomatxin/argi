@@ -24,18 +24,27 @@ This repository contains a compiler for a new programming language written in Zi
 
 ## Guidelines
 
-- To add new feature:
-    1. create a `.rg` test that demonstrates the feature in `compiler/tests/`
-    2. implement the feature in `compiler/src/` until it compiles.
-    3. ensure all tests pass after the change one by one, and that the generated llvm code is correct.
-    4. add the test to the test.zig file.
+- To add a new feature:
+    1. Create a `.rg` test that demonstrates the feature in `compiler/tests/`.
+    2. Draft a small implementation plan, evaluating whether the change affects
+       tokenizing, syntaxing, semantizing or codegen.
+    3. Implement the feature in `compiler/src/` until it compiles.
+    4. Ensure all tests pass and generated LLVM IR makes sense for the feature.
+    5. Add the test to `compiler/tests/test.zig` where applicable.
+    6. Evaluate if the diagnostics need improvement for the new feature and
+       enhance them.
 
+- Keep CLI help aligned with the tool's current capabilities.
 
 - Follow Zig coding style:
     - spaces, snake_case for variables/functions/files, descriptive names.
     - File naming: `snake_case.zig` (e.g., `parser.zig`, `type_checker.zig`).
 
-- Commits: focused, descriptive subject in imperative mood (e.g., "add binary literals to lexer").
+- Commits: focused, descriptive subject in imperative mood (e.g., "add binary
+literals to lexer").
 
-- If you think some important information is missing from this guide, please add it.
+- If you think some important information is missing from this guide, please
+add it. If you learn something non-obvious, document it here so future work is
+faster.
+
 
