@@ -49,11 +49,11 @@ pub const Syntaxer = struct {
     pub fn parse(self: *Syntaxer) ![]const *syn.STNode {
         self.st = parseSentences(self) catch |err| {
             if (err == SyntaxerError.OutOfMemory) {
-                try self.diags.add(self.tokenLocation(), .internal, "error de memoria al parsear", .{});
+                try self.diags.add(self.tokenLocation(), .internal, "out of memory while parsing", .{});
             } else {
-                try self.diags.add(self.tokenLocation(), .syntax, "error de sintaxis: {s}", .{@errorName(err)});
+                try self.diags.add(self.tokenLocation(), .syntax, "syntax error: {s}", .{@errorName(err)});
             }
-            std.debug.print("Error al parsear: {s}\n", .{@errorName(err)});
+            std.debug.print("Parse error: {s}\n", .{@errorName(err)});
             return err;
         };
         return self.st.items; // slice inmutable a devolver
@@ -98,7 +98,7 @@ pub const Syntaxer = struct {
     fn parseIdentifier(self: *Syntaxer) SyntaxerError![]const u8 {
         const t = self.current();
         if (t.content != .identifier) {
-            try self.diags.add(self.tokenLocation(), .syntax, "se esperaba identificador, se encontró '{s}'", .{@tagName(self.current().content)});
+            try self.diags.add(self.tokenLocation(), .syntax, "expected identifier, found '{s}'", .{@tagName(self.current().content)});
             return SyntaxerError.ExpectedIdentifier;
         }
         const name = t.content.identifier;
@@ -140,7 +140,7 @@ pub const Syntaxer = struct {
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
-                try self.diags.add(self.tokenLocation(), .syntax, "se esperaba un campo de struct, se encontró '{s}'", .{@tagName(self.current().content)});
+                try self.diags.add(self.tokenLocation(), .syntax, "expected struct field, found '{s}'", .{@tagName(self.current().content)});
                 return SyntaxerError.ExpectedStructField;
             }
             self.advanceOne();
@@ -186,7 +186,7 @@ pub const Syntaxer = struct {
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
-                try self.diags.add(self.tokenLocation(), .syntax, "se esperaba un campo de struct, se encontró '{s}'", .{@tagName(self.current().content)});
+                try self.diags.add(self.tokenLocation(), .syntax, "expected struct field, found '{s}'", .{@tagName(self.current().content)});
                 return SyntaxerError.ExpectedStructField;
             }
             self.advanceOne();

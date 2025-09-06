@@ -122,6 +122,7 @@ pub const TypeDeclaration = struct {
 
 pub const FunctionDeclaration = struct {
     name: []const u8,
+    location: tok.Location,
     input: StructType, // Arguments
     output: StructType, // Named return params
     body: ?*const CodeBlock,

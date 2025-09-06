@@ -45,6 +45,10 @@ pub const Diagnostics = struct {
     }
 
     pub fn dump(self: *Diagnostics) !void {
+        try self.dumpWithLimit(std.math.maxInt(usize));
+    }
+
+    pub fn dumpWithLimit(self: *Diagnostics, max_count: usize) !void {
         for (self.source_files) |f| {
             // pre-split en líneas para subrayado
             var lines_it = std.mem.splitAny(u8, f.code, "\n");
@@ -52,8 +56,10 @@ pub const Diagnostics = struct {
             defer lines.deinit();
             while (lines_it.next()) |l| lines.append(l) catch {};
 
+            var shown: usize = 0;
             for (self.list.items) |d| {
                 if (!std.mem.eql(u8, d.loc.file, f.path)) continue;
+                if (shown >= max_count) break;
                 std.debug.print(
                     "{s}:{d}:{d}: error: {s}\n",
                     .{ f.path, d.loc.line, d.loc.column, d.msg },
@@ -67,6 +73,7 @@ pub const Diagnostics = struct {
                     indent(indent_len);
                     std.debug.print("^\n", .{});
                 }
+                shown += 1;
             }
         }
     }

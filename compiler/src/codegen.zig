@@ -120,7 +120,7 @@ pub const CodeGenerator = struct {
     pub fn generate(self: *CodeGenerator) !llvm.c.LLVMModuleRef {
         for (self.ast) |n| {
             _ = self.visitNode(n) catch |err| {
-                try self.diags.add(n.location, .codegen, "error al generar el código: {s}", .{@errorName(err)});
+                try self.diags.add(n.location, .codegen, "code generation error: {s}", .{@errorName(err)});
                 return CodegenError.CompilationFailed;
             };
         }
@@ -132,10 +132,10 @@ pub const CodeGenerator = struct {
             c.LLVMDisposeMessage(ir_cstr);
             if (msg != null) {
                 const txt = std.mem.span(msg);
-                try self.diags.add(self.ast[0].location, .codegen, "la verificación de LLVM falló: {s}", .{txt});
+                try self.diags.add(self.ast[0].location, .codegen, "LLVM verification failed: {s}", .{txt});
                 c.LLVMDisposeMessage(msg);
             } else {
-                try self.diags.add(self.ast[0].location, .codegen, "la verificación de LLVM falló (sin mensaje)", .{});
+                try self.diags.add(self.ast[0].location, .codegen, "LLVM verification failed (no message)", .{});
             }
             return CodegenError.ModuleCreationFailed;
         }
@@ -148,7 +148,7 @@ pub const CodeGenerator = struct {
         return switch (n.content) {
             .function_declaration => |f| {
                 self.genFunction(f) catch |e| {
-                    try self.diags.add(n.location, .codegen, "error al generar la función {s}: {s}", .{ f.name, @errorName(e) });
+                    try self.diags.add(n.location, .codegen, "error generating function {s}: {s}", .{ f.name, @errorName(e) });
                     return e;
                 };
                 return null;
@@ -159,82 +159,82 @@ pub const CodeGenerator = struct {
             .binding_declaration => |b| {
                 if (self.current_scope.lookup(b.name) != null)
                     return self.genBindingUse(b) catch |e| {
-                        try self.diags.add(n.location, .codegen, "error al generar el enlace {s}: {s}", .{ b.name, @errorName(e) });
+                        try self.diags.add(n.location, .codegen, "error generating binding {s}: {s}", .{ b.name, @errorName(e) });
                         return e;
                     };
                 self.genBindingDecl(b) catch |e| {
-                    try self.diags.add(n.location, .codegen, "error al generar la declaración del enlace {s}: {s}", .{ b.name, @errorName(e) });
+                    try self.diags.add(n.location, .codegen, "error generating binding declaration {s}: {s}", .{ b.name, @errorName(e) });
                     return e;
                 };
                 return null;
             },
             .binding_assignment => |a| {
                 _ = self.genAssignment(a) catch |e| {
-                    try self.diags.add(n.location, .codegen, "error al generar la asignación para {s}: {s}", .{ a.sym_id.name, @errorName(e) });
+                    try self.diags.add(n.location, .codegen, "error generating assignment for {s}: {s}", .{ a.sym_id.name, @errorName(e) });
                     return e;
                 };
                 return null;
             },
             .binding_use => |b| self.genBindingUse(b) catch |e| {
-                try self.diags.add(n.location, .codegen, "error al generar el uso del enlace {s}: {s}", .{ b.name, @errorName(e) });
+                try self.diags.add(n.location, .codegen, "error generating binding use {s}: {s}", .{ b.name, @errorName(e) });
                 return e;
             },
             .code_block => |cb| {
                 self.genCodeBlock(cb) catch |e| {
-                    try self.diags.add(n.location, .codegen, "error al generar el bloque de código: {s}", .{@errorName(e)});
+                    try self.diags.add(n.location, .codegen, "error generating code block: {s}", .{@errorName(e)});
                     return e;
                 };
                 return null;
             },
             .return_statement => |r| {
                 self.genReturn(r) catch |e| {
-                    try self.diags.add(n.location, .codegen, "error al generar la sentencia de retorno: {s}", .{@errorName(e)});
+                    try self.diags.add(n.location, .codegen, "error generating return statement: {s}", .{@errorName(e)});
                     return e;
                 };
                 return null;
             },
             .value_literal => |v| self.genValueLiteral(&v) catch |e| {
-                try self.diags.add(n.location, .codegen, "error al generar el literal de valor: {s}", .{@errorName(e)});
+                try self.diags.add(n.location, .codegen, "error generating value literal: {s}", .{@errorName(e)});
                 return e;
             },
             .binary_operation => |bo| self.genBinaryOp(&bo) catch |e| {
-                try self.diags.add(n.location, .codegen, "error al generar la operación binaria: {s}", .{@errorName(e)});
+                try self.diags.add(n.location, .codegen, "error generating binary operation: {s}", .{@errorName(e)});
                 return e;
             },
             .comparison => |comp| self.genComparison(&comp) catch |e| {
-                try self.diags.add(n.location, .codegen, "error al generar la comparación: {s}", .{@errorName(e)});
+                try self.diags.add(n.location, .codegen, "error generating comparison: {s}", .{@errorName(e)});
                 return e;
             },
             .if_statement => |ifs| {
                 self.genIfStatement(ifs) catch |e| {
-                    try self.diags.add(n.location, .codegen, "error al generar la sentencia if: {s}", .{@errorName(e)});
+                    try self.diags.add(n.location, .codegen, "error generating if statement: {s}", .{@errorName(e)});
                     return e;
                 };
                 return null;
             },
             .function_call => |fc| self.genFunctionCall(fc) catch |e| {
-                try self.diags.add(n.location, .codegen, "error al generar la llamada a la función: {s}", .{@errorName(e)});
+                try self.diags.add(n.location, .codegen, "error generating function call: {s}", .{@errorName(e)});
                 return e;
             },
             .struct_value_literal => |sl| self.genStructValueLiteral(sl) catch |e| {
-                try self.diags.add(n.location, .codegen, "error al generar el literal de valor de struct: {s}", .{@errorName(e)});
+                try self.diags.add(n.location, .codegen, "error generating struct value literal: {s}", .{@errorName(e)});
                 return e;
             },
             .struct_field_access => |sfa| self.genStructFieldAccess(sfa) catch |e| {
-                try self.diags.add(n.location, .codegen, "error al generar el acceso al campo de struct: {s}", .{@errorName(e)});
+                try self.diags.add(n.location, .codegen, "error generating struct field access: {s}", .{@errorName(e)});
                 return e;
             },
             .address_of => |a| self.genAddressOf(a) catch |e| {
-                try self.diags.add(n.location, .codegen, "error al generar la operación address-of: {s}", .{@errorName(e)});
+                try self.diags.add(n.location, .codegen, "error generating address-of: {s}", .{@errorName(e)});
                 return e;
             },
             .dereference => |d| self.genDereference(&d) catch |e| {
-                try self.diags.add(n.location, .codegen, "error al generar la operación de desreferencia: {s}", .{@errorName(e)});
+                try self.diags.add(n.location, .codegen, "error generating dereference: {s}", .{@errorName(e)});
                 return e;
             },
             .pointer_assignment => |pa| {
                 self.genPointerAssignment(pa) catch |e| {
-                    try self.diags.add(n.location, .codegen, "error al generar la asignación de puntero: {s}", .{@errorName(e)});
+                    try self.diags.add(n.location, .codegen, "error generating pointer assignment: {s}", .{@errorName(e)});
                     return e;
                 };
                 return null;

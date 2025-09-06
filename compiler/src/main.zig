@@ -7,10 +7,15 @@ pub fn main() !void {
     defer std.process.argsFree(std.heap.page_allocator, args);
 
     if (args.len < 2) {
-        std.debug.print("Uso: argi <comando> [archivo]\n", .{});
-        std.debug.print("Comandos disponibles:\n", .{});
-        std.debug.print("  build <file.rg>  - Compila el código a un binario\n", .{});
-        std.debug.print("  lsp              - Inicia el servidor LSP\n", .{});
+        std.debug.print("Usage: argi <command> [file] [options]\n", .{});
+        std.debug.print("Available commands:\n", .{});
+        std.debug.print("  build <file.rg> [flags]  - Compile program to a binary\n", .{});
+        std.debug.print("  lsp                       - Start LSP server\n", .{});
+        std.debug.print("\nBuild flags (on build error):\n", .{});
+        std.debug.print("  --on-build-error-show-cascade          Print all cascading diagnostics\n", .{});
+        std.debug.print("  --on-build-error-show-syntax-tree      Print the syntax tree\n", .{});
+        std.debug.print("  --on-build-error-show-semantic-graph   Print the semantic graph\n", .{});
+        std.debug.print("  --on-build-error-show-token-list      Print the token list\n", .{});
         return;
     }
 
@@ -18,16 +23,17 @@ pub fn main() !void {
 
     if (std.mem.eql(u8, command, "build")) {
         if (args.len < 3) {
-            std.debug.print("Error: Se necesita un archivo\n", .{});
+            std.debug.print("Error: file path required\n", .{});
             return;
         }
-        build_cmd.compile(args[2]) catch |err| {
-            std.debug.print("Error al compilar: {any}\n", .{err});
+        const build_args = args[2..];
+        build_cmd.compile(build_args) catch |err| {
+            std.debug.print("Build error: {any}\n", .{err});
             return;
         };
     } else if (std.mem.eql(u8, command, "lsp")) {
         try lsp_cmd.start();
     } else {
-        std.debug.print("Error: Comando desconocido\n", .{});
+        std.debug.print("Error: unknown command\n", .{});
     }
 }
