@@ -38,6 +38,10 @@ pub const Type = union(enum) {
     type_name: []const u8,
     struct_type_literal: StructTypeLiteral,
     pointer_type: *Type,
+    generic_type_instantiation: struct {
+        base_name: []const u8,
+        args: StructTypeLiteral,
+    },
 };
 
 pub const SymbolDeclaration = struct {
@@ -49,6 +53,7 @@ pub const SymbolDeclaration = struct {
 
 pub const TypeDeclaration = struct {
     name: []const u8,
+    generic_params: []const []const u8,
     value: *STNode, // StructTypeLiteral
 };
 
