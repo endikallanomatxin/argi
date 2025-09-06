@@ -53,7 +53,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en el nodo '{any}': {s}",
+                    "error in node '{any}': {s}",
                     .{ n.content, @errorName(err) },
                 );
             };
@@ -85,17 +85,17 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en la declaración del tipo '{s}': {s}",
+                    "error in type declaration '{s}': {s}",
                     .{ d.name, @errorName(err) },
                 );
                 break :blk err;
             },
 
-            .function_declaration => |d| self.handleFuncDecl(d, s) catch |err| blk: {
+            .function_declaration => |d| self.handleFuncDecl(d, s, n.location) catch |err| blk: {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en la declaración de la función '{s}': {s}",
+                    "error in function declaration '{s}': {s}",
                     .{ d.name, @errorName(err) },
                 );
                 break :blk err;
@@ -105,7 +105,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en la asignación '{s}': {s}",
+                    "error in assignment '{s}': {s}",
                     .{ a.name, @errorName(err) },
                 );
                 break :blk err;
@@ -115,7 +115,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en el identificador '{s}': {s}",
+                    "error in identifier '{s}': {s}",
                     .{ id, @errorName(err) },
                 );
                 break :blk err;
@@ -125,7 +125,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en el literal '{any}': {s}",
+                    "error in literal '{any}': {s}",
                     .{ l, @errorName(err) },
                 );
                 break :blk err;
@@ -135,7 +135,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en el literal de valor de struct: {s}",
+                    "error in struct value literal: {s}",
                     .{@errorName(err)},
                 );
                 break :blk err;
@@ -145,7 +145,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en el literal de tipo de struct: {s}",
+                    "error in struct type literal: {s}",
                     .{@errorName(err)},
                 );
                 break :blk err;
@@ -155,19 +155,34 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en el acceso al campo de struct '{s}': {s}",
+                    "error in struct field access '{s}': {s}",
                     .{ sfa.field_name, @errorName(err) },
                 );
                 break :blk err;
             },
 
             .function_call => |fc| self.handleCall(fc, s) catch |err| blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error en la llamada a la función '{s}': {s}",
-                    .{ fc.callee, @errorName(err) },
-                );
+                if (err == error.AmbiguousOverload) {
+                    // try to produce detailed candidates list
+                    const tv_in = self.visitNode(fc.input.*, s) catch null;
+                    var details: []const u8 = "";
+                    if (tv_in) |te| if (te.ty == .struct_type) {
+                        details = self.buildOverloadCandidatesString(fc.callee, te.ty, s) catch "";
+                    };
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "ambiguous call to '{s}'. Possible overloads:\n{s}",
+                        .{ fc.callee, details },
+                    );
+                } else {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in function call '{s}': {s}",
+                        .{ fc.callee, @errorName(err) },
+                    );
+                }
                 break :blk err;
             },
 
@@ -175,7 +190,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en el bloque de código: {s}",
+                    "error in code block: {s}",
                     .{@errorName(err)},
                 );
                 break :blk_ret err;
@@ -185,7 +200,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en la operación binaria '{any}': {s}",
+                    "error in binary operation '{any}': {s}",
                     .{ bo.operator, @errorName(err) },
                 );
                 break :blk err;
@@ -195,7 +210,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en la comparación '{any}': {s}",
+                    "error in comparison '{any}': {s}",
                     .{ c.operator, @errorName(err) },
                 );
                 break :blk err;
@@ -205,7 +220,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en la sentencia de retorno: {s}",
+                    "error in return statement: {s}",
                     .{@errorName(err)},
                 );
                 break :blk err;
@@ -215,7 +230,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en la sentencia if: {s}",
+                    "error in if statement: {s}",
                     .{@errorName(err)},
                 );
                 break :blk err;
@@ -225,7 +240,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en la operación address-of: {s}",
+                    "error in address-of operation: {s}",
                     .{@errorName(err)},
                 );
                 break :blk err;
@@ -235,7 +250,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en la operación de desreferencia: {s}",
+                    "error in dereference operation: {s}",
                     .{@errorName(err)},
                 );
                 break :blk err;
@@ -245,7 +260,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error en la asignación de puntero: {s}",
+                    "error in pointer assignment: {s}",
                     .{@errorName(err)},
                 );
                 break :blk err;
@@ -377,6 +392,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         f: syn.FunctionDeclaration,
         p: *Scope,
+        loc: tok.Location,
     ) SemErr!TypedExpr {
         var child = try Scope.init(self.allocator, p, null);
 
@@ -444,6 +460,7 @@ pub const Semantizer = struct {
         const fn_ptr = try self.allocator.create(sem.FunctionDeclaration);
         fn_ptr.* = .{
             .name = f.name,
+            .location = loc,
             .input = in_struct,
             .output = out_struct,
             .body = body_cb,
@@ -462,7 +479,7 @@ pub const Semantizer = struct {
             try lst.append(fn_ptr);
             try p.functions.put(f.name, lst);
         }
-        const n = try self.makeNode(undefined, .{ .function_declaration = fn_ptr }, p);
+        const n = try self.makeNode(loc, .{ .function_declaration = fn_ptr }, p);
         if (p.parent == null) try self.root_list.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -632,8 +649,7 @@ pub const Semantizer = struct {
         const tv_in = try self.visitNode(call.input.*, s);
         if (tv_in.ty != .struct_type) return error.InvalidType;
 
-        const chosen = self.resolveOverload(call.callee, tv_in.ty, s) orelse
-            return error.SymbolNotFound;
+        const chosen = try self.resolveOverload(call.callee, tv_in.ty, s);
 
         const fc_ptr = try self.allocator.create(sem.FunctionCall);
         fc_ptr.* = .{ .callee = chosen, .input = tv_in.node };
@@ -654,9 +670,10 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = result_ty };
     }
 
-    fn resolveOverload(_: *Semantizer, name: []const u8, in_ty: sem.Type, s: *Scope) ?*sem.FunctionDeclaration {
+    fn resolveOverload(_: *Semantizer, name: []const u8, in_ty: sem.Type, s: *Scope) SemErr!*sem.FunctionDeclaration {
         var best: ?*sem.FunctionDeclaration = null;
         var best_score: u32 = std.math.maxInt(u32);
+        var ambiguous = false;
 
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
@@ -669,14 +686,17 @@ pub const Semantizer = struct {
                     if (best == null or score < best_score) {
                         best = cand;
                         best_score = score;
+                        ambiguous = false;
                     } else if (score == best_score) {
                         // ambiguous with same specificity
-                        best = null;
+                        ambiguous = true;
                     }
                 }
             }
         }
-        return best;
+        if (best == null) return error.SymbolNotFound;
+        if (ambiguous) return error.AmbiguousOverload;
+        return best.?;
     }
 
     //──────────────────────────────────────────────────── BINARY OP
@@ -861,6 +881,81 @@ pub const Semantizer = struct {
 
     fn builtinFromName(name: []const u8) ?sem.BuiltinType {
         return std.meta.stringToEnum(sem.BuiltinType, name);
+    }
+
+    fn buildOverloadCandidatesString(self: *Semantizer, name: []const u8, in_ty: sem.Type, s: *Scope) ![]u8 {
+        var buf = std.ArrayList(u8).init(self.allocator.*);
+        var cur: ?*Scope = s;
+        var first: bool = true;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr(name)) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    const expected: sem.Type = .{ .struct_type = &cand.input };
+                    if (!typesStructurallyEqual(expected, in_ty)) continue;
+                    if (!first) try buf.appendSlice("\n");
+                    first = false;
+                    try buf.appendSlice("  - ");
+                    try self.appendFunctionSignature(&buf, cand);
+                    try buf.appendSlice("  [file: ");
+                    try buf.appendSlice(cand.location.file);
+                    try buf.appendSlice(":");
+                    try buf.appendSlice(std.fmt.allocPrint(self.allocator.*, "{d}:{d}", .{ cand.location.line, cand.location.column }) catch "");
+                    try buf.appendSlice("]");
+                }
+            }
+        }
+        return try buf.toOwnedSlice();
+    }
+
+    fn appendFunctionSignature(self: *Semantizer, buf: *std.ArrayList(u8), f: *const sem.FunctionDeclaration) !void {
+        try buf.appendSlice(f.name);
+        try buf.appendSlice(" (");
+        var i: usize = 0;
+        while (i < f.input.fields.len) : (i += 1) {
+            const fld = f.input.fields[i];
+            if (i != 0) try buf.appendSlice(", ");
+            try buf.appendSlice(".");
+            try buf.appendSlice(fld.name);
+            try buf.appendSlice(": ");
+            try self.appendType(buf, fld.ty);
+        }
+        try buf.appendSlice(") -> (");
+        i = 0;
+        while (i < f.output.fields.len) : (i += 1) {
+            const ofld = f.output.fields[i];
+            if (i != 0) try buf.appendSlice(", ");
+            try buf.appendSlice(".");
+            try buf.appendSlice(ofld.name);
+            try buf.appendSlice(": ");
+            try self.appendType(buf, ofld.ty);
+        }
+        try buf.appendSlice(")");
+    }
+
+    fn appendType(self: *Semantizer, buf: *std.ArrayList(u8), t: sem.Type) !void {
+        switch (t) {
+            .builtin => |bt| {
+                const s = @tagName(bt);
+                try buf.appendSlice(s);
+            },
+            .pointer_type => |sub| {
+                try buf.appendSlice("&");
+                try self.appendType(buf, sub.*);
+            },
+            .struct_type => |st| {
+                try buf.appendSlice("{");
+                var i: usize = 0;
+                while (i < st.fields.len) : (i += 1) {
+                    const fld = st.fields[i];
+                    if (i != 0) try buf.appendSlice(", ");
+                    try buf.appendSlice(".");
+                    try buf.appendSlice(fld.name);
+                    try buf.appendSlice(": ");
+                    try self.appendType(buf, fld.ty);
+                }
+                try buf.appendSlice("}");
+            },
+        }
     }
 };
 

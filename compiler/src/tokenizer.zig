@@ -260,7 +260,7 @@ pub const Tokenizer = struct {
                     try self.addToken(tok.Content{ .comparison_operator = .not_equal }, loc);
                     try self.advanceOne(); // Avanzar el segundo '!'
                 } else {
-                    try self.diagnostics.add(loc, .syntax, "carácter no reconocido: '{c}'", .{self.this()});
+                    try self.diagnostics.add(loc, .syntax, "unrecognized character: '{c}'", .{self.this()});
                     try self.advanceOne(); // saltamos y seguimos
                     return;
                 }
@@ -328,14 +328,14 @@ pub const Tokenizer = struct {
                         '\'' => '\'', // comilla simple
                         '0' => 0, // NUL
                         else => {
-                            try self.diagnostics.add(loc, .syntax, "Escape no soportado: \\{c}", .{esc});
+                            try self.diagnostics.add(loc, .syntax, "unsupported escape: \\{c}", .{esc});
                             return TokenizerError.UnknownCharacter;
                         },
                     };
                     try self.advanceOne(); // salta la letra de escape
                 } else { // -- carácter simple --
                     if (self.this() == '\'') {
-                        try self.diagnostics.add(loc, .syntax, "Char literal vacío", .{});
+                        try self.diagnostics.add(loc, .syntax, "empty char literal", .{});
                         return TokenizerError.UnknownCharacter;
                     }
                     char_val = self.this();
@@ -344,7 +344,7 @@ pub const Tokenizer = struct {
 
                 // 2. debe venir la comilla de cierre
                 if (self.this() != '\'') {
-                    try self.diagnostics.add(loc, .syntax, "Char literal sin cerrar", .{});
+                    try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
                     return TokenizerError.UnknownCharacter;
                 }
                 try self.advanceOne(); // salta la comilla de cierre
@@ -396,7 +396,7 @@ pub const Tokenizer = struct {
                 return;
             },
             else => {
-                try self.diagnostics.add(loc, .syntax, "carácter no reconocido: '{c}'", .{self.this()});
+                try self.diagnostics.add(loc, .syntax, "unrecognized character: '{c}'", .{self.this()});
                 try self.advanceOne(); // saltamos y seguimos
                 return;
             },
@@ -414,7 +414,7 @@ pub const Tokenizer = struct {
         var i: usize = 0;
         for (self.tokens.items) |token| {
             std.debug.print("{d}: ", .{i});
-            tok_print.printToken(token);
+            tok_print.printTokenWithLocation(token, token.location);
             i += 1;
         }
     }
