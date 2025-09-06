@@ -108,8 +108,26 @@ test "31_core" {
     try run();
 }
 
-test "32_generics" {
+test "321_generic_functions" {
     try clean();
-    try build("tests/32_generics.rg");
+    try build("tests/321_generic_functions.rg");
+    try run();
+}
+
+test "322_generic_structs" {
+    try clean();
+    try build("tests/322_generic_structs.rg");
+    try run();
+}
+
+test "323_generic_functions_multi" {
+    try clean();
+    try build("tests/323_generic_functions_multi.rg");
+    try run();
+}
+
+test "324_generic_structs_multi" {
+    try clean();
+    try build("tests/324_generic_structs_multi.rg");
     try run();
 }

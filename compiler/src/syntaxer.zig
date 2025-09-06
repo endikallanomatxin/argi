@@ -168,6 +168,11 @@ pub const Syntaxer = struct {
         }
 
         const name = try self.parseIdentifier();
+        if (self.tokenIs(.hash)) {
+            self.advanceOne();
+            const gen_args = try self.parseStructTypeLiteral();
+            return syn.Type{ .generic_type_instantiation = .{ .base_name = name, .args = gen_args } };
+        }
         return syn.Type{ .type_name = name };
     }
 
@@ -511,6 +516,7 @@ pub const Syntaxer = struct {
 
                     const tdecl = syn.TypeDeclaration{
                         .name = name,
+                        .generic_params = generic_params,
                         .value = lit_node,
                     };
                     return try self.makeNode(.{ .type_declaration = tdecl }, id_loc);

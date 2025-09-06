@@ -376,15 +376,31 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!TypedExpr {
         const st_lit = d.value.*.content.struct_type_literal;
-        const st_ptr = try self.structTypeFromLiteral(st_lit, s);
-
-        const td = try self.allocator.create(sem.TypeDeclaration);
-        td.* = .{ .name = d.name, .ty = .{ .struct_type = st_ptr } };
-
-        try s.types.put(d.name, td);
-        const n = try self.makeNode(undefined, .{ .type_declaration = td }, s);
-        if (s.parent == null) try self.root_list.append(n);
-        return .{ .node = n, .ty = .{ .builtin = .Any } };
+        if (d.generic_params.len > 0) {
+            // Register as generic type template
+            if (s.generic_types.getPtr(d.name)) |lst| {
+                try lst.append(.{ .name = d.name, .location = d.value.location, .param_names = d.generic_params, .body = st_lit });
+            } else {
+                var new_list = std.ArrayList(GenericTypeTemplate).init(self.allocator.*);
+                try new_list.append(.{ .name = d.name, .location = d.value.location, .param_names = d.generic_params, .body = st_lit });
+                try s.generic_types.put(d.name, new_list);
+            }
+            // No concrete type emitted now
+            const noop = try self.makeNode(d.value.location, .{ .code_block = blk: {
+                const empty = try self.allocator.create(sem.CodeBlock);
+                empty.* = .{ .nodes = &.{}, .ret_val = null };
+                break :blk empty;
+            } }, s);
+            return .{ .node = noop, .ty = .{ .builtin = .Any } };
+        } else {
+            const st_ptr = try self.structTypeFromLiteral(st_lit, s);
+            const td = try self.allocator.create(sem.TypeDeclaration);
+            td.* = .{ .name = d.name, .ty = .{ .struct_type = st_ptr } };
+            try s.types.put(d.name, td);
+            const n = try self.makeNode(undefined, .{ .type_declaration = td }, s);
+            if (s.parent == null) try self.root_list.append(n);
+            return .{ .node = n, .ty = .{ .builtin = .Any } };
+        }
     }
 
     //──────────────────────────────────────────────────── FUNCTION DECLARATION
@@ -930,6 +946,42 @@ pub const Semantizer = struct {
         return error.SymbolNotFound;
     }
 
+    fn instantiateGenericTypeNamed(
+        self: *Semantizer,
+        name: []const u8,
+        stargs: syn.StructTypeLiteral,
+        s: *Scope,
+    ) SemErr!*sem.StructType {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.generic_types.getPtr(name)) |list_ptr| {
+                for (list_ptr.items) |tmpl| {
+                    var subst = std.StringHashMap(sem.Type).init(self.allocator.*);
+                    defer subst.deinit();
+
+                    var ok: bool = true;
+                    for (tmpl.param_names) |pname| {
+                        var found: bool = false;
+                        for (stargs.fields) |fld| {
+                            if (std.mem.eql(u8, fld.name, pname)) {
+                                const resolved = try self.resolveTypeWithSubst(fld.type.?, s, &subst);
+                                try subst.put(pname, resolved);
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) { ok = false; break; }
+                    }
+                    if (!ok) continue;
+
+                    const st_ptr = try self.structTypeFromLiteralWithSubst(tmpl.body, s, &subst);
+                    return st_ptr;
+                }
+            }
+        }
+        return error.SymbolNotFound;
+    }
+
     //──────────────────────────────────────────────────── BINARY OP
     fn handleBinOp(
         self: *Semantizer,
@@ -1100,6 +1152,10 @@ pub const Semantizer = struct {
                     break :blk td.ty;
                 break :blk error.InvalidType;
             },
+            .generic_type_instantiation => |g| blk_g: {
+                const st_ptr = try self.instantiateGenericTypeNamed(g.base_name, g.args, s);
+                break :blk_g .{ .struct_type = st_ptr };
+            },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
             .pointer_type => |inner| blk: {
                 const inner_ty = try self.resolveType(inner.*, s);
@@ -1115,6 +1171,11 @@ pub const Semantizer = struct {
             .type_name => |id| blk: {
                 if (subst.get(id)) |mapped| break :blk mapped;
                 break :blk try self.resolveType(t, s);
+            },
+            .generic_type_instantiation => |g| blk_g: {
+                // For now, ignore outer substitutions for base_name; stargs are resolved inside
+                const st_ptr = try self.instantiateGenericTypeNamed(g.base_name, g.args, s);
+                break :blk_g .{ .struct_type = st_ptr };
             },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteralWithSubst(st, s, subst) },
             .pointer_type => |inner| blk: {
@@ -1216,6 +1277,14 @@ const GenericTemplate = struct {
     output: syn.StructTypeLiteral,
     body: ?*syn.STNode,
 };
+
+// Generic type template for monomorphization of named struct types
+const GenericTypeTemplate = struct {
+    name: []const u8,
+    location: tok.Location,
+    param_names: []const []const u8,
+    body: syn.StructTypeLiteral,
+};
 const Scope = struct {
     parent: ?*Scope,
 
@@ -1224,6 +1293,7 @@ const Scope = struct {
     functions: std.StringHashMap(std.ArrayList(*sem.FunctionDeclaration)),
     types: std.StringHashMap(*sem.TypeDeclaration),
     generic_functions: std.StringHashMap(std.ArrayList(GenericTemplate)),
+    generic_types: std.StringHashMap(std.ArrayList(GenericTypeTemplate)),
 
     current_fn: ?*sem.FunctionDeclaration,
 
@@ -1239,6 +1309,7 @@ const Scope = struct {
             .functions = std.StringHashMap(std.ArrayList(*sem.FunctionDeclaration)).init(a.*),
             .types = std.StringHashMap(*sem.TypeDeclaration).init(a.*),
             .generic_functions = std.StringHashMap(std.ArrayList(GenericTemplate)).init(a.*),
+            .generic_types = std.StringHashMap(std.ArrayList(GenericTypeTemplate)).init(a.*),
             .current_fn = fnc,
         };
     }
