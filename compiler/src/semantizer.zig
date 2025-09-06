@@ -14,6 +14,7 @@ const SemErr = error{
     NotYetImplemented,
     OutOfMemory,
     OptionalUnwrap,
+    AmbiguousOverload,
 };
 
 const TypedExpr = struct {
@@ -377,9 +378,6 @@ pub const Semantizer = struct {
         f: syn.FunctionDeclaration,
         p: *Scope,
     ) SemErr!TypedExpr {
-        if (p.functions.contains(f.name))
-            return error.SymbolAlreadyDefined;
-
         var child = try Scope.init(self.allocator, p, null);
 
         // ── entrada
@@ -451,7 +449,19 @@ pub const Semantizer = struct {
             .body = body_cb,
         };
 
-        try p.functions.put(f.name, fn_ptr);
+        // Register function into overload set for the name
+        if (p.functions.getPtr(f.name)) |list_ptr| {
+            // prevent exact duplicate signature (same input structure, strict equality)
+            for (list_ptr.items) |existing| {
+                if (typesExactlyEqual(.{ .struct_type = &existing.input }, .{ .struct_type = &fn_ptr.input }))
+                    return error.SymbolAlreadyDefined;
+            }
+            try list_ptr.append(fn_ptr);
+        } else {
+            var lst = std.ArrayList(*sem.FunctionDeclaration).init(self.allocator.*);
+            try lst.append(fn_ptr);
+            try p.functions.put(f.name, lst);
+        }
         const n = try self.makeNode(undefined, .{ .function_declaration = fn_ptr }, p);
         if (p.parent == null) try self.root_list.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
@@ -619,31 +629,54 @@ pub const Semantizer = struct {
         call: syn.FunctionCall,
         s: *Scope,
     ) SemErr!TypedExpr {
-        const fnc = s.lookupFunction(call.callee) orelse return error.SymbolNotFound;
-
         const tv_in = try self.visitNode(call.input.*, s);
         if (tv_in.ty != .struct_type) return error.InvalidType;
 
-        const expected_ty: sem.Type = .{ .struct_type = &fnc.input };
-        if (!typesStructurallyEqual(expected_ty, tv_in.ty)) return error.InvalidType;
+        const chosen = self.resolveOverload(call.callee, tv_in.ty, s) orelse
+            return error.SymbolNotFound;
 
         const fc_ptr = try self.allocator.create(sem.FunctionCall);
-        fc_ptr.* = .{ .callee = fnc, .input = tv_in.node };
+        fc_ptr.* = .{ .callee = chosen, .input = tv_in.node };
 
         const n = try self.makeNode(undefined, .{ .function_call = fc_ptr }, s);
 
-        const result_ty: sem.Type = if (fnc.isExtern())
-            switch (fnc.output.fields.len) {
+        const result_ty: sem.Type = if (chosen.isExtern())
+            switch (chosen.output.fields.len) {
                 0 => .{ .builtin = .Any },
-                1 => fnc.output.fields[0].ty,
-                else => .{ .struct_type = &fnc.output },
+                1 => chosen.output.fields[0].ty,
+                else => .{ .struct_type = &chosen.output },
             }
-        else if (fnc.output.fields.len == 0)
+        else if (chosen.output.fields.len == 0)
             .{ .builtin = .Any }
         else
-            .{ .struct_type = &fnc.output };
+            .{ .struct_type = &chosen.output };
 
         return .{ .node = n, .ty = result_ty };
+    }
+
+    fn resolveOverload(_: *Semantizer, name: []const u8, in_ty: sem.Type, s: *Scope) ?*sem.FunctionDeclaration {
+        var best: ?*sem.FunctionDeclaration = null;
+        var best_score: u32 = std.math.maxInt(u32);
+
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr(name)) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    const expected: sem.Type = .{ .struct_type = &cand.input };
+                    if (!typesStructurallyEqual(expected, in_ty)) continue;
+
+                    const score = specificityScore(expected, in_ty);
+                    if (best == null or score < best_score) {
+                        best = cand;
+                        best_score = score;
+                    } else if (score == best_score) {
+                        // ambiguous with same specificity
+                        best = null;
+                    }
+                }
+            }
+        }
+        return best;
     }
 
     //──────────────────────────────────────────────────── BINARY OP
@@ -837,7 +870,7 @@ const Scope = struct {
 
     nodes: std.ArrayList(*sem.SGNode),
     bindings: std.StringHashMap(*sem.BindingDeclaration),
-    functions: std.StringHashMap(*sem.FunctionDeclaration),
+    functions: std.StringHashMap(std.ArrayList(*sem.FunctionDeclaration)),
     types: std.StringHashMap(*sem.TypeDeclaration),
 
     current_fn: ?*sem.FunctionDeclaration,
@@ -851,7 +884,7 @@ const Scope = struct {
             .parent = p,
             .nodes = std.ArrayList(*sem.SGNode).init(a.*),
             .bindings = std.StringHashMap(*sem.BindingDeclaration).init(a.*),
-            .functions = std.StringHashMap(*sem.FunctionDeclaration).init(a.*),
+            .functions = std.StringHashMap(std.ArrayList(*sem.FunctionDeclaration)).init(a.*),
             .types = std.StringHashMap(*sem.TypeDeclaration).init(a.*),
             .current_fn = fnc,
         };
@@ -863,8 +896,11 @@ const Scope = struct {
         return null;
     }
 
+    // Deprecated: use resolveOverload in Semantizer instead.
     fn lookupFunction(self: *Scope, n: []const u8) ?*sem.FunctionDeclaration {
-        if (self.functions.get(n)) |f| return f;
+        if (self.functions.getPtr(n)) |lst| {
+            if (lst.items.len > 0) return lst.items[0];
+        }
         if (self.parent) |p| return p.lookupFunction(n);
         return null;
     }
@@ -922,5 +958,56 @@ fn isAny(t: sem.Type) bool {
     return switch (t) {
         .builtin => |bt| bt == .Any,
         else => false,
+    };
+}
+
+// Strict type equality: no wildcards; pointer subtypes must match exactly.
+fn typesExactlyEqual(a: sem.Type, b: sem.Type) bool {
+    return switch (a) {
+        .builtin => |ab| switch (b) {
+            .builtin => |bb| ab == bb,
+            else => false,
+        },
+        .struct_type => |ast| switch (b) {
+            .struct_type => |bst| blk: {
+                if (ast.fields.len != bst.fields.len) break :blk false;
+                var i: usize = 0;
+                while (i < ast.fields.len) : (i += 1) {
+                    const fa = ast.fields[i];
+                    const fb = bst.fields[i];
+                    if (!std.mem.eql(u8, fa.name, fb.name)) break :blk false;
+                    if (!typesExactlyEqual(fa.ty, fb.ty)) break :blk false;
+                }
+                break :blk true;
+            },
+            else => false,
+        },
+        .pointer_type => |apt| switch (b) {
+            .pointer_type => |bpt| typesExactlyEqual(apt.*, bpt.*),
+            else => false,
+        },
+    };
+}
+
+// Lower score = more specific. Assumes typesStructurallyEqual(expected, actual) already true.
+fn specificityScore(expected: sem.Type, actual: sem.Type) u32 {
+    return switch (expected) {
+        .builtin => 0,
+        .struct_type => |est| blk: {
+            var sum: u32 = 0;
+            const ast = actual.struct_type;
+            var i: usize = 0;
+            while (i < est.fields.len) : (i += 1) {
+                const fe = est.fields[i];
+                const fa = ast.fields[i];
+                sum += specificityScore(fe.ty, fa.ty);
+            }
+            break :blk sum;
+        },
+        .pointer_type => |ept| blk2: {
+            const apt = actual.pointer_type;
+            if (isAny(ept.*) or isAny(apt.*)) break :blk2 1;
+            break :blk2 specificityScore(ept.*, apt.*);
+        },
     };
 }
