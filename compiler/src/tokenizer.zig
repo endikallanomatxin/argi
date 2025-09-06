@@ -220,6 +220,9 @@ pub const Tokenizer = struct {
 
         // Para tokens individuales según el carácter:
         switch (self.this()) {
+            '#' => {
+                try self.addToken(tok.Content{ .hash = .{} }, loc);
+            },
             '(' => {
                 try self.addToken(tok.Content{ .open_parenthesis = .{} }, loc);
             },

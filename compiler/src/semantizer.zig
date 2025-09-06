@@ -394,6 +394,38 @@ pub const Semantizer = struct {
         p: *Scope,
         loc: tok.Location,
     ) SemErr!TypedExpr {
+        // Register generic template and skip direct emission
+        if (f.generic_params.len > 0) {
+            if (p.generic_functions.getPtr(f.name)) |lst| {
+                try lst.append(.{
+                    .name = f.name,
+                    .location = loc,
+                    .param_names = f.generic_params,
+                    .input = f.input,
+                    .output = f.output,
+                    .body = f.body,
+                });
+            } else {
+                var new_list = std.ArrayList(GenericTemplate).init(self.allocator.*);
+                try new_list.append(.{
+                    .name = f.name,
+                    .location = loc,
+                    .param_names = f.generic_params,
+                    .input = f.input,
+                    .output = f.output,
+                    .body = f.body,
+                });
+                try p.generic_functions.put(f.name, new_list);
+            }
+            // Return a no-op node for generic template
+            const noop = try self.makeNode(loc, .{ .code_block = blk: {
+                const empty = try self.allocator.create(sem.CodeBlock);
+                empty.* = .{ .nodes = &.{}, .ret_val = null };
+                break :blk empty;
+            } }, p);
+            return .{ .node = noop, .ty = .{ .builtin = .Any } };
+        }
+
         var child = try Scope.init(self.allocator, p, null);
 
         // ── entrada
@@ -620,6 +652,28 @@ pub const Semantizer = struct {
         return ptr;
     }
 
+    fn structTypeFromLiteralWithSubst(
+        self: *Semantizer,
+        st: syn.StructTypeLiteral,
+        s: *Scope,
+        subst: *std.StringHashMap(sem.Type),
+    ) SemErr!*sem.StructType {
+        var buf = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+        for (st.fields) |f| {
+            const ty = try self.resolveTypeWithSubst(f.type.?, s, subst);
+            const dvp = if (f.default_value) |n|
+                (try self.visitNode(n.*, s)).node
+            else
+                null;
+            try buf.append(.{ .name = f.name, .ty = ty, .default_value = dvp });
+        }
+        const slice = try buf.toOwnedSlice();
+        buf.deinit();
+        const ptr = try self.allocator.create(sem.StructType);
+        ptr.* = .{ .fields = slice };
+        return ptr;
+    }
+
     fn structTypeFromVal(
         self: *Semantizer,
         sv: syn.StructValueLiteral,
@@ -649,7 +703,14 @@ pub const Semantizer = struct {
         const tv_in = try self.visitNode(call.input.*, s);
         if (tv_in.ty != .struct_type) return error.InvalidType;
 
-        const chosen = try self.resolveOverload(call.callee, tv_in.ty, s);
+        var chosen: *sem.FunctionDeclaration = undefined;
+        if (call.type_arguments_struct) |stargs| {
+            chosen = try self.instantiateGenericNamed(call.callee, stargs, s);
+        } else if (call.type_arguments) |targs| {
+            chosen = try self.instantiateGeneric(call.callee, targs, s);
+        } else {
+            chosen = try self.resolveOverload(call.callee, tv_in.ty, s);
+        }
 
         const fc_ptr = try self.allocator.create(sem.FunctionCall);
         fc_ptr.* = .{ .callee = chosen, .input = tv_in.node };
@@ -697,6 +758,176 @@ pub const Semantizer = struct {
         if (best == null) return error.SymbolNotFound;
         if (ambiguous) return error.AmbiguousOverload;
         return best.?;
+    }
+
+    fn instantiateGenericNamed(
+        self: *Semantizer,
+        name: []const u8,
+        stargs: syn.StructTypeLiteral,
+        s: *Scope,
+    ) SemErr!*sem.FunctionDeclaration {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.generic_functions.getPtr(name)) |list_ptr| {
+                for (list_ptr.items) |tmpl| {
+                    var subst = std.StringHashMap(sem.Type).init(self.allocator.*);
+                    defer subst.deinit();
+
+                    var ok: bool = true;
+                    for (tmpl.param_names) |pname| {
+                        var found: bool = false;
+                        for (stargs.fields) |fld| {
+                            if (std.mem.eql(u8, fld.name, pname)) {
+                                const resolved = try self.resolveTypeWithSubst(fld.type.?, s, &subst);
+                                try subst.put(pname, resolved);
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) { ok = false; break; }
+                    }
+                    if (!ok) continue;
+
+                    const in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, &subst);
+                    const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, &subst);
+
+                    if (s.functions.getPtr(name)) |fns| {
+                        for (fns.items) |cand| {
+                            if (typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
+                                return cand;
+                        }
+                    }
+
+                    var child = try Scope.init(self.allocator, s, null);
+                    var it = subst.iterator();
+                    while (it.next()) |entry| {
+                        const td = try self.allocator.create(sem.TypeDeclaration);
+                        td.* = .{ .name = entry.key_ptr.*, .ty = entry.value_ptr.* };
+                        try child.types.put(entry.key_ptr.*, td);
+                    }
+                    for (in_struct_ptr.fields) |fld| {
+                        const bd = try self.allocator.create(sem.BindingDeclaration);
+                        bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
+                        try child.bindings.put(fld.name, bd);
+                    }
+                    for (out_struct_ptr.fields) |fld| {
+                        const bd = try self.allocator.create(sem.BindingDeclaration);
+                        bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
+                        try child.bindings.put(fld.name, bd);
+                    }
+
+                    var body_cb: ?*sem.CodeBlock = null;
+                    if (tmpl.body) |body_node| {
+                        const body_te = try self.visitNode(body_node.*, &child);
+                        body_cb = body_te.node.content.code_block;
+                    }
+
+                    const fn_ptr = try self.allocator.create(sem.FunctionDeclaration);
+                    fn_ptr.* = .{
+                        .name = tmpl.name,
+                        .location = tmpl.location,
+                        .input = in_struct_ptr.*,
+                        .output = out_struct_ptr.*,
+                        .body = body_cb,
+                    };
+                    if (s.functions.getPtr(name)) |list_ptr2| {
+                        try list_ptr2.append(fn_ptr);
+                    } else {
+                        var lst = std.ArrayList(*sem.FunctionDeclaration).init(self.allocator.*);
+                        try lst.append(fn_ptr);
+                        try s.functions.put(name, lst);
+                    }
+                    const n = try self.makeNode(tmpl.location, .{ .function_declaration = fn_ptr }, null);
+                    try self.root_list.append(n);
+                    return fn_ptr;
+                }
+            }
+        }
+        return error.SymbolNotFound;
+    }
+
+    fn instantiateGeneric(
+        self: *Semantizer,
+        name: []const u8,
+        type_args_syn: []const syn.Type,
+        s: *Scope,
+    ) SemErr!*sem.FunctionDeclaration {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.generic_functions.getPtr(name)) |list_ptr| {
+                for (list_ptr.items) |tmpl| {
+                    if (tmpl.param_names.len != type_args_syn.len) continue;
+
+                    var subst = std.StringHashMap(sem.Type).init(self.allocator.*);
+                    defer subst.deinit();
+                    var i: usize = 0;
+                    while (i < tmpl.param_names.len) : (i += 1) {
+                        const resolved = try self.resolveTypeWithSubst(type_args_syn[i], s, &subst);
+                        try subst.put(tmpl.param_names[i], resolved);
+                    }
+
+                    const in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, &subst);
+                    const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, &subst);
+
+                    // Check if already instantiated
+                    if (s.functions.getPtr(name)) |fns| {
+                        for (fns.items) |cand| {
+                            if (typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
+                                return cand;
+                        }
+                    }
+
+                    // Create child scope with type aliases
+                    var child = try Scope.init(self.allocator, s, null);
+                    var it = subst.iterator();
+                    while (it.next()) |entry| {
+                        const td = try self.allocator.create(sem.TypeDeclaration);
+                        td.* = .{ .name = entry.key_ptr.*, .ty = entry.value_ptr.* };
+                        try child.types.put(entry.key_ptr.*, td);
+                    }
+
+                    // Register params in child scope
+                    for (in_struct_ptr.fields) |fld| {
+                        const bd = try self.allocator.create(sem.BindingDeclaration);
+                        bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
+                        try child.bindings.put(fld.name, bd);
+                    }
+                    for (out_struct_ptr.fields) |fld| {
+                        const bd = try self.allocator.create(sem.BindingDeclaration);
+                        bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
+                        try child.bindings.put(fld.name, bd);
+                    }
+
+                    var body_cb: ?*sem.CodeBlock = null;
+                    if (tmpl.body) |body_node| {
+                        const body_te = try self.visitNode(body_node.*, &child);
+                        body_cb = body_te.node.content.code_block;
+                    }
+
+                    const fn_ptr = try self.allocator.create(sem.FunctionDeclaration);
+                    fn_ptr.* = .{
+                        .name = tmpl.name,
+                        .location = tmpl.location,
+                        .input = in_struct_ptr.*,
+                        .output = out_struct_ptr.*,
+                        .body = body_cb,
+                    };
+
+                    if (s.functions.getPtr(name)) |list_ptr2| {
+                        try list_ptr2.append(fn_ptr);
+                    } else {
+                        var lst = std.ArrayList(*sem.FunctionDeclaration).init(self.allocator.*);
+                        try lst.append(fn_ptr);
+                        try s.functions.put(name, lst);
+                    }
+                    const n = try self.makeNode(tmpl.location, .{ .function_declaration = fn_ptr }, null);
+                    // Always add instantiated functions at the root for codegen order
+                    try self.root_list.append(n);
+                    return fn_ptr;
+                }
+            }
+        }
+        return error.SymbolNotFound;
     }
 
     //──────────────────────────────────────────────────── BINARY OP
@@ -879,6 +1110,22 @@ pub const Semantizer = struct {
         };
     }
 
+    fn resolveTypeWithSubst(self: *Semantizer, t: syn.Type, s: *Scope, subst: *std.StringHashMap(sem.Type)) !sem.Type {
+        return switch (t) {
+            .type_name => |id| blk: {
+                if (subst.get(id)) |mapped| break :blk mapped;
+                break :blk try self.resolveType(t, s);
+            },
+            .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteralWithSubst(st, s, subst) },
+            .pointer_type => |inner| blk: {
+                const inner_ty = try self.resolveTypeWithSubst(inner.*, s, subst);
+                const ptr = try self.allocator.create(sem.Type);
+                ptr.* = inner_ty;
+                break :blk .{ .pointer_type = ptr };
+            },
+        };
+    }
+
     fn builtinFromName(name: []const u8) ?sem.BuiltinType {
         return std.meta.stringToEnum(sem.BuiltinType, name);
     }
@@ -960,6 +1207,15 @@ pub const Semantizer = struct {
 };
 
 //────────────────────────────────────────────────────────────────────── BUILDER SCOPE
+// Generic function template used for monomorphization
+const GenericTemplate = struct {
+    name: []const u8,
+    location: tok.Location,
+    param_names: []const []const u8,
+    input: syn.StructTypeLiteral,
+    output: syn.StructTypeLiteral,
+    body: ?*syn.STNode,
+};
 const Scope = struct {
     parent: ?*Scope,
 
@@ -967,6 +1223,7 @@ const Scope = struct {
     bindings: std.StringHashMap(*sem.BindingDeclaration),
     functions: std.StringHashMap(std.ArrayList(*sem.FunctionDeclaration)),
     types: std.StringHashMap(*sem.TypeDeclaration),
+    generic_functions: std.StringHashMap(std.ArrayList(GenericTemplate)),
 
     current_fn: ?*sem.FunctionDeclaration,
 
@@ -981,6 +1238,7 @@ const Scope = struct {
             .bindings = std.StringHashMap(*sem.BindingDeclaration).init(a.*),
             .functions = std.StringHashMap(std.ArrayList(*sem.FunctionDeclaration)).init(a.*),
             .types = std.StringHashMap(*sem.TypeDeclaration).init(a.*),
+            .generic_functions = std.StringHashMap(std.ArrayList(GenericTemplate)).init(a.*),
             .current_fn = fnc,
         };
     }

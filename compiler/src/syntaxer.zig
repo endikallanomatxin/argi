@@ -106,6 +106,47 @@ pub const Syntaxer = struct {
         return name;
     }
 
+    fn parseGenericParamNames(self: *Syntaxer) SyntaxerError![]const []const u8 {
+        // Parses: [T, U, ...]
+        if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        var names = std.ArrayList([]const u8).init(self.allocator.*);
+        while (!self.tokenIs(.close_bracket)) {
+            const n = try self.parseIdentifier();
+            try names.append(n);
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            } else break;
+        }
+        if (!self.tokenIs(.close_bracket)) return SyntaxerError.ExpectedRightBracket;
+        self.advanceOne();
+        return names.items;
+    }
+
+    fn parseTypeList(self: *Syntaxer) SyntaxerError![]const syn.Type {
+        // Parses: [Type, &Type, ( .a: Type=..., ... ) , ...]
+        if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+        var tys = std.ArrayList(syn.Type).init(self.allocator.*);
+        while (!self.tokenIs(.close_bracket)) {
+            const t = (try self.parseType()).?; // types are mandatory here
+            try tys.append(t);
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            } else break;
+        }
+        if (!self.tokenIs(.close_bracket)) return SyntaxerError.ExpectedRightBracket;
+        self.advanceOne();
+        return tys.items;
+    }
+
     // ────────────────────────────  TYPE ANNOTATIONS ──────────────────────────
     fn parseType(self: *Syntaxer) SyntaxerError!?syn.Type {
         // permitimos omitir la anotación
@@ -251,10 +292,20 @@ pub const Syntaxer = struct {
             // ─── ident  /  call ─────────────────────────────────────────────
             .identifier => blk: {
                 const name = try self.parseIdentifier();
+                var type_args: ?[]const syn.Type = null;
+                var type_args_struct: ?syn.StructTypeLiteral = null;
+                if (self.tokenIs(.open_bracket)) {
+                    // Explicit type arguments on call site (old syntax)
+                    type_args = try self.parseTypeList();
+                } else if (self.tokenIs(.hash)) {
+                    // New syntax: #(.T: Int32)
+                    self.advanceOne();
+                    type_args_struct = try self.parseStructTypeLiteral();
+                }
                 if (self.tokenIs(.open_parenthesis)) { // llamada
                     const struct_value_literal = try self.parseStructValueLiteral();
                     break :blk try self.makeNode(
-                        .{ .function_call = .{ .callee = name, .input = struct_value_literal } },
+                        .{ .function_call = .{ .callee = name, .type_arguments = type_args, .type_arguments_struct = type_args_struct, .input = struct_value_literal } },
                         t.location,
                     );
                 }
@@ -321,7 +372,9 @@ pub const Syntaxer = struct {
         return lhs;
     }
 
-    // ─────────────────────────────  STATEMENTS  ──────────────────────────────
+    // (old parseStatement removed; unified version with generics is below)
+
+    // Override parseStatement to support generics on function declarations
     fn parseStatement(self: *Syntaxer) SyntaxerError!*syn.STNode {
         self.skipNewLinesAndComments();
 
@@ -333,6 +386,21 @@ pub const Syntaxer = struct {
 
         const id_loc = self.tokenLocation();
         const name = try self.parseIdentifier();
+
+        // Allow optional generic parameter block after name for function declarations
+        var generic_params: []const []const u8 = &.{};
+        if (self.tokenIs(.hash)) {
+            self.advanceOne();
+            const gen_struct = try self.parseStructTypeLiteral();
+            // Extract parameter names from fields: id#(.T: Type, .U: Type)
+            var names = std.ArrayList([]const u8).init(self.allocator.*);
+            for (gen_struct.fields) |fld| try names.append(fld.name);
+            generic_params = names.items;
+        } else if (self.tokenIs(.open_bracket)) {
+            // Back-compat: old syntax name[T, U]
+            const parsed = try self.parseGenericParamNames();
+            generic_params = parsed;
+        }
 
         // Build identifier node and (optionally) consume postfix chains so
         // we can detect pointer‑dereference assignments like `p& = 0`.
@@ -368,9 +436,6 @@ pub const Syntaxer = struct {
                 if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
                 self.advanceOne();
 
-                // Si tras el identificador viene un paréntesis, puede ser
-                // una declaración de función (normal o extern).
-
                 // caso ExternFunction
                 switch (self.current().content) {
                     .identifier => |ident_name| {
@@ -380,9 +445,10 @@ pub const Syntaxer = struct {
                             // Construimos el nodo
                             const ef = syn.FunctionDeclaration{
                                 .name = name,
+                                .generic_params = generic_params,
                                 .input = input,
                                 .output = output,
-                                .body = null, // Extern functions do not have a body
+                                .body = null,
                             };
                             return try self.makeNode(.{ .function_declaration = ef }, id_loc);
                         }
@@ -397,6 +463,7 @@ pub const Syntaxer = struct {
 
                 const fn_decl = syn.FunctionDeclaration{
                     .name = name,
+                    .generic_params = generic_params,
                     .input = input,
                     .output = output,
                     .body = body,
@@ -409,7 +476,7 @@ pub const Syntaxer = struct {
                     id_loc,
                 );
                 return try self.makeNode(
-                    .{ .function_call = .{ .callee = name, .input = input_node } },
+                    .{ .function_call = .{ .callee = name, .type_arguments = null, .type_arguments_struct = null, .input = input_node } },
                     id_loc,
                 );
             }

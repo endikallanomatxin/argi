@@ -107,3 +107,9 @@ test "31_core" {
     try build("tests/31_core.rg");
     try run();
 }
+
+test "32_generics" {
+    try clean();
+    try build("tests/32_generics.rg");
+    try run();
+}

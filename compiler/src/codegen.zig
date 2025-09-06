@@ -818,7 +818,23 @@ pub const CodeGenerator = struct {
 
         // ─────── llamadas INTERNAS (idénticas a antes) ───────────────────
         if (!is_extern) {
-            const fn_ty = sym.type_ref;
+            var sym_opt = self.current_scope.lookup(key_name);
+            if (sym_opt == null) {
+                // Create a forward declaration for internal function not yet emitted (e.g., monomorphized later)
+                const in_ty = try self.toLLVMType(.{ .struct_type = &callee_decl.input });
+                const out_ty = try self.toLLVMType(.{ .struct_type = &callee_decl.output });
+                const fnty = c.LLVMFunctionType(out_ty, blk: {
+                    var a = try self.allocator.alloc(llvm.c.LLVMTypeRef, 1);
+                    a[0] = in_ty;
+                    break :blk a.ptr;
+                }, 1, 0);
+                const cname = try self.dupZ(key_name);
+                const fn_ref = c.LLVMAddFunction(self.module, cname.ptr, fnty);
+                try self.current_scope.symbols.put(key_name, .{ .cname = cname, .mutability = .constant, .type_ref = fnty, .ref = fn_ref });
+                sym_opt = self.current_scope.lookup(key_name);
+            }
+
+            const fn_ty = sym_opt.?.type_ref;
             const ret_ty = c.LLVMGetReturnType(fn_ty);
 
             var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, 1);
@@ -827,7 +843,7 @@ pub const CodeGenerator = struct {
             const call_val = c.LLVMBuildCall2(
                 self.builder,
                 fn_ty,
-                sym.ref,
+                sym_opt.?.ref,
                 argv.ptr,
                 1,
                 "call",
