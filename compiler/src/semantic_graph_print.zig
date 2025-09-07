@@ -21,12 +21,13 @@ fn printValueLiteral(lit: *const sem.ValueLiteral, lvl: usize) void {
         .float_literal => |f| std.debug.print("Literal float: {d}\n", .{f}),
         .char_literal => |c| std.debug.print("Literal char: '{c}'\n", .{c}),
         .string_literal => |s| std.debug.print("Literal string: \"{s}\"\n", .{s}),
+        .bool_literal => |b| std.debug.print("Literal bool: {s}\n", .{if (b) "true" else "false"}),
     }
 }
 
 pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
     indent(lvl);
-    switch (node.*) {
+    switch (node.content) {
         .binding_declaration => |b| {
             const mut = if (b.mutability == .variable) "var" else "const";
             std.debug.print("Decl \"{s}\" {s} : {s}\n", .{ b.name, mut, typeToString(b.ty) });
@@ -52,7 +53,7 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             indent(lvl + 1);
             std.debug.print("Body:\n", .{});
             if (f.body) |cb| {
-                const tmp: sem.SGNode = .{ .code_block = @constCast(cb) };
+                const tmp: sem.SGNode = .{ .location = node.location, .content = .{ .code_block = @constCast(cb) } };
                 printNode(&tmp, lvl + 2);
             } else {
                 indent(lvl + 2);
@@ -144,12 +145,18 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             printNode(ifs.condition, lvl + 2);
             indent(lvl + 1);
             std.debug.print("Then:\n", .{});
-            const t: sem.SGNode = .{ .code_block = @constCast(ifs.then_block) };
+            const t: sem.SGNode = .{
+                .location = node.location,
+                .content = .{ .code_block = @constCast(ifs.then_block) },
+            };
             printNode(&t, lvl + 2);
             if (ifs.else_block) |eb| {
                 indent(lvl + 1);
                 std.debug.print("Else:\n", .{});
-                const e: sem.SGNode = .{ .code_block = @constCast(eb) };
+                const e: sem.SGNode = .{
+                    .location = node.location,
+                    .content = .{ .code_block = @constCast(eb) },
+                };
                 printNode(&e, lvl + 2);
             }
         },
@@ -169,7 +176,16 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             std.debug.print("Dereference\n", .{});
             indent(lvl + 1);
             std.debug.print("result_ty: {s}\n", .{@tagName(d.ty)});
-            printNode(d.pointer, lvl + 1);
+            printNode(d.pointer, lvl + 2);
+        },
+        .pointer_assignment => |pa| {
+            std.debug.print("PointerAssignment\n", .{});
+            indent(lvl + 1);
+            std.debug.print("pointer:\n", .{});
+            printNode(pa.pointer, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("value:\n", .{});
+            printNode(pa.value, lvl + 2);
         },
 
         else => std.debug.print("Unknown SG node\n", .{}),

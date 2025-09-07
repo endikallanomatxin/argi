@@ -3,6 +3,7 @@ const tok = @import("token.zig");
 const tokp = @import("token_print.zig");
 const syn = @import("syntax_tree.zig");
 const synp = @import("syntax_tree_print.zig");
+const diagnostic = @import("diagnostic.zig");
 
 pub const SyntaxerError = error{
     ExpectedIdentifier,
@@ -33,20 +34,26 @@ pub const Syntaxer = struct {
     index: usize,
     allocator: *const std.mem.Allocator,
     st: std.ArrayList(*syn.STNode),
+    diags: *diagnostic.Diagnostics,
 
-    pub fn init(alloc: *const std.mem.Allocator, toks: []const tok.Token) Syntaxer {
+    pub fn init(alloc: *const std.mem.Allocator, toks: []const tok.Token, diags: *diagnostic.Diagnostics) Syntaxer {
         return .{
             .tokens = toks,
             .index = 0,
             .allocator = alloc,
             .st = std.ArrayList(*syn.STNode).init(alloc.*),
+            .diags = diags,
         };
     }
 
     pub fn parse(self: *Syntaxer) ![]const *syn.STNode {
-        std.debug.print("\n\nsyntaxing...\n", .{});
         self.st = parseSentences(self) catch |err| {
-            std.debug.print("Error al parsear: {any}\n", .{err});
+            if (err == SyntaxerError.OutOfMemory) {
+                try self.diags.add(self.tokenLocation(), .internal, "out of memory while parsing", .{});
+            } else {
+                try self.diags.add(self.tokenLocation(), .syntax, "syntax error: {s}", .{@errorName(err)});
+            }
+            std.debug.print("Parse error: {s}\n", .{@errorName(err)});
             return err;
         };
         return self.st.items; // slice inmutable a devolver
@@ -91,8 +98,7 @@ pub const Syntaxer = struct {
     fn parseIdentifier(self: *Syntaxer) SyntaxerError![]const u8 {
         const t = self.current();
         if (t.content != .identifier) {
-            std.debug.print("Expected identifier, found:\n", .{});
-            tokp.printTokenWithLocation(t, self.tokenLocation());
+            try self.diags.add(self.tokenLocation(), .syntax, "expected identifier, found '{s}'", .{@tagName(self.current().content)});
             return SyntaxerError.ExpectedIdentifier;
         }
         const name = t.content.identifier;
@@ -134,8 +140,7 @@ pub const Syntaxer = struct {
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
-                std.debug.print("Expected struct field, found:\n", .{});
-                tokp.printToken(self.current());
+                try self.diags.add(self.tokenLocation(), .syntax, "expected struct field, found '{s}'", .{@tagName(self.current().content)});
                 return SyntaxerError.ExpectedStructField;
             }
             self.advanceOne();
@@ -181,8 +186,7 @@ pub const Syntaxer = struct {
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
-                std.debug.print("Expected struct field, found:\n", .{});
-                tokp.printTokenWithLocation(self.current(), self.tokenLocation());
+                try self.diags.add(self.tokenLocation(), .syntax, "expected struct field, found '{s}'", .{@tagName(self.current().content)});
                 return SyntaxerError.ExpectedStructField;
             }
             self.advanceOne();
@@ -330,7 +334,31 @@ pub const Syntaxer = struct {
         const id_loc = self.tokenLocation();
         const name = try self.parseIdentifier();
 
-        // ----------- function declaration or call ------------
+        // Build identifier node and (optionally) consume postfix chains so
+        // we can detect pointer‑dereference assignments like `p& = 0`.
+        const ident_node = try self.makeNode(.{ .identifier = name }, id_loc);
+        const lhs_with_postfix = try self.parsePostfix(ident_node);
+
+        // ─── Assignment (simple or pointer) ───────────────────
+        if (self.tokenIs(.equal)) {
+            self.advanceOne();
+            const rhs_expr = try self.parseExpression();
+
+            if (lhs_with_postfix == ident_node) {
+                // Regular binding reassignment
+                return try self.makeNode(
+                    .{ .assignment = .{ .name = name, .value = rhs_expr } },
+                    id_loc,
+                );
+            } else {
+                // Store through dereference or field
+                return try self.makeNode(
+                    .{ .pointer_assignment = .{ .target = lhs_with_postfix, .value = rhs_expr } },
+                    id_loc,
+                );
+            }
+        }
+
         if (self.tokenIs(.open_parenthesis)) {
             const input = try self.parseStructTypeLiteral();
 
@@ -482,13 +510,31 @@ pub const Syntaxer = struct {
             start,
         );
     }
-
     fn parseReturn(self: *Syntaxer) SyntaxerError!*syn.STNode {
         const start = self.tokenLocation();
-        if (!self.tokenIs(.keyword_return)) return SyntaxerError.ExpectedKeywordReturn;
-        self.advanceOne();
+        if (!self.tokenIs(.keyword_return))
+            return SyntaxerError.ExpectedKeywordReturn;
+
+        self.advanceOne(); // consume 'return'
+
+        // ── ¿hay algo más en la línea?  --------------------------
+        // Si lo siguiente es fin de línea, un '}', o EOF, NO hay expresión.
+        switch (self.current().content) {
+            .new_line, .close_brace, .eof => {
+                return try self.makeNode(
+                    .{ .return_statement = .{ .expression = null } },
+                    start,
+                );
+            },
+            else => {},
+        }
+
+        // ── otherwise parse the expression -----------------------
         const expr = try self.parseExpression();
-        return try self.makeNode(.{ .return_statement = .{ .expression = expr } }, start);
+        return try self.makeNode(
+            .{ .return_statement = .{ .expression = expr } },
+            start,
+        );
     }
 
     // ─────────────────────────────  DEBUG  ──────────────────────────────────

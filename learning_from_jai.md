@@ -58,7 +58,7 @@ We will only try to find a good solution for memory (85% solution).
 
 Exceptions are silly
 
-Exceptions inject a lot of complexity into the language.
+Exceptions inyect a lot of complexity into the language.
 
 Go does errors right.
 
@@ -650,4 +650,22 @@ function_with_varargs :: (args: ..) {
 }
 ```
 
+---
+
+## Tsoding video about metaprogramming
+
+Metaprogramming:
+
+- You can set compilation options whle compiling. Insie a #run you can say: do
+not produce an executable. That way it behaves like a script.
+
+- You have a compile time directive that you take a string and insert it as
+code. (He likes it, i think is dangerous. Igual una forma de arreglarlo sería
+que la string fuera de tipo code o algo así.)
+
+Other:
+
+- StringBuilder is kind of a linked list of strings reference for build. Annd then when you ask it to convert to string, it concatenates all the strings in the linked list and returns a single string, also dealocating the linked list.
+
+...
 

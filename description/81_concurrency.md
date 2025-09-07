@@ -95,6 +95,10 @@ Tiene sentido no permitir que el input no sean deep_copies o mutex o channels? L
 >En go las goroutines no puedes return. Eso es una asyn func.
 >Igual la clave es encontrar una sintaxis que me permita hacer algo similar de forma sencilla.
 
+### Concurrency Primitives
+
+As there are different types of concurrency, the primitives have to be created from the Async the work with.
+
 
 #### Channels
 
