@@ -38,6 +38,10 @@ pub const Type = union(enum) {
     type_name: []const u8,
     struct_type_literal: StructTypeLiteral,
     pointer_type: *Type,
+    generic_type_instantiation: struct {
+        base_name: []const u8,
+        args: StructTypeLiteral,
+    },
 };
 
 pub const SymbolDeclaration = struct {
@@ -49,11 +53,14 @@ pub const SymbolDeclaration = struct {
 
 pub const TypeDeclaration = struct {
     name: []const u8,
+    generic_params: []const []const u8,
     value: *STNode, // StructTypeLiteral
 };
 
 pub const FunctionDeclaration = struct {
     name: []const u8,
+    // Optional generic parameters: names only (e.g. foo[T, U])
+    generic_params: []const []const u8,
     input: StructTypeLiteral, // Arguments
     output: StructTypeLiteral, // Named return params
     body: ?*STNode, // CodeBlock
@@ -67,6 +74,10 @@ pub const Assignment = struct {
 
 pub const FunctionCall = struct {
     callee: []const u8,
+    // Optional explicit type arguments on call site (e.g. foo[Int32, &Char])
+    type_arguments: ?[]const Type,
+    // Alternative syntax: named type arguments via struct-like block: #(.T: Int32)
+    type_arguments_struct: ?StructTypeLiteral,
     input: *const STNode, // Arguments
 };
 

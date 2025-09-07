@@ -20,6 +20,10 @@ fn printType(t: syn.Type, lvl: usize) void {
             std.debug.print("&", .{});
             printType(pt.*, lvl);
         },
+        .generic_type_instantiation => |g| {
+            std.debug.print("{s}#", .{g.base_name});
+            printStructTypeLiteral(g.args, lvl);
+        },
     }
 }
 

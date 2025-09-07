@@ -33,6 +33,9 @@ pub fn printToken(token: tok.Token) void {
         .close_bracket => {
             std.debug.print("close_bracket\n", .{});
         },
+        .hash => {
+            std.debug.print("hash\n", .{});
+        },
         .dot => {
             std.debug.print("dot\n", .{});
         },
