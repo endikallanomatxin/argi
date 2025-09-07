@@ -1,41 +1,50 @@
-# AGENTS GUIDE
+# Repository Guidelines
 
-This repository contains a toy compiler written in Zig. Please follow the rules below when contributing.
-
-
-## Working with the compiler
-
-To add new functionality to the language, write new files in `compiler/tests/` and implement the corresponding compiler features in `compiler/src/`.
-
-To build the compiler inside the `compiler` directory:
-
-```bash
-cd compiler
-zig build
-```
-
-Do **not** run `zig build test` (it is not possible within your environment and it wont work). Instead build once and then compile the tests individually. Example:
-
-```bash
-cd compiler
-zig build
-./zig-out/bin/argi build tests/example_test.rg
-```
-
-This avoids issues in restricted environments.
+This repository contains a compiler for a new programming language written in Zig.
 
 
-## Directory overview
+## Project Structure & Module Organization
 
-- `compiler/src` – Zig sources for the compiler.
-- `compiler/tests` – example `.rg` programs used in the test suite.
-- `modules/` – early standard library modules.
-- `description/` – design documents.
+- `compiler/`: Zig sources for the compiler.
+    - `src/`: Source files for the compiler.
+        - The compiler is structured in four phases:
+        tokenizing, syntaxing, semantizing and codegen.
+    - `tests/`: Example `.rg` programs used as tests.
+
+- `modules/`: Early standard library module drafts.
+
+- `description/`: Design documents and architecture notes.
 
 
-## Contribution workflow
+## Usage
 
-- Keep commits focused and descriptive.
-- Include a short summary and any relevant test output in your PR body.
-- Follow the existing Zig coding style (spaces, snake_case names, etc.).
-- If you think some important information is missing from this guide, please add it.
+- Build compiler: `cd compiler && zig build`
+- Compile a test program: `./zig-out/bin/argi build tests/example_test.rg`
+
+
+## Guidelines
+
+- To add a new feature:
+    1. Create a `.rg` test that demonstrates the feature in `compiler/tests/`.
+    2. Draft a small implementation plan, evaluating whether the change affects
+       tokenizing, syntaxing, semantizing or codegen.
+    3. Implement the feature in `compiler/src/` until it compiles.
+    4. Ensure all tests pass and generated LLVM IR makes sense for the feature.
+    5. Add the test to `compiler/tests/test.zig` where applicable.
+    6. Evaluate if the diagnostics need improvement for the new feature and
+       enhance them.
+
+- Keep CLI help aligned with the tool's current capabilities.
+
+- Follow Zig coding style:
+    - spaces, snake_case for variables/functions/files, descriptive names.
+    - File naming: `snake_case.zig` (e.g., `parser.zig`, `type_checker.zig`).
+
+- Commits: focused, descriptive subject in imperative mood (e.g., "add binary
+literals to lexer").
+
+- If you think some important information is missing from this guide, please
+add it. If you learn something non-obvious, document it here so future work is
+faster.
+
+

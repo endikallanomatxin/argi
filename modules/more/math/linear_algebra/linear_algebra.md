@@ -1,3 +1,11 @@
+Linkea con BLAS y LAPACK.
+- Qué ofrecen: la base de la álgebra lineal densa (multiplicación de vectores/matrices y descomposiciones avanzadas).
+- Por qué importan: prácticamente todo software científico, de machine learning o simulación numérica (Matlab, R, Julia, NumPy/SciPy, PETSc…) las usa bajo el capó para garantizar rendimiento en cualquier CPU.
+
+Checkea si están instaladas en el sistema en orden de preferencia.
+Si no están te dice que las instales sugiriendote un comando.
+
+
 Creo que Julia es muy bueno para trabajar con arrays y vectores y demas
 
 > [!TODO] Pensar nombre del tipo más general.

@@ -32,9 +32,9 @@ error from a superset to a subset.
 ## Error unions
 
 ```
-Errable<#T: Type, #E: Type> : Type = (
-	..Ok    (T)  -- Success
-	..Error (E)  -- Fail
+Errable#(.t: Type, .e: Type) : Type = (
+	..Ok    (t)  -- Success
+	..Error (e)  -- Fail
 )
 ```
 
@@ -74,4 +74,14 @@ If you are inside a function that returns an Errable and you are calling a funct
 	- If it errs, it immediately returns the error. (like Rust, y como try en zig)
 		Incluye siempre un stack trace y las variables que han dado lugar a ese error.
 - If you do:`my_func () !! "Something"` you can add some context. (like anyhow rust crate)
+
+
+## Errable as a monad
+
+pensar en concatenar operaciones sobre errables (andthen, orelse…)
+podria ser
+and then: “|>”
+or else: “|<“ o “|!”
+
+Darle una vuelta.
 

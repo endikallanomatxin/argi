@@ -78,6 +78,12 @@ test "12_function_args" {
     try run();
 }
 
+test "13_multiple_dispatch" {
+    try clean();
+    try build("tests/13_multiple_dispatch.rg");
+    try run();
+}
+
 test "21_named_struct_types" {
     try clean();
     try build("tests/21_named_struct_types.rg");
@@ -87,5 +93,17 @@ test "21_named_struct_types" {
 test "22_pointers" {
     try clean();
     try build("tests/22_pointers.rg");
+    try run();
+}
+
+test "30_libc" {
+    try clean();
+    try build("tests/30_libc.rg");
+    try run();
+}
+
+test "31_core" {
+    try clean();
+    try build("tests/31_core.rg");
     try run();
 }

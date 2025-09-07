@@ -1,19 +1,20 @@
-putchar ( .c : Char ) -> () : ExternFunction
+-- Printing
+putchar ( .character : Char ) -> () : ExternFunction
+puts ( .string : &Char ) -> () : ExternFunction
+
+-- Allocation
+malloc ( .size : Int32 ) -> ( .pointer: &Any) : ExternFunction
+free ( .pointer: &Any ) -> () : ExternFunction
 
 main () -> (.status_code: Int32) := {
-    putchar(.c='h')
-    putchar(.c='e')
-    putchar(.c='l')
-    putchar(.c='l')
-    putchar(.c='o')
-    putchar(.c=' ')
-    putchar(.c='w')
-    putchar(.c='o')
-    putchar(.c='r')
-    putchar(.c='l')
-    putchar(.c='d')
-    putchar(.c='!')
-    putchar(.c='\n')
+    puts(.string="Hello world!")
+
+    p : &Char = malloc(.size=14)
+    p& = '0'
+    puts(.string=p)
+    free(.pointer=p)
+
+    putchar(.character='\n')
     status_code = 0
 }
 

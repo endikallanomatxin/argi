@@ -15,7 +15,12 @@ pub const Scope = struct {
     binding_declarations: []const *BindingDeclaration,
 };
 
-pub const SGNode = union(enum) {
+pub const SGNode = struct {
+    location: tok.Location,
+    content: Content,
+};
+
+pub const Content = union(enum) {
     type_declaration: *TypeDeclaration,
     function_declaration: *FunctionDeclaration,
 
@@ -40,7 +45,8 @@ pub const SGNode = union(enum) {
     continue_statement: struct {},
 
     address_of: *const SGNode,
-    dereference: *const Dereference,
+    dereference: Dereference,
+    pointer_assignment: PointerAssignment,
 };
 
 //
@@ -66,7 +72,7 @@ pub const BuiltinType = enum {
     Float64,
     Char,
     Bool,
-    Void,
+    Any,
 };
 
 pub const StructType = struct {
@@ -87,6 +93,7 @@ pub const ValueLiteral = union(enum) {
     float_literal: f64,
     char_literal: u8,
     string_literal: []const u8,
+    bool_literal: bool,
 };
 
 pub const StructValueLiteral = struct {
@@ -115,6 +122,7 @@ pub const TypeDeclaration = struct {
 
 pub const FunctionDeclaration = struct {
     name: []const u8,
+    location: tok.Location,
     input: StructType, // Arguments
     output: StructType, // Named return params
     body: ?*const CodeBlock,
@@ -208,4 +216,9 @@ pub const SwitchCase = struct {
 pub const Dereference = struct {
     pointer: *const SGNode,
     ty: Type,
+};
+
+pub const PointerAssignment = struct {
+    pointer: *const SGNode, // expresión que produce &T
+    value: *const SGNode, // Value to assign
 };

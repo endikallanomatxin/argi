@@ -48,18 +48,22 @@
 
 # Key characteristics
 
-- Functions take only one argument and return only one value. Usually it is a struct.
+- Functions
 
-- Functions have multiple dispatch, considering the types of the fields inside the struct.
+    - take a struct and return a struct.
 
-- Side effects are always indicated.
-  (Capability based programming, dependency inyection).
+    - have multiple dispatch, considering the types of the fields inside the struct.
 
-- Has Errable and Nullable types.
+    - their side effects are always explicit.
+        (Capability based programming, dependency inyection).
 
-- No objects. Structs.
+- Code organization and polimorphism:
 
-- No inheritance. Interface-like abstract types.
+    - No objects
 
-- Has generics.
+    - No inheritance. Interface-like abstract types.
+
+    - Has generics.
+
+- Errable and Nullable types.
 
