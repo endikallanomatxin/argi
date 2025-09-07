@@ -34,6 +34,10 @@ This repository contains a compiler for a new programming language written in Zi
     6. Evaluate if the diagnostics need improvement for the new feature and
        enhance them.
 
+- If during development of a feature, you find some tangential improvement that
+should be made, if it is not worth it to handle it at the moment, mark it as a
+TODO and focus on the main feature first.
+
 - Keep CLI help aligned with the tool's current capabilities.
 
 - Follow Zig coding style:
