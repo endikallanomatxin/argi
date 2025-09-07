@@ -81,6 +81,36 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
+            .abstract_declaration => |ad| self.handleAbstractDecl(ad, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in abstract declaration '{s}': {s}",
+                    .{ ad.name, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .abstract_canbe => |rel| self.handleAbstractCanBe(rel, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in abstract canbe for '{s}': {s}",
+                    .{ rel.name, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .abstract_defaultsto => |rel| self.handleAbstractDefault(rel, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in abstract defaultsto for '{s}': {s}",
+                    .{ rel.name, @errorName(err) },
+                );
+                break :blk err;
+            },
+
             .type_declaration => |d| self.handleTypeDecl(d, s) catch |err| blk: {
                 try self.diags.add(
                     n.location,
@@ -266,6 +296,52 @@ pub const Semantizer = struct {
                 break :blk err;
             },
         };
+    }
+
+    //──────────────────────────────────────────────────── ABSTRACT DECLARATION
+    fn handleAbstractDecl(
+        self: *Semantizer,
+        ad: syn.AbstractDeclaration,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        // Register abstract as a nominal type placeholder (maps to Any for now)
+        if (s.types.contains(ad.name)) return error.SymbolAlreadyDefined;
+
+        const td = try self.allocator.create(sem.TypeDeclaration);
+        td.* = .{ .name = ad.name, .ty = .{ .builtin = .Any } };
+        try s.types.put(ad.name, td);
+
+        const n = try self.makeNode(undefined, .{ .type_declaration = td }, s);
+        if (s.parent == null) try self.root_list.append(n);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    // For now, relations are recorded as no-ops to accept syntax without enforcing.
+    fn handleAbstractCanBe(
+        self: *Semantizer,
+        rel: syn.AbstractCanBe,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        _ = rel;
+        // Future: store (rel.name -> rel.ty) mapping in scope for conformance checks.
+        // No semantic effect yet; return a no-op code block node.
+        const empty = try self.allocator.create(sem.CodeBlock);
+        empty.* = .{ .nodes = &.{}, .ret_val = null };
+        const n = try self.makeNode(undefined, .{ .code_block = empty }, s);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleAbstractDefault(
+        self: *Semantizer,
+        rel: syn.AbstractDefault,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        _ = rel;
+        // Future: store default backing type for abstract in scope.
+        const empty = try self.allocator.create(sem.CodeBlock);
+        empty.* = .{ .nodes = &.{}, .ret_val = null };
+        const n = try self.makeNode(undefined, .{ .code_block = empty }, s);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
     //─────────────────────────────────────────────────────────  LITERALS

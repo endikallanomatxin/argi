@@ -176,6 +176,31 @@ pub const Syntaxer = struct {
         return syn.Type{ .type_name = name };
     }
 
+    // Parses a minimal abstract body: a parenthesized list of identifiers
+    // representing composed abstract requirements. Examples:
+    //   ()
+    //   ( Addable, Iterable )
+    // Newlines and comments are ignored.
+    fn parseAbstractRequirements(self: *Syntaxer) SyntaxerError![]const []const u8 {
+        if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        var reqs = std.ArrayList([]const u8).init(self.allocator.*);
+        while (!self.tokenIs(.close_parenthesis)) {
+            const nm = try self.parseIdentifier();
+            try reqs.append(nm);
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            }
+        }
+        if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+        self.advanceOne();
+        return reqs.items;
+    }
+
     // ( .field : Type? (= expr)? , ... )
     fn parseStructTypeLiteral(self: *Syntaxer) SyntaxerError!syn.StructTypeLiteral {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
@@ -497,6 +522,26 @@ pub const Syntaxer = struct {
             );
         }
 
+        // ----------- ABSTRACT RELATIONS (canbe/defaultsto) -----------------
+        // <Name>[#(...)] canbe <Type>
+        // <Name>[#(...)] defaultsto <Type>
+        switch (self.current().content) {
+            .identifier => |kw| {
+                if (std.mem.eql(u8, kw, "canbe")) {
+                    self.advanceOne();
+                    const ty = (try self.parseType()).?; // required
+                    const rel = syn.AbstractCanBe{ .name = name, .generic_params = generic_params, .ty = ty };
+                    return try self.makeNode(.{ .abstract_canbe = rel }, id_loc);
+                } else if (std.mem.eql(u8, kw, "defaultsto")) {
+                    self.advanceOne();
+                    const ty = (try self.parseType()).?; // required
+                    const rel = syn.AbstractDefault{ .name = name, .generic_params = generic_params, .ty = ty };
+                    return try self.makeNode(.{ .abstract_defaultsto = rel }, id_loc);
+                }
+            },
+            else => {},
+        }
+
         // ----------- SYMBOL / TYPE DECLARATION -----------------------------
         if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) {
             var mut: syn.Mutability = .constant;
@@ -520,6 +565,15 @@ pub const Syntaxer = struct {
                         .value = lit_node,
                     };
                     return try self.makeNode(.{ .type_declaration = tdecl }, id_loc);
+                } else if (ty == .type_name and std.mem.eql(u8, ty.type_name, "Abstract")) {
+                    // Abstract declaration: Name : Abstract (= ( ... ))?
+                    var reqs: []const []const u8 = &.{};
+                    if (self.tokenIs(.equal)) {
+                        self.advanceOne();
+                        reqs = try self.parseAbstractRequirements();
+                    }
+                    const adecl = syn.AbstractDeclaration{ .name = name, .generic_params = generic_params, .requires = reqs };
+                    return try self.makeNode(.{ .abstract_declaration = adecl }, id_loc);
                 }
             }
 
