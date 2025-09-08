@@ -58,6 +58,9 @@ pub const Semantizer = struct {
                 );
             };
 
+        // Final conformance verification for abstracts (top-level scope)
+        try self.verifyAbstracts(&global);
+
         self.root_nodes = try self.root_list.toOwnedSlice();
         self.root_list.deinit();
         return self.root_nodes;
@@ -91,7 +94,7 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
-            .abstract_canbe => |rel| self.handleAbstractCanBe(rel, s) catch |err| blk: {
+            .abstract_canbe => |rel| self.handleAbstractCanBe(rel, s, n.location) catch |err| blk: {
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -101,7 +104,7 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
-            .abstract_defaultsto => |rel| self.handleAbstractDefault(rel, s) catch |err| blk: {
+            .abstract_defaultsto => |rel| self.handleAbstractDefault(rel, s, n.location) catch |err| blk: {
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -357,16 +360,17 @@ pub const Semantizer = struct {
         self: *Semantizer,
         rel: syn.AbstractCanBe,
         s: *Scope,
+        loc: tok.Location,
     ) SemErr!TypedExpr {
         const concrete_ty = try self.resolveType(rel.ty, s);
 
         // Defer conformance checks until call sites or a validation pass.
 
         if (s.abstract_impls.getPtr(rel.name)) |lst| {
-            try lst.append(concrete_ty);
+            try lst.append(.{ .ty = concrete_ty, .location = loc });
         } else {
-            var new_list = std.ArrayList(sem.Type).init(self.allocator.*);
-            try new_list.append(concrete_ty);
+            var new_list = std.ArrayList(AbstractImplEntry).init(self.allocator.*);
+            try new_list.append(.{ .ty = concrete_ty, .location = loc });
             try s.abstract_impls.put(rel.name, new_list);
         }
 
@@ -380,9 +384,10 @@ pub const Semantizer = struct {
         self: *Semantizer,
         rel: syn.AbstractDefault,
         s: *Scope,
+        loc: tok.Location,
     ) SemErr!TypedExpr {
         const concrete_ty = try self.resolveType(rel.ty, s);
-        try s.abstract_defaults.put(rel.name, concrete_ty);
+        try s.abstract_defaults.put(rel.name, .{ .ty = concrete_ty, .location = loc });
         const empty = try self.allocator.create(sem.CodeBlock);
         empty.* = .{ .nodes = &.{}, .ret_val = null };
         const n = try self.makeNode(undefined, .{ .code_block = empty }, s);
@@ -406,18 +411,144 @@ pub const Semantizer = struct {
 
     fn existsFunctionForRequirement(self: *Semantizer, rq: AbstractFunctionReqSem, concrete: sem.Type, s: *Scope) bool {
         var cur: ?*Scope = s;
-        var seen_any: bool = false;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.functions.getPtr(rq.name)) |lst| {
-                seen_any = true;
                 for (lst.items) |cand| {
-                    if (self.funcInputMatchesRequirement(&cand.input, &rq.input, concrete, rq.input_self_indices)) return true;
+                    if (!self.funcInputMatchesRequirement(&cand.input, &rq.input, concrete, rq.input_self_indices))
+                        continue;
+                    // Also require exact output match (nominal)
+                    if (cand.output.fields.len != rq.output.fields.len) continue;
+                    var j: usize = 0;
+                    var outputs_ok = true;
+                    while (j < rq.output.fields.len) : (j += 1) {
+                        const ro = rq.output.fields[j];
+                        const co = cand.output.fields[j];
+                        if (!typesExactlyEqual(ro.ty, co.ty)) { outputs_ok = false; break; }
+                    }
+                    if (!outputs_ok) continue;
+                    return true;
                 }
             }
         }
-        // If no overloads are registered yet for this name, defer the check
-        if (!seen_any) return true;
         return false;
+    }
+
+    fn verifyAbstracts(self: *Semantizer, s: *Scope) !void {
+        var any_error = false;
+        var it = s.abstract_impls.iterator();
+        while (it.next()) |entry| {
+            const abs_name = entry.key_ptr.*;
+            const impls = entry.value_ptr.*;
+            const info = self.lookupAbstractInfo(s, abs_name) orelse continue;
+
+            for (impls.items) |impl| {
+                const conc = impl.ty;
+                for (info.requirements) |rq| {
+                    if (self.existsFunctionForRequirement(rq, conc, s)) continue;
+
+                    // Build expected input with concrete substituted for Self
+                    const exp_in = try self.buildExpectedInputWithConcrete(&rq, conc);
+                    const in_ty: sem.Type = .{ .struct_type = exp_in };
+
+                    // Produce candidates string
+                    const candidates = self.buildOverloadCandidatesString(rq.name, in_ty, s) catch "";
+
+                    // Build signature string
+                    var buf = std.ArrayList(u8).init(self.allocator.*);
+                    defer buf.deinit();
+                    try buf.appendSlice(rq.name);
+                    try buf.appendSlice(" (");
+                    var i: usize = 0;
+                    while (i < exp_in.fields.len) : (i += 1) {
+                        const fld = exp_in.fields[i];
+                        if (i != 0) try buf.appendSlice(", ");
+                        try buf.appendSlice(".");
+                        try buf.appendSlice(fld.name);
+                        try buf.appendSlice(": ");
+                        try self.appendTypePretty(&buf, fld.ty, s);
+                    }
+                    try buf.appendSlice(")");
+
+                    // Report diagnostic at the 'canbe' site
+                    if (candidates.len > 0) {
+                        try self.diags.add(
+                            impl.location,
+                            .semantic,
+                            "type does not implement abstract '{s}': missing function '{s}'. Possible overloads:\n{s}",
+                            .{ abs_name, buf.items, candidates },
+                        );
+                    } else {
+                        try self.diags.add(
+                            impl.location,
+                            .semantic,
+                            "type does not implement abstract '{s}': missing function '{s}'.",
+                            .{ abs_name, buf.items },
+                        );
+                    }
+                    any_error = true;
+                }
+            }
+        }
+
+        // Also verify defaults conform to their abstracts
+        var it_def = s.abstract_defaults.iterator();
+        while (it_def.next()) |entry2| {
+            const abs_name2 = entry2.key_ptr.*;
+            const def_entry = entry2.value_ptr.*;
+            const info2 = self.lookupAbstractInfo(s, abs_name2) orelse continue;
+            const conc2 = def_entry.ty;
+            for (info2.requirements) |rq2| {
+                if (self.existsFunctionForRequirement(rq2, conc2, s)) continue;
+
+                const exp_in2 = try self.buildExpectedInputWithConcrete(&rq2, conc2);
+                const in_ty2: sem.Type = .{ .struct_type = exp_in2 };
+                const candidates2 = self.buildOverloadCandidatesString(rq2.name, in_ty2, s) catch "";
+
+                var buf2 = std.ArrayList(u8).init(self.allocator.*);
+                defer buf2.deinit();
+                try buf2.appendSlice(rq2.name);
+                try buf2.appendSlice(" (");
+                var j: usize = 0;
+                while (j < exp_in2.fields.len) : (j += 1) {
+                    const fld2 = exp_in2.fields[j];
+                    if (j != 0) try buf2.appendSlice(", ");
+                    try buf2.appendSlice(".");
+                    try buf2.appendSlice(fld2.name);
+                    try buf2.appendSlice(": ");
+                    try self.appendTypePretty(&buf2, fld2.ty, s);
+                }
+                try buf2.appendSlice(")");
+
+                if (candidates2.len > 0) {
+                    try self.diags.add(
+                        def_entry.location,
+                        .semantic,
+                        "default type does not implement abstract '{s}': missing function '{s}'. Possible overloads:\n{s}",
+                        .{ abs_name2, buf2.items, candidates2 },
+                    );
+                } else {
+                    try self.diags.add(
+                        def_entry.location,
+                        .semantic,
+                        "default type does not implement abstract '{s}': missing function '{s}'.",
+                        .{ abs_name2, buf2.items },
+                    );
+                }
+                any_error = true;
+            }
+        }
+        if (any_error) return error.SymbolNotFound;
+    }
+
+    fn buildExpectedInputWithConcrete(self: *Semantizer, rq: *const AbstractFunctionReqSem, concrete: sem.Type) !*sem.StructType {
+        var fields = try self.allocator.alloc(sem.StructTypeField, rq.input.fields.len);
+        for (rq.input.fields, 0..) |f, i| {
+            const is_self = containsIndex(rq.input_self_indices, @intCast(i));
+            fields[i] = .{ .name = f.name, .ty = if (is_self) concrete else f.ty, .default_value = null };
+        }
+        const st_ptr = try self.allocator.create(sem.StructType);
+        st_ptr.* = .{ .fields = fields };
+        return st_ptr;
     }
 
     fn funcInputMatchesRequirement(self: *Semantizer, cand_in: *const sem.StructType, req_in: *const sem.StructType, concrete: sem.Type, self_idxs: []const u32) bool {
@@ -928,7 +1059,7 @@ pub const Semantizer = struct {
             if (sc.functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
                     const expected: sem.Type = .{ .struct_type = &cand.input };
-                    if (!typesStructurallyEqual(expected, in_ty)) continue;
+                    if (!typesExactlyEqual(expected, in_ty)) continue;
 
                     const score = specificityScore(expected, in_ty);
                     if (best == null or score < best_score) {
@@ -1322,7 +1453,7 @@ pub const Semantizer = struct {
                 // Prefer abstract default if available
                 if (self.lookupAbstractInfo(s, id)) |_| {
                     if (s.abstract_defaults.get(id)) |def_ty|
-                        break :blk def_ty
+                        break :blk def_ty.ty
                     else
                         break :blk error.InvalidType;
                 }
@@ -1377,11 +1508,11 @@ pub const Semantizer = struct {
             if (sc.functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
                     const expected: sem.Type = .{ .struct_type = &cand.input };
-                    if (!typesStructurallyEqual(expected, in_ty)) continue;
+                    if (!typesExactlyEqual(expected, in_ty)) continue;
                     if (!first) try buf.appendSlice("\n");
                     first = false;
                     try buf.appendSlice("  - ");
-                    try self.appendFunctionSignature(&buf, cand);
+                    try self.appendFunctionSignature(&buf, cand, s);
                     try buf.appendSlice("  [file: ");
                     try buf.appendSlice(cand.location.file);
                     try buf.appendSlice(":");
@@ -1393,7 +1524,7 @@ pub const Semantizer = struct {
         return try buf.toOwnedSlice();
     }
 
-    fn appendFunctionSignature(self: *Semantizer, buf: *std.ArrayList(u8), f: *const sem.FunctionDeclaration) !void {
+    fn appendFunctionSignature(self: *Semantizer, buf: *std.ArrayList(u8), f: *const sem.FunctionDeclaration, s: *Scope) !void {
         try buf.appendSlice(f.name);
         try buf.appendSlice(" (");
         var i: usize = 0;
@@ -1403,7 +1534,7 @@ pub const Semantizer = struct {
             try buf.appendSlice(".");
             try buf.appendSlice(fld.name);
             try buf.appendSlice(": ");
-            try self.appendType(buf, fld.ty);
+            try self.appendTypePretty(buf, fld.ty, s);
         }
         try buf.appendSlice(") -> (");
         i = 0;
@@ -1413,7 +1544,7 @@ pub const Semantizer = struct {
             try buf.appendSlice(".");
             try buf.appendSlice(ofld.name);
             try buf.appendSlice(": ");
-            try self.appendType(buf, ofld.ty);
+            try self.appendTypePretty(buf, ofld.ty, s);
         }
         try buf.appendSlice(")");
     }
@@ -1442,6 +1573,40 @@ pub const Semantizer = struct {
                 try buf.appendSlice("}");
             },
         }
+    }
+
+    fn appendTypePretty(self: *Semantizer, buf: *std.ArrayList(u8), t: sem.Type, s: *Scope) !void {
+        if (self.typeNameFor(s, t)) |nm| {
+            try buf.appendSlice(nm);
+            return;
+        }
+        switch (t) {
+            .builtin => |bt| {
+                const sname = @tagName(bt);
+                try buf.appendSlice(sname);
+            },
+            .pointer_type => |sub| {
+                try buf.appendSlice("&");
+                try self.appendTypePretty(buf, sub.*, s);
+            },
+            .struct_type => |_| {
+                // Fallback: avoid expanding anonymous structs in this context
+                try buf.appendSlice("{...}");
+            },
+        }
+    }
+
+    fn typeNameFor(self: *Semantizer, s: *Scope, t: sem.Type) ?[]const u8 {
+        _ = self;
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            var it = sc.types.iterator();
+            while (it.next()) |entry| {
+                const td = entry.value_ptr.*;
+                if (typesExactlyEqual(td.ty, t)) return td.name;
+            }
+        }
+        return null;
     }
 };
 
@@ -1476,6 +1641,14 @@ const AbstractInfo = struct {
     name: []const u8,
     requirements: []const AbstractFunctionReqSem,
 };
+const AbstractImplEntry = struct {
+    ty: sem.Type,
+    location: tok.Location,
+};
+const AbstractDefaultEntry = struct {
+    ty: sem.Type,
+    location: tok.Location,
+};
 const Scope = struct {
     parent: ?*Scope,
 
@@ -1484,8 +1657,8 @@ const Scope = struct {
     functions: std.StringHashMap(std.ArrayList(*sem.FunctionDeclaration)),
     types: std.StringHashMap(*sem.TypeDeclaration),
     abstracts: std.StringHashMap(*AbstractInfo),
-    abstract_impls: std.StringHashMap(std.ArrayList(sem.Type)),
-    abstract_defaults: std.StringHashMap(sem.Type),
+    abstract_impls: std.StringHashMap(std.ArrayList(AbstractImplEntry)),
+    abstract_defaults: std.StringHashMap(AbstractDefaultEntry),
     generic_functions: std.StringHashMap(std.ArrayList(GenericTemplate)),
     generic_types: std.StringHashMap(std.ArrayList(GenericTypeTemplate)),
 
@@ -1503,8 +1676,8 @@ const Scope = struct {
             .functions = std.StringHashMap(std.ArrayList(*sem.FunctionDeclaration)).init(a.*),
             .types = std.StringHashMap(*sem.TypeDeclaration).init(a.*),
             .abstracts = std.StringHashMap(*AbstractInfo).init(a.*),
-            .abstract_impls = std.StringHashMap(std.ArrayList(sem.Type)).init(a.*),
-            .abstract_defaults = std.StringHashMap(sem.Type).init(a.*),
+            .abstract_impls = std.StringHashMap(std.ArrayList(AbstractImplEntry)).init(a.*),
+            .abstract_defaults = std.StringHashMap(AbstractDefaultEntry).init(a.*),
             .generic_functions = std.StringHashMap(std.ArrayList(GenericTemplate)).init(a.*),
             .generic_types = std.StringHashMap(std.ArrayList(GenericTypeTemplate)).init(a.*),
             .current_fn = fnc,
@@ -1545,13 +1718,12 @@ fn typesStructurallyEqual(a: sem.Type, b: sem.Type) bool {
             .builtin => false,
 
             .struct_type => |bst| blk: {
+                // Keep for legacy: structural comparison of anonymous structs
                 if (ast.fields.len != bst.fields.len) break :blk false;
-
                 var i: usize = 0;
                 while (i < ast.fields.len) : (i += 1) {
                     const fa = ast.fields[i];
                     const fb = bst.fields[i];
-
                     if (!std.mem.eql(u8, fa.name, fb.name)) break :blk false;
                     if (!typesStructurallyEqual(fa.ty, fb.ty)) break :blk false;
                 }
@@ -1590,17 +1762,7 @@ fn typesExactlyEqual(a: sem.Type, b: sem.Type) bool {
             else => false,
         },
         .struct_type => |ast| switch (b) {
-            .struct_type => |bst| blk: {
-                if (ast.fields.len != bst.fields.len) break :blk false;
-                var i: usize = 0;
-                while (i < ast.fields.len) : (i += 1) {
-                    const fa = ast.fields[i];
-                    const fb = bst.fields[i];
-                    if (!std.mem.eql(u8, fa.name, fb.name)) break :blk false;
-                    if (!typesExactlyEqual(fa.ty, fb.ty)) break :blk false;
-                }
-                break :blk true;
-            },
+            .struct_type => |bst| ast == bst, // nominal: same named type instance
             else => false,
         },
         .pointer_type => |apt| switch (b) {
