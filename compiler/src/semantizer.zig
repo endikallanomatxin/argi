@@ -10,6 +10,8 @@ const SemErr = error{
     SymbolNotFound,
     ConstantReassignment,
     InvalidType,
+    UnknownType,
+    AbstractNeedsDefault,
     MissingReturnValue,
     NotYetImplemented,
     OutOfMemory,
@@ -75,12 +77,55 @@ pub const Semantizer = struct {
     fn visitNode(self: *Semantizer, n: syn.STNode, s: *Scope) SemErr!TypedExpr {
         return switch (n.content) {
             .symbol_declaration => |d| self.handleSymbolDecl(d, s) catch |err| blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error en la declaración del símbolo '{s}': {s}",
-                    .{ d.name, @errorName(err) },
-                );
+                switch (err) {
+                    error.UnknownType => {
+                        // Try to extract the written type name when available
+                        if (d.type) |tp| {
+                            if (tp == .type_name) {
+                                try self.diags.add(
+                                    n.location,
+                                    .semantic,
+                                    "unknown type '{s}' in declaration of '{s}'",
+                                    .{ tp.type_name, d.name },
+                                );
+                                break :blk err;
+                            }
+                        }
+                        try self.diags.add(
+                            n.location,
+                            .semantic,
+                            "unknown type in declaration of '{s}'",
+                            .{d.name},
+                        );
+                    },
+                    error.AbstractNeedsDefault => {
+                        if (d.type) |tp2| {
+                            if (tp2 == .type_name) {
+                                try self.diags.add(
+                                    n.location,
+                                    .semantic,
+                                    "cannot use abstract '{s}' as a type for a symbol. Use a concrete type or add a default concrete type to the abstract type ('{s} defaultsto <Type>')",
+                                    .{ tp2.type_name, tp2.type_name },
+                                );
+                                break :blk err;
+                            }
+                        }
+                        try self.diags.add(
+                            n.location,
+                            .semantic,
+                            "cannot use abstract type without a default (add 'defaultsto' or use a concrete type)",
+                            .{},
+                        );
+                    },
+                    else => {
+                        try self.diags.add(
+                            n.location,
+                            .semantic,
+                            "error in symbol declaration '{s}': {s}",
+                            .{ d.name, @errorName(err) },
+                        );
+                    },
+                }
                 break :blk err;
             },
 
@@ -423,7 +468,10 @@ pub const Semantizer = struct {
                     while (j < rq.output.fields.len) : (j += 1) {
                         const ro = rq.output.fields[j];
                         const co = cand.output.fields[j];
-                        if (!typesExactlyEqual(ro.ty, co.ty)) { outputs_ok = false; break; }
+                        if (!typesExactlyEqual(ro.ty, co.ty)) {
+                            outputs_ok = false;
+                            break;
+                        }
                     }
                     if (!outputs_ok) continue;
                     return true;
@@ -1102,7 +1150,10 @@ pub const Semantizer = struct {
                                 break;
                             }
                         }
-                        if (!found) { ok = false; break; }
+                        if (!found) {
+                            ok = false;
+                            break;
+                        }
                     }
                     if (!ok) continue;
 
@@ -1272,7 +1323,10 @@ pub const Semantizer = struct {
                                 break;
                             }
                         }
-                        if (!found) { ok = false; break; }
+                        if (!found) {
+                            ok = false;
+                            break;
+                        }
                     }
                     if (!ok) continue;
 
@@ -1450,16 +1504,16 @@ pub const Semantizer = struct {
             .type_name => |id| blk: {
                 if (builtinFromName(id)) |bt|
                     break :blk .{ .builtin = bt };
-                // Prefer abstract default if available
+                // If it's an abstract, require a defaultsto to use as a type
                 if (self.lookupAbstractInfo(s, id)) |_| {
-                    if (s.abstract_defaults.get(id)) |def_ty|
-                        break :blk def_ty.ty
+                    if (self.lookupAbstractDefault(s, id)) |def_entry|
+                        break :blk def_entry.ty
                     else
-                        break :blk error.InvalidType;
+                        break :blk error.AbstractNeedsDefault;
                 }
                 if (s.lookupType(id)) |td|
                     break :blk td.ty;
-                break :blk error.InvalidType;
+                break :blk error.UnknownType;
             },
             .generic_type_instantiation => |g| blk_g: {
                 const st_ptr = try self.instantiateGenericTypeNamed(g.base_name, g.args, s);
@@ -1494,6 +1548,14 @@ pub const Semantizer = struct {
                 break :blk .{ .pointer_type = ptr };
             },
         };
+    }
+
+    fn lookupAbstractDefault(_: *Semantizer, s: *Scope, name: []const u8) ?AbstractDefaultEntry {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.abstract_defaults.get(name)) |def| return def;
+        }
+        return null;
     }
 
     fn builtinFromName(name: []const u8) ?sem.BuiltinType {
