@@ -37,8 +37,9 @@ This repository contains a compiler for a new programming language written in Zi
        enhance them.
 
 - If during development of a feature, you find some tangential improvement that
-should be made, if it is not worth it to handle it at the moment, mark it as a
-TODO and focus on the main feature first.
+should be made, or you foresee that some area needs further work, if it is not
+worth it to handle it at the moment, mark it as a TODO and focus on the main
+feature first.
 
 - Keep CLI help aligned with the tool's current capabilities.
 
