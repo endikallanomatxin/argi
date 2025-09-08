@@ -314,9 +314,33 @@ pub const Semantizer = struct {
         // Store abstract info (resolved requirements) in scope
         var reqs = std.ArrayList(AbstractFunctionReqSem).init(self.allocator.*);
         for (ad.requires_functions) |rf| {
-            const in_ptr = try self.structTypeFromLiteral(rf.input, s);
+            // Build input struct resolving types; treat 'Self' specially
+            var in_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+            var self_idxs = std.ArrayList(u32).init(self.allocator.*);
+            for (rf.input.fields, 0..) |fld, i| {
+                var ty: sem.Type = undefined;
+                if (fld.type) |t| {
+                    if (t == .type_name and std.mem.eql(u8, t.type_name, "Self")) {
+                        ty = .{ .builtin = .Any }; // placeholder; we’ll match via index
+                        try self_idxs.append(@intCast(i));
+                    } else {
+                        ty = try self.resolveType(t, s);
+                    }
+                } else ty = .{ .builtin = .Any };
+                try in_fields.append(.{ .name = fld.name, .ty = ty, .default_value = null });
+            }
+            const in_struct = sem.StructType{ .fields = try in_fields.toOwnedSlice() };
+            in_fields.deinit();
+
             const out_ptr = try self.structTypeFromLiteral(rf.output, s);
-            try reqs.append(.{ .name = rf.name, .input = in_ptr.*, .output = out_ptr.* });
+
+            try reqs.append(.{
+                .name = rf.name,
+                .input = in_struct,
+                .output = out_ptr.*,
+                .input_self_indices = try self_idxs.toOwnedSlice(),
+            });
+            self_idxs.deinit();
         }
         const info = try self.allocator.create(AbstractInfo);
         info.* = .{ .name = ad.name, .requirements = try reqs.toOwnedSlice() };
@@ -387,7 +411,7 @@ pub const Semantizer = struct {
             if (sc.functions.getPtr(rq.name)) |lst| {
                 seen_any = true;
                 for (lst.items) |cand| {
-                    if (self.funcInputMatchesRequirement(&cand.input, &rq.input, concrete)) return true;
+                    if (self.funcInputMatchesRequirement(&cand.input, &rq.input, concrete, rq.input_self_indices)) return true;
                 }
             }
         }
@@ -396,18 +420,23 @@ pub const Semantizer = struct {
         return false;
     }
 
-    fn funcInputMatchesRequirement(self: *Semantizer, cand_in: *const sem.StructType, req_in: *const sem.StructType, concrete: sem.Type) bool {
+    fn funcInputMatchesRequirement(self: *Semantizer, cand_in: *const sem.StructType, req_in: *const sem.StructType, concrete: sem.Type, self_idxs: []const u32) bool {
         _ = self;
         if (cand_in.fields.len != req_in.fields.len) return false;
         var i: usize = 0;
         while (i < req_in.fields.len) : (i += 1) {
             const rf = req_in.fields[i];
             const cf = cand_in.fields[i];
-            if (!std.mem.eql(u8, rf.name, cf.name)) return false;
-            const expect_ty: sem.Type = if (std.mem.eql(u8, rf.name, "self")) concrete else rf.ty;
+            // Field names do not need to match for abstract requirements
+            const expect_ty: sem.Type = if (containsIndex(self_idxs, @intCast(i))) concrete else rf.ty;
             if (!typesExactlyEqual(expect_ty, cf.ty)) return false;
         }
         return true;
+    }
+
+    fn containsIndex(list: []const u32, idx: u32) bool {
+        for (list) |v| if (v == idx) return true;
+        return false;
     }
 
     //─────────────────────────────────────────────────────────  LITERALS
@@ -1439,6 +1468,8 @@ const AbstractFunctionReqSem = struct {
     name: []const u8,
     input: sem.StructType,
     output: sem.StructType,
+    // indices of input fields whose type was 'Self'
+    input_self_indices: []const u32,
 };
 
 const AbstractInfo = struct {

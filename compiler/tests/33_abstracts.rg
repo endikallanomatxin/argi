@@ -1,6 +1,6 @@
 -- Abstract composed + function requirement
 Animal : Abstract = (
-    speak(.self: Any) -> (.s: &Char),
+    speak(.who: Self) -> (.s: &Char),
     Addable
 )
 
@@ -19,4 +19,3 @@ Animal defaultsto Dog
 main () -> (.status_code: Int32) := {
     status_code = 0
 }
-
