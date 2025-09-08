@@ -65,9 +65,10 @@ pub const TypeDeclaration = struct {
 pub const AbstractDeclaration = struct {
     name: []const u8,
     generic_params: []const []const u8,
-    // Minimal initial representation: list of composed abstract names.
-    // Function requirements will be added later.
-    requires: []const []const u8,
+    // Composed abstracts (by name)
+    requires_abstracts: []const []const u8,
+    // Function requirements
+    requires_functions: []const AbstractFunctionRequirement,
 };
 
 // "Name canbe Type" implementation relation
@@ -82,6 +83,12 @@ pub const AbstractDefault = struct {
     name: []const u8,
     generic_params: []const []const u8,
     ty: Type,
+};
+
+pub const AbstractFunctionRequirement = struct {
+    name: []const u8,
+    input: StructTypeLiteral,
+    output: StructTypeLiteral,
 };
 
 pub const FunctionDeclaration = struct {

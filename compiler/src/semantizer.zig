@@ -311,6 +311,18 @@ pub const Semantizer = struct {
         td.* = .{ .name = ad.name, .ty = .{ .builtin = .Any } };
         try s.types.put(ad.name, td);
 
+        // Store abstract info (resolved requirements) in scope
+        var reqs = std.ArrayList(AbstractFunctionReqSem).init(self.allocator.*);
+        for (ad.requires_functions) |rf| {
+            const in_ptr = try self.structTypeFromLiteral(rf.input, s);
+            const out_ptr = try self.structTypeFromLiteral(rf.output, s);
+            try reqs.append(.{ .name = rf.name, .input = in_ptr.*, .output = out_ptr.* });
+        }
+        const info = try self.allocator.create(AbstractInfo);
+        info.* = .{ .name = ad.name, .requirements = try reqs.toOwnedSlice() };
+        reqs.deinit();
+        try s.abstracts.put(ad.name, info);
+
         const n = try self.makeNode(undefined, .{ .type_declaration = td }, s);
         if (s.parent == null) try self.root_list.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
@@ -322,9 +334,18 @@ pub const Semantizer = struct {
         rel: syn.AbstractCanBe,
         s: *Scope,
     ) SemErr!TypedExpr {
-        _ = rel;
-        // Future: store (rel.name -> rel.ty) mapping in scope for conformance checks.
-        // No semantic effect yet; return a no-op code block node.
+        const concrete_ty = try self.resolveType(rel.ty, s);
+
+        // Defer conformance checks until call sites or a validation pass.
+
+        if (s.abstract_impls.getPtr(rel.name)) |lst| {
+            try lst.append(concrete_ty);
+        } else {
+            var new_list = std.ArrayList(sem.Type).init(self.allocator.*);
+            try new_list.append(concrete_ty);
+            try s.abstract_impls.put(rel.name, new_list);
+        }
+
         const empty = try self.allocator.create(sem.CodeBlock);
         empty.* = .{ .nodes = &.{}, .ret_val = null };
         const n = try self.makeNode(undefined, .{ .code_block = empty }, s);
@@ -336,12 +357,57 @@ pub const Semantizer = struct {
         rel: syn.AbstractDefault,
         s: *Scope,
     ) SemErr!TypedExpr {
-        _ = rel;
-        // Future: store default backing type for abstract in scope.
+        const concrete_ty = try self.resolveType(rel.ty, s);
+        try s.abstract_defaults.put(rel.name, concrete_ty);
         const empty = try self.allocator.create(sem.CodeBlock);
         empty.* = .{ .nodes = &.{}, .ret_val = null };
         const n = try self.makeNode(undefined, .{ .code_block = empty }, s);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn lookupAbstractInfo(_: *Semantizer, s: *Scope, name: []const u8) ?*AbstractInfo {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.abstracts.get(name)) |info| return info;
+        }
+        return null;
+    }
+
+    fn ensureConformance(self: *Semantizer, info: *AbstractInfo, concrete: sem.Type, s: *Scope) !void {
+        for (info.requirements) |rq| {
+            if (!self.existsFunctionForRequirement(rq, concrete, s))
+                return error.SymbolNotFound;
+        }
+    }
+
+    fn existsFunctionForRequirement(self: *Semantizer, rq: AbstractFunctionReqSem, concrete: sem.Type, s: *Scope) bool {
+        var cur: ?*Scope = s;
+        var seen_any: bool = false;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr(rq.name)) |lst| {
+                seen_any = true;
+                for (lst.items) |cand| {
+                    if (self.funcInputMatchesRequirement(&cand.input, &rq.input, concrete)) return true;
+                }
+            }
+        }
+        // If no overloads are registered yet for this name, defer the check
+        if (!seen_any) return true;
+        return false;
+    }
+
+    fn funcInputMatchesRequirement(self: *Semantizer, cand_in: *const sem.StructType, req_in: *const sem.StructType, concrete: sem.Type) bool {
+        _ = self;
+        if (cand_in.fields.len != req_in.fields.len) return false;
+        var i: usize = 0;
+        while (i < req_in.fields.len) : (i += 1) {
+            const rf = req_in.fields[i];
+            const cf = cand_in.fields[i];
+            if (!std.mem.eql(u8, rf.name, cf.name)) return false;
+            const expect_ty: sem.Type = if (std.mem.eql(u8, rf.name, "self")) concrete else rf.ty;
+            if (!typesExactlyEqual(expect_ty, cf.ty)) return false;
+        }
+        return true;
     }
 
     //─────────────────────────────────────────────────────────  LITERALS
@@ -1224,6 +1290,13 @@ pub const Semantizer = struct {
             .type_name => |id| blk: {
                 if (builtinFromName(id)) |bt|
                     break :blk .{ .builtin = bt };
+                // Prefer abstract default if available
+                if (self.lookupAbstractInfo(s, id)) |_| {
+                    if (s.abstract_defaults.get(id)) |def_ty|
+                        break :blk def_ty
+                    else
+                        break :blk error.InvalidType;
+                }
                 if (s.lookupType(id)) |td|
                     break :blk td.ty;
                 break :blk error.InvalidType;
@@ -1361,6 +1434,17 @@ const GenericTypeTemplate = struct {
     param_names: []const []const u8,
     body: syn.StructTypeLiteral,
 };
+// Abstract typing support
+const AbstractFunctionReqSem = struct {
+    name: []const u8,
+    input: sem.StructType,
+    output: sem.StructType,
+};
+
+const AbstractInfo = struct {
+    name: []const u8,
+    requirements: []const AbstractFunctionReqSem,
+};
 const Scope = struct {
     parent: ?*Scope,
 
@@ -1368,6 +1452,9 @@ const Scope = struct {
     bindings: std.StringHashMap(*sem.BindingDeclaration),
     functions: std.StringHashMap(std.ArrayList(*sem.FunctionDeclaration)),
     types: std.StringHashMap(*sem.TypeDeclaration),
+    abstracts: std.StringHashMap(*AbstractInfo),
+    abstract_impls: std.StringHashMap(std.ArrayList(sem.Type)),
+    abstract_defaults: std.StringHashMap(sem.Type),
     generic_functions: std.StringHashMap(std.ArrayList(GenericTemplate)),
     generic_types: std.StringHashMap(std.ArrayList(GenericTypeTemplate)),
 
@@ -1384,6 +1471,9 @@ const Scope = struct {
             .bindings = std.StringHashMap(*sem.BindingDeclaration).init(a.*),
             .functions = std.StringHashMap(std.ArrayList(*sem.FunctionDeclaration)).init(a.*),
             .types = std.StringHashMap(*sem.TypeDeclaration).init(a.*),
+            .abstracts = std.StringHashMap(*AbstractInfo).init(a.*),
+            .abstract_impls = std.StringHashMap(std.ArrayList(sem.Type)).init(a.*),
+            .abstract_defaults = std.StringHashMap(sem.Type).init(a.*),
             .generic_functions = std.StringHashMap(std.ArrayList(GenericTemplate)).init(a.*),
             .generic_types = std.StringHashMap(std.ArrayList(GenericTypeTemplate)).init(a.*),
             .current_fn = fnc,
