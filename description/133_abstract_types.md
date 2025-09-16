@@ -167,3 +167,6 @@ AbstractMatrix#(
 )
 ```
 
+
+> [!TODO] Pensar si implementar orphan rule o permitir type piracy como julia.
+
