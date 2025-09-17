@@ -33,19 +33,34 @@ pub const Content = union(enum) {
     binary_operation: BinaryOperation,
     comparison: Comparison,
     if_statement: IfStatement,
-    address_of: *STNode,
+    address_of: AddressOf,
     dereference: *STNode,
     pointer_assignment: PointerAssignment,
+};
+
+pub const PointerMutability = enum {
+    read_only,
+    read_write,
 };
 
 pub const Type = union(enum) {
     type_name: []const u8,
     struct_type_literal: StructTypeLiteral,
-    pointer_type: *Type,
+    pointer_type: *PointerType,
     generic_type_instantiation: struct {
         base_name: []const u8,
         args: StructTypeLiteral,
     },
+};
+
+pub const PointerType = struct {
+    mutability: PointerMutability,
+    child: *Type,
+};
+
+pub const AddressOf = struct {
+    value: *STNode,
+    mutability: PointerMutability,
 };
 
 pub const SymbolDeclaration = struct {

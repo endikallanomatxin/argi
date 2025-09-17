@@ -16,9 +16,14 @@ fn printType(t: syn.Type, lvl: usize) void {
     switch (t) {
         .type_name => |id| std.debug.print("{s}", .{id}),
         .struct_type_literal => |st| printStructTypeLiteral(st, lvl),
-        .pointer_type => |pt| {
-            std.debug.print("&", .{});
-            printType(pt.*, lvl);
+        .pointer_type => |pt_ptr| {
+            const pt = pt_ptr.*;
+            const prefix = switch (pt.mutability) {
+                .read_only => "&",
+                .read_write => "$&",
+            };
+            std.debug.print("{s}", .{prefix});
+            printType(pt.child.*, lvl);
         },
         .generic_type_instantiation => |g| {
             std.debug.print("{s}#", .{g.base_name});
@@ -272,10 +277,14 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
 
         // ── ADDRESS OF ────────────────────────────────────────────────
         .address_of => |ao| {
-            std.debug.print("AddressOf\n", .{});
+            const prefix = switch (ao.mutability) {
+                .read_only => "&",
+                .read_write => "$&",
+            };
+            std.debug.print("AddressOf {s}\n", .{prefix});
             indent(lvl + 1);
             std.debug.print("value:\n", .{});
-            printNode(ao.*, lvl + 2);
+            printNode(ao.value.*, lvl + 2);
         },
 
         // ── DEREFERENCE ────────────────────────────────────────────────

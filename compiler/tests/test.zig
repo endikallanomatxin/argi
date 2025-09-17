@@ -90,21 +90,21 @@ test "21_named_struct_types" {
     try run();
 }
 
-test "22_pointers" {
+test "221_pointers" {
     try clean();
-    try build("tests/22_pointers.rg");
+    try build("tests/221_pointers.rg");
     try run();
 }
 
-test "30_libc" {
+test "222_read-only_vs_read-and-write_pointers" {
     try clean();
-    try build("tests/30_libc.rg");
+    try build("tests/222_read-only_vs_read-and-write_pointers.rg");
     try run();
 }
 
-test "31_core" {
+test "30_core_and_libc" {
     try clean();
-    try build("tests/31_core.rg");
+    try build("tests/30_core_and_libc.rg");
     try run();
 }
 
@@ -132,8 +132,14 @@ test "324_generic_structs_multi" {
     try run();
 }
 
-test "33_abstracts" {
+test "331_abstract" {
     try clean();
-    try build("tests/33_abstracts.rg");
+    try build("tests/331_abstract.rg");
+    try run();
+}
+
+test "334_abstract_instantiation" {
+    try clean();
+    try build("tests/334_abstract_instantiation.rg");
     try run();
 }

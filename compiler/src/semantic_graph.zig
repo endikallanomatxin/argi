@@ -55,7 +55,12 @@ pub const Content = union(enum) {
 pub const Type = union(enum) {
     builtin: BuiltinType,
     struct_type: *const StructType,
-    pointer_type: *const Type,
+    pointer_type: *const PointerType,
+};
+
+pub const PointerType = struct {
+    mutability: syn.PointerMutability,
+    child: *const Type,
 };
 
 pub const BuiltinType = enum {
@@ -216,6 +221,7 @@ pub const SwitchCase = struct {
 pub const Dereference = struct {
     pointer: *const SGNode,
     ty: Type,
+    pointer_type: *const PointerType,
 };
 
 pub const PointerAssignment = struct {
