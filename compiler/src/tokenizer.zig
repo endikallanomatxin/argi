@@ -307,6 +307,9 @@ pub const Tokenizer = struct {
             '%' => {
                 try self.addToken(tok.Content{ .binary_operator = .modulo }, loc);
             },
+            '$' => {
+                try self.addToken(tok.Content{ .dollar = .{} }, loc);
+            },
             '&' => {
                 try self.addToken(tok.Content{ .ampersand = .{} }, loc);
             },

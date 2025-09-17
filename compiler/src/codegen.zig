@@ -275,9 +275,11 @@ pub const CodeGenerator = struct {
                 }
                 break :blk struct_ty;
             },
-            .pointer_type => |sub| {
+            .pointer_type => |ptr_info_ptr| {
+                const ptr_info = ptr_info_ptr.*;
+                const child_ty = ptr_info.child.*;
                 // ¿el pointee es nuestro 'Any' (= builtin.Void)?
-                const is_any = switch (sub.*) {
+                const is_any = switch (child_ty) {
                     .builtin => |bt| bt == .Any,
                     else => false,
                 };
@@ -287,7 +289,7 @@ pub const CodeGenerator = struct {
                     return c.LLVMPointerType(c.LLVMInt8Type(), 0);
                 }
 
-                const sub_ty = try self.toLLVMType(sub.*);
+                const sub_ty = try self.toLLVMType(child_ty);
                 return c.LLVMPointerType(sub_ty, 0);
             },
         };
@@ -319,9 +321,11 @@ pub const CodeGenerator = struct {
                 };
                 try buf.appendSlice(s);
             },
-            .pointer_type => |sub| {
-                try buf.appendSlice("p_");
-                try self.encodeType(buf, sub.*);
+            .pointer_type => |ptr_info_ptr| {
+                const ptr_info = ptr_info_ptr.*;
+                const prefix = if (ptr_info.mutability == .read_write) "prw_" else "pro_";
+                try buf.appendSlice(prefix);
+                try self.encodeType(buf, ptr_info.child.*);
             },
             .struct_type => |st| {
                 try buf.appendSlice("s{");
@@ -858,13 +862,14 @@ pub const CodeGenerator = struct {
             var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, 1);
             argv[0] = (try self.visitNode(fc.input)).?.value_ref;
 
+            const call_name = if (ret_ty == c.LLVMVoidType()) "" else "call";
             const call_val = c.LLVMBuildCall2(
                 self.builder,
                 fn_ty,
                 sym_opt.?.ref,
                 argv.ptr,
                 1,
-                "call",
+                call_name,
             );
 
             return if (ret_ty == c.LLVMVoidType())
@@ -909,20 +914,21 @@ pub const CodeGenerator = struct {
         }
 
         // Build the extern call (C ABI)
+        const ret_ty = c.LLVMGetReturnType(sym.type_ref);
+        const call_name = if (ret_ty == c.LLVMVoidType()) "" else "call";
         const call_inst = c.LLVMBuildCall2(
             self.builder,
             sym.type_ref,
             sym.ref,
             argv.ptr,
             @intCast(idx),
-            "call",
+            call_name,
         );
 
         // Return according to number of return fields
         switch (callee_decl.output.fields.len) {
             0 => return null,
             1 => {
-                const ret_ty = c.LLVMGetReturnType(sym.type_ref);
                 return .{ .value_ref = call_inst, .type_ref = ret_ty };
             },
             else => {
