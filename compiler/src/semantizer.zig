@@ -704,16 +704,7 @@ pub const Semantizer = struct {
         var d_idx: usize = child.deferred.items.len;
         while (d_idx > 0) : (d_idx -= 1) {
             const group = child.deferred.items[d_idx - 1];
-            if (group.is_auto) {
-                for (group.nodes) |node| try child.nodes.append(node);
-            }
-        }
-        d_idx = child.deferred.items.len;
-        while (d_idx > 0) : (d_idx -= 1) {
-            const group = child.deferred.items[d_idx - 1];
-            if (!group.is_auto) {
-                for (group.nodes) |node| try child.nodes.append(node);
-            }
+            for (group.nodes) |node| try child.nodes.append(node);
         }
 
         const slice = try child.nodes.toOwnedSlice();
@@ -1624,7 +1615,7 @@ pub const Semantizer = struct {
 
         if (s.nodes.items.len > start_len) {
             const new_nodes = s.nodes.items[start_len..];
-            try self.registerDefer(s, new_nodes, false);
+            try self.registerDefer(s, new_nodes);
             s.nodes.items.len = start_len;
         }
 
@@ -1970,11 +1961,11 @@ pub const Semantizer = struct {
         return null;
     }
 
-    fn registerDefer(self: *Semantizer, s: *Scope, nodes: []const *sem.SGNode, is_auto: bool) !void {
+    fn registerDefer(self: *Semantizer, s: *Scope, nodes: []const *sem.SGNode) !void {
         if (nodes.len == 0) return;
         const copy = try self.allocator.alloc(*sem.SGNode, nodes.len);
         std.mem.copyForwards(*sem.SGNode, copy, nodes);
-        try s.deferred.append(.{ .nodes = copy, .is_auto = is_auto });
+        try s.deferred.append(.{ .nodes = copy });
     }
 
     fn clearDeferred(self: *Semantizer, s: *Scope) void {
@@ -2029,7 +2020,7 @@ pub const Semantizer = struct {
         fc_ptr.* = .{ .callee = deinit_fn, .input = args_node };
 
         const call_node = try self.makeNode(loc, .{ .function_call = fc_ptr }, null);
-        try self.registerDefer(s, &[_]*sem.SGNode{call_node}, true);
+        try self.registerDefer(s, &[_]*sem.SGNode{call_node});
     }
 };
 
@@ -2075,7 +2066,6 @@ const AbstractDefaultEntry = struct {
 
 const DeferredGroup = struct {
     nodes: []const *sem.SGNode,
-    is_auto: bool,
 };
 const Scope = struct {
     parent: ?*Scope,
