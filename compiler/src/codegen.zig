@@ -576,6 +576,22 @@ pub const CodeGenerator = struct {
                 const casted = c.LLVMBuildBitCast(self.builder, value_ref, target_ty, "ptr.cast");
                 _ = c.LLVMBuildStore(self.builder, casted, storage);
             } else if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMStructTypeKind and
+                c.LLVMGetTypeKind(target_ty) != c.LLVMStructTypeKind)
+            {
+                const field_count = c.LLVMCountStructElementTypes(tv.type_ref);
+                var extracted = false;
+                var idx: u32 = 0;
+                while (idx < field_count) : (idx += 1) {
+                    const fty = c.LLVMStructGetTypeAtIndex(tv.type_ref, idx);
+                    if (fty == target_ty) {
+                        const elem = c.LLVMBuildExtractValue(self.builder, value_ref, idx, "init.extract");
+                        _ = c.LLVMBuildStore(self.builder, elem, storage);
+                        extracted = true;
+                        break;
+                    }
+                }
+                if (!extracted) return CodegenError.InvalidType;
+            } else if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMStructTypeKind and
                 c.LLVMGetTypeKind(llvm_decl_ty) == c.LLVMStructTypeKind)
             {
                 // El literal proporciona solo un subconjunto de campos:

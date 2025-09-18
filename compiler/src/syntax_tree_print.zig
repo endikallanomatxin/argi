@@ -200,6 +200,15 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             indent(lvl + 1);
             std.debug.print("Field:  .{s}\n", .{sfa.field_name});
         },
+        .index_access => |ia| {
+            std.debug.print("IndexAccess \n", .{});
+            indent(lvl + 1);
+            std.debug.print("Value: ", .{});
+            printNode(ia.value.*, 0);
+            indent(lvl + 1);
+            std.debug.print("Index:\n", .{});
+            printNode(ia.index.*, lvl + 2);
+        },
 
         // ── CODE-BLOCK ───────────────────────────────────────────────────
         .code_block => |cb| {
@@ -218,6 +227,15 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             indent(lvl + 1);
             std.debug.print("expr:\n", .{});
             printNode(df.*, lvl + 2);
+        },
+        .index_assignment => |ia| {
+            std.debug.print("IndexAssignment\n", .{});
+            indent(lvl + 1);
+            std.debug.print("target:\n", .{});
+            printNode(ia.target.*, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("value:\n", .{});
+            printNode(ia.value.*, lvl + 2);
         },
 
         // ── IF ───────────────────────────────────────────────────────────

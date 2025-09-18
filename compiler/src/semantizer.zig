@@ -241,6 +241,30 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
+            .index_access => |ia| self.handleIndexAccess(ia, s) catch |err| blk: {
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in index access: {s}",
+                        .{@errorName(err)},
+                    );
+                }
+                break :blk err;
+            },
+
+            .index_assignment => |ia| self.handleIndexAssignment(ia, s) catch |err| blk: {
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in index assignment: {s}",
+                        .{@errorName(err)},
+                    );
+                }
+                break :blk err;
+            },
+
             .function_call => |fc| self.handleCall(fc, s) catch |err| blk: {
                 if (err == error.Reported) break :blk err;
                 if (err == error.AmbiguousOverload) {
@@ -1027,6 +1051,123 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = fty };
     }
 
+    fn handleIndexAccess(
+        self: *Semantizer,
+        ia: syn.IndexAccess,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        const base = try self.visitNode(ia.value.*, s);
+        const idx = try self.visitNode(ia.index.*, s);
+
+        const input_te = try self.buildCallInput(&[_]CallArg{
+            .{ .name = "self", .expr = base },
+            .{ .name = "index", .expr = idx },
+        });
+
+        const name = "operator get[]";
+        const chosen = self.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
+            error.SymbolNotFound => {
+                const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
+                const available = try self.collectFunctionSignatures(name, s);
+                defer {
+                    self.allocator.free(actual_sig);
+                    self.allocator.free(available);
+                }
+                try self.diags.add(
+                    ia.value.*.location,
+                    .semantic,
+                    "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
+                    .{ name, actual_sig, available },
+                );
+                return error.Reported;
+            },
+            error.AmbiguousOverload => {
+                const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
+                const available = try self.collectFunctionSignatures(name, s);
+                defer {
+                    self.allocator.free(actual_sig);
+                    self.allocator.free(available);
+                }
+                try self.diags.add(
+                    ia.value.*.location,
+                    .semantic,
+                    "ambiguous call to '{s}' for arguments {s}. Possible overloads:\n{s}",
+                    .{ name, actual_sig, available },
+                );
+                return error.Reported;
+            },
+            else => return err,
+        };
+
+        const call_ptr = try self.allocator.create(sem.FunctionCall);
+        call_ptr.* = .{ .callee = chosen, .input = input_te.node };
+
+        const node = try self.makeNode(undefined, .{ .function_call = call_ptr }, s);
+        return .{ .node = node, .ty = self.functionReturnType(chosen) };
+    }
+
+    fn handleIndexAssignment(
+        self: *Semantizer,
+        ia: syn.IndexAssignment,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        if (ia.target.*.content != .index_access) return error.InvalidType;
+        const idx = ia.target.*.content.index_access;
+
+        const base = try self.visitNode(idx.value.*, s);
+        const index_expr = try self.visitNode(idx.index.*, s);
+        const value_expr = try self.visitNode(ia.value.*, s);
+
+        const ptr_self = try self.ensureMutablePointer(idx.value, base, s);
+
+        const input_te = try self.buildCallInput(&[_]CallArg{
+            .{ .name = "self", .expr = ptr_self },
+            .{ .name = "index", .expr = index_expr },
+            .{ .name = "value", .expr = value_expr },
+        });
+
+        const name = "operator set[]";
+        const chosen = self.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
+            error.SymbolNotFound => {
+                const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
+                const available = try self.collectFunctionSignatures(name, s);
+                defer {
+                    self.allocator.free(actual_sig);
+                    self.allocator.free(available);
+                }
+                try self.diags.add(
+                    ia.target.*.location,
+                    .semantic,
+                    "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
+                    .{ name, actual_sig, available },
+                );
+                return error.Reported;
+            },
+            error.AmbiguousOverload => {
+                const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
+                const available = try self.collectFunctionSignatures(name, s);
+                defer {
+                    self.allocator.free(actual_sig);
+                    self.allocator.free(available);
+                }
+                try self.diags.add(
+                    ia.target.*.location,
+                    .semantic,
+                    "ambiguous call to '{s}' for arguments {s}. Possible overloads:\n{s}",
+                    .{ name, actual_sig, available },
+                );
+                return error.Reported;
+            },
+            else => return err,
+        };
+
+        const call_ptr = try self.allocator.create(sem.FunctionCall);
+        call_ptr.* = .{ .callee = chosen, .input = input_te.node };
+
+        const node = try self.makeNode(undefined, .{ .function_call = call_ptr }, s);
+        return .{ .node = node, .ty = .{ .builtin = .Any } };
+    }
+
     //────────────────────────────────────────────────────  AUX STRUCT TYPES
     fn structTypeFromLiteral(
         self: *Semantizer,
@@ -1148,16 +1289,7 @@ pub const Semantizer = struct {
 
         const n = try self.makeNode(undefined, .{ .function_call = fc_ptr }, s);
 
-        const result_ty: sem.Type = if (chosen.isExtern())
-            switch (chosen.output.fields.len) {
-                0 => .{ .builtin = .Any },
-                1 => chosen.output.fields[0].ty,
-                else => .{ .struct_type = &chosen.output },
-            }
-        else if (chosen.output.fields.len == 0)
-            .{ .builtin = .Any }
-        else
-            .{ .struct_type = &chosen.output };
+        const result_ty = self.functionReturnType(chosen);
 
         return .{ .node = n, .ty = result_ty };
     }
@@ -1653,6 +1785,44 @@ pub const Semantizer = struct {
     }
 
     //────────────────────────────────────────────────── POINTER ASSIGNMENT
+    const CallArg = struct {
+        name: []const u8,
+        expr: TypedExpr,
+    };
+
+    fn buildCallInput(self: *Semantizer, args: []const CallArg) !TypedExpr {
+        var ty_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+        var val_fields = std.ArrayList(sem.StructValueLiteralField).init(self.allocator.*);
+
+        for (args) |arg| {
+            try ty_fields.append(.{ .name = arg.name, .ty = arg.expr.ty, .default_value = null });
+            try val_fields.append(.{ .name = arg.name, .value = arg.expr.node });
+        }
+
+        const ty_slice = try ty_fields.toOwnedSlice();
+        ty_fields.deinit();
+
+        const struct_ptr = try self.allocator.create(sem.StructType);
+        struct_ptr.* = .{ .fields = ty_slice };
+
+        const val_slice = try val_fields.toOwnedSlice();
+        val_fields.deinit();
+
+        const lit_ptr = try self.allocator.create(sem.StructValueLiteral);
+        lit_ptr.* = .{ .fields = val_slice, .ty = .{ .struct_type = struct_ptr } };
+
+        const node = try self.makeNode(undefined, .{ .struct_value_literal = lit_ptr }, null);
+        return .{ .node = node, .ty = .{ .struct_type = struct_ptr } };
+    }
+
+    fn functionReturnType(_: *Semantizer, fn_decl: *sem.FunctionDeclaration) sem.Type {
+        return switch (fn_decl.output.fields.len) {
+            0 => .{ .builtin = .Any },
+            1 => fn_decl.output.fields[0].ty,
+            else => .{ .struct_type = &fn_decl.output },
+        };
+    }
+
     fn handlePointerAssignment(
         self: *Semantizer,
         pa: syn.PointerAssignment,
@@ -1706,6 +1876,59 @@ pub const Semantizer = struct {
     }
 
     //──────────────────────────────────────────────────── HELPERS
+    fn ensureMutablePointer(
+        self: *Semantizer,
+        expr_node: *const syn.STNode,
+        te: TypedExpr,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        if (te.ty == .pointer_type) {
+            const info = te.ty.pointer_type.*;
+            if (info.mutability != .read_write) {
+                const ptr_str = try self.formatType(.{ .pointer_type = te.ty.pointer_type }, s);
+                defer self.allocator.free(ptr_str);
+                try self.diags.add(
+                    expr_node.location,
+                    .semantic,
+                    "cannot assign through pointer '{s}' because it is read-only; use '$&' when acquiring it",
+                    .{ptr_str},
+                );
+                return error.Reported;
+            }
+            return te;
+        }
+
+        if (te.node.content != .binding_use) {
+            try self.diags.add(
+                expr_node.location,
+                .semantic,
+                "cannot assign through indexed expression; take '$&' explicitly",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const binding = te.node.content.binding_use;
+        if (binding.mutability != .variable) {
+            try self.diags.add(
+                expr_node.location,
+                .semantic,
+                "binding '{s}' is immutable; declare it with '::' or use '&{s}'",
+                .{ binding.name, binding.name },
+            );
+            return error.Reported;
+        }
+
+        const child_ty = try self.allocator.create(sem.Type);
+        child_ty.* = te.ty;
+
+        const ptr_info = try self.allocator.create(sem.PointerType);
+        ptr_info.* = .{ .mutability = .read_write, .child = child_ty };
+
+        const addr_node = try self.makeNode(undefined, .{ .address_of = te.node }, null);
+        return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
+    }
+
     fn makeNode(
         self: *Semantizer,
         loc: tok.Location,
