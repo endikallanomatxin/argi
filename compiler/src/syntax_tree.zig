@@ -29,11 +29,13 @@ pub const Content = union(enum) {
     struct_type_literal: StructTypeLiteral,
     struct_value_literal: StructValueLiteral,
     struct_field_access: StructFieldAccess,
+    index_access: IndexAccess,
     return_statement: ReturnStatement,
     binary_operation: BinaryOperation,
     comparison: Comparison,
     if_statement: IfStatement,
     defer_statement: *STNode,
+    index_assignment: IndexAssignment,
     address_of: AddressOf,
     dereference: *STNode,
     pointer_assignment: PointerAssignment,
@@ -163,6 +165,16 @@ pub const StructValueLiteralField = struct {
 pub const StructFieldAccess = struct {
     struct_value: *STNode,
     field_name: []const u8,
+};
+
+pub const IndexAccess = struct {
+    value: *STNode,
+    index: *STNode,
+};
+
+pub const IndexAssignment = struct {
+    target: *STNode,
+    value: *STNode,
 };
 
 pub const BinaryOperation = struct {

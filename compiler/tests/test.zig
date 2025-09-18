@@ -161,3 +161,9 @@ test "353_deinit" {
     try build("tests/353_deinit.rg");
     try run();
 }
+
+test "36_get_and_set_index_operators" {
+    try clean();
+    try build("tests/36_get_and_set_index_operators.rg");
+    try run();
+}
