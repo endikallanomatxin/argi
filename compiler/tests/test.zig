@@ -143,3 +143,21 @@ test "334_abstract_instantiation" {
     try build("tests/334_abstract_instantiation.rg");
     try run();
 }
+
+test "351_init" {
+    try clean();
+    try build("tests/351_init.rg");
+    try run();
+}
+
+test "352_defer" {
+    try clean();
+    try build("tests/352_defer.rg");
+    try run();
+}
+
+test "353_deinit" {
+    try clean();
+    try build("tests/353_deinit.rg");
+    try run();
+}

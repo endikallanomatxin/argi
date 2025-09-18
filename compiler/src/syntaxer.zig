@@ -476,6 +476,18 @@ pub const Syntaxer = struct {
             else => {},
         }
 
+        if (self.tokenIs(.hash)) {
+            const hash_loc = self.tokenLocation();
+            self.advanceOne();
+            const ident = try self.parseIdentifier();
+            if (!std.mem.eql(u8, ident, "defer")) {
+                try self.diags.add(hash_loc, .syntax, "unknown directive '#{s}'", .{ident});
+                return SyntaxerError.ExpectedDeclarationOrAssignment;
+            }
+            const expr = try self.parseExpression();
+            return try self.makeNode(.{ .defer_statement = expr }, hash_loc);
+        }
+
         const id_loc = self.tokenLocation();
         const name = try self.parseIdentifier();
 
