@@ -191,6 +191,13 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             printNode(pa.value, lvl + 2);
         },
 
+        .type_initializer => |ti| {
+            std.debug.print("TypeInitializer {s}\n", .{ti.type_decl.name});
+            indent(lvl + 1);
+            std.debug.print("args:\n", .{});
+            printNode(ti.args, lvl + 2);
+        },
+
         else => std.debug.print("Unknown SG node\n", .{}),
     }
 }
