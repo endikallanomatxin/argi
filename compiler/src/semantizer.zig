@@ -1078,6 +1078,10 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!TypedExpr {
         const tv_in = try self.visitNode(call.input.*, s);
+        if (s.lookupType(call.callee)) |type_decl| {
+            return self.handleTypeInitializer(call, tv_in, type_decl, s);
+        }
+
         if (tv_in.ty != .struct_type) return error.InvalidType;
 
         var chosen: *sem.FunctionDeclaration = undefined;
@@ -1132,6 +1136,85 @@ pub const Semantizer = struct {
             .{ .struct_type = &chosen.output };
 
         return .{ .node = n, .ty = result_ty };
+    }
+
+    fn handleTypeInitializer(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        tv_in: TypedExpr,
+        type_decl: *sem.TypeDeclaration,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        if (tv_in.ty != .struct_type) {
+            try self.diags.add(
+                call.input.*.location,
+                .semantic,
+                "expected struct literal arguments when constructing type '{s}'",
+                .{call.callee},
+            );
+            return error.Reported;
+        }
+
+        var init_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+        defer init_fields.deinit();
+
+        const ptr_child = try self.allocator.create(sem.Type);
+        ptr_child.* = type_decl.ty;
+
+        const ptr_info = try self.allocator.create(sem.PointerType);
+        ptr_info.* = .{ .mutability = .read_write, .child = ptr_child };
+
+        try init_fields.append(.{ .name = "p", .ty = .{ .pointer_type = ptr_info }, .default_value = null });
+
+        const user_struct = tv_in.ty.struct_type;
+        for (user_struct.fields) |fld| {
+            try init_fields.append(.{ .name = fld.name, .ty = fld.ty, .default_value = null });
+        }
+
+        const init_struct = try self.allocator.create(sem.StructType);
+        init_struct.* = .{ .fields = try init_fields.toOwnedSlice() };
+
+        const init_input_ty: sem.Type = .{ .struct_type = init_struct };
+
+        const init_fn = self.resolveOverload("init", init_input_ty, s) catch |err| switch (err) {
+            error.SymbolNotFound => {
+                const actual_sig = try self.formatCallInput(user_struct, s);
+                const available = try self.collectFunctionSignatures("init", s);
+                defer {
+                    self.allocator.free(actual_sig);
+                    self.allocator.free(available);
+                }
+                try self.diags.add(
+                    call.input.*.location,
+                    .semantic,
+                    "failed to initialize type '{s}': no 'init' overload accepts arguments {s}. Available overloads:\n{s}",
+                    .{ call.callee, actual_sig, available },
+                );
+                return error.Reported;
+            },
+            error.AmbiguousOverload => {
+                const candidates_result = self.buildOverloadCandidatesString("init", init_input_ty, s) catch null;
+                const candidates = candidates_result orelse "";
+                defer if (candidates_result) |owned| self.allocator.free(owned);
+                try self.diags.add(
+                    call.input.*.location,
+                    .semantic,
+                    "failed to initialize type '{s}': matching 'init' overloads are ambiguous. Candidates:\n{s}",
+                    .{ call.callee, candidates },
+                );
+                return error.Reported;
+            },
+            else => return err,
+        };
+
+        const type_init = sem.TypeInitializer{
+            .type_decl = type_decl,
+            .init_fn = init_fn,
+            .args = tv_in.node,
+        };
+
+        const init_node = try self.makeNode(undefined, .{ .type_initializer = type_init }, null);
+        return .{ .node = init_node, .ty = type_decl.ty };
     }
 
     fn resolveOverload(_: *Semantizer, name: []const u8, in_ty: sem.Type, s: *Scope) SemErr!*sem.FunctionDeclaration {
