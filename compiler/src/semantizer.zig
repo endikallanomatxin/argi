@@ -17,6 +17,7 @@ const SemErr = error{
     OutOfMemory,
     OptionalUnwrap,
     AmbiguousOverload,
+    Reported,
 };
 
 const TypedExpr = struct {
@@ -240,6 +241,7 @@ pub const Semantizer = struct {
             },
 
             .function_call => |fc| self.handleCall(fc, s) catch |err| blk: {
+                if (err == error.Reported) break :blk err;
                 if (err == error.AmbiguousOverload) {
                     // try to produce detailed candidates list
                     const tv_in = self.visitNode(fc.input.*, s) catch null;
@@ -315,32 +317,38 @@ pub const Semantizer = struct {
             },
 
             .address_of => |p| self.handleAddressOf(p, s) catch |err| blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in address-of operation: {s}",
-                    .{@errorName(err)},
-                );
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in address-of operation: {s}",
+                        .{@errorName(err)},
+                    );
+                }
                 break :blk err;
             },
 
             .dereference => |p| self.handleDereference(p, s) catch |err| blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in dereference operation: {s}",
-                    .{@errorName(err)},
-                );
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in dereference operation: {s}",
+                        .{@errorName(err)},
+                    );
+                }
                 break :blk err;
             },
 
             .pointer_assignment => |pa| self.handlePointerAssignment(pa, s) catch |err| blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in pointer assignment: {s}",
-                    .{@errorName(err)},
-                );
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in pointer assignment: {s}",
+                        .{@errorName(err)},
+                    );
+                }
                 break :blk err;
             },
         };
@@ -1078,7 +1086,33 @@ pub const Semantizer = struct {
         } else if (call.type_arguments) |targs| {
             chosen = try self.instantiateGeneric(call.callee, targs, s);
         } else {
-            chosen = try self.resolveOverload(call.callee, tv_in.ty, s);
+            chosen = self.resolveOverload(call.callee, tv_in.ty, s) catch |err| switch (err) {
+                error.SymbolNotFound => {
+                    if (tv_in.ty == .struct_type) {
+                        const actual_sig = try self.formatCallInput(tv_in.ty.struct_type, s);
+                        const available = try self.collectFunctionSignatures(call.callee, s);
+                        defer {
+                            self.allocator.free(actual_sig);
+                            self.allocator.free(available);
+                        }
+                        try self.diags.add(
+                            call.input.*.location,
+                            .semantic,
+                            "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
+                            .{ call.callee, actual_sig, available },
+                        );
+                    } else {
+                        try self.diags.add(
+                            call.input.*.location,
+                            .semantic,
+                            "no overload of '{s}' matches the provided arguments",
+                            .{call.callee},
+                        );
+                    }
+                    return error.Reported;
+                },
+                else => return err,
+            };
         }
 
         const fc_ptr = try self.allocator.create(sem.FunctionCall);
@@ -1429,12 +1463,26 @@ pub const Semantizer = struct {
     ) SemErr!TypedExpr {
         const te = try self.visitNode(addr.value.*, s);
 
-        if (te.node.content != .binding_use)
-            return error.InvalidType;
+        if (te.node.content != .binding_use) {
+            try self.diags.add(
+                addr.value.*.location,
+                .semantic,
+                "cannot take the address of this expression; only named variables are addressable",
+                .{},
+            );
+            return error.Reported;
+        }
 
         const binding = te.node.content.binding_use;
-        if (addr.mutability == .read_write and binding.mutability != .variable)
-            return error.InvalidType;
+        if (addr.mutability == .read_write and binding.mutability != .variable) {
+            try self.diags.add(
+                addr.value.*.location,
+                .semantic,
+                "binding '{s}' is immutable; declare it with '::' or take '&{s}' instead of '$&{s}'",
+                .{ binding.name, binding.name, binding.name },
+            );
+            return error.Reported;
+        }
 
         const child = try self.allocator.create(sem.Type);
         child.* = te.ty;
@@ -1456,7 +1504,17 @@ pub const Semantizer = struct {
     ) SemErr!TypedExpr {
         const te = try self.visitNode(inner.*, s);
 
-        if (te.ty != .pointer_type) return error.InvalidType;
+        if (te.ty != .pointer_type) {
+            const ty_str = try self.formatType(te.ty, s);
+            defer self.allocator.free(ty_str);
+            try self.diags.add(
+                inner.*.location,
+                .semantic,
+                "cannot dereference value of type '{s}'; expected a pointer",
+                .{ty_str},
+            );
+            return error.Reported;
+        }
         const ptr_info_ptr = te.ty.pointer_type;
         const ptr_info = ptr_info_ptr.*;
         const base_ty = ptr_info.child.*; // T
@@ -1481,11 +1539,34 @@ pub const Semantizer = struct {
         const tgt_te = try self.visitNode(pa.target.*, s);
         const deref_sg = tgt_te.node.content.dereference;
 
-        if (deref_sg.pointer_type.*.mutability != .read_write)
-            return error.InvalidType;
+        if (deref_sg.pointer_type.*.mutability != .read_write) {
+            const ptr_ty: sem.Type = .{ .pointer_type = deref_sg.pointer_type };
+            const ptr_str = try self.formatType(ptr_ty, s);
+            defer self.allocator.free(ptr_str);
+            try self.diags.add(
+                pa.target.*.location,
+                .semantic,
+                "cannot assign through pointer '{s}' because it is read-only; use '$&' when acquiring it",
+                .{ptr_str},
+            );
+            return error.Reported;
+        }
 
-        if (!typesStructurallyEqual(deref_sg.ty, rhs.ty))
-            return error.InvalidType;
+        if (!typesStructurallyEqual(deref_sg.ty, rhs.ty)) {
+            const expected = try self.formatType(deref_sg.ty, s);
+            const actual = try self.formatType(rhs.ty, s);
+            defer {
+                self.allocator.free(expected);
+                self.allocator.free(actual);
+            }
+            try self.diags.add(
+                pa.value.*.location,
+                .semantic,
+                "cannot assign value of type '{s}' to location of type '{s}'",
+                .{ actual, expected },
+            );
+            return error.Reported;
+        }
 
         const n = try self.makeNode(
             undefined,
@@ -1689,6 +1770,56 @@ pub const Semantizer = struct {
                 try buf.appendSlice("{...}");
             },
         }
+    }
+
+    fn formatType(self: *Semantizer, t: sem.Type, s: *Scope) ![]u8 {
+        var buf = std.ArrayList(u8).init(self.allocator.*);
+        errdefer buf.deinit();
+        try self.appendTypePretty(&buf, t, s);
+        return try buf.toOwnedSlice();
+    }
+
+    fn formatCallInput(self: *Semantizer, st: *const sem.StructType, s: *Scope) ![]u8 {
+        var buf = std.ArrayList(u8).init(self.allocator.*);
+        errdefer buf.deinit();
+
+        try buf.appendSlice("(");
+        var i: usize = 0;
+        while (i < st.fields.len) : (i += 1) {
+            const fld = st.fields[i];
+            if (i != 0) try buf.appendSlice(", ");
+            try buf.appendSlice(".");
+            try buf.appendSlice(fld.name);
+            try buf.appendSlice(": ");
+            try self.appendTypePretty(&buf, fld.ty, s);
+        }
+        try buf.appendSlice(")");
+
+        return try buf.toOwnedSlice();
+    }
+
+    fn collectFunctionSignatures(self: *Semantizer, name: []const u8, s: *Scope) ![]u8 {
+        var buf = std.ArrayList(u8).init(self.allocator.*);
+        errdefer buf.deinit();
+
+        var cur: ?*Scope = s;
+        var first = true;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr(name)) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (!first) try buf.appendSlice("\n");
+                    first = false;
+                    try buf.appendSlice("  - ");
+                    try self.appendFunctionSignature(&buf, cand, s);
+                }
+            }
+        }
+
+        if (first) {
+            try buf.appendSlice("  (none)");
+        }
+
+        return try buf.toOwnedSlice();
     }
 
     fn typeNameFor(self: *Semantizer, s: *Scope, t: sem.Type) ?[]const u8 {
