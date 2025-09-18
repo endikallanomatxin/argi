@@ -25,24 +25,30 @@ This repository contains a compiler for a new programming language written in Zi
 ## Guidelines
 
 - To add a new feature:
-    1. Create a `.rg` test that demonstrates the feature in `compiler/tests/`.
-    2. Draft a small implementation plan, evaluating whether the change affects
+    1. Checkout the language description and draft-modules to understand the
+       feature.
+    2. Create a `.rg` test that demonstrates the feature in `compiler/tests/`.
+    3. Draft a small implementation plan, evaluating whether the change affects
        tokenizing, syntaxing, semantizing or codegen.
-    3. Implement the feature in `compiler/src/` until it compiles.
-    4. Ensure all tests pass and generated LLVM IR makes sense for the feature.
-    5. Add the test to `compiler/tests/test.zig` where applicable.
-    6. Evaluate if the diagnostics need improvement for the new feature and
+    4. Implement the feature in `compiler/src/` until it compiles.
+    5. Ensure all tests pass and generated LLVM IR makes sense for the feature.
+    6. Add the test to `compiler/tests/test.zig` where applicable.
+    7. Evaluate if the diagnostics need improvement for the new feature and
        enhance them.
 
 - If during development of a feature, you find some tangential improvement that
-should be made, if it is not worth it to handle it at the moment, mark it as a
-TODO and focus on the main feature first.
+should be made, or you foresee that some area needs further work, if it is not
+worth it to handle it at the moment, mark it as a TODO and focus on the main
+feature first.
 
 - Keep CLI help aligned with the tool's current capabilities.
 
 - Follow Zig coding style:
     - spaces, snake_case for variables/functions/files, descriptive names.
     - File naming: `snake_case.zig` (e.g., `parser.zig`, `type_checker.zig`).
+
+- Use comments to explain non-obvious code, especially complex algorithms or
+design decisions.
 
 - Commits: focused, descriptive subject in imperative mood (e.g., "add binary
 literals to lexer").

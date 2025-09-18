@@ -82,6 +82,38 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
     indent(lvl);
 
     switch (node.content) {
+        // ── ABSTRACTS (minimal printing) ─────────────────────────────────
+        .abstract_declaration => |ad| {
+            std.debug.print("AbstractDecl \"{s}\"\n", .{ad.name});
+            if (ad.requires_abstracts.len > 0) {
+                indent(lvl + 1);
+                std.debug.print("requires:", .{});
+                for (ad.requires_abstracts) |r| {
+                    std.debug.print(" {s}", .{r});
+                }
+                std.debug.print("\n", .{});
+            }
+            if (ad.requires_functions.len > 0) {
+                for (ad.requires_functions) |rf| {
+                    indent(lvl + 1);
+                    std.debug.print("require fn {s} ", .{rf.name});
+                    printStructTypeLiteral(rf.input, lvl + 1);
+                    std.debug.print(" -> ", .{});
+                    printStructTypeLiteral(rf.output, lvl + 1);
+                    std.debug.print("\n", .{});
+                }
+            }
+        },
+        .abstract_canbe => |rel| {
+            std.debug.print("AbstractCanBe \"{s}\" ", .{rel.name});
+            printType(rel.ty, lvl);
+            std.debug.print("\n", .{});
+        },
+        .abstract_defaultsto => |rel| {
+            std.debug.print("AbstractDefault \"{s}\" ", .{rel.name});
+            printType(rel.ty, lvl);
+            std.debug.print("\n", .{});
+        },
         // ── SYMBOL DECLARATION ────────────────────────────────────────────
         .symbol_declaration => |d| {
             const mut = if (d.mutability == .variable) "var" else "const";

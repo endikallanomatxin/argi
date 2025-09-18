@@ -176,6 +176,48 @@ pub const Syntaxer = struct {
         return syn.Type{ .type_name = name };
     }
 
+    // Parse an abstract body: a parenthesized, comma-separated list of items.
+    // Each item can be:
+    //   - an identifier: composed abstract name (e.g., Addable)
+    //   - a function requirement: name ( StructTypeLiteral ) -> ( StructTypeLiteral )
+    // Newlines and comments are ignored.
+    fn parseAbstractBody(self: *Syntaxer) SyntaxerError!struct {
+        req_names: []const []const u8,
+        req_funcs: []const syn.AbstractFunctionRequirement,
+    } {
+        if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        var names = std.ArrayList([]const u8).init(self.allocator.*);
+        var funcs = std.ArrayList(syn.AbstractFunctionRequirement).init(self.allocator.*);
+
+        while (!self.tokenIs(.close_parenthesis)) {
+            const nm = try self.parseIdentifier();
+
+            // Function requirement if followed by '('
+            if (self.tokenIs(.open_parenthesis)) {
+                const in_st = try self.parseStructTypeLiteral();
+                if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
+                self.advanceOne();
+                const out_st = try self.parseStructTypeLiteral();
+                try funcs.append(.{ .name = nm, .input = in_st, .output = out_st });
+            } else {
+                // Just a composed abstract name
+                try names.append(nm);
+            }
+
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            }
+        }
+        if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+        self.advanceOne();
+        return .{ .req_names = names.items, .req_funcs = funcs.items };
+    }
+
     // ( .field : Type? (= expr)? , ... )
     fn parseStructTypeLiteral(self: *Syntaxer) SyntaxerError!syn.StructTypeLiteral {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
@@ -497,6 +539,26 @@ pub const Syntaxer = struct {
             );
         }
 
+        // ----------- ABSTRACT RELATIONS (canbe/defaultsto) -----------------
+        // <Name>[#(...)] canbe <Type>
+        // <Name>[#(...)] defaultsto <Type>
+        switch (self.current().content) {
+            .identifier => |kw| {
+                if (std.mem.eql(u8, kw, "canbe")) {
+                    self.advanceOne();
+                    const ty = (try self.parseType()).?; // required
+                    const rel = syn.AbstractCanBe{ .name = name, .generic_params = generic_params, .ty = ty };
+                    return try self.makeNode(.{ .abstract_canbe = rel }, id_loc);
+                } else if (std.mem.eql(u8, kw, "defaultsto")) {
+                    self.advanceOne();
+                    const ty = (try self.parseType()).?; // required
+                    const rel = syn.AbstractDefault{ .name = name, .generic_params = generic_params, .ty = ty };
+                    return try self.makeNode(.{ .abstract_defaultsto = rel }, id_loc);
+                }
+            },
+            else => {},
+        }
+
         // ----------- SYMBOL / TYPE DECLARATION -----------------------------
         if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) {
             var mut: syn.Mutability = .constant;
@@ -520,6 +582,23 @@ pub const Syntaxer = struct {
                         .value = lit_node,
                     };
                     return try self.makeNode(.{ .type_declaration = tdecl }, id_loc);
+                } else if (ty == .type_name and std.mem.eql(u8, ty.type_name, "Abstract")) {
+                    // Abstract declaration: Name : Abstract (= ( ... ))?
+                    var req_names: []const []const u8 = &.{};
+                    var req_funcs: []const syn.AbstractFunctionRequirement = &.{};
+                    if (self.tokenIs(.equal)) {
+                        self.advanceOne();
+                        const body = try self.parseAbstractBody();
+                        req_names = body.req_names;
+                        req_funcs = body.req_funcs;
+                    }
+                    const adecl = syn.AbstractDeclaration{
+                        .name = name,
+                        .generic_params = generic_params,
+                        .requires_abstracts = req_names,
+                        .requires_functions = req_funcs,
+                    };
+                    return try self.makeNode(.{ .abstract_declaration = adecl }, id_loc);
                 }
             }
 

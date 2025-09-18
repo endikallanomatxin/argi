@@ -523,32 +523,50 @@ pub const CodeGenerator = struct {
         // 2) tipo declarado (siempre está resuelto por el semantizador)
         const llvm_decl_ty = try self.toLLVMType(b.ty);
 
-        // 3) reserva de espacio
         const cname = try self.dupZ(b.name);
-        const alloca = c.LLVMBuildAlloca(self.builder, llvm_decl_ty, cname.ptr);
+
+        // 3) reserva de espacio
+        //    - En global scope: crear variable global
+        //    - Dentro de función: alloca en el entry
+        var storage: llvm.c.LLVMValueRef = null;
+        if (self.current_scope.parent == null) {
+            // Global variable
+            storage = c.LLVMAddGlobal(self.module, llvm_decl_ty, cname.ptr);
+            // Use zero initializer for globals (safer than undef)
+            const zero = c.LLVMConstNull(llvm_decl_ty);
+            c.LLVMSetInitializer(storage, zero);
+        } else {
+            storage = c.LLVMBuildAlloca(self.builder, llvm_decl_ty, cname.ptr);
+        }
 
         // 4) registrar en la tabla
         try self.current_scope.symbols.put(b.name, .{
             .cname = cname,
             .mutability = b.mutability,
             .type_ref = llvm_decl_ty,
-            .ref = alloca,
+            .ref = storage,
             .initialized = init_tv != null,
         });
 
         // 5) almacenar valor inicial, manejando struct-parciales
         if (init_tv) |tv| {
+            // Global initializers must be constant; for now, only allow none
+            if (self.current_scope.parent == null) {
+                // Non-constant global init not supported yet; ignore for now
+                // (could enhance by constant-folding later)
+                return;
+            }
             const value_ref = tv.value_ref;
             const target_ty = llvm_decl_ty;
 
             if (tv.type_ref == llvm_decl_ty) {
                 // tipos idénticos → copiar tal cual
-                _ = c.LLVMBuildStore(self.builder, tv.value_ref, alloca);
+                _ = c.LLVMBuildStore(self.builder, tv.value_ref, storage);
             } else if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMPointerTypeKind and
                 c.LLVMGetTypeKind(target_ty) == c.LLVMGetTypeKind(tv.type_ref))
             {
                 const casted = c.LLVMBuildBitCast(self.builder, value_ref, target_ty, "ptr.cast");
-                _ = c.LLVMBuildStore(self.builder, casted, alloca);
+                _ = c.LLVMBuildStore(self.builder, casted, storage);
             } else if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMStructTypeKind and
                 c.LLVMGetTypeKind(llvm_decl_ty) == c.LLVMStructTypeKind)
             {
@@ -590,7 +608,7 @@ pub const CodeGenerator = struct {
                     }
                 }
 
-                _ = c.LLVMBuildStore(self.builder, agg, alloca);
+                _ = c.LLVMBuildStore(self.builder, agg, storage);
             } else {
                 return CodegenError.InvalidType;
             }
@@ -890,30 +908,22 @@ pub const CodeGenerator = struct {
             idx += 1;
         }
 
-        _ = c.LLVMBuildCall2(
+        // Build the extern call (C ABI)
+        const call_inst = c.LLVMBuildCall2(
             self.builder,
             sym.type_ref,
             sym.ref,
             argv.ptr,
             @intCast(idx),
-            "",
+            "call",
         );
 
-        // retorno según nº de campos
+        // Return according to number of return fields
         switch (callee_decl.output.fields.len) {
             0 => return null,
             1 => {
-                // el valor ya está retornado por la instrucción `call`
                 const ret_ty = c.LLVMGetReturnType(sym.type_ref);
-                const call_val = c.LLVMBuildCall2(
-                    self.builder,
-                    sym.type_ref,
-                    sym.ref,
-                    argv.ptr,
-                    @intCast(idx),
-                    "calltmp",
-                );
-                return .{ .value_ref = call_val, .type_ref = ret_ty };
+                return .{ .value_ref = call_inst, .type_ref = ret_ty };
             },
             else => {
                 const loaded = c.LLVMBuildLoad2(self.builder, sret_ty, sret_tmp, "ret");
