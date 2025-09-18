@@ -23,6 +23,7 @@ pub const SyntaxerError = error{
     ExpectedDeclarationOrAssignment,
     ExpectedKeywordReturn,
     ExpectedKeywordIf,
+    ExpectedAmpersand,
     OutOfMemory,
 };
 
@@ -153,15 +154,41 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.equal) or self.tokenIs(.comma) or self.tokenIs(.close_parenthesis))
             return null;
 
-        if (self.tokenIs(.ampersand)) { // &T
-            self.advanceOne();
-            const base_ty = (try self.parseType()).?; // recursivo
+        if (self.tokenIs(.ampersand) or self.tokenIs(.dollar)) {
+            var mutability: syn.PointerMutability = .read_only;
+            var op_loc = self.tokenLocation();
 
-            // guardar el sub-tipo en heap: debe vivir más que esta llamada
+            if (self.tokenIs(.dollar)) {
+                mutability = .read_write;
+                self.advanceOne();
+
+                if (!self.tokenIs(.ampersand)) {
+                    try self.diags.add(op_loc, .syntax, "expected '&' after '$' for mutable pointer type", .{});
+                    return SyntaxerError.ExpectedAmpersand;
+                }
+                op_loc = self.tokenLocation();
+            }
+
+            if (!self.tokenIs(.ampersand)) {
+                try self.diags.add(op_loc, .syntax, "expected '&' for pointer type", .{});
+                return SyntaxerError.ExpectedAmpersand;
+            }
+
+            self.advanceOne();
+            const base_ty_opt = try self.parseType();
+            if (base_ty_opt == null) {
+                try self.diags.add(op_loc, .syntax, "expected type after pointer prefix", .{});
+                return SyntaxerError.ExpectedIdentifier;
+            }
+            const base_ty = base_ty_opt.?;
+
             const ptr_inner = try self.allocator.create(syn.Type);
             ptr_inner.* = base_ty;
 
-            return syn.Type{ .pointer_type = ptr_inner };
+            const ptr_ty = try self.allocator.create(syn.PointerType);
+            ptr_ty.* = .{ .mutability = mutability, .child = ptr_inner };
+
+            return syn.Type{ .pointer_type = ptr_ty };
         } else if (self.tokenIs(.open_parenthesis)) {
             const lit = try self.parseStructTypeLiteral();
             return syn.Type{ .struct_type_literal = lit };
@@ -328,11 +355,29 @@ pub const Syntaxer = struct {
     fn parsePrimary(self: *Syntaxer) !*syn.STNode {
         const t = self.current();
 
-        if (self.tokenIs(.ampersand)) {
-            const loc = t.location;
+        if (self.tokenIs(.ampersand) or self.tokenIs(.dollar)) {
+            var mutability: syn.PointerMutability = .read_only;
+            var op_loc = t.location;
+
+            if (self.tokenIs(.dollar)) {
+                mutability = .read_write;
+                self.advanceOne();
+
+                if (!self.tokenIs(.ampersand)) {
+                    try self.diags.add(op_loc, .syntax, "expected '&' after '$' for mutable pointer", .{});
+                    return SyntaxerError.ExpectedAmpersand;
+                }
+                op_loc = self.tokenLocation();
+            }
+
+            if (!self.tokenIs(.ampersand)) {
+                try self.diags.add(op_loc, .syntax, "expected '&' for address-of", .{});
+                return SyntaxerError.ExpectedAmpersand;
+            }
+
             self.advanceOne();
             const inner = try self.parsePrimary(); // recursivo
-            return try self.makeNode(.{ .address_of = inner }, loc);
+            return try self.makeNode(.{ .address_of = .{ .value = inner, .mutability = mutability } }, op_loc);
         }
 
         const base: *syn.STNode = switch (t.content) {
