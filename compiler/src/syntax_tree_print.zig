@@ -213,6 +213,13 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             if (ret.expression) |e| printNode(e.*, lvl + 1);
         },
 
+        .defer_statement => |df| {
+            std.debug.print("Defer\n", .{});
+            indent(lvl + 1);
+            std.debug.print("expr:\n", .{});
+            printNode(df.*, lvl + 2);
+        },
+
         // ── IF ───────────────────────────────────────────────────────────
         .if_statement => |ifs| {
             std.debug.print("If\n", .{});

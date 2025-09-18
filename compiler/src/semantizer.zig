@@ -66,6 +66,7 @@ pub const Semantizer = struct {
 
         self.root_nodes = try self.root_list.toOwnedSlice();
         self.root_list.deinit();
+        self.clearDeferred(&global);
         return self.root_nodes;
     }
 
@@ -77,7 +78,7 @@ pub const Semantizer = struct {
     //────────────────────────────────────────────────────────────────── visitors
     fn visitNode(self: *Semantizer, n: syn.STNode, s: *Scope) SemErr!TypedExpr {
         return switch (n.content) {
-            .symbol_declaration => |d| self.handleSymbolDecl(d, s) catch |err| blk: {
+            .symbol_declaration => |d| self.handleSymbolDecl(d, s, n.location) catch |err| blk: {
                 switch (err) {
                     error.UnknownType => {
                         // Try to extract the written type name when available
@@ -303,6 +304,18 @@ pub const Semantizer = struct {
                     "error in return statement: {s}",
                     .{@errorName(err)},
                 );
+                break :blk err;
+            },
+
+            .defer_statement => |expr| self.handleDefer(expr, s) catch |err| blk: {
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in defer statement: {s}",
+                        .{@errorName(err)},
+                    );
+                }
                 break :blk err;
             },
 
@@ -688,8 +701,15 @@ pub const Semantizer = struct {
         for (blk.items) |st|
             _ = try self.visitNode(st.*, &child);
 
+        var d_idx: usize = child.deferred.items.len;
+        while (d_idx > 0) : (d_idx -= 1) {
+            const group = child.deferred.items[d_idx - 1];
+            for (group.nodes) |node| try child.nodes.append(node);
+        }
+
         const slice = try child.nodes.toOwnedSlice();
         child.nodes.deinit();
+        self.clearDeferred(&child);
 
         const cb = try self.allocator.create(sem.CodeBlock);
         cb.* = .{ .nodes = slice, .ret_val = null };
@@ -703,6 +723,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         d: syn.SymbolDeclaration,
         s: *Scope,
+        loc: tok.Location,
     ) SemErr!TypedExpr {
         if (s.bindings.contains(d.name))
             return error.SymbolAlreadyDefined;
@@ -722,10 +743,12 @@ pub const Semantizer = struct {
         };
 
         try s.bindings.put(d.name, bd);
-        const n = try self.makeNode(undefined, .{ .binding_declaration = bd }, s);
+        const n = try self.makeNode(loc, .{ .binding_declaration = bd }, s);
         if (s.parent == null) try self.root_list.append(n);
 
         if (d.value) |v| bd.initialization = (try self.visitNode(v.*, s)).node;
+
+        try self.maybeScheduleAutoDeinit(bd, loc, s);
 
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -888,6 +911,7 @@ pub const Semantizer = struct {
             try lst.append(fn_ptr);
             try p.functions.put(f.name, lst);
         }
+        self.clearDeferred(&child);
         const n = try self.makeNode(loc, .{ .function_declaration = fn_ptr }, p);
         if (p.parent == null) try self.root_list.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
@@ -1078,6 +1102,10 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!TypedExpr {
         const tv_in = try self.visitNode(call.input.*, s);
+        if (s.lookupType(call.callee)) |type_decl| {
+            return self.handleTypeInitializer(call, tv_in, type_decl, s);
+        }
+
         if (tv_in.ty != .struct_type) return error.InvalidType;
 
         var chosen: *sem.FunctionDeclaration = undefined;
@@ -1132,6 +1160,85 @@ pub const Semantizer = struct {
             .{ .struct_type = &chosen.output };
 
         return .{ .node = n, .ty = result_ty };
+    }
+
+    fn handleTypeInitializer(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        tv_in: TypedExpr,
+        type_decl: *sem.TypeDeclaration,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        if (tv_in.ty != .struct_type) {
+            try self.diags.add(
+                call.input.*.location,
+                .semantic,
+                "expected struct literal arguments when constructing type '{s}'",
+                .{call.callee},
+            );
+            return error.Reported;
+        }
+
+        var init_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+        defer init_fields.deinit();
+
+        const ptr_child = try self.allocator.create(sem.Type);
+        ptr_child.* = type_decl.ty;
+
+        const ptr_info = try self.allocator.create(sem.PointerType);
+        ptr_info.* = .{ .mutability = .read_write, .child = ptr_child };
+
+        try init_fields.append(.{ .name = "p", .ty = .{ .pointer_type = ptr_info }, .default_value = null });
+
+        const user_struct = tv_in.ty.struct_type;
+        for (user_struct.fields) |fld| {
+            try init_fields.append(.{ .name = fld.name, .ty = fld.ty, .default_value = null });
+        }
+
+        const init_struct = try self.allocator.create(sem.StructType);
+        init_struct.* = .{ .fields = try init_fields.toOwnedSlice() };
+
+        const init_input_ty: sem.Type = .{ .struct_type = init_struct };
+
+        const init_fn = self.resolveOverload("init", init_input_ty, s) catch |err| switch (err) {
+            error.SymbolNotFound => {
+                const actual_sig = try self.formatCallInput(user_struct, s);
+                const available = try self.collectFunctionSignatures("init", s);
+                defer {
+                    self.allocator.free(actual_sig);
+                    self.allocator.free(available);
+                }
+                try self.diags.add(
+                    call.input.*.location,
+                    .semantic,
+                    "failed to initialize type '{s}': no 'init' overload accepts arguments {s}. Available overloads:\n{s}",
+                    .{ call.callee, actual_sig, available },
+                );
+                return error.Reported;
+            },
+            error.AmbiguousOverload => {
+                const candidates_result = self.buildOverloadCandidatesString("init", init_input_ty, s) catch null;
+                const candidates = candidates_result orelse "";
+                defer if (candidates_result) |owned| self.allocator.free(owned);
+                try self.diags.add(
+                    call.input.*.location,
+                    .semantic,
+                    "failed to initialize type '{s}': matching 'init' overloads are ambiguous. Candidates:\n{s}",
+                    .{ call.callee, candidates },
+                );
+                return error.Reported;
+            },
+            else => return err,
+        };
+
+        const type_init = sem.TypeInitializer{
+            .type_decl = type_decl,
+            .init_fn = init_fn,
+            .args = tv_in.node,
+        };
+
+        const init_node = try self.makeNode(undefined, .{ .type_initializer = type_init }, null);
+        return .{ .node = init_node, .ty = type_decl.ty };
     }
 
     fn resolveOverload(_: *Semantizer, name: []const u8, in_ty: sem.Type, s: *Scope) SemErr!*sem.FunctionDeclaration {
@@ -1245,6 +1352,7 @@ pub const Semantizer = struct {
                     }
                     const n = try self.makeNode(tmpl.location, .{ .function_declaration = fn_ptr }, null);
                     try self.root_list.append(n);
+                    self.clearDeferred(&child);
                     return fn_ptr;
                 }
             }
@@ -1329,6 +1437,7 @@ pub const Semantizer = struct {
                     const n = try self.makeNode(tmpl.location, .{ .function_declaration = fn_ptr }, null);
                     // Always add instantiated functions at the root for codegen order
                     try self.root_list.append(n);
+                    self.clearDeferred(&child);
                     return fn_ptr;
                 }
             }
@@ -1494,6 +1603,23 @@ pub const Semantizer = struct {
 
         const addr_node = try self.makeNode(undefined, .{ .address_of = te.node }, null);
         return .{ .node = addr_node, .ty = out_ty };
+    }
+
+    fn handleDefer(
+        self: *Semantizer,
+        expr: *syn.STNode,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        const start_len = s.nodes.items.len;
+        const te = try self.visitNode(expr.*, s);
+
+        if (s.nodes.items.len > start_len) {
+            const new_nodes = s.nodes.items[start_len..];
+            try self.registerDefer(s, new_nodes);
+            s.nodes.items.len = start_len;
+        }
+
+        return .{ .node = te.node, .ty = .{ .builtin = .Any } };
     }
 
     //──────────────────────────────────────────────────── DEREFERENCE
@@ -1834,6 +1960,68 @@ pub const Semantizer = struct {
         }
         return null;
     }
+
+    fn registerDefer(self: *Semantizer, s: *Scope, nodes: []const *sem.SGNode) !void {
+        if (nodes.len == 0) return;
+        const copy = try self.allocator.alloc(*sem.SGNode, nodes.len);
+        std.mem.copyForwards(*sem.SGNode, copy, nodes);
+        try s.deferred.append(.{ .nodes = copy });
+    }
+
+    fn clearDeferred(self: *Semantizer, s: *Scope) void {
+        for (s.deferred.items) |group| self.allocator.free(group.nodes);
+        s.deferred.deinit();
+    }
+
+    fn findDeinit(_: *Semantizer, ty: sem.Type, s: *Scope) ?*sem.FunctionDeclaration {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr("deinit")) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (cand.input.fields.len == 0) continue;
+                    const first = cand.input.fields[0];
+                    if (first.ty != .pointer_type) continue;
+                    const ptr_info = first.ty.pointer_type.*;
+                    if (ptr_info.mutability != .read_write) continue;
+                    const pointee = ptr_info.child.*;
+                    if (typesExactlyEqual(pointee, ty)) return cand;
+                }
+            }
+        }
+        return null;
+    }
+
+    fn maybeScheduleAutoDeinit(
+        self: *Semantizer,
+        binding: *sem.BindingDeclaration,
+        loc: tok.Location,
+        s: *Scope,
+    ) !void {
+        if (s.parent == null) return;
+        const deinit_fn = self.findDeinit(binding.ty, s) orelse return;
+        if (deinit_fn.input.fields.len != 1) return;
+
+        const binding_use = try self.makeNode(loc, .{ .binding_use = binding }, null);
+
+        const addr_node = try self.makeNode(loc, .{ .address_of = binding_use }, null);
+
+        const arg_fields = try self.allocator.alloc(sem.StructValueLiteralField, 1);
+        arg_fields[0] = .{ .name = deinit_fn.input.fields[0].name, .value = addr_node };
+
+        const args_struct = try self.allocator.create(sem.StructValueLiteral);
+        args_struct.* = .{
+            .fields = arg_fields,
+            .ty = .{ .struct_type = &deinit_fn.input },
+        };
+
+        const args_node = try self.makeNode(loc, .{ .struct_value_literal = args_struct }, null);
+
+        const fc_ptr = try self.allocator.create(sem.FunctionCall);
+        fc_ptr.* = .{ .callee = deinit_fn, .input = args_node };
+
+        const call_node = try self.makeNode(loc, .{ .function_call = fc_ptr }, null);
+        try self.registerDefer(s, &[_]*sem.SGNode{call_node});
+    }
 };
 
 //────────────────────────────────────────────────────────────────────── BUILDER SCOPE
@@ -1875,8 +2063,13 @@ const AbstractDefaultEntry = struct {
     ty: sem.Type,
     location: tok.Location,
 };
+
+const DeferredGroup = struct {
+    nodes: []const *sem.SGNode,
+};
 const Scope = struct {
     parent: ?*Scope,
+    allocator: *const std.mem.Allocator,
 
     nodes: std.ArrayList(*sem.SGNode),
     bindings: std.StringHashMap(*sem.BindingDeclaration),
@@ -1887,6 +2080,7 @@ const Scope = struct {
     abstract_defaults: std.StringHashMap(AbstractDefaultEntry),
     generic_functions: std.StringHashMap(std.ArrayList(GenericTemplate)),
     generic_types: std.StringHashMap(std.ArrayList(GenericTypeTemplate)),
+    deferred: std.ArrayList(DeferredGroup),
 
     current_fn: ?*sem.FunctionDeclaration,
 
@@ -1897,6 +2091,7 @@ const Scope = struct {
     ) !Scope {
         return .{
             .parent = p,
+            .allocator = a,
             .nodes = std.ArrayList(*sem.SGNode).init(a.*),
             .bindings = std.StringHashMap(*sem.BindingDeclaration).init(a.*),
             .functions = std.StringHashMap(std.ArrayList(*sem.FunctionDeclaration)).init(a.*),
@@ -1906,6 +2101,7 @@ const Scope = struct {
             .abstract_defaults = std.StringHashMap(AbstractDefaultEntry).init(a.*),
             .generic_functions = std.StringHashMap(std.ArrayList(GenericTemplate)).init(a.*),
             .generic_types = std.StringHashMap(std.ArrayList(GenericTypeTemplate)).init(a.*),
+            .deferred = std.ArrayList(DeferredGroup).init(a.*),
             .current_fn = fnc,
         };
     }
@@ -2006,7 +2202,6 @@ fn typesCompatible(expected: sem.Type, actual: sem.Type) bool {
                 while (i < est.fields.len) : (i += 1) {
                     const ef = est.fields[i];
                     const af = ast.fields[i];
-                    if (!std.mem.eql(u8, ef.name, af.name)) break :blk false;
                     if (!typesCompatible(ef.ty, af.ty)) break :blk false;
                 }
                 break :blk true;
