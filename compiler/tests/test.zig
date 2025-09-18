@@ -167,3 +167,9 @@ test "36_get_and_set_index_operators" {
     try build("tests/36_get_and_set_index_operators.rg");
     try run();
 }
+
+test "37_size_of_and_alignment_of_builtin_functions" {
+    try clean();
+    try build("tests/37_size_of_and_alignment_of_builtin_functions.rg");
+    try run();
+}

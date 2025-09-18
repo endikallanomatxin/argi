@@ -243,6 +243,10 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "error generating type initializer: {s}", .{@errorName(e)});
                 return e;
             },
+            .type_literal => |_| {
+                try self.diags.add(n.location, .codegen, "type values are compile-time only", .{});
+                return CodegenError.NotYetImplemented;
+            },
             else => CodegenError.UnknownNode,
         };
     }
@@ -263,6 +267,7 @@ pub const CodeGenerator = struct {
                 .Float64 => c.LLVMDoubleType(),
                 .Char => c.LLVMInt8Type(),
                 .Bool => c.LLVMInt1Type(),
+                .Type => c.LLVMPointerType(c.LLVMInt8Type(), 0),
                 .Any => c.LLVMInt8Type(), // &Any es i8*
             },
             .struct_type => |st| blk: {
@@ -321,6 +326,7 @@ pub const CodeGenerator = struct {
                     .Float64 => "f64",
                     .Char => "char",
                     .Bool => "bool",
+                    .Type => "type",
                     .Any => "any",
                 };
                 try buf.appendSlice(s);
