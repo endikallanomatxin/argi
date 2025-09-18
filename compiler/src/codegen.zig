@@ -239,6 +239,10 @@ pub const CodeGenerator = struct {
                 };
                 return null;
             },
+            .type_initializer => |ti| self.genTypeInitializer(&ti) catch |e| {
+                try self.diags.add(n.location, .codegen, "error generating type initializer: {s}", .{@errorName(e)});
+                return e;
+            },
             else => CodegenError.UnknownNode,
         };
     }
@@ -936,6 +940,81 @@ pub const CodeGenerator = struct {
                 return .{ .value_ref = loaded, .type_ref = sret_ty };
             },
         }
+    }
+
+    fn genTypeInitializer(self: *CodeGenerator, ti: *const sem.TypeInitializer) CodegenError!TypedValue {
+        const result_ty_ref = try self.toLLVMType(ti.type_decl.ty);
+        const storage = c.LLVMBuildAlloca(self.builder, result_ty_ref, "type.init.tmp");
+
+        const total_fields = ti.init_fn.input.fields.len;
+        if (total_fields == 0) return CodegenError.InvalidType;
+        const user_field_count = total_fields - 1;
+
+        const args_tv_opt = try self.visitNode(ti.args);
+        if (user_field_count > 0 and args_tv_opt == null)
+            return CodegenError.ValueNotFound;
+
+        const init_input_ty_ref = try self.toLLVMType(.{ .struct_type = &ti.init_fn.input });
+        var agg = c.LLVMGetUndef(init_input_ty_ref);
+        agg = c.LLVMBuildInsertValue(self.builder, agg, storage, 0, "ctor.arg.p");
+
+        if (user_field_count > 0) {
+            const args_tv = args_tv_opt.?;
+            var i: usize = 0;
+            while (i < user_field_count) : (i += 1) {
+                const extracted = c.LLVMBuildExtractValue(
+                    self.builder,
+                    args_tv.value_ref,
+                    @intCast(i),
+                    "ctor.arg.extract",
+                );
+                agg = c.LLVMBuildInsertValue(
+                    self.builder,
+                    agg,
+                    extracted,
+                    @intCast(i + 1),
+                    "ctor.arg.insert",
+                );
+            }
+        }
+
+        const key_name = if (ti.init_fn.isExtern() or isMainName(ti.init_fn.name) or isMainCandidate(ti.init_fn))
+            ti.init_fn.name
+        else
+            try self.mangledNameFor(ti.init_fn);
+        var sym_opt = self.current_scope.lookup(key_name);
+        if (sym_opt == null) {
+            const in_ty_ref = init_input_ty_ref;
+            const out_ty_ref = if (ti.init_fn.output.fields.len == 0)
+                c.LLVMVoidType()
+            else
+                try self.toLLVMType(.{ .struct_type = &ti.init_fn.output });
+            const fnty = c.LLVMFunctionType(
+                out_ty_ref,
+                blk: {
+                    var a = try self.allocator.alloc(llvm.c.LLVMTypeRef, 1);
+                    a[0] = in_ty_ref;
+                    break :blk a.ptr;
+                },
+                1,
+                0,
+            );
+            const cname = try self.dupZ(key_name);
+            const fn_ref = c.LLVMAddFunction(self.module, cname.ptr, fnty);
+            try self.current_scope.symbols.put(key_name, .{ .cname = cname, .mutability = .constant, .type_ref = fnty, .ref = fn_ref });
+            sym_opt = self.current_scope.lookup(key_name);
+        }
+
+        const fn_sym = sym_opt.?;
+        var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, 1);
+        defer self.allocator.free(argv);
+        argv[0] = agg;
+
+        const call_name = if (c.LLVMGetReturnType(fn_sym.type_ref) == c.LLVMVoidType()) "" else "call";
+        _ = c.LLVMBuildCall2(self.builder, fn_sym.type_ref, fn_sym.ref, argv.ptr, 1, call_name);
+
+        const result_val = c.LLVMBuildLoad2(self.builder, result_ty_ref, storage, "type.init.result");
+        return .{ .value_ref = result_val, .type_ref = result_ty_ref };
     }
 
     // ────────────────────────────────────────── struct literal ──

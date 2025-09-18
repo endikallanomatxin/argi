@@ -47,6 +47,7 @@ pub const Content = union(enum) {
     address_of: *const SGNode,
     dereference: Dereference,
     pointer_assignment: PointerAssignment,
+    type_initializer: TypeInitializer,
 };
 
 //
@@ -227,4 +228,10 @@ pub const Dereference = struct {
 pub const PointerAssignment = struct {
     pointer: *const SGNode, // expresión que produce &T
     value: *const SGNode, // Value to assign
+};
+
+pub const TypeInitializer = struct {
+    type_decl: *const TypeDeclaration,
+    init_fn: *const FunctionDeclaration,
+    args: *const SGNode,
 };

@@ -33,6 +33,7 @@ pub const Content = union(enum) {
     binary_operation: BinaryOperation,
     comparison: Comparison,
     if_statement: IfStatement,
+    defer_statement: *STNode,
     address_of: AddressOf,
     dereference: *STNode,
     pointer_assignment: PointerAssignment,
