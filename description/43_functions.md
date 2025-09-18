@@ -366,6 +366,12 @@ to(&s: Struct, t: type == String) -> (string: String) := {
 > interface.
 
 
+> [!CHECK]
+> Should we consider output types for the dispatch too?
+> It can be useful, but it can also make it harder to infer types.
+> Compile time could get exponential if not careful.
+
+
 ### Operator overloading
 
 ```

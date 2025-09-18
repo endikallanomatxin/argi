@@ -1,9 +1,9 @@
-StaticList<t: Type, n: Int> : abstract = []
+StaticList#(.t: Type, .n: Int) : abstract = []
 
-List<t> canbe StaticList<t, _>
+List#(.t) canbe StaticList#(.t, _)
 
 
-StackArray<t, n> : Type = [
+StackArray#(.t, .n) : Type = (
     ---
     This is a stack allocated array.
     Similar to the default array in C or zig, when not using malloc.
@@ -13,13 +13,13 @@ StackArray<t, n> : Type = [
     ._data_type : t
     ._length    : UInt64    = n  -- Igual 64 es demasiado?
     ._alignment : Alignment = ..Default
-]
+)
 
 StaticList#(t, n) canbe StackArray#(t, n)
 Indexable#(t)     canbe StackArray#(t, n)
 List#(t)          canbe StackArray#(t, n)
 
-operator get[] (&a: StackArray#(t, n), .i:Int) -> (.v: t) := {
+operator get[] (&a: StackArray#(.t, .n), .i:Int) -> (.v: t) := {
     if i < 1 or i > N {
         panic("Index out of bounds")
     }
@@ -32,7 +32,7 @@ operator get[] (&a: StackArray#(t, n), .i:Int) -> (.v: t) := {
 }
 
 
-StaticArray<t, n> : Type = [
+StaticArray#(.t, .n) : Type = [
     ---
     A heap allocated static array
     ---
@@ -42,4 +42,4 @@ StaticArray<t, n> : Type = [
     ._alignment : Alignment   = ..Default
 ]
 
-StaticList<t, n> canbe StaticArray<t, n>
+StaticList#(.t, .n) canbe StaticArray#(.t, .n)

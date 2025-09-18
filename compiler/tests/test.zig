@@ -131,3 +131,9 @@ test "324_generic_structs_multi" {
     try build("tests/324_generic_structs_multi.rg");
     try run();
 }
+
+test "33_abstracts" {
+    try clean();
+    try build("tests/33_abstracts.rg");
+    try run();
+}

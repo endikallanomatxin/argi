@@ -16,6 +16,10 @@ pub const STNode = struct {
 pub const Content = union(enum) {
     symbol_declaration: SymbolDeclaration,
     type_declaration: TypeDeclaration,
+    // Abstract type features
+    abstract_declaration: AbstractDeclaration,
+    abstract_canbe: AbstractCanBe,
+    abstract_defaultsto: AbstractDefault,
     function_declaration: FunctionDeclaration,
     assignment: Assignment,
     identifier: []const u8,
@@ -55,6 +59,36 @@ pub const TypeDeclaration = struct {
     name: []const u8,
     generic_params: []const []const u8,
     value: *STNode, // StructTypeLiteral
+};
+
+// Abstract type declarations (interface-like)
+pub const AbstractDeclaration = struct {
+    name: []const u8,
+    generic_params: []const []const u8,
+    // Composed abstracts (by name)
+    requires_abstracts: []const []const u8,
+    // Function requirements
+    requires_functions: []const AbstractFunctionRequirement,
+};
+
+// "Name canbe Type" implementation relation
+pub const AbstractCanBe = struct {
+    name: []const u8,
+    generic_params: []const []const u8,
+    ty: Type,
+};
+
+// "Name defaultsto Type" default concrete backing type
+pub const AbstractDefault = struct {
+    name: []const u8,
+    generic_params: []const []const u8,
+    ty: Type,
+};
+
+pub const AbstractFunctionRequirement = struct {
+    name: []const u8,
+    input: StructTypeLiteral,
+    output: StructTypeLiteral,
 };
 
 pub const FunctionDeclaration = struct {

@@ -10,13 +10,43 @@ Types are named using PascalCase, and variables are named using snake_case.
 
 Types are casted using the cast function.
 
-```
-cast (t: MyType) -> (s: String) := {
-    ...
-}
+- Con multiple dispatch en el return type:
 
-print( "My type:" + my_var|cast(_) )
-```
+    ```
+    cast (t: MyType) -> (s: String) := {
+        ...
+    }
+
+    print( "My type:" + my_var|cast(_) )
+    ```
+
+
+- Con multiple dispatch considerando ==:
+
+    ```
+    cast (.t: MyType, .t: Type == String) -> (.s: String) := {
+        ...
+    }
+
+    print( "My type:" + my_var|cast(_, String) )
+    ```
+
+- Con multiple dispatch sin usar ==, obliga a que todos los tipos a los que se
+puede castear ocurran dentro de la misma función, por ejemplo usando switch. Es
+poco ampliable.
+
+- Con generics:
+
+	```
+	cast#(.t: Type) (.v: t) -> (s: String) := {
+		...
+	}
+
+	print( "My type:" + my_var|cast#(typeof(my_var))(_) )
+	```
+
+
+> [!TODO] Decidir como se hace esto usando multiple dispatch.
 
 Se resuelve gracias al multiple dispatch.
 
