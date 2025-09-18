@@ -198,6 +198,12 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             printNode(ti.args, lvl + 2);
         },
 
+        .type_literal => |tl| {
+            std.debug.print("TypeLiteral\n", .{});
+            indent(lvl + 1);
+            std.debug.print("type: {s}\n", .{typeToString(tl.ty)});
+        },
+
         else => std.debug.print("Unknown SG node\n", .{}),
     }
 }

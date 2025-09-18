@@ -48,6 +48,7 @@ pub const Content = union(enum) {
     dereference: Dereference,
     pointer_assignment: PointerAssignment,
     type_initializer: TypeInitializer,
+    type_literal: *const TypeLiteral,
 };
 
 //
@@ -78,6 +79,7 @@ pub const BuiltinType = enum {
     Float64,
     Char,
     Bool,
+    Type,
     Any,
 };
 
@@ -100,6 +102,10 @@ pub const ValueLiteral = union(enum) {
     char_literal: u8,
     string_literal: []const u8,
     bool_literal: bool,
+};
+
+pub const TypeLiteral = struct {
+    ty: Type,
 };
 
 pub const StructValueLiteral = struct {

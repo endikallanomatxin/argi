@@ -25,6 +25,14 @@ const TypedExpr = struct {
     ty: sem.Type,
 };
 
+const BuiltinTypeInfoKind = enum {
+    size,
+    alignment,
+};
+
+const pointer_size_bytes: u64 = @sizeOf(*usize);
+const pointer_alignment_bytes: u64 = pointer_size_bytes;
+
 //──────────────────────────────────────────────────────────────────────────────
 //  SEMANTIZER
 //──────────────────────────────────────────────────────────────────────────────
@@ -1026,7 +1034,17 @@ pub const Semantizer = struct {
     ) SemErr!TypedExpr {
         const base = try self.visitNode(ma.struct_value.*, s);
 
-        if (base.ty != .struct_type) return error.InvalidType;
+        if (base.ty != .struct_type) {
+            const desc = try self.formatType(base.ty, s);
+            defer self.allocator.free(desc);
+            try self.diags.add(
+                ma.struct_value.*.location,
+                .semantic,
+                "cannot access field '.{s}' on value of type '{s}'",
+                .{ ma.field_name, desc },
+            );
+            return error.Reported;
+        }
         const st = base.ty.struct_type;
 
         var idx: ?u32 = null;
@@ -1242,6 +1260,22 @@ pub const Semantizer = struct {
         call: syn.FunctionCall,
         s: *Scope,
     ) SemErr!TypedExpr {
+        if (std.mem.eql(u8, call.callee, "size_of"))
+            return self.handleBuiltinTypeInfo(.size, call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                else => err,
+            };
+        if (std.mem.eql(u8, call.callee, "alignment_of"))
+            return self.handleBuiltinTypeInfo(.alignment, call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                else => err,
+            };
+        if (std.mem.eql(u8, call.callee, "type_of"))
+            return self.handleTypeOf(call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                else => err,
+            };
+
         const tv_in = try self.visitNode(call.input.*, s);
         if (s.lookupType(call.callee)) |type_decl| {
             return self.handleTypeInitializer(call, tv_in, type_decl, s);
@@ -1818,7 +1852,6 @@ pub const Semantizer = struct {
     fn functionReturnType(_: *Semantizer, fn_decl: *sem.FunctionDeclaration) sem.Type {
         return switch (fn_decl.output.fields.len) {
             0 => .{ .builtin = .Any },
-            1 => fn_decl.output.fields[0].ty,
             else => .{ .struct_type = &fn_decl.output },
         };
     }
@@ -1876,6 +1909,269 @@ pub const Semantizer = struct {
     }
 
     //──────────────────────────────────────────────────── HELPERS
+    fn handleBuiltinTypeInfo(
+        self: *Semantizer,
+        kind: BuiltinTypeInfoKind,
+        call: syn.FunctionCall,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        const target_ty = try self.extractTypeArgument(call, s);
+
+        const value = switch (kind) {
+            .size => try self.computeTypeSize(target_ty),
+            .alignment => try self.computeTypeAlignment(target_ty),
+        };
+
+        const loc = call.input.*.location;
+        if (value > std.math.maxInt(i32)) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "result of builtin exceeds Int32 range",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        return try self.makeIntLiteral(loc, @intCast(value), .{ .builtin = .Int32 });
+    }
+
+    fn handleTypeOf(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        const arg_node = call.input.*;
+        if (arg_node.content != .struct_value_literal) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "type_of expects '.value' argument",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name, "value")) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "type_of expects a single '.value' argument",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const tv = try self.visitNode(svl.fields[0].value.*, s);
+        const loc = call.input.*.location;
+        return try self.makeTypeLiteral(loc, tv.ty);
+    }
+
+    fn extractTypeArgument(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        s: *Scope,
+    ) SemErr!sem.Type {
+        const arg_node = call.input.*;
+        if (arg_node.content != .struct_value_literal) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "builtin expects .type argument (example: .type = Int32)",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len != 1) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "builtin expects a single '.type' argument",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const field = svl.fields[0];
+        if (!std.mem.eql(u8, field.name, "type")) {
+            try self.diags.add(
+                field.value.*.location,
+                .semantic,
+                "expected '.type' argument",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        return self.resolveTypeExpression(field.value, s);
+    }
+
+    fn resolveTypeExpression(
+        self: *Semantizer,
+        node: *const syn.STNode,
+        s: *Scope,
+    ) SemErr!sem.Type {
+        return switch (node.content) {
+            .identifier => |name| blk: {
+                const ty_ast = syn.Type{ .type_name = name };
+                break :blk self.resolveType(ty_ast, s) catch {
+                    try self.diags.add(
+                        node.location,
+                        .semantic,
+                        "unknown type '{s}'",
+                        .{name},
+                    );
+                    return error.Reported;
+                };
+            },
+            .struct_type_literal => |lit| blk: {
+                const struct_ty = try self.structTypeFromLiteral(lit, s);
+                break :blk .{ .struct_type = struct_ty };
+            },
+            .function_call => |fc| blk: {
+                if (std.mem.eql(u8, fc.callee, "type_of")) {
+                    break :blk try self.typeOfCallResultType(fc, s);
+                }
+                try self.diags.add(
+                    node.location,
+                    .semantic,
+                    "unsupported expression in '.type' argument",
+                    .{},
+                );
+                return error.Reported;
+            },
+            else => blk_invalid: {
+                try self.diags.add(
+                    node.location,
+                    .semantic,
+                    "expected type expression",
+                    .{},
+                );
+                break :blk_invalid error.Reported;
+            },
+        };
+    }
+
+    fn typeOfCallResultType(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        s: *Scope,
+    ) SemErr!sem.Type {
+        const arg_node = call.input.*;
+        if (arg_node.content != .struct_value_literal) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "type_of expects '.value' argument",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name, "value")) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "type_of expects a single '.value' argument",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const value_expr = svl.fields[0].value;
+        const tv = try self.visitNode(value_expr.*, s);
+        return tv.ty;
+    }
+
+    fn computeTypeSize(
+        self: *Semantizer,
+        ty: sem.Type,
+    ) SemErr!u64 {
+        return switch (ty) {
+            .builtin => |bt| switch (bt) {
+                .Int8, .UInt8, .Char, .Bool => 1,
+                .Int16, .UInt16, .Float16 => 2,
+                .Int32, .UInt32, .Float32 => 4,
+                .Int64, .UInt64, .Float64 => 8,
+                .Type => pointer_size_bytes,
+                .Any => pointer_size_bytes,
+            },
+            .pointer_type => pointer_size_bytes,
+            .struct_type => |st| blk: {
+                const max_align = try self.computeTypeAlignment(.{ .struct_type = st });
+                var size: u64 = 0;
+                var idx: usize = 0;
+                while (idx < st.fields.len) : (idx += 1) {
+                    const fld = st.fields[idx];
+                    const field_align = try self.computeTypeAlignment(fld.ty);
+                    const field_size = try self.computeTypeSize(fld.ty);
+                    size = alignForward(size, field_align);
+                    size += field_size;
+                }
+                break :blk alignForward(size, max_align);
+            },
+        };
+    }
+
+    fn computeTypeAlignment(
+        self: *Semantizer,
+        ty: sem.Type,
+    ) SemErr!u64 {
+        return switch (ty) {
+            .builtin => |bt| switch (bt) {
+                .Int8, .UInt8, .Char, .Bool => 1,
+                .Int16, .UInt16, .Float16 => 2,
+                .Int32, .UInt32, .Float32 => 4,
+                .Int64, .UInt64, .Float64 => 8,
+                .Type => pointer_alignment_bytes,
+                .Any => pointer_alignment_bytes,
+            },
+            .pointer_type => pointer_alignment_bytes,
+            .struct_type => |st| blk: {
+                var max_align: u64 = 1;
+                var idx: usize = 0;
+                while (idx < st.fields.len) : (idx += 1) {
+                    const fld_align = try self.computeTypeAlignment(st.fields[idx].ty);
+                    if (fld_align > max_align) max_align = fld_align;
+                }
+                break :blk if (max_align == 0) 1 else max_align;
+            },
+        };
+    }
+
+    fn alignForward(value: u64, alignment: u64) u64 {
+        if (alignment <= 1) return value;
+        const mask = alignment - 1;
+        return (value + mask) & ~mask;
+    }
+
+    fn makeIntLiteral(
+        self: *Semantizer,
+        loc: tok.Location,
+        value: i64,
+        ty: sem.Type,
+    ) !TypedExpr {
+        const lit_ptr = try self.allocator.create(sem.ValueLiteral);
+        lit_ptr.* = .{ .int_literal = value };
+        const node = try self.makeNode(loc, .{ .value_literal = lit_ptr.* }, null);
+        return .{ .node = node, .ty = ty };
+    }
+
+    fn makeTypeLiteral(
+        self: *Semantizer,
+        loc: tok.Location,
+        ty: sem.Type,
+    ) !TypedExpr {
+        const type_node = try self.allocator.create(sem.TypeLiteral);
+        type_node.* = .{ .ty = ty };
+        const node = try self.makeNode(loc, .{ .type_literal = type_node }, null);
+        return .{ .node = node, .ty = .{ .builtin = .Type } };
+    }
+
     fn ensureMutablePointer(
         self: *Semantizer,
         expr_node: *const syn.STNode,
