@@ -898,10 +898,17 @@ pub const CodeGenerator = struct {
                 call_name,
             );
 
-            return if (ret_ty == c.LLVMVoidType())
-                null
-            else
-                .{ .value_ref = call_val, .type_ref = ret_ty };
+            if (ret_ty == c.LLVMVoidType()) {
+                return null;
+            }
+
+            if (c.LLVMGetTypeKind(ret_ty) == c.LLVMStructTypeKind and callee_decl.output.fields.len == 1) {
+                const extracted = c.LLVMBuildExtractValue(self.builder, call_val, 0, "call.unpack");
+                const elem_ty = try self.toLLVMType(callee_decl.output.fields[0].ty);
+                return .{ .value_ref = extracted, .type_ref = elem_ty };
+            }
+
+            return .{ .value_ref = call_val, .type_ref = ret_ty };
         }
 
         // ─────── llamadas EXTERN ─────────────────────────────────────────
