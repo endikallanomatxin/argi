@@ -1035,6 +1035,16 @@ pub const Semantizer = struct {
         const base = try self.visitNode(ma.struct_value.*, s);
 
         if (base.ty != .struct_type) {
+            if (base.node.content == .function_call) {
+                const fc = base.node.content.function_call;
+                if (fc.callee.output.fields.len == 1) {
+                    const only_field = fc.callee.output.fields[0];
+                    if (std.mem.eql(u8, only_field.name, ma.field_name)) {
+                        return base;
+                    }
+                }
+            }
+
             const desc = try self.formatType(base.ty, s);
             defer self.allocator.free(desc);
             try self.diags.add(
@@ -1454,8 +1464,10 @@ pub const Semantizer = struct {
                         var found: bool = false;
                         for (stargs.fields) |fld| {
                             if (std.mem.eql(u8, fld.name, pname)) {
-                                const resolved = try self.resolveTypeWithSubst(fld.type.?, s, &subst);
-                                try subst.put(pname, resolved);
+                                if (fld.type) |ty_node| {
+                                    const resolved = try self.resolveTypeWithSubst(ty_node, s, &subst);
+                                    try subst.put(pname, resolved);
+                                }
                                 found = true;
                                 break;
                             }
@@ -1629,8 +1641,10 @@ pub const Semantizer = struct {
                         var found: bool = false;
                         for (stargs.fields) |fld| {
                             if (std.mem.eql(u8, fld.name, pname)) {
-                                const resolved = try self.resolveTypeWithSubst(fld.type.?, s, &subst);
-                                try subst.put(pname, resolved);
+                                if (fld.type) |ty_node| {
+                                    const resolved = try self.resolveTypeWithSubst(ty_node, s, &subst);
+                                    try subst.put(pname, resolved);
+                                }
                                 found = true;
                                 break;
                             }
@@ -1852,6 +1866,7 @@ pub const Semantizer = struct {
     fn functionReturnType(_: *Semantizer, fn_decl: *sem.FunctionDeclaration) sem.Type {
         return switch (fn_decl.output.fields.len) {
             0 => .{ .builtin = .Any },
+            1 => fn_decl.output.fields[0].ty,
             else => .{ .struct_type = &fn_decl.output },
         };
     }
