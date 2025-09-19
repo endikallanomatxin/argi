@@ -6,11 +6,12 @@ Pair : Type = (
 
 -- Define the index get operator as a normal function
 -- Convention: op_index_get(.self: T, .i: Int32) -> (.v: T)
-operator get[](.self: Pair, .i: Int32) -> (.v: Int32) := {
+operator get[](.self: &Pair, .i: Int32) -> (.v: Int32) := {
+    temp :: Pair = self&
     if i == 1 {
-        v = self.x
+        v = temp.x
     } else {
-        v = self.y
+        v = temp.y
     }
 }
 
