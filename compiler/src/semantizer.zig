@@ -1087,8 +1087,10 @@ pub const Semantizer = struct {
         const base = try self.visitNode(ia.value.*, s);
         const idx = try self.visitNode(ia.index.*, s);
 
+        const ro_self = try self.ensureReadOnlyPointer(ia.value, base);
+
         const input_te = try self.buildCallInput(&[_]CallArg{
-            .{ .name = "self", .expr = base },
+            .{ .name = "self", .expr = ro_self },
             .{ .name = "index", .expr = idx },
         });
 
@@ -2185,6 +2187,35 @@ pub const Semantizer = struct {
         type_node.* = .{ .ty = ty };
         const node = try self.makeNode(loc, .{ .type_literal = type_node }, null);
         return .{ .node = node, .ty = .{ .builtin = .Type } };
+    }
+
+    fn ensureReadOnlyPointer(
+        self: *Semantizer,
+        expr_node: *const syn.STNode,
+        te: TypedExpr,
+    ) SemErr!TypedExpr {
+        // Si ya es puntero (&T o $&T), sirve para un parámetro de solo lectura.
+        if (te.ty == .pointer_type) return te;
+
+        // Para tomar la dirección, exigimos una variable nombrada (mismo criterio que &).
+        if (te.node.content != .binding_use) {
+            try self.diags.add(
+                expr_node.location,
+                .semantic,
+                "cannot take the address of this expression; only named variables are addressable",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const child_ty = try self.allocator.create(sem.Type);
+        child_ty.* = te.ty;
+
+        const ptr_info = try self.allocator.create(sem.PointerType);
+        ptr_info.* = .{ .mutability = .read_only, .child = child_ty };
+
+        const addr_node = try self.makeNode(undefined, .{ .address_of = te.node }, null);
+        return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
     }
 
     fn ensureMutablePointer(
