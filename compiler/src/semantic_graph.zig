@@ -31,6 +31,7 @@ pub const Content = union(enum) {
     function_call: *FunctionCall,
     code_block: *CodeBlock,
     value_literal: ValueLiteral,
+    list_literal: *const ListLiteral,
     struct_value_literal: *const StructValueLiteral,
     struct_field_access: *const StructFieldAccess,
     binary_operation: BinaryOperation,
@@ -102,6 +103,11 @@ pub const ValueLiteral = union(enum) {
     char_literal: u8,
     string_literal: []const u8,
     bool_literal: bool,
+};
+
+pub const ListLiteral = struct {
+    elements: []const *const SGNode,
+    element_types: []const Type,
 };
 
 pub const TypeLiteral = struct {

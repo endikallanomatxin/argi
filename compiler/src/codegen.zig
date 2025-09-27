@@ -220,6 +220,10 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "error generating struct value literal: {s}", .{@errorName(e)});
                 return e;
             },
+            .list_literal => |_| {
+                try self.diags.add(n.location, .codegen, "list literals are compile-time only", .{});
+                return CodegenError.NotYetImplemented;
+            },
             .struct_field_access => |sfa| self.genStructFieldAccess(sfa) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating struct field access: {s}", .{@errorName(e)});
                 return e;
@@ -725,6 +729,15 @@ pub const CodeGenerator = struct {
         const lhs = (try self.visitNode(bo.left)) orelse return CodegenError.ValueNotFound;
         const rhs = (try self.visitNode(bo.right)) orelse return CodegenError.ValueNotFound;
 
+        if (bo.operator == .addition) {
+            const lhs_kind = c.LLVMGetTypeKind(lhs.type_ref);
+            const rhs_kind = c.LLVMGetTypeKind(rhs.type_ref);
+            if (lhs_kind == c.LLVMPointerTypeKind and rhs_kind == c.LLVMIntegerTypeKind)
+                return try self.buildPointerOffset(lhs, rhs, "ptr.add");
+            if (lhs_kind == c.LLVMIntegerTypeKind and rhs_kind == c.LLVMPointerTypeKind)
+                return try self.buildPointerOffset(rhs, lhs, "ptr.add");
+        }
+
         const is_float = lhs.type_ref == c.LLVMFloatType();
         const val = switch (bo.operator) {
             .addition => if (is_float) c.LLVMBuildFAdd(self.builder, lhs.value_ref, rhs.value_ref, "add") else c.LLVMBuildAdd(self.builder, lhs.value_ref, rhs.value_ref, "add"),
@@ -735,6 +748,24 @@ pub const CodeGenerator = struct {
         };
 
         return .{ .value_ref = val, .type_ref = lhs.type_ref };
+    }
+
+    fn buildPointerOffset(
+        self: *CodeGenerator,
+        ptr: TypedValue,
+        index: TypedValue,
+        name: []const u8,
+    ) !TypedValue {
+        const idx_ty = c.LLVMInt64Type();
+        var idx_val = index.value_ref;
+        if (c.LLVMTypeOf(idx_val) != idx_ty)
+            idx_val = c.LLVMBuildSExt(self.builder, idx_val, idx_ty, "idx.ext");
+
+        var indices = [_]llvm.c.LLVMValueRef{idx_val};
+        const elem_ty = c.LLVMGetElementType(ptr.type_ref);
+        const name_z = try self.dupZ(name);
+        const result = c.LLVMBuildGEP2(self.builder, elem_ty, ptr.value_ref, &indices, 1, name_z.ptr);
+        return .{ .value_ref = result, .type_ref = ptr.type_ref };
     }
 
     // ────────────────────────────────────────── comparison ──

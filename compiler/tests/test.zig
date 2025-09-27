@@ -173,3 +173,15 @@ test "37_size_of_and_alignment_of_builtin_functions" {
     try build("tests/37_size_of_and_alignment_of_builtin_functions.rg");
     try run();
 }
+
+test "411_list_literal_length" {
+    try clean();
+    try build("tests/411_list_literal_length.rg");
+    try run();
+}
+
+test "412_list_literal_access" {
+    try clean();
+    try build("tests/412_list_literal_access.rg");
+    try run();
+}
