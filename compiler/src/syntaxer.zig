@@ -294,6 +294,34 @@ pub const Syntaxer = struct {
         return .{ .req_names = names.items, .req_funcs = funcs.items };
     }
 
+    fn parseListLiteral(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        const start_loc = self.tokenLocation();
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        var elems = std.ArrayList(*syn.STNode).init(self.allocator.*);
+
+        while (!self.tokenIs(.close_parenthesis)) {
+            const elem = try self.parseExpression();
+            try elems.append(elem);
+
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            } else break;
+        }
+
+        if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+        self.advanceOne();
+
+        return try self.makeNode(
+            .{ .list_literal = .{ .element_type = null, .elements = elems.items } },
+            start_loc,
+        );
+    }
+
     // ( .field : Type? (= expr)? , ... )
     fn parseStructTypeLiteral(self: *Syntaxer) SyntaxerError!syn.StructTypeLiteral {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
@@ -478,8 +506,31 @@ pub const Syntaxer = struct {
                 break :blk try self.makeNode(.{ .literal = lit }, t.location);
             },
 
-            // ─── struct value literal ───────────────────────────────────────
-            .open_parenthesis => try self.parseStructValueLiteral(),
+            // ─── struct value literal o list literal ─────────────────────────────────
+            .open_parenthesis => blk: {
+                // Mirar el primer token no-trivial tras '(' para decidir:
+                var saw_dot = false;
+                {
+                    var idx: usize = self.index + 1;
+                    while (idx < self.tokens.len) : (idx += 1) {
+                        const tag = std.meta.activeTag(self.tokens[idx].content);
+                        switch (tag) {
+                            .new_line, .comment => continue,
+                            .dot => {
+                                saw_dot = true;
+                            },
+                            else => {},
+                        }
+                        break;
+                    }
+                }
+
+                if (saw_dot) {
+                    break :blk try self.parseStructValueLiteral();
+                } else {
+                    break :blk try self.parseListLiteral();
+                }
+            },
 
             // ─── [expr] en corchetes ────────────────────────────────────────
             .open_bracket => blk: {

@@ -25,10 +25,14 @@ pub const Content = union(enum) {
     identifier: []const u8,
     function_call: FunctionCall,
     code_block: CodeBlock,
+
     literal: tok.Literal, // literals are not parsed until the type is known.
+
+    list_literal: ListLiteral,
     struct_type_literal: StructTypeLiteral,
     struct_value_literal: StructValueLiteral,
     struct_field_access: StructFieldAccess,
+
     index_access: IndexAccess,
     return_statement: ReturnStatement,
     binary_operation: BinaryOperation,
@@ -141,6 +145,11 @@ pub const Mutability = enum {
 pub const CodeBlock = struct {
     items: []const *STNode,
     // Return args in the future.
+};
+
+pub const ListLiteral = struct {
+    element_type: ?Type, // Optional explicit type
+    elements: []const *STNode,
 };
 
 pub const StructTypeLiteral = struct {

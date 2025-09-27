@@ -249,6 +249,16 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
+            .list_literal => |ll| self.handleListLiteral(ll, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in list literal: {s}",
+                    .{@errorName(err)},
+                );
+                break :blk err;
+            },
+
             .index_access => |ia| self.handleIndexAccess(ia, s) catch |err| blk: {
                 if (err != error.Reported) {
                     try self.diags.add(
@@ -1079,12 +1089,110 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = fty };
     }
 
+    //──────────────────────────────────────────────────── LIST LITERAL
+    fn handleListLiteral(
+        self: *Semantizer,
+        ll: syn.ListLiteral,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        var expected_elem_ty_opt: ?sem.Type = null;
+        if (ll.element_type) |elt_ty_syn| {
+            expected_elem_ty_opt = try self.resolveType(elt_ty_syn, s);
+        }
+
+        var elems = std.ArrayList(*sem.SGNode).init(self.allocator.*);
+        var elem_types = std.ArrayList(sem.Type).init(self.allocator.*);
+        defer {
+            elems.deinit();
+            elem_types.deinit();
+        }
+
+        for (ll.elements, 0..) |elem_node, idx| {
+            const elem_te = try self.visitNode(elem_node.*, s);
+
+            if (expected_elem_ty_opt) |exp_ty| {
+                if (!typesStructurallyEqual(exp_ty, elem_te.ty)) {
+                    const exp = try self.formatType(exp_ty, s);
+                    const got = try self.formatType(elem_te.ty, s);
+                    defer {
+                        self.allocator.free(exp);
+                        self.allocator.free(got);
+                    }
+                    try self.diags.add(
+                        elem_node.*.location,
+                        .semantic,
+                        "list element {d} has type '{s}', expected '{s}'",
+                        .{ idx, got, exp },
+                    );
+                    return error.Reported;
+                }
+            }
+
+            try elems.append(elem_te.node);
+            try elem_types.append(elem_te.ty);
+        }
+
+        const lit_ptr = try self.allocator.create(sem.ListLiteral);
+        lit_ptr.* = .{
+            .elements = try elems.toOwnedSlice(),
+            .element_types = try elem_types.toOwnedSlice(),
+        };
+
+        const node = try self.makeNode(undefined, .{ .list_literal = lit_ptr }, null);
+        return .{ .node = node, .ty = .{ .builtin = .Any } };
+    }
+
     fn handleIndexAccess(
         self: *Semantizer,
         ia: syn.IndexAccess,
         s: *Scope,
     ) SemErr!TypedExpr {
         const base = try self.visitNode(ia.value.*, s);
+
+        if (base.node.content == .list_literal) {
+            const ll = base.node.content.list_literal;
+            const idx_te = try self.visitNode(ia.index.*, s);
+
+            if (idx_te.node.content != .value_literal) {
+                try self.diags.add(
+                    ia.index.*.location,
+                    .semantic,
+                    "index into a list literal must be an integer literal",
+                    .{},
+                );
+                return error.Reported;
+            }
+
+            const lit = idx_te.node.content.value_literal;
+            const raw_index: i64 = switch (lit) {
+                .int_literal => |v| v,
+                else => blk: {
+                    try self.diags.add(
+                        ia.index.*.location,
+                        .semantic,
+                        "index into a list literal must be an integer literal",
+                        .{},
+                    );
+                    break :blk 0;
+                },
+            };
+
+            if (raw_index < 0 or raw_index >= ll.elements.len) {
+                try self.diags.add(
+                    ia.index.*.location,
+                    .semantic,
+                    "list literal index {d} out of bounds (length {d})",
+                    .{ raw_index, ll.elements.len },
+                );
+                return error.Reported;
+            }
+
+            const ui: usize = @intCast(raw_index);
+            const elem_node = ll.elements[ui];
+            const elem_ty = ll.element_types[ui];
+            return .{ .node = @constCast(elem_node), .ty = elem_ty };
+        }
+
         const idx = try self.visitNode(ia.index.*, s);
 
         const ro_self = try self.ensureReadOnlyPointer(ia.value, base);
@@ -1284,6 +1392,11 @@ pub const Semantizer = struct {
             };
         if (std.mem.eql(u8, call.callee, "type_of"))
             return self.handleTypeOf(call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                else => err,
+            };
+        if (std.mem.eql(u8, call.callee, "length"))
+            return self.handleLengthBuiltin(call, s) catch |err| switch (err) {
                 error.Reported => return err,
                 else => err,
             };
@@ -1951,6 +2064,56 @@ pub const Semantizer = struct {
         }
 
         return try self.makeIntLiteral(loc, @intCast(value), .{ .builtin = .Int32 });
+    }
+
+    fn handleLengthBuiltin(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        const arg_node = call.input.*;
+        const arg_loc = arg_node.location;
+
+        var value_te: TypedExpr = undefined;
+        if (arg_node.content == .struct_value_literal) {
+            const sv = arg_node.content.struct_value_literal;
+            if (sv.fields.len != 1 or !std.mem.eql(u8, sv.fields[0].name, "value")) {
+                try self.diags.add(
+                    arg_loc,
+                    .semantic,
+                    "length expects a single '.value' argument when using named parameters",
+                    .{},
+                );
+                return error.Reported;
+            }
+            value_te = try self.visitNode(sv.fields[0].value.*, s);
+        } else {
+            value_te = try self.visitNode(arg_node, s);
+        }
+
+        if (value_te.node.content != .list_literal) {
+            try self.diags.add(
+                arg_loc,
+                .semantic,
+                "length expects a list literal (e.g. length((1, 2, 3)))",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const ll = value_te.node.content.list_literal;
+        const len = ll.elements.len;
+        if (len > std.math.maxInt(i32)) {
+            try self.diags.add(
+                arg_loc,
+                .semantic,
+                "length result exceeds Int32 range",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        return try self.makeIntLiteral(arg_loc, @intCast(len), .{ .builtin = .Int32 });
     }
 
     fn handleTypeOf(

@@ -28,6 +28,15 @@ fn printValueLiteral(lit: *const sem.ValueLiteral, lvl: usize) void {
     }
 }
 
+fn printListLiteral(ll: *const sem.ListLiteral, lvl: usize) void {
+    std.debug.print("ListLiteral\n", .{});
+    for (ll.elements, 0..) |elem, i| {
+        indent(lvl + 1);
+        std.debug.print("[{d}]:\n", .{i});
+        printNode(elem, lvl + 2);
+    }
+}
+
 pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
     indent(lvl);
     switch (node.content) {
@@ -84,6 +93,11 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
         },
 
         .value_literal => |v| printValueLiteral(&v, lvl),
+
+        .list_literal => |ll| {
+            indent(lvl);
+            printListLiteral(ll, lvl);
+        },
 
         .struct_value_literal => |sl| {
             std.debug.print("StructLiteral\n", .{});

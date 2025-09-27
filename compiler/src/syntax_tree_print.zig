@@ -66,6 +66,18 @@ fn printStructValueLiteral(sl: syn.StructValueLiteral, lvl: usize) void {
     std.debug.print(")", .{});
 }
 
+fn printListLiteral(ll: syn.ListLiteral, lvl: usize) void {
+    std.debug.print("(\n", .{});
+    for (ll.elements, 0..) |elem, i| {
+        indent(lvl + 1);
+        std.debug.print("[{d}]: ", .{i});
+        printNode(elem.*, lvl + 1);
+        std.debug.print("\n", .{});
+    }
+    indent(lvl);
+    std.debug.print(")", .{});
+}
+
 fn printLiteral(lit: tok.Literal) void {
     switch (lit) {
         .bool_literal => |v| std.debug.print("bool:{s}", .{if (v) "true" else "false"}),
@@ -200,6 +212,15 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             indent(lvl + 1);
             std.debug.print("Field:  .{s}\n", .{sfa.field_name});
         },
+
+        // ── LIST LITERAL ─────────────────────────────────────────────────
+        .list_literal => |ll| {
+            std.debug.print("ListLiteral ", .{});
+            printListLiteral(ll, lvl);
+            std.debug.print("\n", .{});
+        },
+
+        // ── INDEX ACCESS ────────────────────────────────────────────────
         .index_access => |ia| {
             std.debug.print("IndexAccess \n", .{});
             indent(lvl + 1);
