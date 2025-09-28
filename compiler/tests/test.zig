@@ -185,3 +185,10 @@ test "412_list_literal_access" {
     try build("tests/412_list_literal_access.rg");
     try run();
 }
+
+
+test "413_array_from_list_literal" {
+    try clean();
+    try build("tests/413_array_from_list_literal.rg");
+    try run();
+}
