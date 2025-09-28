@@ -275,6 +275,20 @@ That way, everything behaves as if it were a stack variable.
 > init#(.t: Type, .n: Int)(.a: &Array#(.t), .source: ListLiteral#(.t)) -> () #inline { ... }
 > ```
 
+> [!IDEA]
+> Si usamos init para el casting, en realidad queda bastante bien porque si es
+> posible se inlinea probablemente.
+> Podría hacerse a través del overloading de la funcón de init.
+>
+> `init(out: $&TargetType, in: SourceType) -> ()`
+> Se usaría:
+> `new = TargetType(source_value)`
+
+> [!FIX]
+> La llamada a las funciones init tiene el mismo nombre que el tipo, eso hace
+> que no se pueda referenciar a la función de init por su nombre. No sé si será
+> problema.
+
 
 ## Keeping
 
