@@ -49,7 +49,7 @@ l : StackArray#(Int, 3) = (1, 2, 3)
 
 ### Slices
 
-`2..5` y `2.2.10`
+Index indication: `2..5` y `2.2.10`
 
 > [!TODO] Pensar en otra sintaxis, que el punto se usa para otras cosas.
 
