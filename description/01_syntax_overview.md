@@ -74,6 +74,12 @@ aritmética y luego volverlo a convertir en un puntero. Es suficientemente
 incómodo como para no hacerlo sin querer, te obliga a ser explícito para
 cagarla.
 
+### Read-only vs read-write pointers
+
+There are two types of pointers:
+- Read-write pointers: `&T`
+- Read-only pointers: `$&T`
+
 ## Code blocks
 
 Everything between `{ }` is considered a code block.
@@ -173,30 +179,115 @@ my_var | my_func (&_, second_arg)
 
 Builtins initialize to 0 values. (from Odin)
 
-All types have to methods:
+All types have two methods:
 - `init` to create an instance of the type.
 - `deinit` to destroy the instance of the type.
 
 When you delcare a new instance:
 
 ```
-my_thing : MyType = "something"
--- or
-my_thing : MyType = ("something", 12, true)
+my_thing := MyType("something", 12, true)
 ```
 
-What it really does is:
+> [!TODO]
+> Think about syntactic sugar to allow:
+> ```
+> my_list := (1, 2, 3, 4)
+> ```
+> which should be:
+> ```
+> my_list := List#(.t: Int32)(1, 2, 3, 4)
+> ```
+
+The init function must be declared like this:
 
 ```
-my_thing : MyType = init("something")
+init (.empty_struct_pointer: $&MyType, arg1: String, arg2: Int, arg3: Bool) -> (.result: MyType) := {
+    ...
+}
 ```
 
-The init function is automatically called and resolved with the multiple
-dispatch.
+If init function is defined it is called. If it doesn't, it creates an empty struct, if possible.
+
+When init is used, the first argument is the mutable pointer to the declared but uninitialized struct.
+
+So:
+
+```
+my_thing := MyType("something", 12, true)
+```
+
+is really:
+
+```
+my_thing : MyType
+init ($&my_thing, "something", 12, true)
+```
+
+> [!NOTE] init it the only function allowed to receive uninitialized arguments.
+>
+> El primer parámetro de init puede ser un puntero a memoria reservada pero no inicializada de ese tipo.
+> 
+> Chequeos estáticos dentro de init:
+> - Write-only sobre *out: no se permite leer campos hasta que estén escritos
+>   (idealmente, nunca leer el out).
+> - Definite initialization: en todas las rutas de éxito, todos los campos han
+>   sido escritos.
+> - No escape/no alias: el puntero no puede escaparse (no guardarlo en globals,
+>   no capturarlo en closures, no pasarlo a hilos).
+
+
+> Ventaja: implementación y DX sencillas; no necesitas “propagar estados” por todo el programa.
+
+> [!TODO] Think more about defaults in struct declaration/initialization
+> Without the init declared, it would create an empty struct.
+> Requiring all the field that have no default.
+
+> [!CHECK]
+> Habíamos dicho que no se podía usar un struct sin inicializar.
+> Permitimos esto solo para este caso? o en general, y nos obligamos a que se
+> trackee a través de las funciones si el struct se ha inicializado? O le damos
+> un indicador para decirle al compilador que lo estamos haciendo aposta y que
+> lo ignore?
+> Igual lo mejor es que sea una excepción? Que al final es el init.
+
+
+If wanted you can return an empty errable:
+
+```
+init(out: $&MyType, ...) -> Errable#((), InitError)
+```
 
 On scope exit, `deinit` is automatically called for all types that are not in the result struct.
-
 That way, everything behaves as if it were a stack variable.
+
+> [!NOTE]
+> Si hay rutas de error/early-return, garantizad que el valor queda en estado
+> no-inicializado (no se llamará deinit), o que se limpia parcial antes de
+> salir.
+> - Solo se invoca deinit en objetos inicializados.
+> - Si init falla (devuelve error), no se llama deinit sobre esa ranura.
+
+> [!NOTE] Para usar el stack, hay que inlinear las funciones de init.
+> Si quieres que el objeto esté en el stack, el alloca no se puede llamar dentro de una función.
+> Por ejemplo, Array tiene esta firma:
+> ```
+> init#(.t: Type, .n: Int)(.a: &Array#(.t), .source: ListLiteral#(.t)) -> () #inline { ... }
+> ```
+
+> [!IDEA]
+> Si usamos init para el casting, en realidad queda bastante bien porque si es
+> posible se inlinea probablemente.
+> Podría hacerse a través del overloading de la funcón de init.
+>
+> `init(out: $&TargetType, in: SourceType) -> ()`
+> Se usaría:
+> `new = TargetType(source_value)`
+
+> [!FIX]
+> La llamada a las funciones init tiene el mismo nombre que el tipo, eso hace
+> que no se pueda referenciar a la función de init por su nombre. No sé si será
+> problema.
 
 
 ## Keeping

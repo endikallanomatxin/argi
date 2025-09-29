@@ -128,8 +128,6 @@ pub const CodeGenerator = struct {
         var msg: [*c]u8 = null;
         const failed = c.LLVMVerifyModule(self.module, c.LLVMReturnStatusAction, &msg) != 0;
         if (failed) {
-            const ir_cstr = c.LLVMPrintModuleToString(self.module);
-            c.LLVMDisposeMessage(ir_cstr);
             if (msg != null) {
                 const txt = std.mem.span(msg);
                 try self.diags.add(self.ast[0].location, .codegen, "LLVM verification failed: {s}", .{txt});
@@ -197,6 +195,10 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "error generating value literal: {s}", .{@errorName(e)});
                 return e;
             },
+            .array_literal => |al| self.genArrayLiteral(al) catch |e| {
+                try self.diags.add(n.location, .codegen, "error generating array literal: {s}", .{@errorName(e)});
+                return e;
+            },
             .binary_operation => |bo| self.genBinaryOp(&bo) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating binary operation: {s}", .{@errorName(e)});
                 return e;
@@ -220,6 +222,10 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "error generating struct value literal: {s}", .{@errorName(e)});
                 return e;
             },
+            .list_literal => |_| {
+                try self.diags.add(n.location, .codegen, "list literals are compile-time only", .{});
+                return CodegenError.NotYetImplemented;
+            },
             .struct_field_access => |sfa| self.genStructFieldAccess(sfa) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating struct field access: {s}", .{@errorName(e)});
                 return e;
@@ -239,9 +245,24 @@ pub const CodeGenerator = struct {
                 };
                 return null;
             },
+            .array_index => |ai| self.genArrayIndex(&ai) catch |e| {
+                try self.diags.add(n.location, .codegen, "error generating array index: {s}", .{@errorName(e)});
+                return e;
+            },
+            .array_store => |as| {
+                self.genArrayStore(&as) catch |e| {
+                    try self.diags.add(n.location, .codegen, "error generating array store: {s}", .{@errorName(e)});
+                    return e;
+                };
+                return null;
+            },
             .type_initializer => |ti| self.genTypeInitializer(&ti) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating type initializer: {s}", .{@errorName(e)});
                 return e;
+            },
+            .type_literal => |_| {
+                try self.diags.add(n.location, .codegen, "type values are compile-time only", .{});
+                return CodegenError.NotYetImplemented;
             },
             else => CodegenError.UnknownNode,
         };
@@ -263,6 +284,7 @@ pub const CodeGenerator = struct {
                 .Float64 => c.LLVMDoubleType(),
                 .Char => c.LLVMInt8Type(),
                 .Bool => c.LLVMInt1Type(),
+                .Type => c.LLVMPointerType(c.LLVMInt8Type(), 0),
                 .Any => c.LLVMInt8Type(), // &Any es i8*
             },
             .struct_type => |st| blk: {
@@ -296,6 +318,11 @@ pub const CodeGenerator = struct {
                 const sub_ty = try self.toLLVMType(child_ty);
                 return c.LLVMPointerType(sub_ty, 0);
             },
+            .array_type => |arr_ptr| {
+                const elem_ty = try self.toLLVMType(arr_ptr.element_type.*);
+                const count: c_uint = @intCast(arr_ptr.length);
+                return c.LLVMArrayType(elem_ty, count);
+            },
         };
     }
 
@@ -321,6 +348,7 @@ pub const CodeGenerator = struct {
                     .Float64 => "f64",
                     .Char => "char",
                     .Bool => "bool",
+                    .Type => "type",
                     .Any => "any",
                 };
                 try buf.appendSlice(s);
@@ -342,6 +370,14 @@ pub const CodeGenerator = struct {
                     try self.encodeType(buf, f.ty);
                 }
                 try buf.appendSlice("}");
+            },
+            .array_type => |arr_ptr| {
+                try buf.appendSlice("arr");
+                var tmp: [32]u8 = undefined;
+                const len_slice = std.fmt.bufPrint(&tmp, "{d}", .{arr_ptr.length}) catch "?";
+                try buf.appendSlice(len_slice);
+                try buf.appendSlice("_");
+                try self.encodeType(buf, arr_ptr.element_type.*);
             },
         }
     }
@@ -576,6 +612,22 @@ pub const CodeGenerator = struct {
                 const casted = c.LLVMBuildBitCast(self.builder, value_ref, target_ty, "ptr.cast");
                 _ = c.LLVMBuildStore(self.builder, casted, storage);
             } else if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMStructTypeKind and
+                c.LLVMGetTypeKind(target_ty) != c.LLVMStructTypeKind)
+            {
+                const field_count = c.LLVMCountStructElementTypes(tv.type_ref);
+                var extracted = false;
+                var idx: u32 = 0;
+                while (idx < field_count) : (idx += 1) {
+                    const fty = c.LLVMStructGetTypeAtIndex(tv.type_ref, idx);
+                    if (fty == target_ty) {
+                        const elem = c.LLVMBuildExtractValue(self.builder, value_ref, idx, "init.extract");
+                        _ = c.LLVMBuildStore(self.builder, elem, storage);
+                        extracted = true;
+                        break;
+                    }
+                }
+                if (!extracted) return CodegenError.InvalidType;
+            } else if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMStructTypeKind and
                 c.LLVMGetTypeKind(llvm_decl_ty) == c.LLVMStructTypeKind)
             {
                 // El literal proporciona solo un subconjunto de campos:
@@ -699,9 +751,99 @@ pub const CodeGenerator = struct {
     }
 
     // ────────────────────────────────────────── binary-op (sin coerciones) ──
+
+    fn genArrayLiteral(self: *CodeGenerator, al: *const sem.ArrayLiteral) !TypedValue {
+        const elem_ty_ref = try self.toLLVMType(al.element_type);
+        const count: c_uint = @intCast(al.length);
+        const array_ty_ref = c.LLVMArrayType(elem_ty_ref, count);
+
+        var agg = c.LLVMGetUndef(array_ty_ref);
+        var idx: usize = 0;
+        while (idx < al.elements.len) : (idx += 1) {
+            const elem_tv_opt = try self.visitNode(al.elements[idx]);
+            const elem_tv = elem_tv_opt orelse return CodegenError.ValueNotFound;
+
+            if (elem_tv.type_ref != elem_ty_ref)
+                return CodegenError.InvalidType;
+
+            const index_c: c_uint = @intCast(idx);
+
+            agg = c.LLVMBuildInsertValue(
+                self.builder,
+                agg,
+                elem_tv.value_ref,
+                index_c,
+                "array.elem",
+            );
+        }
+
+        return .{ .value_ref = agg, .type_ref = array_ty_ref };
+    }
+
+    fn castIndexToI32(self: *CodeGenerator, tv: TypedValue) !llvm.c.LLVMValueRef {
+        if (tv.type_ref == c.LLVMInt32Type()) return tv.value_ref;
+        if (c.LLVMGetTypeKind(tv.type_ref) != c.LLVMIntegerTypeKind)
+            return CodegenError.InvalidType;
+        return c.LLVMBuildIntCast(self.builder, tv.value_ref, c.LLVMInt32Type(), "array.idx.cast");
+    }
+
+    fn genArrayElementPointer(
+        self: *CodeGenerator,
+        array_ptr_tv: TypedValue,
+        array_ty_ref: llvm.c.LLVMTypeRef,
+        index_val: llvm.c.LLVMValueRef,
+    ) !llvm.c.LLVMValueRef {
+        const zero = c.LLVMConstInt(c.LLVMInt32Type(), 0, 0);
+        var indices = [_]llvm.c.LLVMValueRef{ zero, index_val };
+        return c.LLVMBuildGEP2(self.builder, array_ty_ref, array_ptr_tv.value_ref, &indices, 2, "array.elem.ptr");
+    }
+
+    fn genArrayIndex(self: *CodeGenerator, ai: *const sem.ArrayIndex) !TypedValue {
+        const array_ptr_tv_opt = try self.visitNode(ai.array_ptr);
+        const array_ptr_tv = array_ptr_tv_opt orelse return CodegenError.ValueNotFound;
+
+        const idx_tv_opt = try self.visitNode(ai.index);
+        const idx_tv = idx_tv_opt orelse return CodegenError.ValueNotFound;
+        const index_val = try self.castIndexToI32(idx_tv);
+        const array_ty_ref = try self.toLLVMType(.{ .array_type = ai.array_type });
+        const elem_ptr = try self.genArrayElementPointer(array_ptr_tv, array_ty_ref, index_val);
+        const elem_ty_ref = try self.toLLVMType(ai.element_type);
+        const loaded = c.LLVMBuildLoad2(self.builder, elem_ty_ref, elem_ptr, "array.elem");
+        return .{ .value_ref = loaded, .type_ref = elem_ty_ref };
+    }
+
+    fn genArrayStore(self: *CodeGenerator, as: *const sem.ArrayStore) !void {
+        const array_ptr_tv_opt = try self.visitNode(as.array_ptr);
+        const array_ptr_tv = array_ptr_tv_opt orelse return CodegenError.ValueNotFound;
+
+        const idx_tv_opt = try self.visitNode(as.index);
+        const idx_tv = idx_tv_opt orelse return CodegenError.ValueNotFound;
+        const index_val = try self.castIndexToI32(idx_tv);
+
+        const array_ty_ref = try self.toLLVMType(.{ .array_type = as.array_type });
+        const elem_ptr = try self.genArrayElementPointer(array_ptr_tv, array_ty_ref, index_val);
+
+        const value_tv_opt = try self.visitNode(as.value);
+        const value_tv = value_tv_opt orelse return CodegenError.ValueNotFound;
+        const elem_ty_ref = try self.toLLVMType(as.element_type);
+
+        if (value_tv.type_ref != elem_ty_ref)
+            return CodegenError.InvalidType;
+
+        _ = c.LLVMBuildStore(self.builder, value_tv.value_ref, elem_ptr);
+    }
     fn genBinaryOp(self: *CodeGenerator, bo: *const sem.BinaryOperation) !TypedValue {
         const lhs = (try self.visitNode(bo.left)) orelse return CodegenError.ValueNotFound;
         const rhs = (try self.visitNode(bo.right)) orelse return CodegenError.ValueNotFound;
+
+        if (bo.operator == .addition) {
+            const lhs_kind = c.LLVMGetTypeKind(lhs.type_ref);
+            const rhs_kind = c.LLVMGetTypeKind(rhs.type_ref);
+            if (lhs_kind == c.LLVMPointerTypeKind and rhs_kind == c.LLVMIntegerTypeKind)
+                return try self.buildPointerOffset(lhs, rhs, "ptr.add");
+            if (lhs_kind == c.LLVMIntegerTypeKind and rhs_kind == c.LLVMPointerTypeKind)
+                return try self.buildPointerOffset(rhs, lhs, "ptr.add");
+        }
 
         const is_float = lhs.type_ref == c.LLVMFloatType();
         const val = switch (bo.operator) {
@@ -713,6 +855,24 @@ pub const CodeGenerator = struct {
         };
 
         return .{ .value_ref = val, .type_ref = lhs.type_ref };
+    }
+
+    fn buildPointerOffset(
+        self: *CodeGenerator,
+        ptr: TypedValue,
+        index: TypedValue,
+        name: []const u8,
+    ) !TypedValue {
+        const idx_ty = c.LLVMInt64Type();
+        var idx_val = index.value_ref;
+        if (c.LLVMTypeOf(idx_val) != idx_ty)
+            idx_val = c.LLVMBuildSExt(self.builder, idx_val, idx_ty, "idx.ext");
+
+        var indices = [_]llvm.c.LLVMValueRef{idx_val};
+        const elem_ty = c.LLVMGetElementType(ptr.type_ref);
+        const name_z = try self.dupZ(name);
+        const result = c.LLVMBuildGEP2(self.builder, elem_ty, ptr.value_ref, &indices, 1, name_z.ptr);
+        return .{ .value_ref = result, .type_ref = ptr.type_ref };
     }
 
     // ────────────────────────────────────────── comparison ──
@@ -876,10 +1036,17 @@ pub const CodeGenerator = struct {
                 call_name,
             );
 
-            return if (ret_ty == c.LLVMVoidType())
-                null
-            else
-                .{ .value_ref = call_val, .type_ref = ret_ty };
+            if (ret_ty == c.LLVMVoidType()) {
+                return null;
+            }
+
+            if (c.LLVMGetTypeKind(ret_ty) == c.LLVMStructTypeKind and callee_decl.output.fields.len == 1) {
+                const extracted = c.LLVMBuildExtractValue(self.builder, call_val, 0, "call.unpack");
+                const elem_ty = try self.toLLVMType(callee_decl.output.fields[0].ty);
+                return .{ .value_ref = extracted, .type_ref = elem_ty };
+            }
+
+            return .{ .value_ref = call_val, .type_ref = ret_ty };
         }
 
         // ─────── llamadas EXTERN ─────────────────────────────────────────

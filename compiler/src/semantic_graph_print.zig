@@ -14,6 +14,7 @@ fn typeToString(t: sem.Type) []const u8 {
             .read_only => "&",
             .read_write => "$&",
         },
+        .array_type => |_| "array",
     };
 }
 
@@ -25,6 +26,15 @@ fn printValueLiteral(lit: *const sem.ValueLiteral, lvl: usize) void {
         .char_literal => |c| std.debug.print("Literal char: '{c}'\n", .{c}),
         .string_literal => |s| std.debug.print("Literal string: \"{s}\"\n", .{s}),
         .bool_literal => |b| std.debug.print("Literal bool: {s}\n", .{if (b) "true" else "false"}),
+    }
+}
+
+fn printListLiteral(ll: *const sem.ListLiteral, lvl: usize) void {
+    std.debug.print("ListLiteral\n", .{});
+    for (ll.elements, 0..) |elem, i| {
+        indent(lvl + 1);
+        std.debug.print("[{d}]:\n", .{i});
+        printNode(elem, lvl + 2);
     }
 }
 
@@ -85,6 +95,20 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
 
         .value_literal => |v| printValueLiteral(&v, lvl),
 
+        .list_literal => |ll| {
+            indent(lvl);
+            printListLiteral(ll, lvl);
+        },
+
+        .array_literal => |al| {
+            std.debug.print("ArrayLiteral len={d} elem={s}\n", .{ al.length, typeToString(al.element_type) });
+            for (al.elements, 0..) |elem, i| {
+                indent(lvl + 1);
+                std.debug.print("[{d}]:\n", .{i});
+                printNode(elem, lvl + 2);
+            }
+        },
+
         .struct_value_literal => |sl| {
             std.debug.print("StructLiteral\n", .{});
             for (sl.fields) |f| {
@@ -99,6 +123,29 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             indent(lvl + 1);
             std.debug.print("Struct:\n", .{});
             printNode(sfa.struct_value, lvl + 2);
+        },
+
+        .array_index => |ai| {
+            std.debug.print("ArrayIndex\n", .{});
+            indent(lvl + 1);
+            std.debug.print("ArrayPtr:\n", .{});
+            printNode(ai.array_ptr, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("Index:\n", .{});
+            printNode(ai.index, lvl + 2);
+        },
+
+        .array_store => |as| {
+            std.debug.print("ArrayStore\n", .{});
+            indent(lvl + 1);
+            std.debug.print("ArrayPtr:\n", .{});
+            printNode(as.array_ptr, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("Index:\n", .{});
+            printNode(as.index, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("Value:\n", .{});
+            printNode(as.value, lvl + 2);
         },
 
         .binary_operation => |bo| {
@@ -196,6 +243,12 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             indent(lvl + 1);
             std.debug.print("args:\n", .{});
             printNode(ti.args, lvl + 2);
+        },
+
+        .type_literal => |tl| {
+            std.debug.print("TypeLiteral\n", .{});
+            indent(lvl + 1);
+            std.debug.print("type: {s}\n", .{typeToString(tl.ty)});
         },
 
         else => std.debug.print("Unknown SG node\n", .{}),

@@ -78,6 +78,35 @@ pub const Syntaxer = struct {
         return std.meta.activeTag(self.current().content) == std.meta.activeTag(tag);
     }
 
+    fn lookaheadIsTypeArgument(self: *Syntaxer) bool {
+        if (!self.tokenIs(.open_bracket)) return false;
+
+        var depth: i32 = 0;
+        var idx: usize = self.index;
+        while (idx < self.tokens.len) : (idx += 1) {
+            const tag = std.meta.activeTag(self.tokens[idx].content);
+            switch (tag) {
+                .open_bracket => depth += 1,
+                .close_bracket => {
+                    depth -= 1;
+                    if (depth == 0) {
+                        var lookahead = idx + 1;
+                        while (lookahead < self.tokens.len) : (lookahead += 1) {
+                            const next_tag = std.meta.activeTag(self.tokens[lookahead].content);
+                            switch (next_tag) {
+                                .new_line, .comment => continue,
+                                else => return next_tag == .open_parenthesis,
+                            }
+                        }
+                        return false;
+                    }
+                },
+                else => {},
+            }
+        }
+        return false;
+    }
+
     fn skipNewLinesAndComments(self: *Syntaxer) void {
         while (self.index < self.tokens.len) {
             switch (self.current().content) {
@@ -105,6 +134,26 @@ pub const Syntaxer = struct {
         const name = t.content.identifier;
         self.advanceOne();
         return name;
+    }
+
+    fn parseOperatorName(self: *Syntaxer) SyntaxerError![]const u8 {
+        if (std.meta.activeTag(self.current().content) != .identifier) {
+            try self.diags.add(self.tokenLocation(), .syntax, "expected operator name after 'operator'", .{});
+            return SyntaxerError.ExpectedIdentifier;
+        }
+
+        const ident = try self.parseIdentifier();
+
+        if (std.mem.eql(u8, ident, "get") or std.mem.eql(u8, ident, "set")) {
+            if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
+            self.advanceOne();
+            if (!self.tokenIs(.close_bracket)) return SyntaxerError.ExpectedRightBracket;
+            self.advanceOne();
+            return try std.fmt.allocPrint(self.allocator.*, "operator {s}[]", .{ident});
+        }
+
+        try self.diags.add(self.tokenLocation(), .syntax, "unsupported operator '{s}'", .{ident});
+        return SyntaxerError.ExpectedIdentifier;
     }
 
     fn parseGenericParamNames(self: *Syntaxer) SyntaxerError![]const []const u8 {
@@ -154,7 +203,56 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.equal) or self.tokenIs(.comma) or self.tokenIs(.close_parenthesis))
             return null;
 
-        if (self.tokenIs(.ampersand) or self.tokenIs(.dollar)) {
+        if (self.tokenIs(.open_bracket)) {
+            const len_loc = self.tokenLocation();
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+
+            if (std.meta.activeTag(self.current().content) != .literal) {
+                try self.diags.add(len_loc, .syntax, "expected array length integer literal", .{});
+                return SyntaxerError.ExpectedIntLiteral;
+            }
+
+            const length = length_blk: {
+                const lit = switch (self.current().content) {
+                    .literal => |value| value,
+                    else => unreachable,
+                };
+                switch (lit) {
+                    .decimal_int_literal => |text| {
+                        break :length_blk std.fmt.parseInt(usize, text, 10) catch {
+                            try self.diags.add(len_loc, .syntax, "invalid array length literal", .{});
+                            return SyntaxerError.ExpectedIntLiteral;
+                        };
+                    },
+                    else => {
+                        try self.diags.add(len_loc, .syntax, "array length must be a decimal integer literal", .{});
+                        return SyntaxerError.ExpectedIntLiteral;
+                    },
+                }
+            };
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+
+            if (!self.tokenIs(.close_bracket)) {
+                try self.diags.add(len_loc, .syntax, "expected ']' after array length", .{});
+                return SyntaxerError.ExpectedRightBracket;
+            }
+            self.advanceOne();
+
+            const elem_ty_opt = try self.parseType();
+            if (elem_ty_opt == null) {
+                try self.diags.add(len_loc, .syntax, "expected element type after array length", .{});
+                return SyntaxerError.ExpectedIdentifier;
+            }
+            const elem_ty = elem_ty_opt.?;
+            const elem_ptr = try self.allocator.create(syn.Type);
+            elem_ptr.* = elem_ty;
+
+            const array_ty = try self.allocator.create(syn.ArrayType);
+            array_ty.* = .{ .length = length, .element = elem_ptr };
+            return syn.Type{ .array_type = array_ty };
+        } else if (self.tokenIs(.ampersand) or self.tokenIs(.dollar)) {
             var mutability: syn.PointerMutability = .read_only;
             var op_loc = self.tokenLocation();
 
@@ -245,6 +343,34 @@ pub const Syntaxer = struct {
         return .{ .req_names = names.items, .req_funcs = funcs.items };
     }
 
+    fn parseListLiteral(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        const start_loc = self.tokenLocation();
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        var elems = std.ArrayList(*syn.STNode).init(self.allocator.*);
+
+        while (!self.tokenIs(.close_parenthesis)) {
+            const elem = try self.parseExpression();
+            try elems.append(elem);
+
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            } else break;
+        }
+
+        if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+        self.advanceOne();
+
+        return try self.makeNode(
+            .{ .list_literal = .{ .element_type = null, .elements = elems.items } },
+            start_loc,
+        );
+    }
+
     // ( .field : Type? (= expr)? , ... )
     fn parseStructTypeLiteral(self: *Syntaxer) SyntaxerError!syn.StructTypeLiteral {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
@@ -330,24 +456,43 @@ pub const Syntaxer = struct {
 
     // ────────────────────────── postfix “.campo” chain ───────────────────────
     fn parsePostfix(self: *Syntaxer, mut: *syn.STNode) !*syn.STNode {
-        var new_mut = mut;
+        var node = mut;
         while (true) {
             if (self.tokenIs(.dot)) {
                 const dot_loc = self.tokenLocation();
-                self.advanceOne(); // consume '.'
+                self.advanceOne();
                 const fld_name = try self.parseIdentifier();
-                new_mut = try self.makeNode(
-                    .{ .struct_field_access = .{ .struct_value = mut, .field_name = fld_name } },
+                node = try self.makeNode(
+                    .{ .struct_field_access = .{ .struct_value = node, .field_name = fld_name } },
                     dot_loc,
                 );
-            } else if (self.tokenIs(.ampersand)) {
-                // POST-FIX `&`  ==>  **dereference**
+                continue;
+            }
+
+            if (self.tokenIs(.open_bracket)) {
+                const bracket_loc = self.tokenLocation();
+                self.advanceOne();
+                const idx_expr = try self.parseExpression();
+                if (!self.tokenIs(.close_bracket))
+                    return SyntaxerError.ExpectedRightBracket;
+                self.advanceOne();
+                node = try self.makeNode(
+                    .{ .index_access = .{ .value = node, .index = idx_expr } },
+                    bracket_loc,
+                );
+                continue;
+            }
+
+            if (self.tokenIs(.ampersand)) {
                 const amp_loc = self.tokenLocation();
-                self.advanceOne(); // consume '&'
-                new_mut = try self.makeNode(.{ .dereference = new_mut }, amp_loc);
-            } else break;
+                self.advanceOne();
+                node = try self.makeNode(.{ .dereference = node }, amp_loc);
+                continue;
+            }
+
+            break;
         }
-        return new_mut;
+        return node;
     }
 
     // ─────────────────────────────  EXPRESSIONS  ─────────────────────────────
@@ -386,7 +531,7 @@ pub const Syntaxer = struct {
                 const name = try self.parseIdentifier();
                 var type_args: ?[]const syn.Type = null;
                 var type_args_struct: ?syn.StructTypeLiteral = null;
-                if (self.tokenIs(.open_bracket)) {
+                if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
                     // Explicit type arguments on call site (old syntax)
                     type_args = try self.parseTypeList();
                 } else if (self.tokenIs(.hash)) {
@@ -410,17 +555,30 @@ pub const Syntaxer = struct {
                 break :blk try self.makeNode(.{ .literal = lit }, t.location);
             },
 
-            // ─── struct value literal ───────────────────────────────────────
-            .open_parenthesis => try self.parseStructValueLiteral(),
+            // ─── struct value literal o list literal ─────────────────────────────────
+            .open_parenthesis => blk: {
+                // Mirar el primer token no-trivial tras '(' para decidir:
+                var saw_dot = false;
+                {
+                    var idx: usize = self.index + 1;
+                    while (idx < self.tokens.len) : (idx += 1) {
+                        const tag = std.meta.activeTag(self.tokens[idx].content);
+                        switch (tag) {
+                            .new_line, .comment => continue,
+                            .dot => {
+                                saw_dot = true;
+                            },
+                            else => {},
+                        }
+                        break;
+                    }
+                }
 
-            // ─── [expr] en corchetes ────────────────────────────────────────
-            .open_bracket => blk: {
-                self.advanceOne();
-                const e = try self.parseExpression();
-                if (!self.tokenIs(.close_bracket))
-                    return SyntaxerError.ExpectedRightBracket;
-                self.advanceOne();
-                break :blk e;
+                if (saw_dot) {
+                    break :blk try self.parseStructValueLiteral();
+                } else {
+                    break :blk try self.parseListLiteral();
+                }
             },
 
             // ─── bloque `{}` embebido ───────────────────────────────────────
@@ -489,7 +647,11 @@ pub const Syntaxer = struct {
         }
 
         const id_loc = self.tokenLocation();
-        const name = try self.parseIdentifier();
+        var name = try self.parseIdentifier();
+
+        if (std.mem.eql(u8, name, "operator")) {
+            name = try self.parseOperatorName();
+        }
 
         // Allow optional generic parameter block after name for function declarations
         var generic_params: []const []const u8 = &.{};
@@ -500,7 +662,7 @@ pub const Syntaxer = struct {
             var names = std.ArrayList([]const u8).init(self.allocator.*);
             for (gen_struct.fields) |fld| try names.append(fld.name);
             generic_params = names.items;
-        } else if (self.tokenIs(.open_bracket)) {
+        } else if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
             // Back-compat: old syntax name[T, U]
             const parsed = try self.parseGenericParamNames();
             generic_params = parsed;
@@ -520,6 +682,11 @@ pub const Syntaxer = struct {
                 // Regular binding reassignment
                 return try self.makeNode(
                     .{ .assignment = .{ .name = name, .value = rhs_expr } },
+                    id_loc,
+                );
+            } else if (lhs_with_postfix.*.content == .index_access) {
+                return try self.makeNode(
+                    .{ .index_assignment = .{ .target = lhs_with_postfix, .value = rhs_expr } },
                     id_loc,
                 );
             } else {

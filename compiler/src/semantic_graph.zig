@@ -31,8 +31,12 @@ pub const Content = union(enum) {
     function_call: *FunctionCall,
     code_block: *CodeBlock,
     value_literal: ValueLiteral,
+    list_literal: *const ListLiteral,
     struct_value_literal: *const StructValueLiteral,
     struct_field_access: *const StructFieldAccess,
+    array_literal: *const ArrayLiteral,
+    array_index: ArrayIndex,
+    array_store: ArrayStore,
     binary_operation: BinaryOperation,
     comparison: Comparison,
     return_statement: *ReturnStatement,
@@ -48,6 +52,7 @@ pub const Content = union(enum) {
     dereference: Dereference,
     pointer_assignment: PointerAssignment,
     type_initializer: TypeInitializer,
+    type_literal: *const TypeLiteral,
 };
 
 //
@@ -57,11 +62,17 @@ pub const Type = union(enum) {
     builtin: BuiltinType,
     struct_type: *const StructType,
     pointer_type: *const PointerType,
+    array_type: *const ArrayType,
 };
 
 pub const PointerType = struct {
     mutability: syn.PointerMutability,
     child: *const Type,
+};
+
+pub const ArrayType = struct {
+    length: usize,
+    element_type: *const Type,
 };
 
 pub const BuiltinType = enum {
@@ -78,6 +89,7 @@ pub const BuiltinType = enum {
     Float64,
     Char,
     Bool,
+    Type,
     Any,
 };
 
@@ -100,6 +112,36 @@ pub const ValueLiteral = union(enum) {
     char_literal: u8,
     string_literal: []const u8,
     bool_literal: bool,
+};
+
+pub const ListLiteral = struct {
+    elements: []const *const SGNode,
+    element_types: []const Type,
+};
+
+pub const ArrayLiteral = struct {
+    elements: []const *const SGNode,
+    element_type: Type,
+    length: usize,
+};
+
+pub const ArrayIndex = struct {
+    array_ptr: *const SGNode,
+    index: *const SGNode,
+    element_type: Type,
+    array_type: *const ArrayType,
+};
+
+pub const ArrayStore = struct {
+    array_ptr: *const SGNode,
+    index: *const SGNode,
+    value: *const SGNode,
+    element_type: Type,
+    array_type: *const ArrayType,
+};
+
+pub const TypeLiteral = struct {
+    ty: Type,
 };
 
 pub const StructValueLiteral = struct {
