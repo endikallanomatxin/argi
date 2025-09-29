@@ -770,11 +770,29 @@ pub const Semantizer = struct {
         if (s.bindings.contains(d.name))
             return error.SymbolAlreadyDefined;
 
+        var init_node: ?*syn.STNode = null;
+        var init_te_opt: ?TypedExpr = null;
+        if (d.value) |v| {
+            init_node = v;
+            init_te_opt = try self.visitNode(v.*, s);
+        }
+
         var ty: sem.Type = .{ .builtin = .Int32 };
-        if (d.type) |t|
-            ty = try self.resolveType(t, s)
-        else if (d.value) |v|
-            ty = (try self.visitNode(v.*, s)).ty;
+        if (d.type) |t| {
+            ty = try self.resolveType(t, s);
+        } else if (init_te_opt) |te| {
+            ty = te.ty;
+        }
+
+        if (init_te_opt) |te_initial| {
+            if (d.type) |_| {
+                init_te_opt = try self.coerceExprToType(ty, te_initial, init_node.?, s);
+            } else if (te_initial.node.content == .list_literal) {
+                const arr_info = try self.inferArrayTypeFromList(te_initial.node.content.list_literal, init_node.?.location, s);
+                ty = .{ .array_type = arr_info };
+                init_te_opt = try self.convertListLiteralToArray(te_initial, arr_info, init_node.?.location, s);
+            }
+        }
 
         const bd = try self.allocator.create(sem.BindingDeclaration);
         bd.* = .{
@@ -788,7 +806,7 @@ pub const Semantizer = struct {
         const n = try self.makeNode(loc, .{ .binding_declaration = bd }, s);
         if (s.parent == null) try self.root_list.append(n);
 
-        if (d.value) |v| bd.initialization = (try self.visitNode(v.*, s)).node;
+        if (init_te_opt) |init_te| bd.initialization = init_te.node;
 
         try self.maybeScheduleAutoDeinit(bd, loc, s);
 
@@ -969,7 +987,8 @@ pub const Semantizer = struct {
         if (b.mutability == .constant and b.initialization != null)
             return error.ConstantReassignment;
 
-        const rhs = try self.visitNode(a.value.*, s);
+        var rhs = try self.visitNode(a.value.*, s);
+        rhs = try self.coerceExprToType(b.ty, rhs, a.value, s);
 
         const asg = try self.allocator.create(sem.Assignment);
         asg.* = .{ .sym_id = b, .value = rhs.node };
@@ -1043,6 +1062,18 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!TypedExpr {
         const base = try self.visitNode(ma.struct_value.*, s);
+
+        if (base.ty == .array_type) {
+            const desc = try self.formatType(base.ty, s);
+            defer self.allocator.free(desc);
+            try self.diags.add(
+                ma.struct_value.*.location,
+                .semantic,
+                "type '{s}' has no field '.{s}'",
+                .{ desc, ma.field_name },
+            );
+            return error.Reported;
+        }
 
         if (base.ty != .struct_type) {
             if (base.node.content == .function_call) {
@@ -1132,10 +1163,13 @@ pub const Semantizer = struct {
             try elem_types.append(elem_te.ty);
         }
 
+        const elements_slice = try elems.toOwnedSlice();
+        const elem_types_slice = try elem_types.toOwnedSlice();
+
         const lit_ptr = try self.allocator.create(sem.ListLiteral);
         lit_ptr.* = .{
-            .elements = try elems.toOwnedSlice(),
-            .element_types = try elem_types.toOwnedSlice(),
+            .elements = elements_slice,
+            .element_types = elem_types_slice,
         };
 
         const node = try self.makeNode(undefined, .{ .list_literal = lit_ptr }, null);
@@ -1148,6 +1182,37 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!TypedExpr {
         const base = try self.visitNode(ia.value.*, s);
+
+        if (base.ty == .array_type) {
+            const idx_te = try self.visitNode(ia.index.*, s);
+            if (!isIntegerType(idx_te.ty)) {
+                const idx_ty = try self.formatType(idx_te.ty, s);
+                defer self.allocator.free(idx_ty);
+                try self.diags.add(
+                    ia.index.*.location,
+                    .semantic,
+                    "array index must be an integer type, got '{s}'",
+                    .{idx_ty},
+                );
+                return error.Reported;
+            }
+
+            const arr_type_ptr = base.ty.array_type;
+            const elem_ty = arr_type_ptr.*.element_type.*;
+            const ro_self = try self.ensureReadOnlyPointer(ia.value, base);
+
+            const node = try self.makeNode(
+                undefined,
+                .{ .array_index = .{
+                    .array_ptr = ro_self.node,
+                    .index = idx_te.node,
+                    .element_type = elem_ty,
+                    .array_type = arr_type_ptr,
+                } },
+                null,
+            );
+            return .{ .node = node, .ty = elem_ty };
+        }
 
         if (base.node.content == .list_literal) {
             const ll = base.node.content.list_literal;
@@ -1253,6 +1318,57 @@ pub const Semantizer = struct {
         const idx = ia.target.*.content.index_access;
 
         const base = try self.visitNode(idx.value.*, s);
+
+        if (base.ty == .array_type) {
+            const index_expr = try self.visitNode(idx.index.*, s);
+            if (!isIntegerType(index_expr.ty)) {
+                const idx_ty = try self.formatType(index_expr.ty, s);
+                defer self.allocator.free(idx_ty);
+                try self.diags.add(
+                    idx.index.*.location,
+                    .semantic,
+                    "array index must be an integer type, got '{s}'",
+                    .{idx_ty},
+                );
+                return error.Reported;
+            }
+
+            const value_expr = try self.visitNode(ia.value.*, s);
+            const arr_type_ptr = base.ty.array_type;
+            const elem_ty = arr_type_ptr.*.element_type.*;
+
+            if (!typesStructurallyEqual(elem_ty, value_expr.ty)) {
+                const expected = try self.formatType(elem_ty, s);
+                const actual = try self.formatType(value_expr.ty, s);
+                defer {
+                    self.allocator.free(expected);
+                    self.allocator.free(actual);
+                }
+                try self.diags.add(
+                    ia.value.*.location,
+                    .semantic,
+                    "cannot assign value of type '{s}' to array element of type '{s}'",
+                    .{ actual, expected },
+                );
+                return error.Reported;
+            }
+
+            const ptr_self = try self.ensureMutablePointer(idx.value, base, s);
+
+            const node = try self.makeNode(
+                undefined,
+                .{ .array_store = .{
+                    .array_ptr = ptr_self.node,
+                    .index = index_expr.node,
+                    .value = value_expr.node,
+                    .element_type = elem_ty,
+                    .array_type = arr_type_ptr,
+                } },
+                s,
+            );
+            return .{ .node = node, .ty = .{ .builtin = .Any } };
+        }
+
         const index_expr = try self.visitNode(idx.index.*, s);
         const value_expr = try self.visitNode(ia.value.*, s);
 
@@ -2091,29 +2207,56 @@ pub const Semantizer = struct {
             value_te = try self.visitNode(arg_node, s);
         }
 
-        if (value_te.node.content != .list_literal) {
-            try self.diags.add(
-                arg_loc,
-                .semantic,
-                "length expects a list literal (e.g. length((1, 2, 3)))",
-                .{},
-            );
-            return error.Reported;
+        switch (value_te.node.content) {
+            .list_literal => |ll| {
+                const len = ll.elements.len;
+                if (len > std.math.maxInt(i32)) {
+                    try self.diags.add(
+                        arg_loc,
+                        .semantic,
+                        "length result exceeds Int32 range",
+                        .{},
+                    );
+                    return error.Reported;
+                }
+                return try self.makeIntLiteral(arg_loc, @intCast(len), .{ .builtin = .Int32 });
+            },
+            .array_literal => |al| {
+                if (al.length > std.math.maxInt(i32)) {
+                    try self.diags.add(
+                        arg_loc,
+                        .semantic,
+                        "length result exceeds Int32 range",
+                        .{},
+                    );
+                    return error.Reported;
+                }
+                return try self.makeIntLiteral(arg_loc, @intCast(al.length), .{ .builtin = .Int32 });
+            },
+            else => {},
         }
 
-        const ll = value_te.node.content.list_literal;
-        const len = ll.elements.len;
-        if (len > std.math.maxInt(i32)) {
-            try self.diags.add(
-                arg_loc,
-                .semantic,
-                "length result exceeds Int32 range",
-                .{},
-            );
-            return error.Reported;
+        if (value_te.ty == .array_type) {
+            const arr = value_te.ty.array_type.*;
+            if (arr.length > std.math.maxInt(i32)) {
+                try self.diags.add(
+                    arg_loc,
+                    .semantic,
+                    "length result exceeds Int32 range",
+                    .{},
+                );
+                return error.Reported;
+            }
+            return try self.makeIntLiteral(arg_loc, @intCast(arr.length), .{ .builtin = .Int32 });
         }
 
-        return try self.makeIntLiteral(arg_loc, @intCast(len), .{ .builtin = .Int32 });
+        try self.diags.add(
+            arg_loc,
+            .semantic,
+            "length expects a list literal or array (e.g. length((1, 2, 3)))",
+            .{},
+        );
+        return error.Reported;
     }
 
     fn handleTypeOf(
@@ -2294,6 +2437,12 @@ pub const Semantizer = struct {
                 }
                 break :blk alignForward(size, max_align);
             },
+            .array_type => |arr_ptr| blk_arr: {
+                const elem_size = try self.computeTypeSize(arr_ptr.element_type.*);
+                const len_u64: u64 = @intCast(arr_ptr.length);
+                const total = elem_size * len_u64;
+                break :blk_arr total;
+            },
         };
     }
 
@@ -2320,6 +2469,7 @@ pub const Semantizer = struct {
                 }
                 break :blk if (max_align == 0) 1 else max_align;
             },
+            .array_type => |arr_ptr| try self.computeTypeAlignment(arr_ptr.element_type.*),
         };
     }
 
@@ -2434,6 +2584,129 @@ pub const Semantizer = struct {
         return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
     }
 
+    fn coerceExprToType(
+        self: *Semantizer,
+        expected: sem.Type,
+        expr: TypedExpr,
+        expr_node: *const syn.STNode,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        return switch (expected) {
+            .array_type => |arr_info| self.convertListLiteralToArray(expr, arr_info, expr_node.location, s),
+            else => expr,
+        };
+    }
+
+    fn convertListLiteralToArray(
+        self: *Semantizer,
+        expr: TypedExpr,
+        arr_info: *const sem.ArrayType,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        switch (expr.node.content) {
+            .list_literal => |ll| {
+                if (ll.elements.len != arr_info.length) {
+                    try self.diags.add(
+                        loc,
+                        .semantic,
+                        "array expects {d} elements, but list literal has {d}",
+                        .{ arr_info.length, ll.elements.len },
+                    );
+                    return error.Reported;
+                }
+
+                const expected_elem_ty = arr_info.element_type.*;
+                for (ll.element_types, 0..) |elem_ty, idx| {
+                    if (typesStructurallyEqual(expected_elem_ty, elem_ty)) continue;
+                    const exp = try self.formatType(expected_elem_ty, s);
+                    const got = try self.formatType(elem_ty, s);
+                    defer {
+                        self.allocator.free(exp);
+                        self.allocator.free(got);
+                    }
+                    try self.diags.add(
+                        loc,
+                        .semantic,
+                        "array element {d} has type '{s}', expected '{s}'",
+                        .{ idx, got, exp },
+                    );
+                    return error.Reported;
+                }
+
+                const arr_lit = try self.allocator.create(sem.ArrayLiteral);
+                arr_lit.* = .{
+                    .elements = ll.elements,
+                    .element_type = expected_elem_ty,
+                    .length = arr_info.length,
+                };
+
+                const node = try self.makeNode(loc, .{ .array_literal = arr_lit }, null);
+                return .{ .node = node, .ty = .{ .array_type = arr_info } };
+            },
+            else => {},
+        }
+
+        const exp = try self.formatType(.{ .array_type = arr_info }, s);
+        const got = try self.formatType(expr.ty, s);
+        defer {
+            self.allocator.free(exp);
+            self.allocator.free(got);
+        }
+        try self.diags.add(
+            loc,
+            .semantic,
+            "cannot initialize array of type '{s}' with expression of type '{s}'",
+            .{ exp, got },
+        );
+        return error.Reported;
+    }
+
+    fn inferArrayTypeFromList(
+        self: *Semantizer,
+        ll: *const sem.ListLiteral,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!*sem.ArrayType {
+        if (ll.elements.len == 0) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "cannot infer array type from empty list literal; specify the type explicitly",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const first_ty = ll.element_types[0];
+        for (ll.element_types, 0..) |elem_ty, idx| {
+            if (typesStructurallyEqual(first_ty, elem_ty)) continue;
+            const exp = try self.formatType(first_ty, s);
+            const got = try self.formatType(elem_ty, s);
+            defer {
+                self.allocator.free(exp);
+                self.allocator.free(got);
+            }
+            try self.diags.add(
+                loc,
+                .semantic,
+                "array element {d} has type '{s}', expected '{s}'",
+                .{ idx, got, exp },
+            );
+            return error.Reported;
+        }
+
+        const elem_ty_ptr = try self.allocator.create(sem.Type);
+        elem_ty_ptr.* = first_ty;
+
+        const arr_info = try self.allocator.create(sem.ArrayType);
+        arr_info.* = .{
+            .length = ll.elements.len,
+            .element_type = elem_ty_ptr,
+        };
+        return arr_info;
+    }
+
     fn makeNode(
         self: *Semantizer,
         loc: tok.Location,
@@ -2483,6 +2756,19 @@ pub const Semantizer = struct {
 
                 break :blk .{ .pointer_type = sem_ptr };
             },
+            .array_type => |arr_info| blk_arr: {
+                const elem_ty = try self.resolveType(arr_info.element.*, s);
+                const elem_ptr = try self.allocator.create(sem.Type);
+                elem_ptr.* = elem_ty;
+
+                const sem_arr = try self.allocator.create(sem.ArrayType);
+                sem_arr.* = .{
+                    .length = arr_info.length,
+                    .element_type = elem_ptr,
+                };
+
+                break :blk_arr .{ .array_type = sem_arr };
+            },
         };
     }
 
@@ -2510,6 +2796,19 @@ pub const Semantizer = struct {
                 };
 
                 break :blk .{ .pointer_type = sem_ptr };
+            },
+            .array_type => |arr_info| blk_arr: {
+                const elem_ty = try self.resolveTypeWithSubst(arr_info.element.*, s, subst);
+                const elem_ptr = try self.allocator.create(sem.Type);
+                elem_ptr.* = elem_ty;
+
+                const sem_arr = try self.allocator.create(sem.ArrayType);
+                sem_arr.* = .{
+                    .length = arr_info.length,
+                    .element_type = elem_ptr,
+                };
+
+                break :blk_arr .{ .array_type = sem_arr };
             },
         };
     }
@@ -2622,6 +2921,15 @@ pub const Semantizer = struct {
             .struct_type => |_| {
                 // Fallback: avoid expanding anonymous structs in this context
                 try buf.appendSlice("{...}");
+            },
+            .array_type => |arr_ptr| {
+                const arr = arr_ptr.*;
+                var tmp: [32]u8 = undefined;
+                const len_slice = std.fmt.bufPrint(&tmp, "{d}", .{arr.length}) catch "?";
+                try buf.appendSlice("[");
+                try buf.appendSlice(len_slice);
+                try buf.appendSlice("]");
+                try self.appendTypePretty(buf, arr.element_type.*, s);
             },
         }
     }
@@ -2881,6 +3189,7 @@ fn typesStructurallyEqual(a: sem.Type, b: sem.Type) bool {
             },
 
             .pointer_type => false,
+            .array_type => false,
         },
 
         .pointer_type => |apt_ptr| switch (b) {
@@ -2900,12 +3209,32 @@ fn typesStructurallyEqual(a: sem.Type, b: sem.Type) bool {
             },
             else => false,
         },
+
+        .array_type => |aat_ptr| switch (b) {
+            .array_type => |bat_ptr| blk_arr: {
+                const aat = aat_ptr.*;
+                const bat = bat_ptr.*;
+                if (aat.length != bat.length) break :blk_arr false;
+                break :blk_arr typesStructurallyEqual(aat.element_type.*, bat.element_type.*);
+            },
+            else => false,
+        },
     };
 }
 
 fn isAny(t: sem.Type) bool {
     return switch (t) {
         .builtin => |bt| bt == .Any,
+        else => false,
+    };
+}
+
+fn isIntegerType(t: sem.Type) bool {
+    return switch (t) {
+        .builtin => |bt| switch (bt) {
+            .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64 => true,
+            else => false,
+        },
         else => false,
     };
 }
@@ -2954,6 +3283,15 @@ fn typesCompatible(expected: sem.Type, actual: sem.Type) bool {
             },
             else => false,
         },
+        .array_type => |eat_ptr| switch (actual) {
+            .array_type => |aat_ptr| blk_arr: {
+                const eat = eat_ptr.*;
+                const aat = aat_ptr.*;
+                if (eat.length != aat.length) break :blk_arr false;
+                break :blk_arr typesCompatible(eat.element_type.*, aat.element_type.*);
+            },
+            else => false,
+        },
     };
 }
 
@@ -2974,6 +3312,15 @@ fn typesExactlyEqual(a: sem.Type, b: sem.Type) bool {
                 const bpt = bpt_ptr.*;
                 if (apt.mutability != bpt.mutability) break :blk false;
                 break :blk typesExactlyEqual(apt.child.*, bpt.child.*);
+            },
+            else => false,
+        },
+        .array_type => |aat_ptr| switch (b) {
+            .array_type => |bat_ptr| blk_arr: {
+                const aat = aat_ptr.*;
+                const bat = bat_ptr.*;
+                if (aat.length != bat.length) break :blk_arr false;
+                break :blk_arr typesExactlyEqual(aat.element_type.*, bat.element_type.*);
             },
             else => false,
         },
@@ -3010,6 +3357,13 @@ fn specificityScore(expected: sem.Type, actual: sem.Type) u32 {
                 break :blk2 1;
 
             break :blk2 specificityScore(expected_child, actual_child);
+        },
+        .array_type => |eat_ptr| blk_arr: {
+            const aat_ptr = actual.array_type;
+            const eat = eat_ptr.*;
+            const aat = aat_ptr.*;
+            if (eat.length != aat.length) break :blk_arr 10;
+            break :blk_arr specificityScore(eat.element_type.*, aat.element_type.*);
         },
     };
 }

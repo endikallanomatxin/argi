@@ -29,6 +29,11 @@ fn printType(t: syn.Type, lvl: usize) void {
             std.debug.print("{s}#", .{g.base_name});
             printStructTypeLiteral(g.args, lvl);
         },
+        .array_type => |arr_ptr| {
+            const arr = arr_ptr.*;
+            std.debug.print("[{d}]", .{arr.length});
+            printType(arr.element.*, lvl);
+        },
     }
 }
 

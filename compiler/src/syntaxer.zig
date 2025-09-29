@@ -203,7 +203,56 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.equal) or self.tokenIs(.comma) or self.tokenIs(.close_parenthesis))
             return null;
 
-        if (self.tokenIs(.ampersand) or self.tokenIs(.dollar)) {
+        if (self.tokenIs(.open_bracket)) {
+            const len_loc = self.tokenLocation();
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+
+            if (std.meta.activeTag(self.current().content) != .literal) {
+                try self.diags.add(len_loc, .syntax, "expected array length integer literal", .{});
+                return SyntaxerError.ExpectedIntLiteral;
+            }
+
+            const length = length_blk: {
+                const lit = switch (self.current().content) {
+                    .literal => |value| value,
+                    else => unreachable,
+                };
+                switch (lit) {
+                    .decimal_int_literal => |text| {
+                        break :length_blk std.fmt.parseInt(usize, text, 10) catch {
+                            try self.diags.add(len_loc, .syntax, "invalid array length literal", .{});
+                            return SyntaxerError.ExpectedIntLiteral;
+                        };
+                    },
+                    else => {
+                        try self.diags.add(len_loc, .syntax, "array length must be a decimal integer literal", .{});
+                        return SyntaxerError.ExpectedIntLiteral;
+                    },
+                }
+            };
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+
+            if (!self.tokenIs(.close_bracket)) {
+                try self.diags.add(len_loc, .syntax, "expected ']' after array length", .{});
+                return SyntaxerError.ExpectedRightBracket;
+            }
+            self.advanceOne();
+
+            const elem_ty_opt = try self.parseType();
+            if (elem_ty_opt == null) {
+                try self.diags.add(len_loc, .syntax, "expected element type after array length", .{});
+                return SyntaxerError.ExpectedIdentifier;
+            }
+            const elem_ty = elem_ty_opt.?;
+            const elem_ptr = try self.allocator.create(syn.Type);
+            elem_ptr.* = elem_ty;
+
+            const array_ty = try self.allocator.create(syn.ArrayType);
+            array_ty.* = .{ .length = length, .element = elem_ptr };
+            return syn.Type{ .array_type = array_ty };
+        } else if (self.tokenIs(.ampersand) or self.tokenIs(.dollar)) {
             var mutability: syn.PointerMutability = .read_only;
             var op_loc = self.tokenLocation();
 
@@ -530,16 +579,6 @@ pub const Syntaxer = struct {
                 } else {
                     break :blk try self.parseListLiteral();
                 }
-            },
-
-            // ─── [expr] en corchetes ────────────────────────────────────────
-            .open_bracket => blk: {
-                self.advanceOne();
-                const e = try self.parseExpression();
-                if (!self.tokenIs(.close_bracket))
-                    return SyntaxerError.ExpectedRightBracket;
-                self.advanceOne();
-                break :blk e;
             },
 
             // ─── bloque `{}` embebido ───────────────────────────────────────
