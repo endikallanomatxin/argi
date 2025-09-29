@@ -58,11 +58,17 @@ pub const Type = union(enum) {
         base_name: []const u8,
         args: StructTypeLiteral,
     },
+    array_type: *ArrayType,
 };
 
 pub const PointerType = struct {
     mutability: PointerMutability,
     child: *Type,
+};
+
+pub const ArrayType = struct {
+    length: usize,
+    element: *Type,
 };
 
 pub const AddressOf = struct {
