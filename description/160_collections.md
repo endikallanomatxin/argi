@@ -27,81 +27,35 @@ m := ("a"=1, "b"=2)
 
 ### Owning constructs
 
-#### StackArray `[N]T`
+#### Array `[N]T`
 
 Fixed-size arrays:
 
 ```
 a : [3]Int32 = (1, 2, 3)
 -- is the same as
-l : StackArray#(Int32, 3)((1, 2, 3))
+l : Array#(Int32, 3)((1, 2, 3))
 ```
 
 > [!TODO] Pensar una forma de definir longitud de forma automática.
 > Igual `[?]T` para que el compilador lo calcule.
 
 
-#### AllocatedArray
+#### `Allocation#(.t = [N]T)`
 
-TODO before this: Allocators
+Similar to basic Array, but using an allocator, still static size.
 
-similar to basic Array, but using an allocator, still static size
-
-> Esto se parecerá bastante a un slice en realidad.
-
-> Igual podríamos hacer que Stack fuera un allocator que se puede usar siempre
-> y decir que es el valor por defecto, así podríamos unificar StackArray y
-> AllocatedArray bajo un mismo tipo.
-
-```
-init#(.t: Type) (.a: $&AllocatedArray#(.t), .source: ListOfKnownLength#(.t, .n), .allocator: Allocator) -> () := {
-
-    l : Int32 = length(source)
-    data_ptr : &t = allocator | alloc(_, .count = l, .type = t)
-
-    for i: Int32 = 0; i < l; i = i + 1 {
-        element_ptr : $&t = data_ptr + i
-        element_ptr& = src[i]
-    }
-
-    a& = (
-        .data = data_ptr,
-        .length = l,
-        .allocator = allocator,
-    )
-}
-
-deinit#(.t: Type) (.a: $&AllocatedArray#(.t)) -> () := {
-    arr :: Slice#(.t) = a&
-    ptr : &Any = arr.data
-    free(.pointer = ptr)
-}
-
-operator get[]#(.t: Type)(.self: &AllocatedArray#(.t), .i: Int32) -> (.value: t) := {
-    arr :: Slice#(.t) = self&
-    element_ptr : &t = arr.data + i
-    value = element_ptr&
-}
-
-operator set[]#(.t: Type)(.self: $&AllocatedArray#(.t), .i: Int32, .value: t) -> () := {
-    arr :: Slice#(.t) = self&
-    element_ptr : $&t = arr.data + i
-    element_ptr& = value
-}
-```
+It implements the `List` interface.
+una instanciación concreta `Allocation#(.u = [N]T)` puede cumplir tu interfaz de
+listas, aunque el genérico `Allocation#(.u: Type)` (sin fijar) no lo haga.
 
 
-#### Dynamic Arrays `[d]T` or `DynamicArray#(.t: Type)`
 
-It uses allocated array internally
+#### `DynamicArray#(.t: Type)`
 
-> [!FIX]
-> `l : [d]Int32 = (1, 2, 3)`
-> cannot turn into
-> `l := DynamicArray#(Int32)((1, 2, 3), my_allocator)`
-> Because it needs an allocator to work with!!
+It uses `Allocation#(.u = [N]T)` internally, and grows as needed.
 
-> [!TODO] Should [d]T be the default for list literals?
+`l := DynamicArray#(Int32)((1, 2, 3), my_allocator)`
 
 
 #### LengthedArray (capacidad fija en stack, len runtime)
@@ -113,7 +67,7 @@ It uses allocated array internally
 
 Empaqueta, p.ej. u10, u12.
 
-PackedArray#(.bits:Int) = (...)
+`PackedArray#(.bits:Int) = (...)`
 
 
 #### LinkedList
@@ -145,11 +99,8 @@ RWSlice#(.t: Type) : Type = (
 
 ##### Slice indexing
 
-Index indication: `2..5` y `2.2.10`
-
-> [!TODO] Pensar en otra sintaxis, que el punto se usa para otras cosas.
-
-Igual `my_array | slice(2, 5)`
+`my_array | slice(2, 5)`
+`my_array | slice(2, 5, .stride=2)`
 
 #### Sentinel slice
 
@@ -175,8 +126,20 @@ l | slice (0, 10)  -- 1D slice
 l | slice (((0, 10), (0, 20)))  -- 2D slice
 ```
 
-La list abstract type podría darse cuenta de que list literals anidados la
-cumplen?
+> [!CHECK]
+> La list abstract type podría darse cuenta de que list literals anidados la
+> cumplen?
+
+
+### List Abstracts
+
+- Indexable#(T) → lectura indexada: len() y get[].
+- IndexableMutable#(T) → añade set[].
+- Resizable#(T) → añade push, pop, insert, … (solo para los dinámicos).
+
+`[N]T`, `RSlice#(T)`, `RWSlice#(T)` y `Allocation#([N]T)` cumplen `Indexable`;
+los que tengan memoria mutable cumplen `IndexableMutable`; y solo `DynamicArray#(T)`
+(dinámico) cumple `Resizable`.
 
 
 ## Maps
@@ -205,7 +168,6 @@ More info on collection types in `../library/collections/`
 ### SoA / AoS
 
 > [!TODO]
-
 
 ---
 
