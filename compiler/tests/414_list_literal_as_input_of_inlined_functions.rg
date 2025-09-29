@@ -1,0 +1,4 @@
+-- Needed implementations:
+-- - inlineación de funciones
+-- - unrolling de loops
+-- - edit init to be the only function that can receive uninitialized arguments, and only if it is an inlined function.

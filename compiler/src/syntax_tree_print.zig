@@ -29,6 +29,11 @@ fn printType(t: syn.Type, lvl: usize) void {
             std.debug.print("{s}#", .{g.base_name});
             printStructTypeLiteral(g.args, lvl);
         },
+        .array_type => |arr_ptr| {
+            const arr = arr_ptr.*;
+            std.debug.print("[{d}]", .{arr.length});
+            printType(arr.element.*, lvl);
+        },
     }
 }
 
@@ -60,6 +65,18 @@ fn printStructValueLiteral(sl: syn.StructValueLiteral, lvl: usize) void {
         indent(lvl + 1);
         std.debug.print(".{s} = ", .{f.name});
         printNode(f.value.*, lvl + 1);
+        std.debug.print("\n", .{});
+    }
+    indent(lvl);
+    std.debug.print(")", .{});
+}
+
+fn printListLiteral(ll: syn.ListLiteral, lvl: usize) void {
+    std.debug.print("(\n", .{});
+    for (ll.elements, 0..) |elem, i| {
+        indent(lvl + 1);
+        std.debug.print("[{d}]: ", .{i});
+        printNode(elem.*, lvl + 1);
         std.debug.print("\n", .{});
     }
     indent(lvl);
@@ -201,6 +218,24 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             std.debug.print("Field:  .{s}\n", .{sfa.field_name});
         },
 
+        // ── LIST LITERAL ─────────────────────────────────────────────────
+        .list_literal => |ll| {
+            std.debug.print("ListLiteral ", .{});
+            printListLiteral(ll, lvl);
+            std.debug.print("\n", .{});
+        },
+
+        // ── INDEX ACCESS ────────────────────────────────────────────────
+        .index_access => |ia| {
+            std.debug.print("IndexAccess \n", .{});
+            indent(lvl + 1);
+            std.debug.print("Value: ", .{});
+            printNode(ia.value.*, 0);
+            indent(lvl + 1);
+            std.debug.print("Index:\n", .{});
+            printNode(ia.index.*, lvl + 2);
+        },
+
         // ── CODE-BLOCK ───────────────────────────────────────────────────
         .code_block => |cb| {
             std.debug.print("CodeBlock\n", .{});
@@ -218,6 +253,15 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             indent(lvl + 1);
             std.debug.print("expr:\n", .{});
             printNode(df.*, lvl + 2);
+        },
+        .index_assignment => |ia| {
+            std.debug.print("IndexAssignment\n", .{});
+            indent(lvl + 1);
+            std.debug.print("target:\n", .{});
+            printNode(ia.target.*, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("value:\n", .{});
+            printNode(ia.value.*, lvl + 2);
         },
 
         // ── IF ───────────────────────────────────────────────────────────

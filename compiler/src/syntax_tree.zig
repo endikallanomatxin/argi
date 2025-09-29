@@ -25,15 +25,21 @@ pub const Content = union(enum) {
     identifier: []const u8,
     function_call: FunctionCall,
     code_block: CodeBlock,
+
     literal: tok.Literal, // literals are not parsed until the type is known.
+
+    list_literal: ListLiteral,
     struct_type_literal: StructTypeLiteral,
     struct_value_literal: StructValueLiteral,
     struct_field_access: StructFieldAccess,
+
+    index_access: IndexAccess,
     return_statement: ReturnStatement,
     binary_operation: BinaryOperation,
     comparison: Comparison,
     if_statement: IfStatement,
     defer_statement: *STNode,
+    index_assignment: IndexAssignment,
     address_of: AddressOf,
     dereference: *STNode,
     pointer_assignment: PointerAssignment,
@@ -52,11 +58,17 @@ pub const Type = union(enum) {
         base_name: []const u8,
         args: StructTypeLiteral,
     },
+    array_type: *ArrayType,
 };
 
 pub const PointerType = struct {
     mutability: PointerMutability,
     child: *Type,
+};
+
+pub const ArrayType = struct {
+    length: usize,
+    element: *Type,
 };
 
 pub const AddressOf = struct {
@@ -141,6 +153,11 @@ pub const CodeBlock = struct {
     // Return args in the future.
 };
 
+pub const ListLiteral = struct {
+    element_type: ?Type, // Optional explicit type
+    elements: []const *STNode,
+};
+
 pub const StructTypeLiteral = struct {
     fields: []const StructTypeLiteralField,
 };
@@ -163,6 +180,16 @@ pub const StructValueLiteralField = struct {
 pub const StructFieldAccess = struct {
     struct_value: *STNode,
     field_name: []const u8,
+};
+
+pub const IndexAccess = struct {
+    value: *STNode,
+    index: *STNode,
+};
+
+pub const IndexAssignment = struct {
+    target: *STNode,
+    value: *STNode,
 };
 
 pub const BinaryOperation = struct {
