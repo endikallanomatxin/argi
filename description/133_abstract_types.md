@@ -44,6 +44,10 @@ Animal canbe Dog
 Animal defaultsto Dog
 ```
 
+> [!CHECK] Valorar default
+> Como la sintaxis cómoda para definición de listas al final no se va a dar,
+> igual no tiene sentido esto.
+
 ```
 Addable : Abstract = (
 	operator + (Self, Self) -> (Self)
@@ -167,6 +171,18 @@ AbstractMatrix#(
 )
 ```
 
+---
 
 > [!TODO] Pensar si implementar orphan rule o permitir type piracy como julia.
+
+> [!TODO] Subtyping con genéricos.
+> ¿Vector<Int64> es usable donde se espera Vector<Number>?
+
+
+> [!TODO] Where clauses en la cabecera de funciones y de los abstracts.
+> Pensar si merece la pena.
+
+> [!TODO]
+> Se permite que el abstract aporte tipos asociados?
+
 
