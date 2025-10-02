@@ -78,6 +78,7 @@ pub const AddressOf = struct {
 
 pub const SymbolDeclaration = struct {
     name: []const u8,
+    name_loc: tok.Location,
     type: ?Type,
     mutability: Mutability,
     value: ?*STNode,
@@ -85,6 +86,7 @@ pub const SymbolDeclaration = struct {
 
 pub const TypeDeclaration = struct {
     name: []const u8,
+    name_loc: tok.Location,
     generic_params: []const []const u8,
     value: *STNode, // StructTypeLiteral
 };
@@ -121,7 +123,7 @@ pub const AbstractFunctionRequirement = struct {
 
 pub const FunctionDeclaration = struct {
     name: []const u8,
-    // Optional generic parameters: names only (e.g. foo[T, U])
+    name_loc: tok.Location,
     generic_params: []const []const u8,
     input: StructTypeLiteral, // Arguments
     output: StructTypeLiteral, // Named return params
@@ -136,6 +138,7 @@ pub const Assignment = struct {
 
 pub const FunctionCall = struct {
     callee: []const u8,
+    callee_loc: tok.Location,
     // Optional explicit type arguments on call site (e.g. foo[Int32, &Char])
     type_arguments: ?[]const Type,
     // Alternative syntax: named type arguments via struct-like block: #(.T: Int32)
@@ -164,6 +167,7 @@ pub const StructTypeLiteral = struct {
 
 pub const StructTypeLiteralField = struct {
     name: []const u8,
+    name_loc: tok.Location,
     type: ?Type,
     default_value: ?*STNode, // Optional default value for the field
 };
@@ -174,12 +178,14 @@ pub const StructValueLiteral = struct {
 
 pub const StructValueLiteralField = struct {
     name: []const u8,
+    name_loc: tok.Location,
     value: *STNode,
 };
 
 pub const StructFieldAccess = struct {
     struct_value: *STNode,
     field_name: []const u8,
+    field_loc: tok.Location,
 };
 
 pub const IndexAccess = struct {

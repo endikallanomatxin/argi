@@ -4,6 +4,7 @@ const sf = @import("source_files.zig");
 const diag = @import("diagnostic.zig");
 const token = @import("token.zig");
 const tokenizer = @import("tokenizer.zig");
+const st = @import("syntax_tree.zig");
 const syntaxer = @import("syntaxer.zig");
 const semantizer = @import("semantizer.zig");
 
@@ -361,65 +362,210 @@ pub const LanguageService = struct {
         const doc = try self.getDoc(uri);
         const text = doc.text;
 
-        // Arena temporal para tokenizar sin fugas
+        // Arena temporal
         var arena = std.heap.ArenaAllocator.init(gpa);
         defer arena.deinit();
-        var a = arena.allocator();
+        var work = arena.allocator();
 
-        // Diagnósticos “dummy” para el tokenizer (necesita el tipo)
+        // Diagnósticos dummy para tokenizer/syntaxer
         const one_file = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
-        var diagnostics = diag.Diagnostics.init(&a, &one_file);
+        var diagnostics = diag.Diagnostics.init(&work, &one_file);
         defer diagnostics.deinit();
 
-        // Tokeniza con TU tokenizer
-        var tz = tokenizer.Tokenizer.init(&a, &diagnostics, text, doc.path);
+        // 1) Tokeniza
+        var tz = tokenizer.Tokenizer.init(&work, &diagnostics, text, doc.path);
         const toks = try tz.tokenize();
-        if (toks.len == 0) return out; // vacío
+        if (toks.len == 0) return out;
 
-        // Helpers de delta-encoding (LSP: 5*u32)
-        var prev_line: u32 = 0;
-        var prev_char: u32 = 0;
+        // 2) Parsea; si falla, devolvemos solo léxico rápido
+        var syn_ctx = syntaxer.Syntaxer.init(&work, toks, &diagnostics);
+        const st_nodes = syn_ctx.parse() catch {
+            try emitLexical(&out, gpa, text, toks);
+            return out;
+        };
 
-        // Recorremos todos menos el EOF: usamos el offset del siguiente para la longitud
-        var i: usize = 0;
-        while (i + 1 < toks.len) : (i += 1) {
-            const tk = toks[i];
-            const tk_next = toks[i + 1];
+        // 3) Mapa offset -> índice de token (para longitudes de identificadores)
+        var off2ix = std.AutoHashMap(usize, usize).init(work);
+        defer off2ix.deinit();
+        for (toks, 0..) |tk, i| {
+            try off2ix.put(tk.location.offset, i);
+        }
 
-            const ty_opt = classify(tk.content) orelse continue;
+        // 4) Recolectamos TODO en 'collected' (luego ordenamos y codificamos)
+        var collected = std.ArrayList(SemanticToken).init(work);
+        defer collected.deinit();
 
-            // Coordenadas 0-based para LSP
+        // 4.a) Léxico con split por '\n' (NO añadimos identificadores aquí)
+        for (toks) |tk| {
+            const ty_opt = classify_lex_only(tk.content) orelse continue;
+
+            const start_off: usize = tk.location.offset;
+            const len_u: usize = tokenLenBytes(tk);
+            const end_off: usize = start_off + len_u;
+
             var line0: u32 = if (tk.location.line == 0) 0 else tk.location.line - 1;
             var col0: u32 = if (tk.location.column == 0) 0 else tk.location.column - 1;
 
-            // Span bruto en bytes [start_off, end_off)
-            const start_off: usize = tk.location.offset;
-            const end_off: usize = tk_next.location.offset;
-            if (end_off <= start_off) continue; // tokens vacíos/solapados: saltar
-
-            // Partimos en líneas: LSP no acepta longitudes que crucen '\n'
-            var off = start_off;
+            var off: usize = start_off;
             while (off < end_off) {
                 const rest = text[off..end_off];
-                const nl_rel = std.mem.indexOfScalar(u8, rest, '\n');
-
-                if (nl_rel) |r| {
-                    // segmento hasta antes del '\n'
+                if (std.mem.indexOfScalar(u8, rest, '\n')) |r| {
                     if (r > 0) {
-                        try pushEncoded(&out, &prev_line, &prev_char, line0, col0, @intCast(r), ty_opt, 0);
+                        try collected.append(.{
+                            .line = line0,
+                            .start = col0,
+                            .len = @intCast(@min(r, @as(usize, std.math.maxInt(u32)))),
+                            .type_index = ty_opt,
+                            .mods = 0,
+                        });
                         col0 += @intCast(r);
                     }
-                    // consumir '\n' y saltar de línea
-                    off += r + 1;
+                    off += r + 1; // saltar '\n'
                     line0 += 1;
                     col0 = 0;
                 } else {
-                    // último segmento en la misma línea
                     const seg = rest.len;
-                    if (seg > 0) try pushEncoded(&out, &prev_line, &prev_char, line0, col0, @intCast(seg), ty_opt, 0);
+                    if (seg > 0) {
+                        try collected.append(.{
+                            .line = line0,
+                            .start = col0,
+                            .len = @intCast(@min(seg, @as(usize, std.math.maxInt(u32)))),
+                            .type_index = ty_opt,
+                            .mods = 0,
+                        });
+                    }
                     break;
                 }
             }
+        }
+
+        // 4.b) Overlay del AST: sólo identificadores con su rol
+        const Emitter = struct {
+            sink: *std.ArrayList(SemanticToken),
+            toks: []const token.Token,
+            off2ix: *std.AutoHashMap(usize, usize),
+
+            fn identAt(this: *@This(), loc: token.Location, ty_idx: u32, mods: u32) !void {
+                const start_off = loc.offset;
+                const maybe_ix = this.off2ix.get(start_off) orelse return;
+                const tk = this.toks[maybe_ix];
+                if (tk.content != .identifier) return;
+
+                const len_bytes: u32 = @intCast(@min(tokenLenBytes(tk), @as(usize, std.math.maxInt(u32))));
+                const line0: u32 = if (loc.line == 0) 0 else loc.line - 1;
+                const col0: u32 = if (loc.column == 0) 0 else loc.column - 1;
+
+                try this.sink.append(.{
+                    .line = line0,
+                    .start = col0,
+                    .len = len_bytes,
+                    .type_index = ty_idx,
+                    .mods = mods,
+                });
+            }
+        };
+
+        var em = Emitter{
+            .sink = &collected,
+            .toks = toks,
+            .off2ix = &off2ix,
+        };
+
+        // Recorrido del AST (iterativo con pila)
+        var stack = std.ArrayList(*const st.STNode).init(work);
+        defer stack.deinit();
+        for (st_nodes) |n| try stack.append(n);
+
+        while (popOrNull(*const st.STNode, &stack)) |n| {
+            switch (n.content) {
+                .function_declaration => |fd| {
+                    try em.identAt(fd.name_loc, TOKEN_INDEX.function, 0);
+                    for (fd.input.fields) |f| {
+                        try em.identAt(f.name_loc, TOKEN_INDEX.property, 0);
+                        if (f.default_value) |dv| try stack.append(dv);
+                    }
+                    for (fd.output.fields) |f| {
+                        try em.identAt(f.name_loc, TOKEN_INDEX.property, 0);
+                        if (f.default_value) |dv| try stack.append(dv);
+                    }
+                    if (fd.body) |b| try stack.append(b);
+                },
+                .symbol_declaration => |sd| {
+                    // (si añades modifiers: p.ej. readonly para const)
+                    try em.identAt(sd.name_loc, TOKEN_INDEX.variable, 0);
+                    if (sd.value) |v| try stack.append(v);
+                },
+                .type_declaration => |td| {
+                    try em.identAt(td.name_loc, TOKEN_INDEX.type_, 0);
+                    try stack.append(td.value);
+                },
+                .function_call => |fc| {
+                    try em.identAt(fc.callee_loc, TOKEN_INDEX.function, 0);
+                    try stack.append(fc.input);
+                },
+                .struct_field_access => |sfa| {
+                    try em.identAt(sfa.field_loc, TOKEN_INDEX.property, 0);
+                    try stack.append(sfa.struct_value);
+                },
+                .struct_value_literal => |sv| {
+                    for (sv.fields) |f| {
+                        try em.identAt(f.name_loc, TOKEN_INDEX.property, 0);
+                        try stack.append(f.value);
+                    }
+                },
+                .struct_type_literal => |stl| {
+                    for (stl.fields) |f| {
+                        try em.identAt(f.name_loc, TOKEN_INDEX.property, 0);
+                        if (f.default_value) |dv| try stack.append(dv);
+                    }
+                },
+                .code_block => |cb| {
+                    for (cb.items) |sub| try stack.append(sub);
+                },
+                .binary_operation => |bo| {
+                    try stack.append(bo.left);
+                    try stack.append(bo.right);
+                },
+                .comparison => |c| {
+                    try stack.append(c.left);
+                    try stack.append(c.right);
+                },
+                .return_statement => |r| if (r.expression) |e| try stack.append(e),
+                .if_statement => |ifs| {
+                    try stack.append(ifs.condition);
+                    try stack.append(ifs.then_block);
+                    if (ifs.else_block) |e| try stack.append(e);
+                },
+                .list_literal => |ll| for (ll.elements) |e| try stack.append(e),
+                .index_access => |ia| {
+                    try stack.append(ia.value);
+                    try stack.append(ia.index);
+                },
+                .index_assignment => |ia| {
+                    try stack.append(ia.target);
+                    try stack.append(ia.value);
+                },
+                .address_of => |p| try stack.append(p.value),
+                .dereference => |p| try stack.append(p),
+                .pointer_assignment => |pa| {
+                    try stack.append(pa.target);
+                    try stack.append(pa.value);
+                },
+                else => {},
+            }
+        }
+
+        // 5) Ordenar y delta-codificar
+        std.sort.block(SemanticToken, collected.items, {}, struct {
+            fn lessThan(_: void, a: SemanticToken, b: SemanticToken) bool {
+                return if (a.line == b.line) a.start < b.start else a.line < b.line;
+            }
+        }.lessThan);
+
+        var prev_line: u32 = 0;
+        var prev_char: u32 = 0;
+        for (collected.items) |t| {
+            try pushEncoded(&out, &prev_line, &prev_char, t.line, t.start, t.len, t.type_index, t.mods);
         }
 
         return out;
@@ -511,4 +657,107 @@ inline fn classify(c: token.Content) ?u32 {
         // No coloreamos
         .new_line, .eof => null,
     };
+}
+
+fn emitLexical(
+    out: *std.ArrayList(u32),
+    gpa: std.mem.Allocator,
+    text: []const u8,
+    toks: []const token.Token,
+) !void {
+    _ = gpa; // por ahora no lo necesitamos
+
+    var prev_line: u32 = 0;
+    var prev_char: u32 = 0;
+
+    for (toks) |tk| {
+        // Sólo categorías léxicas (identificadores los pinta el AST)
+        const ty_opt = classify_lex_only(tk.content) orelse continue;
+
+        const start_off: usize = tk.location.offset;
+        const len_bytes: usize = tokenLenBytes(tk);
+        const end_off: usize = start_off + len_bytes;
+
+        var line0: u32 = if (tk.location.line == 0) 0 else tk.location.line - 1;
+        var col0: u32 = if (tk.location.column == 0) 0 else tk.location.column - 1;
+
+        // Partir en segmentos por si el token contiene '\n' (p.ej. string o comment multilínea)
+        var off = start_off;
+        while (off < end_off) {
+            const rest = text[off..end_off];
+            const nl_rel = std.mem.indexOfScalar(u8, rest, '\n');
+
+            if (nl_rel) |r| {
+                if (r > 0) {
+                    try pushEncoded(out, &prev_line, &prev_char, line0, col0, @intCast(r), ty_opt, 0);
+                    col0 += @intCast(r);
+                }
+                off += r + 1; // saltar '\n'
+                line0 += 1;
+                col0 = 0;
+            } else {
+                const seg = rest.len;
+                if (seg > 0) {
+                    try pushEncoded(out, &prev_line, &prev_char, line0, col0, @intCast(seg), ty_opt, 0);
+                }
+                break;
+            }
+        }
+    }
+}
+
+const SemanticToken = struct { line: u32, start: u32, len: u32, type_index: u32, mods: u32 };
+
+fn tokenLenBytes(tk: token.Token) usize {
+    return switch (tk.content) {
+        .identifier => |s| s.len,
+        .comment => |s| s.len,
+
+        .literal => |lit| switch (lit) {
+            .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal, .regular_float_literal, .scientific_float_literal, .string_literal => |s| s.len,
+            .char_literal => 3, // 'x' mínimo (ajusta si soportas escapes)
+            .bool_literal => |b| if (b) 4 else 5, // true/false
+        },
+
+        // ← añade aquí TODAS tus keywords
+        .keyword_return => "return".len, // 6
+        .keyword_if => "if".len, // 2
+        .keyword_else => "else".len, // 4
+        // .keyword_while => "while".len,
+        // .keyword_for => "for".len,
+        // ...etc si las tienes
+
+        // Puntuación / operadores
+        .double_colon => 2,
+        .arrow => 2,
+
+        // Si en tu lexer estos **siempre** son de 2 chars, deja 2;
+        // si no, cámbialo a 1 o computa según el enum que uses.
+        .comparison_operator => 2,
+        .binary_operator => 2,
+
+        .new_line => 1,
+
+        // Paréntesis, corchetes, llaves, unarios, etc., 1 char:
+        .equal, .colon, .dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar, .eof => 1,
+    };
+}
+
+inline fn classify_lex_only(c: token.Content) ?u32 {
+    return switch (c) {
+        .comment => TOKEN_INDEX.comment,
+        .literal => |lit| switch (lit) {
+            .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal, .regular_float_literal, .scientific_float_literal => TOKEN_INDEX.number,
+            .string_literal, .char_literal => TOKEN_INDEX.string,
+            .bool_literal => TOKEN_INDEX.keyword, // si prefieres, cámbialo a .number o .type_
+        },
+        .keyword_return, .keyword_if, .keyword_else => TOKEN_INDEX.keyword,
+        .comparison_operator, .binary_operator, .equal, .arrow, .colon, .double_colon, .dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar => TOKEN_INDEX.operator,
+        .identifier => null, // ident los pinta el pase sintáctico
+        .new_line, .eof => null,
+    };
+}
+inline fn popOrNull(comptime T: type, list: *std.ArrayList(T)) ?T {
+    if (list.items.len == 0) return null;
+    return list.pop();
 }
