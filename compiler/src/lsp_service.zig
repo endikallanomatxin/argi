@@ -1,11 +1,26 @@
 const std = @import("std");
 
-const sf = @import("../source_files.zig");
-const diag = @import("../diagnostic.zig");
-const token = @import("../token.zig");
-const tokenizer = @import("../tokenizer.zig");
-const syntaxer = @import("../syntaxer.zig");
-const semantizer = @import("../semantizer.zig");
+const sf = @import("source_files.zig");
+const diag = @import("diagnostic.zig");
+const token = @import("token.zig");
+const tokenizer = @import("tokenizer.zig");
+const syntaxer = @import("syntaxer.zig");
+const semantizer = @import("semantizer.zig");
+
+// Índices fijos del legend que anuncias en initialize.semanticTokensProvider.legend.tokenTypes
+const TOKEN_INDEX = struct {
+    pub const namespace: u32 = 0;
+    pub const type_: u32 = 1; // 'type' es keyword en Zig
+    pub const function: u32 = 2;
+    pub const method: u32 = 3;
+    pub const variable: u32 = 4;
+    pub const property: u32 = 5;
+    pub const keyword: u32 = 6;
+    pub const number: u32 = 7;
+    pub const string: u32 = 8;
+    pub const comment: u32 = 9;
+    pub const operator: u32 = 10;
+};
 
 pub const Severity = enum(u8) {
     err = 1,
@@ -178,6 +193,13 @@ pub const LanguageService = struct {
         return null;
     }
 
+    pub fn getDoc(self: *LanguageService, uri: []const u8) !*Document {
+        if (self.findDocument(uri)) |idx| {
+            return &self.documents.items[idx];
+        }
+        return error.DocumentNotOpen;
+    }
+
     fn analyzeDocument(self: *LanguageService, doc: *Document) !DiagnosticsResult {
         try self.ensureCoreFiles();
 
@@ -331,6 +353,77 @@ pub const LanguageService = struct {
 
         return any_loaded;
     }
+
+    pub fn semanticTokensFull(self: *LanguageService, uri: []const u8) !std.ArrayList(u32) {
+        const gpa = self.allocator;
+        var out = std.ArrayList(u32).init(gpa);
+
+        const doc = try self.getDoc(uri);
+        const text = doc.text;
+
+        // Arena temporal para tokenizar sin fugas
+        var arena = std.heap.ArenaAllocator.init(gpa);
+        defer arena.deinit();
+        var a = arena.allocator();
+
+        // Diagnósticos “dummy” para el tokenizer (necesita el tipo)
+        const one_file = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
+        var diagnostics = diag.Diagnostics.init(&a, &one_file);
+        defer diagnostics.deinit();
+
+        // Tokeniza con TU tokenizer
+        var tz = tokenizer.Tokenizer.init(&a, &diagnostics, text, doc.path);
+        const toks = try tz.tokenize();
+        if (toks.len == 0) return out; // vacío
+
+        // Helpers de delta-encoding (LSP: 5*u32)
+        var prev_line: u32 = 0;
+        var prev_char: u32 = 0;
+
+        // Recorremos todos menos el EOF: usamos el offset del siguiente para la longitud
+        var i: usize = 0;
+        while (i + 1 < toks.len) : (i += 1) {
+            const tk = toks[i];
+            const tk_next = toks[i + 1];
+
+            const ty_opt = classify(tk.content) orelse continue;
+
+            // Coordenadas 0-based para LSP
+            var line0: u32 = if (tk.location.line == 0) 0 else tk.location.line - 1;
+            var col0: u32 = if (tk.location.column == 0) 0 else tk.location.column - 1;
+
+            // Span bruto en bytes [start_off, end_off)
+            const start_off: usize = tk.location.offset;
+            const end_off: usize = tk_next.location.offset;
+            if (end_off <= start_off) continue; // tokens vacíos/solapados: saltar
+
+            // Partimos en líneas: LSP no acepta longitudes que crucen '\n'
+            var off = start_off;
+            while (off < end_off) {
+                const rest = text[off..end_off];
+                const nl_rel = std.mem.indexOfScalar(u8, rest, '\n');
+
+                if (nl_rel) |r| {
+                    // segmento hasta antes del '\n'
+                    if (r > 0) {
+                        try pushEncoded(&out, &prev_line, &prev_char, line0, col0, @intCast(r), ty_opt, 0);
+                        col0 += @intCast(r);
+                    }
+                    // consumir '\n' y saltar de línea
+                    off += r + 1;
+                    line0 += 1;
+                    col0 = 0;
+                } else {
+                    // último segmento en la misma línea
+                    const seg = rest.len;
+                    if (seg > 0) try pushEncoded(&out, &prev_line, &prev_char, line0, col0, @intCast(seg), ty_opt, 0);
+                    break;
+                }
+            }
+        }
+
+        return out;
+    }
 };
 
 fn locationToRange(loc: token.Location) Range {
@@ -373,4 +466,49 @@ pub fn decodeFileUri(allocator: std.mem.Allocator, uri: []const u8) !?[]u8 {
     const slice = try builder.toOwnedSlice();
     builder.deinit();
     return slice;
+}
+
+inline fn pushEncoded(
+    outp: *std.ArrayList(u32),
+    prev_linep: *u32,
+    prev_charp: *u32,
+    line: u32,
+    start_col: u32,
+    len: u32,
+    ty_index: u32,
+    mods: u32,
+) !void {
+    const d_line = line - prev_linep.*;
+    const d_char = if (d_line == 0) (start_col - prev_charp.*) else start_col;
+    try outp.append(d_line);
+    try outp.append(d_char);
+    try outp.append(len);
+    try outp.append(ty_index);
+    try outp.append(mods);
+    prev_linep.* = line;
+    prev_charp.* = start_col;
+}
+
+inline fn classify(c: token.Content) ?u32 {
+    return switch (c) {
+        .comment => TOKEN_INDEX.comment,
+        .identifier => TOKEN_INDEX.variable,
+
+        .literal => |lit| switch (lit) {
+            .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal, .regular_float_literal, .scientific_float_literal => TOKEN_INDEX.number,
+
+            .string_literal, .char_literal => TOKEN_INDEX.string,
+
+            else => TOKEN_INDEX.number, // por si amplías Literal
+        },
+
+        // Keywords que ya emites (añade más si tu token.zig los incluye)
+        .keyword_return, .keyword_if, .keyword_else => TOKEN_INDEX.keyword,
+
+        // Operadores / puntuación
+        .comparison_operator, .binary_operator, .equal, .arrow, .colon, .double_colon, .dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar => TOKEN_INDEX.operator,
+
+        // No coloreamos
+        .new_line, .eof => null,
+    };
 }

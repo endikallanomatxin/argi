@@ -83,6 +83,10 @@ const LanguageServer = struct {
                 if (id_value) |id| self.handleShutdown(&writer, id) catch {};
             } else if (std.mem.eql(u8, method, "exit")) {
                 break;
+            } else if (std.mem.eql(u8, method, "textDocument/semanticTokens/full")) {
+                if (id_value) |id| self.handleSemanticTokensFull(&writer, id, params_value) catch {};
+            } else if (std.mem.eql(u8, method, "textDocument/semanticTokens/range")) {
+                if (id_value) |id| self.handleSemanticTokensRange(&writer, id, params_value) catch {};
             } else {
                 // Método desconocido -> ignorar
             }
@@ -238,6 +242,7 @@ const LanguageServer = struct {
         try stream.write(id_value);
         try stream.objectField("result");
         try stream.beginObject();
+
         try stream.objectField("capabilities");
         try stream.beginObject();
         try stream.objectField("positionEncoding");
@@ -249,7 +254,41 @@ const LanguageServer = struct {
         try stream.objectField("change");
         try stream.write(@as(i32, 1));
         try stream.endObject();
+        try stream.objectField("semanticTokensProvider");
+        try stream.beginObject();
+        // legend
+        try stream.objectField("legend");
+        try stream.beginObject();
+        try stream.objectField("tokenTypes");
+        try stream.beginArray();
+        // usa los que vayas a producir ya en el MVP:
+        try stream.write("namespace");
+        try stream.write("type");
+        try stream.write("function");
+        try stream.write("method");
+        try stream.write("variable");
+        try stream.write("property");
+        try stream.write("keyword");
+        try stream.write("number");
+        try stream.write("string");
+        try stream.write("comment");
+        try stream.write("operator");
+        try stream.endArray();
+        try stream.objectField("tokenModifiers");
+        try stream.beginArray();
+        try stream.write("declaration"); // opcional, ya
+        try stream.write("readonly"); // opcional
+        try stream.endArray();
         try stream.endObject();
+
+        // soporte
+        try stream.objectField("full");
+        try stream.write(true); // MVP: full, sin delta
+        try stream.objectField("range");
+        try stream.write(true); // si quieres implementar /range más tarde
+        try stream.endObject();
+        try stream.endObject();
+
         try stream.objectField("serverInfo");
         try stream.beginObject();
         try stream.objectField("name");
@@ -337,6 +376,88 @@ const LanguageServer = struct {
         try stream.endObject();
 
         try self.sendMessage(writer, payload.items);
+    }
+
+    fn handleSemanticTokensFull(self: *LanguageServer, writer: anytype, id_value: json.Value, params_value: ?json.Value) !void {
+        if (self.service == null) return;
+        const params = params_value orelse return;
+        if (params != .object) return;
+        const text_document_value = getField(&params.object, "textDocument") orelse return;
+        if (text_document_value != .object) return;
+        const uri_value = getField(&text_document_value.object, "uri") orelse return;
+        if (uri_value != .string) return;
+
+        if (self.service) |*svc| {
+            var data = try svc.semanticTokensFull(uri_value.string); // ArrayList(u32)
+            defer data.deinit();
+
+            var payload = std.ArrayList(u8).init(self.allocator);
+            defer payload.deinit();
+            var stream = json.writeStream(payload.writer(), .{});
+            defer stream.deinit();
+
+            try stream.beginObject();
+            try stream.objectField("jsonrpc");
+            try stream.write("2.0");
+            try stream.objectField("id");
+            try stream.write(id_value);
+            try stream.objectField("result");
+            try stream.beginObject();
+            try stream.objectField("data");
+            try stream.beginArray();
+            for (data.items) |word| try stream.write(word);
+            try stream.endArray();
+            try stream.endObject(); // result
+            try stream.endObject(); // root
+
+            try self.sendMessage(writer, payload.items);
+        }
+    }
+
+    fn handleSemanticTokensRange(
+        self: *LanguageServer,
+        writer: anytype,
+        id_value: json.Value,
+        params_value: ?json.Value,
+    ) !void {
+        if (self.service == null) return;
+        const params = params_value orelse return;
+        if (params != .object) return;
+
+        const text_document_value = getField(&params.object, "textDocument") orelse return;
+        if (text_document_value != .object) return;
+        const uri_value = getField(&text_document_value.object, "uri") orelse return;
+        if (uri_value != .string) return;
+
+        // La spec manda un "range" aquí; por ahora lo ignoramos (MVP),
+        // pero lo parseamos para que no falle si viene.
+        _ = getField(&params.object, "range");
+
+        if (self.service) |*svc| {
+            var data = try svc.semanticTokensFull(uri_value.string);
+            defer data.deinit();
+
+            var payload = std.ArrayList(u8).init(self.allocator);
+            defer payload.deinit();
+            var stream = json.writeStream(payload.writer(), .{});
+            defer stream.deinit();
+
+            try stream.beginObject();
+            try stream.objectField("jsonrpc");
+            try stream.write("2.0");
+            try stream.objectField("id");
+            try stream.write(id_value);
+            try stream.objectField("result");
+            try stream.beginObject();
+            try stream.objectField("data");
+            try stream.beginArray();
+            for (data.items) |word| try stream.write(word);
+            try stream.endArray();
+            try stream.endObject(); // result
+            try stream.endObject(); // root
+
+            try self.sendMessage(writer, payload.items);
+        }
     }
 
     fn sendMessage(self: *LanguageServer, writer: anytype, payload: []const u8) !void {
