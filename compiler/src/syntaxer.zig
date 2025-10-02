@@ -385,6 +385,7 @@ pub const Syntaxer = struct {
                 return SyntaxerError.ExpectedStructField;
             }
             self.advanceOne();
+            const fname_loc = self.tokenLocation();
             const fname = try self.parseIdentifier();
 
             var ftype: ?syn.Type = null;
@@ -401,6 +402,7 @@ pub const Syntaxer = struct {
 
             try fields.append(.{
                 .name = fname,
+                .name_loc = fname_loc,
                 .type = ftype,
                 .default_value = def_val,
             });
@@ -420,6 +422,7 @@ pub const Syntaxer = struct {
     // ─────── struct VALUE literal  (p.e.  (.x=1, .y=2) ) ─────────────────────
     fn parseStructValueLiteral(self: *Syntaxer) SyntaxerError!*syn.STNode {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        const start_loc = self.tokenLocation();
         self.advanceOne();
         self.skipNewLinesAndComments();
 
@@ -437,7 +440,7 @@ pub const Syntaxer = struct {
             self.advanceOne();
 
             const val = try self.parseExpression();
-            try fields.append(.{ .name = fname, .value = val });
+            try fields.append(.{ .name = fname, .name_loc = val.location, .value = val });
 
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
@@ -450,7 +453,7 @@ pub const Syntaxer = struct {
 
         return try self.makeNode(
             .{ .struct_value_literal = .{ .fields = fields.items } },
-            self.tokenLocation(),
+            start_loc,
         );
     }
 
@@ -461,9 +464,10 @@ pub const Syntaxer = struct {
             if (self.tokenIs(.dot)) {
                 const dot_loc = self.tokenLocation();
                 self.advanceOne();
+                const fld_loc = self.tokenLocation();
                 const fld_name = try self.parseIdentifier();
                 node = try self.makeNode(
-                    .{ .struct_field_access = .{ .struct_value = node, .field_name = fld_name } },
+                    .{ .struct_field_access = .{ .struct_value = node, .field_name = fld_name, .field_loc = fld_loc } },
                     dot_loc,
                 );
                 continue;
@@ -542,7 +546,13 @@ pub const Syntaxer = struct {
                 if (self.tokenIs(.open_parenthesis)) { // llamada
                     const struct_value_literal = try self.parseStructValueLiteral();
                     break :blk try self.makeNode(
-                        .{ .function_call = .{ .callee = name, .type_arguments = type_args, .type_arguments_struct = type_args_struct, .input = struct_value_literal } },
+                        .{ .function_call = .{
+                            .callee = name,
+                            .callee_loc = t.location,
+                            .type_arguments = type_args,
+                            .type_arguments_struct = type_args_struct,
+                            .input = struct_value_literal,
+                        } },
                         t.location,
                     );
                 }
@@ -716,6 +726,7 @@ pub const Syntaxer = struct {
                             // Construimos el nodo
                             const ef = syn.FunctionDeclaration{
                                 .name = name,
+                                .name_loc = id_loc,
                                 .generic_params = generic_params,
                                 .input = input,
                                 .output = output,
@@ -734,6 +745,7 @@ pub const Syntaxer = struct {
 
                 const fn_decl = syn.FunctionDeclaration{
                     .name = name,
+                    .name_loc = id_loc,
                     .generic_params = generic_params,
                     .input = input,
                     .output = output,
@@ -747,7 +759,13 @@ pub const Syntaxer = struct {
                     id_loc,
                 );
                 return try self.makeNode(
-                    .{ .function_call = .{ .callee = name, .type_arguments = null, .type_arguments_struct = null, .input = input_node } },
+                    .{ .function_call = .{
+                        .callee = name,
+                        .callee_loc = id_loc,
+                        .type_arguments = null,
+                        .type_arguments_struct = null,
+                        .input = input_node,
+                    } },
                     id_loc,
                 );
             }
@@ -802,6 +820,7 @@ pub const Syntaxer = struct {
 
                     const tdecl = syn.TypeDeclaration{
                         .name = name,
+                        .name_loc = id_loc,
                         .generic_params = generic_params,
                         .value = lit_node,
                     };
@@ -834,6 +853,7 @@ pub const Syntaxer = struct {
 
             const sym = syn.SymbolDeclaration{
                 .name = name,
+                .name_loc = id_loc,
                 .type = ty_opt,
                 .mutability = mut,
                 .value = rhs,
