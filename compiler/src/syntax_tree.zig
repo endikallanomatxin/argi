@@ -13,9 +13,16 @@ pub const STNode = struct {
     content: Content,
 };
 
+pub const Name = struct {
+    string: []const u8,
+    location: tok.Location,
+    // Location is used mainly for the lsp
+};
+
 pub const Content = union(enum) {
     symbol_declaration: SymbolDeclaration,
     type_declaration: TypeDeclaration,
+
     // Abstract type features
     abstract_declaration: AbstractDeclaration,
     abstract_canbe: AbstractCanBe,
@@ -26,14 +33,16 @@ pub const Content = union(enum) {
     function_call: FunctionCall,
     code_block: CodeBlock,
 
-    literal: tok.Literal, // literals are not parsed until the type is known.
-
+    // Literals
+    // (Not parsed until the type is known)
+    literal: tok.Literal,
     list_literal: ListLiteral,
     struct_type_literal: StructTypeLiteral,
     struct_value_literal: StructValueLiteral,
-    struct_field_access: StructFieldAccess,
 
+    struct_field_access: StructFieldAccess,
     index_access: IndexAccess,
+
     return_statement: ReturnStatement,
     binary_operation: BinaryOperation,
     comparison: Comparison,
@@ -51,11 +60,11 @@ pub const PointerMutability = enum {
 };
 
 pub const Type = union(enum) {
-    type_name: []const u8,
+    type_name: Name,
     struct_type_literal: StructTypeLiteral,
     pointer_type: *PointerType,
     generic_type_instantiation: struct {
-        base_name: []const u8,
+        base_name: Name,
         args: StructTypeLiteral,
     },
     array_type: *ArrayType,
@@ -77,23 +86,21 @@ pub const AddressOf = struct {
 };
 
 pub const SymbolDeclaration = struct {
-    name: []const u8,
-    name_loc: tok.Location,
+    name: Name,
     type: ?Type,
     mutability: Mutability,
     value: ?*STNode,
 };
 
 pub const TypeDeclaration = struct {
-    name: []const u8,
-    name_loc: tok.Location,
+    name: Name,
     generic_params: []const []const u8,
     value: *STNode, // StructTypeLiteral
 };
 
 // Abstract type declarations (interface-like)
 pub const AbstractDeclaration = struct {
-    name: []const u8,
+    name: Name,
     generic_params: []const []const u8,
     // Composed abstracts (by name)
     requires_abstracts: []const []const u8,
@@ -110,20 +117,19 @@ pub const AbstractCanBe = struct {
 
 // "Name defaultsto Type" default concrete backing type
 pub const AbstractDefault = struct {
-    name: []const u8,
+    name: Name,
     generic_params: []const []const u8,
     ty: Type,
 };
 
 pub const AbstractFunctionRequirement = struct {
-    name: []const u8,
+    name: Name,
     input: StructTypeLiteral,
     output: StructTypeLiteral,
 };
 
 pub const FunctionDeclaration = struct {
-    name: []const u8,
-    name_loc: tok.Location,
+    name: Name,
     generic_params: []const []const u8,
     input: StructTypeLiteral, // Arguments
     output: StructTypeLiteral, // Named return params
@@ -132,7 +138,7 @@ pub const FunctionDeclaration = struct {
 };
 
 pub const Assignment = struct {
-    name: []const u8,
+    name: Name,
     value: *STNode,
 };
 
@@ -166,8 +172,7 @@ pub const StructTypeLiteral = struct {
 };
 
 pub const StructTypeLiteralField = struct {
-    name: []const u8,
-    name_loc: tok.Location,
+    name: Name,
     type: ?Type,
     default_value: ?*STNode, // Optional default value for the field
 };
@@ -177,15 +182,13 @@ pub const StructValueLiteral = struct {
 };
 
 pub const StructValueLiteralField = struct {
-    name: []const u8,
-    name_loc: tok.Location,
+    name: Name,
     value: *STNode,
 };
 
 pub const StructFieldAccess = struct {
     struct_value: *STNode,
-    field_name: []const u8,
-    field_loc: tok.Location,
+    field_name: Name,
 };
 
 pub const IndexAccess = struct {

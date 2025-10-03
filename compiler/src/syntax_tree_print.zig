@@ -14,7 +14,7 @@ fn indent(lvl: usize) void {
 // ── impresión de tipos ──────────────────────────────────────────────────────
 fn printType(t: syn.Type, lvl: usize) void {
     switch (t) {
-        .type_name => |id| std.debug.print("{s}", .{id}),
+        .type_name => |id| std.debug.print("{s}", .{id.string}),
         .struct_type_literal => |st| printStructTypeLiteral(st, lvl),
         .pointer_type => |pt_ptr| {
             const pt = pt_ptr.*;
@@ -26,7 +26,7 @@ fn printType(t: syn.Type, lvl: usize) void {
             printType(pt.child.*, lvl);
         },
         .generic_type_instantiation => |g| {
-            std.debug.print("{s}#", .{g.base_name});
+            std.debug.print("{s}#", .{g.base_name.string});
             printStructTypeLiteral(g.args, lvl);
         },
         .array_type => |arr_ptr| {
@@ -41,7 +41,7 @@ fn printStructTypeLiteral(st: syn.StructTypeLiteral, lvl: usize) void {
     std.debug.print("struct (\n", .{});
     for (st.fields) |f| {
         indent(lvl + 1);
-        std.debug.print(".{s}", .{f.name});
+        std.debug.print(".{s}", .{f.name.string});
 
         if (f.type) |fty| {
             std.debug.print(" : ", .{});
@@ -63,7 +63,7 @@ fn printStructValueLiteral(sl: syn.StructValueLiteral, lvl: usize) void {
     std.debug.print("(\n", .{});
     for (sl.fields) |f| {
         indent(lvl + 1);
-        std.debug.print(".{s} = ", .{f.name});
+        std.debug.print(".{s} = ", .{f.name.string});
         printNode(f.value.*, lvl + 1);
         std.debug.print("\n", .{});
     }
@@ -106,7 +106,7 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
     switch (node.content) {
         // ── ABSTRACTS (minimal printing) ─────────────────────────────────
         .abstract_declaration => |ad| {
-            std.debug.print("AbstractDecl \"{s}\"\n", .{ad.name});
+            std.debug.print("AbstractDecl \"{s}\"\n", .{ad.name.string});
             if (ad.requires_abstracts.len > 0) {
                 indent(lvl + 1);
                 std.debug.print("requires:", .{});
@@ -118,7 +118,7 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             if (ad.requires_functions.len > 0) {
                 for (ad.requires_functions) |rf| {
                     indent(lvl + 1);
-                    std.debug.print("require fn {s} ", .{rf.name});
+                    std.debug.print("require fn {s} ", .{rf.name.string});
                     printStructTypeLiteral(rf.input, lvl + 1);
                     std.debug.print(" -> ", .{});
                     printStructTypeLiteral(rf.output, lvl + 1);
@@ -132,14 +132,14 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             std.debug.print("\n", .{});
         },
         .abstract_defaultsto => |rel| {
-            std.debug.print("AbstractDefault \"{s}\" ", .{rel.name});
+            std.debug.print("AbstractDefault \"{s}\" ", .{rel.name.string});
             printType(rel.ty, lvl);
             std.debug.print("\n", .{});
         },
         // ── SYMBOL DECLARATION ────────────────────────────────────────────
         .symbol_declaration => |d| {
             const mut = if (d.mutability == .variable) "var" else "const";
-            std.debug.print("SymbolDecl \"{s}\" ({s})", .{ d.name, mut });
+            std.debug.print("SymbolDecl \"{s}\" ({s})", .{ d.name.string, mut });
 
             if (d.type) |ty| {
                 std.debug.print(" : ", .{});
@@ -157,13 +157,13 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
 
         // ── TYPE DECLARATION ──────────────────────────────────────────────
         .type_declaration => |td| {
-            std.debug.print("TypeDecl  \"{s}\"\n", .{td.name});
+            std.debug.print("TypeDecl  \"{s}\"\n", .{td.name.string});
             printNode(td.value.*, lvl + 1); // el valor es un struct_type_literal
         },
 
         // ── FUNCTION DECLARATION ──────────────────────────────────────────
         .function_declaration => |fd| {
-            std.debug.print("FuncDecl \"{s}\"\n", .{fd.name});
+            std.debug.print("FuncDecl \"{s}\"\n", .{fd.name.string});
 
             indent(lvl + 1);
             std.debug.print("input : ", .{});
@@ -186,7 +186,7 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
 
         // ── ASSIGNMENT ────────────────────────────────────────────────────
         .assignment => |a| {
-            std.debug.print("Assignment \"{s}\"\n", .{a.name});
+            std.debug.print("Assignment \"{s}\"\n", .{a.name.string});
             printNode(a.value.*, lvl + 1);
         },
 
@@ -215,7 +215,7 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             std.debug.print("Struct: ", .{});
             printNode(sfa.struct_value.*, 0);
             indent(lvl + 1);
-            std.debug.print("Field:  .{s}\n", .{sfa.field_name});
+            std.debug.print("Field:  .{s}\n", .{sfa.field_name.string});
         },
 
         // ── LIST LITERAL ─────────────────────────────────────────────────
