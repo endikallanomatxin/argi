@@ -43,6 +43,13 @@ pub const Semantizer = struct {
     root_nodes: []const *sem.SGNode = &.{}, // slice final
     diags: *diagnostic.Diagnostics,
 
+    // ── Reintentos top-level
+    pending_now: std.ArrayList(*const syn.STNode),
+    pending_next: std.ArrayList(*const syn.STNode),
+    defer_unknown_top_level: bool = false,
+    current_top_node: ?*const syn.STNode = null,
+    max_retry_rounds: u32 = 8,
+
     pub fn init(
         alloc: *const std.mem.Allocator,
         st: []const *syn.STNode,
@@ -53,21 +60,57 @@ pub const Semantizer = struct {
             .st_nodes = st,
             .root_list = std.ArrayList(*sem.SGNode).init(alloc.*),
             .diags = diags,
+            .pending_now = std.ArrayList(*const syn.STNode).init(alloc.*),
+            .pending_next = std.ArrayList(*const syn.STNode).init(alloc.*),
         };
     }
 
     pub fn analyze(self: *Semantizer) SemErr![]const *sem.SGNode {
         var global = try Scope.init(self.allocator, null, null);
 
-        for (self.st_nodes) |n|
-            _ = self.visitNode(n.*, &global) catch |err| {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in node '{any}': {s}",
-                    .{ n.content, @errorName(err) },
-                );
-            };
+        // 1) Pasada inicial: difiere los UnknownType top-level
+        self.defer_unknown_top_level = true;
+        for (self.st_nodes) |n| {
+            self.current_top_node = n;
+            _ = self.visitNode(n.*, &global) catch {};
+        }
+        self.current_top_node = null;
+
+        // 2) Rondas de reintento: solo lo pendiente
+        var round: u32 = 0;
+        while (self.pending_next.items.len > 0 and round < self.max_retry_rounds) {
+            // swap pending_next -> pending_now
+            const tmp = self.pending_now;
+            self.pending_now = self.pending_next;
+            self.pending_next = tmp;
+            self.pending_next.items.len = 0;
+
+            var progressed = false;
+            for (self.pending_now.items) |pn| {
+                self.current_top_node = pn;
+                if (self.visitNode(pn.*, &global)) |_| {
+                    progressed = true;
+                } else |_| {
+                    // Las causas distintas de UnknownType ya se reportan dentro.
+                    // UnknownType vuelve a entrar en pending_next si procede.
+                }
+            }
+            self.current_top_node = null;
+            self.pending_now.items.len = 0; // vaciar
+            if (!progressed) break;
+            round += 1;
+        }
+
+        // 3) Último pase: ya NO diferir => emitir diags de lo que quede
+        self.defer_unknown_top_level = false;
+        if (self.pending_next.items.len > 0) {
+            for (self.pending_next.items) |pn| {
+                self.current_top_node = pn;
+                _ = self.visitNode(pn.*, &global) catch {};
+            }
+            self.current_top_node = null;
+            self.pending_next.items.len = 0;
+        }
 
         // Final conformance verification for abstracts (top-level scope)
         try self.verifyAbstracts(&global);
@@ -89,18 +132,20 @@ pub const Semantizer = struct {
             .symbol_declaration => |d| self.handleSymbolDecl(d, s, n.location) catch |err| blk: {
                 switch (err) {
                     error.UnknownType => {
-                        // Try to extract the written type name when available
-                        if (d.type) |tp| {
-                            if (tp == .type_name) {
-                                try self.diags.add(
-                                    n.location,
-                                    .semantic,
-                                    "unknown type '{s}' in declaration of '{s}'",
-                                    .{ tp.type_name.string, d.name.string },
-                                );
-                                break :blk err;
-                            }
+                        if (s.parent == null and self.defer_unknown_top_level) {
+                            try self.pushTopLevelForRetry();
+                            break :blk error.Reported; // sin diagnóstico por ahora
                         }
+                        // Diagnóstico normal (no diferido)
+                        if (d.type) |tp| if (tp == .type_name) {
+                            try self.diags.add(
+                                n.location,
+                                .semantic,
+                                "unknown type '{s}' in declaration of '{s}'",
+                                .{ tp.type_name.string, d.name.string },
+                            );
+                            break :blk err;
+                        };
                         try self.diags.add(
                             n.location,
                             .semantic,
@@ -170,6 +215,10 @@ pub const Semantizer = struct {
             },
 
             .type_declaration => |d| self.handleTypeDecl(d, s) catch |err| blk: {
+                if (err == error.UnknownType and s.parent == null and self.defer_unknown_top_level) {
+                    try self.pushTopLevelForRetry();
+                    break :blk error.Reported; // sin diagnóstico todavía
+                }
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -180,6 +229,10 @@ pub const Semantizer = struct {
             },
 
             .function_declaration => |d| self.handleFuncDecl(d, s, n.location) catch |err| blk: {
+                if (err == error.UnknownType and s.parent == null and self.defer_unknown_top_level) {
+                    try self.pushTopLevelForRetry();
+                    break :blk error.Reported;
+                }
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -837,13 +890,34 @@ pub const Semantizer = struct {
             } }, s);
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
         } else {
+            // 1) Asegurar stub nominal para el nombre del tipo
+            var td: *sem.TypeDeclaration = undefined;
+            if (s.types.get(d.name.string)) |existing| {
+                td = existing;
+            } else {
+                const stub = try self.allocator.create(sem.StructType);
+                stub.* = .{ .fields = &.{} };
+                td = try self.allocator.create(sem.TypeDeclaration);
+                td.* = .{ .name = d.name.string, .ty = .{ .struct_type = stub } };
+                try s.types.put(d.name.string, td);
+                // Emitir el nodo una sola vez cuando el stub se crea
+                const n0 = try self.makeNode(undefined, .{ .type_declaration = td }, s);
+                if (s.parent == null) try self.root_list.append(n0);
+            }
+
+            // 2) Intentar completar el cuerpo ahora (puede fallar con UnknownType)
             const st_ptr = try self.structTypeFromLiteral(st_lit, s);
-            const td = try self.allocator.create(sem.TypeDeclaration);
-            td.* = .{ .name = d.name.string, .ty = .{ .struct_type = st_ptr } };
-            try s.types.put(d.name.string, td);
-            const n = try self.makeNode(undefined, .{ .type_declaration = td }, s);
-            if (s.parent == null) try self.root_list.append(n);
-            return .{ .node = n, .ty = .{ .builtin = .Any } };
+            // Rellenar el stub in-place (puntero estable). struct_type es *const; necesitamos mutarlo.
+            const dst_const = td.ty.struct_type; // *const sem.StructType
+            const dst: *sem.StructType = @constCast(dst_const); // hacemos mutable el pointee
+            dst.fields = st_ptr.fields;
+            // Devolver un no-op para no duplicar el nodo en root
+            const noop = try self.makeNode(d.value.location, .{ .code_block = blk2: {
+                const empty = try self.allocator.create(sem.CodeBlock);
+                empty.* = .{ .nodes = &.{}, .ret_val = null };
+                break :blk2 empty;
+            } }, null);
+            return .{ .node = noop, .ty = .{ .builtin = .Any } };
         }
     }
 
@@ -3059,6 +3133,14 @@ pub const Semantizer = struct {
 
         const call_node = try self.makeNode(loc, .{ .function_call = fc_ptr }, null);
         try self.registerDefer(s, &[_]*sem.SGNode{call_node});
+    }
+
+    // ─────────────────────────────────────────────────── Helpers reintento
+    fn pushTopLevelForRetry(self: *Semantizer) !void {
+        if (!self.defer_unknown_top_level) return;
+        if (self.current_top_node) |ptr| {
+            try self.pending_next.append(ptr);
+        }
     }
 };
 
