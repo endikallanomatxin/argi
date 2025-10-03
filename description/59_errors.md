@@ -75,6 +75,12 @@ If you are inside a function that returns an Errable and you are calling a funct
 		Incluye siempre un stack trace y las variables que han dado lugar a ese error.
 - If you do:`my_func () !! "Something"` you can add some context. (like anyhow rust crate)
 
+> Se permite en cualquier subexpresión (no solo en instrucción); ejemplo: line_len := read_line(fd)!.len.
+
+> En funciones cuyo tipo de salida no es Errable, usar ! es error del compilador.
+
+> ! hace short-circuit con ejecución de defers
+
 
 ## Errable as a monad
 

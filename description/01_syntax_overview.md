@@ -74,6 +74,10 @@ aritmética y luego volverlo a convertir en un puntero. Es suficientemente
 incómodo como para no hacerlo sin querer, te obliga a ser explícito para
 cagarla.
 
+> [!TODO] Puede pasarse un puntero $& a una función que espera un &?
+> Requerimos casteo explícito?
+
+
 ### Read-only vs read-write pointers
 
 There are two types of pointers:
