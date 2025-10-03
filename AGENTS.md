@@ -6,12 +6,14 @@ This repository contains a compiler for a new programming language written in Zi
 ## Project Structure & Module Organization
 
 - `compiler/`: Zig sources for the compiler.
+    - `core/`: Core modules (standard library for the compiler).
     - `src/`: Source files for the compiler.
         - The compiler is structured in four phases:
         tokenizing, syntaxing, semantizing and codegen.
     - `tests/`: Example `.rg` programs used as tests.
 
-- `modules/`: Early standard library module drafts.
+- `modules/`: More modules' drafts that will be officially supported but not
+part of the core library.
 
 - `description/`: Design documents and architecture notes.
 

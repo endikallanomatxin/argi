@@ -22,3 +22,5 @@
     (por ahora no trabajar más en el defaultsto, que igual lo quitamos)
 
 
+- Modules: switch from file-based to directory-based modules
+

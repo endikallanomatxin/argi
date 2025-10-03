@@ -1,1 +1,0 @@
-Arguments : Type = StackArray<String>

@@ -75,11 +75,6 @@ init (
 my_buf : HeapAllocation = init(1024, my_allocator)
 ```
 
-As the allocator needs the memory capability, it is not possible to define a
-default allocator. The user must provide one when initializing the type.
-
-> [!BUG] Igual esto es muy limitante.
-
 
 In a type:
 
