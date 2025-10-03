@@ -21,6 +21,10 @@ This repository contains a compiler for a new programming language written in Zi
 - Build compiler: `cd compiler && zig build`
 - Compile a test program: `./zig-out/bin/argi build tests/example_test.rg`
 
+> It might be necessary to set the following environment variables to make zig work:
+> `ZIG_LOCAL_CACHE_DIR="$PWD/.zig-cache"`
+> `ZIG_GLOBAL_CACHE_DIR="$HOME/.cache"`
+
 
 ## Guidelines
 
@@ -48,7 +52,8 @@ feature first.
     - File naming: `snake_case.zig` (e.g., `parser.zig`, `type_checker.zig`).
 
 - Use comments to explain non-obvious code, especially complex algorithms or
-design decisions.
+design decisions. If you leave comments, ensure they are descriptive and
+timeless; not refering to the current change.
 
 - Commits: focused, descriptive subject in imperative mood (e.g., "add binary
 literals to lexer").
