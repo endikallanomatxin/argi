@@ -96,7 +96,7 @@ pub const Semantizer = struct {
                                     n.location,
                                     .semantic,
                                     "unknown type '{s}' in declaration of '{s}'",
-                                    .{ tp.type_name, d.name },
+                                    .{ tp.type_name.string, d.name.string },
                                 );
                                 break :blk err;
                             }
@@ -105,7 +105,7 @@ pub const Semantizer = struct {
                             n.location,
                             .semantic,
                             "unknown type in declaration of '{s}'",
-                            .{d.name},
+                            .{d.name.string},
                         );
                     },
                     error.AbstractNeedsDefault => {
@@ -115,7 +115,7 @@ pub const Semantizer = struct {
                                     n.location,
                                     .semantic,
                                     "cannot use abstract '{s}' as a type for a symbol. Use a concrete type or add a default concrete type to the abstract type ('{s} defaultsto <Type>')",
-                                    .{ tp2.type_name, tp2.type_name },
+                                    .{ tp2.type_name.string, tp2.type_name.string },
                                 );
                                 break :blk err;
                             }
@@ -132,7 +132,7 @@ pub const Semantizer = struct {
                             n.location,
                             .semantic,
                             "error in symbol declaration '{s}': {s}",
-                            .{ d.name, @errorName(err) },
+                            .{ d.name.string, @errorName(err) },
                         );
                     },
                 }
@@ -144,7 +144,7 @@ pub const Semantizer = struct {
                     n.location,
                     .semantic,
                     "error in abstract declaration '{s}': {s}",
-                    .{ ad.name, @errorName(err) },
+                    .{ ad.name.string, @errorName(err) },
                 );
                 break :blk err;
             },
@@ -164,7 +164,7 @@ pub const Semantizer = struct {
                     n.location,
                     .semantic,
                     "error in abstract defaultsto for '{s}': {s}",
-                    .{ rel.name, @errorName(err) },
+                    .{ rel.name.string, @errorName(err) },
                 );
                 break :blk err;
             },
@@ -174,7 +174,7 @@ pub const Semantizer = struct {
                     n.location,
                     .semantic,
                     "error in type declaration '{s}': {s}",
-                    .{ d.name, @errorName(err) },
+                    .{ d.name.string, @errorName(err) },
                 );
                 break :blk err;
             },
@@ -184,7 +184,7 @@ pub const Semantizer = struct {
                     n.location,
                     .semantic,
                     "error in function declaration '{s}': {s}",
-                    .{ d.name, @errorName(err) },
+                    .{ d.name.string, @errorName(err) },
                 );
                 break :blk err;
             },
@@ -194,7 +194,7 @@ pub const Semantizer = struct {
                     n.location,
                     .semantic,
                     "error in assignment '{s}': {s}",
-                    .{ a.name, @errorName(err) },
+                    .{ a.name.string, @errorName(err) },
                 );
                 break :blk err;
             },
@@ -244,7 +244,7 @@ pub const Semantizer = struct {
                     n.location,
                     .semantic,
                     "error in struct field access '{s}': {s}",
-                    .{ sfa.field_name, @errorName(err) },
+                    .{ sfa.field_name.string, @errorName(err) },
                 );
                 break :blk err;
             },
@@ -416,11 +416,11 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!TypedExpr {
         // Register abstract as a nominal type placeholder (maps to Any for now)
-        if (s.types.contains(ad.name)) return error.SymbolAlreadyDefined;
+        if (s.types.contains(ad.name.string)) return error.SymbolAlreadyDefined;
 
         const td = try self.allocator.create(sem.TypeDeclaration);
-        td.* = .{ .name = ad.name, .ty = .{ .builtin = .Any } };
-        try s.types.put(ad.name, td);
+        td.* = .{ .name = ad.name.string, .ty = .{ .builtin = .Any } };
+        try s.types.put(ad.name.string, td);
 
         // Store abstract info (resolved requirements) in scope
         var reqs = std.ArrayList(AbstractFunctionReqSem).init(self.allocator.*);
@@ -431,14 +431,14 @@ pub const Semantizer = struct {
             for (rf.input.fields, 0..) |fld, i| {
                 var ty: sem.Type = undefined;
                 if (fld.type) |t| {
-                    if (t == .type_name and std.mem.eql(u8, t.type_name, "Self")) {
+                    if (t == .type_name and std.mem.eql(u8, t.type_name.string, "Self")) {
                         ty = .{ .builtin = .Any }; // placeholder; we’ll match via index
                         try self_idxs.append(@intCast(i));
                     } else {
                         ty = try self.resolveType(t, s);
                     }
                 } else ty = .{ .builtin = .Any };
-                try in_fields.append(.{ .name = fld.name, .ty = ty, .default_value = null });
+                try in_fields.append(.{ .name = fld.name.string, .ty = ty, .default_value = null });
             }
             const in_struct = sem.StructType{ .fields = try in_fields.toOwnedSlice() };
             in_fields.deinit();
@@ -446,7 +446,7 @@ pub const Semantizer = struct {
             const out_ptr = try self.structTypeFromLiteral(rf.output, s);
 
             try reqs.append(.{
-                .name = rf.name,
+                .name = rf.name.string,
                 .input = in_struct,
                 .output = out_ptr.*,
                 .input_self_indices = try self_idxs.toOwnedSlice(),
@@ -454,9 +454,9 @@ pub const Semantizer = struct {
             self_idxs.deinit();
         }
         const info = try self.allocator.create(AbstractInfo);
-        info.* = .{ .name = ad.name, .requirements = try reqs.toOwnedSlice() };
+        info.* = .{ .name = ad.name.string, .requirements = try reqs.toOwnedSlice() };
         reqs.deinit();
-        try s.abstracts.put(ad.name, info);
+        try s.abstracts.put(ad.name.string, info);
 
         const n = try self.makeNode(undefined, .{ .type_declaration = td }, s);
         if (s.parent == null) try self.root_list.append(n);
@@ -495,7 +495,7 @@ pub const Semantizer = struct {
         loc: tok.Location,
     ) SemErr!TypedExpr {
         const concrete_ty = try self.resolveType(rel.ty, s);
-        try s.abstract_defaults.put(rel.name, .{ .ty = concrete_ty, .location = loc });
+        try s.abstract_defaults.put(rel.name.string, .{ .ty = concrete_ty, .location = loc });
         const empty = try self.allocator.create(sem.CodeBlock);
         empty.* = .{ .nodes = &.{}, .ret_val = null };
         const n = try self.makeNode(undefined, .{ .code_block = empty }, s);
@@ -767,7 +767,7 @@ pub const Semantizer = struct {
         s: *Scope,
         loc: tok.Location,
     ) SemErr!TypedExpr {
-        if (s.bindings.contains(d.name))
+        if (s.bindings.contains(d.name.string))
             return error.SymbolAlreadyDefined;
 
         var init_node: ?*syn.STNode = null;
@@ -796,13 +796,13 @@ pub const Semantizer = struct {
 
         const bd = try self.allocator.create(sem.BindingDeclaration);
         bd.* = .{
-            .name = d.name,
+            .name = d.name.string,
             .mutability = d.mutability,
             .ty = ty,
             .initialization = null,
         };
 
-        try s.bindings.put(d.name, bd);
+        try s.bindings.put(d.name.string, bd);
         const n = try self.makeNode(loc, .{ .binding_declaration = bd }, s);
         if (s.parent == null) try self.root_list.append(n);
 
@@ -822,12 +822,12 @@ pub const Semantizer = struct {
         const st_lit = d.value.*.content.struct_type_literal;
         if (d.generic_params.len > 0) {
             // Register as generic type template
-            if (s.generic_types.getPtr(d.name)) |lst| {
-                try lst.append(.{ .name = d.name, .location = d.value.location, .param_names = d.generic_params, .body = st_lit });
+            if (s.generic_types.getPtr(d.name.string)) |lst| {
+                try lst.append(.{ .name = d.name.string, .location = d.value.location, .param_names = d.generic_params, .body = st_lit });
             } else {
                 var new_list = std.ArrayList(GenericTypeTemplate).init(self.allocator.*);
-                try new_list.append(.{ .name = d.name, .location = d.value.location, .param_names = d.generic_params, .body = st_lit });
-                try s.generic_types.put(d.name, new_list);
+                try new_list.append(.{ .name = d.name.string, .location = d.value.location, .param_names = d.generic_params, .body = st_lit });
+                try s.generic_types.put(d.name.string, new_list);
             }
             // No concrete type emitted now
             const noop = try self.makeNode(d.value.location, .{ .code_block = blk: {
@@ -839,8 +839,8 @@ pub const Semantizer = struct {
         } else {
             const st_ptr = try self.structTypeFromLiteral(st_lit, s);
             const td = try self.allocator.create(sem.TypeDeclaration);
-            td.* = .{ .name = d.name, .ty = .{ .struct_type = st_ptr } };
-            try s.types.put(d.name, td);
+            td.* = .{ .name = d.name.string, .ty = .{ .struct_type = st_ptr } };
+            try s.types.put(d.name.string, td);
             const n = try self.makeNode(undefined, .{ .type_declaration = td }, s);
             if (s.parent == null) try self.root_list.append(n);
             return .{ .node = n, .ty = .{ .builtin = .Any } };
@@ -856,9 +856,9 @@ pub const Semantizer = struct {
     ) SemErr!TypedExpr {
         // Register generic template and skip direct emission
         if (f.generic_params.len > 0) {
-            if (p.generic_functions.getPtr(f.name)) |lst| {
+            if (p.generic_functions.getPtr(f.name.string)) |lst| {
                 try lst.append(.{
-                    .name = f.name,
+                    .name = f.name.string,
                     .location = loc,
                     .param_names = f.generic_params,
                     .input = f.input,
@@ -868,14 +868,14 @@ pub const Semantizer = struct {
             } else {
                 var new_list = std.ArrayList(GenericTemplate).init(self.allocator.*);
                 try new_list.append(.{
-                    .name = f.name,
+                    .name = f.name.string,
                     .location = loc,
                     .param_names = f.generic_params,
                     .input = f.input,
                     .output = f.output,
                     .body = f.body,
                 });
-                try p.generic_functions.put(f.name, new_list);
+                try p.generic_functions.put(f.name.string, new_list);
             }
             // Return a no-op node for generic template
             const noop = try self.makeNode(loc, .{ .code_block = blk: {
@@ -898,19 +898,19 @@ pub const Semantizer = struct {
                 null;
 
             try in_fields.append(.{
-                .name = fld.name,
+                .name = fld.name.string,
                 .ty = ty,
                 .default_value = dvp,
             });
 
             const bd = try self.allocator.create(sem.BindingDeclaration);
             bd.* = .{
-                .name = fld.name,
+                .name = fld.name.string,
                 .mutability = .variable,
                 .ty = ty,
                 .initialization = dvp,
             };
-            try child.bindings.put(fld.name, bd);
+            try child.bindings.put(fld.name.string, bd);
         }
         const in_struct = sem.StructType{ .fields = try in_fields.toOwnedSlice() };
         in_fields.deinit();
@@ -925,19 +925,19 @@ pub const Semantizer = struct {
                 null;
 
             try out_fields.append(.{
-                .name = fld.name,
+                .name = fld.name.string,
                 .ty = ty,
                 .default_value = dvp,
             });
 
             const bd = try self.allocator.create(sem.BindingDeclaration);
             bd.* = .{
-                .name = fld.name,
+                .name = fld.name.string,
                 .mutability = .variable,
                 .ty = ty,
                 .initialization = dvp,
             };
-            try child.bindings.put(fld.name, bd);
+            try child.bindings.put(fld.name.string, bd);
         }
         const out_struct = sem.StructType{ .fields = try out_fields.toOwnedSlice() };
         out_fields.deinit();
@@ -951,7 +951,7 @@ pub const Semantizer = struct {
 
         const fn_ptr = try self.allocator.create(sem.FunctionDeclaration);
         fn_ptr.* = .{
-            .name = f.name,
+            .name = f.name.string,
             .location = loc,
             .input = in_struct,
             .output = out_struct,
@@ -959,7 +959,7 @@ pub const Semantizer = struct {
         };
 
         // Register function into overload set for the name
-        if (p.functions.getPtr(f.name)) |list_ptr| {
+        if (p.functions.getPtr(f.name.string)) |list_ptr| {
             // prevent exact duplicate signature (same input structure, strict equality)
             for (list_ptr.items) |existing| {
                 if (typesExactlyEqual(.{ .struct_type = &existing.input }, .{ .struct_type = &fn_ptr.input }))
@@ -969,7 +969,7 @@ pub const Semantizer = struct {
         } else {
             var lst = std.ArrayList(*sem.FunctionDeclaration).init(self.allocator.*);
             try lst.append(fn_ptr);
-            try p.functions.put(f.name, lst);
+            try p.functions.put(f.name.string, lst);
         }
         self.clearDeferred(&child);
         const n = try self.makeNode(loc, .{ .function_declaration = fn_ptr }, p);
@@ -983,7 +983,7 @@ pub const Semantizer = struct {
         a: syn.Assignment,
         s: *Scope,
     ) SemErr!TypedExpr {
-        const b = s.lookupBinding(a.name) orelse return error.SymbolNotFound;
+        const b = s.lookupBinding(a.name.string) orelse return error.SymbolNotFound;
         if (b.mutability == .constant and b.initialization != null)
             return error.ConstantReassignment;
 
@@ -1007,7 +1007,7 @@ pub const Semantizer = struct {
 
         for (sl.fields) |f| {
             const tv = try self.visitNode(f.value.*, s);
-            try fields_buf.append(.{ .name = f.name, .value = tv.node });
+            try fields_buf.append(.{ .name = f.name.string, .value = tv.node });
         }
 
         const fields = try fields_buf.toOwnedSlice();
@@ -1036,8 +1036,8 @@ pub const Semantizer = struct {
 
             const tv = try self.visitNode(fld.default_value.?.*, s);
 
-            try val_fields.append(.{ .name = fld.name, .value = tv.node });
-            try ty_fields.append(.{ .name = fld.name, .ty = tv.ty, .default_value = null });
+            try val_fields.append(.{ .name = fld.name.string, .value = tv.node });
+            try ty_fields.append(.{ .name = fld.name.string, .ty = tv.ty, .default_value = null });
         }
 
         const vals = try val_fields.toOwnedSlice();
@@ -1070,7 +1070,7 @@ pub const Semantizer = struct {
                 ma.struct_value.*.location,
                 .semantic,
                 "type '{s}' has no field '.{s}'",
-                .{ desc, ma.field_name },
+                .{ desc, ma.field_name.string },
             );
             return error.Reported;
         }
@@ -1080,7 +1080,7 @@ pub const Semantizer = struct {
                 const fc = base.node.content.function_call;
                 if (fc.callee.output.fields.len == 1) {
                     const only_field = fc.callee.output.fields[0];
-                    if (std.mem.eql(u8, only_field.name, ma.field_name)) {
+                    if (std.mem.eql(u8, only_field.name, ma.field_name.string)) {
                         return base;
                     }
                 }
@@ -1092,7 +1092,7 @@ pub const Semantizer = struct {
                 ma.struct_value.*.location,
                 .semantic,
                 "cannot access field '.{s}' on value of type '{s}'",
-                .{ ma.field_name, desc },
+                .{ ma.field_name.string, desc },
             );
             return error.Reported;
         }
@@ -1101,7 +1101,7 @@ pub const Semantizer = struct {
         var idx: ?u32 = null;
         var fty: sem.Type = undefined;
         for (st.fields, 0..) |f, i| {
-            if (std.mem.eql(u8, f.name, ma.field_name)) {
+            if (std.mem.eql(u8, f.name, ma.field_name.string)) {
                 idx = @intCast(i);
                 fty = f.ty;
                 break;
@@ -1112,7 +1112,7 @@ pub const Semantizer = struct {
         const fa = try self.allocator.create(sem.StructFieldAccess);
         fa.* = .{
             .struct_value = base.node,
-            .field_name = ma.field_name,
+            .field_name = ma.field_name.string,
             .field_index = idx.?,
         };
 
@@ -1437,7 +1437,7 @@ pub const Semantizer = struct {
             else
                 null;
 
-            try buf.append(.{ .name = f.name, .ty = ty, .default_value = dvp });
+            try buf.append(.{ .name = f.name.string, .ty = ty, .default_value = dvp });
         }
 
         const slice = try buf.toOwnedSlice();
@@ -1461,7 +1461,7 @@ pub const Semantizer = struct {
                 (try self.visitNode(n.*, s)).node
             else
                 null;
-            try buf.append(.{ .name = f.name, .ty = ty, .default_value = dvp });
+            try buf.append(.{ .name = f.name.string, .ty = ty, .default_value = dvp });
         }
         const slice = try buf.toOwnedSlice();
         buf.deinit();
@@ -1479,7 +1479,7 @@ pub const Semantizer = struct {
 
         for (sv.fields) |f| {
             const tv = try self.visitNode(f.value.*, s);
-            try buf.append(.{ .name = f.name, .ty = tv.ty, .default_value = null });
+            try buf.append(.{ .name = f.name.string, .ty = tv.ty, .default_value = null });
         }
 
         const slice = try buf.toOwnedSlice();
@@ -1694,7 +1694,7 @@ pub const Semantizer = struct {
                     for (tmpl.param_names) |pname| {
                         var found: bool = false;
                         for (stargs.fields) |fld| {
-                            if (std.mem.eql(u8, fld.name, pname)) {
+                            if (std.mem.eql(u8, fld.name.string, pname)) {
                                 if (fld.type) |ty_node| {
                                     const resolved = try self.resolveTypeWithSubst(ty_node, s, &subst);
                                     try subst.put(pname, resolved);
@@ -1871,7 +1871,7 @@ pub const Semantizer = struct {
                     for (tmpl.param_names) |pname| {
                         var found: bool = false;
                         for (stargs.fields) |fld| {
-                            if (std.mem.eql(u8, fld.name, pname)) {
+                            if (std.mem.eql(u8, fld.name.string, pname)) {
                                 if (fld.type) |ty_node| {
                                     const resolved = try self.resolveTypeWithSubst(ty_node, s, &subst);
                                     try subst.put(pname, resolved);
@@ -2193,7 +2193,7 @@ pub const Semantizer = struct {
         var value_te: TypedExpr = undefined;
         if (arg_node.content == .struct_value_literal) {
             const sv = arg_node.content.struct_value_literal;
-            if (sv.fields.len != 1 or !std.mem.eql(u8, sv.fields[0].name, "value")) {
+            if (sv.fields.len != 1 or !std.mem.eql(u8, sv.fields[0].name.string, "value")) {
                 try self.diags.add(
                     arg_loc,
                     .semantic,
@@ -2276,7 +2276,7 @@ pub const Semantizer = struct {
         }
 
         const svl = arg_node.content.struct_value_literal;
-        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name, "value")) {
+        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, "value")) {
             try self.diags.add(
                 arg_node.location,
                 .semantic,
@@ -2319,7 +2319,7 @@ pub const Semantizer = struct {
         }
 
         const field = svl.fields[0];
-        if (!std.mem.eql(u8, field.name, "type")) {
+        if (!std.mem.eql(u8, field.name.string, "type")) {
             try self.diags.add(
                 field.value.*.location,
                 .semantic,
@@ -2339,7 +2339,7 @@ pub const Semantizer = struct {
     ) SemErr!sem.Type {
         return switch (node.content) {
             .identifier => |name| blk: {
-                const ty_ast = syn.Type{ .type_name = name };
+                const ty_ast = syn.Type{ .type_name = syn.Name{ .string = name, .location = node.location } };
                 break :blk self.resolveType(ty_ast, s) catch {
                     try self.diags.add(
                         node.location,
@@ -2395,7 +2395,7 @@ pub const Semantizer = struct {
         }
 
         const svl = arg_node.content.struct_value_literal;
-        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name, "value")) {
+        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, "value")) {
             try self.diags.add(
                 arg_node.location,
                 .semantic,
@@ -2724,7 +2724,8 @@ pub const Semantizer = struct {
 
     fn resolveType(self: *Semantizer, t: syn.Type, s: *Scope) !sem.Type {
         return switch (t) {
-            .type_name => |id| blk: {
+            .type_name => |tn| blk: {
+                const id = tn.string;
                 if (builtinFromName(id)) |bt|
                     break :blk .{ .builtin = bt };
                 // If it's an abstract, require a defaultsto to use as a type
@@ -2739,7 +2740,7 @@ pub const Semantizer = struct {
                 break :blk error.UnknownType;
             },
             .generic_type_instantiation => |g| blk_g: {
-                const st_ptr = try self.instantiateGenericTypeNamed(g.base_name, g.args, s);
+                const st_ptr = try self.instantiateGenericTypeNamed(g.base_name.string, g.args, s);
                 break :blk_g .{ .struct_type = st_ptr };
             },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
@@ -2774,13 +2775,14 @@ pub const Semantizer = struct {
 
     fn resolveTypeWithSubst(self: *Semantizer, t: syn.Type, s: *Scope, subst: *std.StringHashMap(sem.Type)) !sem.Type {
         return switch (t) {
-            .type_name => |id| blk: {
+            .type_name => |tn| blk: {
+                const id = tn.string;
                 if (subst.get(id)) |mapped| break :blk mapped;
                 break :blk try self.resolveType(t, s);
             },
             .generic_type_instantiation => |g| blk_g: {
                 // For now, ignore outer substitutions for base_name; stargs are resolved inside
-                const st_ptr = try self.instantiateGenericTypeNamed(g.base_name, g.args, s);
+                const st_ptr = try self.instantiateGenericTypeNamed(g.base_name.string, g.args, s);
                 break :blk_g .{ .struct_type = st_ptr };
             },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteralWithSubst(st, s, subst) },

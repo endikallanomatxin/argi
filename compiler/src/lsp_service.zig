@@ -8,10 +8,10 @@ const st = @import("syntax_tree.zig");
 const syntaxer = @import("syntaxer.zig");
 const semantizer = @import("semantizer.zig");
 
-// Índices fijos del legend que anuncias en initialize.semanticTokensProvider.legend.tokenTypes
+// Token types legend indices
 const TOKEN_INDEX = struct {
     pub const namespace: u32 = 0;
-    pub const type_: u32 = 1; // 'type' es keyword en Zig
+    pub const type_: u32 = 1;
     pub const function: u32 = 2;
     pub const method: u32 = 3;
     pub const variable: u32 = 4;
@@ -21,6 +21,12 @@ const TOKEN_INDEX = struct {
     pub const string: u32 = 8;
     pub const comment: u32 = 9;
     pub const operator: u32 = 10;
+};
+
+// Token modifier indices
+const MOD_INDEX = struct {
+    pub const declaration: u32 = 0;
+    pub const readonly: u32 = 1;
 };
 
 pub const Severity = enum(u8) {
@@ -362,40 +368,34 @@ pub const LanguageService = struct {
         const doc = try self.getDoc(uri);
         const text = doc.text;
 
-        // Arena temporal
         var arena = std.heap.ArenaAllocator.init(gpa);
         defer arena.deinit();
         var work = arena.allocator();
 
-        // Diagnósticos dummy para tokenizer/syntaxer
         const one_file = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
         var diagnostics = diag.Diagnostics.init(&work, &one_file);
         defer diagnostics.deinit();
 
-        // 1) Tokeniza
         var tz = tokenizer.Tokenizer.init(&work, &diagnostics, text, doc.path);
         const toks = try tz.tokenize();
         if (toks.len == 0) return out;
 
-        // 2) Parsea; si falla, devolvemos solo léxico rápido
         var syn_ctx = syntaxer.Syntaxer.init(&work, toks, &diagnostics);
         const st_nodes = syn_ctx.parse() catch {
             try emitLexical(&out, gpa, text, toks);
             return out;
         };
 
-        // 3) Mapa offset -> índice de token (para longitudes de identificadores)
         var off2ix = std.AutoHashMap(usize, usize).init(work);
         defer off2ix.deinit();
         for (toks, 0..) |tk, i| {
             try off2ix.put(tk.location.offset, i);
         }
 
-        // 4) Recolectamos TODO en 'collected' (luego ordenamos y codificamos)
         var collected = std.ArrayList(SemanticToken).init(work);
         defer collected.deinit();
 
-        // 4.a) Léxico con split por '\n' (NO añadimos identificadores aquí)
+        // Lexical layer (no identifiers)
         for (toks) |tk| {
             const ty_opt = classify_lex_only(tk.content) orelse continue;
 
@@ -420,7 +420,7 @@ pub const LanguageService = struct {
                         });
                         col0 += @intCast(r);
                     }
-                    off += r + 1; // saltar '\n'
+                    off += r + 1;
                     line0 += 1;
                     col0 = 0;
                 } else {
@@ -439,7 +439,10 @@ pub const LanguageService = struct {
             }
         }
 
-        // 4.b) Overlay del AST: sólo identificadores con su rol
+        // AST overlay
+        const DECL: u32 = (1 << MOD_INDEX.declaration);
+        const RO: u32 = (1 << MOD_INDEX.readonly);
+
         const Emitter = struct {
             sink: *std.ArrayList(SemanticToken),
             toks: []const token.Token,
@@ -463,6 +466,33 @@ pub const LanguageService = struct {
                     .mods = mods,
                 });
             }
+
+            fn colorType(this: *@This(), ty: st.Type, decl_mods: u32) !void {
+                switch (ty) {
+                    .type_name => |tn| {
+                        try this.identAt(tn.location, TOKEN_INDEX.type_, 0);
+                    },
+                    .generic_type_instantiation => |g| {
+                        try this.identAt(g.base_name.location, TOKEN_INDEX.type_, 0);
+                        for (g.args.fields) |af| {
+                            try this.identAt(af.name.location, TOKEN_INDEX.property, decl_mods);
+                            if (af.type) |child_t| try this.colorType(child_t, decl_mods);
+                        }
+                    },
+                    .struct_type_literal => |stl| {
+                        for (stl.fields) |f| {
+                            try this.identAt(f.name.location, TOKEN_INDEX.property, decl_mods);
+                            if (f.type) |child_t| try this.colorType(child_t, decl_mods);
+                        }
+                    },
+                    .array_type => |arr_ptr| {
+                        try this.colorType(arr_ptr.element.*, decl_mods);
+                    },
+                    .pointer_type => |ptr_ptr| {
+                        try this.colorType(ptr_ptr.child.*, decl_mods);
+                    },
+                }
+            }
         };
 
         var em = Emitter{
@@ -471,7 +501,6 @@ pub const LanguageService = struct {
             .off2ix = &off2ix,
         };
 
-        // Recorrido del AST (iterativo con pila)
         var stack = std.ArrayList(*const st.STNode).init(work);
         defer stack.deinit();
         for (st_nodes) |n| try stack.append(n);
@@ -479,43 +508,58 @@ pub const LanguageService = struct {
         while (popOrNull(*const st.STNode, &stack)) |n| {
             switch (n.content) {
                 .function_declaration => |fd| {
-                    try em.identAt(fd.name_loc, TOKEN_INDEX.function, 0);
+                    try em.identAt(fd.name.location, TOKEN_INDEX.function, DECL);
+
                     for (fd.input.fields) |f| {
-                        try em.identAt(f.name_loc, TOKEN_INDEX.property, 0);
+                        try em.identAt(f.name.location, TOKEN_INDEX.property, DECL);
+                        if (f.type) |ty| try em.colorType(ty, DECL);
                         if (f.default_value) |dv| try stack.append(dv);
                     }
                     for (fd.output.fields) |f| {
-                        try em.identAt(f.name_loc, TOKEN_INDEX.property, 0);
+                        try em.identAt(f.name.location, TOKEN_INDEX.property, DECL);
+                        if (f.type) |ty| try em.colorType(ty, DECL);
                         if (f.default_value) |dv| try stack.append(dv);
                     }
+
                     if (fd.body) |b| try stack.append(b);
                 },
                 .symbol_declaration => |sd| {
-                    // (si añades modifiers: p.ej. readonly para const)
-                    try em.identAt(sd.name_loc, TOKEN_INDEX.variable, 0);
+                    const mods: u32 = DECL | (if (sd.mutability == .constant) RO else 0);
+                    try em.identAt(sd.name.location, TOKEN_INDEX.variable, mods);
+                    if (sd.type) |ty| try em.colorType(ty, DECL);
                     if (sd.value) |v| try stack.append(v);
                 },
                 .type_declaration => |td| {
-                    try em.identAt(td.name_loc, TOKEN_INDEX.type_, 0);
+                    try em.identAt(td.name.location, TOKEN_INDEX.type_, DECL);
                     try stack.append(td.value);
                 },
                 .function_call => |fc| {
                     try em.identAt(fc.callee_loc, TOKEN_INDEX.function, 0);
+                    if (fc.type_arguments) |tas| {
+                        for (tas) |t| try em.colorType(t, 0);
+                    }
+                    if (fc.type_arguments_struct) |tas_struct| {
+                        for (tas_struct.fields) |f| {
+                            try em.identAt(f.name.location, TOKEN_INDEX.property, 0);
+                            if (f.type) |ty| try em.colorType(ty, 0);
+                        }
+                    }
                     try stack.append(fc.input);
                 },
                 .struct_field_access => |sfa| {
-                    try em.identAt(sfa.field_loc, TOKEN_INDEX.property, 0);
+                    try em.identAt(sfa.field_name.location, TOKEN_INDEX.property, 0);
                     try stack.append(sfa.struct_value);
                 },
                 .struct_value_literal => |sv| {
                     for (sv.fields) |f| {
-                        try em.identAt(f.name_loc, TOKEN_INDEX.property, 0);
+                        try em.identAt(f.name.location, TOKEN_INDEX.property, 0);
                         try stack.append(f.value);
                     }
                 },
                 .struct_type_literal => |stl| {
                     for (stl.fields) |f| {
-                        try em.identAt(f.name_loc, TOKEN_INDEX.property, 0);
+                        try em.identAt(f.name.location, TOKEN_INDEX.property, DECL);
+                        if (f.type) |ty| try em.colorType(ty, DECL);
                         if (f.default_value) |dv| try stack.append(dv);
                     }
                 },
@@ -555,7 +599,6 @@ pub const LanguageService = struct {
             }
         }
 
-        // 5) Ordenar y delta-codificar
         std.sort.block(SemanticToken, collected.items, {}, struct {
             fn lessThan(_: void, a: SemanticToken, b: SemanticToken) bool {
                 return if (a.line == b.line) a.start < b.start else a.line < b.line;
@@ -642,19 +685,14 @@ inline fn classify(c: token.Content) ?u32 {
 
         .literal => |lit| switch (lit) {
             .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal, .regular_float_literal, .scientific_float_literal => TOKEN_INDEX.number,
-
             .string_literal, .char_literal => TOKEN_INDEX.string,
-
-            else => TOKEN_INDEX.number, // por si amplías Literal
+            else => TOKEN_INDEX.number,
         },
 
-        // Keywords que ya emites (añade más si tu token.zig los incluye)
         .keyword_return, .keyword_if, .keyword_else => TOKEN_INDEX.keyword,
 
-        // Operadores / puntuación
         .comparison_operator, .binary_operator, .equal, .arrow, .colon, .double_colon, .dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar => TOKEN_INDEX.operator,
 
-        // No coloreamos
         .new_line, .eof => null,
     };
 }
@@ -665,13 +703,12 @@ fn emitLexical(
     text: []const u8,
     toks: []const token.Token,
 ) !void {
-    _ = gpa; // por ahora no lo necesitamos
+    _ = gpa;
 
     var prev_line: u32 = 0;
     var prev_char: u32 = 0;
 
     for (toks) |tk| {
-        // Sólo categorías léxicas (identificadores los pinta el AST)
         const ty_opt = classify_lex_only(tk.content) orelse continue;
 
         const start_off: usize = tk.location.offset;
@@ -681,7 +718,6 @@ fn emitLexical(
         var line0: u32 = if (tk.location.line == 0) 0 else tk.location.line - 1;
         var col0: u32 = if (tk.location.column == 0) 0 else tk.location.column - 1;
 
-        // Partir en segmentos por si el token contiene '\n' (p.ej. string o comment multilínea)
         var off = start_off;
         while (off < end_off) {
             const rest = text[off..end_off];
@@ -692,7 +728,7 @@ fn emitLexical(
                     try pushEncoded(out, &prev_line, &prev_char, line0, col0, @intCast(r), ty_opt, 0);
                     col0 += @intCast(r);
                 }
-                off += r + 1; // saltar '\n'
+                off += r + 1;
                 line0 += 1;
                 col0 = 0;
             } else {
@@ -715,30 +751,21 @@ fn tokenLenBytes(tk: token.Token) usize {
 
         .literal => |lit| switch (lit) {
             .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal, .regular_float_literal, .scientific_float_literal, .string_literal => |s| s.len,
-            .char_literal => 3, // 'x' mínimo (ajusta si soportas escapes)
-            .bool_literal => |b| if (b) 4 else 5, // true/false
+            .char_literal => 3,
+            .bool_literal => |b| if (b) 4 else 5,
         },
 
-        // ← añade aquí TODAS tus keywords
-        .keyword_return => "return".len, // 6
-        .keyword_if => "if".len, // 2
-        .keyword_else => "else".len, // 4
-        // .keyword_while => "while".len,
-        // .keyword_for => "for".len,
-        // ...etc si las tienes
+        .keyword_return => "return".len,
+        .keyword_if => "if".len,
+        .keyword_else => "else".len,
 
-        // Puntuación / operadores
         .double_colon => 2,
         .arrow => 2,
-
-        // Si en tu lexer estos **siempre** son de 2 chars, deja 2;
-        // si no, cámbialo a 1 o computa según el enum que uses.
         .comparison_operator => 2,
         .binary_operator => 2,
 
         .new_line => 1,
 
-        // Paréntesis, corchetes, llaves, unarios, etc., 1 char:
         .equal, .colon, .dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar, .eof => 1,
     };
 }
@@ -749,14 +776,15 @@ inline fn classify_lex_only(c: token.Content) ?u32 {
         .literal => |lit| switch (lit) {
             .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal, .regular_float_literal, .scientific_float_literal => TOKEN_INDEX.number,
             .string_literal, .char_literal => TOKEN_INDEX.string,
-            .bool_literal => TOKEN_INDEX.keyword, // si prefieres, cámbialo a .number o .type_
+            .bool_literal => TOKEN_INDEX.keyword,
         },
         .keyword_return, .keyword_if, .keyword_else => TOKEN_INDEX.keyword,
         .comparison_operator, .binary_operator, .equal, .arrow, .colon, .double_colon, .dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar => TOKEN_INDEX.operator,
-        .identifier => null, // ident los pinta el pase sintáctico
+        .identifier => null,
         .new_line, .eof => null,
     };
 }
+
 inline fn popOrNull(comptime T: type, list: *std.ArrayList(T)) ?T {
     if (list.items.len == 0) return null;
     return list.pop();

@@ -136,6 +136,12 @@ pub const Syntaxer = struct {
         return name;
     }
 
+    fn parseName(self: *Syntaxer) SyntaxerError!syn.Name {
+        const loc = self.tokenLocation();
+        const ident = try self.parseIdentifier();
+        return .{ .string = ident, .location = loc };
+    }
+
     fn parseOperatorName(self: *Syntaxer) SyntaxerError![]const u8 {
         if (std.meta.activeTag(self.current().content) != .identifier) {
             try self.diags.add(self.tokenLocation(), .syntax, "expected operator name after 'operator'", .{});
@@ -292,13 +298,13 @@ pub const Syntaxer = struct {
             return syn.Type{ .struct_type_literal = lit };
         }
 
-        const name = try self.parseIdentifier();
+        const tname = try self.parseName();
         if (self.tokenIs(.hash)) {
             self.advanceOne();
             const gen_args = try self.parseStructTypeLiteral();
-            return syn.Type{ .generic_type_instantiation = .{ .base_name = name, .args = gen_args } };
+            return syn.Type{ .generic_type_instantiation = .{ .base_name = tname, .args = gen_args } };
         }
-        return syn.Type{ .type_name = name };
+        return syn.Type{ .type_name = tname };
     }
 
     // Parse an abstract body: a parenthesized, comma-separated list of items.
@@ -318,18 +324,21 @@ pub const Syntaxer = struct {
         var funcs = std.ArrayList(syn.AbstractFunctionRequirement).init(self.allocator.*);
 
         while (!self.tokenIs(.close_parenthesis)) {
-            const nm = try self.parseIdentifier();
+            const nm_loc = self.tokenLocation();
+            const nm_bytes = try self.parseIdentifier();
 
-            // Function requirement if followed by '('
             if (self.tokenIs(.open_parenthesis)) {
                 const in_st = try self.parseStructTypeLiteral();
                 if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
                 self.advanceOne();
                 const out_st = try self.parseStructTypeLiteral();
-                try funcs.append(.{ .name = nm, .input = in_st, .output = out_st });
+                try funcs.append(.{
+                    .name = .{ .string = nm_bytes, .location = nm_loc },
+                    .input = in_st,
+                    .output = out_st,
+                });
             } else {
-                // Just a composed abstract name
-                try names.append(nm);
+                try names.append(nm_bytes); // composed abstracts siguen siendo []const []const u8
             }
 
             self.skipNewLinesAndComments();
@@ -385,8 +394,7 @@ pub const Syntaxer = struct {
                 return SyntaxerError.ExpectedStructField;
             }
             self.advanceOne();
-            const fname_loc = self.tokenLocation();
-            const fname = try self.parseIdentifier();
+            const fname = try self.parseName();
 
             var ftype: ?syn.Type = null;
             if (self.tokenIs(.colon)) {
@@ -400,12 +408,7 @@ pub const Syntaxer = struct {
                 def_val = try self.parseExpression();
             }
 
-            try fields.append(.{
-                .name = fname,
-                .name_loc = fname_loc,
-                .type = ftype,
-                .default_value = def_val,
-            });
+            try fields.append(.{ .name = fname, .type = ftype, .default_value = def_val });
 
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
@@ -434,13 +437,13 @@ pub const Syntaxer = struct {
                 return SyntaxerError.ExpectedStructField;
             }
             self.advanceOne();
-            const fname = try self.parseIdentifier();
+            const fname = try self.parseName();
 
             if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
             self.advanceOne();
 
             const val = try self.parseExpression();
-            try fields.append(.{ .name = fname, .name_loc = val.location, .value = val });
+            try fields.append(.{ .name = fname, .value = val });
 
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
@@ -464,10 +467,10 @@ pub const Syntaxer = struct {
             if (self.tokenIs(.dot)) {
                 const dot_loc = self.tokenLocation();
                 self.advanceOne();
-                const fld_loc = self.tokenLocation();
-                const fld_name = try self.parseIdentifier();
+                const fname = try self.parseName();
+                const floc = self.tokenLocation();
                 node = try self.makeNode(
-                    .{ .struct_field_access = .{ .struct_value = node, .field_name = fld_name, .field_loc = fld_loc } },
+                    .{ .struct_field_access = .{ .struct_value = node, .field_name = syn.Name{ .string = fname.string, .location = floc } } },
                     dot_loc,
                 );
                 continue;
@@ -657,39 +660,36 @@ pub const Syntaxer = struct {
         }
 
         const id_loc = self.tokenLocation();
-        var name = try self.parseIdentifier();
+        var name = try self.parseName();
 
-        if (std.mem.eql(u8, name, "operator")) {
-            name = try self.parseOperatorName();
+        if (std.mem.eql(u8, name.string, "operator")) {
+            const op = try self.parseOperatorName();
+            name = .{ .string = op, .location = id_loc };
         }
 
-        // Allow optional generic parameter block after name for function declarations
+        // Optional generic params after name (unchanged)
         var generic_params: []const []const u8 = &.{};
         if (self.tokenIs(.hash)) {
             self.advanceOne();
             const gen_struct = try self.parseStructTypeLiteral();
-            // Extract parameter names from fields: id#(.T: Type, .U: Type)
             var names = std.ArrayList([]const u8).init(self.allocator.*);
-            for (gen_struct.fields) |fld| try names.append(fld.name);
+            for (gen_struct.fields) |fld| try names.append(fld.name.string);
             generic_params = names.items;
         } else if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
-            // Back-compat: old syntax name[T, U]
             const parsed = try self.parseGenericParamNames();
             generic_params = parsed;
         }
 
-        // Build identifier node and (optionally) consume postfix chains so
-        // we can detect pointer‑dereference assignments like `p& = 0`.
-        const ident_node = try self.makeNode(.{ .identifier = name }, id_loc);
+        // Build identifier node to parse postfix (for p.x, p& etc.)
+        const ident_node = try self.makeNode(.{ .identifier = name.string }, id_loc);
         const lhs_with_postfix = try self.parsePostfix(ident_node);
 
-        // ─── Assignment (simple or pointer) ───────────────────
+        // Assignment (store/pointer/index/regular)
         if (self.tokenIs(.equal)) {
             self.advanceOne();
             const rhs_expr = try self.parseExpression();
 
             if (lhs_with_postfix == ident_node) {
-                // Regular binding reassignment
                 return try self.makeNode(
                     .{ .assignment = .{ .name = name, .value = rhs_expr } },
                     id_loc,
@@ -700,7 +700,6 @@ pub const Syntaxer = struct {
                     id_loc,
                 );
             } else {
-                // Store through dereference or field
                 return try self.makeNode(
                     .{ .pointer_assignment = .{ .target = lhs_with_postfix, .value = rhs_expr } },
                     id_loc,
@@ -717,16 +716,12 @@ pub const Syntaxer = struct {
                 if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
                 self.advanceOne();
 
-                // caso ExternFunction
                 switch (self.current().content) {
                     .identifier => |ident_name| {
                         if (std.mem.eql(u8, ident_name, "ExternFunction")) {
-                            // Consumimos la palabra clave
                             self.advanceOne();
-                            // Construimos el nodo
                             const ef = syn.FunctionDeclaration{
                                 .name = name,
-                                .name_loc = id_loc,
                                 .generic_params = generic_params,
                                 .input = input,
                                 .output = output,
@@ -738,14 +733,12 @@ pub const Syntaxer = struct {
                     else => {},
                 }
 
-                // caso normal: ":= { ... }"
                 if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                 self.advanceOne();
                 const body = try self.parseCodeBlock();
 
                 const fn_decl = syn.FunctionDeclaration{
                     .name = name,
-                    .name_loc = id_loc,
                     .generic_params = generic_params,
                     .input = input,
                     .output = output,
@@ -753,14 +746,11 @@ pub const Syntaxer = struct {
                 };
                 return try self.makeNode(.{ .function_declaration = fn_decl }, id_loc);
             } else {
-                // Si no hay flecha, es una llamada a función.
-                const input_node = try self.makeNode(
-                    .{ .struct_type_literal = input },
-                    id_loc,
-                );
+                // call: Name(...)
+                const input_node = try self.makeNode(.{ .struct_type_literal = input }, id_loc);
                 return try self.makeNode(
                     .{ .function_call = .{
-                        .callee = name,
+                        .callee = name.string,
                         .callee_loc = id_loc,
                         .type_arguments = null,
                         .type_arguments_struct = null,
@@ -771,25 +761,13 @@ pub const Syntaxer = struct {
             }
         }
 
-        // ----------- ASSIGNMENT --------------------------------------------
-        if (self.tokenIs(.equal)) {
-            self.advanceOne();
-            const val = try self.parseExpression();
-            return try self.makeNode(
-                .{ .assignment = .{ .name = name, .value = val } },
-                id_loc,
-            );
-        }
-
-        // ----------- ABSTRACT RELATIONS (canbe/defaultsto) -----------------
-        // <Name>[#(...)] canbe <Type>
-        // <Name>[#(...)] defaultsto <Type>
+        // Abstract relations (canbe/defaultsto)
         switch (self.current().content) {
             .identifier => |kw| {
                 if (std.mem.eql(u8, kw, "canbe")) {
                     self.advanceOne();
                     const ty = (try self.parseType()).?; // required
-                    const rel = syn.AbstractCanBe{ .name = name, .generic_params = generic_params, .ty = ty };
+                    const rel = syn.AbstractCanBe{ .name = name.string, .generic_params = generic_params, .ty = ty };
                     return try self.makeNode(.{ .abstract_canbe = rel }, id_loc);
                 } else if (std.mem.eql(u8, kw, "defaultsto")) {
                     self.advanceOne();
@@ -801,7 +779,7 @@ pub const Syntaxer = struct {
             else => {},
         }
 
-        // ----------- SYMBOL / TYPE DECLARATION -----------------------------
+        // Declarations: ":" or "::"
         if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) {
             var mut: syn.Mutability = .constant;
             if (self.tokenIs(.double_colon)) mut = .variable;
@@ -809,9 +787,8 @@ pub const Syntaxer = struct {
 
             const ty_opt = try self.parseType();
 
-            // Check for type declaration
             if (ty_opt) |ty| {
-                if (ty == .type_name and std.mem.eql(u8, ty.type_name, "Type")) {
+                if (ty == .type_name and std.mem.eql(u8, ty.type_name.string, "Type")) {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                     self.advanceOne();
                     if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
@@ -820,13 +797,11 @@ pub const Syntaxer = struct {
 
                     const tdecl = syn.TypeDeclaration{
                         .name = name,
-                        .name_loc = id_loc,
                         .generic_params = generic_params,
                         .value = lit_node,
                     };
                     return try self.makeNode(.{ .type_declaration = tdecl }, id_loc);
-                } else if (ty == .type_name and std.mem.eql(u8, ty.type_name, "Abstract")) {
-                    // Abstract declaration: Name : Abstract (= ( ... ))?
+                } else if (ty == .type_name and std.mem.eql(u8, ty.type_name.string, "Abstract")) {
                     var req_names: []const []const u8 = &.{};
                     var req_funcs: []const syn.AbstractFunctionRequirement = &.{};
                     if (self.tokenIs(.equal)) {
@@ -853,7 +828,6 @@ pub const Syntaxer = struct {
 
             const sym = syn.SymbolDeclaration{
                 .name = name,
-                .name_loc = id_loc,
                 .type = ty_opt,
                 .mutability = mut,
                 .value = rhs,
