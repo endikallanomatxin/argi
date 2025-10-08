@@ -24,6 +24,9 @@ data : (
 
 Structs' types are structural only when anonymous.
 
+> [!IDEA] Default fields could be filled in the call site.
+> This helps by reducing the need to dive into the function calls to see what
+> inputs are being overridden.
 
 ## Protected fields
 
@@ -51,13 +54,13 @@ set_x(s: MyStruct, x: Int) {
 También puede ser útil para garantizar que un struct se inicializa correctamente.
 
 ```
-MyStruct := (
+MyStruct : Type = (
 	._x :: Int = 0
 	._y :: Int = 0
 	._z :: Int = 0
 )
 
-init (x: Int, y: Int, z: Int) -> MyStruct := {
+init (ms: $&MyStruct, x: Int, y: Int, z: Int) -> () := {
 	return MyStruct(x, y, z)
 }
 ```
@@ -65,13 +68,14 @@ init (x: Int, y: Int, z: Int) -> MyStruct := {
 We use dynamic dispatch by return type to create the initializer.
 
 ```
-my_var : MyType = (1, 2, 3)
+my_var := MyType(1, 2, 3)
 ```
 
 Esto realmente es:
 
 ```
-my_var : MyType = init (1, 2, 3)
+my_var : MyType
+init($&my_var, 1, 2, 3)
 ```
 
 y queda muy limpio.

@@ -74,15 +74,16 @@ aritmética y luego volverlo a convertir en un puntero. Es suficientemente
 incómodo como para no hacerlo sin querer, te obliga a ser explícito para
 cagarla.
 
-> [!TODO] Puede pasarse un puntero $& a una función que espera un &?
-> Requerimos casteo explícito?
-
 
 ### Read-only vs read-write pointers
 
 There are two types of pointers:
-- Read-write pointers: `&T`
-- Read-only pointers: `$&T`
+- Read-only pointers: `&T`
+- Read-write pointers: `$&T` ($ is for side effects)
+
+> [!TODO] Puede pasarse un puntero $& a una función que espera un &?
+> Requerimos casteo explícito?
+
 
 ## Code blocks
 
@@ -109,7 +110,7 @@ This forces the good practice of declaring variables before loops and conditiona
 
 Functions are declared similar to variables or constants.
 
-They just contain a couple of structs after the name, separated by an arrow:
+They just contain a couple of structs after the name (input and output), separated by an arrow:
 
 ```
 add (.a: Int, .b: Int) -> (.c: Int) := {
@@ -126,6 +127,11 @@ When calling functions:
 
 - you can omit the names of the fields when you specify all of them in the correct order.
 - output structs with a single field are automatically unpacked (to avoid unnecessary verbosity).
+
+> [!CHECK]
+> Valorar que no se haga unpacking automático y que los defaults se
+> autorrellenen en el call site para que el código sea forward-compatible.
+
 
 ```
 result = add(1, 2) + add(3, 4)
@@ -181,11 +187,11 @@ my_var | my_func (&_, second_arg)
 
 ## Initialization of types
 
-Builtins initialize to 0 values. (from Odin)
-
 All types have two methods:
 - `init` to create an instance of the type.
 - `deinit` to destroy the instance of the type.
+
+### Init
 
 When you delcare a new instance:
 
@@ -228,9 +234,10 @@ my_thing : MyType
 init ($&my_thing, "something", 12, true)
 ```
 
-> [!NOTE] init it the only function allowed to receive uninitialized arguments.
+> [!NOTE] init() is the only function allowed to receive uninitialized arguments.
 >
-> El primer parámetro de init puede ser un puntero a memoria reservada pero no inicializada de ese tipo.
+> El primer parámetro de init puede ser un puntero a memoria reservada pero no
+> inicializada de ese tipo.
 > 
 > Chequeos estáticos dentro de init:
 > - Write-only sobre *out: no se permite leer campos hasta que estén escritos
@@ -241,40 +248,29 @@ init ($&my_thing, "something", 12, true)
 >   no capturarlo en closures, no pasarlo a hilos).
 
 
-> Ventaja: implementación y DX sencillas; no necesitas “propagar estados” por todo el programa.
-
-> [!TODO] Think more about defaults in struct declaration/initialization
-> Without the init declared, it would create an empty struct.
-> Requiring all the field that have no default.
-
-> [!CHECK]
-> Habíamos dicho que no se podía usar un struct sin inicializar.
-> Permitimos esto solo para este caso? o en general, y nos obligamos a que se
-> trackee a través de las funciones si el struct se ha inicializado? O le damos
-> un indicador para decirle al compilador que lo estamos haciendo aposta y que
-> lo ignore?
-> Igual lo mejor es que sea una excepción? Que al final es el init.
-
-
 If wanted you can return an empty errable:
 
 ```
 init(out: $&MyType, ...) -> Errable#((), InitError)
 ```
 
+### Deinit
+
 On scope exit, `deinit` is automatically called for all types that are not in the result struct.
 That way, everything behaves as if it were a stack variable.
 
 > [!NOTE]
-> Si hay rutas de error/early-return, garantizad que el valor queda en estado
+> Si hay rutas de error/early-return, garantiza que el valor queda en estado
 > no-inicializado (no se llamará deinit), o que se limpia parcial antes de
 > salir.
 > - Solo se invoca deinit en objetos inicializados.
 > - Si init falla (devuelve error), no se llama deinit sobre esa ranura.
 
 > [!NOTE] Para usar el stack, hay que inlinear las funciones de init.
-> Si quieres que el objeto esté en el stack, el alloca no se puede llamar dentro de una función.
-> Por ejemplo, Array tiene esta firma:
+> Si quieres que el objeto esté en el stack, el alloca no se puede llamar
+> dentro de una función.
+> Por ejemplo, si quisiéramos hacer Array como parte de la librería estándar,
+> tendría que tener esta firma:
 > ```
 > init#(.t: Type, .n: Int)(.a: &Array#(.t), .source: ListLiteral#(.t)) -> () #inline { ... }
 > ```
@@ -292,6 +288,9 @@ That way, everything behaves as if it were a stack variable.
 > La llamada a las funciones init tiene el mismo nombre que el tipo, eso hace
 > que no se pueda referenciar a la función de init por su nombre. No sé si será
 > problema.
+
+> [!CHECK]
+> La variable resultate de la inicialización va en el input o en el output de la declaración?
 
 
 ## Keeping
