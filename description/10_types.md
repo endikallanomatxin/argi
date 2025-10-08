@@ -45,6 +45,17 @@ poco ampliable.
 	print( "My type:" + my_var|cast#(typeof(my_var))(_) )
 	```
 
+- Using the init function:
+
+	```
+	my_string := String(my_var)
+	```
+
+	```
+	init (s: $&String, v: MyType) -> () := {
+		...
+	}
+	```
 
 > [!TODO] Decidir como se hace esto usando multiple dispatch.
 
