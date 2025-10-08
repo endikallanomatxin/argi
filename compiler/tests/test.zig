@@ -186,8 +186,9 @@ test "412_list_literal_access" {
     try run();
 }
 
-test "413_arrays" {
+
+test "413_array_from_list_literal" {
     try clean();
-    try build("tests/413_arrays.rg");
+    try build("tests/413_array_from_list_literal.rg");
     try run();
 }
