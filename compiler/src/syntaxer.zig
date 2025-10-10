@@ -324,8 +324,13 @@ pub const Syntaxer = struct {
         var funcs = std.ArrayList(syn.AbstractFunctionRequirement).init(self.allocator.*);
 
         while (!self.tokenIs(.close_parenthesis)) {
-            const nm_loc = self.tokenLocation();
-            const nm_bytes = try self.parseIdentifier();
+            var name = try self.parseName();
+            const name_loc = name.location;
+
+            if (std.mem.eql(u8, name.string, "operator")) {
+                const operator_name = try self.parseOperatorName();
+                name = .{ .string = operator_name, .location = name_loc };
+            }
 
             if (self.tokenIs(.open_parenthesis)) {
                 const in_st = try self.parseStructTypeLiteral();
@@ -333,12 +338,12 @@ pub const Syntaxer = struct {
                 self.advanceOne();
                 const out_st = try self.parseStructTypeLiteral();
                 try funcs.append(.{
-                    .name = .{ .string = nm_bytes, .location = nm_loc },
+                    .name = name,
                     .input = in_st,
                     .output = out_st,
                 });
             } else {
-                try names.append(nm_bytes); // composed abstracts siguen siendo []const []const u8
+                try names.append(name.string); // composed abstracts siguen siendo []const []const u8
             }
 
             self.skipNewLinesAndComments();
