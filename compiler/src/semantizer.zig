@@ -479,14 +479,16 @@ pub const Semantizer = struct {
         var reqs = std.ArrayList(AbstractFunctionReqSem).init(self.allocator.*);
         const generic_params = ad.generic_params;
         for (ad.requires_functions) |rf| {
-            // Build input struct resolving types; track Self/generic usages
+            // Build input struct resolving types; track Self/generic/abstract usages
             var in_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
             var input_generic = std.ArrayList(?u32).init(self.allocator.*);
+            var input_abstract = std.ArrayList(?[]const u8).init(self.allocator.*);
             var self_idxs = std.ArrayList(u32).init(self.allocator.*);
 
             for (rf.input.fields, 0..) |fld, i| {
                 var ty: sem.Type = .{ .builtin = .Any };
                 var generic_idx_opt: ?u32 = null;
+                var abstract_req: ?[]const u8 = null;
 
                 if (fld.type) |t| {
                     switch (t) {
@@ -504,7 +506,13 @@ pub const Semantizer = struct {
                                     }
                                 }
                                 if (!found) {
-                                    ty = try self.resolveType(t, s);
+                                    ty = self.resolveType(t, s) catch |err| switch (err) {
+                                        error.AbstractNeedsDefault => blk: {
+                                            abstract_req = name;
+                                            break :blk .{ .builtin = .Any };
+                                        },
+                                        else => return err,
+                                    };
                                 }
                             }
                         },
@@ -526,21 +534,26 @@ pub const Semantizer = struct {
 
                 try in_fields.append(.{ .name = fld.name.string, .ty = ty, .default_value = null });
                 try input_generic.append(generic_idx_opt);
+                try input_abstract.append(abstract_req);
             }
 
             const in_struct = sem.StructType{ .fields = try in_fields.toOwnedSlice() };
             const input_generic_slice = try input_generic.toOwnedSlice();
+            const input_abstract_slice = try input_abstract.toOwnedSlice();
 
             in_fields.deinit();
             input_generic.deinit();
+            input_abstract.deinit();
 
-            // Build output struct, tracking generics similarly
+            // Build output struct, tracking generics/abstracts similarly
             var out_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
             var output_generic = std.ArrayList(?u32).init(self.allocator.*);
+            var output_abstract = std.ArrayList(?[]const u8).init(self.allocator.*);
 
             for (rf.output.fields) |fld| {
                 var ty: sem.Type = .{ .builtin = .Any };
                 var generic_idx_opt: ?u32 = null;
+                var abstract_req: ?[]const u8 = null;
 
                 if (fld.type) |t| {
                     switch (t) {
@@ -555,7 +568,13 @@ pub const Semantizer = struct {
                                 }
                             }
                             if (!found) {
-                                ty = try self.resolveType(t, s);
+                                ty = self.resolveType(t, s) catch |err| switch (err) {
+                                    error.AbstractNeedsDefault => blk: {
+                                        abstract_req = name;
+                                        break :blk .{ .builtin = .Any };
+                                    },
+                                    else => return err,
+                                };
                             }
                         },
                         else => {
@@ -576,13 +595,16 @@ pub const Semantizer = struct {
 
                 try out_fields.append(.{ .name = fld.name.string, .ty = ty, .default_value = null });
                 try output_generic.append(generic_idx_opt);
+                try output_abstract.append(abstract_req);
             }
 
             const out_struct = sem.StructType{ .fields = try out_fields.toOwnedSlice() };
             const output_generic_slice = try output_generic.toOwnedSlice();
+            const output_abstract_slice = try output_abstract.toOwnedSlice();
 
             out_fields.deinit();
             output_generic.deinit();
+            output_abstract.deinit();
 
             try reqs.append(.{
                 .name = rf.name.string,
@@ -591,6 +613,8 @@ pub const Semantizer = struct {
                 .input_self_indices = try self_idxs.toOwnedSlice(),
                 .input_generic_param_indices = input_generic_slice,
                 .output_generic_param_indices = output_generic_slice,
+                .input_abstract_requirements = input_abstract_slice,
+                .output_abstract_requirements = output_abstract_slice,
             });
             self_idxs.deinit();
         }
@@ -676,19 +700,19 @@ pub const Semantizer = struct {
                 for (lst.items) |cand| {
                     if (info.param_names.len == 0) {
                         const empty: []?sem.Type = &[_]?sem.Type{};
-                        if (!self.funcInputMatchesRequirement(&rq, &cand.input, concrete, empty))
+                        if (!self.funcInputMatchesRequirement(&rq, &cand.input, concrete, empty, s))
                             continue;
-                        if (!self.funcOutputMatchesRequirement(&rq, &cand.output, empty))
+                        if (!self.funcOutputMatchesRequirement(&rq, &cand.output, empty, s))
                             continue;
                         return true;
                     } else {
-                        const bindings = try self.allocator.alloc(?sem.Type, info.param_names.len);
+                        var bindings = try self.allocator.alloc(?sem.Type, info.param_names.len);
                         defer self.allocator.free(bindings);
-                        for (bindings) |*slot| slot.* = null;
+                        for (bindings, 0..) |_, idx| bindings[idx] = null;
 
-                        if (!self.funcInputMatchesRequirement(&rq, &cand.input, concrete, bindings))
+                        if (!self.funcInputMatchesRequirement(&rq, &cand.input, concrete, bindings, s))
                             continue;
-                        if (!self.funcOutputMatchesRequirement(&rq, &cand.output, bindings))
+                        if (!self.funcOutputMatchesRequirement(&rq, &cand.output, bindings, s))
                             continue;
                         return true;
                     }
@@ -822,8 +846,8 @@ pub const Semantizer = struct {
         cand_in: *const sem.StructType,
         concrete: sem.Type,
         param_bindings: []?sem.Type,
+        s: *Scope,
     ) bool {
-        _ = self;
         const req_in = &rq.input;
         if (cand_in.fields.len != req_in.fields.len) return false;
 
@@ -835,6 +859,13 @@ pub const Semantizer = struct {
             if (containsIndex(rq.input_self_indices, @intCast(i))) {
                 if (!typesExactlyEqual(concrete, cf.ty)) return false;
                 continue;
+            }
+
+            if (rq.input_abstract_requirements.len > i) {
+                if (rq.input_abstract_requirements[i]) |abs_name| {
+                    if (!self.typeImplementsAbstract(abs_name, cf.ty, s)) return false;
+                    continue;
+                }
             }
 
             if (rq.input_generic_param_indices.len > i) {
@@ -859,14 +890,21 @@ pub const Semantizer = struct {
         rq: *const AbstractFunctionReqSem,
         cand_out: *const sem.StructType,
         param_bindings: []?sem.Type,
+        s: *Scope,
     ) bool {
-        _ = self;
         if (cand_out.fields.len != rq.output.fields.len) return false;
 
         var i: usize = 0;
         while (i < rq.output.fields.len) : (i += 1) {
             const ro = rq.output.fields[i];
             const co = cand_out.fields[i];
+
+            if (rq.output_abstract_requirements.len > i) {
+                if (rq.output_abstract_requirements[i]) |abs_name| {
+                    if (!self.typeImplementsAbstract(abs_name, co.ty, s)) return false;
+                    continue;
+                }
+            }
 
             if (rq.output_generic_param_indices.len > i) {
                 if (rq.output_generic_param_indices[i]) |gi| {
@@ -883,6 +921,33 @@ pub const Semantizer = struct {
             if (!typesExactlyEqual(ro.ty, co.ty)) return false;
         }
         return true;
+    }
+
+    fn typeImplementsAbstract(
+        self: *Semantizer,
+        abs_name: []const u8,
+        candidate: sem.Type,
+        s: *Scope,
+    ) bool {
+        _ = self;
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.abstract_impls.getPtr(abs_name)) |list_ptr| {
+                const impls = list_ptr.*;
+                for (impls.items) |impl| {
+                    if (typesExactlyEqual(impl.ty, candidate)) return true;
+                }
+            }
+        }
+
+        var cur_def: ?*Scope = s;
+        while (cur_def) |sc| : (cur_def = sc.parent) {
+            if (sc.abstract_defaults.getPtr(abs_name)) |def_entry| {
+                if (typesExactlyEqual(def_entry.*.ty, candidate)) return true;
+            }
+        }
+
+        return false;
     }
 
     fn containsIndex(list: []const u32, idx: u32) bool {
@@ -3372,6 +3437,9 @@ const AbstractFunctionReqSem = struct {
     // parallel slices to track generic parameter usage per field
     input_generic_param_indices: []const ?u32,
     output_generic_param_indices: []const ?u32,
+    // optional abstract requirements per field (null if none)
+    input_abstract_requirements: []const ?[]const u8,
+    output_abstract_requirements: []const ?[]const u8,
 };
 
 const AbstractInfo = struct {
