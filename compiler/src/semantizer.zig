@@ -477,37 +477,130 @@ pub const Semantizer = struct {
 
         // Store abstract info (resolved requirements) in scope
         var reqs = std.ArrayList(AbstractFunctionReqSem).init(self.allocator.*);
+        const generic_params = ad.generic_params;
         for (ad.requires_functions) |rf| {
-            // Build input struct resolving types; treat 'Self' specially
+            // Build input struct resolving types; track Self/generic usages
             var in_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+            var input_generic = std.ArrayList(?u32).init(self.allocator.*);
             var self_idxs = std.ArrayList(u32).init(self.allocator.*);
-            for (rf.input.fields, 0..) |fld, i| {
-                var ty: sem.Type = undefined;
-                if (fld.type) |t| {
-                    if (t == .type_name and std.mem.eql(u8, t.type_name.string, "Self")) {
-                        ty = .{ .builtin = .Any }; // placeholder; we’ll match via index
-                        try self_idxs.append(@intCast(i));
-                    } else {
-                        ty = try self.resolveType(t, s);
-                    }
-                } else ty = .{ .builtin = .Any };
-                try in_fields.append(.{ .name = fld.name.string, .ty = ty, .default_value = null });
-            }
-            const in_struct = sem.StructType{ .fields = try in_fields.toOwnedSlice() };
-            in_fields.deinit();
 
-            const out_ptr = try self.structTypeFromLiteral(rf.output, s);
+            for (rf.input.fields, 0..) |fld, i| {
+                var ty: sem.Type = .{ .builtin = .Any };
+                var generic_idx_opt: ?u32 = null;
+
+                if (fld.type) |t| {
+                    switch (t) {
+                        .type_name => |tn| {
+                            const name = tn.string;
+                            if (std.mem.eql(u8, name, "Self")) {
+                                try self_idxs.append(@intCast(i));
+                            } else {
+                                var found: bool = false;
+                                for (generic_params, 0..) |gp, gi| {
+                                    if (std.mem.eql(u8, gp, name)) {
+                                        generic_idx_opt = @intCast(gi);
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if (!found) {
+                                    ty = try self.resolveType(t, s);
+                                }
+                            }
+                        },
+                        else => {
+                            if (t == .pointer_type) {
+                                const ptr_info = t.pointer_type;
+                                const child_node = ptr_info.child.*;
+                                if (child_node == .type_name and std.mem.eql(u8, child_node.type_name.string, "Self")) {
+                                    ty = try self.pointerToAny(ptr_info.mutability);
+                                } else {
+                                    ty = try self.resolveType(t, s);
+                                }
+                            } else {
+                                ty = try self.resolveType(t, s);
+                            }
+                        },
+                    }
+                }
+
+                try in_fields.append(.{ .name = fld.name.string, .ty = ty, .default_value = null });
+                try input_generic.append(generic_idx_opt);
+            }
+
+            const in_struct = sem.StructType{ .fields = try in_fields.toOwnedSlice() };
+            const input_generic_slice = try input_generic.toOwnedSlice();
+
+            in_fields.deinit();
+            input_generic.deinit();
+
+            // Build output struct, tracking generics similarly
+            var out_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+            var output_generic = std.ArrayList(?u32).init(self.allocator.*);
+
+            for (rf.output.fields) |fld| {
+                var ty: sem.Type = .{ .builtin = .Any };
+                var generic_idx_opt: ?u32 = null;
+
+                if (fld.type) |t| {
+                    switch (t) {
+                        .type_name => |tn| {
+                            const name = tn.string;
+                            var found: bool = false;
+                            for (generic_params, 0..) |gp, gi| {
+                                if (std.mem.eql(u8, gp, name)) {
+                                    generic_idx_opt = @intCast(gi);
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found) {
+                                ty = try self.resolveType(t, s);
+                            }
+                        },
+                        else => {
+                            if (t == .pointer_type) {
+                                const ptr_info = t.pointer_type;
+                                const child_node = ptr_info.child.*;
+                                if (child_node == .type_name and std.mem.eql(u8, child_node.type_name.string, "Self")) {
+                                    ty = try self.pointerToAny(ptr_info.mutability);
+                                } else {
+                                    ty = try self.resolveType(t, s);
+                                }
+                            } else {
+                                ty = try self.resolveType(t, s);
+                            }
+                        },
+                    }
+                }
+
+                try out_fields.append(.{ .name = fld.name.string, .ty = ty, .default_value = null });
+                try output_generic.append(generic_idx_opt);
+            }
+
+            const out_struct = sem.StructType{ .fields = try out_fields.toOwnedSlice() };
+            const output_generic_slice = try output_generic.toOwnedSlice();
+
+            out_fields.deinit();
+            output_generic.deinit();
 
             try reqs.append(.{
                 .name = rf.name.string,
                 .input = in_struct,
-                .output = out_ptr.*,
+                .output = out_struct,
                 .input_self_indices = try self_idxs.toOwnedSlice(),
+                .input_generic_param_indices = input_generic_slice,
+                .output_generic_param_indices = output_generic_slice,
             });
             self_idxs.deinit();
         }
+
         const info = try self.allocator.create(AbstractInfo);
-        info.* = .{ .name = ad.name.string, .requirements = try reqs.toOwnedSlice() };
+        info.* = .{
+            .name = ad.name.string,
+            .requirements = try reqs.toOwnedSlice(),
+            .param_names = generic_params,
+        };
         reqs.deinit();
         try s.abstracts.put(ad.name.string, info);
 
@@ -565,32 +658,40 @@ pub const Semantizer = struct {
 
     fn ensureConformance(self: *Semantizer, info: *AbstractInfo, concrete: sem.Type, s: *Scope) !void {
         for (info.requirements) |rq| {
-            if (!self.existsFunctionForRequirement(rq, concrete, s))
+            if (!(try self.existsFunctionForRequirement(info, rq, concrete, s)))
                 return error.SymbolNotFound;
         }
     }
 
-    fn existsFunctionForRequirement(self: *Semantizer, rq: AbstractFunctionReqSem, concrete: sem.Type, s: *Scope) bool {
+    fn existsFunctionForRequirement(
+        self: *Semantizer,
+        info: *const AbstractInfo,
+        rq: AbstractFunctionReqSem,
+        concrete: sem.Type,
+        s: *Scope,
+    ) SemErr!bool {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.functions.getPtr(rq.name)) |lst| {
                 for (lst.items) |cand| {
-                    if (!self.funcInputMatchesRequirement(&cand.input, &rq.input, concrete, rq.input_self_indices))
-                        continue;
-                    // Also require exact output match (nominal)
-                    if (cand.output.fields.len != rq.output.fields.len) continue;
-                    var j: usize = 0;
-                    var outputs_ok = true;
-                    while (j < rq.output.fields.len) : (j += 1) {
-                        const ro = rq.output.fields[j];
-                        const co = cand.output.fields[j];
-                        if (!typesExactlyEqual(ro.ty, co.ty)) {
-                            outputs_ok = false;
-                            break;
-                        }
+                    if (info.param_names.len == 0) {
+                        const empty: []?sem.Type = &[_]?sem.Type{};
+                        if (!self.funcInputMatchesRequirement(&rq, &cand.input, concrete, empty))
+                            continue;
+                        if (!self.funcOutputMatchesRequirement(&rq, &cand.output, empty))
+                            continue;
+                        return true;
+                    } else {
+                        const bindings = try self.allocator.alloc(?sem.Type, info.param_names.len);
+                        defer self.allocator.free(bindings);
+                        for (bindings) |*slot| slot.* = null;
+
+                        if (!self.funcInputMatchesRequirement(&rq, &cand.input, concrete, bindings))
+                            continue;
+                        if (!self.funcOutputMatchesRequirement(&rq, &cand.output, bindings))
+                            continue;
+                        return true;
                     }
-                    if (!outputs_ok) continue;
-                    return true;
                 }
             }
         }
@@ -608,7 +709,7 @@ pub const Semantizer = struct {
             for (impls.items) |impl| {
                 const conc = impl.ty;
                 for (info.requirements) |rq| {
-                    if (self.existsFunctionForRequirement(rq, conc, s)) continue;
+                    if (try self.existsFunctionForRequirement(info, rq, conc, s)) continue;
 
                     // Build expected input with concrete substituted for Self
                     const exp_in = try self.buildExpectedInputWithConcrete(&rq, conc);
@@ -662,7 +763,7 @@ pub const Semantizer = struct {
             const info2 = self.lookupAbstractInfo(s, abs_name2) orelse continue;
             const conc2 = def_entry.ty;
             for (info2.requirements) |rq2| {
-                if (self.existsFunctionForRequirement(rq2, conc2, s)) continue;
+                if (try self.existsFunctionForRequirement(info2, rq2, conc2, s)) continue;
 
                 const exp_in2 = try self.buildExpectedInputWithConcrete(&rq2, conc2);
                 const in_ty2: sem.Type = .{ .struct_type = exp_in2 };
@@ -715,16 +816,71 @@ pub const Semantizer = struct {
         return st_ptr;
     }
 
-    fn funcInputMatchesRequirement(self: *Semantizer, cand_in: *const sem.StructType, req_in: *const sem.StructType, concrete: sem.Type, self_idxs: []const u32) bool {
+    fn funcInputMatchesRequirement(
+        self: *Semantizer,
+        rq: *const AbstractFunctionReqSem,
+        cand_in: *const sem.StructType,
+        concrete: sem.Type,
+        param_bindings: []?sem.Type,
+    ) bool {
         _ = self;
+        const req_in = &rq.input;
         if (cand_in.fields.len != req_in.fields.len) return false;
+
         var i: usize = 0;
         while (i < req_in.fields.len) : (i += 1) {
             const rf = req_in.fields[i];
             const cf = cand_in.fields[i];
-            // Field names do not need to match for abstract requirements
-            const expect_ty: sem.Type = if (containsIndex(self_idxs, @intCast(i))) concrete else rf.ty;
-            if (!typesExactlyEqual(expect_ty, cf.ty)) return false;
+
+            if (containsIndex(rq.input_self_indices, @intCast(i))) {
+                if (!typesExactlyEqual(concrete, cf.ty)) return false;
+                continue;
+            }
+
+            if (rq.input_generic_param_indices.len > i) {
+                if (rq.input_generic_param_indices[i]) |gi| {
+                    if (gi >= param_bindings.len) return false;
+                    if (param_bindings[gi]) |bound| {
+                        if (!typesExactlyEqual(bound, cf.ty)) return false;
+                    } else {
+                        param_bindings[gi] = cf.ty;
+                    }
+                    continue;
+                }
+            }
+
+            if (!typesExactlyEqual(rf.ty, cf.ty)) return false;
+        }
+        return true;
+    }
+
+    fn funcOutputMatchesRequirement(
+        self: *Semantizer,
+        rq: *const AbstractFunctionReqSem,
+        cand_out: *const sem.StructType,
+        param_bindings: []?sem.Type,
+    ) bool {
+        _ = self;
+        if (cand_out.fields.len != rq.output.fields.len) return false;
+
+        var i: usize = 0;
+        while (i < rq.output.fields.len) : (i += 1) {
+            const ro = rq.output.fields[i];
+            const co = cand_out.fields[i];
+
+            if (rq.output_generic_param_indices.len > i) {
+                if (rq.output_generic_param_indices[i]) |gi| {
+                    if (gi >= param_bindings.len) return false;
+                    if (param_bindings[gi]) |bound| {
+                        if (!typesExactlyEqual(bound, co.ty)) return false;
+                    } else {
+                        param_bindings[gi] = co.ty;
+                    }
+                    continue;
+                }
+            }
+
+            if (!typesExactlyEqual(ro.ty, co.ty)) return false;
         }
         return true;
     }
@@ -2796,6 +2952,19 @@ pub const Semantizer = struct {
         return n;
     }
 
+    fn pointerToAny(self: *Semantizer, mutability: syn.PointerMutability) !sem.Type {
+        const child = try self.allocator.create(sem.Type);
+        child.* = .{ .builtin = .Any };
+
+        const sem_ptr = try self.allocator.create(sem.PointerType);
+        sem_ptr.* = .{
+            .mutability = mutability,
+            .child = child,
+        };
+
+        return .{ .pointer_type = sem_ptr };
+    }
+
     fn resolveType(self: *Semantizer, t: syn.Type, s: *Scope) !sem.Type {
         return switch (t) {
             .type_name => |tn| blk: {
@@ -2814,7 +2983,23 @@ pub const Semantizer = struct {
                 break :blk error.UnknownType;
             },
             .generic_type_instantiation => |g| blk_g: {
-                const st_ptr = try self.instantiateGenericTypeNamed(g.base_name.string, g.args, s);
+                const base_name = g.base_name.string;
+                if (self.lookupAbstractInfo(s, base_name)) |info| {
+                    // Basic arity validation: ensure all parameters are provided
+                    for (info.param_names) |pname| {
+                        var found = false;
+                        for (g.args.fields) |fld| {
+                            if (std.mem.eql(u8, fld.name.string, pname)) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) break :blk_g error.UnknownType;
+                    }
+                    break :blk_g .{ .builtin = .Any };
+                }
+
+                const st_ptr = try self.instantiateGenericTypeNamed(base_name, g.args, s);
                 break :blk_g .{ .struct_type = st_ptr };
             },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
@@ -2855,8 +3040,23 @@ pub const Semantizer = struct {
                 break :blk try self.resolveType(t, s);
             },
             .generic_type_instantiation => |g| blk_g: {
+                const base_name = g.base_name.string;
+                if (self.lookupAbstractInfo(s, base_name)) |info| {
+                    for (info.param_names) |pname| {
+                        var found = false;
+                        for (g.args.fields) |fld| {
+                            if (std.mem.eql(u8, fld.name.string, pname)) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) break :blk_g error.UnknownType;
+                    }
+                    break :blk_g .{ .builtin = .Any };
+                }
+
                 // For now, ignore outer substitutions for base_name; stargs are resolved inside
-                const st_ptr = try self.instantiateGenericTypeNamed(g.base_name.string, g.args, s);
+                const st_ptr = try self.instantiateGenericTypeNamed(base_name, g.args, s);
                 break :blk_g .{ .struct_type = st_ptr };
             },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteralWithSubst(st, s, subst) },
@@ -3169,11 +3369,15 @@ const AbstractFunctionReqSem = struct {
     output: sem.StructType,
     // indices of input fields whose type was 'Self'
     input_self_indices: []const u32,
+    // parallel slices to track generic parameter usage per field
+    input_generic_param_indices: []const ?u32,
+    output_generic_param_indices: []const ?u32,
 };
 
 const AbstractInfo = struct {
     name: []const u8,
     requirements: []const AbstractFunctionReqSem,
+    param_names: []const []const u8,
 };
 const AbstractImplEntry = struct {
     ty: sem.Type,
