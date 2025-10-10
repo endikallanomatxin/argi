@@ -40,3 +40,10 @@ Manual memory management that is easy to use and hard to misuse.
 (Somehow automatic, but at compile time, not runtime.)
 (similar to mojo, which is similar to rust but simpler)
 
+
+## Solution
+
+All values will be automatically deinitialized after their last use.
+
+All types must implement init() and deinit() methods.
+
