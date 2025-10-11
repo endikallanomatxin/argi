@@ -5,6 +5,19 @@ const sem = @import("semantic_graph.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
+pub const TypedExpr = struct {
+    node: *sem.SGNode,
+    ty: sem.Type,
+};
+
+pub const BuiltinTypeInfoKind = enum {
+    size,
+    alignment,
+};
+
+pub const pointer_size_bytes: u64 = @sizeOf(*usize);
+pub const pointer_alignment_bytes: u64 = pointer_size_bytes;
+
 pub fn typesStructurallyEqual(a: sem.Type, b: sem.Type) bool {
     return switch (a) {
         .builtin => |ab| switch (b) {
@@ -165,4 +178,18 @@ pub fn typesCompatible(expected: sem.Type, actual: sem.Type) bool {
             else => false,
         },
     };
+}
+
+const Scope = @import("scope.zig").Scope;
+
+pub fn typeNameFor(s: *Scope, t: sem.Type) ?[]const u8 {
+    var cur: ?*Scope = s;
+    while (cur) |sc| : (cur = sc.parent) {
+        var it = sc.types.iterator();
+        while (it.next()) |entry| {
+            const td = entry.value_ptr.*;
+            if (typesExactlyEqual(td.ty, t)) return td.name;
+        }
+    }
+    return null;
 }

@@ -75,4 +75,20 @@ pub const Scope = struct {
         }
         return null;
     }
+
+    pub fn lookupAbstractDefault(s: *Scope, name: []const u8) ?abs.AbstractDefaultEntry {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.abstract_defaults.get(name)) |def| return def;
+        }
+        return null;
+    }
+
+    pub fn lookupAbstractInfo(s: *Scope, name: []const u8) ?*abs.AbstractInfo {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.abstracts.get(name)) |info| return info;
+        }
+        return null;
+    }
 };

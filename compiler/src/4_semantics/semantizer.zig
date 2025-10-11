@@ -13,7 +13,7 @@ const Scope = @import("scope.zig").Scope;
 
 const helpers = @import("helpers.zig");
 
-const SemErr = error{
+pub const SemErr = error{
     SymbolAlreadyDefined,
     SymbolNotFound,
     ConstantReassignment,
@@ -28,18 +28,9 @@ const SemErr = error{
     Reported,
 };
 
-const TypedExpr = struct {
-    node: *sem.SGNode,
-    ty: sem.Type,
+pub const DeferredGroup = struct {
+    nodes: []const *sem.SGNode,
 };
-
-const BuiltinTypeInfoKind = enum {
-    size,
-    alignment,
-};
-
-const pointer_size_bytes: u64 = @sizeOf(*usize);
-const pointer_alignment_bytes: u64 = pointer_size_bytes;
 
 //──────────────────────────────────────────────────────────────────────────────
 //  SEMANTIZER
@@ -135,7 +126,7 @@ pub const Semantizer = struct {
     }
 
     //────────────────────────────────────────────────────────────────── visitors
-    fn visitNode(self: *Semantizer, n: syn.STNode, s: *Scope) SemErr!TypedExpr {
+    fn visitNode(self: *Semantizer, n: syn.STNode, s: *Scope) SemErr!typ.TypedExpr {
         return switch (n.content) {
             .symbol_declaration => |d| self.handleSymbolDecl(d, s, n.location) catch |err| blk: {
                 switch (err) {
@@ -475,7 +466,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         ad: syn.AbstractDeclaration,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         // Register abstract as a nominal type placeholder (maps to Any for now)
         if (s.types.contains(ad.name.string)) return error.SymbolAlreadyDefined;
 
@@ -647,7 +638,7 @@ pub const Semantizer = struct {
         rel: syn.AbstractCanBe,
         s: *Scope,
         loc: tok.Location,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         const concrete_ty = try self.resolveType(rel.ty, s);
 
         // Defer conformance checks until call sites or a validation pass.
@@ -671,21 +662,13 @@ pub const Semantizer = struct {
         rel: syn.AbstractDefault,
         s: *Scope,
         loc: tok.Location,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         const concrete_ty = try self.resolveType(rel.ty, s);
         try s.abstract_defaults.put(rel.name.string, .{ .ty = concrete_ty, .location = loc });
         const empty = try self.allocator.create(sem.CodeBlock);
         empty.* = .{ .nodes = &.{}, .ret_val = null };
         const n = try self.makeNode(undefined, .{ .code_block = empty }, s);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
-    }
-
-    fn lookupAbstractInfo(_: *Semantizer, s: *Scope, name: []const u8) ?*abs.AbstractInfo {
-        var cur: ?*Scope = s;
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.abstracts.get(name)) |info| return info;
-        }
-        return null;
     }
 
     fn ensureConformance(self: *Semantizer, info: *abs.AbstractInfo, concrete: sem.Type, s: *Scope) !void {
@@ -736,7 +719,7 @@ pub const Semantizer = struct {
         while (it.next()) |entry| {
             const abs_name = entry.key_ptr.*;
             const impls = entry.value_ptr.*;
-            const info = self.lookupAbstractInfo(s, abs_name) orelse continue;
+            const info = s.lookupAbstractInfo(abs_name) orelse continue;
 
             for (impls.items) |impl| {
                 const conc = impl.ty;
@@ -792,7 +775,7 @@ pub const Semantizer = struct {
         while (it_def.next()) |entry2| {
             const abs_name2 = entry2.key_ptr.*;
             const def_entry = entry2.value_ptr.*;
-            const info2 = self.lookupAbstractInfo(s, abs_name2) orelse continue;
+            const info2 = s.lookupAbstractInfo(abs_name2) orelse continue;
             const conc2 = def_entry.ty;
             for (info2.requirements) |rq2| {
                 if (try self.existsFunctionForRequirement(info2, rq2, conc2, s)) continue;
@@ -849,7 +832,7 @@ pub const Semantizer = struct {
     }
 
     //─────────────────────────────────────────────────────────  LITERALS
-    fn handleLiteral(self: *Semantizer, lit: tok.Literal) SemErr!TypedExpr {
+    fn handleLiteral(self: *Semantizer, lit: tok.Literal) SemErr!typ.TypedExpr {
         var sg: sem.ValueLiteral = undefined;
         var ty: sem.Type = .{ .builtin = .Int32 };
 
@@ -893,7 +876,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         name: []const u8,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         const b = s.lookupBinding(name) orelse return error.SymbolNotFound;
         const n = try self.makeNode(undefined, .{ .binding_use = b }, null);
         return .{ .node = n, .ty = b.ty };
@@ -904,7 +887,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         blk: syn.CodeBlock,
         parent: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         var child = try Scope.init(self.allocator, parent, null);
 
         for (blk.items) |st|
@@ -933,12 +916,12 @@ pub const Semantizer = struct {
         d: syn.SymbolDeclaration,
         s: *Scope,
         loc: tok.Location,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         if (s.bindings.contains(d.name.string))
             return error.SymbolAlreadyDefined;
 
         var init_node: ?*syn.STNode = null;
-        var init_te_opt: ?TypedExpr = null;
+        var init_te_opt: ?typ.TypedExpr = null;
         if (d.value) |v| {
             init_node = v;
             init_te_opt = try self.visitNode(v.*, s);
@@ -985,7 +968,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         d: syn.TypeDeclaration,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         const st_lit = d.value.*.content.struct_type_literal;
         if (d.generic_params.len > 0) {
             // Register as generic type template
@@ -1041,7 +1024,7 @@ pub const Semantizer = struct {
         f: syn.FunctionDeclaration,
         p: *Scope,
         loc: tok.Location,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         // Register generic template and skip direct emission
         if (f.generic_params.len > 0) {
             if (p.generic_functions.getPtr(f.name.string)) |lst| {
@@ -1170,7 +1153,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         a: syn.Assignment,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         const b = s.lookupBinding(a.name.string) orelse return error.SymbolNotFound;
         if (b.mutability == .constant and b.initialization != null)
             return error.ConstantReassignment;
@@ -1205,7 +1188,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         sl: syn.StructValueLiteral,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         var fields_buf = std.ArrayList(sem.StructValueLiteralField).init(self.allocator.*);
 
         for (sl.fields) |f| {
@@ -1229,7 +1212,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         st: syn.StructTypeLiteral,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         var val_fields = std.ArrayList(sem.StructValueLiteralField).init(self.allocator.*);
         var ty_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
 
@@ -1263,7 +1246,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         ma: syn.StructFieldAccess,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         const base = try self.visitNode(ma.struct_value.*, s);
 
         if (base.ty == .array_type) {
@@ -1328,7 +1311,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         ll: syn.ListLiteral,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         var expected_elem_ty_opt: ?sem.Type = null;
         if (ll.element_type) |elt_ty_syn| {
             expected_elem_ty_opt = try self.resolveType(elt_ty_syn, s);
@@ -1383,7 +1366,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         ia: syn.IndexAccess,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         const base = try self.visitNode(ia.value.*, s);
 
         if (base.ty == .array_type) {
@@ -1481,7 +1464,7 @@ pub const Semantizer = struct {
         if (inferred) |instantiated| {
             chosen = instantiated;
         } else {
-            chosen = self.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
+            chosen = abs.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
                 error.SymbolNotFound => {
                     const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
                     const available = try self.collectFunctionSignatures(name, s);
@@ -1527,7 +1510,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         ia: syn.IndexAssignment,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         if (ia.target.*.content != .index_access) return error.InvalidType;
         const idx = ia.target.*.content.index_access;
 
@@ -1605,7 +1588,7 @@ pub const Semantizer = struct {
         if (inferred) |instantiated| {
             chosen = instantiated;
         } else {
-            chosen = self.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
+            chosen = abs.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
                 error.SymbolNotFound => {
                     const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
                     const available = try self.collectFunctionSignatures(name, s);
@@ -1720,7 +1703,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         call: syn.FunctionCall,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         if (std.mem.eql(u8, call.callee, "size_of"))
             return self.handleBuiltinTypeInfo(.size, call, s) catch |err| switch (err) {
                 error.Reported => return err,
@@ -1767,7 +1750,7 @@ pub const Semantizer = struct {
             if (inferred) |instantiated| {
                 chosen = instantiated;
             } else {
-                chosen = self.resolveOverload(call.callee, tv_in.ty, s) catch |err| switch (err) {
+                chosen = abs.resolveOverload(call.callee, tv_in.ty, s) catch |err| switch (err) {
                     error.SymbolNotFound => {
                         if (tv_in.ty == .struct_type) {
                             const actual_sig = try self.formatCallInput(tv_in.ty.struct_type, s);
@@ -1810,10 +1793,10 @@ pub const Semantizer = struct {
     fn handleTypeInitializer(
         self: *Semantizer,
         call: syn.FunctionCall,
-        tv_in: TypedExpr,
+        tv_in: typ.TypedExpr,
         type_decl: *sem.TypeDeclaration,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         if (tv_in.ty != .struct_type) {
             try self.diags.add(
                 call.input.*.location,
@@ -1845,7 +1828,7 @@ pub const Semantizer = struct {
 
         const init_input_ty: sem.Type = .{ .struct_type = init_struct };
 
-        const init_fn = self.resolveOverload("init", init_input_ty, s) catch |err| switch (err) {
+        const init_fn = abs.resolveOverload("init", init_input_ty, s) catch |err| switch (err) {
             error.SymbolNotFound => {
                 const actual_sig = try self.formatCallInput(user_struct, s);
                 const available = try self.collectFunctionSignatures("init", s);
@@ -1884,35 +1867,6 @@ pub const Semantizer = struct {
 
         const init_node = try self.makeNode(undefined, .{ .type_initializer = type_init }, null);
         return .{ .node = init_node, .ty = type_decl.ty };
-    }
-
-    fn resolveOverload(_: *Semantizer, name: []const u8, in_ty: sem.Type, s: *Scope) SemErr!*sem.FunctionDeclaration {
-        var best: ?*sem.FunctionDeclaration = null;
-        var best_score: u32 = std.math.maxInt(u32);
-        var ambiguous = false;
-
-        var cur: ?*Scope = s;
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.functions.getPtr(name)) |list_ptr| {
-                for (list_ptr.items) |cand| {
-                    const expected: sem.Type = .{ .struct_type = &cand.input };
-                    if (!typ.typesCompatible(expected, in_ty)) continue;
-
-                    const score = abs.specificityScore(expected, in_ty);
-                    if (best == null or score < best_score) {
-                        best = cand;
-                        best_score = score;
-                        ambiguous = false;
-                    } else if (score == best_score) {
-                        // ambiguous with same specificity
-                        ambiguous = true;
-                    }
-                }
-            }
-        }
-        if (best == null) return error.SymbolNotFound;
-        if (ambiguous) return error.AmbiguousOverload;
-        return best.?;
     }
 
     fn findFieldByName(st: *const sem.StructType, name: []const u8) ?*const sem.StructTypeField {
@@ -2098,7 +2052,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         name: []const u8,
         stargs: syn.StructTypeLiteral,
-        call_input: TypedExpr,
+        call_input: typ.TypedExpr,
         s: *Scope,
     ) SemErr!*sem.FunctionDeclaration {
         var cur: ?*Scope = s;
@@ -2202,7 +2156,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         name: []const u8,
         type_args_syn: []const syn.Type,
-        call_input: TypedExpr,
+        call_input: typ.TypedExpr,
         s: *Scope,
     ) SemErr!*sem.FunctionDeclaration {
         var cur: ?*Scope = s;
@@ -2343,7 +2297,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         bo: syn.BinaryOperation,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         var lhs = try self.visitNode(bo.left.*, s);
         var rhs = try self.visitNode(bo.right.*, s);
 
@@ -2403,7 +2357,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         c: syn.Comparison,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         var lhs = try self.visitNode(c.left.*, s);
         var rhs = try self.visitNode(c.right.*, s);
 
@@ -2442,7 +2396,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         r: syn.ReturnStatement,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         const e = if (r.expression) |ex| (try self.visitNode(ex.*, s)) else null;
 
         const rs = try self.allocator.create(sem.ReturnStatement);
@@ -2457,7 +2411,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         ifs: syn.IfStatement,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         const start_len = s.nodes.items.len;
 
         const cond = try self.visitNode(ifs.condition.*, s);
@@ -2486,7 +2440,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         addr: syn.AddressOf,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         const te = try self.visitNode(addr.value.*, s);
 
         if (te.node.content != .binding_use) {
@@ -2526,7 +2480,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         expr: *syn.STNode,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         const start_len = s.nodes.items.len;
         const te = try self.visitNode(expr.*, s);
 
@@ -2544,7 +2498,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         inner: *syn.STNode,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         const te = try self.visitNode(inner.*, s);
 
         if (te.ty != .pointer_type) {
@@ -2572,10 +2526,10 @@ pub const Semantizer = struct {
     //────────────────────────────────────────────────── POINTER ASSIGNMENT
     const CallArg = struct {
         name: []const u8,
-        expr: TypedExpr,
+        expr: typ.TypedExpr,
     };
 
-    fn buildCallInput(self: *Semantizer, args: []const CallArg) !TypedExpr {
+    fn buildCallInput(self: *Semantizer, args: []const CallArg) !typ.TypedExpr {
         var ty_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
         var val_fields = std.ArrayList(sem.StructValueLiteralField).init(self.allocator.*);
 
@@ -2612,7 +2566,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         pa: syn.PointerAssignment,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         var rhs = try self.visitNode(pa.value.*, s);
 
         if (pa.target.*.content == .struct_field_access) {
@@ -2721,10 +2675,10 @@ pub const Semantizer = struct {
     //──────────────────────────────────────────────────── HELPERS
     fn handleBuiltinTypeInfo(
         self: *Semantizer,
-        kind: BuiltinTypeInfoKind,
+        kind: typ.BuiltinTypeInfoKind,
         call: syn.FunctionCall,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         const target_ty = try self.extractTypeArgument(call, s);
 
         const value = switch (kind) {
@@ -2750,11 +2704,11 @@ pub const Semantizer = struct {
         self: *Semantizer,
         call: syn.FunctionCall,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         const arg_node = call.input.*;
         const arg_loc = arg_node.location;
 
-        var value_te: TypedExpr = undefined;
+        var value_te: typ.TypedExpr = undefined;
         if (arg_node.content == .struct_value_literal) {
             const sv = arg_node.content.struct_value_literal;
             if (sv.fields.len != 1 or !std.mem.eql(u8, sv.fields[0].name.string, "value")) {
@@ -2823,7 +2777,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         call: syn.FunctionCall,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         const arg_node = call.input.*;
         if (arg_node.content != .struct_value_literal) {
             try self.diags.add(
@@ -2980,10 +2934,10 @@ pub const Semantizer = struct {
                 .Int16, .UInt16, .Float16 => 2,
                 .Int32, .UInt32, .Float32 => 4,
                 .Int64, .UInt64, .Float64 => 8,
-                .Type => pointer_size_bytes,
-                .Any => pointer_size_bytes,
+                .Type => typ.pointer_size_bytes,
+                .Any => typ.pointer_size_bytes,
             },
-            .pointer_type => pointer_size_bytes,
+            .pointer_type => typ.pointer_size_bytes,
             .struct_type => |st| blk: {
                 const max_align = try self.computeTypeAlignment(.{ .struct_type = st });
                 var size: u64 = 0;
@@ -3016,10 +2970,10 @@ pub const Semantizer = struct {
                 .Int16, .UInt16, .Float16 => 2,
                 .Int32, .UInt32, .Float32 => 4,
                 .Int64, .UInt64, .Float64 => 8,
-                .Type => pointer_alignment_bytes,
-                .Any => pointer_alignment_bytes,
+                .Type => typ.pointer_alignment_bytes,
+                .Any => typ.pointer_alignment_bytes,
             },
-            .pointer_type => pointer_alignment_bytes,
+            .pointer_type => typ.pointer_alignment_bytes,
             .struct_type => |st| blk: {
                 var max_align: u64 = 1;
                 var idx: usize = 0;
@@ -3044,7 +2998,7 @@ pub const Semantizer = struct {
         loc: tok.Location,
         value: i64,
         ty: sem.Type,
-    ) !TypedExpr {
+    ) !typ.TypedExpr {
         const lit_ptr = try self.allocator.create(sem.ValueLiteral);
         lit_ptr.* = .{ .int_literal = value };
         const node = try self.makeNode(loc, .{ .value_literal = lit_ptr.* }, null);
@@ -3055,7 +3009,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         loc: tok.Location,
         ty: sem.Type,
-    ) !TypedExpr {
+    ) !typ.TypedExpr {
         const type_node = try self.allocator.create(sem.TypeLiteral);
         type_node.* = .{ .ty = ty };
         const node = try self.makeNode(loc, .{ .type_literal = type_node }, null);
@@ -3065,8 +3019,8 @@ pub const Semantizer = struct {
     fn ensureReadOnlyPointer(
         self: *Semantizer,
         expr_node: *const syn.STNode,
-        te: TypedExpr,
-    ) SemErr!TypedExpr {
+        te: typ.TypedExpr,
+    ) SemErr!typ.TypedExpr {
         // Si ya es puntero (&T o $&T), sirve para un parámetro de solo lectura.
         if (te.ty == .pointer_type) return te;
 
@@ -3094,9 +3048,9 @@ pub const Semantizer = struct {
     fn ensureMutablePointer(
         self: *Semantizer,
         expr_node: *const syn.STNode,
-        te: TypedExpr,
+        te: typ.TypedExpr,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         if (te.ty == .pointer_type) {
             const info = te.ty.pointer_type.*;
             if (info.mutability != .read_write) {
@@ -3147,10 +3101,10 @@ pub const Semantizer = struct {
     fn coerceExprToType(
         self: *Semantizer,
         expected: sem.Type,
-        expr: TypedExpr,
+        expr: typ.TypedExpr,
         expr_node: *const syn.STNode,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         if (typ.typesExactlyEqual(expected, expr.ty)) return expr;
 
         return switch (expected) {
@@ -3164,9 +3118,9 @@ pub const Semantizer = struct {
     fn coerceLiteralToBuiltin(
         self: *Semantizer,
         target: sem.BuiltinType,
-        expr: TypedExpr,
+        expr: typ.TypedExpr,
         expr_node: *const syn.STNode,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         if (expr.node.content != .value_literal) return expr;
 
         const lit = expr.node.content.value_literal;
@@ -3189,7 +3143,7 @@ pub const Semantizer = struct {
         target: sem.BuiltinType,
         value: i64,
         loc: tok.Location,
-    ) SemErr!?TypedExpr {
+    ) SemErr!?typ.TypedExpr {
         const type_name = @tagName(target);
         return switch (target) {
             .Int8, .Int16, .Int32, .Int64 => blk_signed: {
@@ -3250,13 +3204,13 @@ pub const Semantizer = struct {
         target: sem.BuiltinType,
         value: f64,
         loc: tok.Location,
-    ) SemErr!?TypedExpr {
+    ) SemErr!?typ.TypedExpr {
         return switch (target) {
             .Float16, .Float32, .Float64 => blk: {
                 const lit_ptr = try self.allocator.create(sem.ValueLiteral);
                 lit_ptr.* = .{ .float_literal = value };
                 const node = try self.makeNode(loc, .{ .value_literal = lit_ptr.* }, null);
-                break :blk TypedExpr{ .node = node, .ty = .{ .builtin = target } };
+                break :blk typ.TypedExpr{ .node = node, .ty = .{ .builtin = target } };
             },
             else => null,
         };
@@ -3265,10 +3219,10 @@ pub const Semantizer = struct {
     fn coerceStructLiteral(
         self: *Semantizer,
         expected: *const sem.StructType,
-        expr: TypedExpr,
+        expr: typ.TypedExpr,
         expr_node: *const syn.STNode,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         if (expr.node.content != .struct_value_literal) return expr;
         const lit = expr.node.content.struct_value_literal;
         const actual_struct = lit.ty.struct_type;
@@ -3291,7 +3245,7 @@ pub const Semantizer = struct {
             }
 
             const field_node = @constCast(lit.fields[i].value);
-            var field_expr = TypedExpr{
+            var field_expr = typ.TypedExpr{
                 .node = field_node,
                 .ty = act_field.ty,
             };
@@ -3325,11 +3279,11 @@ pub const Semantizer = struct {
 
     fn convertListLiteralToArray(
         self: *Semantizer,
-        expr: TypedExpr,
+        expr: typ.TypedExpr,
         arr_info: *const sem.ArrayType,
         loc: tok.Location,
         s: *Scope,
-    ) SemErr!TypedExpr {
+    ) SemErr!typ.TypedExpr {
         switch (expr.node.content) {
             .list_literal => |ll| {
                 if (ll.elements.len != arr_info.length) {
@@ -3468,8 +3422,8 @@ pub const Semantizer = struct {
                 if (builtinFromName(id)) |bt|
                     break :blk .{ .builtin = bt };
                 // If it's an abstract, require a defaultsto to use as a type
-                if (self.lookupAbstractInfo(s, id)) |_| {
-                    if (self.lookupAbstractDefault(s, id)) |def_entry|
+                if (s.lookupAbstractInfo(id)) |_| {
+                    if (s.lookupAbstractDefault(id)) |def_entry|
                         break :blk def_entry.ty;
                     // Treat abstract types without defaults as 'Any' so they can be
                     // used in signatures; conformance is verified when instantiating.
@@ -3481,7 +3435,7 @@ pub const Semantizer = struct {
             },
             .generic_type_instantiation => |g| blk_g: {
                 const base_name = g.base_name.string;
-                if (self.lookupAbstractInfo(s, base_name)) |info| {
+                if (s.lookupAbstractInfo(base_name)) |info| {
                     // Basic arity validation: ensure all parameters are provided
                     for (info.param_names) |pname| {
                         var found = false;
@@ -3541,7 +3495,7 @@ pub const Semantizer = struct {
             },
             .generic_type_instantiation => |g| blk_g: {
                 const base_name = g.base_name.string;
-                if (self.lookupAbstractInfo(s, base_name)) |info| {
+                if (s.lookupAbstractInfo(base_name)) |info| {
                     for (info.param_names) |pname| {
                         var found = false;
                         for (g.args.fields) |fld| {
@@ -3590,14 +3544,6 @@ pub const Semantizer = struct {
                 break :blk_arr .{ .array_type = sem_arr };
             },
         };
-    }
-
-    fn lookupAbstractDefault(_: *Semantizer, s: *Scope, name: []const u8) ?abs.AbstractDefaultEntry {
-        var cur: ?*Scope = s;
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.abstract_defaults.get(name)) |def| return def;
-        }
-        return null;
     }
 
     fn builtinFromName(name: []const u8) ?sem.BuiltinType {
@@ -3682,7 +3628,7 @@ pub const Semantizer = struct {
     }
 
     fn appendTypePretty(self: *Semantizer, buf: *std.ArrayList(u8), t: sem.Type, s: *Scope) !void {
-        if (self.typeNameFor(s, t)) |nm| {
+        if (typ.typeNameFor(s, t)) |nm| {
             try buf.appendSlice(nm);
             return;
         }
@@ -3761,19 +3707,6 @@ pub const Semantizer = struct {
         }
 
         return try buf.toOwnedSlice();
-    }
-
-    fn typeNameFor(self: *Semantizer, s: *Scope, t: sem.Type) ?[]const u8 {
-        _ = self;
-        var cur: ?*Scope = s;
-        while (cur) |sc| : (cur = sc.parent) {
-            var it = sc.types.iterator();
-            while (it.next()) |entry| {
-                const td = entry.value_ptr.*;
-                if (typ.typesExactlyEqual(td.ty, t)) return td.name;
-            }
-        }
-        return null;
     }
 
     fn registerDefer(self: *Semantizer, s: *Scope, nodes: []const *sem.SGNode) !void {
@@ -3858,7 +3791,3 @@ fn binaryOpVerb(op: tok.BinaryOperator) []const u8 {
         .modulo => "mod",
     };
 }
-
-pub const DeferredGroup = struct {
-    nodes: []const *sem.SGNode,
-};
