@@ -519,7 +519,7 @@ pub const Semantizer = struct {
                                 const ptr_info = t.pointer_type;
                                 const child_node = ptr_info.child.*;
                                 if (child_node == .type_name and std.mem.eql(u8, child_node.type_name.string, "Self")) {
-                                    ty = try self.pointerToAny(ptr_info.mutability);
+                                    ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
                                 } else {
                                     ty = try self.resolveType(t, s);
                                 }
@@ -580,7 +580,7 @@ pub const Semantizer = struct {
                                 const ptr_info = t.pointer_type;
                                 const child_node = ptr_info.child.*;
                                 if (child_node == .type_name and std.mem.eql(u8, child_node.type_name.string, "Self")) {
-                                    ty = try self.pointerToAny(ptr_info.mutability);
+                                    ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
                                 } else {
                                     ty = try self.resolveType(t, s);
                                 }
@@ -3231,19 +3231,6 @@ pub const Semantizer = struct {
         };
         if (scope) |s| try s.nodes.append(n);
         return n;
-    }
-
-    fn pointerToAny(self: *Semantizer, mutability: syn.PointerMutability) !sem.Type {
-        const child = try self.allocator.create(sem.Type);
-        child.* = .{ .builtin = .Any };
-
-        const sem_ptr = try self.allocator.create(sem.PointerType);
-        sem_ptr.* = .{
-            .mutability = mutability,
-            .child = child,
-        };
-
-        return .{ .pointer_type = sem_ptr };
     }
 
     fn resolveType(self: *Semantizer, t: syn.Type, s: *Scope) !sem.Type {
