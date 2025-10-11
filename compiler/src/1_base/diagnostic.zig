@@ -1,6 +1,6 @@
 const std = @import("std");
 const sf = @import("source_files.zig");
-const tok = @import("token.zig");
+const tok = @import("../2_tokens/token.zig");
 
 pub const Kind = enum {
     syntax,

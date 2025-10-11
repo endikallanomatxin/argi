@@ -2,18 +2,18 @@ const std = @import("std");
 const fs = std.fs;
 const allocator = std.heap.page_allocator;
 
-const llvm = @import("../llvm.zig");
+const llvm = @import("../5_codegen/llvm.zig");
 const c = llvm.c;
 
-const sf = @import("../source_files.zig");
-const diag = @import("../diagnostic.zig");
-const token = @import("../token.zig");
-const tokzr = @import("../tokenizer.zig");
-const syn = @import("../syntaxer.zig");
-const sem = @import("../semantizer.zig");
-const link = @import("../link.zig");
-const codegen = @import("../codegen.zig");
-const tokp = @import("../token_print.zig");
+const sf = @import("../1_base/source_files.zig");
+const diag = @import("../1_base/diagnostic.zig");
+const token = @import("../2_tokens/token.zig");
+const tokzr = @import("../2_tokens/tokenizer.zig");
+const syn = @import("../3_syntax/syntaxer.zig");
+const sem = @import("../4_semantics/semantizer.zig");
+const link = @import("../5_codegen/link.zig");
+const codegen = @import("../5_codegen/codegen.zig");
+const tokp = @import("../2_tokens/token_print.zig");
 
 const BuildFlags = struct {
     show_cascade: bool = false,
@@ -26,8 +26,11 @@ fn parseFlags(args: []const []const u8) BuildFlags {
     var flags: BuildFlags = .{};
     for (args) |a| {
         if (std.mem.eql(u8, a, "--on-build-error-show-cascade")) flags.show_cascade = true
+            //
         else if (std.mem.eql(u8, a, "--on-build-error-show-syntax-tree")) flags.show_syntax_tree = true
+            //
         else if (std.mem.eql(u8, a, "--on-build-error-show-semantic-graph")) flags.show_semantic_graph = true
+            //
         else if (std.mem.eql(u8, a, "--on-build-error-show-token-list")) flags.show_token_list = true;
     }
     return flags;

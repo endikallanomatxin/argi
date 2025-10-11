@@ -1,5 +1,3 @@
-- Put numbers to the src files to indicate the order in which they operate.
-
 - Split the semantizer into multiple passes:
 
     Checklists, worklists:

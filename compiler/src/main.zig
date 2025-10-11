@@ -1,6 +1,6 @@
 const std = @import("std");
-const build_cmd = @import("commands/build.zig");
-const lsp_cmd = @import("commands/lsp.zig");
+const build_cmd = @import("0_commands/build.zig");
+const lsp_cmd = @import("0_commands/lsp.zig");
 
 pub fn main() !void {
     const args = std.process.argsAlloc(std.heap.page_allocator) catch return;

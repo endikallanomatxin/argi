@@ -1,12 +1,12 @@
 const std = @import("std");
 
-const sf = @import("source_files.zig");
-const diag = @import("diagnostic.zig");
-const token = @import("token.zig");
-const tokenizer = @import("tokenizer.zig");
-const st = @import("syntax_tree.zig");
-const syntaxer = @import("syntaxer.zig");
-const semantizer = @import("semantizer.zig");
+const sf = @import("../1_base/source_files.zig");
+const diag = @import("../1_base/diagnostic.zig");
+const token = @import("../2_tokens/token.zig");
+const tokenizer = @import("../2_tokens/tokenizer.zig");
+const st = @import("../3_syntax/syntax_tree.zig");
+const syntaxer = @import("../3_syntax/syntaxer.zig");
+const semantizer = @import("../4_semantics/semantizer.zig");
 
 // Token types legend indices
 const TOKEN_INDEX = struct {

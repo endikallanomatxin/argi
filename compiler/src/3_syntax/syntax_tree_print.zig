@@ -1,6 +1,6 @@
 const std = @import("std");
 const syn = @import("syntax_tree.zig");
-const tok = @import("token.zig");
+const tok = @import("../2_tokens/token.zig");
 
 //──────────────────────────────────────────────────────────────────────────────
 // Utilidades
