@@ -5,7 +5,8 @@ const sem = @import("semantic_graph.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
-const types = @import("types.zig");
+const typ = @import("types.zig");
+const helpers = @import("helpers.zig");
 
 const Scope = @import("scope.zig").Scope;
 
@@ -48,7 +49,7 @@ pub fn typeImplementsAbstract(
         if (sc.abstract_impls.getPtr(abs_name)) |list_ptr| {
             const impls = list_ptr.*;
             for (impls.items) |impl| {
-                if (types.typesExactlyEqual(impl.ty, candidate)) return true;
+                if (typ.typesExactlyEqual(impl.ty, candidate)) return true;
             }
         }
     }
@@ -56,7 +57,7 @@ pub fn typeImplementsAbstract(
     var cur_def: ?*Scope = s;
     while (cur_def) |sc| : (cur_def = sc.parent) {
         if (sc.abstract_defaults.getPtr(abs_name)) |def_entry| {
-            if (types.typesExactlyEqual(def_entry.*.ty, candidate)) return true;
+            if (typ.typesExactlyEqual(def_entry.*.ty, candidate)) return true;
         }
     }
 
@@ -89,7 +90,7 @@ pub fn specificityScore(expected: sem.Type, actual: sem.Type) u32 {
             const expected_child = ept.child.*;
             const actual_child = apt.child.*;
 
-            if (types.isAny(expected_child) or types.isAny(actual_child))
+            if (typ.isAny(expected_child) or typ.isAny(actual_child))
                 break :blk2 1;
 
             break :blk2 specificityScore(expected_child, actual_child);
@@ -102,4 +103,85 @@ pub fn specificityScore(expected: sem.Type, actual: sem.Type) u32 {
             break :blk_arr specificityScore(eat.element_type.*, aat.element_type.*);
         },
     };
+}
+
+pub fn funcInputMatchesRequirement(
+    rq: *const AbstractFunctionReqSem,
+    cand_in: *const sem.StructType,
+    concrete: sem.Type,
+    param_bindings: []?sem.Type,
+    s: *Scope,
+) bool {
+    const req_in = &rq.input;
+    if (cand_in.fields.len != req_in.fields.len) return false;
+
+    var i: usize = 0;
+    while (i < req_in.fields.len) : (i += 1) {
+        const rf = req_in.fields[i];
+        const cf = cand_in.fields[i];
+
+        if (helpers.containsIndex(rq.input_self_indices, @intCast(i))) {
+            if (!typ.typesExactlyEqual(concrete, cf.ty)) return false;
+            continue;
+        }
+
+        if (rq.input_abstract_requirements.len > i) {
+            if (rq.input_abstract_requirements[i]) |abs_name| {
+                if (!typeImplementsAbstract(abs_name, cf.ty, s)) return false;
+                continue;
+            }
+        }
+
+        if (rq.input_generic_param_indices.len > i) {
+            if (rq.input_generic_param_indices[i]) |gi| {
+                if (gi >= param_bindings.len) return false;
+                if (param_bindings[gi]) |bound| {
+                    if (!typ.typesExactlyEqual(bound, cf.ty)) return false;
+                } else {
+                    param_bindings[gi] = cf.ty;
+                }
+                continue;
+            }
+        }
+
+        if (!typ.typesExactlyEqual(rf.ty, cf.ty)) return false;
+    }
+    return true;
+}
+
+pub fn funcOutputMatchesRequirement(
+    rq: *const AbstractFunctionReqSem,
+    cand_out: *const sem.StructType,
+    param_bindings: []?sem.Type,
+    s: *Scope,
+) bool {
+    if (cand_out.fields.len != rq.output.fields.len) return false;
+
+    var i: usize = 0;
+    while (i < rq.output.fields.len) : (i += 1) {
+        const ro = rq.output.fields[i];
+        const co = cand_out.fields[i];
+
+        if (rq.output_abstract_requirements.len > i) {
+            if (rq.output_abstract_requirements[i]) |abs_name| {
+                if (!typeImplementsAbstract(abs_name, co.ty, s)) return false;
+                continue;
+            }
+        }
+
+        if (rq.output_generic_param_indices.len > i) {
+            if (rq.output_generic_param_indices[i]) |gi| {
+                if (gi >= param_bindings.len) return false;
+                if (param_bindings[gi]) |bound| {
+                    if (!typ.typesExactlyEqual(bound, co.ty)) return false;
+                } else {
+                    param_bindings[gi] = co.ty;
+                }
+                continue;
+            }
+        }
+
+        if (!typ.typesExactlyEqual(ro.ty, co.ty)) return false;
+    }
+    return true;
 }
