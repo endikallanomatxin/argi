@@ -5,6 +5,8 @@ const sem = @import("semantic_graph.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
+const Scope = @import("scope.zig").Scope;
+
 const SemErr = error{
     SymbolAlreadyDefined,
     SymbolNotFound,
@@ -3974,7 +3976,7 @@ pub const Semantizer = struct {
 
 //────────────────────────────────────────────────────────────────────── BUILDER SCOPE
 // Generic function template used for monomorphization
-const GenericTemplate = struct {
+pub const GenericTemplate = struct {
     name: []const u8,
     location: tok.Location,
     param_names: []const []const u8,
@@ -3984,7 +3986,7 @@ const GenericTemplate = struct {
 };
 
 // Generic type template for monomorphization of named struct types
-const GenericTypeTemplate = struct {
+pub const GenericTypeTemplate = struct {
     name: []const u8,
     location: tok.Location,
     param_names: []const []const u8,
@@ -4005,82 +4007,22 @@ const AbstractFunctionReqSem = struct {
     output_abstract_requirements: []const ?[]const u8,
 };
 
-const AbstractInfo = struct {
+pub const AbstractInfo = struct {
     name: []const u8,
     requirements: []const AbstractFunctionReqSem,
     param_names: []const []const u8,
 };
-const AbstractImplEntry = struct {
+pub const AbstractImplEntry = struct {
     ty: sem.Type,
     location: tok.Location,
 };
-const AbstractDefaultEntry = struct {
+pub const AbstractDefaultEntry = struct {
     ty: sem.Type,
     location: tok.Location,
 };
 
-const DeferredGroup = struct {
+pub const DeferredGroup = struct {
     nodes: []const *sem.SGNode,
-};
-const Scope = struct {
-    parent: ?*Scope,
-    allocator: *const std.mem.Allocator,
-
-    nodes: std.ArrayList(*sem.SGNode),
-    bindings: std.StringHashMap(*sem.BindingDeclaration),
-    functions: std.StringHashMap(std.ArrayList(*sem.FunctionDeclaration)),
-    types: std.StringHashMap(*sem.TypeDeclaration),
-    abstracts: std.StringHashMap(*AbstractInfo),
-    abstract_impls: std.StringHashMap(std.ArrayList(AbstractImplEntry)),
-    abstract_defaults: std.StringHashMap(AbstractDefaultEntry),
-    generic_functions: std.StringHashMap(std.ArrayList(GenericTemplate)),
-    generic_types: std.StringHashMap(std.ArrayList(GenericTypeTemplate)),
-    deferred: std.ArrayList(DeferredGroup),
-
-    current_fn: ?*sem.FunctionDeclaration,
-
-    fn init(
-        a: *const std.mem.Allocator,
-        p: ?*Scope,
-        fnc: ?*sem.FunctionDeclaration,
-    ) !Scope {
-        return .{
-            .parent = p,
-            .allocator = a,
-            .nodes = std.ArrayList(*sem.SGNode).init(a.*),
-            .bindings = std.StringHashMap(*sem.BindingDeclaration).init(a.*),
-            .functions = std.StringHashMap(std.ArrayList(*sem.FunctionDeclaration)).init(a.*),
-            .types = std.StringHashMap(*sem.TypeDeclaration).init(a.*),
-            .abstracts = std.StringHashMap(*AbstractInfo).init(a.*),
-            .abstract_impls = std.StringHashMap(std.ArrayList(AbstractImplEntry)).init(a.*),
-            .abstract_defaults = std.StringHashMap(AbstractDefaultEntry).init(a.*),
-            .generic_functions = std.StringHashMap(std.ArrayList(GenericTemplate)).init(a.*),
-            .generic_types = std.StringHashMap(std.ArrayList(GenericTypeTemplate)).init(a.*),
-            .deferred = std.ArrayList(DeferredGroup).init(a.*),
-            .current_fn = fnc,
-        };
-    }
-
-    fn lookupBinding(self: *Scope, n: []const u8) ?*sem.BindingDeclaration {
-        if (self.bindings.get(n)) |b| return b;
-        if (self.parent) |p| return p.lookupBinding(n);
-        return null;
-    }
-
-    // Deprecated: use resolveOverload in Semantizer instead.
-    fn lookupFunction(self: *Scope, n: []const u8) ?*sem.FunctionDeclaration {
-        if (self.functions.getPtr(n)) |lst| {
-            if (lst.items.len > 0) return lst.items[0];
-        }
-        if (self.parent) |p| return p.lookupFunction(n);
-        return null;
-    }
-
-    fn lookupType(self: *Scope, n: []const u8) ?*sem.TypeDeclaration {
-        if (self.types.get(n)) |t| return t;
-        if (self.parent) |p| return p.lookupType(n);
-        return null;
-    }
 };
 
 //──────────────────────────────────────────────────────────── TYPE EQUALITY HELPER
