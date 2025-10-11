@@ -3,6 +3,23 @@ Indexable#(.t : Type) : Abstract = (
     operator get[] (.s: &Self, .i: UInt) -> (.v: t)
 )
 
+IndexableMutable#(.T: Type) : Abstract = (
+  length (.self: Self) -> (.n: UInt64),
+  operator get[] (.self: Self, .i: UInt64) -> (.value: T)
+  operator set[] (.self: Self, .i: UInt64, .value: T) -> ()
+)
+
+Resizable#(.T: Type) : Abstract = (
+  length (.self: Self) -> (.n: UInt64),
+  operator get[] (.self: Self, .i: UInt64) -> (.value: T)
+  operator set[] (.self: Self, .i: UInt64, .value: T) -> ()
+
+  push (.self: Self, .value: T) -> (),
+  pop (.self: Self) -> (.value: T),
+  insert (.self: Self, .i: UInt64, .value: T) -> ()
+)
+
+
 
 -- List#(t) : Abstract = [
 --     ---
