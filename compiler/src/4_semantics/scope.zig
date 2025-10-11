@@ -54,18 +54,25 @@ pub const Scope = struct {
         return null;
     }
 
-    // Deprecated: use resolveOverload in Semantizer instead.
-    pub fn lookupFunction(self: *Scope, n: []const u8) ?*sg.FunctionDeclaration {
-        if (self.functions.getPtr(n)) |lst| {
-            if (lst.items.len > 0) return lst.items[0];
-        }
-        if (self.parent) |p| return p.lookupFunction(n);
-        return null;
-    }
-
     pub fn lookupType(self: *Scope, n: []const u8) ?*sg.TypeDeclaration {
         if (self.types.get(n)) |t| return t;
         if (self.parent) |p| return p.lookupType(n);
+        return null;
+    }
+
+    pub fn lookupGenericTypeTemplate(
+        self: *Scope,
+        name: []const u8,
+        param_count: usize,
+    ) ?*const gen.GenericTypeTemplate {
+        var cur: ?*Scope = self;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.generic_types.get(name)) |list_ptr| {
+                for (list_ptr.items, 0..) |tmpl, idx| {
+                    if (tmpl.param_names.len == param_count) return &list_ptr.items[idx];
+                }
+            }
+        }
         return null;
     }
 };
