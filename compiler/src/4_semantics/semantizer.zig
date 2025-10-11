@@ -1946,24 +1946,6 @@ pub const Semantizer = struct {
         };
     }
 
-    fn lookupGenericTypeTemplate(
-        self: *Semantizer,
-        s: *Scope,
-        name: []const u8,
-        param_count: usize,
-    ) ?*const gen.GenericTypeTemplate {
-        _ = self;
-        var cur: ?*Scope = s;
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.generic_types.get(name)) |list_ptr| {
-                for (list_ptr.items, 0..) |tmpl, idx| {
-                    if (tmpl.param_names.len == param_count) return &list_ptr.items[idx];
-                }
-            }
-        }
-        return null;
-    }
-
     fn extractTypeArgumentFromActual(
         self: *Semantizer,
         template_ty: syn.Type,
@@ -2006,7 +1988,7 @@ pub const Semantizer = struct {
                 }
             },
             .generic_type_instantiation => |g| {
-                const tmpl_ptr = self.lookupGenericTypeTemplate(s, g.base_name.string, g.args.fields.len) orelse null;
+                const tmpl_ptr = s.lookupGenericTypeTemplate(g.base_name.string, g.args.fields.len) orelse null;
                 if (tmpl_ptr != null and actual_ty == .struct_type) {
                     const tmpl = tmpl_ptr.?;
                     const actual_struct = actual_ty.struct_type;
