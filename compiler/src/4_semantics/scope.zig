@@ -6,6 +6,9 @@ const sem = @import("semantizer.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
+const abs = @import("abstracts.zig");
+const gen = @import("generics.zig");
+
 pub const Scope = struct {
     parent: ?*Scope,
     allocator: *const std.mem.Allocator,
@@ -14,11 +17,11 @@ pub const Scope = struct {
     bindings: std.StringHashMap(*sg.BindingDeclaration),
     functions: std.StringHashMap(std.ArrayList(*sg.FunctionDeclaration)),
     types: std.StringHashMap(*sg.TypeDeclaration),
-    abstracts: std.StringHashMap(*sem.AbstractInfo),
-    abstract_impls: std.StringHashMap(std.ArrayList(sem.AbstractImplEntry)),
-    abstract_defaults: std.StringHashMap(sem.AbstractDefaultEntry),
-    generic_functions: std.StringHashMap(std.ArrayList(sem.GenericTemplate)),
-    generic_types: std.StringHashMap(std.ArrayList(sem.GenericTypeTemplate)),
+    abstracts: std.StringHashMap(*abs.AbstractInfo),
+    abstract_impls: std.StringHashMap(std.ArrayList(abs.AbstractImplEntry)),
+    abstract_defaults: std.StringHashMap(abs.AbstractDefaultEntry),
+    generic_functions: std.StringHashMap(std.ArrayList(gen.GenericTemplate)),
+    generic_types: std.StringHashMap(std.ArrayList(gen.GenericTypeTemplate)),
     deferred: std.ArrayList(sem.DeferredGroup),
 
     current_fn: ?*sg.FunctionDeclaration,
@@ -35,11 +38,11 @@ pub const Scope = struct {
             .bindings = std.StringHashMap(*sg.BindingDeclaration).init(a.*),
             .functions = std.StringHashMap(std.ArrayList(*sg.FunctionDeclaration)).init(a.*),
             .types = std.StringHashMap(*sg.TypeDeclaration).init(a.*),
-            .abstracts = std.StringHashMap(*sem.AbstractInfo).init(a.*),
-            .abstract_impls = std.StringHashMap(std.ArrayList(sem.AbstractImplEntry)).init(a.*),
-            .abstract_defaults = std.StringHashMap(sem.AbstractDefaultEntry).init(a.*),
-            .generic_functions = std.StringHashMap(std.ArrayList(sem.GenericTemplate)).init(a.*),
-            .generic_types = std.StringHashMap(std.ArrayList(sem.GenericTypeTemplate)).init(a.*),
+            .abstracts = std.StringHashMap(*abs.AbstractInfo).init(a.*),
+            .abstract_impls = std.StringHashMap(std.ArrayList(abs.AbstractImplEntry)).init(a.*),
+            .abstract_defaults = std.StringHashMap(abs.AbstractDefaultEntry).init(a.*),
+            .generic_functions = std.StringHashMap(std.ArrayList(gen.GenericTemplate)).init(a.*),
+            .generic_types = std.StringHashMap(std.ArrayList(gen.GenericTypeTemplate)).init(a.*),
             .deferred = std.ArrayList(sem.DeferredGroup).init(a.*),
             .current_fn = fnc,
         };
