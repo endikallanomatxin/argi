@@ -1,7 +1,7 @@
 const std = @import("std");
 const json = std.json;
 
-const service = @import("../lsp_service.zig");
+const service = @import("lsp_service.zig");
 
 const AllocError = std.mem.Allocator.Error;
 

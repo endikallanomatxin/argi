@@ -1,9 +1,9 @@
 const std = @import("std");
-const tok = @import("token.zig");
-const syn = @import("syntax_tree.zig");
+const tok = @import("../2_tokens/token.zig");
+const syn = @import("../3_syntax/syntax_tree.zig");
 const sem = @import("semantic_graph.zig");
 const sgp = @import("semantic_graph_print.zig");
-const diagnostic = @import("diagnostic.zig");
+const diagnostic = @import("../1_base/diagnostic.zig");
 
 const SemErr = error{
     SymbolAlreadyDefined,

@@ -1,9 +1,9 @@
 const std = @import("std");
 const llvm = @import("llvm.zig");
 const c = llvm.c;
-const sem = @import("semantic_graph.zig");
-const syn = @import("syntax_tree.zig");
-const diagnostic = @import("diagnostic.zig");
+const sem = @import("../4_semantics/semantic_graph.zig");
+const syn = @import("../3_syntax/syntax_tree.zig");
+const diagnostic = @import("../1_base/diagnostic.zig");
 
 pub const CodegenError = error{
     ModuleCreationFailed,

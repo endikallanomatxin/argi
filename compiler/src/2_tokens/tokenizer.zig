@@ -1,7 +1,7 @@
 const std = @import("std");
 const tok = @import("token.zig");
 const tok_print = @import("token_print.zig");
-const diag = @import("diagnostic.zig");
+const diag = @import("../1_base/diagnostic.zig");
 
 pub const TokenizerError = error{
     UnknownCharacter,

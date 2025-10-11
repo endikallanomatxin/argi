@@ -1,9 +1,9 @@
 const std = @import("std");
-const tok = @import("token.zig");
-const tokp = @import("token_print.zig");
+const tok = @import("../2_tokens/token.zig");
+const tokp = @import("../2_tokens/token_print.zig");
 const syn = @import("syntax_tree.zig");
 const synp = @import("syntax_tree_print.zig");
-const diagnostic = @import("diagnostic.zig");
+const diagnostic = @import("../1_base/diagnostic.zig");
 
 pub const SyntaxerError = error{
     ExpectedIdentifier,
