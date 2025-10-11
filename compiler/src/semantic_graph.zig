@@ -37,6 +37,7 @@ pub const Content = union(enum) {
     array_literal: *const ArrayLiteral,
     array_index: ArrayIndex,
     array_store: ArrayStore,
+    struct_field_store: StructFieldStore,
     binary_operation: BinaryOperation,
     comparison: Comparison,
     return_statement: *ReturnStatement,
@@ -158,6 +159,14 @@ pub const StructFieldAccess = struct {
     struct_value: *const SGNode,
     field_name: []const u8,
     field_index: u32,
+};
+
+pub const StructFieldStore = struct {
+    struct_ptr: *const SGNode,
+    struct_type: *const StructType,
+    field_index: u32,
+    field_type: Type,
+    value: *const SGNode,
 };
 
 //

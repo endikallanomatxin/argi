@@ -60,9 +60,21 @@ test "04_literals" {
     try run();
 }
 
-test "05_anonymous_structs" {
+test "050_anonymous_structs" {
     try clean();
     try build("tests/05_anonymous_structs.rg");
+    try run();
+}
+
+test "051_struct_default_fields" {
+    try clean();
+    try build("tests/051_struct_default_fields.rg");
+    try run();
+}
+
+test "052_struct_field_store" {
+    try clean();
+    try build("tests/052_struct_field_store.rg");
     try run();
 }
 

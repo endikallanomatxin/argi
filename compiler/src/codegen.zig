@@ -47,28 +47,45 @@ fn isUnsignedBuiltin(sem_ty: ?sem.Type) bool {
     return false;
 }
 
-fn intLiteralValue(node: *const sem.SGNode) ?i64 {
-    if (node.content == .value_literal) {
-        const lit = node.content.value_literal;
-        if (lit == .int_literal) return lit.int_literal;
-    }
-    return null;
-}
-
-fn literalAsInteger(
-    self: *CodeGenerator,
+fn constantFromLiteral(
     node: *const sem.SGNode,
     target_ty: llvm.c.LLVMTypeRef,
+    sem_ty: sem.Type,
 ) ?TypedValue {
-    if (intLiteralValue(node)) |int_val| {
-        if (c.LLVMGetTypeKind(target_ty) == c.LLVMIntegerTypeKind) {
-            const bits: u64 = @bitCast(int_val);
-            const const_val = c.LLVMConstInt(target_ty, bits, 1);
-            return TypedValue{ .value_ref = const_val, .type_ref = target_ty, .sem_type = null };
-        }
-    }
-    _ = self;
-    return null;
+    if (node.content != .value_literal) return null;
+    const lit = node.content.value_literal;
+    return switch (lit) {
+        .int_literal => |val| blk: {
+            if (c.LLVMGetTypeKind(target_ty) != c.LLVMIntegerTypeKind)
+                break :blk null;
+            const bits: u64 = @bitCast(val);
+            const sign_extend: c_int = if (val < 0) 1 else 0;
+            const const_val = c.LLVMConstInt(target_ty, bits, sign_extend);
+            break :blk TypedValue{ .value_ref = const_val, .type_ref = target_ty, .sem_type = sem_ty };
+        },
+        .bool_literal => |b| blk_bool: {
+            if (c.LLVMGetTypeKind(target_ty) != c.LLVMIntegerTypeKind)
+                break :blk_bool null;
+            const bits: u64 = if (b) 1 else 0;
+            const const_val = c.LLVMConstInt(target_ty, bits, 0);
+            break :blk_bool TypedValue{ .value_ref = const_val, .type_ref = target_ty, .sem_type = sem_ty };
+        },
+        .char_literal => |ch| blk_char: {
+            if (c.LLVMGetTypeKind(target_ty) != c.LLVMIntegerTypeKind)
+                break :blk_char null;
+            const bits: u64 = @intCast(ch);
+            const const_val = c.LLVMConstInt(target_ty, bits, 0);
+            break :blk_char TypedValue{ .value_ref = const_val, .type_ref = target_ty, .sem_type = sem_ty };
+        },
+        .float_literal => |f| blk_float: {
+            const kind = c.LLVMGetTypeKind(target_ty);
+            if (kind != c.LLVMFloatTypeKind and kind != c.LLVMDoubleTypeKind)
+                break :blk_float null;
+            const const_val = c.LLVMConstReal(target_ty, f);
+            break :blk_float TypedValue{ .value_ref = const_val, .type_ref = target_ty, .sem_type = sem_ty };
+        },
+        else => null,
+    };
 }
 
 const Scope = struct {
@@ -236,6 +253,13 @@ pub const CodeGenerator = struct {
             .array_literal => |al| self.genArrayLiteral(al) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating array literal: {s}", .{@errorName(e)});
                 return e;
+            },
+            .struct_field_store => |sf| {
+                self.genStructFieldStore(&sf) catch |e| {
+                    try self.diags.add(n.location, .codegen, "error generating struct field store: {s}", .{@errorName(e)});
+                    return e;
+                };
+                return null;
             },
             .binary_operation => |bo| self.genBinaryOp(&bo) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating binary operation: {s}", .{@errorName(e)});
@@ -632,14 +656,14 @@ pub const CodeGenerator = struct {
         });
 
         // 5) almacenar valor inicial, manejando struct-parciales
-        if (init_tv) |tv| {
+        if (init_tv) |tv_raw| {
+            var tv = tv_raw;
             // Global initializers must be constant; for now, only allow none
             if (self.current_scope.parent == null) {
                 // Non-constant global init not supported yet; ignore for now
                 // (could enhance by constant-folding later)
                 return;
             }
-            const value_ref = tv.value_ref;
             const target_ty = llvm_decl_ty;
 
             if (tv.type_ref == llvm_decl_ty) {
@@ -648,7 +672,7 @@ pub const CodeGenerator = struct {
             } else if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMPointerTypeKind and
                 c.LLVMGetTypeKind(target_ty) == c.LLVMGetTypeKind(tv.type_ref))
             {
-                const casted = c.LLVMBuildBitCast(self.builder, value_ref, target_ty, "ptr.cast");
+                const casted = c.LLVMBuildBitCast(self.builder, tv.value_ref, target_ty, "ptr.cast");
                 _ = c.LLVMBuildStore(self.builder, casted, storage);
             } else if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMStructTypeKind and
                 c.LLVMGetTypeKind(target_ty) != c.LLVMStructTypeKind)
@@ -659,7 +683,7 @@ pub const CodeGenerator = struct {
                 while (idx < field_count) : (idx += 1) {
                     const fty = c.LLVMStructGetTypeAtIndex(tv.type_ref, idx);
                     if (fty == target_ty) {
-                        const elem = c.LLVMBuildExtractValue(self.builder, value_ref, idx, "init.extract");
+                        const elem = c.LLVMBuildExtractValue(self.builder, tv.value_ref, idx, "init.extract");
                         _ = c.LLVMBuildStore(self.builder, elem, storage);
                         extracted = true;
                         break;
@@ -708,23 +732,17 @@ pub const CodeGenerator = struct {
                 }
 
                 _ = c.LLVMBuildStore(self.builder, agg, storage);
-            } else if (
-                c.LLVMGetTypeKind(tv.type_ref) == c.LLVMIntegerTypeKind and
-                c.LLVMGetTypeKind(target_ty) == c.LLVMIntegerTypeKind)
-            {
+            } else {
                 if (b.initialization) |init_node| {
-                    if (intLiteralValue(init_node)) |int_val| {
-                        const bits: u64 = @bitCast(int_val);
-                        const const_val = c.LLVMConstInt(target_ty, bits, 1);
-                        _ = c.LLVMBuildStore(self.builder, const_val, storage);
+                    if (constantFromLiteral(init_node, target_ty, b.ty)) |const_tv| {
+                        tv = const_tv;
+                        _ = c.LLVMBuildStore(self.builder, tv.value_ref, storage);
                     } else {
                         return CodegenError.InvalidType;
                     }
                 } else {
                     return CodegenError.InvalidType;
                 }
-            } else {
-                return CodegenError.InvalidType;
             }
         }
     }
@@ -906,10 +924,19 @@ pub const CodeGenerator = struct {
         var rhs_tv = (try self.visitNode(bo.right)) orelse return CodegenError.ValueNotFound;
 
         if (lhs_tv.type_ref != rhs_tv.type_ref) {
-            if (literalAsInteger(self, bo.right, lhs_tv.type_ref)) |converted| {
-                rhs_tv = converted;
-            } else if (literalAsInteger(self, bo.left, rhs_tv.type_ref)) |converted| {
-                lhs_tv = converted;
+            if (lhs_tv.sem_type) |lhs_sem| {
+                const lhs_target = try self.toLLVMType(lhs_sem);
+                if (constantFromLiteral(bo.right, lhs_target, lhs_sem)) |const_tv| {
+                    rhs_tv = const_tv;
+                }
+            }
+            if (rhs_tv.type_ref != lhs_tv.type_ref) {
+                if (rhs_tv.sem_type) |rhs_sem| {
+                    const rhs_target = try self.toLLVMType(rhs_sem);
+                    if (constantFromLiteral(bo.left, rhs_target, rhs_sem)) |const_tv| {
+                        lhs_tv = const_tv;
+                    }
+                }
             }
         }
 
@@ -973,10 +1000,19 @@ pub const CodeGenerator = struct {
         var rhs_tv = (try self.visitNode(co.right)) orelse return CodegenError.ValueNotFound;
 
         if (lhs_tv.type_ref != rhs_tv.type_ref) {
-            if (literalAsInteger(self, co.right, lhs_tv.type_ref)) |converted| {
-                rhs_tv = converted;
-            } else if (literalAsInteger(self, co.left, rhs_tv.type_ref)) |converted| {
-                lhs_tv = converted;
+            if (lhs_tv.sem_type) |lhs_sem| {
+                const lhs_target = try self.toLLVMType(lhs_sem);
+                if (constantFromLiteral(co.right, lhs_target, lhs_sem)) |const_tv| {
+                    rhs_tv = const_tv;
+                }
+            }
+            if (rhs_tv.type_ref != lhs_tv.type_ref) {
+                if (rhs_tv.sem_type) |rhs_sem| {
+                    const rhs_target = try self.toLLVMType(rhs_sem);
+                    if (constantFromLiteral(co.left, rhs_target, rhs_sem)) |const_tv| {
+                        lhs_tv = const_tv;
+                    }
+                }
             }
         }
 
@@ -1310,23 +1346,9 @@ pub const CodeGenerator = struct {
             const field_tv_opt = try self.visitNode(f.value);
             const field_tv = field_tv_opt orelse return CodegenError.ValueNotFound;
             const field_ll_ty = c.LLVMStructGetTypeAtIndex(ty, @intCast(i));
-            var tv = field_tv;
-            if (field_tv.type_ref != field_ll_ty) {
-                if (intLiteralValue(sl.fields[i].value)) |int_val| {
-                    if (c.LLVMGetTypeKind(field_tv.type_ref) == c.LLVMIntegerTypeKind and
-                        c.LLVMGetTypeKind(field_ll_ty) == c.LLVMIntegerTypeKind)
-                    {
-                        const bits: u64 = @bitCast(int_val);
-                        const const_val = c.LLVMConstInt(field_ll_ty, bits, 1);
-                        tv = .{ .value_ref = const_val, .type_ref = field_ll_ty, .sem_type = null };
-                    } else {
-                        return CodegenError.InvalidType;
-                    }
-                } else {
-                    return CodegenError.InvalidType;
-                }
-            }
-            vals[i] = tv;
+            if (field_tv.type_ref != field_ll_ty)
+                return CodegenError.InvalidType;
+            vals[i] = field_tv;
         }
 
         // construir el agregado en tiempo de ejecución
@@ -1354,6 +1376,36 @@ pub const CodeGenerator = struct {
         }
 
         return .{ .value_ref = val, .type_ref = field_ty, .sem_type = field_sem_ty };
+    }
+
+    fn genStructFieldStore(self: *CodeGenerator, sf: *const sem.StructFieldStore) !void {
+        const struct_ptr_tv_opt = try self.visitNode(sf.struct_ptr);
+        const struct_ptr_tv = struct_ptr_tv_opt orelse return CodegenError.ValueNotFound;
+
+        if (c.LLVMGetTypeKind(struct_ptr_tv.type_ref) != c.LLVMPointerTypeKind)
+            return CodegenError.InvalidType;
+
+        const struct_ty_ref = try self.toLLVMType(.{ .struct_type = sf.struct_type });
+        const field_ptr = c.LLVMBuildStructGEP2(
+            self.builder,
+            struct_ty_ref,
+            struct_ptr_tv.value_ref,
+            sf.field_index,
+            "field.ptr",
+        );
+
+        const value_tv_opt = try self.visitNode(sf.value);
+        var value_tv = value_tv_opt orelse return CodegenError.ValueNotFound;
+        const field_ty_ref = try self.toLLVMType(sf.field_type);
+        if (value_tv.type_ref != field_ty_ref) {
+            if (constantFromLiteral(sf.value, field_ty_ref, sf.field_type)) |const_tv| {
+                value_tv = const_tv;
+            } else {
+                return CodegenError.InvalidType;
+            }
+        }
+
+        _ = c.LLVMBuildStore(self.builder, value_tv.value_ref, field_ptr);
     }
 
     // ────────────────────────────────────────── address-of ──

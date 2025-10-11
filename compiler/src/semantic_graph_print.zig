@@ -148,6 +148,16 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             printNode(as.value, lvl + 2);
         },
 
+        .struct_field_store => |sf| {
+            std.debug.print("StructFieldStore field={d}\n", .{sf.field_index});
+            indent(lvl + 1);
+            std.debug.print("StructPtr:\n", .{});
+            printNode(sf.struct_ptr, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("Value:\n", .{});
+            printNode(sf.value, lvl + 2);
+        },
+
         .binary_operation => |bo| {
             const op = switch (bo.operator) {
                 .addition => "+",
