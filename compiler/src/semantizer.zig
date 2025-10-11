@@ -1578,39 +1578,50 @@ pub const Semantizer = struct {
         });
 
         const name = "operator get[]";
-        const chosen = self.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
-            error.SymbolNotFound => {
-                const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
-                const available = try self.collectFunctionSignatures(name, s);
-                defer {
-                    self.allocator.free(actual_sig);
-                    self.allocator.free(available);
-                }
-                try self.diags.add(
-                    ia.value.*.location,
-                    .semantic,
-                    "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
-                    .{ name, actual_sig, available },
-                );
-                return error.Reported;
-            },
-            error.AmbiguousOverload => {
-                const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
-                const available = try self.collectFunctionSignatures(name, s);
-                defer {
-                    self.allocator.free(actual_sig);
-                    self.allocator.free(available);
-                }
-                try self.diags.add(
-                    ia.value.*.location,
-                    .semantic,
-                    "ambiguous call to '{s}' for arguments {s}. Possible overloads:\n{s}",
-                    .{ name, actual_sig, available },
-                );
-                return error.Reported;
-            },
+        const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+        const inferred = self.instantiateGenericNamed(name, empty_args, input_te, s) catch |err| switch (err) {
+            error.SymbolNotFound => null,
             else => return err,
         };
+
+        var chosen: *sem.FunctionDeclaration = undefined;
+        if (inferred) |instantiated| {
+            chosen = instantiated;
+        } else {
+            chosen = self.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
+                error.SymbolNotFound => {
+                    const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
+                    const available = try self.collectFunctionSignatures(name, s);
+                    defer {
+                        self.allocator.free(actual_sig);
+                        self.allocator.free(available);
+                    }
+                    try self.diags.add(
+                        ia.value.*.location,
+                        .semantic,
+                        "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
+                        .{ name, actual_sig, available },
+                    );
+                    return error.Reported;
+                },
+                error.AmbiguousOverload => {
+                    const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
+                    const available = try self.collectFunctionSignatures(name, s);
+                    defer {
+                        self.allocator.free(actual_sig);
+                        self.allocator.free(available);
+                    }
+                    try self.diags.add(
+                        ia.value.*.location,
+                        .semantic,
+                        "ambiguous call to '{s}' for arguments {s}. Possible overloads:\n{s}",
+                        .{ name, actual_sig, available },
+                    );
+                    return error.Reported;
+                },
+                else => return err,
+            };
+        }
 
         const call_ptr = try self.allocator.create(sem.FunctionCall);
         call_ptr.* = .{ .callee = chosen, .input = input_te.node };
@@ -1691,39 +1702,50 @@ pub const Semantizer = struct {
         });
 
         const name = "operator set[]";
-        const chosen = self.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
-            error.SymbolNotFound => {
-                const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
-                const available = try self.collectFunctionSignatures(name, s);
-                defer {
-                    self.allocator.free(actual_sig);
-                    self.allocator.free(available);
-                }
-                try self.diags.add(
-                    ia.target.*.location,
-                    .semantic,
-                    "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
-                    .{ name, actual_sig, available },
-                );
-                return error.Reported;
-            },
-            error.AmbiguousOverload => {
-                const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
-                const available = try self.collectFunctionSignatures(name, s);
-                defer {
-                    self.allocator.free(actual_sig);
-                    self.allocator.free(available);
-                }
-                try self.diags.add(
-                    ia.target.*.location,
-                    .semantic,
-                    "ambiguous call to '{s}' for arguments {s}. Possible overloads:\n{s}",
-                    .{ name, actual_sig, available },
-                );
-                return error.Reported;
-            },
+        const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+        const inferred = self.instantiateGenericNamed(name, empty_args, input_te, s) catch |err| switch (err) {
+            error.SymbolNotFound => null,
             else => return err,
         };
+
+        var chosen: *sem.FunctionDeclaration = undefined;
+        if (inferred) |instantiated| {
+            chosen = instantiated;
+        } else {
+            chosen = self.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
+                error.SymbolNotFound => {
+                    const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
+                    const available = try self.collectFunctionSignatures(name, s);
+                    defer {
+                        self.allocator.free(actual_sig);
+                        self.allocator.free(available);
+                    }
+                    try self.diags.add(
+                        ia.target.*.location,
+                        .semantic,
+                        "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
+                        .{ name, actual_sig, available },
+                    );
+                    return error.Reported;
+                },
+                error.AmbiguousOverload => {
+                    const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
+                    const available = try self.collectFunctionSignatures(name, s);
+                    defer {
+                        self.allocator.free(actual_sig);
+                        self.allocator.free(available);
+                    }
+                    try self.diags.add(
+                        ia.target.*.location,
+                        .semantic,
+                        "ambiguous call to '{s}' for arguments {s}. Possible overloads:\n{s}",
+                        .{ name, actual_sig, available },
+                    );
+                    return error.Reported;
+                },
+                else => return err,
+            };
+        }
 
         const call_ptr = try self.allocator.create(sem.FunctionCall);
         call_ptr.* = .{ .callee = chosen, .input = input_te.node };
@@ -1843,33 +1865,43 @@ pub const Semantizer = struct {
         } else if (call.type_arguments) |targs| {
             chosen = try self.instantiateGeneric(call.callee, targs, tv_in, s);
         } else {
-            chosen = self.resolveOverload(call.callee, tv_in.ty, s) catch |err| switch (err) {
-                error.SymbolNotFound => {
-                    if (tv_in.ty == .struct_type) {
-                        const actual_sig = try self.formatCallInput(tv_in.ty.struct_type, s);
-                        const available = try self.collectFunctionSignatures(call.callee, s);
-                        defer {
-                            self.allocator.free(actual_sig);
-                            self.allocator.free(available);
-                        }
-                        try self.diags.add(
-                            call.input.*.location,
-                            .semantic,
-                            "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
-                            .{ call.callee, actual_sig, available },
-                        );
-                    } else {
-                        try self.diags.add(
-                            call.input.*.location,
-                            .semantic,
-                            "no overload of '{s}' matches the provided arguments",
-                            .{call.callee},
-                        );
-                    }
-                    return error.Reported;
-                },
+            const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+            const inferred = self.instantiateGenericNamed(call.callee, empty_args, tv_in, s) catch |err| switch (err) {
+                error.SymbolNotFound => null,
                 else => return err,
             };
+
+            if (inferred) |instantiated| {
+                chosen = instantiated;
+            } else {
+                chosen = self.resolveOverload(call.callee, tv_in.ty, s) catch |err| switch (err) {
+                    error.SymbolNotFound => {
+                        if (tv_in.ty == .struct_type) {
+                            const actual_sig = try self.formatCallInput(tv_in.ty.struct_type, s);
+                            const available = try self.collectFunctionSignatures(call.callee, s);
+                            defer {
+                                self.allocator.free(actual_sig);
+                                self.allocator.free(available);
+                            }
+                            try self.diags.add(
+                                call.input.*.location,
+                                .semantic,
+                                "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
+                                .{ call.callee, actual_sig, available },
+                            );
+                        } else {
+                            try self.diags.add(
+                                call.input.*.location,
+                                .semantic,
+                                "no overload of '{s}' matches the provided arguments",
+                                .{call.callee},
+                            );
+                        }
+                        return error.Reported;
+                    },
+                    else => return err,
+                };
+            }
         }
 
         const fc_ptr = try self.allocator.create(sem.FunctionCall);
@@ -1997,6 +2029,145 @@ pub const Semantizer = struct {
         return null;
     }
 
+    fn typeUsesParam(self: *Semantizer, ty: syn.Type, param: []const u8) bool {
+        return switch (ty) {
+            .type_name => std.mem.eql(u8, ty.type_name.string, param),
+            .pointer_type => |ptr_info| self.typeUsesParam(ptr_info.child.*, param),
+            .array_type => |arr_info| self.typeUsesParam(arr_info.element.*, param),
+            .generic_type_instantiation => |g| blk: {
+                for (g.args.fields) |fld| {
+                    if (fld.type) |sub_ty| {
+                        if (self.typeUsesParam(sub_ty, param)) break :blk true;
+                    }
+                }
+                break :blk false;
+            },
+            .struct_type_literal => |st| blk_struct: {
+                for (st.fields) |fld| {
+                    if (fld.type) |sub_ty| {
+                        if (self.typeUsesParam(sub_ty, param)) break :blk_struct true;
+                    }
+                }
+                break :blk_struct false;
+            },
+        };
+    }
+
+    fn lookupGenericTypeTemplate(
+        self: *Semantizer,
+        s: *Scope,
+        name: []const u8,
+        param_count: usize,
+    ) ?*const GenericTypeTemplate {
+        _ = self;
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.generic_types.get(name)) |list_ptr| {
+                for (list_ptr.items, 0..) |tmpl, idx| {
+                    if (tmpl.param_names.len == param_count) return &list_ptr.items[idx];
+                }
+            }
+        }
+        return null;
+    }
+
+    fn extractTypeArgumentFromActual(
+        self: *Semantizer,
+        template_ty: syn.Type,
+        actual_ty: sem.Type,
+        param_name: []const u8,
+        s: *Scope,
+    ) ?sem.Type {
+        switch (template_ty) {
+            .type_name => |tn| {
+                if (std.mem.eql(u8, tn.string, param_name)) return actual_ty;
+            },
+            .pointer_type => |ptr_info| {
+                if (actual_ty != .pointer_type) return null;
+                return self.extractTypeArgumentFromActual(
+                    ptr_info.child.*,
+                    actual_ty.pointer_type.child.*,
+                    param_name,
+                    s,
+                );
+            },
+            .array_type => |arr_info| {
+                if (actual_ty != .array_type) return null;
+                return self.extractTypeArgumentFromActual(
+                    arr_info.element.*,
+                    actual_ty.array_type.element_type.*,
+                    param_name,
+                    s,
+                );
+            },
+            .struct_type_literal => |st| {
+                if (actual_ty != .struct_type) return null;
+                const actual_struct = actual_ty.struct_type;
+                for (st.fields) |fld| {
+                    if (fld.type) |sub_ty| {
+                        if (findFieldByName(actual_struct, fld.name.string)) |actual_field| {
+                            if (self.extractTypeArgumentFromActual(sub_ty, actual_field.ty, param_name, s)) |res|
+                                return res;
+                        }
+                    }
+                }
+            },
+            .generic_type_instantiation => |g| {
+                const tmpl_ptr = self.lookupGenericTypeTemplate(s, g.base_name.string, g.args.fields.len) orelse null;
+                if (tmpl_ptr != null and actual_ty == .struct_type) {
+                    const tmpl = tmpl_ptr.?;
+                    const actual_struct = actual_ty.struct_type;
+                    for (tmpl.body.fields) |tmpl_field| {
+                        if (tmpl_field.type) |sub_ty| {
+                            if (findFieldByName(actual_struct, tmpl_field.name.string)) |actual_field| {
+                                if (self.extractTypeArgumentFromActual(sub_ty, actual_field.ty, param_name, s)) |res|
+                                    return res;
+                            }
+                        }
+                    }
+                }
+            },
+        }
+        return null;
+    }
+
+    fn deriveElementTypeFromList(list_type: sem.Type) ?sem.Type {
+        return switch (list_type) {
+            .array_type => list_type.array_type.element_type.*,
+            else => null,
+        };
+    }
+
+    fn inferGenericParamFromCall(
+        self: *Semantizer,
+        tmpl: GenericTemplate,
+        param_name: []const u8,
+        call_input_ty: sem.Type,
+        s: *Scope,
+        subst: *std.StringHashMap(sem.Type),
+    ) ?sem.Type {
+        if (call_input_ty != .struct_type) return null;
+        const actual = call_input_ty.struct_type;
+        for (tmpl.input.fields) |fld| {
+            if (fld.type) |ty_node| {
+                if (!self.typeUsesParam(ty_node, param_name)) continue;
+                if (findFieldByName(actual, fld.name.string)) |actual_field| {
+                    if (self.extractTypeArgumentFromActual(ty_node, actual_field.ty, param_name, s)) |res|
+                        return res;
+                }
+            }
+        }
+
+        // Heuristic: derive element type when list_type already inferred.
+        if (std.mem.eql(u8, param_name, "list_value_type")) {
+            if (subst.get("list_type")) |list_ty| {
+                if (deriveElementTypeFromList(list_ty)) |elem_ty| return elem_ty;
+            }
+        }
+
+        return null;
+    }
+
     fn refineStructTypeWithActual(
         self: *Semantizer,
         expected_ptr: *sem.StructType,
@@ -2070,9 +2241,18 @@ pub const Semantizer = struct {
                                 if (fld.type) |ty_node| {
                                     const resolved = try self.resolveTypeWithSubst(ty_node, s, &subst);
                                     try subst.put(pname, resolved);
+                                } else if (fld.default_value) |def_node| {
+                                    const resolved = try self.resolveTypeExpression(def_node, s);
+                                    try subst.put(pname, resolved);
                                 }
                                 found = true;
                                 break;
+                            }
+                        }
+                        if (!found) {
+                            if (self.inferGenericParamFromCall(tmpl, pname, call_input.ty, s, &subst)) |inferred| {
+                                try subst.put(pname, inferred);
+                                found = true;
                             }
                         }
                         if (!found) {
@@ -2236,6 +2416,7 @@ pub const Semantizer = struct {
         name: []const u8,
         stargs: syn.StructTypeLiteral,
         s: *Scope,
+        outer_subst: ?*std.StringHashMap(sem.Type),
     ) SemErr!*sem.StructType {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
@@ -2244,6 +2425,13 @@ pub const Semantizer = struct {
                     var subst = std.StringHashMap(sem.Type).init(self.allocator.*);
                     defer subst.deinit();
 
+                    if (outer_subst) |outer| {
+                        var it_outer = outer.iterator();
+                        while (it_outer.next()) |entry| {
+                            try subst.put(entry.key_ptr.*, entry.value_ptr.*);
+                        }
+                    }
+
                     var ok: bool = true;
                     for (tmpl.param_names) |pname| {
                         var found: bool = false;
@@ -2251,6 +2439,9 @@ pub const Semantizer = struct {
                             if (std.mem.eql(u8, fld.name.string, pname)) {
                                 if (fld.type) |ty_node| {
                                     const resolved = try self.resolveTypeWithSubst(ty_node, s, &subst);
+                                    try subst.put(pname, resolved);
+                                } else if (fld.default_value) |def_node| {
+                                    const resolved = try self.resolveTypeExpression(def_node, s);
                                     try subst.put(pname, resolved);
                                 }
                                 found = true;
@@ -3430,7 +3621,7 @@ pub const Semantizer = struct {
                     break :blk_g .{ .builtin = .Any };
                 }
 
-                const st_ptr = self.instantiateGenericTypeNamed(base_name, g.args, s) catch |err| switch (err) {
+                const st_ptr = self.instantiateGenericTypeNamed(base_name, g.args, s, null) catch |err| switch (err) {
                     error.SymbolNotFound => break :blk_g error.UnknownType,
                     else => return err,
                 };
@@ -3490,7 +3681,7 @@ pub const Semantizer = struct {
                 }
 
                 // For now, ignore outer substitutions for base_name; stargs are resolved inside
-                const st_ptr = self.instantiateGenericTypeNamed(base_name, g.args, s) catch |err| switch (err) {
+                const st_ptr = self.instantiateGenericTypeNamed(base_name, g.args, s, subst) catch |err| switch (err) {
                     error.SymbolNotFound => break :blk_g error.UnknownType,
                     else => return err,
                 };
