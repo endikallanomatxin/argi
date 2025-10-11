@@ -5,6 +5,8 @@ const sem = @import("semantic_graph.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
+const types = @import("types.zig");
+
 const Scope = @import("scope.zig").Scope;
 
 const SemErr = error{
@@ -859,7 +861,7 @@ pub const Semantizer = struct {
             const cf = cand_in.fields[i];
 
             if (containsIndex(rq.input_self_indices, @intCast(i))) {
-                if (!typesExactlyEqual(concrete, cf.ty)) return false;
+                if (!types.typesExactlyEqual(concrete, cf.ty)) return false;
                 continue;
             }
 
@@ -874,7 +876,7 @@ pub const Semantizer = struct {
                 if (rq.input_generic_param_indices[i]) |gi| {
                     if (gi >= param_bindings.len) return false;
                     if (param_bindings[gi]) |bound| {
-                        if (!typesExactlyEqual(bound, cf.ty)) return false;
+                        if (!types.typesExactlyEqual(bound, cf.ty)) return false;
                     } else {
                         param_bindings[gi] = cf.ty;
                     }
@@ -882,7 +884,7 @@ pub const Semantizer = struct {
                 }
             }
 
-            if (!typesExactlyEqual(rf.ty, cf.ty)) return false;
+            if (!types.typesExactlyEqual(rf.ty, cf.ty)) return false;
         }
         return true;
     }
@@ -912,7 +914,7 @@ pub const Semantizer = struct {
                 if (rq.output_generic_param_indices[i]) |gi| {
                     if (gi >= param_bindings.len) return false;
                     if (param_bindings[gi]) |bound| {
-                        if (!typesExactlyEqual(bound, co.ty)) return false;
+                        if (!types.typesExactlyEqual(bound, co.ty)) return false;
                     } else {
                         param_bindings[gi] = co.ty;
                     }
@@ -920,7 +922,7 @@ pub const Semantizer = struct {
                 }
             }
 
-            if (!typesExactlyEqual(ro.ty, co.ty)) return false;
+            if (!types.typesExactlyEqual(ro.ty, co.ty)) return false;
         }
         return true;
     }
@@ -937,7 +939,7 @@ pub const Semantizer = struct {
             if (sc.abstract_impls.getPtr(abs_name)) |list_ptr| {
                 const impls = list_ptr.*;
                 for (impls.items) |impl| {
-                    if (typesExactlyEqual(impl.ty, candidate)) return true;
+                    if (types.typesExactlyEqual(impl.ty, candidate)) return true;
                 }
             }
         }
@@ -945,7 +947,7 @@ pub const Semantizer = struct {
         var cur_def: ?*Scope = s;
         while (cur_def) |sc| : (cur_def = sc.parent) {
             if (sc.abstract_defaults.getPtr(abs_name)) |def_entry| {
-                if (typesExactlyEqual(def_entry.*.ty, candidate)) return true;
+                if (types.typesExactlyEqual(def_entry.*.ty, candidate)) return true;
             }
         }
 
@@ -1259,7 +1261,7 @@ pub const Semantizer = struct {
         if (p.functions.getPtr(f.name.string)) |list_ptr| {
             // prevent exact duplicate signature (same input structure, strict equality)
             for (list_ptr.items) |existing| {
-                if (typesExactlyEqual(.{ .struct_type = &existing.input }, .{ .struct_type = &fn_ptr.input }))
+                if (types.typesExactlyEqual(.{ .struct_type = &existing.input }, .{ .struct_type = &fn_ptr.input }))
                     return error.SymbolAlreadyDefined;
             }
             try list_ptr.append(fn_ptr);
@@ -1286,7 +1288,7 @@ pub const Semantizer = struct {
 
         var rhs = try self.visitNode(a.value.*, s);
         rhs = try self.coerceExprToType(b.ty, rhs, a.value, s);
-        if (!typesExactlyEqual(b.ty, rhs.ty)) {
+        if (!types.typesExactlyEqual(b.ty, rhs.ty)) {
             const expected = try self.formatType(b.ty, s);
             const actual = try self.formatType(rhs.ty, s);
             defer {
@@ -1454,7 +1456,7 @@ pub const Semantizer = struct {
             const elem_te = try self.visitNode(elem_node.*, s);
 
             if (expected_elem_ty_opt) |exp_ty| {
-                if (!typesStructurallyEqual(exp_ty, elem_te.ty)) {
+                if (!types.typesStructurallyEqual(exp_ty, elem_te.ty)) {
                     const exp = try self.formatType(exp_ty, s);
                     const got = try self.formatType(elem_te.ty, s);
                     defer {
@@ -1497,7 +1499,7 @@ pub const Semantizer = struct {
 
         if (base.ty == .array_type) {
             const idx_te = try self.visitNode(ia.index.*, s);
-            if (!isIntegerType(idx_te.ty)) {
+            if (!types.isIntegerType(idx_te.ty)) {
                 const idx_ty = try self.formatType(idx_te.ty, s);
                 defer self.allocator.free(idx_ty);
                 try self.diags.add(
@@ -1644,7 +1646,7 @@ pub const Semantizer = struct {
 
         if (base.ty == .array_type) {
             const index_expr = try self.visitNode(idx.index.*, s);
-            if (!isIntegerType(index_expr.ty)) {
+            if (!types.isIntegerType(index_expr.ty)) {
                 const idx_ty = try self.formatType(index_expr.ty, s);
                 defer self.allocator.free(idx_ty);
                 try self.diags.add(
@@ -1660,7 +1662,7 @@ pub const Semantizer = struct {
             const arr_type_ptr = base.ty.array_type;
             const elem_ty = arr_type_ptr.*.element_type.*;
 
-            if (!typesStructurallyEqual(elem_ty, value_expr.ty)) {
+            if (!types.typesStructurallyEqual(elem_ty, value_expr.ty)) {
                 const expected = try self.formatType(elem_ty, s);
                 const actual = try self.formatType(value_expr.ty, s);
                 defer {
@@ -2005,7 +2007,7 @@ pub const Semantizer = struct {
             if (sc.functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
                     const expected: sem.Type = .{ .struct_type = &cand.input };
-                    if (!typesCompatible(expected, in_ty)) continue;
+                    if (!types.typesCompatible(expected, in_ty)) continue;
 
                     const score = specificityScore(expected, in_ty);
                     if (best == null or score < best_score) {
@@ -2191,11 +2193,11 @@ pub const Semantizer = struct {
 
             if (actual_field_ptr) |af| {
                 const actual_ty_field = af.ty;
-                if (typesStructurallyEqual(exp_field.ty, actual_ty_field)) {
+                if (types.typesStructurallyEqual(exp_field.ty, actual_ty_field)) {
                     final_ty = actual_ty_field;
-                } else if (isAny(exp_field.ty)) {
+                } else if (types.isAny(exp_field.ty)) {
                     final_ty = actual_ty_field;
-                } else if (typesCompatible(exp_field.ty, actual_ty_field)) {
+                } else if (types.typesCompatible(exp_field.ty, actual_ty_field)) {
                     final_ty = actual_ty_field;
                 } else {
                     self.allocator.free(refined);
@@ -2271,7 +2273,7 @@ pub const Semantizer = struct {
 
                     if (s.functions.getPtr(name)) |fns| {
                         for (fns.items) |cand| {
-                            if (typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
+                            if (types.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
                                 return cand;
                         }
                     }
@@ -2354,7 +2356,7 @@ pub const Semantizer = struct {
                     // Check if already instantiated
                     if (s.functions.getPtr(name)) |fns| {
                         for (fns.items) |cand| {
-                            if (typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
+                            if (types.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
                                 return cand;
                         }
                     }
@@ -2501,7 +2503,7 @@ pub const Semantizer = struct {
         rhs = try self.coerceExprToType(lhs.ty, rhs, bo.right, s);
         lhs = try self.coerceExprToType(rhs.ty, lhs, bo.left, s);
 
-        if (!typesExactlyEqual(lhs.ty, rhs.ty)) {
+        if (!types.typesExactlyEqual(lhs.ty, rhs.ty)) {
             const left_ty = try self.formatType(lhs.ty, s);
             const right_ty = try self.formatType(rhs.ty, s);
             defer {
@@ -2537,7 +2539,7 @@ pub const Semantizer = struct {
         rhs = try self.coerceExprToType(lhs.ty, rhs, c.right, s);
         lhs = try self.coerceExprToType(rhs.ty, lhs, c.left, s);
 
-        if (!typesExactlyEqual(lhs.ty, rhs.ty)) {
+        if (!types.typesExactlyEqual(lhs.ty, rhs.ty)) {
             const left_ty = try self.formatType(lhs.ty, s);
             const right_ty = try self.formatType(rhs.ty, s);
             defer {
@@ -2770,7 +2772,7 @@ pub const Semantizer = struct {
             const field_info = struct_type.fields[sf.field_index];
 
             rhs = try self.coerceExprToType(field_info.ty, rhs, pa.value, s);
-            if (!typesExactlyEqual(field_info.ty, rhs.ty)) {
+            if (!types.typesExactlyEqual(field_info.ty, rhs.ty)) {
                 const expected = try self.formatType(field_info.ty, s);
                 const actual = try self.formatType(rhs.ty, s);
                 defer {
@@ -2818,7 +2820,7 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        if (!typesStructurallyEqual(deref_sg.ty, rhs.ty)) {
+        if (!types.typesStructurallyEqual(deref_sg.ty, rhs.ty)) {
             const expected = try self.formatType(deref_sg.ty, s);
             const actual = try self.formatType(rhs.ty, s);
             defer {
@@ -3278,7 +3280,7 @@ pub const Semantizer = struct {
         expr_node: *const syn.STNode,
         s: *Scope,
     ) SemErr!TypedExpr {
-        if (typesExactlyEqual(expected, expr.ty)) return expr;
+        if (types.typesExactlyEqual(expected, expr.ty)) return expr;
 
         return switch (expected) {
             .array_type => |arr_info| self.convertListLiteralToArray(expr, arr_info, expr_node.location, s),
@@ -3423,7 +3425,7 @@ pub const Semantizer = struct {
                 .ty = act_field.ty,
             };
             field_expr = try self.coerceExprToType(exp_field.ty, field_expr, expr_node, s);
-            if (!typesExactlyEqual(exp_field.ty, field_expr.ty)) {
+            if (!types.typesExactlyEqual(exp_field.ty, field_expr.ty)) {
                 const expected_ty = try self.formatType(exp_field.ty, s);
                 const actual_ty = try self.formatType(field_expr.ty, s);
                 defer {
@@ -3471,7 +3473,7 @@ pub const Semantizer = struct {
 
                 const expected_elem_ty = arr_info.element_type.*;
                 for (ll.element_types, 0..) |elem_ty, idx| {
-                    if (typesStructurallyEqual(expected_elem_ty, elem_ty)) continue;
+                    if (types.typesStructurallyEqual(expected_elem_ty, elem_ty)) continue;
                     const exp = try self.formatType(expected_elem_ty, s);
                     const got = try self.formatType(elem_ty, s);
                     defer {
@@ -3533,7 +3535,7 @@ pub const Semantizer = struct {
 
         const first_ty = ll.element_types[0];
         for (ll.element_types, 0..) |elem_ty, idx| {
-            if (typesStructurallyEqual(first_ty, elem_ty)) continue;
+            if (types.typesStructurallyEqual(first_ty, elem_ty)) continue;
             const exp = try self.formatType(first_ty, s);
             const got = try self.formatType(elem_ty, s);
             defer {
@@ -3739,7 +3741,7 @@ pub const Semantizer = struct {
             if (sc.functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
                     const expected: sem.Type = .{ .struct_type = &cand.input };
-                    if (!typesCompatible(expected, in_ty)) continue;
+                    if (!types.typesCompatible(expected, in_ty)) continue;
                     if (!first) try buf.appendSlice("\n");
                     first = false;
                     try buf.appendSlice("  - ");
@@ -3897,7 +3899,7 @@ pub const Semantizer = struct {
             var it = sc.types.iterator();
             while (it.next()) |entry| {
                 const td = entry.value_ptr.*;
-                if (typesExactlyEqual(td.ty, t)) return td.name;
+                if (types.typesExactlyEqual(td.ty, t)) return td.name;
             }
         }
         return null;
@@ -3926,7 +3928,7 @@ pub const Semantizer = struct {
                     const ptr_info = first.ty.pointer_type.*;
                     if (ptr_info.mutability != .read_write) continue;
                     const pointee = ptr_info.child.*;
-                    if (typesExactlyEqual(pointee, ty)) return cand;
+                    if (types.typesExactlyEqual(pointee, ty)) return cand;
                 }
             }
         }
@@ -4025,71 +4027,6 @@ pub const DeferredGroup = struct {
     nodes: []const *sem.SGNode,
 };
 
-//──────────────────────────────────────────────────────────── TYPE EQUALITY HELPER
-fn typesStructurallyEqual(a: sem.Type, b: sem.Type) bool {
-    return switch (a) {
-        .builtin => |ab| switch (b) {
-            .builtin => |bb| ab == bb,
-            else => false,
-        },
-
-        .struct_type => |ast| switch (b) {
-            .builtin => false,
-
-            .struct_type => |bst| blk: {
-                // Keep for legacy: structural comparison of anonymous structs
-                if (ast.fields.len != bst.fields.len) break :blk false;
-                var i: usize = 0;
-                while (i < ast.fields.len) : (i += 1) {
-                    const fa = ast.fields[i];
-                    const fb = bst.fields[i];
-                    if (!std.mem.eql(u8, fa.name, fb.name)) break :blk false;
-                    if (!typesStructurallyEqual(fa.ty, fb.ty)) break :blk false;
-                }
-                break :blk true;
-            },
-
-            .pointer_type => false,
-            .array_type => false,
-        },
-
-        .pointer_type => |apt_ptr| switch (b) {
-            .pointer_type => |bpt_ptr| blk: {
-                const apt = apt_ptr.*;
-                const bpt = bpt_ptr.*;
-
-                if (apt.mutability != bpt.mutability)
-                    break :blk false;
-
-                const sub_a = apt.child.*;
-                const sub_b = bpt.child.*;
-
-                if (isAny(sub_a) or isAny(sub_b)) break :blk true;
-
-                break :blk typesStructurallyEqual(sub_a, sub_b);
-            },
-            else => false,
-        },
-
-        .array_type => |aat_ptr| switch (b) {
-            .array_type => |bat_ptr| blk_arr: {
-                const aat = aat_ptr.*;
-                const bat = bat_ptr.*;
-                if (aat.length != bat.length) break :blk_arr false;
-                break :blk_arr typesStructurallyEqual(aat.element_type.*, bat.element_type.*);
-            },
-            else => false,
-        },
-    };
-}
-
-fn isAny(t: sem.Type) bool {
-    return switch (t) {
-        .builtin => |bt| bt == .Any,
-        else => false,
-    };
-}
-
 fn binaryOpVerb(op: tok.BinaryOperator) []const u8 {
     return switch (op) {
         .addition => "add",
@@ -4097,104 +4034,6 @@ fn binaryOpVerb(op: tok.BinaryOperator) []const u8 {
         .multiplication => "multiply",
         .division => "divide",
         .modulo => "mod",
-    };
-}
-
-fn isIntegerType(t: sem.Type) bool {
-    return switch (t) {
-        .builtin => |bt| switch (bt) {
-            .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64 => true,
-            else => false,
-        },
-        else => false,
-    };
-}
-
-fn pointerMutabilityCompatible(expected: syn.PointerMutability, actual: syn.PointerMutability) bool {
-    return switch (expected) {
-        .read_only => true,
-        .read_write => actual == .read_write,
-    };
-}
-
-fn typesCompatible(expected: sem.Type, actual: sem.Type) bool {
-    return switch (expected) {
-        .builtin => |eb| switch (actual) {
-            .builtin => |ab| eb == ab,
-            else => false,
-        },
-        .struct_type => |est| switch (actual) {
-            .struct_type => |ast| blk: {
-                if (est.fields.len != ast.fields.len) break :blk false;
-                var i: usize = 0;
-                while (i < est.fields.len) : (i += 1) {
-                    const ef = est.fields[i];
-                    const af = ast.fields[i];
-                    if (!typesCompatible(ef.ty, af.ty)) break :blk false;
-                }
-                break :blk true;
-            },
-            else => false,
-        },
-        .pointer_type => |ept_ptr| switch (actual) {
-            .pointer_type => |apt_ptr| blk: {
-                const ept = ept_ptr.*;
-                const apt = apt_ptr.*;
-
-                if (!pointerMutabilityCompatible(ept.mutability, apt.mutability))
-                    break :blk false;
-
-                const expected_child = ept.child.*;
-                const actual_child = apt.child.*;
-
-                if (isAny(expected_child) or isAny(actual_child))
-                    break :blk true;
-
-                break :blk typesCompatible(expected_child, actual_child);
-            },
-            else => false,
-        },
-        .array_type => |eat_ptr| switch (actual) {
-            .array_type => |aat_ptr| blk_arr: {
-                const eat = eat_ptr.*;
-                const aat = aat_ptr.*;
-                if (eat.length != aat.length) break :blk_arr false;
-                break :blk_arr typesCompatible(eat.element_type.*, aat.element_type.*);
-            },
-            else => false,
-        },
-    };
-}
-
-// Strict type equality: no wildcards; pointer subtypes must match exactly.
-fn typesExactlyEqual(a: sem.Type, b: sem.Type) bool {
-    return switch (a) {
-        .builtin => |ab| switch (b) {
-            .builtin => |bb| ab == bb,
-            else => false,
-        },
-        .struct_type => |ast| switch (b) {
-            .struct_type => |bst| ast == bst, // nominal: same named type instance
-            else => false,
-        },
-        .pointer_type => |apt_ptr| switch (b) {
-            .pointer_type => |bpt_ptr| blk: {
-                const apt = apt_ptr.*;
-                const bpt = bpt_ptr.*;
-                if (apt.mutability != bpt.mutability) break :blk false;
-                break :blk typesExactlyEqual(apt.child.*, bpt.child.*);
-            },
-            else => false,
-        },
-        .array_type => |aat_ptr| switch (b) {
-            .array_type => |bat_ptr| blk_arr: {
-                const aat = aat_ptr.*;
-                const bat = bat_ptr.*;
-                if (aat.length != bat.length) break :blk_arr false;
-                break :blk_arr typesExactlyEqual(aat.element_type.*, bat.element_type.*);
-            },
-            else => false,
-        },
     };
 }
 
@@ -4224,7 +4063,7 @@ fn specificityScore(expected: sem.Type, actual: sem.Type) u32 {
             const expected_child = ept.child.*;
             const actual_child = apt.child.*;
 
-            if (isAny(expected_child) or isAny(actual_child))
+            if (types.isAny(expected_child) or types.isAny(actual_child))
                 break :blk2 1;
 
             break :blk2 specificityScore(expected_child, actual_child);
