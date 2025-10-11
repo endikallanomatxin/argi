@@ -215,3 +215,236 @@ pub fn resolveOverload(name: []const u8, in_ty: sg.Type, s: *Scope) sem.SemErr!*
     if (ambiguous) return error.AmbiguousOverload;
     return best.?;
 }
+
+pub fn ensureConformance(info: *AbstractInfo, concrete: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) sem.SemErr!void {
+    for (info.requirements) |rq| {
+        if (!(try existsFunctionForRequirement(info, rq, concrete, s, allocator)))
+            return error.SymbolNotFound;
+    }
+}
+
+fn buildExpectedInputWithConcrete(rq: *const AbstractFunctionReqSem, concrete: sg.Type, allocator: *const std.mem.Allocator) !*sg.StructType {
+    var fields = try allocator.alloc(sg.StructTypeField, rq.input.fields.len);
+    for (rq.input.fields, 0..) |f, i| {
+        const is_self = helpers.containsIndex(rq.input_self_indices, @intCast(i));
+        fields[i] = .{ .name = f.name, .ty = if (is_self) concrete else f.ty, .default_value = null };
+    }
+    const st_ptr = try allocator.create(sg.StructType);
+    st_ptr.* = .{ .fields = fields };
+    return st_ptr;
+}
+
+fn existsFunctionForRequirement(
+    info: *const AbstractInfo,
+    rq: AbstractFunctionReqSem,
+    concrete: sg.Type,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+) sem.SemErr!bool {
+    var cur: ?*Scope = s;
+    while (cur) |sc| : (cur = sc.parent) {
+        if (sc.functions.getPtr(rq.name)) |lst| {
+            for (lst.items) |cand| {
+                if (info.param_names.len == 0) {
+                    const empty: []?sg.Type = &[_]?sg.Type{};
+                    if (!funcInputMatchesRequirement(&rq, &cand.input, concrete, empty, s))
+                        continue;
+                    if (!funcOutputMatchesRequirement(&rq, &cand.output, empty, s))
+                        continue;
+                    return true;
+                } else {
+                    var bindings = try allocator.alloc(?sg.Type, info.param_names.len);
+                    defer allocator.free(bindings);
+                    for (bindings, 0..) |_, idx| bindings[idx] = null;
+
+                    if (!funcInputMatchesRequirement(&rq, &cand.input, concrete, bindings, s))
+                        continue;
+                    if (!funcOutputMatchesRequirement(&rq, &cand.output, bindings, s))
+                        continue;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+pub fn verifyAbstracts(s: *Scope, allocator: *const std.mem.Allocator, diags: *diagnostic.Diagnostics) !void {
+    var any_error = false;
+    var it = s.abstract_impls.iterator();
+    while (it.next()) |entry| {
+        const abs_name = entry.key_ptr.*;
+        const impls = entry.value_ptr.*;
+        const info = s.lookupAbstractInfo(abs_name) orelse continue;
+
+        for (impls.items) |impl| {
+            const conc = impl.ty;
+            for (info.requirements) |rq| {
+                if (try existsFunctionForRequirement(info, rq, conc, s, allocator)) continue;
+
+                // Build expected input with concrete substituted for Self
+                const exp_in = try buildExpectedInputWithConcrete(&rq, conc, allocator);
+                const in_ty: sg.Type = .{ .struct_type = exp_in };
+
+                // Produce candidates string
+                const candidates = buildOverloadCandidatesString(rq.name, in_ty, s, allocator) catch "";
+
+                // Build signature string
+                var buf = std.ArrayList(u8).init(allocator.*);
+                defer buf.deinit();
+                try buf.appendSlice(rq.name);
+                try buf.appendSlice(" (");
+                var i: usize = 0;
+                while (i < exp_in.fields.len) : (i += 1) {
+                    const fld = exp_in.fields[i];
+                    if (i != 0) try buf.appendSlice(", ");
+                    try buf.appendSlice(".");
+                    try buf.appendSlice(fld.name);
+                    try buf.appendSlice(": ");
+                    try typ.appendTypePretty(&buf, fld.ty, s);
+                }
+                try buf.appendSlice(")");
+
+                // Report diagnostic at the 'canbe' site
+                if (candidates.len > 0) {
+                    try diags.add(
+                        impl.location,
+                        .semantic,
+                        "type does not implement abstract '{s}': missing function '{s}'. Possible overloads:\n{s}",
+                        .{ abs_name, buf.items, candidates },
+                    );
+                } else {
+                    try diags.add(
+                        impl.location,
+                        .semantic,
+                        "type does not implement abstract '{s}': missing function '{s}'.",
+                        .{ abs_name, buf.items },
+                    );
+                }
+                any_error = true;
+            }
+        }
+    }
+
+    // Also verify defaults conform to their abstracts
+    var it_def = s.abstract_defaults.iterator();
+    while (it_def.next()) |entry2| {
+        const abs_name2 = entry2.key_ptr.*;
+        const def_entry = entry2.value_ptr.*;
+        const info2 = s.lookupAbstractInfo(abs_name2) orelse continue;
+        const conc2 = def_entry.ty;
+        for (info2.requirements) |rq2| {
+            if (try existsFunctionForRequirement(info2, rq2, conc2, s, allocator)) continue;
+
+            const exp_in2 = try buildExpectedInputWithConcrete(&rq2, conc2, allocator);
+            const in_ty2: sg.Type = .{ .struct_type = exp_in2 };
+            const candidates2 = buildOverloadCandidatesString(rq2.name, in_ty2, s, allocator) catch "";
+
+            var buf2 = std.ArrayList(u8).init(allocator.*);
+            defer buf2.deinit();
+            try buf2.appendSlice(rq2.name);
+            try buf2.appendSlice(" (");
+            var j: usize = 0;
+            while (j < exp_in2.fields.len) : (j += 1) {
+                const fld2 = exp_in2.fields[j];
+                if (j != 0) try buf2.appendSlice(", ");
+                try buf2.appendSlice(".");
+                try buf2.appendSlice(fld2.name);
+                try buf2.appendSlice(": ");
+                try typ.appendTypePretty(&buf2, fld2.ty, s);
+            }
+            try buf2.appendSlice(")");
+
+            if (candidates2.len > 0) {
+                try diags.add(
+                    def_entry.location,
+                    .semantic,
+                    "default type does not implement abstract '{s}': missing function '{s}'. Possible overloads:\n{s}",
+                    .{ abs_name2, buf2.items, candidates2 },
+                );
+            } else {
+                try diags.add(
+                    def_entry.location,
+                    .semantic,
+                    "default type does not implement abstract '{s}': missing function '{s}'.",
+                    .{ abs_name2, buf2.items },
+                );
+            }
+            any_error = true;
+        }
+    }
+    if (any_error) return error.SymbolNotFound;
+}
+
+pub fn buildOverloadCandidatesString(name: []const u8, in_ty: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) ![]u8 {
+    var buf = std.ArrayList(u8).init(allocator.*);
+    var cur: ?*Scope = s;
+    var first: bool = true;
+    while (cur) |sc| : (cur = sc.parent) {
+        if (sc.functions.getPtr(name)) |list_ptr| {
+            for (list_ptr.items) |cand| {
+                const expected: sg.Type = .{ .struct_type = &cand.input };
+                if (!typ.typesCompatible(expected, in_ty)) continue;
+                if (!first) try buf.appendSlice("\n");
+                first = false;
+                try buf.appendSlice("  - ");
+                try appendFunctionSignature(&buf, cand, s);
+                try buf.appendSlice("  [file: ");
+                try buf.appendSlice(cand.location.file);
+                try buf.appendSlice(":");
+                try buf.appendSlice(std.fmt.allocPrint(allocator.*, "{d}:{d}", .{ cand.location.line, cand.location.column }) catch "");
+                try buf.appendSlice("]");
+            }
+        }
+    }
+    return try buf.toOwnedSlice();
+}
+
+pub fn collectFunctionSignatures(name: []const u8, s: *Scope, allocator: *const std.mem.Allocator) ![]u8 {
+    var buf = std.ArrayList(u8).init(allocator.*);
+    errdefer buf.deinit();
+
+    var cur: ?*Scope = s;
+    var first = true;
+    while (cur) |sc| : (cur = sc.parent) {
+        if (sc.functions.getPtr(name)) |list_ptr| {
+            for (list_ptr.items) |cand| {
+                if (!first) try buf.appendSlice("\n");
+                first = false;
+                try buf.appendSlice("  - ");
+                try appendFunctionSignature(&buf, cand, s);
+            }
+        }
+    }
+
+    if (first) {
+        try buf.appendSlice("  (none)");
+    }
+
+    return try buf.toOwnedSlice();
+}
+
+fn appendFunctionSignature(buf: *std.ArrayList(u8), f: *const sg.FunctionDeclaration, s: *Scope) !void {
+    try buf.appendSlice(f.name);
+    try buf.appendSlice(" (");
+    var i: usize = 0;
+    while (i < f.input.fields.len) : (i += 1) {
+        const fld = f.input.fields[i];
+        if (i != 0) try buf.appendSlice(", ");
+        try buf.appendSlice(".");
+        try buf.appendSlice(fld.name);
+        try buf.appendSlice(": ");
+        try typ.appendTypePretty(buf, fld.ty, s);
+    }
+    try buf.appendSlice(") -> (");
+    i = 0;
+    while (i < f.output.fields.len) : (i += 1) {
+        const ofld = f.output.fields[i];
+        if (i != 0) try buf.appendSlice(", ");
+        try buf.appendSlice(".");
+        try buf.appendSlice(ofld.name);
+        try buf.appendSlice(": ");
+        try typ.appendTypePretty(buf, ofld.ty, s);
+    }
+    try buf.appendSlice(")");
+}

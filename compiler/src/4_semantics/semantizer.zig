@@ -8,10 +8,9 @@ const diagnostic = @import("../1_base/diagnostic.zig");
 const typ = @import("types.zig");
 const abs = @import("abstracts.zig");
 const gen = @import("generics.zig");
+const helpers = @import("helpers.zig");
 
 const Scope = @import("scope.zig").Scope;
-
-const helpers = @import("helpers.zig");
 
 pub const SemErr = error{
     SymbolAlreadyDefined,
@@ -112,7 +111,7 @@ pub const Semantizer = struct {
         }
 
         // Final conformance verification for abstracts (top-level scope)
-        try self.verifyAbstracts(&global);
+        try abs.verifyAbstracts(&global, self.allocator, self.diags);
 
         self.root_nodes = try self.root_list.toOwnedSlice();
         self.root_list.deinit();
@@ -342,7 +341,7 @@ pub const Semantizer = struct {
                     const tv_in = self.visitNode(fc.input.*, s) catch null;
                     var details: []const u8 = "";
                     if (tv_in) |te| if (te.ty == .struct_type) {
-                        details = self.buildOverloadCandidatesString(fc.callee, te.ty, s) catch "";
+                        details = abs.buildOverloadCandidatesString(fc.callee, te.ty, s, self.allocator) catch "";
                     };
                     try self.diags.add(
                         n.location,
@@ -669,166 +668,6 @@ pub const Semantizer = struct {
         empty.* = .{ .nodes = &.{}, .ret_val = null };
         const n = try self.makeNode(undefined, .{ .code_block = empty }, s);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
-    }
-
-    fn ensureConformance(self: *Semantizer, info: *abs.AbstractInfo, concrete: sem.Type, s: *Scope) !void {
-        for (info.requirements) |rq| {
-            if (!(try self.existsFunctionForRequirement(info, rq, concrete, s)))
-                return error.SymbolNotFound;
-        }
-    }
-
-    fn existsFunctionForRequirement(
-        self: *Semantizer,
-        info: *const abs.AbstractInfo,
-        rq: abs.AbstractFunctionReqSem,
-        concrete: sem.Type,
-        s: *Scope,
-    ) SemErr!bool {
-        var cur: ?*Scope = s;
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.functions.getPtr(rq.name)) |lst| {
-                for (lst.items) |cand| {
-                    if (info.param_names.len == 0) {
-                        const empty: []?sem.Type = &[_]?sem.Type{};
-                        if (!abs.funcInputMatchesRequirement(&rq, &cand.input, concrete, empty, s))
-                            continue;
-                        if (!abs.funcOutputMatchesRequirement(&rq, &cand.output, empty, s))
-                            continue;
-                        return true;
-                    } else {
-                        var bindings = try self.allocator.alloc(?sem.Type, info.param_names.len);
-                        defer self.allocator.free(bindings);
-                        for (bindings, 0..) |_, idx| bindings[idx] = null;
-
-                        if (!abs.funcInputMatchesRequirement(&rq, &cand.input, concrete, bindings, s))
-                            continue;
-                        if (!abs.funcOutputMatchesRequirement(&rq, &cand.output, bindings, s))
-                            continue;
-                        return true;
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
-    fn verifyAbstracts(self: *Semantizer, s: *Scope) !void {
-        var any_error = false;
-        var it = s.abstract_impls.iterator();
-        while (it.next()) |entry| {
-            const abs_name = entry.key_ptr.*;
-            const impls = entry.value_ptr.*;
-            const info = s.lookupAbstractInfo(abs_name) orelse continue;
-
-            for (impls.items) |impl| {
-                const conc = impl.ty;
-                for (info.requirements) |rq| {
-                    if (try self.existsFunctionForRequirement(info, rq, conc, s)) continue;
-
-                    // Build expected input with concrete substituted for Self
-                    const exp_in = try self.buildExpectedInputWithConcrete(&rq, conc);
-                    const in_ty: sem.Type = .{ .struct_type = exp_in };
-
-                    // Produce candidates string
-                    const candidates = self.buildOverloadCandidatesString(rq.name, in_ty, s) catch "";
-
-                    // Build signature string
-                    var buf = std.ArrayList(u8).init(self.allocator.*);
-                    defer buf.deinit();
-                    try buf.appendSlice(rq.name);
-                    try buf.appendSlice(" (");
-                    var i: usize = 0;
-                    while (i < exp_in.fields.len) : (i += 1) {
-                        const fld = exp_in.fields[i];
-                        if (i != 0) try buf.appendSlice(", ");
-                        try buf.appendSlice(".");
-                        try buf.appendSlice(fld.name);
-                        try buf.appendSlice(": ");
-                        try self.appendTypePretty(&buf, fld.ty, s);
-                    }
-                    try buf.appendSlice(")");
-
-                    // Report diagnostic at the 'canbe' site
-                    if (candidates.len > 0) {
-                        try self.diags.add(
-                            impl.location,
-                            .semantic,
-                            "type does not implement abstract '{s}': missing function '{s}'. Possible overloads:\n{s}",
-                            .{ abs_name, buf.items, candidates },
-                        );
-                    } else {
-                        try self.diags.add(
-                            impl.location,
-                            .semantic,
-                            "type does not implement abstract '{s}': missing function '{s}'.",
-                            .{ abs_name, buf.items },
-                        );
-                    }
-                    any_error = true;
-                }
-            }
-        }
-
-        // Also verify defaults conform to their abstracts
-        var it_def = s.abstract_defaults.iterator();
-        while (it_def.next()) |entry2| {
-            const abs_name2 = entry2.key_ptr.*;
-            const def_entry = entry2.value_ptr.*;
-            const info2 = s.lookupAbstractInfo(abs_name2) orelse continue;
-            const conc2 = def_entry.ty;
-            for (info2.requirements) |rq2| {
-                if (try self.existsFunctionForRequirement(info2, rq2, conc2, s)) continue;
-
-                const exp_in2 = try self.buildExpectedInputWithConcrete(&rq2, conc2);
-                const in_ty2: sem.Type = .{ .struct_type = exp_in2 };
-                const candidates2 = self.buildOverloadCandidatesString(rq2.name, in_ty2, s) catch "";
-
-                var buf2 = std.ArrayList(u8).init(self.allocator.*);
-                defer buf2.deinit();
-                try buf2.appendSlice(rq2.name);
-                try buf2.appendSlice(" (");
-                var j: usize = 0;
-                while (j < exp_in2.fields.len) : (j += 1) {
-                    const fld2 = exp_in2.fields[j];
-                    if (j != 0) try buf2.appendSlice(", ");
-                    try buf2.appendSlice(".");
-                    try buf2.appendSlice(fld2.name);
-                    try buf2.appendSlice(": ");
-                    try self.appendTypePretty(&buf2, fld2.ty, s);
-                }
-                try buf2.appendSlice(")");
-
-                if (candidates2.len > 0) {
-                    try self.diags.add(
-                        def_entry.location,
-                        .semantic,
-                        "default type does not implement abstract '{s}': missing function '{s}'. Possible overloads:\n{s}",
-                        .{ abs_name2, buf2.items, candidates2 },
-                    );
-                } else {
-                    try self.diags.add(
-                        def_entry.location,
-                        .semantic,
-                        "default type does not implement abstract '{s}': missing function '{s}'.",
-                        .{ abs_name2, buf2.items },
-                    );
-                }
-                any_error = true;
-            }
-        }
-        if (any_error) return error.SymbolNotFound;
-    }
-
-    fn buildExpectedInputWithConcrete(self: *Semantizer, rq: *const abs.AbstractFunctionReqSem, concrete: sem.Type) !*sem.StructType {
-        var fields = try self.allocator.alloc(sem.StructTypeField, rq.input.fields.len);
-        for (rq.input.fields, 0..) |f, i| {
-            const is_self = helpers.containsIndex(rq.input_self_indices, @intCast(i));
-            fields[i] = .{ .name = f.name, .ty = if (is_self) concrete else f.ty, .default_value = null };
-        }
-        const st_ptr = try self.allocator.create(sem.StructType);
-        st_ptr.* = .{ .fields = fields };
-        return st_ptr;
     }
 
     //─────────────────────────────────────────────────────────  LITERALS
@@ -1161,8 +1000,8 @@ pub const Semantizer = struct {
         var rhs = try self.visitNode(a.value.*, s);
         rhs = try self.coerceExprToType(b.ty, rhs, a.value, s);
         if (!typ.typesExactlyEqual(b.ty, rhs.ty)) {
-            const expected = try self.formatType(b.ty, s);
-            const actual = try self.formatType(rhs.ty, s);
+            const expected = try typ.formatType(b.ty, s, self.allocator);
+            const actual = try typ.formatType(rhs.ty, s, self.allocator);
             defer {
                 self.allocator.free(expected);
                 self.allocator.free(actual);
@@ -1250,7 +1089,7 @@ pub const Semantizer = struct {
         const base = try self.visitNode(ma.struct_value.*, s);
 
         if (base.ty == .array_type) {
-            const desc = try self.formatType(base.ty, s);
+            const desc = try typ.formatType(base.ty, s, self.allocator);
             defer self.allocator.free(desc);
             try self.diags.add(
                 ma.struct_value.*.location,
@@ -1272,7 +1111,7 @@ pub const Semantizer = struct {
                 }
             }
 
-            const desc = try self.formatType(base.ty, s);
+            const desc = try typ.formatType(base.ty, s, self.allocator);
             defer self.allocator.free(desc);
             try self.diags.add(
                 ma.struct_value.*.location,
@@ -1329,8 +1168,8 @@ pub const Semantizer = struct {
 
             if (expected_elem_ty_opt) |exp_ty| {
                 if (!typ.typesStructurallyEqual(exp_ty, elem_te.ty)) {
-                    const exp = try self.formatType(exp_ty, s);
-                    const got = try self.formatType(elem_te.ty, s);
+                    const exp = try typ.formatType(exp_ty, s, self.allocator);
+                    const got = try typ.formatType(elem_te.ty, s, self.allocator);
                     defer {
                         self.allocator.free(exp);
                         self.allocator.free(got);
@@ -1372,7 +1211,7 @@ pub const Semantizer = struct {
         if (base.ty == .array_type) {
             const idx_te = try self.visitNode(ia.index.*, s);
             if (!typ.isIntegerType(idx_te.ty)) {
-                const idx_ty = try self.formatType(idx_te.ty, s);
+                const idx_ty = try typ.formatType(idx_te.ty, s, self.allocator);
                 defer self.allocator.free(idx_ty);
                 try self.diags.add(
                     ia.index.*.location,
@@ -1466,8 +1305,8 @@ pub const Semantizer = struct {
         } else {
             chosen = abs.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
                 error.SymbolNotFound => {
-                    const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
-                    const available = try self.collectFunctionSignatures(name, s);
+                    const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
+                    const available = try abs.collectFunctionSignatures(name, s, self.allocator);
                     defer {
                         self.allocator.free(actual_sig);
                         self.allocator.free(available);
@@ -1481,8 +1320,8 @@ pub const Semantizer = struct {
                     return error.Reported;
                 },
                 error.AmbiguousOverload => {
-                    const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
-                    const available = try self.collectFunctionSignatures(name, s);
+                    const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
+                    const available = try abs.collectFunctionSignatures(name, s, self.allocator);
                     defer {
                         self.allocator.free(actual_sig);
                         self.allocator.free(available);
@@ -1503,7 +1342,7 @@ pub const Semantizer = struct {
         call_ptr.* = .{ .callee = chosen, .input = input_te.node };
 
         const node = try self.makeNode(undefined, .{ .function_call = call_ptr }, s);
-        return .{ .node = node, .ty = self.functionReturnType(chosen) };
+        return .{ .node = node, .ty = typ.functionReturnType(chosen) };
     }
 
     fn handleIndexAssignment(
@@ -1519,7 +1358,7 @@ pub const Semantizer = struct {
         if (base.ty == .array_type) {
             const index_expr = try self.visitNode(idx.index.*, s);
             if (!typ.isIntegerType(index_expr.ty)) {
-                const idx_ty = try self.formatType(index_expr.ty, s);
+                const idx_ty = try typ.formatType(index_expr.ty, s, self.allocator);
                 defer self.allocator.free(idx_ty);
                 try self.diags.add(
                     idx.index.*.location,
@@ -1535,8 +1374,8 @@ pub const Semantizer = struct {
             const elem_ty = arr_type_ptr.*.element_type.*;
 
             if (!typ.typesStructurallyEqual(elem_ty, value_expr.ty)) {
-                const expected = try self.formatType(elem_ty, s);
-                const actual = try self.formatType(value_expr.ty, s);
+                const expected = try typ.formatType(elem_ty, s, self.allocator);
+                const actual = try typ.formatType(value_expr.ty, s, self.allocator);
                 defer {
                     self.allocator.free(expected);
                     self.allocator.free(actual);
@@ -1590,8 +1429,8 @@ pub const Semantizer = struct {
         } else {
             chosen = abs.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
                 error.SymbolNotFound => {
-                    const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
-                    const available = try self.collectFunctionSignatures(name, s);
+                    const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
+                    const available = try abs.collectFunctionSignatures(name, s, self.allocator);
                     defer {
                         self.allocator.free(actual_sig);
                         self.allocator.free(available);
@@ -1605,8 +1444,8 @@ pub const Semantizer = struct {
                     return error.Reported;
                 },
                 error.AmbiguousOverload => {
-                    const actual_sig = try self.formatCallInput(input_te.ty.struct_type, s);
-                    const available = try self.collectFunctionSignatures(name, s);
+                    const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
+                    const available = try abs.collectFunctionSignatures(name, s, self.allocator);
                     defer {
                         self.allocator.free(actual_sig);
                         self.allocator.free(available);
@@ -1753,8 +1592,8 @@ pub const Semantizer = struct {
                 chosen = abs.resolveOverload(call.callee, tv_in.ty, s) catch |err| switch (err) {
                     error.SymbolNotFound => {
                         if (tv_in.ty == .struct_type) {
-                            const actual_sig = try self.formatCallInput(tv_in.ty.struct_type, s);
-                            const available = try self.collectFunctionSignatures(call.callee, s);
+                            const actual_sig = try typ.formatCallInput(tv_in.ty.struct_type, s, self.allocator);
+                            const available = try abs.collectFunctionSignatures(call.callee, s, self.allocator);
                             defer {
                                 self.allocator.free(actual_sig);
                                 self.allocator.free(available);
@@ -1785,7 +1624,7 @@ pub const Semantizer = struct {
 
         const n = try self.makeNode(undefined, .{ .function_call = fc_ptr }, s);
 
-        const result_ty = self.functionReturnType(chosen);
+        const result_ty = typ.functionReturnType(chosen);
 
         return .{ .node = n, .ty = result_ty };
     }
@@ -1830,8 +1669,8 @@ pub const Semantizer = struct {
 
         const init_fn = abs.resolveOverload("init", init_input_ty, s) catch |err| switch (err) {
             error.SymbolNotFound => {
-                const actual_sig = try self.formatCallInput(user_struct, s);
-                const available = try self.collectFunctionSignatures("init", s);
+                const actual_sig = try typ.formatCallInput(user_struct, s, self.allocator);
+                const available = try abs.collectFunctionSignatures("init", s, self.allocator);
                 defer {
                     self.allocator.free(actual_sig);
                     self.allocator.free(available);
@@ -1845,7 +1684,7 @@ pub const Semantizer = struct {
                 return error.Reported;
             },
             error.AmbiguousOverload => {
-                const candidates_result = self.buildOverloadCandidatesString("init", init_input_ty, s) catch null;
+                const candidates_result = abs.buildOverloadCandidatesString("init", init_input_ty, s, self.allocator) catch null;
                 const candidates = candidates_result orelse "";
                 defer if (candidates_result) |owned| self.allocator.free(owned);
                 try self.diags.add(
@@ -2308,7 +2147,7 @@ pub const Semantizer = struct {
             const int_node = if (lhs_is_ptr) bo.right else bo.left;
             const is_valid_index = int_ty == .builtin and (int_ty.builtin == .Int64 or int_ty.builtin == .UInt64);
             if (!is_valid_index) {
-                const other_str = try self.formatType(int_ty, s);
+                const other_str = try typ.formatType(int_ty, s, self.allocator);
                 defer self.allocator.free(other_str);
                 try self.diags.add(
                     int_node.*.location,
@@ -2329,8 +2168,8 @@ pub const Semantizer = struct {
         lhs = try self.coerceExprToType(rhs.ty, lhs, bo.left, s);
 
         if (!typ.typesExactlyEqual(lhs.ty, rhs.ty)) {
-            const left_ty = try self.formatType(lhs.ty, s);
-            const right_ty = try self.formatType(rhs.ty, s);
+            const left_ty = try typ.formatType(lhs.ty, s, self.allocator);
+            const right_ty = try typ.formatType(rhs.ty, s, self.allocator);
             defer {
                 self.allocator.free(left_ty);
                 self.allocator.free(right_ty);
@@ -2365,8 +2204,8 @@ pub const Semantizer = struct {
         lhs = try self.coerceExprToType(rhs.ty, lhs, c.left, s);
 
         if (!typ.typesExactlyEqual(lhs.ty, rhs.ty)) {
-            const left_ty = try self.formatType(lhs.ty, s);
-            const right_ty = try self.formatType(rhs.ty, s);
+            const left_ty = try typ.formatType(lhs.ty, s, self.allocator);
+            const right_ty = try typ.formatType(rhs.ty, s, self.allocator);
             defer {
                 self.allocator.free(left_ty);
                 self.allocator.free(right_ty);
@@ -2502,7 +2341,7 @@ pub const Semantizer = struct {
         const te = try self.visitNode(inner.*, s);
 
         if (te.ty != .pointer_type) {
-            const ty_str = try self.formatType(te.ty, s);
+            const ty_str = try typ.formatType(te.ty, s, self.allocator);
             defer self.allocator.free(ty_str);
             try self.diags.add(
                 inner.*.location,
@@ -2554,14 +2393,6 @@ pub const Semantizer = struct {
         return .{ .node = node, .ty = .{ .struct_type = struct_ptr } };
     }
 
-    fn functionReturnType(_: *Semantizer, fn_decl: *sem.FunctionDeclaration) sem.Type {
-        return switch (fn_decl.output.fields.len) {
-            0 => .{ .builtin = .Any },
-            1 => fn_decl.output.fields[0].ty,
-            else => .{ .struct_type = &fn_decl.output },
-        };
-    }
-
     fn handlePointerAssignment(
         self: *Semantizer,
         pa: syn.PointerAssignment,
@@ -2581,7 +2412,7 @@ pub const Semantizer = struct {
 
             const ptr_info = ptr_self.ty.pointer_type.*;
             if (ptr_info.child.* != .struct_type) {
-                const desc = try self.formatType(ptr_self.ty, s);
+                const desc = try typ.formatType(ptr_self.ty, s, self.allocator);
                 defer self.allocator.free(desc);
                 try self.diags.add(
                     sa.struct_value.location,
@@ -2598,8 +2429,8 @@ pub const Semantizer = struct {
 
             rhs = try self.coerceExprToType(field_info.ty, rhs, pa.value, s);
             if (!typ.typesExactlyEqual(field_info.ty, rhs.ty)) {
-                const expected = try self.formatType(field_info.ty, s);
-                const actual = try self.formatType(rhs.ty, s);
+                const expected = try typ.formatType(field_info.ty, s, self.allocator);
+                const actual = try typ.formatType(rhs.ty, s, self.allocator);
                 defer {
                     self.allocator.free(expected);
                     self.allocator.free(actual);
@@ -2634,7 +2465,7 @@ pub const Semantizer = struct {
 
         if (deref_sg.pointer_type.*.mutability != .read_write) {
             const ptr_ty: sem.Type = .{ .pointer_type = deref_sg.pointer_type };
-            const ptr_str = try self.formatType(ptr_ty, s);
+            const ptr_str = try typ.formatType(ptr_ty, s, self.allocator);
             defer self.allocator.free(ptr_str);
             try self.diags.add(
                 pa.target.*.location,
@@ -2646,8 +2477,8 @@ pub const Semantizer = struct {
         }
 
         if (!typ.typesStructurallyEqual(deref_sg.ty, rhs.ty)) {
-            const expected = try self.formatType(deref_sg.ty, s);
-            const actual = try self.formatType(rhs.ty, s);
+            const expected = try typ.formatType(deref_sg.ty, s, self.allocator);
+            const actual = try typ.formatType(rhs.ty, s, self.allocator);
             defer {
                 self.allocator.free(expected);
                 self.allocator.free(actual);
@@ -3054,7 +2885,7 @@ pub const Semantizer = struct {
         if (te.ty == .pointer_type) {
             const info = te.ty.pointer_type.*;
             if (info.mutability != .read_write) {
-                const ptr_str = try self.formatType(.{ .pointer_type = te.ty.pointer_type }, s);
+                const ptr_str = try typ.formatType(.{ .pointer_type = te.ty.pointer_type }, s, self.allocator);
                 defer self.allocator.free(ptr_str);
                 try self.diags.add(
                     expr_node.location,
@@ -3251,8 +3082,8 @@ pub const Semantizer = struct {
             };
             field_expr = try self.coerceExprToType(exp_field.ty, field_expr, expr_node, s);
             if (!typ.typesExactlyEqual(exp_field.ty, field_expr.ty)) {
-                const expected_ty = try self.formatType(exp_field.ty, s);
-                const actual_ty = try self.formatType(field_expr.ty, s);
+                const expected_ty = try typ.formatType(exp_field.ty, s, self.allocator);
+                const actual_ty = try typ.formatType(field_expr.ty, s, self.allocator);
                 defer {
                     self.allocator.free(expected_ty);
                     self.allocator.free(actual_ty);
@@ -3299,8 +3130,8 @@ pub const Semantizer = struct {
                 const expected_elem_ty = arr_info.element_type.*;
                 for (ll.element_types, 0..) |elem_ty, idx| {
                     if (typ.typesStructurallyEqual(expected_elem_ty, elem_ty)) continue;
-                    const exp = try self.formatType(expected_elem_ty, s);
-                    const got = try self.formatType(elem_ty, s);
+                    const exp = try typ.formatType(expected_elem_ty, s, self.allocator);
+                    const got = try typ.formatType(elem_ty, s, self.allocator);
                     defer {
                         self.allocator.free(exp);
                         self.allocator.free(got);
@@ -3327,8 +3158,8 @@ pub const Semantizer = struct {
             else => {},
         }
 
-        const exp = try self.formatType(.{ .array_type = arr_info }, s);
-        const got = try self.formatType(expr.ty, s);
+        const exp = try typ.formatType(.{ .array_type = arr_info }, s, self.allocator);
+        const got = try typ.formatType(expr.ty, s, self.allocator);
         defer {
             self.allocator.free(exp);
             self.allocator.free(got);
@@ -3361,8 +3192,8 @@ pub const Semantizer = struct {
         const first_ty = ll.element_types[0];
         for (ll.element_types, 0..) |elem_ty, idx| {
             if (typ.typesStructurallyEqual(first_ty, elem_ty)) continue;
-            const exp = try self.formatType(first_ty, s);
-            const got = try self.formatType(elem_ty, s);
+            const exp = try typ.formatType(first_ty, s, self.allocator);
+            const got = try typ.formatType(elem_ty, s, self.allocator);
             defer {
                 self.allocator.free(exp);
                 self.allocator.free(got);
@@ -3419,7 +3250,7 @@ pub const Semantizer = struct {
         return switch (t) {
             .type_name => |tn| blk: {
                 const id = tn.string;
-                if (builtinFromName(id)) |bt|
+                if (typ.builtinFromName(id)) |bt|
                     break :blk .{ .builtin = bt };
                 // If it's an abstract, require a defaultsto to use as a type
                 if (s.lookupAbstractInfo(id)) |_| {
@@ -3544,169 +3375,6 @@ pub const Semantizer = struct {
                 break :blk_arr .{ .array_type = sem_arr };
             },
         };
-    }
-
-    fn builtinFromName(name: []const u8) ?sem.BuiltinType {
-        return std.meta.stringToEnum(sem.BuiltinType, name);
-    }
-
-    fn buildOverloadCandidatesString(self: *Semantizer, name: []const u8, in_ty: sem.Type, s: *Scope) ![]u8 {
-        var buf = std.ArrayList(u8).init(self.allocator.*);
-        var cur: ?*Scope = s;
-        var first: bool = true;
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.functions.getPtr(name)) |list_ptr| {
-                for (list_ptr.items) |cand| {
-                    const expected: sem.Type = .{ .struct_type = &cand.input };
-                    if (!typ.typesCompatible(expected, in_ty)) continue;
-                    if (!first) try buf.appendSlice("\n");
-                    first = false;
-                    try buf.appendSlice("  - ");
-                    try self.appendFunctionSignature(&buf, cand, s);
-                    try buf.appendSlice("  [file: ");
-                    try buf.appendSlice(cand.location.file);
-                    try buf.appendSlice(":");
-                    try buf.appendSlice(std.fmt.allocPrint(self.allocator.*, "{d}:{d}", .{ cand.location.line, cand.location.column }) catch "");
-                    try buf.appendSlice("]");
-                }
-            }
-        }
-        return try buf.toOwnedSlice();
-    }
-
-    fn appendFunctionSignature(self: *Semantizer, buf: *std.ArrayList(u8), f: *const sem.FunctionDeclaration, s: *Scope) !void {
-        try buf.appendSlice(f.name);
-        try buf.appendSlice(" (");
-        var i: usize = 0;
-        while (i < f.input.fields.len) : (i += 1) {
-            const fld = f.input.fields[i];
-            if (i != 0) try buf.appendSlice(", ");
-            try buf.appendSlice(".");
-            try buf.appendSlice(fld.name);
-            try buf.appendSlice(": ");
-            try self.appendTypePretty(buf, fld.ty, s);
-        }
-        try buf.appendSlice(") -> (");
-        i = 0;
-        while (i < f.output.fields.len) : (i += 1) {
-            const ofld = f.output.fields[i];
-            if (i != 0) try buf.appendSlice(", ");
-            try buf.appendSlice(".");
-            try buf.appendSlice(ofld.name);
-            try buf.appendSlice(": ");
-            try self.appendTypePretty(buf, ofld.ty, s);
-        }
-        try buf.appendSlice(")");
-    }
-
-    fn appendType(self: *Semantizer, buf: *std.ArrayList(u8), t: sem.Type) !void {
-        switch (t) {
-            .builtin => |bt| {
-                const s = @tagName(bt);
-                try buf.appendSlice(s);
-            },
-            .pointer_type => |ptr_info_ptr| {
-                const ptr_info = ptr_info_ptr.*;
-                const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
-                try buf.appendSlice(prefix);
-                try self.appendType(buf, ptr_info.child.*);
-            },
-            .struct_type => |st| {
-                try buf.appendSlice("{");
-                var i: usize = 0;
-                while (i < st.fields.len) : (i += 1) {
-                    const fld = st.fields[i];
-                    if (i != 0) try buf.appendSlice(", ");
-                    try buf.appendSlice(".");
-                    try buf.appendSlice(fld.name);
-                    try buf.appendSlice(": ");
-                    try self.appendType(buf, fld.ty);
-                }
-                try buf.appendSlice("}");
-            },
-        }
-    }
-
-    fn appendTypePretty(self: *Semantizer, buf: *std.ArrayList(u8), t: sem.Type, s: *Scope) !void {
-        if (typ.typeNameFor(s, t)) |nm| {
-            try buf.appendSlice(nm);
-            return;
-        }
-        switch (t) {
-            .builtin => |bt| {
-                const sname = @tagName(bt);
-                try buf.appendSlice(sname);
-            },
-            .pointer_type => |ptr_info_ptr| {
-                const ptr_info = ptr_info_ptr.*;
-                const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
-                try buf.appendSlice(prefix);
-                try self.appendTypePretty(buf, ptr_info.child.*, s);
-            },
-            .struct_type => |_| {
-                // Fallback: avoid expanding anonymous structs in this context
-                try buf.appendSlice("{...}");
-            },
-            .array_type => |arr_ptr| {
-                const arr = arr_ptr.*;
-                var tmp: [32]u8 = undefined;
-                const len_slice = std.fmt.bufPrint(&tmp, "{d}", .{arr.length}) catch "?";
-                try buf.appendSlice("[");
-                try buf.appendSlice(len_slice);
-                try buf.appendSlice("]");
-                try self.appendTypePretty(buf, arr.element_type.*, s);
-            },
-        }
-    }
-
-    fn formatType(self: *Semantizer, t: sem.Type, s: *Scope) ![]u8 {
-        var buf = std.ArrayList(u8).init(self.allocator.*);
-        errdefer buf.deinit();
-        try self.appendTypePretty(&buf, t, s);
-        return try buf.toOwnedSlice();
-    }
-
-    fn formatCallInput(self: *Semantizer, st: *const sem.StructType, s: *Scope) ![]u8 {
-        var buf = std.ArrayList(u8).init(self.allocator.*);
-        errdefer buf.deinit();
-
-        try buf.appendSlice("(");
-        var i: usize = 0;
-        while (i < st.fields.len) : (i += 1) {
-            const fld = st.fields[i];
-            if (i != 0) try buf.appendSlice(", ");
-            try buf.appendSlice(".");
-            try buf.appendSlice(fld.name);
-            try buf.appendSlice(": ");
-            try self.appendTypePretty(&buf, fld.ty, s);
-        }
-        try buf.appendSlice(")");
-
-        return try buf.toOwnedSlice();
-    }
-
-    fn collectFunctionSignatures(self: *Semantizer, name: []const u8, s: *Scope) ![]u8 {
-        var buf = std.ArrayList(u8).init(self.allocator.*);
-        errdefer buf.deinit();
-
-        var cur: ?*Scope = s;
-        var first = true;
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.functions.getPtr(name)) |list_ptr| {
-                for (list_ptr.items) |cand| {
-                    if (!first) try buf.appendSlice("\n");
-                    first = false;
-                    try buf.appendSlice("  - ");
-                    try self.appendFunctionSignature(&buf, cand, s);
-                }
-            }
-        }
-
-        if (first) {
-            try buf.appendSlice("  (none)");
-        }
-
-        return try buf.toOwnedSlice();
     }
 
     fn registerDefer(self: *Semantizer, s: *Scope, nodes: []const *sem.SGNode) !void {
