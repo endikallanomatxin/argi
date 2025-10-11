@@ -124,6 +124,19 @@ pub fn isIntegerType(t: sg.Type) bool {
     };
 }
 
+pub fn pointerToAny(mutability: syn.PointerMutability, allocator: *const std.mem.Allocator) !sg.Type {
+    const child = try allocator.create(sg.Type);
+    child.* = .{ .builtin = .Any };
+
+    const sem_ptr = try allocator.create(sg.PointerType);
+    sem_ptr.* = .{
+        .mutability = mutability,
+        .child = child,
+    };
+
+    return .{ .pointer_type = sem_ptr };
+}
+
 pub fn pointerMutabilityCompatible(expected: syn.PointerMutability, actual: syn.PointerMutability) bool {
     return switch (expected) {
         .read_only => true,
