@@ -1,30 +1,72 @@
+- Put numbers to the src files to indicate the order in which they operate.
 
-- Really avoid implicit conversions/coercions:
+- Split the semantizer into multiple passes:
 
-    - **No castear literales en codegen.**
-       Deja toda la fijación de literales en el **semantizador** (`coerceLiteralToBuiltin`, `coerceStructLiteral`, etc.).
-       **Acción:** elimina de `codegen.zig` `literalAsInteger/intLiteralValue` y las ramas que los usan en:
+    Checklists, worklists:
 
-       * `genBinaryOp`
-       * `genStructValueLiteral`
-       * init de bindings
-         Si tipos LLVM no coinciden → `InvalidType`. Codegen solo baja lo ya tipado.
+    * `TypeNames`, `TypeBodies`
+    * `Signatures` (funciones sin genéricos)
+    * `Bodies` (cuerpos a tipar)
+    * `Overloads` (call sites con args tipados)
+    * `Generics` (instanciaciones pedidas: funciones y tipos)
+    * `Abstracts` (pares abstracto↔concreto a verificar)
+    * `Arrays` (listas→arrays/inferencia de longitud)
 
-    - **Asignación de structs “reempacando” en codegen.**
+    Pasadas:
 
-       Quita el bloque que reconstruye agregados cuando los LLVM structs difieren.
-       Eso es conversión implícita encubierta. Si algún día soportas
-       “struct-coercions”, que sea en el semantizador; por ahora, **igualdad
-       estricta**.
+    1. **Index**
+       Registra símbolos top-level, plantillas genéricas y **stubs** nominales de tipos.
+       ✔ Garantiza: nombres en tablas, pero sin resolver cuerpos/firmas.
+       ➕ Encola `TypeBodies`, `Signatures`.
+
+    2. **Signatures**
+       Resuelve tipos de parámetros y retornos (no entra a los cuerpos).
+       ✔ Garantiza: firmas concretas para no genéricas.
+       ➕ Encola `Bodies`. Si falta un tipo ⇒ `TypeNames`.
+
+    3. **Bodies**
+       Tipado intra-función (bindings, literales, punteros, etc.), **sin** decidir overloads definitivos.
+       ✔ Garantiza: cada call site produce un `CallSite` (callee name, args tipados).
+       ➕ Encola `Overloads`, `Generics`, `Arrays`.
+
+    4. **Overloads**
+       Elige overload concreto si es determinista; si implica genéricos ⇒ `Generics`.
+       ✔ Garantiza: call sites fijados o re-encolados solo si cambió generación de tipos/ámbito.
+
+    5. **Generics**
+       Monomorfiza con caché `(template_id, subst_tuple<TypeId>)`. Registra la especialización como función/tipo nuevo y **re-encola** su firma/cuerpo donde toque.
+       ✔ Garantiza: no hay duplicados; la memo evita explosiones.
+
+    6. **Abstracts**
+       Verifica `canbe`/`defaultsto` contra `requirements` ahora que el universo de funciones está estable.
+       ✔ Diagnósticos definitivos y con candidatos.
+
+    7. **Coercions**
+       Literales a builtin, lista→array, RO/RW pointers, etc. Mensajes afinados (ya los tienes, solo muévelos aquí).
+
+    8. **Finalize**
+       Inserta `defer` automáticos, congela orden de emisión del SG, limpia diferidos.
+
+    Tu `Semantizer` actual se convierte en:
+
+    * **Contexto + helpers** (visitadores para cuerpo: `visitNode`, `coerce…`, etc.) usados por `pass_bodies` y amigos.
+    * **Driver** (o renómbralo a `SemanticPipeline`). El método `analyze()` pasa a ser un *thin wrapper* que crea el `Context`, lanza el `PassManager` y devuelve `root_nodes`.
+
+    Así **todo sigue “dentro” del semántico**, no como postprocesos, pero **ya no es un dios-objeto**: cada pasada es un módulo pequeño y testeable.
 
 
-- Implement checks like: `let x: UInt8 = 300` → error de rango.
+    Plan de migración en 5 pasos:
+
+    1. Extrae `resolveOverload`, `specificityScore`, `collectFunctionSignatures…` a `overload_resolver.zig`.
+    2. Crea `Context` con tus tablas de `Scope`, `root_list`, `pending_*` → **reemplázalos por checklists**.
+    3. Implementa `passIndex` y `passSignatures`; deja `visitNode` solo para `passBodies`.
+    4. Mete `Generics` y `Abstracts` como pasadas dedicadas, reutilizando tus `instantiateGeneric*` y `verifyAbstracts`.
+    5. Cambia `analyze()` para que llame al `PassManager` y elimine los reintentos globales; los reintentos ahora son **por checklist**.
+
 
 - Choice types: Implement
 
-- Generics:
-
-    - Compile time parameter inference
+- Implement checks like: `let x: UInt8 = 300` → error de rango.
 
 - Abstracts:
 
@@ -57,3 +99,20 @@
 - **`refineStructTypeWithActual` mutando in-place.**
    Riesgo de aliasing. Mejor clonar el `StructType` refinado e internarlo, no modificar el original.
 
+- Really avoid implicit conversions/coercions:
+
+    - **No castear literales en codegen.**
+       Deja toda la fijación de literales en el **semantizador** (`coerceLiteralToBuiltin`, `coerceStructLiteral`, etc.).
+       **Acción:** elimina de `codegen.zig` `literalAsInteger/intLiteralValue` y las ramas que los usan en:
+
+       * `genBinaryOp`
+       * `genStructValueLiteral`
+       * init de bindings
+         Si tipos LLVM no coinciden → `InvalidType`. Codegen solo baja lo ya tipado.
+
+    - **Asignación de structs “reempacando” en codegen.**
+
+       Quita el bloque que reconstruye agregados cuando los LLVM structs difieren.
+       Eso es conversión implícita encubierta. Si algún día soportas
+       “struct-coercions”, que sea en el semantizador; por ahora, **igualdad
+       estricta**.
