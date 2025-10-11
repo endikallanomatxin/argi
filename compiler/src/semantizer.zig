@@ -2549,6 +2549,62 @@ pub const Semantizer = struct {
     ) SemErr!TypedExpr {
         var rhs = try self.visitNode(pa.value.*, s);
 
+        if (pa.target.*.content == .struct_field_access) {
+            const sa = pa.target.*.content.struct_field_access;
+            const target_te = try self.visitNode(pa.target.*, s);
+            if (target_te.node.content != .struct_field_access)
+                return error.InvalidType;
+            const sf = target_te.node.content.struct_field_access;
+
+            const base = try self.visitNode(sa.struct_value.*, s);
+            const ptr_self = try self.ensureMutablePointer(sa.struct_value, base, s);
+
+            const ptr_info = ptr_self.ty.pointer_type.*;
+            if (ptr_info.child.* != .struct_type) {
+                const desc = try self.formatType(ptr_self.ty, s);
+                defer self.allocator.free(desc);
+                try self.diags.add(
+                    sa.struct_value.location,
+                    .semantic,
+                    "cannot assign field on value of type '{s}'",
+                    .{desc},
+                );
+                return error.Reported;
+            }
+
+            const struct_type = ptr_info.child.*.struct_type;
+            if (sf.field_index >= struct_type.fields.len) return error.SymbolNotFound;
+            const field_info = struct_type.fields[sf.field_index];
+
+            rhs = try self.coerceExprToType(field_info.ty, rhs, pa.value, s);
+            if (!typesExactlyEqual(field_info.ty, rhs.ty)) {
+                const expected = try self.formatType(field_info.ty, s);
+                const actual = try self.formatType(rhs.ty, s);
+                defer {
+                    self.allocator.free(expected);
+                    self.allocator.free(actual);
+                }
+                try self.diags.add(
+                    pa.value.*.location,
+                    .semantic,
+                    "cannot assign '{s}' to '{s}' (explicit casts not supported yet)",
+                    .{ actual, expected },
+                );
+                return error.Reported;
+            }
+
+            const store = sem.StructFieldStore{
+                .struct_ptr = ptr_self.node,
+                .struct_type = struct_type,
+                .field_index = sf.field_index,
+                .field_type = field_info.ty,
+                .value = rhs.node,
+            };
+
+            const node = try self.makeNode(undefined, .{ .struct_field_store = store }, s);
+            return .{ .node = node, .ty = .{ .builtin = .Any } };
+        }
+
         if (pa.target.*.content != .dereference) return error.InvalidType;
 
         const tgt_te = try self.visitNode(pa.target.*, s);

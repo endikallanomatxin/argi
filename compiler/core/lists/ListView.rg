@@ -9,15 +9,12 @@ view#(.list_value_type: Type) (
     .from: UInt64,
     .to: UInt64,
 ) -> (.view: ListView) := {
-
-    -- TODO: Implement error handling for invalid ranges.
+    zero :: UInt64 = 0
 
     if to < from {
         -- Invalid range, return an empty view.
-        view = (
-            .start = 0,
-            .length = 0,
-        )
+        view.start = zero
+        view.length = zero
         return
     }
 
@@ -26,10 +23,8 @@ view#(.list_value_type: Type) (
 
     if from >= list_length {
         -- Start index is out of bounds, return an empty view.
-        view = (
-            .start = 0,
-            .length = 0,
-        )
+        view.start = zero
+        view.length = zero
         return
     }
 
@@ -40,8 +35,6 @@ view#(.list_value_type: Type) (
 
     actual_to : UInt64 = to_mut
 
-    view = (
-        .start = from,
-        .length = actual_to - from + 1,
-    )
+    view.start = from
+    view.length = actual_to - from + 1
 }
