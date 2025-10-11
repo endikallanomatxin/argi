@@ -708,9 +708,9 @@ pub const Semantizer = struct {
                 for (lst.items) |cand| {
                     if (info.param_names.len == 0) {
                         const empty: []?sem.Type = &[_]?sem.Type{};
-                        if (!self.funcInputMatchesRequirement(&rq, &cand.input, concrete, empty, s))
+                        if (!abs.funcInputMatchesRequirement(&rq, &cand.input, concrete, empty, s))
                             continue;
-                        if (!self.funcOutputMatchesRequirement(&rq, &cand.output, empty, s))
+                        if (!abs.funcOutputMatchesRequirement(&rq, &cand.output, empty, s))
                             continue;
                         return true;
                     } else {
@@ -718,9 +718,9 @@ pub const Semantizer = struct {
                         defer self.allocator.free(bindings);
                         for (bindings, 0..) |_, idx| bindings[idx] = null;
 
-                        if (!self.funcInputMatchesRequirement(&rq, &cand.input, concrete, bindings, s))
+                        if (!abs.funcInputMatchesRequirement(&rq, &cand.input, concrete, bindings, s))
                             continue;
-                        if (!self.funcOutputMatchesRequirement(&rq, &cand.output, bindings, s))
+                        if (!abs.funcOutputMatchesRequirement(&rq, &cand.output, bindings, s))
                             continue;
                         return true;
                     }
@@ -846,91 +846,6 @@ pub const Semantizer = struct {
         const st_ptr = try self.allocator.create(sem.StructType);
         st_ptr.* = .{ .fields = fields };
         return st_ptr;
-    }
-
-    fn funcInputMatchesRequirement(
-        self: *Semantizer,
-        rq: *const abs.AbstractFunctionReqSem,
-        cand_in: *const sem.StructType,
-        concrete: sem.Type,
-        param_bindings: []?sem.Type,
-        s: *Scope,
-    ) bool {
-        _ = self;
-        const req_in = &rq.input;
-        if (cand_in.fields.len != req_in.fields.len) return false;
-
-        var i: usize = 0;
-        while (i < req_in.fields.len) : (i += 1) {
-            const rf = req_in.fields[i];
-            const cf = cand_in.fields[i];
-
-            if (helpers.containsIndex(rq.input_self_indices, @intCast(i))) {
-                if (!typ.typesExactlyEqual(concrete, cf.ty)) return false;
-                continue;
-            }
-
-            if (rq.input_abstract_requirements.len > i) {
-                if (rq.input_abstract_requirements[i]) |abs_name| {
-                    if (!abs.typeImplementsAbstract(abs_name, cf.ty, s)) return false;
-                    continue;
-                }
-            }
-
-            if (rq.input_generic_param_indices.len > i) {
-                if (rq.input_generic_param_indices[i]) |gi| {
-                    if (gi >= param_bindings.len) return false;
-                    if (param_bindings[gi]) |bound| {
-                        if (!typ.typesExactlyEqual(bound, cf.ty)) return false;
-                    } else {
-                        param_bindings[gi] = cf.ty;
-                    }
-                    continue;
-                }
-            }
-
-            if (!typ.typesExactlyEqual(rf.ty, cf.ty)) return false;
-        }
-        return true;
-    }
-
-    fn funcOutputMatchesRequirement(
-        self: *Semantizer,
-        rq: *const abs.AbstractFunctionReqSem,
-        cand_out: *const sem.StructType,
-        param_bindings: []?sem.Type,
-        s: *Scope,
-    ) bool {
-        _ = self;
-        if (cand_out.fields.len != rq.output.fields.len) return false;
-
-        var i: usize = 0;
-        while (i < rq.output.fields.len) : (i += 1) {
-            const ro = rq.output.fields[i];
-            const co = cand_out.fields[i];
-
-            if (rq.output_abstract_requirements.len > i) {
-                if (rq.output_abstract_requirements[i]) |abs_name| {
-                    if (!abs.typeImplementsAbstract(abs_name, co.ty, s)) return false;
-                    continue;
-                }
-            }
-
-            if (rq.output_generic_param_indices.len > i) {
-                if (rq.output_generic_param_indices[i]) |gi| {
-                    if (gi >= param_bindings.len) return false;
-                    if (param_bindings[gi]) |bound| {
-                        if (!typ.typesExactlyEqual(bound, co.ty)) return false;
-                    } else {
-                        param_bindings[gi] = co.ty;
-                    }
-                    continue;
-                }
-            }
-
-            if (!typ.typesExactlyEqual(ro.ty, co.ty)) return false;
-        }
-        return true;
     }
 
     //─────────────────────────────────────────────────────────  LITERALS
