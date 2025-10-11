@@ -1,13 +1,13 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
-const sem = @import("semantic_graph.zig");
+const sg = @import("semantic_graph.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
 pub const TypedExpr = struct {
-    node: *sem.SGNode,
-    ty: sem.Type,
+    node: *sg.SGNode,
+    ty: sg.Type,
 };
 
 pub const BuiltinTypeInfoKind = enum {
@@ -18,7 +18,7 @@ pub const BuiltinTypeInfoKind = enum {
 pub const pointer_size_bytes: u64 = @sizeOf(*usize);
 pub const pointer_alignment_bytes: u64 = pointer_size_bytes;
 
-pub fn typesStructurallyEqual(a: sem.Type, b: sem.Type) bool {
+pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
     return switch (a) {
         .builtin => |ab| switch (b) {
             .builtin => |bb| ab == bb,
@@ -76,7 +76,7 @@ pub fn typesStructurallyEqual(a: sem.Type, b: sem.Type) bool {
 }
 
 // Strict type equality: no wildcards; pointer subtypes must match exactly.
-pub fn typesExactlyEqual(a: sem.Type, b: sem.Type) bool {
+pub fn typesExactlyEqual(a: sg.Type, b: sg.Type) bool {
     return switch (a) {
         .builtin => |ab| switch (b) {
             .builtin => |bb| ab == bb,
@@ -107,14 +107,14 @@ pub fn typesExactlyEqual(a: sem.Type, b: sem.Type) bool {
     };
 }
 
-pub fn isAny(t: sem.Type) bool {
+pub fn isAny(t: sg.Type) bool {
     return switch (t) {
         .builtin => |bt| bt == .Any,
         else => false,
     };
 }
 
-pub fn isIntegerType(t: sem.Type) bool {
+pub fn isIntegerType(t: sg.Type) bool {
     return switch (t) {
         .builtin => |bt| switch (bt) {
             .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64 => true,
@@ -131,7 +131,7 @@ pub fn pointerMutabilityCompatible(expected: syn.PointerMutability, actual: syn.
     };
 }
 
-pub fn typesCompatible(expected: sem.Type, actual: sem.Type) bool {
+pub fn typesCompatible(expected: sg.Type, actual: sg.Type) bool {
     return switch (expected) {
         .builtin => |eb| switch (actual) {
             .builtin => |ab| eb == ab,
@@ -180,9 +180,17 @@ pub fn typesCompatible(expected: sem.Type, actual: sem.Type) bool {
     };
 }
 
+pub fn functionReturnType(fn_decl: *sg.FunctionDeclaration) sg.Type {
+    return switch (fn_decl.output.fields.len) {
+        0 => .{ .builtin = .Any },
+        1 => fn_decl.output.fields[0].ty,
+        else => .{ .struct_type = &fn_decl.output },
+    };
+}
+
 const Scope = @import("scope.zig").Scope;
 
-pub fn typeNameFor(s: *Scope, t: sem.Type) ?[]const u8 {
+pub fn typeNameFor(s: *Scope, t: sg.Type) ?[]const u8 {
     var cur: ?*Scope = s;
     while (cur) |sc| : (cur = sc.parent) {
         var it = sc.types.iterator();
@@ -192,4 +200,94 @@ pub fn typeNameFor(s: *Scope, t: sem.Type) ?[]const u8 {
         }
     }
     return null;
+}
+
+pub fn builtinFromName(name: []const u8) ?sg.BuiltinType {
+    return std.meta.stringToEnum(sg.BuiltinType, name);
+}
+
+fn appendType(buf: *std.ArrayList(u8), t: sg.Type) !void {
+    switch (t) {
+        .builtin => |bt| {
+            const s = @tagName(bt);
+            try buf.appendSlice(s);
+        },
+        .pointer_type => |ptr_info_ptr| {
+            const ptr_info = ptr_info_ptr.*;
+            const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
+            try buf.appendSlice(prefix);
+            try appendType(buf, ptr_info.child.*);
+        },
+        .struct_type => |st| {
+            try buf.appendSlice("{");
+            var i: usize = 0;
+            while (i < st.fields.len) : (i += 1) {
+                const fld = st.fields[i];
+                if (i != 0) try buf.appendSlice(", ");
+                try buf.appendSlice(".");
+                try buf.appendSlice(fld.name);
+                try buf.appendSlice(": ");
+                try appendType(buf, fld.ty);
+            }
+            try buf.appendSlice("}");
+        },
+    }
+}
+
+pub fn formatType(t: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) ![]u8 {
+    var buf = std.ArrayList(u8).init(allocator.*);
+    errdefer buf.deinit();
+    try appendTypePretty(&buf, t, s);
+    return try buf.toOwnedSlice();
+}
+
+pub fn appendTypePretty(buf: *std.ArrayList(u8), t: sg.Type, s: *Scope) !void {
+    if (typeNameFor(s, t)) |nm| {
+        try buf.appendSlice(nm);
+        return;
+    }
+    switch (t) {
+        .builtin => |bt| {
+            const sname = @tagName(bt);
+            try buf.appendSlice(sname);
+        },
+        .pointer_type => |ptr_info_ptr| {
+            const ptr_info = ptr_info_ptr.*;
+            const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
+            try buf.appendSlice(prefix);
+            try appendTypePretty(buf, ptr_info.child.*, s);
+        },
+        .struct_type => |_| {
+            // Fallback: avoid expanding anonymous structs in this context
+            try buf.appendSlice("{...}");
+        },
+        .array_type => |arr_ptr| {
+            const arr = arr_ptr.*;
+            var tmp: [32]u8 = undefined;
+            const len_slice = std.fmt.bufPrint(&tmp, "{d}", .{arr.length}) catch "?";
+            try buf.appendSlice("[");
+            try buf.appendSlice(len_slice);
+            try buf.appendSlice("]");
+            try appendTypePretty(buf, arr.element_type.*, s);
+        },
+    }
+}
+
+pub fn formatCallInput(st: *const sg.StructType, s: *Scope, allocator: *const std.mem.Allocator) ![]u8 {
+    var buf = std.ArrayList(u8).init(allocator.*);
+    errdefer buf.deinit();
+
+    try buf.appendSlice("(");
+    var i: usize = 0;
+    while (i < st.fields.len) : (i += 1) {
+        const fld = st.fields[i];
+        if (i != 0) try buf.appendSlice(", ");
+        try buf.appendSlice(".");
+        try buf.appendSlice(fld.name);
+        try buf.appendSlice(": ");
+        try appendTypePretty(&buf, fld.ty, s);
+    }
+    try buf.appendSlice(")");
+
+    return try buf.toOwnedSlice();
 }
