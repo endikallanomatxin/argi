@@ -5,9 +5,13 @@ const sem = @import("semantic_graph.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
-const types = @import("types.zig");
+const typ = @import("types.zig");
+const abs = @import("abstracts.zig");
+const gen = @import("generics.zig");
 
 const Scope = @import("scope.zig").Scope;
+
+const helpers = @import("helpers.zig");
 
 const SemErr = error{
     SymbolAlreadyDefined,
@@ -480,7 +484,7 @@ pub const Semantizer = struct {
         try s.types.put(ad.name.string, td);
 
         // Store abstract info (resolved requirements) in scope
-        var reqs = std.ArrayList(AbstractFunctionReqSem).init(self.allocator.*);
+        var reqs = std.ArrayList(abs.AbstractFunctionReqSem).init(self.allocator.*);
         const generic_params = ad.generic_params;
         for (ad.requires_functions) |rf| {
             // Build input struct resolving types; track Self/generic/abstract usages
@@ -623,7 +627,7 @@ pub const Semantizer = struct {
             self_idxs.deinit();
         }
 
-        const info = try self.allocator.create(AbstractInfo);
+        const info = try self.allocator.create(abs.AbstractInfo);
         info.* = .{
             .name = ad.name.string,
             .requirements = try reqs.toOwnedSlice(),
@@ -651,7 +655,7 @@ pub const Semantizer = struct {
         if (s.abstract_impls.getPtr(rel.name)) |lst| {
             try lst.append(.{ .ty = concrete_ty, .location = loc });
         } else {
-            var new_list = std.ArrayList(AbstractImplEntry).init(self.allocator.*);
+            var new_list = std.ArrayList(abs.AbstractImplEntry).init(self.allocator.*);
             try new_list.append(.{ .ty = concrete_ty, .location = loc });
             try s.abstract_impls.put(rel.name, new_list);
         }
@@ -676,7 +680,7 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
-    fn lookupAbstractInfo(_: *Semantizer, s: *Scope, name: []const u8) ?*AbstractInfo {
+    fn lookupAbstractInfo(_: *Semantizer, s: *Scope, name: []const u8) ?*abs.AbstractInfo {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.abstracts.get(name)) |info| return info;
@@ -684,7 +688,7 @@ pub const Semantizer = struct {
         return null;
     }
 
-    fn ensureConformance(self: *Semantizer, info: *AbstractInfo, concrete: sem.Type, s: *Scope) !void {
+    fn ensureConformance(self: *Semantizer, info: *abs.AbstractInfo, concrete: sem.Type, s: *Scope) !void {
         for (info.requirements) |rq| {
             if (!(try self.existsFunctionForRequirement(info, rq, concrete, s)))
                 return error.SymbolNotFound;
@@ -693,8 +697,8 @@ pub const Semantizer = struct {
 
     fn existsFunctionForRequirement(
         self: *Semantizer,
-        info: *const AbstractInfo,
-        rq: AbstractFunctionReqSem,
+        info: *const abs.AbstractInfo,
+        rq: abs.AbstractFunctionReqSem,
         concrete: sem.Type,
         s: *Scope,
     ) SemErr!bool {
@@ -833,10 +837,10 @@ pub const Semantizer = struct {
         if (any_error) return error.SymbolNotFound;
     }
 
-    fn buildExpectedInputWithConcrete(self: *Semantizer, rq: *const AbstractFunctionReqSem, concrete: sem.Type) !*sem.StructType {
+    fn buildExpectedInputWithConcrete(self: *Semantizer, rq: *const abs.AbstractFunctionReqSem, concrete: sem.Type) !*sem.StructType {
         var fields = try self.allocator.alloc(sem.StructTypeField, rq.input.fields.len);
         for (rq.input.fields, 0..) |f, i| {
-            const is_self = containsIndex(rq.input_self_indices, @intCast(i));
+            const is_self = helpers.containsIndex(rq.input_self_indices, @intCast(i));
             fields[i] = .{ .name = f.name, .ty = if (is_self) concrete else f.ty, .default_value = null };
         }
         const st_ptr = try self.allocator.create(sem.StructType);
@@ -846,12 +850,13 @@ pub const Semantizer = struct {
 
     fn funcInputMatchesRequirement(
         self: *Semantizer,
-        rq: *const AbstractFunctionReqSem,
+        rq: *const abs.AbstractFunctionReqSem,
         cand_in: *const sem.StructType,
         concrete: sem.Type,
         param_bindings: []?sem.Type,
         s: *Scope,
     ) bool {
+        _ = self;
         const req_in = &rq.input;
         if (cand_in.fields.len != req_in.fields.len) return false;
 
@@ -860,14 +865,14 @@ pub const Semantizer = struct {
             const rf = req_in.fields[i];
             const cf = cand_in.fields[i];
 
-            if (containsIndex(rq.input_self_indices, @intCast(i))) {
-                if (!types.typesExactlyEqual(concrete, cf.ty)) return false;
+            if (helpers.containsIndex(rq.input_self_indices, @intCast(i))) {
+                if (!typ.typesExactlyEqual(concrete, cf.ty)) return false;
                 continue;
             }
 
             if (rq.input_abstract_requirements.len > i) {
                 if (rq.input_abstract_requirements[i]) |abs_name| {
-                    if (!self.typeImplementsAbstract(abs_name, cf.ty, s)) return false;
+                    if (!abs.typeImplementsAbstract(abs_name, cf.ty, s)) return false;
                     continue;
                 }
             }
@@ -876,7 +881,7 @@ pub const Semantizer = struct {
                 if (rq.input_generic_param_indices[i]) |gi| {
                     if (gi >= param_bindings.len) return false;
                     if (param_bindings[gi]) |bound| {
-                        if (!types.typesExactlyEqual(bound, cf.ty)) return false;
+                        if (!typ.typesExactlyEqual(bound, cf.ty)) return false;
                     } else {
                         param_bindings[gi] = cf.ty;
                     }
@@ -884,18 +889,19 @@ pub const Semantizer = struct {
                 }
             }
 
-            if (!types.typesExactlyEqual(rf.ty, cf.ty)) return false;
+            if (!typ.typesExactlyEqual(rf.ty, cf.ty)) return false;
         }
         return true;
     }
 
     fn funcOutputMatchesRequirement(
         self: *Semantizer,
-        rq: *const AbstractFunctionReqSem,
+        rq: *const abs.AbstractFunctionReqSem,
         cand_out: *const sem.StructType,
         param_bindings: []?sem.Type,
         s: *Scope,
     ) bool {
+        _ = self;
         if (cand_out.fields.len != rq.output.fields.len) return false;
 
         var i: usize = 0;
@@ -905,7 +911,7 @@ pub const Semantizer = struct {
 
             if (rq.output_abstract_requirements.len > i) {
                 if (rq.output_abstract_requirements[i]) |abs_name| {
-                    if (!self.typeImplementsAbstract(abs_name, co.ty, s)) return false;
+                    if (!abs.typeImplementsAbstract(abs_name, co.ty, s)) return false;
                     continue;
                 }
             }
@@ -914,7 +920,7 @@ pub const Semantizer = struct {
                 if (rq.output_generic_param_indices[i]) |gi| {
                     if (gi >= param_bindings.len) return false;
                     if (param_bindings[gi]) |bound| {
-                        if (!types.typesExactlyEqual(bound, co.ty)) return false;
+                        if (!typ.typesExactlyEqual(bound, co.ty)) return false;
                     } else {
                         param_bindings[gi] = co.ty;
                     }
@@ -922,41 +928,9 @@ pub const Semantizer = struct {
                 }
             }
 
-            if (!types.typesExactlyEqual(ro.ty, co.ty)) return false;
+            if (!typ.typesExactlyEqual(ro.ty, co.ty)) return false;
         }
         return true;
-    }
-
-    fn typeImplementsAbstract(
-        self: *Semantizer,
-        abs_name: []const u8,
-        candidate: sem.Type,
-        s: *Scope,
-    ) bool {
-        _ = self;
-        var cur: ?*Scope = s;
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.abstract_impls.getPtr(abs_name)) |list_ptr| {
-                const impls = list_ptr.*;
-                for (impls.items) |impl| {
-                    if (types.typesExactlyEqual(impl.ty, candidate)) return true;
-                }
-            }
-        }
-
-        var cur_def: ?*Scope = s;
-        while (cur_def) |sc| : (cur_def = sc.parent) {
-            if (sc.abstract_defaults.getPtr(abs_name)) |def_entry| {
-                if (types.typesExactlyEqual(def_entry.*.ty, candidate)) return true;
-            }
-        }
-
-        return false;
-    }
-
-    fn containsIndex(list: []const u32, idx: u32) bool {
-        for (list) |v| if (v == idx) return true;
-        return false;
     }
 
     //─────────────────────────────────────────────────────────  LITERALS
@@ -1103,7 +1077,7 @@ pub const Semantizer = struct {
             if (s.generic_types.getPtr(d.name.string)) |lst| {
                 try lst.append(.{ .name = d.name.string, .location = d.value.location, .param_names = d.generic_params, .body = st_lit });
             } else {
-                var new_list = std.ArrayList(GenericTypeTemplate).init(self.allocator.*);
+                var new_list = std.ArrayList(gen.GenericTypeTemplate).init(self.allocator.*);
                 try new_list.append(.{ .name = d.name.string, .location = d.value.location, .param_names = d.generic_params, .body = st_lit });
                 try s.generic_types.put(d.name.string, new_list);
             }
@@ -1165,7 +1139,7 @@ pub const Semantizer = struct {
                     .body = f.body,
                 });
             } else {
-                var new_list = std.ArrayList(GenericTemplate).init(self.allocator.*);
+                var new_list = std.ArrayList(gen.GenericTemplate).init(self.allocator.*);
                 try new_list.append(.{
                     .name = f.name.string,
                     .location = loc,
@@ -1261,7 +1235,7 @@ pub const Semantizer = struct {
         if (p.functions.getPtr(f.name.string)) |list_ptr| {
             // prevent exact duplicate signature (same input structure, strict equality)
             for (list_ptr.items) |existing| {
-                if (types.typesExactlyEqual(.{ .struct_type = &existing.input }, .{ .struct_type = &fn_ptr.input }))
+                if (typ.typesExactlyEqual(.{ .struct_type = &existing.input }, .{ .struct_type = &fn_ptr.input }))
                     return error.SymbolAlreadyDefined;
             }
             try list_ptr.append(fn_ptr);
@@ -1288,7 +1262,7 @@ pub const Semantizer = struct {
 
         var rhs = try self.visitNode(a.value.*, s);
         rhs = try self.coerceExprToType(b.ty, rhs, a.value, s);
-        if (!types.typesExactlyEqual(b.ty, rhs.ty)) {
+        if (!typ.typesExactlyEqual(b.ty, rhs.ty)) {
             const expected = try self.formatType(b.ty, s);
             const actual = try self.formatType(rhs.ty, s);
             defer {
@@ -1456,7 +1430,7 @@ pub const Semantizer = struct {
             const elem_te = try self.visitNode(elem_node.*, s);
 
             if (expected_elem_ty_opt) |exp_ty| {
-                if (!types.typesStructurallyEqual(exp_ty, elem_te.ty)) {
+                if (!typ.typesStructurallyEqual(exp_ty, elem_te.ty)) {
                     const exp = try self.formatType(exp_ty, s);
                     const got = try self.formatType(elem_te.ty, s);
                     defer {
@@ -1499,7 +1473,7 @@ pub const Semantizer = struct {
 
         if (base.ty == .array_type) {
             const idx_te = try self.visitNode(ia.index.*, s);
-            if (!types.isIntegerType(idx_te.ty)) {
+            if (!typ.isIntegerType(idx_te.ty)) {
                 const idx_ty = try self.formatType(idx_te.ty, s);
                 defer self.allocator.free(idx_ty);
                 try self.diags.add(
@@ -1646,7 +1620,7 @@ pub const Semantizer = struct {
 
         if (base.ty == .array_type) {
             const index_expr = try self.visitNode(idx.index.*, s);
-            if (!types.isIntegerType(index_expr.ty)) {
+            if (!typ.isIntegerType(index_expr.ty)) {
                 const idx_ty = try self.formatType(index_expr.ty, s);
                 defer self.allocator.free(idx_ty);
                 try self.diags.add(
@@ -1662,7 +1636,7 @@ pub const Semantizer = struct {
             const arr_type_ptr = base.ty.array_type;
             const elem_ty = arr_type_ptr.*.element_type.*;
 
-            if (!types.typesStructurallyEqual(elem_ty, value_expr.ty)) {
+            if (!typ.typesStructurallyEqual(elem_ty, value_expr.ty)) {
                 const expected = try self.formatType(elem_ty, s);
                 const actual = try self.formatType(value_expr.ty, s);
                 defer {
@@ -2007,9 +1981,9 @@ pub const Semantizer = struct {
             if (sc.functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
                     const expected: sem.Type = .{ .struct_type = &cand.input };
-                    if (!types.typesCompatible(expected, in_ty)) continue;
+                    if (!typ.typesCompatible(expected, in_ty)) continue;
 
-                    const score = specificityScore(expected, in_ty);
+                    const score = abs.specificityScore(expected, in_ty);
                     if (best == null or score < best_score) {
                         best = cand;
                         best_score = score;
@@ -2062,7 +2036,7 @@ pub const Semantizer = struct {
         s: *Scope,
         name: []const u8,
         param_count: usize,
-    ) ?*const GenericTypeTemplate {
+    ) ?*const gen.GenericTypeTemplate {
         _ = self;
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
@@ -2144,7 +2118,7 @@ pub const Semantizer = struct {
 
     fn inferGenericParamFromCall(
         self: *Semantizer,
-        tmpl: GenericTemplate,
+        tmpl: gen.GenericTemplate,
         param_name: []const u8,
         call_input_ty: sem.Type,
         s: *Scope,
@@ -2193,11 +2167,11 @@ pub const Semantizer = struct {
 
             if (actual_field_ptr) |af| {
                 const actual_ty_field = af.ty;
-                if (types.typesStructurallyEqual(exp_field.ty, actual_ty_field)) {
+                if (typ.typesStructurallyEqual(exp_field.ty, actual_ty_field)) {
                     final_ty = actual_ty_field;
-                } else if (types.isAny(exp_field.ty)) {
+                } else if (typ.isAny(exp_field.ty)) {
                     final_ty = actual_ty_field;
-                } else if (types.typesCompatible(exp_field.ty, actual_ty_field)) {
+                } else if (typ.typesCompatible(exp_field.ty, actual_ty_field)) {
                     final_ty = actual_ty_field;
                 } else {
                     self.allocator.free(refined);
@@ -2273,7 +2247,7 @@ pub const Semantizer = struct {
 
                     if (s.functions.getPtr(name)) |fns| {
                         for (fns.items) |cand| {
-                            if (types.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
+                            if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
                                 return cand;
                         }
                     }
@@ -2356,7 +2330,7 @@ pub const Semantizer = struct {
                     // Check if already instantiated
                     if (s.functions.getPtr(name)) |fns| {
                         for (fns.items) |cand| {
-                            if (types.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
+                            if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
                                 return cand;
                         }
                     }
@@ -2503,7 +2477,7 @@ pub const Semantizer = struct {
         rhs = try self.coerceExprToType(lhs.ty, rhs, bo.right, s);
         lhs = try self.coerceExprToType(rhs.ty, lhs, bo.left, s);
 
-        if (!types.typesExactlyEqual(lhs.ty, rhs.ty)) {
+        if (!typ.typesExactlyEqual(lhs.ty, rhs.ty)) {
             const left_ty = try self.formatType(lhs.ty, s);
             const right_ty = try self.formatType(rhs.ty, s);
             defer {
@@ -2539,7 +2513,7 @@ pub const Semantizer = struct {
         rhs = try self.coerceExprToType(lhs.ty, rhs, c.right, s);
         lhs = try self.coerceExprToType(rhs.ty, lhs, c.left, s);
 
-        if (!types.typesExactlyEqual(lhs.ty, rhs.ty)) {
+        if (!typ.typesExactlyEqual(lhs.ty, rhs.ty)) {
             const left_ty = try self.formatType(lhs.ty, s);
             const right_ty = try self.formatType(rhs.ty, s);
             defer {
@@ -2772,7 +2746,7 @@ pub const Semantizer = struct {
             const field_info = struct_type.fields[sf.field_index];
 
             rhs = try self.coerceExprToType(field_info.ty, rhs, pa.value, s);
-            if (!types.typesExactlyEqual(field_info.ty, rhs.ty)) {
+            if (!typ.typesExactlyEqual(field_info.ty, rhs.ty)) {
                 const expected = try self.formatType(field_info.ty, s);
                 const actual = try self.formatType(rhs.ty, s);
                 defer {
@@ -2820,7 +2794,7 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        if (!types.typesStructurallyEqual(deref_sg.ty, rhs.ty)) {
+        if (!typ.typesStructurallyEqual(deref_sg.ty, rhs.ty)) {
             const expected = try self.formatType(deref_sg.ty, s);
             const actual = try self.formatType(rhs.ty, s);
             defer {
@@ -3280,7 +3254,7 @@ pub const Semantizer = struct {
         expr_node: *const syn.STNode,
         s: *Scope,
     ) SemErr!TypedExpr {
-        if (types.typesExactlyEqual(expected, expr.ty)) return expr;
+        if (typ.typesExactlyEqual(expected, expr.ty)) return expr;
 
         return switch (expected) {
             .array_type => |arr_info| self.convertListLiteralToArray(expr, arr_info, expr_node.location, s),
@@ -3425,7 +3399,7 @@ pub const Semantizer = struct {
                 .ty = act_field.ty,
             };
             field_expr = try self.coerceExprToType(exp_field.ty, field_expr, expr_node, s);
-            if (!types.typesExactlyEqual(exp_field.ty, field_expr.ty)) {
+            if (!typ.typesExactlyEqual(exp_field.ty, field_expr.ty)) {
                 const expected_ty = try self.formatType(exp_field.ty, s);
                 const actual_ty = try self.formatType(field_expr.ty, s);
                 defer {
@@ -3473,7 +3447,7 @@ pub const Semantizer = struct {
 
                 const expected_elem_ty = arr_info.element_type.*;
                 for (ll.element_types, 0..) |elem_ty, idx| {
-                    if (types.typesStructurallyEqual(expected_elem_ty, elem_ty)) continue;
+                    if (typ.typesStructurallyEqual(expected_elem_ty, elem_ty)) continue;
                     const exp = try self.formatType(expected_elem_ty, s);
                     const got = try self.formatType(elem_ty, s);
                     defer {
@@ -3535,7 +3509,7 @@ pub const Semantizer = struct {
 
         const first_ty = ll.element_types[0];
         for (ll.element_types, 0..) |elem_ty, idx| {
-            if (types.typesStructurallyEqual(first_ty, elem_ty)) continue;
+            if (typ.typesStructurallyEqual(first_ty, elem_ty)) continue;
             const exp = try self.formatType(first_ty, s);
             const got = try self.formatType(elem_ty, s);
             defer {
@@ -3721,7 +3695,7 @@ pub const Semantizer = struct {
         };
     }
 
-    fn lookupAbstractDefault(_: *Semantizer, s: *Scope, name: []const u8) ?AbstractDefaultEntry {
+    fn lookupAbstractDefault(_: *Semantizer, s: *Scope, name: []const u8) ?abs.AbstractDefaultEntry {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.abstract_defaults.get(name)) |def| return def;
@@ -3741,7 +3715,7 @@ pub const Semantizer = struct {
             if (sc.functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
                     const expected: sem.Type = .{ .struct_type = &cand.input };
-                    if (!types.typesCompatible(expected, in_ty)) continue;
+                    if (!typ.typesCompatible(expected, in_ty)) continue;
                     if (!first) try buf.appendSlice("\n");
                     first = false;
                     try buf.appendSlice("  - ");
@@ -3899,7 +3873,7 @@ pub const Semantizer = struct {
             var it = sc.types.iterator();
             while (it.next()) |entry| {
                 const td = entry.value_ptr.*;
-                if (types.typesExactlyEqual(td.ty, t)) return td.name;
+                if (typ.typesExactlyEqual(td.ty, t)) return td.name;
             }
         }
         return null;
@@ -3928,7 +3902,7 @@ pub const Semantizer = struct {
                     const ptr_info = first.ty.pointer_type.*;
                     if (ptr_info.mutability != .read_write) continue;
                     const pointee = ptr_info.child.*;
-                    if (types.typesExactlyEqual(pointee, ty)) return cand;
+                    if (typ.typesExactlyEqual(pointee, ty)) return cand;
                 }
             }
         }
@@ -3977,55 +3951,6 @@ pub const Semantizer = struct {
 };
 
 //────────────────────────────────────────────────────────────────────── BUILDER SCOPE
-// Generic function template used for monomorphization
-pub const GenericTemplate = struct {
-    name: []const u8,
-    location: tok.Location,
-    param_names: []const []const u8,
-    input: syn.StructTypeLiteral,
-    output: syn.StructTypeLiteral,
-    body: ?*syn.STNode,
-};
-
-// Generic type template for monomorphization of named struct types
-pub const GenericTypeTemplate = struct {
-    name: []const u8,
-    location: tok.Location,
-    param_names: []const []const u8,
-    body: syn.StructTypeLiteral,
-};
-// Abstract typing support
-const AbstractFunctionReqSem = struct {
-    name: []const u8,
-    input: sem.StructType,
-    output: sem.StructType,
-    // indices of input fields whose type was 'Self'
-    input_self_indices: []const u32,
-    // parallel slices to track generic parameter usage per field
-    input_generic_param_indices: []const ?u32,
-    output_generic_param_indices: []const ?u32,
-    // optional abstract requirements per field (null if none)
-    input_abstract_requirements: []const ?[]const u8,
-    output_abstract_requirements: []const ?[]const u8,
-};
-
-pub const AbstractInfo = struct {
-    name: []const u8,
-    requirements: []const AbstractFunctionReqSem,
-    param_names: []const []const u8,
-};
-pub const AbstractImplEntry = struct {
-    ty: sem.Type,
-    location: tok.Location,
-};
-pub const AbstractDefaultEntry = struct {
-    ty: sem.Type,
-    location: tok.Location,
-};
-
-pub const DeferredGroup = struct {
-    nodes: []const *sem.SGNode,
-};
 
 fn binaryOpVerb(op: tok.BinaryOperator) []const u8 {
     return switch (op) {
@@ -4037,43 +3962,6 @@ fn binaryOpVerb(op: tok.BinaryOperator) []const u8 {
     };
 }
 
-// Lower score = more specific. Assumes typesStructurallyEqual(expected, actual) already true.
-fn specificityScore(expected: sem.Type, actual: sem.Type) u32 {
-    return switch (expected) {
-        .builtin => 0,
-        .struct_type => |est| blk: {
-            var sum: u32 = 0;
-            const ast = actual.struct_type;
-            var i: usize = 0;
-            while (i < est.fields.len) : (i += 1) {
-                const fe = est.fields[i];
-                const fa = ast.fields[i];
-                sum += specificityScore(fe.ty, fa.ty);
-            }
-            break :blk sum;
-        },
-        .pointer_type => |ept_ptr| blk2: {
-            const apt_ptr = actual.pointer_type;
-            const ept = ept_ptr.*;
-            const apt = apt_ptr.*;
-
-            if (ept.mutability != apt.mutability)
-                break :blk2 5;
-
-            const expected_child = ept.child.*;
-            const actual_child = apt.child.*;
-
-            if (types.isAny(expected_child) or types.isAny(actual_child))
-                break :blk2 1;
-
-            break :blk2 specificityScore(expected_child, actual_child);
-        },
-        .array_type => |eat_ptr| blk_arr: {
-            const aat_ptr = actual.array_type;
-            const eat = eat_ptr.*;
-            const aat = aat_ptr.*;
-            if (eat.length != aat.length) break :blk_arr 10;
-            break :blk_arr specificityScore(eat.element_type.*, aat.element_type.*);
-        },
-    };
-}
+pub const DeferredGroup = struct {
+    nodes: []const *sem.SGNode,
+};
