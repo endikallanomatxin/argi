@@ -22,6 +22,14 @@ Int canbe UInt32
 Int canbe UInt64
 
 
+UInt : Abstract = ()
+UInt canbe UInt8
+UInt canbe UInt16
+UInt canbe UInt32
+UInt canbe UInt64
+
+
+
 -- TODO: Think if having SignedInteger and UnsignedInteger as abstracts is a
 -- good idea. I think it is not very useful. But consider.
 

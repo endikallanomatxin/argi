@@ -25,7 +25,7 @@ part of the core library.
 
 > It might be necessary to set the following environment variables to make zig work:
 > `ZIG_LOCAL_CACHE_DIR="$PWD/.zig-cache"`
-> `ZIG_GLOBAL_CACHE_DIR="$HOME/.cache"`
+> `ZIG_GLOBAL_CACHE_DIR="$PWD/.zig-global-cache"`
 
 
 ## Guidelines
@@ -41,6 +41,9 @@ part of the core library.
     6. Add the test to `compiler/tests/test.zig` where applicable.
     7. Evaluate if the diagnostics need improvement for the new feature and
        enhance them.
+
+- During development, if some error diagnostic is not clear or useful enough
+improve it.
 
 - If during development of a feature, you find some tangential improvement that
 should be made, or you foresee that some area needs further work, if it is not

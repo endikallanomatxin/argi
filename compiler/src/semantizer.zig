@@ -1201,7 +1201,7 @@ pub const Semantizer = struct {
             const bd = try self.allocator.create(sem.BindingDeclaration);
             bd.* = .{
                 .name = fld.name.string,
-                .mutability = .variable,
+                .mutability = .constant,
                 .ty = ty,
                 .initialization = dvp,
             };
@@ -1284,6 +1284,21 @@ pub const Semantizer = struct {
 
         var rhs = try self.visitNode(a.value.*, s);
         rhs = try self.coerceExprToType(b.ty, rhs, a.value, s);
+        if (!typesExactlyEqual(b.ty, rhs.ty)) {
+            const expected = try self.formatType(b.ty, s);
+            const actual = try self.formatType(rhs.ty, s);
+            defer {
+                self.allocator.free(expected);
+                self.allocator.free(actual);
+            }
+            try self.diags.add(
+                a.value.*.location,
+                .semantic,
+                "cannot assign '{s}' to '{s}' (explicit casts not supported yet)",
+                .{ actual, expected },
+            );
+            return error.Reported;
+        }
 
         const asg = try self.allocator.create(sem.Assignment);
         asg.* = .{ .sym_id = b, .value = rhs.node };
@@ -1806,11 +1821,14 @@ pub const Semantizer = struct {
                 error.Reported => return err,
                 else => err,
             };
-        if (std.mem.eql(u8, call.callee, "length"))
-            return self.handleLengthBuiltin(call, s) catch |err| switch (err) {
+        if (std.mem.eql(u8, call.callee, "length")) len_blk: {
+            const len_res = self.handleLengthBuiltin(call, s) catch |err| switch (err) {
                 error.Reported => return err,
-                else => err,
+                error.SymbolNotFound => break :len_blk,
+                else => return err,
             };
+            return len_res;
+        }
 
         const tv_in = try self.visitNode(call.input.*, s);
         if (s.lookupType(call.callee)) |type_decl| {
@@ -1821,9 +1839,9 @@ pub const Semantizer = struct {
 
         var chosen: *sem.FunctionDeclaration = undefined;
         if (call.type_arguments_struct) |stargs| {
-            chosen = try self.instantiateGenericNamed(call.callee, stargs, s);
+            chosen = try self.instantiateGenericNamed(call.callee, stargs, tv_in, s);
         } else if (call.type_arguments) |targs| {
-            chosen = try self.instantiateGeneric(call.callee, targs, s);
+            chosen = try self.instantiateGeneric(call.callee, targs, tv_in, s);
         } else {
             chosen = self.resolveOverload(call.callee, tv_in.ty, s) catch |err| switch (err) {
                 error.SymbolNotFound => {
@@ -1972,10 +1990,69 @@ pub const Semantizer = struct {
         return best.?;
     }
 
+    fn findFieldByName(st: *const sem.StructType, name: []const u8) ?*const sem.StructTypeField {
+        for (st.fields, 0..) |f, i| {
+            if (std.mem.eql(u8, f.name, name)) return &st.fields[i];
+        }
+        return null;
+    }
+
+    fn refineStructTypeWithActual(
+        self: *Semantizer,
+        expected_ptr: *sem.StructType,
+        actual_ty: sem.Type,
+    ) !bool {
+        if (actual_ty != .struct_type) return false;
+        const actual = actual_ty.struct_type;
+
+        const expected_fields = expected_ptr.fields;
+        var refined = try self.allocator.alloc(sem.StructTypeField, expected_fields.len);
+        errdefer self.allocator.free(refined);
+
+        var idx: usize = 0;
+        while (idx < expected_fields.len) : (idx += 1) {
+            const exp_field = expected_fields[idx];
+            const actual_field_ptr = findFieldByName(actual, exp_field.name);
+
+            var final_ty = exp_field.ty;
+
+            if (actual_field_ptr) |af| {
+                const actual_ty_field = af.ty;
+                if (typesStructurallyEqual(exp_field.ty, actual_ty_field)) {
+                    final_ty = actual_ty_field;
+                } else if (isAny(exp_field.ty)) {
+                    final_ty = actual_ty_field;
+                } else if (typesCompatible(exp_field.ty, actual_ty_field)) {
+                    final_ty = actual_ty_field;
+                } else {
+                    self.allocator.free(refined);
+                    return false;
+                }
+            } else {
+                if (exp_field.default_value == null) {
+                    self.allocator.free(refined);
+                    return false;
+                }
+            }
+
+            refined[idx] = .{
+                .name = exp_field.name,
+                .ty = final_ty,
+                .default_value = exp_field.default_value,
+            };
+        }
+
+        const old_slice = expected_ptr.fields;
+        expected_ptr.fields = refined;
+        self.allocator.free(@constCast(old_slice));
+        return true;
+    }
+
     fn instantiateGenericNamed(
         self: *Semantizer,
         name: []const u8,
         stargs: syn.StructTypeLiteral,
+        call_input: TypedExpr,
         s: *Scope,
     ) SemErr!*sem.FunctionDeclaration {
         var cur: ?*Scope = s;
@@ -2007,6 +2084,8 @@ pub const Semantizer = struct {
 
                     const in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, &subst);
                     const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, &subst);
+
+                    if (!(try self.refineStructTypeWithActual(in_struct_ptr, call_input.ty))) continue;
 
                     if (s.functions.getPtr(name)) |fns| {
                         for (fns.items) |cand| {
@@ -2068,6 +2147,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         name: []const u8,
         type_args_syn: []const syn.Type,
+        call_input: TypedExpr,
         s: *Scope,
     ) SemErr!*sem.FunctionDeclaration {
         var cur: ?*Scope = s;
@@ -2086,6 +2166,8 @@ pub const Semantizer = struct {
 
                     const in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, &subst);
                     const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, &subst);
+
+                    if (!(try self.refineStructTypeWithActual(in_struct_ptr, call_input.ty))) continue;
 
                     // Check if already instantiated
                     if (s.functions.getPtr(name)) |fns| {
@@ -2196,8 +2278,52 @@ pub const Semantizer = struct {
         bo: syn.BinaryOperation,
         s: *Scope,
     ) SemErr!TypedExpr {
-        const lhs = try self.visitNode(bo.left.*, s);
-        const rhs = try self.visitNode(bo.right.*, s);
+        var lhs = try self.visitNode(bo.left.*, s);
+        var rhs = try self.visitNode(bo.right.*, s);
+
+        const lhs_is_ptr = lhs.ty == .pointer_type;
+        const rhs_is_ptr = rhs.ty == .pointer_type;
+        if (bo.operator == .addition and lhs_is_ptr != rhs_is_ptr) {
+            const int_ty = if (lhs_is_ptr) rhs.ty else lhs.ty;
+            const int_node = if (lhs_is_ptr) bo.right else bo.left;
+            const is_valid_index = int_ty == .builtin and (int_ty.builtin == .Int64 or int_ty.builtin == .UInt64);
+            if (!is_valid_index) {
+                const other_str = try self.formatType(int_ty, s);
+                defer self.allocator.free(other_str);
+                try self.diags.add(
+                    int_node.*.location,
+                    .semantic,
+                    "pointer addition requires a 64-bit integer offset, but '{s}' was provided",
+                    .{other_str},
+                );
+                return error.Reported;
+            }
+
+            const bin = try self.allocator.create(sem.BinaryOperation);
+            bin.* = .{ .operator = bo.operator, .left = lhs.node, .right = rhs.node };
+            const n = try self.makeNode(undefined, .{ .binary_operation = bin.* }, s);
+            return .{ .node = n, .ty = if (lhs_is_ptr) lhs.ty else rhs.ty };
+        }
+
+        rhs = try self.coerceExprToType(lhs.ty, rhs, bo.right, s);
+        lhs = try self.coerceExprToType(rhs.ty, lhs, bo.left, s);
+
+        if (!typesExactlyEqual(lhs.ty, rhs.ty)) {
+            const left_ty = try self.formatType(lhs.ty, s);
+            const right_ty = try self.formatType(rhs.ty, s);
+            defer {
+                self.allocator.free(left_ty);
+                self.allocator.free(right_ty);
+            }
+            const verb = binaryOpVerb(bo.operator);
+            try self.diags.add(
+                bo.left.*.location,
+                .semantic,
+                "cannot {s} '{s}' and '{s}'",
+                .{ verb, left_ty, right_ty },
+            );
+            return error.Reported;
+        }
 
         const bin = try self.allocator.create(sem.BinaryOperation);
         bin.* = .{ .operator = bo.operator, .left = lhs.node, .right = rhs.node };
@@ -2212,8 +2338,27 @@ pub const Semantizer = struct {
         c: syn.Comparison,
         s: *Scope,
     ) SemErr!TypedExpr {
-        const lhs = try self.visitNode(c.left.*, s);
-        const rhs = try self.visitNode(c.right.*, s);
+        var lhs = try self.visitNode(c.left.*, s);
+        var rhs = try self.visitNode(c.right.*, s);
+
+        rhs = try self.coerceExprToType(lhs.ty, rhs, c.right, s);
+        lhs = try self.coerceExprToType(rhs.ty, lhs, c.left, s);
+
+        if (!typesExactlyEqual(lhs.ty, rhs.ty)) {
+            const left_ty = try self.formatType(lhs.ty, s);
+            const right_ty = try self.formatType(rhs.ty, s);
+            defer {
+                self.allocator.free(left_ty);
+                self.allocator.free(right_ty);
+            }
+            try self.diags.add(
+                c.left.*.location,
+                .semantic,
+                "cannot compare '{s}' and '{s}'",
+                .{ left_ty, right_ty },
+            );
+            return error.Reported;
+        }
 
         const cmp_ptr = try self.allocator.create(sem.Comparison);
         cmp_ptr.* = .{
@@ -2402,12 +2547,14 @@ pub const Semantizer = struct {
         pa: syn.PointerAssignment,
         s: *Scope,
     ) SemErr!TypedExpr {
-        const rhs = try self.visitNode(pa.value.*, s);
+        var rhs = try self.visitNode(pa.value.*, s);
 
         if (pa.target.*.content != .dereference) return error.InvalidType;
 
         const tgt_te = try self.visitNode(pa.target.*, s);
         const deref_sg = tgt_te.node.content.dereference;
+
+        rhs = try self.coerceExprToType(deref_sg.ty, rhs, pa.value, s);
 
         if (deref_sg.pointer_type.*.mutability != .read_write) {
             const ptr_ty: sem.Type = .{ .pointer_type = deref_sg.pointer_type };
@@ -2432,7 +2579,7 @@ pub const Semantizer = struct {
             try self.diags.add(
                 pa.value.*.location,
                 .semantic,
-                "cannot assign value of type '{s}' to location of type '{s}'",
+                "cannot assign '{s}' to '{s}' (explicit casts not supported yet)",
                 .{ actual, expected },
             );
             return error.Reported;
@@ -2504,54 +2651,50 @@ pub const Semantizer = struct {
 
         switch (value_te.node.content) {
             .list_literal => |ll| {
-                const len = ll.elements.len;
-                if (len > std.math.maxInt(i32)) {
+                const len_u64: u64 = @intCast(ll.elements.len);
+                if (len_u64 > std.math.maxInt(i64)) {
                     try self.diags.add(
                         arg_loc,
                         .semantic,
-                        "length result exceeds Int32 range",
+                        "length result exceeds supported integer range",
                         .{},
                     );
                     return error.Reported;
                 }
-                return try self.makeIntLiteral(arg_loc, @intCast(len), .{ .builtin = .Int32 });
+                return try self.makeIntLiteral(arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
             },
             .array_literal => |al| {
-                if (al.length > std.math.maxInt(i32)) {
+                const len_u64: u64 = @intCast(al.length);
+                if (len_u64 > std.math.maxInt(i64)) {
                     try self.diags.add(
                         arg_loc,
                         .semantic,
-                        "length result exceeds Int32 range",
+                        "length result exceeds supported integer range",
                         .{},
                     );
                     return error.Reported;
                 }
-                return try self.makeIntLiteral(arg_loc, @intCast(al.length), .{ .builtin = .Int32 });
+                return try self.makeIntLiteral(arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
             },
             else => {},
         }
 
         if (value_te.ty == .array_type) {
             const arr = value_te.ty.array_type.*;
-            if (arr.length > std.math.maxInt(i32)) {
+            const len_u64: u64 = @intCast(arr.length);
+            if (len_u64 > std.math.maxInt(i64)) {
                 try self.diags.add(
                     arg_loc,
                     .semantic,
-                    "length result exceeds Int32 range",
+                    "length result exceeds supported integer range",
                     .{},
                 );
                 return error.Reported;
             }
-            return try self.makeIntLiteral(arg_loc, @intCast(arr.length), .{ .builtin = .Int32 });
+            return try self.makeIntLiteral(arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
         }
 
-        try self.diags.add(
-            arg_loc,
-            .semantic,
-            "length expects a list literal or array (e.g. length((1, 2, 3)))",
-            .{},
-        );
-        return error.Reported;
+        return error.SymbolNotFound;
     }
 
     fn handleTypeOf(
@@ -2886,10 +3029,176 @@ pub const Semantizer = struct {
         expr_node: *const syn.STNode,
         s: *Scope,
     ) SemErr!TypedExpr {
+        if (typesExactlyEqual(expected, expr.ty)) return expr;
+
         return switch (expected) {
             .array_type => |arr_info| self.convertListLiteralToArray(expr, arr_info, expr_node.location, s),
+            .builtin => |bt| try self.coerceLiteralToBuiltin(bt, expr, expr_node),
+            .struct_type => |st| try self.coerceStructLiteral(st, expr, expr_node, s),
             else => expr,
         };
+    }
+
+    fn coerceLiteralToBuiltin(
+        self: *Semantizer,
+        target: sem.BuiltinType,
+        expr: TypedExpr,
+        expr_node: *const syn.STNode,
+    ) SemErr!TypedExpr {
+        if (expr.node.content != .value_literal) return expr;
+
+        const lit = expr.node.content.value_literal;
+        switch (lit) {
+            .int_literal => |value| {
+                const maybe = try self.intLiteralAs(target, value, expr_node.location);
+                if (maybe) |converted| return converted;
+            },
+            .float_literal => |value| {
+                const maybe = try self.floatLiteralAs(target, value, expr_node.location);
+                if (maybe) |converted| return converted;
+            },
+            else => {},
+        }
+        return expr;
+    }
+
+    fn intLiteralAs(
+        self: *Semantizer,
+        target: sem.BuiltinType,
+        value: i64,
+        loc: tok.Location,
+    ) SemErr!?TypedExpr {
+        const type_name = @tagName(target);
+        return switch (target) {
+            .Int8, .Int16, .Int32, .Int64 => blk_signed: {
+                const Bounds = struct { min: i64, max: i64 };
+                const bounds: Bounds = switch (target) {
+                    .Int8 => .{ .min = @as(i64, std.math.minInt(i8)), .max = @as(i64, std.math.maxInt(i8)) },
+                    .Int16 => .{ .min = @as(i64, std.math.minInt(i16)), .max = @as(i64, std.math.maxInt(i16)) },
+                    .Int32 => .{ .min = @as(i64, std.math.minInt(i32)), .max = @as(i64, std.math.maxInt(i32)) },
+                    .Int64 => .{ .min = std.math.minInt(i64), .max = std.math.maxInt(i64) },
+                    else => unreachable,
+                };
+                if (value < bounds.min or value > bounds.max) {
+                    try self.diags.add(
+                        loc,
+                        .semantic,
+                        "integer literal {d} does not fit in '{s}' (min {d}, max {d})",
+                        .{ value, type_name, bounds.min, bounds.max },
+                    );
+                    return error.Reported;
+                }
+                break :blk_signed try self.makeIntLiteral(loc, value, .{ .builtin = target });
+            },
+            .UInt8, .UInt16, .UInt32, .UInt64 => blk_unsigned: {
+                if (value < 0) {
+                    try self.diags.add(
+                        loc,
+                        .semantic,
+                        "integer literal {d} does not fit in '{s}' (min 0)",
+                        .{ value, type_name },
+                    );
+                    return error.Reported;
+                }
+                const max_val: u64 = switch (target) {
+                    .UInt8 => std.math.maxInt(u8),
+                    .UInt16 => std.math.maxInt(u16),
+                    .UInt32 => std.math.maxInt(u32),
+                    .UInt64 => std.math.maxInt(u64),
+                    else => unreachable,
+                };
+                const unsigned_value: u64 = @intCast(value);
+                if (unsigned_value > max_val) {
+                    try self.diags.add(
+                        loc,
+                        .semantic,
+                        "integer literal {d} does not fit in '{s}' (max {d})",
+                        .{ value, type_name, max_val },
+                    );
+                    return error.Reported;
+                }
+                break :blk_unsigned try self.makeIntLiteral(loc, value, .{ .builtin = target });
+            },
+            else => null,
+        };
+    }
+
+    fn floatLiteralAs(
+        self: *Semantizer,
+        target: sem.BuiltinType,
+        value: f64,
+        loc: tok.Location,
+    ) SemErr!?TypedExpr {
+        return switch (target) {
+            .Float16, .Float32, .Float64 => blk: {
+                const lit_ptr = try self.allocator.create(sem.ValueLiteral);
+                lit_ptr.* = .{ .float_literal = value };
+                const node = try self.makeNode(loc, .{ .value_literal = lit_ptr.* }, null);
+                break :blk TypedExpr{ .node = node, .ty = .{ .builtin = target } };
+            },
+            else => null,
+        };
+    }
+
+    fn coerceStructLiteral(
+        self: *Semantizer,
+        expected: *const sem.StructType,
+        expr: TypedExpr,
+        expr_node: *const syn.STNode,
+        s: *Scope,
+    ) SemErr!TypedExpr {
+        if (expr.node.content != .struct_value_literal) return expr;
+        const lit = expr.node.content.struct_value_literal;
+        const actual_struct = lit.ty.struct_type;
+
+        if (expected.fields.len != actual_struct.fields.len or
+            expected.fields.len != lit.fields.len)
+        {
+            // Shapes differ; let caller handle mismatch later.
+            return expr;
+        }
+
+        var coerced_fields = try self.allocator.alloc(sem.StructValueLiteralField, expected.fields.len);
+        var i: usize = 0;
+        while (i < expected.fields.len) : (i += 1) {
+            const exp_field = expected.fields[i];
+            const act_field = actual_struct.fields[i];
+            if (!std.mem.eql(u8, exp_field.name, act_field.name)) {
+                self.allocator.free(coerced_fields);
+                return expr;
+            }
+
+            const field_node = @constCast(lit.fields[i].value);
+            var field_expr = TypedExpr{
+                .node = field_node,
+                .ty = act_field.ty,
+            };
+            field_expr = try self.coerceExprToType(exp_field.ty, field_expr, expr_node, s);
+            if (!typesExactlyEqual(exp_field.ty, field_expr.ty)) {
+                const expected_ty = try self.formatType(exp_field.ty, s);
+                const actual_ty = try self.formatType(field_expr.ty, s);
+                defer {
+                    self.allocator.free(expected_ty);
+                    self.allocator.free(actual_ty);
+                }
+                try self.diags.add(
+                    expr_node.location,
+                    .semantic,
+                    "cannot initialize field '.{s}' with '{s}' (expected '{s}')",
+                    .{ exp_field.name, actual_ty, expected_ty },
+                );
+                self.allocator.free(coerced_fields);
+                return error.Reported;
+            }
+
+            coerced_fields[i] = .{ .name = exp_field.name, .value = field_expr.node };
+        }
+
+        const lit_ptr = try self.allocator.create(sem.StructValueLiteral);
+        lit_ptr.* = .{ .fields = coerced_fields, .ty = .{ .struct_type = expected } };
+
+        const node = try self.makeNode(expr_node.location, .{ .struct_value_literal = lit_ptr }, null);
+        return .{ .node = node, .ty = .{ .struct_type = expected } };
     }
 
     fn convertListLiteralToArray(
@@ -3039,9 +3348,10 @@ pub const Semantizer = struct {
                 // If it's an abstract, require a defaultsto to use as a type
                 if (self.lookupAbstractInfo(s, id)) |_| {
                     if (self.lookupAbstractDefault(s, id)) |def_entry|
-                        break :blk def_entry.ty
-                    else
-                        break :blk error.AbstractNeedsDefault;
+                        break :blk def_entry.ty;
+                    // Treat abstract types without defaults as 'Any' so they can be
+                    // used in signatures; conformance is verified when instantiating.
+                    break :blk .{ .builtin = .Any };
                 }
                 if (s.lookupType(id)) |td|
                     break :blk td.ty;
@@ -3064,7 +3374,10 @@ pub const Semantizer = struct {
                     break :blk_g .{ .builtin = .Any };
                 }
 
-                const st_ptr = try self.instantiateGenericTypeNamed(base_name, g.args, s);
+                const st_ptr = self.instantiateGenericTypeNamed(base_name, g.args, s) catch |err| switch (err) {
+                    error.SymbolNotFound => break :blk_g error.UnknownType,
+                    else => return err,
+                };
                 break :blk_g .{ .struct_type = st_ptr };
             },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
@@ -3121,7 +3434,10 @@ pub const Semantizer = struct {
                 }
 
                 // For now, ignore outer substitutions for base_name; stargs are resolved inside
-                const st_ptr = try self.instantiateGenericTypeNamed(base_name, g.args, s);
+                const st_ptr = self.instantiateGenericTypeNamed(base_name, g.args, s) catch |err| switch (err) {
+                    error.SymbolNotFound => break :blk_g error.UnknownType,
+                    else => return err,
+                };
                 break :blk_g .{ .struct_type = st_ptr };
             },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteralWithSubst(st, s, subst) },
@@ -3582,6 +3898,16 @@ fn isAny(t: sem.Type) bool {
     return switch (t) {
         .builtin => |bt| bt == .Any,
         else => false,
+    };
+}
+
+fn binaryOpVerb(op: tok.BinaryOperator) []const u8 {
+    return switch (op) {
+        .addition => "add",
+        .subtraction => "subtract",
+        .multiplication => "multiply",
+        .division => "divide",
+        .modulo => "mod",
     };
 }
 
