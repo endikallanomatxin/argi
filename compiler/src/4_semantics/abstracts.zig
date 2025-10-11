@@ -1,7 +1,8 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
-const sem = @import("semantic_graph.zig");
+const sg = @import("semantic_graph.zig");
+const sem = @import("semantizer.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
@@ -13,8 +14,8 @@ const Scope = @import("scope.zig").Scope;
 // Abstract typing support
 pub const AbstractFunctionReqSem = struct {
     name: []const u8,
-    input: sem.StructType,
-    output: sem.StructType,
+    input: sg.StructType,
+    output: sg.StructType,
     // indices of input fields whose type was 'Self'
     input_self_indices: []const u32,
     // parallel slices to track generic parameter usage per field
@@ -31,17 +32,17 @@ pub const AbstractInfo = struct {
     param_names: []const []const u8,
 };
 pub const AbstractImplEntry = struct {
-    ty: sem.Type,
+    ty: sg.Type,
     location: tok.Location,
 };
 pub const AbstractDefaultEntry = struct {
-    ty: sem.Type,
+    ty: sg.Type,
     location: tok.Location,
 };
 
 pub fn typeImplementsAbstract(
     abs_name: []const u8,
-    candidate: sem.Type,
+    candidate: sg.Type,
     s: *Scope,
 ) bool {
     var cur: ?*Scope = s;
@@ -65,7 +66,7 @@ pub fn typeImplementsAbstract(
 }
 
 // Lower score = more specific. Assumes typesStructurallyEqual(expected, actual) already true.
-pub fn specificityScore(expected: sem.Type, actual: sem.Type) u32 {
+pub fn specificityScore(expected: sg.Type, actual: sg.Type) u32 {
     return switch (expected) {
         .builtin => 0,
         .struct_type => |est| blk: {
@@ -107,9 +108,9 @@ pub fn specificityScore(expected: sem.Type, actual: sem.Type) u32 {
 
 pub fn funcInputMatchesRequirement(
     rq: *const AbstractFunctionReqSem,
-    cand_in: *const sem.StructType,
-    concrete: sem.Type,
-    param_bindings: []?sem.Type,
+    cand_in: *const sg.StructType,
+    concrete: sg.Type,
+    param_bindings: []?sg.Type,
     s: *Scope,
 ) bool {
     const req_in = &rq.input;
@@ -151,8 +152,8 @@ pub fn funcInputMatchesRequirement(
 
 pub fn funcOutputMatchesRequirement(
     rq: *const AbstractFunctionReqSem,
-    cand_out: *const sem.StructType,
-    param_bindings: []?sem.Type,
+    cand_out: *const sg.StructType,
+    param_bindings: []?sg.Type,
     s: *Scope,
 ) bool {
     if (cand_out.fields.len != rq.output.fields.len) return false;
@@ -184,4 +185,33 @@ pub fn funcOutputMatchesRequirement(
         if (!typ.typesExactlyEqual(ro.ty, co.ty)) return false;
     }
     return true;
+}
+
+pub fn resolveOverload(name: []const u8, in_ty: sg.Type, s: *Scope) sem.SemErr!*sg.FunctionDeclaration {
+    var best: ?*sg.FunctionDeclaration = null;
+    var best_score: u32 = std.math.maxInt(u32);
+    var ambiguous = false;
+
+    var cur: ?*Scope = s;
+    while (cur) |sc| : (cur = sc.parent) {
+        if (sc.functions.getPtr(name)) |list_ptr| {
+            for (list_ptr.items) |cand| {
+                const expected: sg.Type = .{ .struct_type = &cand.input };
+                if (!typ.typesCompatible(expected, in_ty)) continue;
+
+                const score = specificityScore(expected, in_ty);
+                if (best == null or score < best_score) {
+                    best = cand;
+                    best_score = score;
+                    ambiguous = false;
+                } else if (score == best_score) {
+                    // ambiguous with same specificity
+                    ambiguous = true;
+                }
+            }
+        }
+    }
+    if (best == null) return error.SymbolNotFound;
+    if (ambiguous) return error.AmbiguousOverload;
+    return best.?;
 }
