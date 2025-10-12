@@ -1,0 +1,2966 @@
+const std = @import("std");
+const tok = @import("../2_tokens/token.zig");
+const syn = @import("../3_syntax/syntax_tree.zig");
+const sg = @import("semantic_graph.zig");
+const sgp = @import("semantic_graph_print.zig");
+const diagnostic = @import("../1_base/diagnostic.zig");
+
+const typ = @import("types.zig");
+const abs = @import("abstracts.zig");
+const gen = @import("generics.zig");
+
+const Scope = @import("scope.zig").Scope;
+const SemErr = @import("errors.zig").SemErr;
+
+//──────────────────────────────────────────────────────────────────────────────
+//  SEMANTIZER
+//──────────────────────────────────────────────────────────────────────────────
+pub const Semantizer = struct {
+    allocator: *const std.mem.Allocator,
+    st_nodes: []const *syn.STNode, // entrada
+    root_list: std.ArrayList(*sg.SGNode), // buffer mut
+    root_nodes: []const *sg.SGNode = &.{}, // slice final
+    diags: *diagnostic.Diagnostics,
+
+    // ── Reintentos top-level
+    pending_now: std.ArrayList(*const syn.STNode),
+    pending_next: std.ArrayList(*const syn.STNode),
+    defer_unknown_top_level: bool = false,
+    current_top_node: ?*const syn.STNode = null,
+    max_retry_rounds: u32 = 8,
+
+    pub fn init(
+        alloc: *const std.mem.Allocator,
+        st: []const *syn.STNode,
+        diags: *diagnostic.Diagnostics,
+    ) Semantizer {
+        return .{
+            .allocator = alloc,
+            .st_nodes = st,
+            .root_list = std.ArrayList(*sg.SGNode).init(alloc.*),
+            .diags = diags,
+            .pending_now = std.ArrayList(*const syn.STNode).init(alloc.*),
+            .pending_next = std.ArrayList(*const syn.STNode).init(alloc.*),
+        };
+    }
+
+    pub fn analyze(self: *Semantizer) SemErr![]const *sg.SGNode {
+        var global = try Scope.init(self.allocator, null, null);
+
+        // 1) Pasada inicial: difiere los UnknownType top-level
+        self.defer_unknown_top_level = true;
+        for (self.st_nodes) |n| {
+            self.current_top_node = n;
+            _ = self.visitNode(n.*, &global) catch {};
+        }
+        self.current_top_node = null;
+
+        // 2) Rondas de reintento: solo lo pendiente
+        var round: u32 = 0;
+        while (self.pending_next.items.len > 0 and round < self.max_retry_rounds) {
+            // swap pending_next -> pending_now
+            const tmp = self.pending_now;
+            self.pending_now = self.pending_next;
+            self.pending_next = tmp;
+            self.pending_next.items.len = 0;
+
+            var progressed = false;
+            for (self.pending_now.items) |pn| {
+                self.current_top_node = pn;
+                if (self.visitNode(pn.*, &global)) |_| {
+                    progressed = true;
+                } else |_| {
+                    // Las causas distintas de UnknownType ya se reportan dentro.
+                    // UnknownType vuelve a entrar en pending_next si procede.
+                }
+            }
+            self.current_top_node = null;
+            self.pending_now.items.len = 0; // vaciar
+            if (!progressed) break;
+            round += 1;
+        }
+
+        // 3) Último pase: ya NO diferir => emitir diags de lo que quede
+        self.defer_unknown_top_level = false;
+        if (self.pending_next.items.len > 0) {
+            for (self.pending_next.items) |pn| {
+                self.current_top_node = pn;
+                _ = self.visitNode(pn.*, &global) catch {};
+            }
+            self.current_top_node = null;
+            self.pending_next.items.len = 0;
+        }
+
+        // Final conformance verification for abstracts (top-level scope)
+        try abs.verifyAbstracts(&global, self.allocator, self.diags);
+
+        self.root_nodes = try self.root_list.toOwnedSlice();
+        self.root_list.deinit();
+        self.clearDeferred(&global);
+        return self.root_nodes;
+    }
+
+    pub fn printSG(self: *Semantizer) void {
+        std.debug.print("\nSEMANTIC GRAPH:\n", .{});
+        for (self.root_nodes) |n| sgp.printNode(n, 0);
+    }
+
+    //────────────────────────────────────────────────────────────────── visitors
+    pub fn visitNode(self: *Semantizer, n: syn.STNode, s: *Scope) SemErr!typ.TypedExpr {
+        return switch (n.content) {
+            .symbol_declaration => |d| self.handleSymbolDecl(d, s, n.location) catch |err| blk: {
+                switch (err) {
+                    error.UnknownType => {
+                        if (s.parent == null and self.defer_unknown_top_level) {
+                            try self.pushTopLevelForRetry();
+                            break :blk error.Reported; // sin diagnóstico por ahora
+                        }
+                        // Diagnóstico normal (no diferido)
+                        if (d.type) |tp| if (tp == .type_name) {
+                            try self.diags.add(
+                                n.location,
+                                .semantic,
+                                "unknown type '{s}' in declaration of '{s}'",
+                                .{ tp.type_name.string, d.name.string },
+                            );
+                            break :blk err;
+                        };
+                        try self.diags.add(
+                            n.location,
+                            .semantic,
+                            "unknown type in declaration of '{s}'",
+                            .{d.name.string},
+                        );
+                    },
+                    error.AbstractNeedsDefault => {
+                        if (d.type) |tp2| {
+                            if (tp2 == .type_name) {
+                                try self.diags.add(
+                                    n.location,
+                                    .semantic,
+                                    "cannot use abstract '{s}' as a type for a symbol. Use a concrete type or add a default concrete type to the abstract type ('{s} defaultsto <Type>')",
+                                    .{ tp2.type_name.string, tp2.type_name.string },
+                                );
+                                break :blk err;
+                            }
+                        }
+                        try self.diags.add(
+                            n.location,
+                            .semantic,
+                            "cannot use abstract type without a default (add 'defaultsto' or use a concrete type)",
+                            .{},
+                        );
+                    },
+                    else => {
+                        try self.diags.add(
+                            n.location,
+                            .semantic,
+                            "error in symbol declaration '{s}': {s}",
+                            .{ d.name.string, @errorName(err) },
+                        );
+                    },
+                }
+                break :blk err;
+            },
+
+            .abstract_declaration => |ad| self.handleAbstractDecl(ad, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in abstract declaration '{s}': {s}",
+                    .{ ad.name.string, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .abstract_canbe => |rel| self.handleAbstractCanBe(rel, s, n.location) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in abstract canbe for '{s}': {s}",
+                    .{ rel.name, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .abstract_defaultsto => |rel| self.handleAbstractDefault(rel, s, n.location) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in abstract defaultsto for '{s}': {s}",
+                    .{ rel.name.string, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .type_declaration => |d| self.handleTypeDecl(d, s) catch |err| blk: {
+                if (err == error.UnknownType and s.parent == null and self.defer_unknown_top_level) {
+                    try self.pushTopLevelForRetry();
+                    break :blk error.Reported; // sin diagnóstico todavía
+                }
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in type declaration '{s}': {s}",
+                    .{ d.name.string, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .function_declaration => |d| self.handleFuncDecl(d, s, n.location) catch |err| blk: {
+                if (err == error.UnknownType and s.parent == null and self.defer_unknown_top_level) {
+                    try self.pushTopLevelForRetry();
+                    break :blk error.Reported;
+                }
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in function declaration '{s}': {s}",
+                    .{ d.name.string, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .assignment => |a| self.handleAssignment(a, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in assignment '{s}': {s}",
+                    .{ a.name.string, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .identifier => |id| self.handleIdentifier(id, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in identifier '{s}': {s}",
+                    .{ id, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .literal => |l| self.handleLiteral(l) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in literal '{any}': {s}",
+                    .{ l, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .struct_value_literal => |sl| self.handleStructValLit(sl, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in struct value literal: {s}",
+                    .{@errorName(err)},
+                );
+                break :blk err;
+            },
+
+            .struct_type_literal => |st| self.handleStructTypeLit(st, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in struct type literal: {s}",
+                    .{@errorName(err)},
+                );
+                break :blk err;
+            },
+
+            .struct_field_access => |sfa| self.handleStructFieldAccess(sfa, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in struct field access '{s}': {s}",
+                    .{ sfa.field_name.string, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .list_literal => |ll| self.handleListLiteral(ll, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in list literal: {s}",
+                    .{@errorName(err)},
+                );
+                break :blk err;
+            },
+
+            .index_access => |ia| self.handleIndexAccess(ia, s) catch |err| blk: {
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in index access: {s}",
+                        .{@errorName(err)},
+                    );
+                }
+                break :blk err;
+            },
+
+            .index_assignment => |ia| self.handleIndexAssignment(ia, s) catch |err| blk: {
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in index assignment: {s}",
+                        .{@errorName(err)},
+                    );
+                }
+                break :blk err;
+            },
+
+            .function_call => |fc| self.handleCall(fc, s) catch |err| blk: {
+                if (err == error.Reported) break :blk err;
+                if (err == error.AmbiguousOverload) {
+                    // try to produce detailed candidates list
+                    const tv_in = self.visitNode(fc.input.*, s) catch null;
+                    var details: []const u8 = "";
+                    if (tv_in) |te| if (te.ty == .struct_type) {
+                        details = abs.buildOverloadCandidatesString(fc.callee, te.ty, s, self.allocator) catch "";
+                    };
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "ambiguous call to '{s}'. Possible overloads:\n{s}",
+                        .{ fc.callee, details },
+                    );
+                } else {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in function call '{s}': {s}",
+                        .{ fc.callee, @errorName(err) },
+                    );
+                }
+                break :blk err;
+            },
+
+            .code_block => |blk| self.handleCodeBlock(blk, s) catch |err| blk_ret: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in code block: {s}",
+                    .{@errorName(err)},
+                );
+                break :blk_ret err;
+            },
+
+            .binary_operation => |bo| self.handleBinOp(bo, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in binary operation '{any}': {s}",
+                    .{ bo.operator, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .comparison => |c| self.handleComparison(c, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in comparison '{any}': {s}",
+                    .{ c.operator, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .return_statement => |r| self.handleReturn(r, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in return statement: {s}",
+                    .{@errorName(err)},
+                );
+                break :blk err;
+            },
+
+            .defer_statement => |expr| self.handleDefer(expr, s) catch |err| blk: {
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in defer statement: {s}",
+                        .{@errorName(err)},
+                    );
+                }
+                break :blk err;
+            },
+
+            .if_statement => |ifs| self.handleIf(ifs, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in if statement: {s}",
+                    .{@errorName(err)},
+                );
+                break :blk err;
+            },
+
+            .address_of => |p| self.handleAddressOf(p, s) catch |err| blk: {
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in address-of operation: {s}",
+                        .{@errorName(err)},
+                    );
+                }
+                break :blk err;
+            },
+
+            .dereference => |p| self.handleDereference(p, s) catch |err| blk: {
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in dereference operation: {s}",
+                        .{@errorName(err)},
+                    );
+                }
+                break :blk err;
+            },
+
+            .pointer_assignment => |pa| self.handlePointerAssignment(pa, s) catch |err| blk: {
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in pointer assignment: {s}",
+                        .{@errorName(err)},
+                    );
+                }
+                break :blk err;
+            },
+        };
+    }
+
+    //──────────────────────────────────────────────────── ABSTRACT DECLARATION
+    fn handleAbstractDecl(
+        self: *Semantizer,
+        ad: syn.AbstractDeclaration,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        // Register abstract as a nominal type placeholder (maps to Any for now)
+        if (s.types.contains(ad.name.string)) return error.SymbolAlreadyDefined;
+
+        const td = try self.allocator.create(sg.TypeDeclaration);
+        td.* = .{ .name = ad.name.string, .ty = .{ .builtin = .Any } };
+        try s.types.put(ad.name.string, td);
+
+        // Store abstract info (resolved requirements) in scope
+        var reqs = std.ArrayList(abs.AbstractFunctionReqSem).init(self.allocator.*);
+        const generic_params = ad.generic_params;
+        for (ad.requires_functions) |rf| {
+            // Build input struct resolving types; track Self/generic/abstract usages
+            var in_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+            var input_generic = std.ArrayList(?u32).init(self.allocator.*);
+            var input_abstract = std.ArrayList(?[]const u8).init(self.allocator.*);
+            var self_idxs = std.ArrayList(u32).init(self.allocator.*);
+
+            for (rf.input.fields, 0..) |fld, i| {
+                var ty: sg.Type = .{ .builtin = .Any };
+                var generic_idx_opt: ?u32 = null;
+                var abstract_req: ?[]const u8 = null;
+
+                if (fld.type) |t| {
+                    switch (t) {
+                        .type_name => |tn| {
+                            const name = tn.string;
+                            if (std.mem.eql(u8, name, "Self")) {
+                                try self_idxs.append(@intCast(i));
+                            } else {
+                                var found: bool = false;
+                                for (generic_params, 0..) |gp, gi| {
+                                    if (std.mem.eql(u8, gp, name)) {
+                                        generic_idx_opt = @intCast(gi);
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if (!found) {
+                                    ty = self.resolveType(t, s) catch |err| switch (err) {
+                                        error.AbstractNeedsDefault => blk: {
+                                            abstract_req = name;
+                                            break :blk .{ .builtin = .Any };
+                                        },
+                                        else => return err,
+                                    };
+                                }
+                            }
+                        },
+                        else => {
+                            if (t == .pointer_type) {
+                                const ptr_info = t.pointer_type;
+                                const child_node = ptr_info.child.*;
+                                if (child_node == .type_name and std.mem.eql(u8, child_node.type_name.string, "Self")) {
+                                    ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
+                                } else {
+                                    ty = try self.resolveType(t, s);
+                                }
+                            } else {
+                                ty = try self.resolveType(t, s);
+                            }
+                        },
+                    }
+                }
+
+                try in_fields.append(.{ .name = fld.name.string, .ty = ty, .default_value = null });
+                try input_generic.append(generic_idx_opt);
+                try input_abstract.append(abstract_req);
+            }
+
+            const in_struct = sg.StructType{ .fields = try in_fields.toOwnedSlice() };
+            const input_generic_slice = try input_generic.toOwnedSlice();
+            const input_abstract_slice = try input_abstract.toOwnedSlice();
+
+            in_fields.deinit();
+            input_generic.deinit();
+            input_abstract.deinit();
+
+            // Build output struct, tracking generics/abstracts similarly
+            var out_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+            var output_generic = std.ArrayList(?u32).init(self.allocator.*);
+            var output_abstract = std.ArrayList(?[]const u8).init(self.allocator.*);
+
+            for (rf.output.fields) |fld| {
+                var ty: sg.Type = .{ .builtin = .Any };
+                var generic_idx_opt: ?u32 = null;
+                var abstract_req: ?[]const u8 = null;
+
+                if (fld.type) |t| {
+                    switch (t) {
+                        .type_name => |tn| {
+                            const name = tn.string;
+                            var found: bool = false;
+                            for (generic_params, 0..) |gp, gi| {
+                                if (std.mem.eql(u8, gp, name)) {
+                                    generic_idx_opt = @intCast(gi);
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found) {
+                                ty = self.resolveType(t, s) catch |err| switch (err) {
+                                    error.AbstractNeedsDefault => blk: {
+                                        abstract_req = name;
+                                        break :blk .{ .builtin = .Any };
+                                    },
+                                    else => return err,
+                                };
+                            }
+                        },
+                        else => {
+                            if (t == .pointer_type) {
+                                const ptr_info = t.pointer_type;
+                                const child_node = ptr_info.child.*;
+                                if (child_node == .type_name and std.mem.eql(u8, child_node.type_name.string, "Self")) {
+                                    ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
+                                } else {
+                                    ty = try self.resolveType(t, s);
+                                }
+                            } else {
+                                ty = try self.resolveType(t, s);
+                            }
+                        },
+                    }
+                }
+
+                try out_fields.append(.{ .name = fld.name.string, .ty = ty, .default_value = null });
+                try output_generic.append(generic_idx_opt);
+                try output_abstract.append(abstract_req);
+            }
+
+            const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
+            const output_generic_slice = try output_generic.toOwnedSlice();
+            const output_abstract_slice = try output_abstract.toOwnedSlice();
+
+            out_fields.deinit();
+            output_generic.deinit();
+            output_abstract.deinit();
+
+            try reqs.append(.{
+                .name = rf.name.string,
+                .input = in_struct,
+                .output = out_struct,
+                .input_self_indices = try self_idxs.toOwnedSlice(),
+                .input_generic_param_indices = input_generic_slice,
+                .output_generic_param_indices = output_generic_slice,
+                .input_abstract_requirements = input_abstract_slice,
+                .output_abstract_requirements = output_abstract_slice,
+            });
+            self_idxs.deinit();
+        }
+
+        const info = try self.allocator.create(abs.AbstractInfo);
+        info.* = .{
+            .name = ad.name.string,
+            .requirements = try reqs.toOwnedSlice(),
+            .param_names = generic_params,
+        };
+        reqs.deinit();
+        try s.abstracts.put(ad.name.string, info);
+
+        const n = try sg.makeSGNode(.{ .type_declaration = td }, undefined, self.allocator);
+        try s.nodes.append(n);
+        if (s.parent == null) try self.root_list.append(n);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    // For now, relations are recorded as no-ops to accept syntax without enforcing.
+    fn handleAbstractCanBe(
+        self: *Semantizer,
+        rel: syn.AbstractCanBe,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        const concrete_ty = try self.resolveType(rel.ty, s);
+
+        // Defer conformance checks until call sites or a validation pass.
+
+        if (s.abstract_impls.getPtr(rel.name)) |lst| {
+            try lst.append(.{ .ty = concrete_ty, .location = loc });
+        } else {
+            var new_list = std.ArrayList(abs.AbstractImplEntry).init(self.allocator.*);
+            try new_list.append(.{ .ty = concrete_ty, .location = loc });
+            try s.abstract_impls.put(rel.name, new_list);
+        }
+
+        const empty = try self.allocator.create(sg.CodeBlock);
+        empty.* = .{ .nodes = &.{}, .ret_val = null };
+        const n = try sg.makeSGNode(.{ .code_block = empty }, undefined, self.allocator);
+        try s.nodes.append(n);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleAbstractDefault(
+        self: *Semantizer,
+        rel: syn.AbstractDefault,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        const concrete_ty = try self.resolveType(rel.ty, s);
+        try s.abstract_defaults.put(rel.name.string, .{ .ty = concrete_ty, .location = loc });
+        const empty = try self.allocator.create(sg.CodeBlock);
+        empty.* = .{ .nodes = &.{}, .ret_val = null };
+        const n = try sg.makeSGNode(.{ .code_block = empty }, undefined, self.allocator);
+        try s.nodes.append(n);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    //─────────────────────────────────────────────────────────  LITERALS
+    fn handleLiteral(self: *Semantizer, lit: tok.Literal) SemErr!typ.TypedExpr {
+        var value_literal: sg.ValueLiteral = undefined;
+        var ty: sg.Type = .{ .builtin = .Int32 };
+
+        switch (lit) {
+            .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => |txt| {
+                value_literal = .{ .int_literal = std.fmt.parseInt(i64, txt, 0) catch 0 };
+            },
+            .regular_float_literal, .scientific_float_literal => |txt| {
+                ty = .{ .builtin = .Float32 };
+                value_literal = .{ .float_literal = std.fmt.parseFloat(f64, txt) catch 0.0 };
+            },
+            .char_literal => |c| {
+                ty = .{ .builtin = .Char };
+                value_literal = .{ .char_literal = c };
+            },
+            .string_literal => |s| {
+                const char_ty: sg.Type = .{ .builtin = .Char };
+                const child = try self.allocator.create(sg.Type);
+                child.* = char_ty;
+
+                const sem_ptr = try self.allocator.create(sg.PointerType);
+                sem_ptr.* = .{ .mutability = .read_only, .child = child };
+
+                ty = .{ .pointer_type = sem_ptr };
+                value_literal = .{ .string_literal = s };
+            },
+            .bool_literal => |b| {
+                ty = .{ .builtin = .Bool };
+                value_literal = .{ .bool_literal = b };
+            },
+        }
+
+        const ptr = try self.allocator.create(sg.ValueLiteral);
+        ptr.* = value_literal;
+        const n = try sg.makeSGNode(.{ .value_literal = ptr.* }, undefined, self.allocator);
+        return .{ .node = n, .ty = ty };
+    }
+
+    //─────────────────────────────────────────────────────────  IDENTIFIER
+    fn handleIdentifier(
+        self: *Semantizer,
+        name: []const u8,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const b = s.lookupBinding(name) orelse return error.SymbolNotFound;
+        const n = try sg.makeSGNode(.{ .binding_use = b }, undefined, self.allocator);
+        return .{ .node = n, .ty = b.ty };
+    }
+
+    //─────────────────────────────────────────────────────────  CODE BLOCK
+    fn handleCodeBlock(
+        self: *Semantizer,
+        blk: syn.CodeBlock,
+        parent: *Scope,
+    ) SemErr!typ.TypedExpr {
+        var child = try Scope.init(self.allocator, parent, null);
+
+        for (blk.items) |st|
+            _ = try self.visitNode(st.*, &child);
+
+        var d_idx: usize = child.deferred.items.len;
+        while (d_idx > 0) : (d_idx -= 1) {
+            const group = child.deferred.items[d_idx - 1];
+            for (group.nodes) |node| try child.nodes.append(node);
+        }
+
+        const slice = try child.nodes.toOwnedSlice();
+        child.nodes.deinit();
+        self.clearDeferred(&child);
+
+        const cb = try self.allocator.create(sg.CodeBlock);
+        cb.* = .{ .nodes = slice, .ret_val = null };
+
+        const n = try sg.makeSGNode(.{ .code_block = cb }, undefined, self.allocator);
+        try parent.nodes.append(n);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    //──────────────────────────────────────────────────── SYMBOL DECLARATION
+    fn handleSymbolDecl(
+        self: *Semantizer,
+        d: syn.SymbolDeclaration,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        if (s.bindings.contains(d.name.string))
+            return error.SymbolAlreadyDefined;
+
+        var init_node: ?*syn.STNode = null;
+        var init_te_opt: ?typ.TypedExpr = null;
+        if (d.value) |v| {
+            init_node = v;
+            init_te_opt = try self.visitNode(v.*, s);
+        }
+        var ty: sg.Type = .{ .builtin = .Int32 };
+        if (d.type) |t| {
+            ty = try self.resolveType(t, s);
+        } else if (init_te_opt) |te| {
+            ty = te.ty;
+        }
+
+        if (init_te_opt) |te_initial| {
+            if (d.type) |_| {
+                init_te_opt = try typ.coerceExprToType(ty, te_initial, init_node.?, s, self.allocator, self.diags);
+            } else if (te_initial.node.content == .list_literal) {
+                const arr_info = try self.inferArrayTypeFromList(te_initial.node.content.list_literal, init_node.?.location, s);
+                ty = .{ .array_type = arr_info };
+                init_te_opt = try typ.convertListLiteralToArray(te_initial, arr_info, init_node.?.location, s, self.allocator, self.diags);
+            }
+        }
+
+        const bd = try self.allocator.create(sg.BindingDeclaration);
+        bd.* = .{
+            .name = d.name.string,
+            .mutability = d.mutability,
+            .ty = ty,
+            .initialization = null,
+        };
+
+        try s.bindings.put(d.name.string, bd);
+        const n = try sg.makeSGNode(.{ .binding_declaration = bd }, loc, self.allocator);
+        try s.nodes.append(n);
+        if (s.parent == null) try self.root_list.append(n);
+
+        if (init_te_opt) |init_te| bd.initialization = init_te.node;
+
+        try self.maybeScheduleAutoDeinit(bd, loc, s);
+
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    //──────────────────────────────────────────────────── TYPE DECLARATION
+    fn handleTypeDecl(
+        self: *Semantizer,
+        d: syn.TypeDeclaration,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const st_lit = d.value.*.content.struct_type_literal;
+        if (d.generic_params.len > 0) {
+            // Register as generic type template
+            if (s.generic_types.getPtr(d.name.string)) |lst| {
+                try lst.append(.{ .name = d.name.string, .location = d.value.location, .param_names = d.generic_params, .body = st_lit });
+            } else {
+                var new_list = std.ArrayList(gen.GenericTypeTemplate).init(self.allocator.*);
+                try new_list.append(.{ .name = d.name.string, .location = d.value.location, .param_names = d.generic_params, .body = st_lit });
+                try s.generic_types.put(d.name.string, new_list);
+            }
+            // No concrete type emitted now
+            const noop = try sg.makeSGNode(.{ .code_block = blk: {
+                const empty = try self.allocator.create(sg.CodeBlock);
+                empty.* = .{ .nodes = &.{}, .ret_val = null };
+                break :blk empty;
+            } }, d.value.location, self.allocator);
+            try s.nodes.append(noop);
+            return .{ .node = noop, .ty = .{ .builtin = .Any } };
+        } else {
+            // 1) Asegurar stub nominal para el nombre del tipo
+            var td: *sg.TypeDeclaration = undefined;
+            if (s.types.get(d.name.string)) |existing| {
+                td = existing;
+            } else {
+                const stub = try self.allocator.create(sg.StructType);
+                stub.* = .{ .fields = &.{} };
+                td = try self.allocator.create(sg.TypeDeclaration);
+                td.* = .{ .name = d.name.string, .ty = .{ .struct_type = stub } };
+                try s.types.put(d.name.string, td);
+                // Emitir el nodo una sola vez cuando el stub se crea
+                const n0 = try sg.makeSGNode(.{ .type_declaration = td }, d.value.location, self.allocator);
+                try s.nodes.append(n0);
+                if (s.parent == null) try self.root_list.append(n0);
+            }
+
+            // 2) Intentar completar el cuerpo ahora (puede fallar con UnknownType)
+            const st_ptr = try self.structTypeFromLiteral(st_lit, s);
+            // Rellenar el stub in-place (puntero estable). struct_type es *const; necesitamos mutarlo.
+            const dst_const = td.ty.struct_type; // *const sem.StructType
+            const dst: *sg.StructType = @constCast(dst_const); // hacemos mutable el pointee
+            dst.fields = st_ptr.fields;
+            // Devolver un no-op para no duplicar el nodo en root
+            const noop = try sg.makeSGNode(.{ .code_block = blk3: {
+                const empty = try self.allocator.create(sg.CodeBlock);
+                empty.* = .{ .nodes = &.{}, .ret_val = null };
+                break :blk3 empty;
+            } }, d.value.location, self.allocator);
+
+            return .{ .node = noop, .ty = .{ .builtin = .Any } };
+        }
+    }
+
+    //──────────────────────────────────────────────────── FUNCTION DECLARATION
+    fn handleFuncDecl(
+        self: *Semantizer,
+        f: syn.FunctionDeclaration,
+        p: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        // Register generic template and skip direct emission
+        if (f.generic_params.len > 0) {
+            if (p.generic_functions.getPtr(f.name.string)) |lst| {
+                try lst.append(.{
+                    .name = f.name.string,
+                    .location = loc,
+                    .param_names = f.generic_params,
+                    .input = f.input,
+                    .output = f.output,
+                    .body = f.body,
+                });
+            } else {
+                var new_list = std.ArrayList(gen.GenericTemplate).init(self.allocator.*);
+                try new_list.append(.{
+                    .name = f.name.string,
+                    .location = loc,
+                    .param_names = f.generic_params,
+                    .input = f.input,
+                    .output = f.output,
+                    .body = f.body,
+                });
+                try p.generic_functions.put(f.name.string, new_list);
+            }
+            // Return a no-op node for generic template
+            const noop = try sg.makeSGNode(.{ .code_block = blk2: {
+                const empty = try self.allocator.create(sg.CodeBlock);
+                empty.* = .{ .nodes = &.{}, .ret_val = null };
+                break :blk2 empty;
+            } }, loc, self.allocator);
+            try p.nodes.append(noop);
+            return .{ .node = noop, .ty = .{ .builtin = .Any } };
+        }
+
+        var child = try Scope.init(self.allocator, p, null);
+        // ── entrada
+        var in_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+        for (f.input.fields) |fld| {
+            const ty = try self.resolveType(fld.type.?, &child);
+            const dvp = if (fld.default_value) |n|
+                (try self.visitNode(n.*, &child)).node
+            else
+                null;
+
+            try in_fields.append(.{
+                .name = fld.name.string,
+                .ty = ty,
+                .default_value = dvp,
+            });
+
+            const bd = try self.allocator.create(sg.BindingDeclaration);
+            bd.* = .{
+                .name = fld.name.string,
+                .mutability = .constant,
+                .ty = ty,
+                .initialization = dvp,
+            };
+            try child.bindings.put(fld.name.string, bd);
+        }
+        const in_struct = sg.StructType{ .fields = try in_fields.toOwnedSlice() };
+        in_fields.deinit();
+
+        // ── salida
+        var out_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+        for (f.output.fields) |fld| {
+            const ty = try self.resolveType(fld.type.?, &child);
+            const dvp = if (fld.default_value) |n|
+                (try self.visitNode(n.*, &child)).node
+            else
+                null;
+
+            try out_fields.append(.{
+                .name = fld.name.string,
+                .ty = ty,
+                .default_value = dvp,
+            });
+
+            const bd = try self.allocator.create(sg.BindingDeclaration);
+            bd.* = .{
+                .name = fld.name.string,
+                .mutability = .variable,
+                .ty = ty,
+                .initialization = dvp,
+            };
+            try child.bindings.put(fld.name.string, bd);
+        }
+        const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
+        out_fields.deinit();
+
+        // ── cuerpo
+        var body_cb: ?*sg.CodeBlock = null;
+        if (f.body) |body_node| {
+            const body_te = try self.visitNode(body_node.*, &child);
+            body_cb = body_te.node.content.code_block;
+        }
+
+        const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
+        fn_ptr.* = .{
+            .name = f.name.string,
+            .location = loc,
+            .input = in_struct,
+            .output = out_struct,
+            .body = body_cb,
+        };
+
+        // Register function into overload set for the name
+        if (p.functions.getPtr(f.name.string)) |list_ptr| {
+            // prevent exact duplicate signature (same input structure, strict equality)
+            for (list_ptr.items) |existing| {
+                if (typ.typesExactlyEqual(.{ .struct_type = &existing.input }, .{ .struct_type = &fn_ptr.input }))
+                    return error.SymbolAlreadyDefined;
+            }
+            try list_ptr.append(fn_ptr);
+        } else {
+            var lst = std.ArrayList(*sg.FunctionDeclaration).init(self.allocator.*);
+            try lst.append(fn_ptr);
+            try p.functions.put(f.name.string, lst);
+        }
+        self.clearDeferred(&child);
+        const n = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, loc, self.allocator);
+        try p.nodes.append(n);
+        if (p.parent == null) try self.root_list.append(n);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    //──────────────────────────────────────────────────── ASSIGNMENT
+    fn handleAssignment(
+        self: *Semantizer,
+        a: syn.Assignment,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const b = s.lookupBinding(a.name.string) orelse return error.SymbolNotFound;
+        if (b.mutability == .constant and b.initialization != null)
+            return error.ConstantReassignment;
+
+        var rhs = try self.visitNode(a.value.*, s);
+        rhs = try typ.coerceExprToType(b.ty, rhs, a.value, s, self.allocator, self.diags);
+        if (!typ.typesExactlyEqual(b.ty, rhs.ty)) {
+            const expected = try typ.formatType(b.ty, s, self.allocator);
+            const actual = try typ.formatType(rhs.ty, s, self.allocator);
+            defer {
+                self.allocator.free(expected);
+                self.allocator.free(actual);
+            }
+            try self.diags.add(
+                a.value.*.location,
+                .semantic,
+                "cannot assign '{s}' to '{s}' (explicit casts not supported yet)",
+                .{ actual, expected },
+            );
+            return error.Reported;
+        }
+
+        const asg = try self.allocator.create(sg.Assignment);
+        asg.* = .{ .sym_id = b, .value = rhs.node };
+
+        const n = try sg.makeSGNode(.{ .binding_assignment = asg }, undefined, self.allocator);
+        try s.nodes.append(n);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    //──────────────────────────────────────────────────── STRUCT VALUE LITERAL
+    fn handleStructValLit(
+        self: *Semantizer,
+        sl: syn.StructValueLiteral,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        var fields_buf = std.ArrayList(sg.StructValueLiteralField).init(self.allocator.*);
+
+        for (sl.fields) |f| {
+            const tv = try self.visitNode(f.value.*, s);
+            try fields_buf.append(.{ .name = f.name.string, .value = tv.node });
+        }
+
+        const fields = try fields_buf.toOwnedSlice();
+        fields_buf.deinit();
+
+        const st_ptr = try self.structTypeFromVal(sl, s);
+
+        const lit = try self.allocator.create(sg.StructValueLiteral);
+        lit.* = .{ .fields = fields, .ty = .{ .struct_type = st_ptr } };
+
+        const n = try sg.makeSGNode(.{ .struct_value_literal = lit }, undefined, self.allocator);
+        return .{ .node = n, .ty = .{ .struct_type = st_ptr } };
+    }
+
+    fn handleStructTypeLit(
+        self: *Semantizer,
+        st: syn.StructTypeLiteral,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        var val_fields = std.ArrayList(sg.StructValueLiteralField).init(self.allocator.*);
+        var ty_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+
+        for (st.fields) |fld| {
+            if (fld.default_value == null)
+                return error.NotYetImplemented;
+
+            const tv = try self.visitNode(fld.default_value.?.*, s);
+
+            try val_fields.append(.{ .name = fld.name.string, .value = tv.node });
+            try ty_fields.append(.{ .name = fld.name.string, .ty = tv.ty, .default_value = null });
+        }
+
+        const vals = try val_fields.toOwnedSlice();
+        const tys = try ty_fields.toOwnedSlice();
+        val_fields.deinit();
+        ty_fields.deinit();
+
+        const st_ptr = try self.allocator.create(sg.StructType);
+        st_ptr.* = .{ .fields = tys };
+
+        const lit_ptr = try self.allocator.create(sg.StructValueLiteral);
+        lit_ptr.* = .{ .fields = vals, .ty = .{ .struct_type = st_ptr } };
+
+        const node_ptr = try sg.makeSGNode(.{ .struct_value_literal = lit_ptr }, undefined, self.allocator);
+        return .{ .node = node_ptr, .ty = .{ .struct_type = st_ptr } };
+    }
+
+    //──────────────────────────────────────────────────── STRUCT FIELD ACCESS
+    fn handleStructFieldAccess(
+        self: *Semantizer,
+        ma: syn.StructFieldAccess,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const base = try self.visitNode(ma.struct_value.*, s);
+
+        if (base.ty == .array_type) {
+            const desc = try typ.formatType(base.ty, s, self.allocator);
+            defer self.allocator.free(desc);
+            try self.diags.add(
+                ma.struct_value.*.location,
+                .semantic,
+                "type '{s}' has no field '.{s}'",
+                .{ desc, ma.field_name.string },
+            );
+            return error.Reported;
+        }
+
+        if (base.ty != .struct_type) {
+            if (base.node.content == .function_call) {
+                const fc = base.node.content.function_call;
+                if (fc.callee.output.fields.len == 1) {
+                    const only_field = fc.callee.output.fields[0];
+                    if (std.mem.eql(u8, only_field.name, ma.field_name.string)) {
+                        return base;
+                    }
+                }
+            }
+
+            const desc = try typ.formatType(base.ty, s, self.allocator);
+            defer self.allocator.free(desc);
+            try self.diags.add(
+                ma.struct_value.*.location,
+                .semantic,
+                "cannot access field '.{s}' on value of type '{s}'",
+                .{ ma.field_name.string, desc },
+            );
+            return error.Reported;
+        }
+        const st = base.ty.struct_type;
+
+        var idx: ?u32 = null;
+        var fty: sg.Type = undefined;
+        for (st.fields, 0..) |f, i| {
+            if (std.mem.eql(u8, f.name, ma.field_name.string)) {
+                idx = @intCast(i);
+                fty = f.ty;
+                break;
+            }
+        }
+        if (idx == null) return error.SymbolNotFound;
+
+        const fa = try self.allocator.create(sg.StructFieldAccess);
+        fa.* = .{
+            .struct_value = base.node,
+            .field_name = ma.field_name.string,
+            .field_index = idx.?,
+        };
+
+        const n = try sg.makeSGNode(.{ .struct_field_access = fa }, undefined, self.allocator);
+        return .{ .node = n, .ty = fty };
+    }
+
+    //──────────────────────────────────────────────────── LIST LITERAL
+    fn handleListLiteral(
+        self: *Semantizer,
+        ll: syn.ListLiteral,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        var expected_elem_ty_opt: ?sg.Type = null;
+        if (ll.element_type) |elt_ty_syn| {
+            expected_elem_ty_opt = try self.resolveType(elt_ty_syn, s);
+        }
+
+        var elems = std.ArrayList(*sg.SGNode).init(self.allocator.*);
+        var elem_types = std.ArrayList(sg.Type).init(self.allocator.*);
+        defer {
+            elems.deinit();
+            elem_types.deinit();
+        }
+
+        for (ll.elements, 0..) |elem_node, idx| {
+            const elem_te = try self.visitNode(elem_node.*, s);
+
+            if (expected_elem_ty_opt) |exp_ty| {
+                if (!typ.typesStructurallyEqual(exp_ty, elem_te.ty)) {
+                    const exp = try typ.formatType(exp_ty, s, self.allocator);
+                    const got = try typ.formatType(elem_te.ty, s, self.allocator);
+                    defer {
+                        self.allocator.free(exp);
+                        self.allocator.free(got);
+                    }
+                    try self.diags.add(
+                        elem_node.*.location,
+                        .semantic,
+                        "list element {d} has type '{s}', expected '{s}'",
+                        .{ idx, got, exp },
+                    );
+                    return error.Reported;
+                }
+            }
+
+            try elems.append(elem_te.node);
+            try elem_types.append(elem_te.ty);
+        }
+
+        const elements_slice = try elems.toOwnedSlice();
+        const elem_types_slice = try elem_types.toOwnedSlice();
+
+        const lit_ptr = try self.allocator.create(sg.ListLiteral);
+        lit_ptr.* = .{
+            .elements = elements_slice,
+            .element_types = elem_types_slice,
+        };
+
+        const node = try sg.makeSGNode(.{ .list_literal = lit_ptr }, undefined, self.allocator);
+        return .{ .node = node, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleIndexAccess(
+        self: *Semantizer,
+        ia: syn.IndexAccess,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const base = try self.visitNode(ia.value.*, s);
+
+        if (base.ty == .array_type) {
+            const idx_te = try self.visitNode(ia.index.*, s);
+            if (!typ.isIntegerType(idx_te.ty)) {
+                const idx_ty = try typ.formatType(idx_te.ty, s, self.allocator);
+                defer self.allocator.free(idx_ty);
+                try self.diags.add(
+                    ia.index.*.location,
+                    .semantic,
+                    "array index must be an integer type, got '{s}'",
+                    .{idx_ty},
+                );
+                return error.Reported;
+            }
+
+            const arr_type_ptr = base.ty.array_type;
+            const elem_ty = arr_type_ptr.*.element_type.*;
+            const ro_self = try typ.ensureReadOnlyPointer(ia.value, base, self.allocator, self.diags);
+
+            const node = try sg.makeSGNode(.{ .array_index = .{
+                .array_ptr = ro_self.node,
+                .index = idx_te.node,
+                .element_type = elem_ty,
+                .array_type = arr_type_ptr,
+            } }, undefined, self.allocator);
+            return .{ .node = node, .ty = elem_ty };
+        }
+
+        if (base.node.content == .list_literal) {
+            const ll = base.node.content.list_literal;
+            const idx_te = try self.visitNode(ia.index.*, s);
+
+            if (idx_te.node.content != .value_literal) {
+                try self.diags.add(
+                    ia.index.*.location,
+                    .semantic,
+                    "index into a list literal must be an integer literal",
+                    .{},
+                );
+                return error.Reported;
+            }
+
+            const lit = idx_te.node.content.value_literal;
+            const raw_index: i64 = switch (lit) {
+                .int_literal => |v| v,
+                else => blk: {
+                    try self.diags.add(
+                        ia.index.*.location,
+                        .semantic,
+                        "index into a list literal must be an integer literal",
+                        .{},
+                    );
+                    break :blk 0;
+                },
+            };
+
+            if (raw_index < 0 or raw_index >= ll.elements.len) {
+                try self.diags.add(
+                    ia.index.*.location,
+                    .semantic,
+                    "list literal index {d} out of bounds (length {d})",
+                    .{ raw_index, ll.elements.len },
+                );
+                return error.Reported;
+            }
+
+            const ui: usize = @intCast(raw_index);
+            const elem_node = ll.elements[ui];
+            const elem_ty = ll.element_types[ui];
+            return .{ .node = @constCast(elem_node), .ty = elem_ty };
+        }
+
+        const idx = try self.visitNode(ia.index.*, s);
+
+        const ro_self = try typ.ensureReadOnlyPointer(ia.value, base, self.allocator, self.diags);
+
+        const input_te = try self.buildCallInput(&[_]CallArg{
+            .{ .name = "self", .expr = ro_self },
+            .{ .name = "index", .expr = idx },
+        });
+
+        const name = "operator get[]";
+        const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+        const inferred = self.instantiateGenericNamed(name, empty_args, input_te, s) catch |err| switch (err) {
+            error.SymbolNotFound => null,
+            else => return err,
+        };
+
+        var chosen: *sg.FunctionDeclaration = undefined;
+        if (inferred) |instantiated| {
+            chosen = instantiated;
+        } else {
+            chosen = abs.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
+                error.SymbolNotFound => {
+                    const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
+                    const available = try abs.collectFunctionSignatures(name, s, self.allocator);
+                    defer {
+                        self.allocator.free(actual_sig);
+                        self.allocator.free(available);
+                    }
+                    try self.diags.add(
+                        ia.value.*.location,
+                        .semantic,
+                        "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
+                        .{ name, actual_sig, available },
+                    );
+                    return error.Reported;
+                },
+                error.AmbiguousOverload => {
+                    const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
+                    const available = try abs.collectFunctionSignatures(name, s, self.allocator);
+                    defer {
+                        self.allocator.free(actual_sig);
+                        self.allocator.free(available);
+                    }
+                    try self.diags.add(
+                        ia.value.*.location,
+                        .semantic,
+                        "ambiguous call to '{s}' for arguments {s}. Possible overloads:\n{s}",
+                        .{ name, actual_sig, available },
+                    );
+                    return error.Reported;
+                },
+                else => return err,
+            };
+        }
+
+        const call_ptr = try self.allocator.create(sg.FunctionCall);
+        call_ptr.* = .{ .callee = chosen, .input = input_te.node };
+
+        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, undefined, self.allocator);
+        try s.nodes.append(node);
+        return .{ .node = node, .ty = typ.functionReturnType(chosen) };
+    }
+
+    fn handleIndexAssignment(
+        self: *Semantizer,
+        ia: syn.IndexAssignment,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (ia.target.*.content != .index_access) return error.InvalidType;
+        const idx = ia.target.*.content.index_access;
+
+        const base = try self.visitNode(idx.value.*, s);
+
+        if (base.ty == .array_type) {
+            const index_expr = try self.visitNode(idx.index.*, s);
+            if (!typ.isIntegerType(index_expr.ty)) {
+                const idx_ty = try typ.formatType(index_expr.ty, s, self.allocator);
+                defer self.allocator.free(idx_ty);
+                try self.diags.add(
+                    idx.index.*.location,
+                    .semantic,
+                    "array index must be an integer type, got '{s}'",
+                    .{idx_ty},
+                );
+                return error.Reported;
+            }
+
+            const value_expr = try self.visitNode(ia.value.*, s);
+            const arr_type_ptr = base.ty.array_type;
+            const elem_ty = arr_type_ptr.*.element_type.*;
+
+            if (!typ.typesStructurallyEqual(elem_ty, value_expr.ty)) {
+                const expected = try typ.formatType(elem_ty, s, self.allocator);
+                const actual = try typ.formatType(value_expr.ty, s, self.allocator);
+                defer {
+                    self.allocator.free(expected);
+                    self.allocator.free(actual);
+                }
+                try self.diags.add(
+                    ia.value.*.location,
+                    .semantic,
+                    "cannot assign value of type '{s}' to array element of type '{s}'",
+                    .{ actual, expected },
+                );
+                return error.Reported;
+            }
+
+            const ptr_self = try typ.ensureMutablePointer(idx.value, base, s, self.allocator, self.diags);
+
+            const node = try sg.makeSGNode(.{ .array_store = .{
+                .array_ptr = ptr_self.node,
+                .index = index_expr.node,
+                .value = value_expr.node,
+                .element_type = elem_ty,
+                .array_type = arr_type_ptr,
+            } }, undefined, self.allocator);
+            try s.nodes.append(node);
+            return .{ .node = node, .ty = .{ .builtin = .Any } };
+        }
+
+        const index_expr = try self.visitNode(idx.index.*, s);
+        const value_expr = try self.visitNode(ia.value.*, s);
+
+        const ptr_self = try typ.ensureMutablePointer(idx.value, base, s, self.allocator, self.diags);
+
+        const input_te = try self.buildCallInput(&[_]CallArg{
+            .{ .name = "self", .expr = ptr_self },
+            .{ .name = "index", .expr = index_expr },
+            .{ .name = "value", .expr = value_expr },
+        });
+
+        const name = "operator set[]";
+        const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+        const inferred = self.instantiateGenericNamed(name, empty_args, input_te, s) catch |err| switch (err) {
+            error.SymbolNotFound => null,
+            else => return err,
+        };
+
+        var chosen: *sg.FunctionDeclaration = undefined;
+        if (inferred) |instantiated| {
+            chosen = instantiated;
+        } else {
+            chosen = abs.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
+                error.SymbolNotFound => {
+                    const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
+                    const available = try abs.collectFunctionSignatures(name, s, self.allocator);
+                    defer {
+                        self.allocator.free(actual_sig);
+                        self.allocator.free(available);
+                    }
+                    try self.diags.add(
+                        ia.target.*.location,
+                        .semantic,
+                        "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
+                        .{ name, actual_sig, available },
+                    );
+                    return error.Reported;
+                },
+                error.AmbiguousOverload => {
+                    const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
+                    const available = try abs.collectFunctionSignatures(name, s, self.allocator);
+                    defer {
+                        self.allocator.free(actual_sig);
+                        self.allocator.free(available);
+                    }
+                    try self.diags.add(
+                        ia.target.*.location,
+                        .semantic,
+                        "ambiguous call to '{s}' for arguments {s}. Possible overloads:\n{s}",
+                        .{ name, actual_sig, available },
+                    );
+                    return error.Reported;
+                },
+                else => return err,
+            };
+        }
+
+        const call_ptr = try self.allocator.create(sg.FunctionCall);
+        call_ptr.* = .{ .callee = chosen, .input = input_te.node };
+
+        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, undefined, self.allocator);
+        try s.nodes.append(node);
+        return .{ .node = node, .ty = .{ .builtin = .Any } };
+    }
+
+    //────────────────────────────────────────────────────  AUX STRUCT TYPES
+    pub fn structTypeFromLiteral(
+        self: *Semantizer,
+        st: syn.StructTypeLiteral,
+        s: *Scope,
+    ) SemErr!*sg.StructType {
+        var buf = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+        for (st.fields) |f| {
+            const ty = try self.resolveType(f.type.?, s);
+            const dvp = if (f.default_value) |n|
+                (try self.visitNode(n.*, s)).node
+            else
+                null;
+
+            try buf.append(.{ .name = f.name.string, .ty = ty, .default_value = dvp });
+        }
+
+        const slice = try buf.toOwnedSlice();
+        buf.deinit();
+
+        const ptr = try self.allocator.create(sg.StructType);
+        ptr.* = .{ .fields = slice };
+        return ptr;
+    }
+
+    pub fn structTypeFromLiteralWithSubst(
+        self: *Semantizer,
+        st: syn.StructTypeLiteral,
+        s: *Scope,
+        subst: *std.StringHashMap(sg.Type),
+    ) SemErr!*sg.StructType {
+        var buf = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+        for (st.fields) |f| {
+            const ty = try self.resolveTypeWithSubst(f.type.?, s, subst);
+            const dvp = if (f.default_value) |n|
+                (try self.visitNode(n.*, s)).node
+            else
+                null;
+            try buf.append(.{ .name = f.name.string, .ty = ty, .default_value = dvp });
+        }
+        const slice = try buf.toOwnedSlice();
+        buf.deinit();
+        const ptr = try self.allocator.create(sg.StructType);
+        ptr.* = .{ .fields = slice };
+        return ptr;
+    }
+
+    fn structTypeFromVal(
+        self: *Semantizer,
+        sv: syn.StructValueLiteral,
+        s: *Scope,
+    ) SemErr!*sg.StructType {
+        var buf = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+
+        for (sv.fields) |f| {
+            const tv = try self.visitNode(f.value.*, s);
+            try buf.append(.{ .name = f.name.string, .ty = tv.ty, .default_value = null });
+        }
+
+        const slice = try buf.toOwnedSlice();
+        buf.deinit();
+
+        const ptr = try self.allocator.create(sg.StructType);
+        ptr.* = .{ .fields = slice };
+        return ptr;
+    }
+
+    //──────────────────────────────────────────────────── FUNCTION CALL
+    fn handleCall(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (std.mem.eql(u8, call.callee, "size_of"))
+            return self.handleBuiltinTypeInfo(.size, call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                else => err,
+            };
+        if (std.mem.eql(u8, call.callee, "alignment_of"))
+            return self.handleBuiltinTypeInfo(.alignment, call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                else => err,
+            };
+        if (std.mem.eql(u8, call.callee, "type_of"))
+            return self.handleTypeOf(call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                else => err,
+            };
+        if (std.mem.eql(u8, call.callee, "length")) len_blk: {
+            const len_res = self.handleLengthBuiltin(call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                error.SymbolNotFound => break :len_blk,
+                else => return err,
+            };
+            return len_res;
+        }
+
+        const tv_in = try self.visitNode(call.input.*, s);
+        if (s.lookupType(call.callee)) |type_decl| {
+            return self.handleTypeInitializer(call, tv_in, type_decl, s);
+        }
+
+        if (tv_in.ty != .struct_type) return error.InvalidType;
+
+        var chosen: *sg.FunctionDeclaration = undefined;
+        if (call.type_arguments_struct) |stargs| {
+            chosen = try self.instantiateGenericNamed(call.callee, stargs, tv_in, s);
+        } else if (call.type_arguments) |targs| {
+            chosen = try self.instantiateGeneric(call.callee, targs, tv_in, s);
+        } else {
+            const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+            const inferred = self.instantiateGenericNamed(call.callee, empty_args, tv_in, s) catch |err| switch (err) {
+                error.SymbolNotFound => null,
+                else => return err,
+            };
+
+            if (inferred) |instantiated| {
+                chosen = instantiated;
+            } else {
+                chosen = abs.resolveOverload(call.callee, tv_in.ty, s) catch |err| switch (err) {
+                    error.SymbolNotFound => {
+                        if (tv_in.ty == .struct_type) {
+                            const actual_sig = try typ.formatCallInput(tv_in.ty.struct_type, s, self.allocator);
+                            const available = try abs.collectFunctionSignatures(call.callee, s, self.allocator);
+                            defer {
+                                self.allocator.free(actual_sig);
+                                self.allocator.free(available);
+                            }
+                            try self.diags.add(
+                                call.input.*.location,
+                                .semantic,
+                                "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
+                                .{ call.callee, actual_sig, available },
+                            );
+                        } else {
+                            try self.diags.add(
+                                call.input.*.location,
+                                .semantic,
+                                "no overload of '{s}' matches the provided arguments",
+                                .{call.callee},
+                            );
+                        }
+                        return error.Reported;
+                    },
+                    else => return err,
+                };
+            }
+        }
+
+        const fc_ptr = try self.allocator.create(sg.FunctionCall);
+        fc_ptr.* = .{ .callee = chosen, .input = tv_in.node };
+
+        const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, undefined, self.allocator);
+        try s.nodes.append(n);
+
+        const result_ty = typ.functionReturnType(chosen);
+
+        return .{ .node = n, .ty = result_ty };
+    }
+
+    fn handleTypeInitializer(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        tv_in: typ.TypedExpr,
+        type_decl: *sg.TypeDeclaration,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (tv_in.ty != .struct_type) {
+            try self.diags.add(
+                call.input.*.location,
+                .semantic,
+                "expected struct literal arguments when constructing type '{s}'",
+                .{call.callee},
+            );
+            return error.Reported;
+        }
+
+        var init_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+        defer init_fields.deinit();
+
+        const ptr_child = try self.allocator.create(sg.Type);
+        ptr_child.* = type_decl.ty;
+
+        const ptr_info = try self.allocator.create(sg.PointerType);
+        ptr_info.* = .{ .mutability = .read_write, .child = ptr_child };
+
+        try init_fields.append(.{ .name = "p", .ty = .{ .pointer_type = ptr_info }, .default_value = null });
+
+        const user_struct = tv_in.ty.struct_type;
+        for (user_struct.fields) |fld| {
+            try init_fields.append(.{ .name = fld.name, .ty = fld.ty, .default_value = null });
+        }
+
+        const init_struct = try self.allocator.create(sg.StructType);
+        init_struct.* = .{ .fields = try init_fields.toOwnedSlice() };
+
+        const init_input_ty: sg.Type = .{ .struct_type = init_struct };
+
+        const init_fn = abs.resolveOverload("init", init_input_ty, s) catch |err| switch (err) {
+            error.SymbolNotFound => {
+                const actual_sig = try typ.formatCallInput(user_struct, s, self.allocator);
+                const available = try abs.collectFunctionSignatures("init", s, self.allocator);
+                defer {
+                    self.allocator.free(actual_sig);
+                    self.allocator.free(available);
+                }
+                try self.diags.add(
+                    call.input.*.location,
+                    .semantic,
+                    "failed to initialize type '{s}': no 'init' overload accepts arguments {s}. Available overloads:\n{s}",
+                    .{ call.callee, actual_sig, available },
+                );
+                return error.Reported;
+            },
+            error.AmbiguousOverload => {
+                const candidates_result = abs.buildOverloadCandidatesString("init", init_input_ty, s, self.allocator) catch null;
+                const candidates = candidates_result orelse "";
+                defer if (candidates_result) |owned| self.allocator.free(owned);
+                try self.diags.add(
+                    call.input.*.location,
+                    .semantic,
+                    "failed to initialize type '{s}': matching 'init' overloads are ambiguous. Candidates:\n{s}",
+                    .{ call.callee, candidates },
+                );
+                return error.Reported;
+            },
+            else => return err,
+        };
+
+        const type_init = sg.TypeInitializer{
+            .type_decl = type_decl,
+            .init_fn = init_fn,
+            .args = tv_in.node,
+        };
+
+        const init_node = try sg.makeSGNode(.{ .type_initializer = type_init }, undefined, self.allocator);
+        return .{ .node = init_node, .ty = type_decl.ty };
+    }
+
+    fn typeUsesParam(self: *Semantizer, ty: syn.Type, param: []const u8) bool {
+        return switch (ty) {
+            .type_name => std.mem.eql(u8, ty.type_name.string, param),
+            .pointer_type => |ptr_info| self.typeUsesParam(ptr_info.child.*, param),
+            .array_type => |arr_info| self.typeUsesParam(arr_info.element.*, param),
+            .generic_type_instantiation => |g| blk: {
+                for (g.args.fields) |fld| {
+                    if (fld.type) |sub_ty| {
+                        if (self.typeUsesParam(sub_ty, param)) break :blk true;
+                    }
+                }
+                break :blk false;
+            },
+            .struct_type_literal => |st| blk_struct: {
+                for (st.fields) |fld| {
+                    if (fld.type) |sub_ty| {
+                        if (self.typeUsesParam(sub_ty, param)) break :blk_struct true;
+                    }
+                }
+                break :blk_struct false;
+            },
+        };
+    }
+
+    fn extractTypeArgumentFromActual(
+        self: *Semantizer,
+        template_ty: syn.Type,
+        actual_ty: sg.Type,
+        param_name: []const u8,
+        s: *Scope,
+    ) ?sg.Type {
+        switch (template_ty) {
+            .type_name => |tn| {
+                if (std.mem.eql(u8, tn.string, param_name)) return actual_ty;
+            },
+            .pointer_type => |ptr_info| {
+                if (actual_ty != .pointer_type) return null;
+                return self.extractTypeArgumentFromActual(
+                    ptr_info.child.*,
+                    actual_ty.pointer_type.child.*,
+                    param_name,
+                    s,
+                );
+            },
+            .array_type => |arr_info| {
+                if (actual_ty != .array_type) return null;
+                return self.extractTypeArgumentFromActual(
+                    arr_info.element.*,
+                    actual_ty.array_type.element_type.*,
+                    param_name,
+                    s,
+                );
+            },
+            .struct_type_literal => |st| {
+                if (actual_ty != .struct_type) return null;
+                const actual_struct = actual_ty.struct_type;
+                for (st.fields) |fld| {
+                    if (fld.type) |sub_ty| {
+                        if (typ.findFieldByName(actual_struct, fld.name.string)) |actual_field| {
+                            if (self.extractTypeArgumentFromActual(sub_ty, actual_field.ty, param_name, s)) |res|
+                                return res;
+                        }
+                    }
+                }
+            },
+            .generic_type_instantiation => |g| {
+                const tmpl_ptr = s.lookupGenericTypeTemplate(g.base_name.string, g.args.fields.len) orelse null;
+                if (tmpl_ptr != null and actual_ty == .struct_type) {
+                    const tmpl = tmpl_ptr.?;
+                    const actual_struct = actual_ty.struct_type;
+                    for (tmpl.body.fields) |tmpl_field| {
+                        if (tmpl_field.type) |sub_ty| {
+                            if (typ.findFieldByName(actual_struct, tmpl_field.name.string)) |actual_field| {
+                                if (self.extractTypeArgumentFromActual(sub_ty, actual_field.ty, param_name, s)) |res|
+                                    return res;
+                            }
+                        }
+                    }
+                }
+            },
+        }
+        return null;
+    }
+
+    fn deriveElementTypeFromList(list_type: sg.Type) ?sg.Type {
+        return switch (list_type) {
+            .array_type => list_type.array_type.element_type.*,
+            else => null,
+        };
+    }
+
+    fn inferGenericParamFromCall(
+        self: *Semantizer,
+        tmpl: gen.GenericTemplate,
+        param_name: []const u8,
+        call_input_ty: sg.Type,
+        s: *Scope,
+        subst: *std.StringHashMap(sg.Type),
+    ) ?sg.Type {
+        if (call_input_ty != .struct_type) return null;
+        const actual = call_input_ty.struct_type;
+        for (tmpl.input.fields) |fld| {
+            if (fld.type) |ty_node| {
+                if (!self.typeUsesParam(ty_node, param_name)) continue;
+                if (typ.findFieldByName(actual, fld.name.string)) |actual_field| {
+                    if (self.extractTypeArgumentFromActual(ty_node, actual_field.ty, param_name, s)) |res|
+                        return res;
+                }
+            }
+        }
+
+        // Heuristic: derive element type when list_type already inferred.
+        if (std.mem.eql(u8, param_name, "list_value_type")) {
+            if (subst.get("list_type")) |list_ty| {
+                if (deriveElementTypeFromList(list_ty)) |elem_ty| return elem_ty;
+            }
+        }
+
+        return null;
+    }
+
+    fn refineStructTypeWithActual(
+        self: *Semantizer,
+        expected_ptr: *sg.StructType,
+        actual_ty: sg.Type,
+    ) !bool {
+        if (actual_ty != .struct_type) return false;
+        const actual = actual_ty.struct_type;
+
+        const expected_fields = expected_ptr.fields;
+        var refined = try self.allocator.alloc(sg.StructTypeField, expected_fields.len);
+        errdefer self.allocator.free(refined);
+
+        var idx: usize = 0;
+        while (idx < expected_fields.len) : (idx += 1) {
+            const exp_field = expected_fields[idx];
+            const actual_field_ptr = typ.findFieldByName(actual, exp_field.name);
+
+            var final_ty = exp_field.ty;
+
+            if (actual_field_ptr) |af| {
+                const actual_ty_field = af.ty;
+                if (typ.typesStructurallyEqual(exp_field.ty, actual_ty_field)) {
+                    final_ty = actual_ty_field;
+                } else if (typ.isAny(exp_field.ty)) {
+                    final_ty = actual_ty_field;
+                } else if (typ.typesCompatible(exp_field.ty, actual_ty_field)) {
+                    final_ty = actual_ty_field;
+                } else {
+                    self.allocator.free(refined);
+                    return false;
+                }
+            } else {
+                if (exp_field.default_value == null) {
+                    self.allocator.free(refined);
+                    return false;
+                }
+            }
+
+            refined[idx] = .{
+                .name = exp_field.name,
+                .ty = final_ty,
+                .default_value = exp_field.default_value,
+            };
+        }
+
+        const old_slice = expected_ptr.fields;
+        expected_ptr.fields = refined;
+        self.allocator.free(@constCast(old_slice));
+        return true;
+    }
+
+    fn instantiateGenericNamed(
+        self: *Semantizer,
+        name: []const u8,
+        stargs: syn.StructTypeLiteral,
+        call_input: typ.TypedExpr,
+        s: *Scope,
+    ) SemErr!*sg.FunctionDeclaration {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.generic_functions.getPtr(name)) |list_ptr| {
+                for (list_ptr.items) |tmpl| {
+                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
+                    defer subst.deinit();
+
+                    var ok: bool = true;
+                    for (tmpl.param_names) |pname| {
+                        var found: bool = false;
+                        for (stargs.fields) |fld| {
+                            if (std.mem.eql(u8, fld.name.string, pname)) {
+                                if (fld.type) |ty_node| {
+                                    const resolved = try self.resolveTypeWithSubst(ty_node, s, &subst);
+                                    try subst.put(pname, resolved);
+                                } else if (fld.default_value) |def_node| {
+                                    const resolved = try self.resolveTypeExpression(def_node, s);
+                                    try subst.put(pname, resolved);
+                                }
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            if (self.inferGenericParamFromCall(tmpl, pname, call_input.ty, s, &subst)) |inferred| {
+                                try subst.put(pname, inferred);
+                                found = true;
+                            }
+                        }
+                        if (!found) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if (!ok) continue;
+
+                    const in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, &subst);
+                    const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, &subst);
+
+                    if (!(try self.refineStructTypeWithActual(in_struct_ptr, call_input.ty))) continue;
+
+                    if (s.functions.getPtr(name)) |fns| {
+                        for (fns.items) |cand| {
+                            if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
+                                return cand;
+                        }
+                    }
+
+                    var child = try Scope.init(self.allocator, s, null);
+                    var it = subst.iterator();
+                    while (it.next()) |entry| {
+                        const td = try self.allocator.create(sg.TypeDeclaration);
+                        td.* = .{ .name = entry.key_ptr.*, .ty = entry.value_ptr.* };
+                        try child.types.put(entry.key_ptr.*, td);
+                    }
+                    for (in_struct_ptr.fields) |fld| {
+                        const bd = try self.allocator.create(sg.BindingDeclaration);
+                        bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
+                        try child.bindings.put(fld.name, bd);
+                    }
+                    for (out_struct_ptr.fields) |fld| {
+                        const bd = try self.allocator.create(sg.BindingDeclaration);
+                        bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
+                        try child.bindings.put(fld.name, bd);
+                    }
+
+                    var body_cb: ?*sg.CodeBlock = null;
+                    if (tmpl.body) |body_node| {
+                        const body_te = try self.visitNode(body_node.*, &child);
+                        body_cb = body_te.node.content.code_block;
+                    }
+
+                    const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
+                    fn_ptr.* = .{
+                        .name = tmpl.name,
+                        .location = tmpl.location,
+                        .input = in_struct_ptr.*,
+                        .output = out_struct_ptr.*,
+                        .body = body_cb,
+                    };
+                    if (s.functions.getPtr(name)) |list_ptr2| {
+                        try list_ptr2.append(fn_ptr);
+                    } else {
+                        var lst = std.ArrayList(*sg.FunctionDeclaration).init(self.allocator.*);
+                        try lst.append(fn_ptr);
+                        try s.functions.put(name, lst);
+                    }
+                    const n = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, tmpl.location, self.allocator);
+                    try self.root_list.append(n);
+                    self.clearDeferred(&child);
+                    return fn_ptr;
+                }
+            }
+        }
+        return error.SymbolNotFound;
+    }
+
+    fn instantiateGeneric(
+        self: *Semantizer,
+        name: []const u8,
+        type_args_syn: []const syn.Type,
+        call_input: typ.TypedExpr,
+        s: *Scope,
+    ) SemErr!*sg.FunctionDeclaration {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.generic_functions.getPtr(name)) |list_ptr| {
+                for (list_ptr.items) |tmpl| {
+                    if (tmpl.param_names.len != type_args_syn.len) continue;
+
+                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
+                    defer subst.deinit();
+                    var i: usize = 0;
+                    while (i < tmpl.param_names.len) : (i += 1) {
+                        const resolved = try self.resolveTypeWithSubst(type_args_syn[i], s, &subst);
+                        try subst.put(tmpl.param_names[i], resolved);
+                    }
+
+                    const in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, &subst);
+                    const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, &subst);
+
+                    if (!(try self.refineStructTypeWithActual(in_struct_ptr, call_input.ty))) continue;
+
+                    // Check if already instantiated
+                    if (s.functions.getPtr(name)) |fns| {
+                        for (fns.items) |cand| {
+                            if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
+                                return cand;
+                        }
+                    }
+
+                    // Create child scope with type aliases
+                    var child = try Scope.init(self.allocator, s, null);
+                    var it = subst.iterator();
+                    while (it.next()) |entry| {
+                        const td = try self.allocator.create(sg.TypeDeclaration);
+                        td.* = .{ .name = entry.key_ptr.*, .ty = entry.value_ptr.* };
+                        try child.types.put(entry.key_ptr.*, td);
+                    }
+
+                    // Register params in child scope
+                    for (in_struct_ptr.fields) |fld| {
+                        const bd = try self.allocator.create(sg.BindingDeclaration);
+                        bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
+                        try child.bindings.put(fld.name, bd);
+                    }
+                    for (out_struct_ptr.fields) |fld| {
+                        const bd = try self.allocator.create(sg.BindingDeclaration);
+                        bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
+                        try child.bindings.put(fld.name, bd);
+                    }
+
+                    var body_cb: ?*sg.CodeBlock = null;
+                    if (tmpl.body) |body_node| {
+                        const body_te = try self.visitNode(body_node.*, &child);
+                        body_cb = body_te.node.content.code_block;
+                    }
+
+                    const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
+                    fn_ptr.* = .{
+                        .name = tmpl.name,
+                        .location = tmpl.location,
+                        .input = in_struct_ptr.*,
+                        .output = out_struct_ptr.*,
+                        .body = body_cb,
+                    };
+
+                    if (s.functions.getPtr(name)) |list_ptr2| {
+                        try list_ptr2.append(fn_ptr);
+                    } else {
+                        var lst = std.ArrayList(*sg.FunctionDeclaration).init(self.allocator.*);
+                        try lst.append(fn_ptr);
+                        try s.functions.put(name, lst);
+                    }
+                    const n = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, tmpl.location, self.allocator);
+                    try self.root_list.append(n);
+                    self.clearDeferred(&child);
+                    return fn_ptr;
+                }
+            }
+        }
+        return error.SymbolNotFound;
+    }
+
+    pub fn instantiateGenericTypeNamed(
+        self: *Semantizer,
+        name: []const u8,
+        stargs: syn.StructTypeLiteral,
+        s: *Scope,
+        outer_subst: ?*std.StringHashMap(sg.Type),
+    ) SemErr!*sg.StructType {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.generic_types.getPtr(name)) |list_ptr| {
+                for (list_ptr.items) |tmpl| {
+                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
+                    defer subst.deinit();
+
+                    if (outer_subst) |outer| {
+                        var it_outer = outer.iterator();
+                        while (it_outer.next()) |entry| {
+                            try subst.put(entry.key_ptr.*, entry.value_ptr.*);
+                        }
+                    }
+
+                    var ok: bool = true;
+                    for (tmpl.param_names) |pname| {
+                        var found: bool = false;
+                        for (stargs.fields) |fld| {
+                            if (std.mem.eql(u8, fld.name.string, pname)) {
+                                if (fld.type) |ty_node| {
+                                    const resolved = try self.resolveTypeWithSubst(ty_node, s, &subst);
+                                    try subst.put(pname, resolved);
+                                } else if (fld.default_value) |def_node| {
+                                    const resolved = try self.resolveTypeExpression(def_node, s);
+                                    try subst.put(pname, resolved);
+                                }
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if (!ok) continue;
+
+                    const st_ptr = try self.structTypeFromLiteralWithSubst(tmpl.body, s, &subst);
+                    return st_ptr;
+                }
+            }
+        }
+        return error.SymbolNotFound;
+    }
+
+    //──────────────────────────────────────────────────── BINARY OP
+    fn handleBinOp(
+        self: *Semantizer,
+        bo: syn.BinaryOperation,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        var lhs = try self.visitNode(bo.left.*, s);
+        var rhs = try self.visitNode(bo.right.*, s);
+
+        const lhs_is_ptr = lhs.ty == .pointer_type;
+        const rhs_is_ptr = rhs.ty == .pointer_type;
+        if (bo.operator == .addition and lhs_is_ptr != rhs_is_ptr) {
+            const int_ty = if (lhs_is_ptr) rhs.ty else lhs.ty;
+            const int_node = if (lhs_is_ptr) bo.right else bo.left;
+            const is_valid_index = int_ty == .builtin and (int_ty.builtin == .Int64 or int_ty.builtin == .UInt64);
+            if (!is_valid_index) {
+                const other_str = try typ.formatType(int_ty, s, self.allocator);
+                defer self.allocator.free(other_str);
+                try self.diags.add(
+                    int_node.*.location,
+                    .semantic,
+                    "pointer addition requires a 64-bit integer offset, but '{s}' was provided",
+                    .{other_str},
+                );
+                return error.Reported;
+            }
+
+            const bin = try self.allocator.create(sg.BinaryOperation);
+            bin.* = .{ .operator = bo.operator, .left = lhs.node, .right = rhs.node };
+            const n = try sg.makeSGNode(.{ .binary_operation = bin.* }, undefined, self.allocator);
+            try s.nodes.append(n);
+            return .{ .node = n, .ty = if (lhs_is_ptr) lhs.ty else rhs.ty };
+        }
+
+        rhs = try typ.coerceExprToType(lhs.ty, rhs, bo.right, s, self.allocator, self.diags);
+        lhs = try typ.coerceExprToType(rhs.ty, lhs, bo.left, s, self.allocator, self.diags);
+
+        if (!typ.typesExactlyEqual(lhs.ty, rhs.ty)) {
+            const left_ty = try typ.formatType(lhs.ty, s, self.allocator);
+            const right_ty = try typ.formatType(rhs.ty, s, self.allocator);
+            defer {
+                self.allocator.free(left_ty);
+                self.allocator.free(right_ty);
+            }
+            const verb = binaryOpVerb(bo.operator);
+            try self.diags.add(
+                bo.left.*.location,
+                .semantic,
+                "cannot {s} '{s}' and '{s}'",
+                .{ verb, left_ty, right_ty },
+            );
+            return error.Reported;
+        }
+
+        const bin = try self.allocator.create(sg.BinaryOperation);
+        bin.* = .{ .operator = bo.operator, .left = lhs.node, .right = rhs.node };
+
+        const n = try sg.makeSGNode(.{ .binary_operation = bin.* }, undefined, self.allocator);
+        try s.nodes.append(n);
+        return .{ .node = n, .ty = lhs.ty };
+    }
+
+    //──────────────────────────────────────────────────── COMPARISON
+    fn handleComparison(
+        self: *Semantizer,
+        c: syn.Comparison,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        var lhs = try self.visitNode(c.left.*, s);
+        var rhs = try self.visitNode(c.right.*, s);
+
+        rhs = try typ.coerceExprToType(lhs.ty, rhs, c.right, s, self.allocator, self.diags);
+        lhs = try typ.coerceExprToType(rhs.ty, lhs, c.left, s, self.allocator, self.diags);
+
+        if (!typ.typesExactlyEqual(lhs.ty, rhs.ty)) {
+            const left_ty = try typ.formatType(lhs.ty, s, self.allocator);
+            const right_ty = try typ.formatType(rhs.ty, s, self.allocator);
+            defer {
+                self.allocator.free(left_ty);
+                self.allocator.free(right_ty);
+            }
+            try self.diags.add(
+                c.left.*.location,
+                .semantic,
+                "cannot compare '{s}' and '{s}'",
+                .{ left_ty, right_ty },
+            );
+            return error.Reported;
+        }
+
+        const cmp_ptr = try self.allocator.create(sg.Comparison);
+        cmp_ptr.* = .{
+            .operator = c.operator,
+            .left = lhs.node,
+            .right = rhs.node,
+        };
+
+        const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, undefined, self.allocator);
+        try s.nodes.append(node);
+        return .{ .node = node, .ty = .{ .builtin = .Bool } };
+    }
+
+    //──────────────────────────────────────────────────── RETURN
+    fn handleReturn(
+        self: *Semantizer,
+        r: syn.ReturnStatement,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const e = if (r.expression) |ex| (try self.visitNode(ex.*, s)) else null;
+
+        const rs = try self.allocator.create(sg.ReturnStatement);
+        rs.* = .{ .expression = if (e) |te| te.node else null };
+
+        const n = try sg.makeSGNode(.{ .return_statement = rs }, undefined, self.allocator);
+        try s.nodes.append(n);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    //──────────────────────────────────────────────────── IF
+    fn handleIf(
+        self: *Semantizer,
+        ifs: syn.IfStatement,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const start_len = s.nodes.items.len;
+
+        const cond = try self.visitNode(ifs.condition.*, s);
+        const then_te = try self.visitNode(ifs.then_block.*, s);
+
+        const else_cb = if (ifs.else_block) |eb|
+            (try self.visitNode(eb.*, s)).node.content.code_block
+        else
+            null;
+
+        s.nodes.items.len = start_len;
+
+        const if_ptr = try self.allocator.create(sg.IfStatement);
+        if_ptr.* = .{
+            .condition = cond.node,
+            .then_block = then_te.node.content.code_block,
+            .else_block = else_cb,
+        };
+
+        const n = try sg.makeSGNode(.{ .if_statement = if_ptr }, undefined, self.allocator);
+        try s.nodes.append(n);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    //──────────────────────────────────────────────────── ADDRESS OF
+    fn handleAddressOf(
+        self: *Semantizer,
+        addr: syn.AddressOf,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const te = try self.visitNode(addr.value.*, s);
+
+        if (te.node.content != .binding_use) {
+            try self.diags.add(
+                addr.value.*.location,
+                .semantic,
+                "cannot take the address of this expression; only named variables are addressable",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const binding = te.node.content.binding_use;
+        if (addr.mutability == .read_write and binding.mutability != .variable) {
+            try self.diags.add(
+                addr.value.*.location,
+                .semantic,
+                "binding '{s}' is immutable; declare it with '::' or take '&{s}' instead of '$&{s}'",
+                .{ binding.name, binding.name, binding.name },
+            );
+            return error.Reported;
+        }
+
+        const child = try self.allocator.create(sg.Type);
+        child.* = te.ty;
+
+        const ptr_ty = try self.allocator.create(sg.PointerType);
+        ptr_ty.* = .{ .mutability = addr.mutability, .child = child };
+
+        const out_ty: sg.Type = .{ .pointer_type = ptr_ty };
+
+        const addr_node = try sg.makeSGNode(.{ .address_of = te.node }, undefined, self.allocator);
+        return .{ .node = addr_node, .ty = out_ty };
+    }
+
+    fn handleDefer(
+        self: *Semantizer,
+        expr: *syn.STNode,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const start_len = s.nodes.items.len;
+        const te = try self.visitNode(expr.*, s);
+
+        if (s.nodes.items.len > start_len) {
+            const new_nodes = s.nodes.items[start_len..];
+            try self.registerDefer(s, new_nodes);
+            s.nodes.items.len = start_len;
+        }
+
+        return .{ .node = te.node, .ty = .{ .builtin = .Any } };
+    }
+
+    //──────────────────────────────────────────────────── DEREFERENCE
+    fn handleDereference(
+        self: *Semantizer,
+        inner: *syn.STNode,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const te = try self.visitNode(inner.*, s);
+
+        if (te.ty != .pointer_type) {
+            const ty_str = try typ.formatType(te.ty, s, self.allocator);
+            defer self.allocator.free(ty_str);
+            try self.diags.add(
+                inner.*.location,
+                .semantic,
+                "cannot dereference value of type '{s}'; expected a pointer",
+                .{ty_str},
+            );
+            return error.Reported;
+        }
+        const ptr_info_ptr = te.ty.pointer_type;
+        const ptr_info = ptr_info_ptr.*;
+        const base_ty = ptr_info.child.*; // T
+
+        const der_ptr = try self.allocator.create(sg.Dereference);
+        der_ptr.* = .{ .pointer = te.node, .ty = base_ty, .pointer_type = ptr_info_ptr };
+
+        const n = try sg.makeSGNode(.{ .dereference = der_ptr.* }, undefined, self.allocator);
+
+        return .{ .node = n, .ty = base_ty };
+    }
+
+    //────────────────────────────────────────────────── POINTER ASSIGNMENT
+    const CallArg = struct {
+        name: []const u8,
+        expr: typ.TypedExpr,
+    };
+
+    fn buildCallInput(self: *Semantizer, args: []const CallArg) !typ.TypedExpr {
+        var ty_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+        var val_fields = std.ArrayList(sg.StructValueLiteralField).init(self.allocator.*);
+
+        for (args) |arg| {
+            try ty_fields.append(.{ .name = arg.name, .ty = arg.expr.ty, .default_value = null });
+            try val_fields.append(.{ .name = arg.name, .value = arg.expr.node });
+        }
+
+        const ty_slice = try ty_fields.toOwnedSlice();
+        ty_fields.deinit();
+
+        const struct_ptr = try self.allocator.create(sg.StructType);
+        struct_ptr.* = .{ .fields = ty_slice };
+
+        const val_slice = try val_fields.toOwnedSlice();
+        val_fields.deinit();
+
+        const lit_ptr = try self.allocator.create(sg.StructValueLiteral);
+        lit_ptr.* = .{ .fields = val_slice, .ty = .{ .struct_type = struct_ptr } };
+
+        const node = try sg.makeSGNode(.{ .struct_value_literal = lit_ptr }, undefined, self.allocator);
+
+        return .{ .node = node, .ty = .{ .struct_type = struct_ptr } };
+    }
+
+    fn handlePointerAssignment(
+        self: *Semantizer,
+        pa: syn.PointerAssignment,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        var rhs = try self.visitNode(pa.value.*, s);
+
+        if (pa.target.*.content == .struct_field_access) {
+            const sa = pa.target.*.content.struct_field_access;
+            const target_te = try self.visitNode(pa.target.*, s);
+            if (target_te.node.content != .struct_field_access)
+                return error.InvalidType;
+            const sf = target_te.node.content.struct_field_access;
+
+            const base = try self.visitNode(sa.struct_value.*, s);
+            const ptr_self = try typ.ensureMutablePointer(sa.struct_value, base, s, self.allocator, self.diags);
+
+            const ptr_info = ptr_self.ty.pointer_type.*;
+            if (ptr_info.child.* != .struct_type) {
+                const desc = try typ.formatType(ptr_self.ty, s, self.allocator);
+                defer self.allocator.free(desc);
+                try self.diags.add(
+                    sa.struct_value.location,
+                    .semantic,
+                    "cannot assign field on value of type '{s}'",
+                    .{desc},
+                );
+                return error.Reported;
+            }
+
+            const struct_type = ptr_info.child.*.struct_type;
+            if (sf.field_index >= struct_type.fields.len) return error.SymbolNotFound;
+            const field_info = struct_type.fields[sf.field_index];
+
+            rhs = try typ.coerceExprToType(field_info.ty, rhs, pa.value, s, self.allocator, self.diags);
+            if (!typ.typesExactlyEqual(field_info.ty, rhs.ty)) {
+                const expected = try typ.formatType(field_info.ty, s, self.allocator);
+                const actual = try typ.formatType(rhs.ty, s, self.allocator);
+                defer {
+                    self.allocator.free(expected);
+                    self.allocator.free(actual);
+                }
+                try self.diags.add(
+                    pa.value.*.location,
+                    .semantic,
+                    "cannot assign '{s}' to '{s}' (explicit casts not supported yet)",
+                    .{ actual, expected },
+                );
+                return error.Reported;
+            }
+
+            const store = sg.StructFieldStore{
+                .struct_ptr = ptr_self.node,
+                .struct_type = struct_type,
+                .field_index = sf.field_index,
+                .field_type = field_info.ty,
+                .value = rhs.node,
+            };
+
+            const node = try sg.makeSGNode(.{ .struct_field_store = store }, undefined, self.allocator);
+            try s.nodes.append(node);
+            return .{ .node = node, .ty = .{ .builtin = .Any } };
+        }
+
+        if (pa.target.*.content != .dereference) return error.InvalidType;
+
+        const tgt_te = try self.visitNode(pa.target.*, s);
+        const deref_sg = tgt_te.node.content.dereference;
+
+        rhs = try typ.coerceExprToType(deref_sg.ty, rhs, pa.value, s, self.allocator, self.diags);
+
+        if (deref_sg.pointer_type.*.mutability != .read_write) {
+            const ptr_ty: sg.Type = .{ .pointer_type = deref_sg.pointer_type };
+            const ptr_str = try typ.formatType(ptr_ty, s, self.allocator);
+            defer self.allocator.free(ptr_str);
+            try self.diags.add(
+                pa.target.*.location,
+                .semantic,
+                "cannot assign through pointer '{s}' because it is read-only; use '$&' when acquiring it",
+                .{ptr_str},
+            );
+            return error.Reported;
+        }
+
+        if (!typ.typesStructurallyEqual(deref_sg.ty, rhs.ty)) {
+            const expected = try typ.formatType(deref_sg.ty, s, self.allocator);
+            const actual = try typ.formatType(rhs.ty, s, self.allocator);
+            defer {
+                self.allocator.free(expected);
+                self.allocator.free(actual);
+            }
+            try self.diags.add(
+                pa.value.*.location,
+                .semantic,
+                "cannot assign '{s}' to '{s}' (explicit casts not supported yet)",
+                .{ actual, expected },
+            );
+            return error.Reported;
+        }
+
+        const n = try sg.makeSGNode(.{ .pointer_assignment = .{
+            .pointer = deref_sg.pointer,
+            .value = rhs.node,
+        } }, undefined, self.allocator);
+        try s.nodes.append(n);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn extractTypeArgument(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!sg.Type {
+        const arg_node = call.input.*;
+        if (arg_node.content != .struct_value_literal) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "builtin expects .type argument (example: .type = Int32)",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len != 1) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "builtin expects a single '.type' argument",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const field = svl.fields[0];
+        if (!std.mem.eql(u8, field.name.string, "type")) {
+            try self.diags.add(
+                field.value.*.location,
+                .semantic,
+                "expected '.type' argument",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        return self.resolveTypeExpression(field.value, s);
+    }
+
+    fn resolveTypeExpression(self: *Semantizer, node: *const syn.STNode, s: *Scope) SemErr!sg.Type {
+        return switch (node.content) {
+            .identifier => |name| blk: {
+                const ty_ast = syn.Type{ .type_name = syn.Name{ .string = name, .location = node.location } };
+                break :blk self.resolveType(ty_ast, s) catch {
+                    try self.diags.add(
+                        node.location,
+                        .semantic,
+                        "unknown type '{s}'",
+                        .{name},
+                    );
+                    return error.Reported;
+                };
+            },
+            .struct_type_literal => |lit| blk: {
+                const struct_ty = try self.structTypeFromLiteral(lit, s);
+                break :blk .{ .struct_type = struct_ty };
+            },
+            .function_call => |fc| blk: {
+                if (std.mem.eql(u8, fc.callee, "type_of")) {
+                    break :blk try self.typeOfCallResultType(fc, s);
+                }
+                try self.diags.add(
+                    node.location,
+                    .semantic,
+                    "unsupported expression in '.type' argument",
+                    .{},
+                );
+                return error.Reported;
+            },
+            else => blk_invalid: {
+                try self.diags.add(
+                    node.location,
+                    .semantic,
+                    "expected type expression",
+                    .{},
+                );
+                break :blk_invalid error.Reported;
+            },
+        };
+    }
+
+    fn typeOfCallResultType(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!sg.Type {
+        const arg_node = call.input.*;
+        if (arg_node.content != .struct_value_literal) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "type_of expects '.value' argument",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, "value")) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "type_of expects a single '.value' argument",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const value_expr = svl.fields[0].value;
+        const tv = try self.visitNode(value_expr.*, s);
+        return tv.ty;
+    }
+
+    fn inferArrayTypeFromList(
+        self: *Semantizer,
+        ll: *const sg.ListLiteral,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!*sg.ArrayType {
+        if (ll.elements.len == 0) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "cannot infer array type from empty list literal; specify the type explicitly",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const first_ty = ll.element_types[0];
+        for (ll.element_types, 0..) |elem_ty, idx| {
+            if (typ.typesStructurallyEqual(first_ty, elem_ty)) continue;
+            const exp = try typ.formatType(first_ty, s, self.allocator);
+            const got = try typ.formatType(elem_ty, s, self.allocator);
+            defer {
+                self.allocator.free(exp);
+                self.allocator.free(got);
+            }
+            try self.diags.add(
+                loc,
+                .semantic,
+                "array element {d} has type '{s}', expected '{s}'",
+                .{ idx, got, exp },
+            );
+            return error.Reported;
+        }
+
+        const elem_ty_ptr = try self.allocator.create(sg.Type);
+        elem_ty_ptr.* = first_ty;
+
+        const arr_info = try self.allocator.create(sg.ArrayType);
+        arr_info.* = .{
+            .length = ll.elements.len,
+            .element_type = elem_ty_ptr,
+        };
+        return arr_info;
+    }
+
+    fn resolveType(self: *Semantizer, t: syn.Type, s: *Scope) SemErr!sg.Type {
+        return switch (t) {
+            .type_name => |tn| blk: {
+                const id = tn.string;
+                if (typ.builtinFromName(id)) |bt|
+                    break :blk .{ .builtin = bt };
+                if (s.lookupAbstractInfo(id)) |_| {
+                    if (s.lookupAbstractDefault(id)) |def_entry|
+                        break :blk def_entry.ty;
+                    break :blk .{ .builtin = .Any };
+                }
+                if (s.lookupType(id)) |td|
+                    break :blk td.ty;
+                break :blk error.UnknownType;
+            },
+            .generic_type_instantiation => |g| blk_g: {
+                const base_name = g.base_name.string;
+                if (s.lookupAbstractInfo(base_name)) |info| {
+                    for (info.param_names) |pname| {
+                        var found = false;
+                        for (g.args.fields) |fld| {
+                            if (std.mem.eql(u8, fld.name.string, pname)) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) break :blk_g error.UnknownType;
+                    }
+                    break :blk_g .{ .builtin = .Any };
+                }
+
+                const st_ptr = self.instantiateGenericTypeNamed(base_name, g.args, s, null) catch |err| switch (err) {
+                    error.SymbolNotFound => break :blk_g error.UnknownType,
+                    else => return err,
+                };
+                break :blk_g .{ .struct_type = st_ptr };
+            },
+            .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
+            .pointer_type => |ptr_info| blk: {
+                const inner_ty = try self.resolveType(ptr_info.child.*, s);
+                const child = try self.allocator.create(sg.Type);
+                child.* = inner_ty;
+
+                const sem_ptr = try self.allocator.create(sg.PointerType);
+                sem_ptr.* = .{
+                    .mutability = ptr_info.mutability,
+                    .child = child,
+                };
+
+                break :blk .{ .pointer_type = sem_ptr };
+            },
+            .array_type => |arr_info| blk_arr: {
+                const elem_ty = try self.resolveType(arr_info.element.*, s);
+                const elem_ptr = try self.allocator.create(sg.Type);
+                elem_ptr.* = elem_ty;
+
+                const sem_arr = try self.allocator.create(sg.ArrayType);
+                sem_arr.* = .{
+                    .length = arr_info.length,
+                    .element_type = elem_ptr,
+                };
+
+                break :blk_arr .{ .array_type = sem_arr };
+            },
+        };
+    }
+
+    fn resolveTypeWithSubst(
+        self: *Semantizer,
+        t: syn.Type,
+        s: *Scope,
+        subst: *std.StringHashMap(sg.Type),
+    ) SemErr!sg.Type {
+        return switch (t) {
+            .type_name => |tn| blk: {
+                const id = tn.string;
+                if (subst.get(id)) |mapped| break :blk mapped;
+                break :blk try self.resolveType(t, s);
+            },
+            .generic_type_instantiation => |g| blk_g: {
+                const base_name = g.base_name.string;
+                if (s.lookupAbstractInfo(base_name)) |info| {
+                    for (info.param_names) |pname| {
+                        var found = false;
+                        for (g.args.fields) |fld| {
+                            if (std.mem.eql(u8, fld.name.string, pname)) {
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) break :blk_g error.UnknownType;
+                    }
+                    break :blk_g .{ .builtin = .Any };
+                }
+
+                const st_ptr = self.instantiateGenericTypeNamed(base_name, g.args, s, subst) catch |err| switch (err) {
+                    error.SymbolNotFound => break :blk_g error.UnknownType,
+                    else => return err,
+                };
+                break :blk_g .{ .struct_type = st_ptr };
+            },
+            .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteralWithSubst(st, s, subst) },
+            .pointer_type => |ptr_info| blk: {
+                const inner_ty = try self.resolveTypeWithSubst(ptr_info.child.*, s, subst);
+                const child = try self.allocator.create(sg.Type);
+                child.* = inner_ty;
+
+                const sem_ptr = try self.allocator.create(sg.PointerType);
+                sem_ptr.* = .{
+                    .mutability = ptr_info.mutability,
+                    .child = child,
+                };
+
+                break :blk .{ .pointer_type = sem_ptr };
+            },
+            .array_type => |arr_info| blk_arr: {
+                const elem_ty = try self.resolveTypeWithSubst(arr_info.element.*, s, subst);
+                const elem_ptr = try self.allocator.create(sg.Type);
+                elem_ptr.* = elem_ty;
+
+                const sem_arr = try self.allocator.create(sg.ArrayType);
+                sem_arr.* = .{
+                    .length = arr_info.length,
+                    .element_type = elem_ptr,
+                };
+
+                break :blk_arr .{ .array_type = sem_arr };
+            },
+        };
+    }
+
+    //──────────────────────────────────────────────────── HELPERS
+    fn handleBuiltinTypeInfo(
+        self: *Semantizer,
+        kind: typ.BuiltinTypeInfoKind,
+        call: syn.FunctionCall,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const target_ty = try self.extractTypeArgument(call, s);
+
+        const value = switch (kind) {
+            .size => typ.computeTypeSize(target_ty),
+            .alignment => typ.computeTypeAlignment(target_ty),
+        };
+
+        const loc = call.input.*.location;
+        if (value > std.math.maxInt(i32)) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "result of builtin exceeds Int32 range",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        return try typ.makeIntLiteral(self.allocator, loc, @intCast(value), .{ .builtin = .Int32 });
+    }
+
+    fn handleLengthBuiltin(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const arg_node = call.input.*;
+        const arg_loc = arg_node.location;
+
+        var value_te: typ.TypedExpr = undefined;
+        if (arg_node.content == .struct_value_literal) {
+            const sv = arg_node.content.struct_value_literal;
+            if (sv.fields.len != 1 or !std.mem.eql(u8, sv.fields[0].name.string, "value")) {
+                try self.diags.add(
+                    arg_loc,
+                    .semantic,
+                    "length expects a single '.value' argument when using named parameters",
+                    .{},
+                );
+                return error.Reported;
+            }
+            value_te = try self.visitNode(sv.fields[0].value.*, s);
+        } else {
+            value_te = try self.visitNode(arg_node, s);
+        }
+
+        switch (value_te.node.content) {
+            .list_literal => |ll| {
+                const len_u64: u64 = @intCast(ll.elements.len);
+                if (len_u64 > std.math.maxInt(i64)) {
+                    try self.diags.add(
+                        arg_loc,
+                        .semantic,
+                        "length result exceeds supported integer range",
+                        .{},
+                    );
+                    return error.Reported;
+                }
+                return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
+            },
+            .array_literal => |al| {
+                const len_u64: u64 = @intCast(al.length);
+                if (len_u64 > std.math.maxInt(i64)) {
+                    try self.diags.add(
+                        arg_loc,
+                        .semantic,
+                        "length result exceeds supported integer range",
+                        .{},
+                    );
+                    return error.Reported;
+                }
+                return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
+            },
+            else => {},
+        }
+
+        if (value_te.ty == .array_type) {
+            const arr = value_te.ty.array_type.*;
+            const len_u64: u64 = @intCast(arr.length);
+            if (len_u64 > std.math.maxInt(i64)) {
+                try self.diags.add(
+                    arg_loc,
+                    .semantic,
+                    "length result exceeds supported integer range",
+                    .{},
+                );
+                return error.Reported;
+            }
+            return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
+        }
+
+        return error.SymbolNotFound;
+    }
+
+    fn handleTypeOf(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const arg_node = call.input.*;
+        if (arg_node.content != .struct_value_literal) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "type_of expects '.value' argument",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, "value")) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "type_of expects a single '.value' argument",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const tv = try self.visitNode(svl.fields[0].value.*, s);
+        const loc = call.input.*.location;
+        return try typ.makeTypeLiteral(self.allocator, loc, tv.ty);
+    }
+
+    fn registerDefer(self: *Semantizer, s: *Scope, nodes: []const *sg.SGNode) !void {
+        if (nodes.len == 0) return;
+        const copy = try self.allocator.alloc(*sg.SGNode, nodes.len);
+        std.mem.copyForwards(*sg.SGNode, copy, nodes);
+        try s.deferred.append(.{ .nodes = copy });
+    }
+
+    fn clearDeferred(self: *Semantizer, s: *Scope) void {
+        for (s.deferred.items) |group| self.allocator.free(group.nodes);
+        s.deferred.deinit();
+    }
+
+    fn maybeScheduleAutoDeinit(
+        self: *Semantizer,
+        binding: *sg.BindingDeclaration,
+        loc: tok.Location,
+        s: *Scope,
+    ) !void {
+        if (s.parent == null) return;
+        const deinit_fn = s.findDeinit(binding.ty) orelse return;
+        if (deinit_fn.input.fields.len != 1) return;
+
+        const binding_use = try sg.makeSGNode(.{ .binding_use = binding }, loc, self.allocator);
+        const addr_node = try sg.makeSGNode(.{ .address_of = binding_use }, loc, self.allocator);
+
+        const arg_fields = try self.allocator.alloc(sg.StructValueLiteralField, 1);
+        arg_fields[0] = .{ .name = deinit_fn.input.fields[0].name, .value = addr_node };
+
+        const args_struct = try self.allocator.create(sg.StructValueLiteral);
+        args_struct.* = .{
+            .fields = arg_fields,
+            .ty = .{ .struct_type = &deinit_fn.input },
+        };
+
+        const args_node = try sg.makeSGNode(.{ .struct_value_literal = args_struct }, loc, self.allocator);
+
+        const fc_ptr = try self.allocator.create(sg.FunctionCall);
+        fc_ptr.* = .{ .callee = deinit_fn, .input = args_node };
+
+        const call_node = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
+        try self.registerDefer(s, &[_]*sg.SGNode{call_node});
+    }
+
+    // ─────────────────────────────────────────────────── Helpers reintento
+    fn pushTopLevelForRetry(self: *Semantizer) !void {
+        if (!self.defer_unknown_top_level) return;
+        if (self.current_top_node) |ptr| {
+            try self.pending_next.append(ptr);
+        }
+    }
+};
+
+//────────────────────────────────────────────────────────────────────── BUILDER SCOPE
+
+fn binaryOpVerb(op: tok.BinaryOperator) []const u8 {
+    return switch (op) {
+        .addition => "add",
+        .subtraction => "subtract",
+        .multiplication => "multiply",
+        .division => "divide",
+        .modulo => "mod",
+    };
+}

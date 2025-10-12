@@ -22,66 +22,68 @@ intentar encontrar un hibrido entre ambos.
 
 Hay que encontrar un balance entre ambos.
 
-project.rgstruct
+project.rgo
 
 ```rg
-.name                 = "Project Name"
+(
+    .name                 = "Project Name"
 
-.version              = "1.0.0"
+    .version              = "1.0.0"
 
-.description          = "A brief description of the project."
+    .description          = "A brief description of the project."
 
-.readme               = "README.md"
+    .readme               = "README.md"
 
-.minimum_argi_version = "0.1.0"
+    .minimum_argi_version = "0.1.0"
 
-.authors = (
-    "Jhon Snow"
-    "Arya Stark"
-)
-
-.license = ..MIT
-
-.dependencies = (
-    "module_one" = (
-        .path      = "http://example.com/module_one/"
-        .version   = ">1.2.3"
-        .lock_hash = "abcd1234efgh5678ijkl9012mnop3456qrst7890uvwx"
+    .authors = (
+        "Jhon Snow"
+        "Arya Stark"
     )
-    "module_two" = (
-        .path      = "https://example.com/module_two/"
-        .version   = ">2"
-        .lock_hash = "wxyz1234abcd5678efgh9012ijkl3456mnop7890qrst"
+
+    .license = ..MIT
+
+    .dependencies = (
+        "module_one" = (
+            .path      = "http://example.com/module_one/"
+            .version   = ">1.2.3"
+            .lock_hash = "abcd1234efgh5678ijkl9012mnop3456qrst7890uvwx"
+        )
+        "module_two" = (
+            .path      = "https://example.com/module_two/"
+            .version   = ">2"
+            .lock_hash = "wxyz1234abcd5678efgh9012ijkl3456mnop7890qrst"
+        )
+        -- TODO: Pensar si separa los locks en otro archivo.
     )
-    -- TODO: Pensar si separa los locks en otro archivo.
-)
 
-.commands = (
+    .commands = (
 
-    -- Deben poder correr at compile time
+        -- Deben poder correr at compile time
 
-    "build" = default_executable_creation (.module = "./entrypoints/main")
-    -- o para librerías estáticamente linkadas.
-    -- "build" = default_dynamically_linked_library_creation (.module = ".")
+        "build" = default_executable_creation (.module = "./entrypoints/main")
+        -- o para librerías estáticamente linkadas.
+        -- "build" = default_dynamically_linked_library_creation (.module = ".")
 
-    "test"  = default_testing (.all_inside_folder = ".")
+        "test"  = default_testing (.all_inside_folder = ".")
 
-    "install" = (.ct: CommandContext) -> () {
-        ct.do("build")
-        -- Aquí procedural
-    }
+        "install" = (.ct: CommandContext) -> () {
+            ct.do("build")
+            -- Aquí procedural
+        }
 
-    "uninstall" = (.ct: CommandContext) -> () {
-        -- Aquí procedural
-    }
+        "uninstall" = (.ct: CommandContext) -> () {
+            -- Aquí procedural
+        }
 
-    "distribute" = (.ct: CommandContext) -> () {
-        -- llena la carpeta dist/ con los compilados para todas las plataformas
-    }
+        "distribute" = (.ct: CommandContext) -> () {
+            -- llena la carpeta dist/ con los compilados para todas las plataformas
+        }
 
-    "custom" = (.ct: CommandContext) -> () {
-        -- Aquí procedural
-    }
+        "custom" = (.ct: CommandContext) -> () {
+            -- Aquí procedural
+        }
+    )
 )
 ```
 
