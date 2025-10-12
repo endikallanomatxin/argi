@@ -1,0 +1,2 @@
+ForeignFunctionInterface : Type = ()
+

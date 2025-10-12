@@ -6,12 +6,14 @@ This repository contains a compiler for a new programming language written in Zi
 ## Project Structure & Module Organization
 
 - `compiler/`: Zig sources for the compiler.
+    - `core/`: Core modules (standard library for the compiler).
     - `src/`: Source files for the compiler.
         - The compiler is structured in four phases:
         tokenizing, syntaxing, semantizing and codegen.
     - `tests/`: Example `.rg` programs used as tests.
 
-- `modules/`: Early standard library module drafts.
+- `modules/`: More modules' drafts that will be officially supported but not
+part of the core library.
 
 - `description/`: Design documents and architecture notes.
 
@@ -20,6 +22,10 @@ This repository contains a compiler for a new programming language written in Zi
 
 - Build compiler: `cd compiler && zig build`
 - Compile a test program: `./zig-out/bin/argi build tests/example_test.rg`
+
+> It might be necessary to set the following environment variables to make zig work:
+> `ZIG_LOCAL_CACHE_DIR="$PWD/.zig-cache"`
+> `ZIG_GLOBAL_CACHE_DIR="$PWD/.zig-global-cache"`
 
 
 ## Guidelines
@@ -36,6 +42,9 @@ This repository contains a compiler for a new programming language written in Zi
     7. Evaluate if the diagnostics need improvement for the new feature and
        enhance them.
 
+- During development, if some error diagnostic is not clear or useful enough
+improve it.
+
 - If during development of a feature, you find some tangential improvement that
 should be made, or you foresee that some area needs further work, if it is not
 worth it to handle it at the moment, mark it as a TODO and focus on the main
@@ -48,7 +57,8 @@ feature first.
     - File naming: `snake_case.zig` (e.g., `parser.zig`, `type_checker.zig`).
 
 - Use comments to explain non-obvious code, especially complex algorithms or
-design decisions.
+design decisions. If you leave comments, ensure they are descriptive and
+timeless; not refering to the current change.
 
 - Commits: focused, descriptive subject in imperative mood (e.g., "add binary
 literals to lexer").

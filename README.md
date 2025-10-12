@@ -25,4 +25,10 @@ Highlights:
     - Virtual types (dynamic dispatch)
 - Errable and Nullable types.
 - Big core library.
+- Great tooling (official formatter, lsp...).
+
+
+Biggest, most important TODO: Define memory management further.
+(all description files starting with 3)
+There are some ideas, but it is still on the air.
 
