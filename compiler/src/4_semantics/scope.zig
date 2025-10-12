@@ -3,6 +3,7 @@ const sg = @import("semantic_graph.zig");
 
 const abs = @import("abstracts.zig");
 const gen = @import("generics.zig");
+const typ = @import("types.zig");
 
 pub const DeferredGroup = struct {
     nodes: []const *sg.SGNode,
@@ -87,6 +88,24 @@ pub const Scope = struct {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.abstracts.get(name)) |info| return info;
+        }
+        return null;
+    }
+
+    pub fn findDeinit(s: *Scope, ty: sg.Type) ?*sg.FunctionDeclaration {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr("deinit")) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (cand.input.fields.len == 0) continue;
+                    const first = cand.input.fields[0];
+                    if (first.ty != .pointer_type) continue;
+                    const ptr_info = first.ty.pointer_type.*;
+                    if (ptr_info.mutability != .read_write) continue;
+                    const pointee = ptr_info.child.*;
+                    if (typ.typesExactlyEqual(pointee, ty)) return cand;
+                }
+            }
         }
         return null;
     }

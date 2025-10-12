@@ -1,7 +1,7 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
-const sem = @import("semantic_graph.zig");
+const sg = @import("semantic_graph.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
@@ -18,8 +18,8 @@ const SemErr = @import("errors.zig").SemErr;
 pub const Semantizer = struct {
     allocator: *const std.mem.Allocator,
     st_nodes: []const *syn.STNode, // entrada
-    root_list: std.ArrayList(*sem.SGNode), // buffer mut
-    root_nodes: []const *sem.SGNode = &.{}, // slice final
+    root_list: std.ArrayList(*sg.SGNode), // buffer mut
+    root_nodes: []const *sg.SGNode = &.{}, // slice final
     diags: *diagnostic.Diagnostics,
 
     // ── Reintentos top-level
@@ -37,14 +37,14 @@ pub const Semantizer = struct {
         return .{
             .allocator = alloc,
             .st_nodes = st,
-            .root_list = std.ArrayList(*sem.SGNode).init(alloc.*),
+            .root_list = std.ArrayList(*sg.SGNode).init(alloc.*),
             .diags = diags,
             .pending_now = std.ArrayList(*const syn.STNode).init(alloc.*),
             .pending_next = std.ArrayList(*const syn.STNode).init(alloc.*),
         };
     }
 
-    pub fn analyze(self: *Semantizer) SemErr![]const *sem.SGNode {
+    pub fn analyze(self: *Semantizer) SemErr![]const *sg.SGNode {
         var global = try Scope.init(self.allocator, null, null);
 
         // 1) Pasada inicial: difiere los UnknownType top-level
@@ -450,7 +450,7 @@ pub const Semantizer = struct {
         // Register abstract as a nominal type placeholder (maps to Any for now)
         if (s.types.contains(ad.name.string)) return error.SymbolAlreadyDefined;
 
-        const td = try self.allocator.create(sem.TypeDeclaration);
+        const td = try self.allocator.create(sg.TypeDeclaration);
         td.* = .{ .name = ad.name.string, .ty = .{ .builtin = .Any } };
         try s.types.put(ad.name.string, td);
 
@@ -459,13 +459,13 @@ pub const Semantizer = struct {
         const generic_params = ad.generic_params;
         for (ad.requires_functions) |rf| {
             // Build input struct resolving types; track Self/generic/abstract usages
-            var in_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+            var in_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
             var input_generic = std.ArrayList(?u32).init(self.allocator.*);
             var input_abstract = std.ArrayList(?[]const u8).init(self.allocator.*);
             var self_idxs = std.ArrayList(u32).init(self.allocator.*);
 
             for (rf.input.fields, 0..) |fld, i| {
-                var ty: sem.Type = .{ .builtin = .Any };
+                var ty: sg.Type = .{ .builtin = .Any };
                 var generic_idx_opt: ?u32 = null;
                 var abstract_req: ?[]const u8 = null;
 
@@ -516,7 +516,7 @@ pub const Semantizer = struct {
                 try input_abstract.append(abstract_req);
             }
 
-            const in_struct = sem.StructType{ .fields = try in_fields.toOwnedSlice() };
+            const in_struct = sg.StructType{ .fields = try in_fields.toOwnedSlice() };
             const input_generic_slice = try input_generic.toOwnedSlice();
             const input_abstract_slice = try input_abstract.toOwnedSlice();
 
@@ -525,12 +525,12 @@ pub const Semantizer = struct {
             input_abstract.deinit();
 
             // Build output struct, tracking generics/abstracts similarly
-            var out_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+            var out_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
             var output_generic = std.ArrayList(?u32).init(self.allocator.*);
             var output_abstract = std.ArrayList(?[]const u8).init(self.allocator.*);
 
             for (rf.output.fields) |fld| {
-                var ty: sem.Type = .{ .builtin = .Any };
+                var ty: sg.Type = .{ .builtin = .Any };
                 var generic_idx_opt: ?u32 = null;
                 var abstract_req: ?[]const u8 = null;
 
@@ -577,7 +577,7 @@ pub const Semantizer = struct {
                 try output_abstract.append(abstract_req);
             }
 
-            const out_struct = sem.StructType{ .fields = try out_fields.toOwnedSlice() };
+            const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
             const output_generic_slice = try output_generic.toOwnedSlice();
             const output_abstract_slice = try output_abstract.toOwnedSlice();
 
@@ -631,7 +631,7 @@ pub const Semantizer = struct {
             try s.abstract_impls.put(rel.name, new_list);
         }
 
-        const empty = try self.allocator.create(sem.CodeBlock);
+        const empty = try self.allocator.create(sg.CodeBlock);
         empty.* = .{ .nodes = &.{}, .ret_val = null };
         const n = try self.makeNode(undefined, .{ .code_block = empty }, s);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
@@ -645,7 +645,7 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         const concrete_ty = try self.resolveType(rel.ty, s);
         try s.abstract_defaults.put(rel.name.string, .{ .ty = concrete_ty, .location = loc });
-        const empty = try self.allocator.create(sem.CodeBlock);
+        const empty = try self.allocator.create(sg.CodeBlock);
         empty.* = .{ .nodes = &.{}, .ret_val = null };
         const n = try self.makeNode(undefined, .{ .code_block = empty }, s);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
@@ -653,40 +653,40 @@ pub const Semantizer = struct {
 
     //─────────────────────────────────────────────────────────  LITERALS
     fn handleLiteral(self: *Semantizer, lit: tok.Literal) SemErr!typ.TypedExpr {
-        var sg: sem.ValueLiteral = undefined;
-        var ty: sem.Type = .{ .builtin = .Int32 };
+        var value_literal: sg.ValueLiteral = undefined;
+        var ty: sg.Type = .{ .builtin = .Int32 };
 
         switch (lit) {
             .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => |txt| {
-                sg = .{ .int_literal = std.fmt.parseInt(i64, txt, 0) catch 0 };
+                value_literal = .{ .int_literal = std.fmt.parseInt(i64, txt, 0) catch 0 };
             },
             .regular_float_literal, .scientific_float_literal => |txt| {
                 ty = .{ .builtin = .Float32 };
-                sg = .{ .float_literal = std.fmt.parseFloat(f64, txt) catch 0.0 };
+                value_literal = .{ .float_literal = std.fmt.parseFloat(f64, txt) catch 0.0 };
             },
             .char_literal => |c| {
                 ty = .{ .builtin = .Char };
-                sg = .{ .char_literal = c };
+                value_literal = .{ .char_literal = c };
             },
             .string_literal => |s| {
-                const char_ty: sem.Type = .{ .builtin = .Char };
-                const child = try self.allocator.create(sem.Type);
+                const char_ty: sg.Type = .{ .builtin = .Char };
+                const child = try self.allocator.create(sg.Type);
                 child.* = char_ty;
 
-                const sem_ptr = try self.allocator.create(sem.PointerType);
+                const sem_ptr = try self.allocator.create(sg.PointerType);
                 sem_ptr.* = .{ .mutability = .read_only, .child = child };
 
                 ty = .{ .pointer_type = sem_ptr };
-                sg = .{ .string_literal = s };
+                value_literal = .{ .string_literal = s };
             },
             .bool_literal => |b| {
                 ty = .{ .builtin = .Bool };
-                sg = .{ .bool_literal = b };
+                value_literal = .{ .bool_literal = b };
             },
         }
 
-        const ptr = try self.allocator.create(sem.ValueLiteral);
-        ptr.* = sg;
+        const ptr = try self.allocator.create(sg.ValueLiteral);
+        ptr.* = value_literal;
         const n = try self.makeNode(undefined, .{ .value_literal = ptr.* }, null);
         return .{ .node = n, .ty = ty };
     }
@@ -723,7 +723,7 @@ pub const Semantizer = struct {
         child.nodes.deinit();
         self.clearDeferred(&child);
 
-        const cb = try self.allocator.create(sem.CodeBlock);
+        const cb = try self.allocator.create(sg.CodeBlock);
         cb.* = .{ .nodes = slice, .ret_val = null };
 
         const n = try self.makeNode(undefined, .{ .code_block = cb }, parent);
@@ -747,7 +747,7 @@ pub const Semantizer = struct {
             init_te_opt = try self.visitNode(v.*, s);
         }
 
-        var ty: sem.Type = .{ .builtin = .Int32 };
+        var ty: sg.Type = .{ .builtin = .Int32 };
         if (d.type) |t| {
             ty = try self.resolveType(t, s);
         } else if (init_te_opt) |te| {
@@ -764,7 +764,7 @@ pub const Semantizer = struct {
             }
         }
 
-        const bd = try self.allocator.create(sem.BindingDeclaration);
+        const bd = try self.allocator.create(sg.BindingDeclaration);
         bd.* = .{
             .name = d.name.string,
             .mutability = d.mutability,
@@ -801,20 +801,20 @@ pub const Semantizer = struct {
             }
             // No concrete type emitted now
             const noop = try self.makeNode(d.value.location, .{ .code_block = blk: {
-                const empty = try self.allocator.create(sem.CodeBlock);
+                const empty = try self.allocator.create(sg.CodeBlock);
                 empty.* = .{ .nodes = &.{}, .ret_val = null };
                 break :blk empty;
             } }, s);
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
         } else {
             // 1) Asegurar stub nominal para el nombre del tipo
-            var td: *sem.TypeDeclaration = undefined;
+            var td: *sg.TypeDeclaration = undefined;
             if (s.types.get(d.name.string)) |existing| {
                 td = existing;
             } else {
-                const stub = try self.allocator.create(sem.StructType);
+                const stub = try self.allocator.create(sg.StructType);
                 stub.* = .{ .fields = &.{} };
-                td = try self.allocator.create(sem.TypeDeclaration);
+                td = try self.allocator.create(sg.TypeDeclaration);
                 td.* = .{ .name = d.name.string, .ty = .{ .struct_type = stub } };
                 try s.types.put(d.name.string, td);
                 // Emitir el nodo una sola vez cuando el stub se crea
@@ -826,11 +826,11 @@ pub const Semantizer = struct {
             const st_ptr = try self.structTypeFromLiteral(st_lit, s);
             // Rellenar el stub in-place (puntero estable). struct_type es *const; necesitamos mutarlo.
             const dst_const = td.ty.struct_type; // *const sem.StructType
-            const dst: *sem.StructType = @constCast(dst_const); // hacemos mutable el pointee
+            const dst: *sg.StructType = @constCast(dst_const); // hacemos mutable el pointee
             dst.fields = st_ptr.fields;
             // Devolver un no-op para no duplicar el nodo en root
             const noop = try self.makeNode(d.value.location, .{ .code_block = blk2: {
-                const empty = try self.allocator.create(sem.CodeBlock);
+                const empty = try self.allocator.create(sg.CodeBlock);
                 empty.* = .{ .nodes = &.{}, .ret_val = null };
                 break :blk2 empty;
             } }, null);
@@ -870,7 +870,7 @@ pub const Semantizer = struct {
             }
             // Return a no-op node for generic template
             const noop = try self.makeNode(loc, .{ .code_block = blk: {
-                const empty = try self.allocator.create(sem.CodeBlock);
+                const empty = try self.allocator.create(sg.CodeBlock);
                 empty.* = .{ .nodes = &.{}, .ret_val = null };
                 break :blk empty;
             } }, p);
@@ -880,7 +880,7 @@ pub const Semantizer = struct {
         var child = try Scope.init(self.allocator, p, null);
 
         // ── entrada
-        var in_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+        var in_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
         for (f.input.fields) |fld| {
             const ty = try self.resolveType(fld.type.?, &child);
             const dvp = if (fld.default_value) |n|
@@ -894,7 +894,7 @@ pub const Semantizer = struct {
                 .default_value = dvp,
             });
 
-            const bd = try self.allocator.create(sem.BindingDeclaration);
+            const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{
                 .name = fld.name.string,
                 .mutability = .constant,
@@ -903,11 +903,11 @@ pub const Semantizer = struct {
             };
             try child.bindings.put(fld.name.string, bd);
         }
-        const in_struct = sem.StructType{ .fields = try in_fields.toOwnedSlice() };
+        const in_struct = sg.StructType{ .fields = try in_fields.toOwnedSlice() };
         in_fields.deinit();
 
         // ── salida
-        var out_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+        var out_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
         for (f.output.fields) |fld| {
             const ty = try self.resolveType(fld.type.?, &child);
             const dvp = if (fld.default_value) |n|
@@ -921,7 +921,7 @@ pub const Semantizer = struct {
                 .default_value = dvp,
             });
 
-            const bd = try self.allocator.create(sem.BindingDeclaration);
+            const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{
                 .name = fld.name.string,
                 .mutability = .variable,
@@ -930,17 +930,17 @@ pub const Semantizer = struct {
             };
             try child.bindings.put(fld.name.string, bd);
         }
-        const out_struct = sem.StructType{ .fields = try out_fields.toOwnedSlice() };
+        const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
         out_fields.deinit();
 
         // ── cuerpo
-        var body_cb: ?*sem.CodeBlock = null;
+        var body_cb: ?*sg.CodeBlock = null;
         if (f.body) |body_node| {
             const body_te = try self.visitNode(body_node.*, &child);
             body_cb = body_te.node.content.code_block;
         }
 
-        const fn_ptr = try self.allocator.create(sem.FunctionDeclaration);
+        const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
         fn_ptr.* = .{
             .name = f.name.string,
             .location = loc,
@@ -958,7 +958,7 @@ pub const Semantizer = struct {
             }
             try list_ptr.append(fn_ptr);
         } else {
-            var lst = std.ArrayList(*sem.FunctionDeclaration).init(self.allocator.*);
+            var lst = std.ArrayList(*sg.FunctionDeclaration).init(self.allocator.*);
             try lst.append(fn_ptr);
             try p.functions.put(f.name.string, lst);
         }
@@ -996,7 +996,7 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const asg = try self.allocator.create(sem.Assignment);
+        const asg = try self.allocator.create(sg.Assignment);
         asg.* = .{ .sym_id = b, .value = rhs.node };
 
         const n = try self.makeNode(undefined, .{ .binding_assignment = asg }, s);
@@ -1009,7 +1009,7 @@ pub const Semantizer = struct {
         sl: syn.StructValueLiteral,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        var fields_buf = std.ArrayList(sem.StructValueLiteralField).init(self.allocator.*);
+        var fields_buf = std.ArrayList(sg.StructValueLiteralField).init(self.allocator.*);
 
         for (sl.fields) |f| {
             const tv = try self.visitNode(f.value.*, s);
@@ -1021,7 +1021,7 @@ pub const Semantizer = struct {
 
         const st_ptr = try self.structTypeFromVal(sl, s);
 
-        const lit = try self.allocator.create(sem.StructValueLiteral);
+        const lit = try self.allocator.create(sg.StructValueLiteral);
         lit.* = .{ .fields = fields, .ty = .{ .struct_type = st_ptr } };
 
         const n = try self.makeNode(undefined, .{ .struct_value_literal = lit }, null);
@@ -1033,8 +1033,8 @@ pub const Semantizer = struct {
         st: syn.StructTypeLiteral,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        var val_fields = std.ArrayList(sem.StructValueLiteralField).init(self.allocator.*);
-        var ty_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+        var val_fields = std.ArrayList(sg.StructValueLiteralField).init(self.allocator.*);
+        var ty_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
 
         for (st.fields) |fld| {
             if (fld.default_value == null)
@@ -1051,10 +1051,10 @@ pub const Semantizer = struct {
         val_fields.deinit();
         ty_fields.deinit();
 
-        const st_ptr = try self.allocator.create(sem.StructType);
+        const st_ptr = try self.allocator.create(sg.StructType);
         st_ptr.* = .{ .fields = tys };
 
-        const lit_ptr = try self.allocator.create(sem.StructValueLiteral);
+        const lit_ptr = try self.allocator.create(sg.StructValueLiteral);
         lit_ptr.* = .{ .fields = vals, .ty = .{ .struct_type = st_ptr } };
 
         const node_ptr = try self.makeNode(undefined, .{ .struct_value_literal = lit_ptr }, null);
@@ -1105,7 +1105,7 @@ pub const Semantizer = struct {
         const st = base.ty.struct_type;
 
         var idx: ?u32 = null;
-        var fty: sem.Type = undefined;
+        var fty: sg.Type = undefined;
         for (st.fields, 0..) |f, i| {
             if (std.mem.eql(u8, f.name, ma.field_name.string)) {
                 idx = @intCast(i);
@@ -1115,7 +1115,7 @@ pub const Semantizer = struct {
         }
         if (idx == null) return error.SymbolNotFound;
 
-        const fa = try self.allocator.create(sem.StructFieldAccess);
+        const fa = try self.allocator.create(sg.StructFieldAccess);
         fa.* = .{
             .struct_value = base.node,
             .field_name = ma.field_name.string,
@@ -1132,13 +1132,13 @@ pub const Semantizer = struct {
         ll: syn.ListLiteral,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        var expected_elem_ty_opt: ?sem.Type = null;
+        var expected_elem_ty_opt: ?sg.Type = null;
         if (ll.element_type) |elt_ty_syn| {
             expected_elem_ty_opt = try self.resolveType(elt_ty_syn, s);
         }
 
-        var elems = std.ArrayList(*sem.SGNode).init(self.allocator.*);
-        var elem_types = std.ArrayList(sem.Type).init(self.allocator.*);
+        var elems = std.ArrayList(*sg.SGNode).init(self.allocator.*);
+        var elem_types = std.ArrayList(sg.Type).init(self.allocator.*);
         defer {
             elems.deinit();
             elem_types.deinit();
@@ -1172,7 +1172,7 @@ pub const Semantizer = struct {
         const elements_slice = try elems.toOwnedSlice();
         const elem_types_slice = try elem_types.toOwnedSlice();
 
-        const lit_ptr = try self.allocator.create(sem.ListLiteral);
+        const lit_ptr = try self.allocator.create(sg.ListLiteral);
         lit_ptr.* = .{
             .elements = elements_slice,
             .element_types = elem_types_slice,
@@ -1280,7 +1280,7 @@ pub const Semantizer = struct {
             else => return err,
         };
 
-        var chosen: *sem.FunctionDeclaration = undefined;
+        var chosen: *sg.FunctionDeclaration = undefined;
         if (inferred) |instantiated| {
             chosen = instantiated;
         } else {
@@ -1319,7 +1319,7 @@ pub const Semantizer = struct {
             };
         }
 
-        const call_ptr = try self.allocator.create(sem.FunctionCall);
+        const call_ptr = try self.allocator.create(sg.FunctionCall);
         call_ptr.* = .{ .callee = chosen, .input = input_te.node };
 
         const node = try self.makeNode(undefined, .{ .function_call = call_ptr }, s);
@@ -1404,7 +1404,7 @@ pub const Semantizer = struct {
             else => return err,
         };
 
-        var chosen: *sem.FunctionDeclaration = undefined;
+        var chosen: *sg.FunctionDeclaration = undefined;
         if (inferred) |instantiated| {
             chosen = instantiated;
         } else {
@@ -1443,7 +1443,7 @@ pub const Semantizer = struct {
             };
         }
 
-        const call_ptr = try self.allocator.create(sem.FunctionCall);
+        const call_ptr = try self.allocator.create(sg.FunctionCall);
         call_ptr.* = .{ .callee = chosen, .input = input_te.node };
 
         const node = try self.makeNode(undefined, .{ .function_call = call_ptr }, s);
@@ -1455,8 +1455,8 @@ pub const Semantizer = struct {
         self: *Semantizer,
         st: syn.StructTypeLiteral,
         s: *Scope,
-    ) SemErr!*sem.StructType {
-        var buf = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+    ) SemErr!*sg.StructType {
+        var buf = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
 
         for (st.fields) |f| {
             const ty = try self.resolveType(f.type.?, s);
@@ -1471,7 +1471,7 @@ pub const Semantizer = struct {
         const slice = try buf.toOwnedSlice();
         buf.deinit();
 
-        const ptr = try self.allocator.create(sem.StructType);
+        const ptr = try self.allocator.create(sg.StructType);
         ptr.* = .{ .fields = slice };
         return ptr;
     }
@@ -1480,9 +1480,9 @@ pub const Semantizer = struct {
         self: *Semantizer,
         st: syn.StructTypeLiteral,
         s: *Scope,
-        subst: *std.StringHashMap(sem.Type),
-    ) SemErr!*sem.StructType {
-        var buf = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+        subst: *std.StringHashMap(sg.Type),
+    ) SemErr!*sg.StructType {
+        var buf = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
         for (st.fields) |f| {
             const ty = try self.resolveTypeWithSubst(f.type.?, s, subst);
             const dvp = if (f.default_value) |n|
@@ -1493,7 +1493,7 @@ pub const Semantizer = struct {
         }
         const slice = try buf.toOwnedSlice();
         buf.deinit();
-        const ptr = try self.allocator.create(sem.StructType);
+        const ptr = try self.allocator.create(sg.StructType);
         ptr.* = .{ .fields = slice };
         return ptr;
     }
@@ -1502,8 +1502,8 @@ pub const Semantizer = struct {
         self: *Semantizer,
         sv: syn.StructValueLiteral,
         s: *Scope,
-    ) SemErr!*sem.StructType {
-        var buf = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+    ) SemErr!*sg.StructType {
+        var buf = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
 
         for (sv.fields) |f| {
             const tv = try self.visitNode(f.value.*, s);
@@ -1513,7 +1513,7 @@ pub const Semantizer = struct {
         const slice = try buf.toOwnedSlice();
         buf.deinit();
 
-        const ptr = try self.allocator.create(sem.StructType);
+        const ptr = try self.allocator.create(sg.StructType);
         ptr.* = .{ .fields = slice };
         return ptr;
     }
@@ -1555,7 +1555,7 @@ pub const Semantizer = struct {
 
         if (tv_in.ty != .struct_type) return error.InvalidType;
 
-        var chosen: *sem.FunctionDeclaration = undefined;
+        var chosen: *sg.FunctionDeclaration = undefined;
         if (call.type_arguments_struct) |stargs| {
             chosen = try self.instantiateGenericNamed(call.callee, stargs, tv_in, s);
         } else if (call.type_arguments) |targs| {
@@ -1600,7 +1600,7 @@ pub const Semantizer = struct {
             }
         }
 
-        const fc_ptr = try self.allocator.create(sem.FunctionCall);
+        const fc_ptr = try self.allocator.create(sg.FunctionCall);
         fc_ptr.* = .{ .callee = chosen, .input = tv_in.node };
 
         const n = try self.makeNode(undefined, .{ .function_call = fc_ptr }, s);
@@ -1614,7 +1614,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         call: syn.FunctionCall,
         tv_in: typ.TypedExpr,
-        type_decl: *sem.TypeDeclaration,
+        type_decl: *sg.TypeDeclaration,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         if (tv_in.ty != .struct_type) {
@@ -1627,13 +1627,13 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        var init_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
+        var init_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
         defer init_fields.deinit();
 
-        const ptr_child = try self.allocator.create(sem.Type);
+        const ptr_child = try self.allocator.create(sg.Type);
         ptr_child.* = type_decl.ty;
 
-        const ptr_info = try self.allocator.create(sem.PointerType);
+        const ptr_info = try self.allocator.create(sg.PointerType);
         ptr_info.* = .{ .mutability = .read_write, .child = ptr_child };
 
         try init_fields.append(.{ .name = "p", .ty = .{ .pointer_type = ptr_info }, .default_value = null });
@@ -1643,10 +1643,10 @@ pub const Semantizer = struct {
             try init_fields.append(.{ .name = fld.name, .ty = fld.ty, .default_value = null });
         }
 
-        const init_struct = try self.allocator.create(sem.StructType);
+        const init_struct = try self.allocator.create(sg.StructType);
         init_struct.* = .{ .fields = try init_fields.toOwnedSlice() };
 
-        const init_input_ty: sem.Type = .{ .struct_type = init_struct };
+        const init_input_ty: sg.Type = .{ .struct_type = init_struct };
 
         const init_fn = abs.resolveOverload("init", init_input_ty, s) catch |err| switch (err) {
             error.SymbolNotFound => {
@@ -1679,7 +1679,7 @@ pub const Semantizer = struct {
             else => return err,
         };
 
-        const type_init = sem.TypeInitializer{
+        const type_init = sg.TypeInitializer{
             .type_decl = type_decl,
             .init_fn = init_fn,
             .args = tv_in.node,
@@ -1716,10 +1716,10 @@ pub const Semantizer = struct {
     fn extractTypeArgumentFromActual(
         self: *Semantizer,
         template_ty: syn.Type,
-        actual_ty: sem.Type,
+        actual_ty: sg.Type,
         param_name: []const u8,
         s: *Scope,
-    ) ?sem.Type {
+    ) ?sg.Type {
         switch (template_ty) {
             .type_name => |tn| {
                 if (std.mem.eql(u8, tn.string, param_name)) return actual_ty;
@@ -1773,7 +1773,7 @@ pub const Semantizer = struct {
         return null;
     }
 
-    fn deriveElementTypeFromList(list_type: sem.Type) ?sem.Type {
+    fn deriveElementTypeFromList(list_type: sg.Type) ?sg.Type {
         return switch (list_type) {
             .array_type => list_type.array_type.element_type.*,
             else => null,
@@ -1784,10 +1784,10 @@ pub const Semantizer = struct {
         self: *Semantizer,
         tmpl: gen.GenericTemplate,
         param_name: []const u8,
-        call_input_ty: sem.Type,
+        call_input_ty: sg.Type,
         s: *Scope,
-        subst: *std.StringHashMap(sem.Type),
-    ) ?sem.Type {
+        subst: *std.StringHashMap(sg.Type),
+    ) ?sg.Type {
         if (call_input_ty != .struct_type) return null;
         const actual = call_input_ty.struct_type;
         for (tmpl.input.fields) |fld| {
@@ -1812,14 +1812,14 @@ pub const Semantizer = struct {
 
     fn refineStructTypeWithActual(
         self: *Semantizer,
-        expected_ptr: *sem.StructType,
-        actual_ty: sem.Type,
+        expected_ptr: *sg.StructType,
+        actual_ty: sg.Type,
     ) !bool {
         if (actual_ty != .struct_type) return false;
         const actual = actual_ty.struct_type;
 
         const expected_fields = expected_ptr.fields;
-        var refined = try self.allocator.alloc(sem.StructTypeField, expected_fields.len);
+        var refined = try self.allocator.alloc(sg.StructTypeField, expected_fields.len);
         errdefer self.allocator.free(refined);
 
         var idx: usize = 0;
@@ -1867,12 +1867,12 @@ pub const Semantizer = struct {
         stargs: syn.StructTypeLiteral,
         call_input: typ.TypedExpr,
         s: *Scope,
-    ) SemErr!*sem.FunctionDeclaration {
+    ) SemErr!*sg.FunctionDeclaration {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.generic_functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
-                    var subst = std.StringHashMap(sem.Type).init(self.allocator.*);
+                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
                     defer subst.deinit();
 
                     var ok: bool = true;
@@ -1919,28 +1919,28 @@ pub const Semantizer = struct {
                     var child = try Scope.init(self.allocator, s, null);
                     var it = subst.iterator();
                     while (it.next()) |entry| {
-                        const td = try self.allocator.create(sem.TypeDeclaration);
+                        const td = try self.allocator.create(sg.TypeDeclaration);
                         td.* = .{ .name = entry.key_ptr.*, .ty = entry.value_ptr.* };
                         try child.types.put(entry.key_ptr.*, td);
                     }
                     for (in_struct_ptr.fields) |fld| {
-                        const bd = try self.allocator.create(sem.BindingDeclaration);
+                        const bd = try self.allocator.create(sg.BindingDeclaration);
                         bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
                         try child.bindings.put(fld.name, bd);
                     }
                     for (out_struct_ptr.fields) |fld| {
-                        const bd = try self.allocator.create(sem.BindingDeclaration);
+                        const bd = try self.allocator.create(sg.BindingDeclaration);
                         bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
                         try child.bindings.put(fld.name, bd);
                     }
 
-                    var body_cb: ?*sem.CodeBlock = null;
+                    var body_cb: ?*sg.CodeBlock = null;
                     if (tmpl.body) |body_node| {
                         const body_te = try self.visitNode(body_node.*, &child);
                         body_cb = body_te.node.content.code_block;
                     }
 
-                    const fn_ptr = try self.allocator.create(sem.FunctionDeclaration);
+                    const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
                     fn_ptr.* = .{
                         .name = tmpl.name,
                         .location = tmpl.location,
@@ -1951,7 +1951,7 @@ pub const Semantizer = struct {
                     if (s.functions.getPtr(name)) |list_ptr2| {
                         try list_ptr2.append(fn_ptr);
                     } else {
-                        var lst = std.ArrayList(*sem.FunctionDeclaration).init(self.allocator.*);
+                        var lst = std.ArrayList(*sg.FunctionDeclaration).init(self.allocator.*);
                         try lst.append(fn_ptr);
                         try s.functions.put(name, lst);
                     }
@@ -1971,14 +1971,14 @@ pub const Semantizer = struct {
         type_args_syn: []const syn.Type,
         call_input: typ.TypedExpr,
         s: *Scope,
-    ) SemErr!*sem.FunctionDeclaration {
+    ) SemErr!*sg.FunctionDeclaration {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.generic_functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
                     if (tmpl.param_names.len != type_args_syn.len) continue;
 
-                    var subst = std.StringHashMap(sem.Type).init(self.allocator.*);
+                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
                     defer subst.deinit();
                     var i: usize = 0;
                     while (i < tmpl.param_names.len) : (i += 1) {
@@ -2003,30 +2003,30 @@ pub const Semantizer = struct {
                     var child = try Scope.init(self.allocator, s, null);
                     var it = subst.iterator();
                     while (it.next()) |entry| {
-                        const td = try self.allocator.create(sem.TypeDeclaration);
+                        const td = try self.allocator.create(sg.TypeDeclaration);
                         td.* = .{ .name = entry.key_ptr.*, .ty = entry.value_ptr.* };
                         try child.types.put(entry.key_ptr.*, td);
                     }
 
                     // Register params in child scope
                     for (in_struct_ptr.fields) |fld| {
-                        const bd = try self.allocator.create(sem.BindingDeclaration);
+                        const bd = try self.allocator.create(sg.BindingDeclaration);
                         bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
                         try child.bindings.put(fld.name, bd);
                     }
                     for (out_struct_ptr.fields) |fld| {
-                        const bd = try self.allocator.create(sem.BindingDeclaration);
+                        const bd = try self.allocator.create(sg.BindingDeclaration);
                         bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
                         try child.bindings.put(fld.name, bd);
                     }
 
-                    var body_cb: ?*sem.CodeBlock = null;
+                    var body_cb: ?*sg.CodeBlock = null;
                     if (tmpl.body) |body_node| {
                         const body_te = try self.visitNode(body_node.*, &child);
                         body_cb = body_te.node.content.code_block;
                     }
 
-                    const fn_ptr = try self.allocator.create(sem.FunctionDeclaration);
+                    const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
                     fn_ptr.* = .{
                         .name = tmpl.name,
                         .location = tmpl.location,
@@ -2038,7 +2038,7 @@ pub const Semantizer = struct {
                     if (s.functions.getPtr(name)) |list_ptr2| {
                         try list_ptr2.append(fn_ptr);
                     } else {
-                        var lst = std.ArrayList(*sem.FunctionDeclaration).init(self.allocator.*);
+                        var lst = std.ArrayList(*sg.FunctionDeclaration).init(self.allocator.*);
                         try lst.append(fn_ptr);
                         try s.functions.put(name, lst);
                     }
@@ -2058,13 +2058,13 @@ pub const Semantizer = struct {
         name: []const u8,
         stargs: syn.StructTypeLiteral,
         s: *Scope,
-        outer_subst: ?*std.StringHashMap(sem.Type),
-    ) SemErr!*sem.StructType {
+        outer_subst: ?*std.StringHashMap(sg.Type),
+    ) SemErr!*sg.StructType {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.generic_types.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
-                    var subst = std.StringHashMap(sem.Type).init(self.allocator.*);
+                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
                     defer subst.deinit();
 
                     if (outer_subst) |outer| {
@@ -2132,7 +2132,7 @@ pub const Semantizer = struct {
                 return error.Reported;
             }
 
-            const bin = try self.allocator.create(sem.BinaryOperation);
+            const bin = try self.allocator.create(sg.BinaryOperation);
             bin.* = .{ .operator = bo.operator, .left = lhs.node, .right = rhs.node };
             const n = try self.makeNode(undefined, .{ .binary_operation = bin.* }, s);
             return .{ .node = n, .ty = if (lhs_is_ptr) lhs.ty else rhs.ty };
@@ -2158,7 +2158,7 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const bin = try self.allocator.create(sem.BinaryOperation);
+        const bin = try self.allocator.create(sg.BinaryOperation);
         bin.* = .{ .operator = bo.operator, .left = lhs.node, .right = rhs.node };
 
         const n = try self.makeNode(undefined, .{ .binary_operation = bin.* }, s);
@@ -2193,7 +2193,7 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const cmp_ptr = try self.allocator.create(sem.Comparison);
+        const cmp_ptr = try self.allocator.create(sg.Comparison);
         cmp_ptr.* = .{
             .operator = c.operator,
             .left = lhs.node,
@@ -2212,7 +2212,7 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         const e = if (r.expression) |ex| (try self.visitNode(ex.*, s)) else null;
 
-        const rs = try self.allocator.create(sem.ReturnStatement);
+        const rs = try self.allocator.create(sg.ReturnStatement);
         rs.* = .{ .expression = if (e) |te| te.node else null };
 
         const n = try self.makeNode(undefined, .{ .return_statement = rs }, s);
@@ -2237,7 +2237,7 @@ pub const Semantizer = struct {
 
         s.nodes.items.len = start_len;
 
-        const if_ptr = try self.allocator.create(sem.IfStatement);
+        const if_ptr = try self.allocator.create(sg.IfStatement);
         if_ptr.* = .{
             .condition = cond.node,
             .then_block = then_te.node.content.code_block,
@@ -2277,13 +2277,13 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const child = try self.allocator.create(sem.Type);
+        const child = try self.allocator.create(sg.Type);
         child.* = te.ty;
 
-        const ptr_ty = try self.allocator.create(sem.PointerType);
+        const ptr_ty = try self.allocator.create(sg.PointerType);
         ptr_ty.* = .{ .mutability = addr.mutability, .child = child };
 
-        const out_ty: sem.Type = .{ .pointer_type = ptr_ty };
+        const out_ty: sg.Type = .{ .pointer_type = ptr_ty };
 
         const addr_node = try self.makeNode(undefined, .{ .address_of = te.node }, null);
         return .{ .node = addr_node, .ty = out_ty };
@@ -2329,7 +2329,7 @@ pub const Semantizer = struct {
         const ptr_info = ptr_info_ptr.*;
         const base_ty = ptr_info.child.*; // T
 
-        const der_ptr = try self.allocator.create(sem.Dereference);
+        const der_ptr = try self.allocator.create(sg.Dereference);
         der_ptr.* = .{ .pointer = te.node, .ty = base_ty, .pointer_type = ptr_info_ptr };
 
         const n = try self.makeNode(undefined, .{ .dereference = der_ptr.* }, null);
@@ -2343,8 +2343,8 @@ pub const Semantizer = struct {
     };
 
     fn buildCallInput(self: *Semantizer, args: []const CallArg) !typ.TypedExpr {
-        var ty_fields = std.ArrayList(sem.StructTypeField).init(self.allocator.*);
-        var val_fields = std.ArrayList(sem.StructValueLiteralField).init(self.allocator.*);
+        var ty_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+        var val_fields = std.ArrayList(sg.StructValueLiteralField).init(self.allocator.*);
 
         for (args) |arg| {
             try ty_fields.append(.{ .name = arg.name, .ty = arg.expr.ty, .default_value = null });
@@ -2354,13 +2354,13 @@ pub const Semantizer = struct {
         const ty_slice = try ty_fields.toOwnedSlice();
         ty_fields.deinit();
 
-        const struct_ptr = try self.allocator.create(sem.StructType);
+        const struct_ptr = try self.allocator.create(sg.StructType);
         struct_ptr.* = .{ .fields = ty_slice };
 
         const val_slice = try val_fields.toOwnedSlice();
         val_fields.deinit();
 
-        const lit_ptr = try self.allocator.create(sem.StructValueLiteral);
+        const lit_ptr = try self.allocator.create(sg.StructValueLiteral);
         lit_ptr.* = .{ .fields = val_slice, .ty = .{ .struct_type = struct_ptr } };
 
         const node = try self.makeNode(undefined, .{ .struct_value_literal = lit_ptr }, null);
@@ -2418,7 +2418,7 @@ pub const Semantizer = struct {
                 return error.Reported;
             }
 
-            const store = sem.StructFieldStore{
+            const store = sg.StructFieldStore{
                 .struct_ptr = ptr_self.node,
                 .struct_type = struct_type,
                 .field_index = sf.field_index,
@@ -2438,7 +2438,7 @@ pub const Semantizer = struct {
         rhs = try self.coerceExprToType(deref_sg.ty, rhs, pa.value, s);
 
         if (deref_sg.pointer_type.*.mutability != .read_write) {
-            const ptr_ty: sem.Type = .{ .pointer_type = deref_sg.pointer_type };
+            const ptr_ty: sg.Type = .{ .pointer_type = deref_sg.pointer_type };
             const ptr_str = try typ.formatType(ptr_ty, s, self.allocator);
             defer self.allocator.free(ptr_str);
             try self.diags.add(
@@ -2614,7 +2614,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         call: syn.FunctionCall,
         s: *Scope,
-    ) SemErr!sem.Type {
+    ) SemErr!sg.Type {
         const arg_node = call.input.*;
         if (arg_node.content != .struct_value_literal) {
             try self.diags.add(
@@ -2655,7 +2655,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         node: *const syn.STNode,
         s: *Scope,
-    ) SemErr!sem.Type {
+    ) SemErr!sg.Type {
         return switch (node.content) {
             .identifier => |name| blk: {
                 const ty_ast = syn.Type{ .type_name = syn.Name{ .string = name, .location = node.location } };
@@ -2701,7 +2701,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         call: syn.FunctionCall,
         s: *Scope,
-    ) SemErr!sem.Type {
+    ) SemErr!sg.Type {
         const arg_node = call.input.*;
         if (arg_node.content != .struct_value_literal) {
             try self.diags.add(
@@ -2731,7 +2731,7 @@ pub const Semantizer = struct {
 
     fn computeTypeSize(
         self: *Semantizer,
-        ty: sem.Type,
+        ty: sg.Type,
     ) SemErr!u64 {
         return switch (ty) {
             .builtin => |bt| switch (bt) {
@@ -2767,7 +2767,7 @@ pub const Semantizer = struct {
 
     fn computeTypeAlignment(
         self: *Semantizer,
-        ty: sem.Type,
+        ty: sg.Type,
     ) SemErr!u64 {
         return switch (ty) {
             .builtin => |bt| switch (bt) {
@@ -2802,9 +2802,9 @@ pub const Semantizer = struct {
         self: *Semantizer,
         loc: tok.Location,
         value: i64,
-        ty: sem.Type,
+        ty: sg.Type,
     ) !typ.TypedExpr {
-        const lit_ptr = try self.allocator.create(sem.ValueLiteral);
+        const lit_ptr = try self.allocator.create(sg.ValueLiteral);
         lit_ptr.* = .{ .int_literal = value };
         const node = try self.makeNode(loc, .{ .value_literal = lit_ptr.* }, null);
         return .{ .node = node, .ty = ty };
@@ -2813,9 +2813,9 @@ pub const Semantizer = struct {
     fn makeTypeLiteral(
         self: *Semantizer,
         loc: tok.Location,
-        ty: sem.Type,
+        ty: sg.Type,
     ) !typ.TypedExpr {
-        const type_node = try self.allocator.create(sem.TypeLiteral);
+        const type_node = try self.allocator.create(sg.TypeLiteral);
         type_node.* = .{ .ty = ty };
         const node = try self.makeNode(loc, .{ .type_literal = type_node }, null);
         return .{ .node = node, .ty = .{ .builtin = .Type } };
@@ -2840,10 +2840,10 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const child_ty = try self.allocator.create(sem.Type);
+        const child_ty = try self.allocator.create(sg.Type);
         child_ty.* = te.ty;
 
-        const ptr_info = try self.allocator.create(sem.PointerType);
+        const ptr_info = try self.allocator.create(sg.PointerType);
         ptr_info.* = .{ .mutability = .read_only, .child = child_ty };
 
         const addr_node = try self.makeNode(undefined, .{ .address_of = te.node }, null);
@@ -2893,10 +2893,10 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const child_ty = try self.allocator.create(sem.Type);
+        const child_ty = try self.allocator.create(sg.Type);
         child_ty.* = te.ty;
 
-        const ptr_info = try self.allocator.create(sem.PointerType);
+        const ptr_info = try self.allocator.create(sg.PointerType);
         ptr_info.* = .{ .mutability = .read_write, .child = child_ty };
 
         const addr_node = try self.makeNode(undefined, .{ .address_of = te.node }, null);
@@ -2905,7 +2905,7 @@ pub const Semantizer = struct {
 
     fn coerceExprToType(
         self: *Semantizer,
-        expected: sem.Type,
+        expected: sg.Type,
         expr: typ.TypedExpr,
         expr_node: *const syn.STNode,
         s: *Scope,
@@ -2922,7 +2922,7 @@ pub const Semantizer = struct {
 
     fn coerceLiteralToBuiltin(
         self: *Semantizer,
-        target: sem.BuiltinType,
+        target: sg.BuiltinType,
         expr: typ.TypedExpr,
         expr_node: *const syn.STNode,
     ) SemErr!typ.TypedExpr {
@@ -2945,7 +2945,7 @@ pub const Semantizer = struct {
 
     fn intLiteralAs(
         self: *Semantizer,
-        target: sem.BuiltinType,
+        target: sg.BuiltinType,
         value: i64,
         loc: tok.Location,
     ) SemErr!?typ.TypedExpr {
@@ -3006,13 +3006,13 @@ pub const Semantizer = struct {
 
     fn floatLiteralAs(
         self: *Semantizer,
-        target: sem.BuiltinType,
+        target: sg.BuiltinType,
         value: f64,
         loc: tok.Location,
     ) SemErr!?typ.TypedExpr {
         return switch (target) {
             .Float16, .Float32, .Float64 => blk: {
-                const lit_ptr = try self.allocator.create(sem.ValueLiteral);
+                const lit_ptr = try self.allocator.create(sg.ValueLiteral);
                 lit_ptr.* = .{ .float_literal = value };
                 const node = try self.makeNode(loc, .{ .value_literal = lit_ptr.* }, null);
                 break :blk typ.TypedExpr{ .node = node, .ty = .{ .builtin = target } };
@@ -3023,7 +3023,7 @@ pub const Semantizer = struct {
 
     fn coerceStructLiteral(
         self: *Semantizer,
-        expected: *const sem.StructType,
+        expected: *const sg.StructType,
         expr: typ.TypedExpr,
         expr_node: *const syn.STNode,
         s: *Scope,
@@ -3039,7 +3039,7 @@ pub const Semantizer = struct {
             return expr;
         }
 
-        var coerced_fields = try self.allocator.alloc(sem.StructValueLiteralField, expected.fields.len);
+        var coerced_fields = try self.allocator.alloc(sg.StructValueLiteralField, expected.fields.len);
         var i: usize = 0;
         while (i < expected.fields.len) : (i += 1) {
             const exp_field = expected.fields[i];
@@ -3075,7 +3075,7 @@ pub const Semantizer = struct {
             coerced_fields[i] = .{ .name = exp_field.name, .value = field_expr.node };
         }
 
-        const lit_ptr = try self.allocator.create(sem.StructValueLiteral);
+        const lit_ptr = try self.allocator.create(sg.StructValueLiteral);
         lit_ptr.* = .{ .fields = coerced_fields, .ty = .{ .struct_type = expected } };
 
         const node = try self.makeNode(expr_node.location, .{ .struct_value_literal = lit_ptr }, null);
@@ -3085,7 +3085,7 @@ pub const Semantizer = struct {
     fn convertListLiteralToArray(
         self: *Semantizer,
         expr: typ.TypedExpr,
-        arr_info: *const sem.ArrayType,
+        arr_info: *const sg.ArrayType,
         loc: tok.Location,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
@@ -3119,7 +3119,7 @@ pub const Semantizer = struct {
                     return error.Reported;
                 }
 
-                const arr_lit = try self.allocator.create(sem.ArrayLiteral);
+                const arr_lit = try self.allocator.create(sg.ArrayLiteral);
                 arr_lit.* = .{
                     .elements = ll.elements,
                     .element_type = expected_elem_ty,
@@ -3149,10 +3149,10 @@ pub const Semantizer = struct {
 
     fn inferArrayTypeFromList(
         self: *Semantizer,
-        ll: *const sem.ListLiteral,
+        ll: *const sg.ListLiteral,
         loc: tok.Location,
         s: *Scope,
-    ) SemErr!*sem.ArrayType {
+    ) SemErr!*sg.ArrayType {
         if (ll.elements.len == 0) {
             try self.diags.add(
                 loc,
@@ -3181,10 +3181,10 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const elem_ty_ptr = try self.allocator.create(sem.Type);
+        const elem_ty_ptr = try self.allocator.create(sg.Type);
         elem_ty_ptr.* = first_ty;
 
-        const arr_info = try self.allocator.create(sem.ArrayType);
+        const arr_info = try self.allocator.create(sg.ArrayType);
         arr_info.* = .{
             .length = ll.elements.len,
             .element_type = elem_ty_ptr,
@@ -3195,10 +3195,10 @@ pub const Semantizer = struct {
     fn makeNode(
         self: *Semantizer,
         loc: tok.Location,
-        content: sem.Content,
+        content: sg.Content,
         scope: ?*Scope,
-    ) !*sem.SGNode {
-        const n = try self.allocator.create(sem.SGNode);
+    ) !*sg.SGNode {
+        const n = try self.allocator.create(sg.SGNode);
         n.* = .{
             .location = loc, // de momento ‘undefined’ en la mayoría de llamadas
             .content = content,
@@ -3207,7 +3207,7 @@ pub const Semantizer = struct {
         return n;
     }
 
-    fn resolveType(self: *Semantizer, t: syn.Type, s: *Scope) !sem.Type {
+    fn resolveType(self: *Semantizer, t: syn.Type, s: *Scope) !sg.Type {
         return switch (t) {
             .type_name => |tn| blk: {
                 const id = tn.string;
@@ -3251,10 +3251,10 @@ pub const Semantizer = struct {
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
             .pointer_type => |ptr_info| blk: {
                 const inner_ty = try self.resolveType(ptr_info.child.*, s);
-                const child = try self.allocator.create(sem.Type);
+                const child = try self.allocator.create(sg.Type);
                 child.* = inner_ty;
 
-                const sem_ptr = try self.allocator.create(sem.PointerType);
+                const sem_ptr = try self.allocator.create(sg.PointerType);
                 sem_ptr.* = .{
                     .mutability = ptr_info.mutability,
                     .child = child,
@@ -3264,10 +3264,10 @@ pub const Semantizer = struct {
             },
             .array_type => |arr_info| blk_arr: {
                 const elem_ty = try self.resolveType(arr_info.element.*, s);
-                const elem_ptr = try self.allocator.create(sem.Type);
+                const elem_ptr = try self.allocator.create(sg.Type);
                 elem_ptr.* = elem_ty;
 
-                const sem_arr = try self.allocator.create(sem.ArrayType);
+                const sem_arr = try self.allocator.create(sg.ArrayType);
                 sem_arr.* = .{
                     .length = arr_info.length,
                     .element_type = elem_ptr,
@@ -3278,7 +3278,7 @@ pub const Semantizer = struct {
         };
     }
 
-    fn resolveTypeWithSubst(self: *Semantizer, t: syn.Type, s: *Scope, subst: *std.StringHashMap(sem.Type)) !sem.Type {
+    fn resolveTypeWithSubst(self: *Semantizer, t: syn.Type, s: *Scope, subst: *std.StringHashMap(sg.Type)) !sg.Type {
         return switch (t) {
             .type_name => |tn| blk: {
                 const id = tn.string;
@@ -3311,10 +3311,10 @@ pub const Semantizer = struct {
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteralWithSubst(st, s, subst) },
             .pointer_type => |ptr_info| blk: {
                 const inner_ty = try self.resolveTypeWithSubst(ptr_info.child.*, s, subst);
-                const child = try self.allocator.create(sem.Type);
+                const child = try self.allocator.create(sg.Type);
                 child.* = inner_ty;
 
-                const sem_ptr = try self.allocator.create(sem.PointerType);
+                const sem_ptr = try self.allocator.create(sg.PointerType);
                 sem_ptr.* = .{
                     .mutability = ptr_info.mutability,
                     .child = child,
@@ -3324,10 +3324,10 @@ pub const Semantizer = struct {
             },
             .array_type => |arr_info| blk_arr: {
                 const elem_ty = try self.resolveTypeWithSubst(arr_info.element.*, s, subst);
-                const elem_ptr = try self.allocator.create(sem.Type);
+                const elem_ptr = try self.allocator.create(sg.Type);
                 elem_ptr.* = elem_ty;
 
-                const sem_arr = try self.allocator.create(sem.ArrayType);
+                const sem_arr = try self.allocator.create(sg.ArrayType);
                 sem_arr.* = .{
                     .length = arr_info.length,
                     .element_type = elem_ptr,
@@ -3338,10 +3338,10 @@ pub const Semantizer = struct {
         };
     }
 
-    fn registerDefer(self: *Semantizer, s: *Scope, nodes: []const *sem.SGNode) !void {
+    fn registerDefer(self: *Semantizer, s: *Scope, nodes: []const *sg.SGNode) !void {
         if (nodes.len == 0) return;
-        const copy = try self.allocator.alloc(*sem.SGNode, nodes.len);
-        std.mem.copyForwards(*sem.SGNode, copy, nodes);
+        const copy = try self.allocator.alloc(*sg.SGNode, nodes.len);
+        std.mem.copyForwards(*sg.SGNode, copy, nodes);
         try s.deferred.append(.{ .nodes = copy });
     }
 
@@ -3350,42 +3350,24 @@ pub const Semantizer = struct {
         s.deferred.deinit();
     }
 
-    fn findDeinit(_: *Semantizer, ty: sem.Type, s: *Scope) ?*sem.FunctionDeclaration {
-        var cur: ?*Scope = s;
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.functions.getPtr("deinit")) |list_ptr| {
-                for (list_ptr.items) |cand| {
-                    if (cand.input.fields.len == 0) continue;
-                    const first = cand.input.fields[0];
-                    if (first.ty != .pointer_type) continue;
-                    const ptr_info = first.ty.pointer_type.*;
-                    if (ptr_info.mutability != .read_write) continue;
-                    const pointee = ptr_info.child.*;
-                    if (typ.typesExactlyEqual(pointee, ty)) return cand;
-                }
-            }
-        }
-        return null;
-    }
-
     fn maybeScheduleAutoDeinit(
         self: *Semantizer,
-        binding: *sem.BindingDeclaration,
+        binding: *sg.BindingDeclaration,
         loc: tok.Location,
         s: *Scope,
     ) !void {
         if (s.parent == null) return;
-        const deinit_fn = self.findDeinit(binding.ty, s) orelse return;
+        const deinit_fn = s.findDeinit(binding.ty) orelse return;
         if (deinit_fn.input.fields.len != 1) return;
 
         const binding_use = try self.makeNode(loc, .{ .binding_use = binding }, null);
 
         const addr_node = try self.makeNode(loc, .{ .address_of = binding_use }, null);
 
-        const arg_fields = try self.allocator.alloc(sem.StructValueLiteralField, 1);
+        const arg_fields = try self.allocator.alloc(sg.StructValueLiteralField, 1);
         arg_fields[0] = .{ .name = deinit_fn.input.fields[0].name, .value = addr_node };
 
-        const args_struct = try self.allocator.create(sem.StructValueLiteral);
+        const args_struct = try self.allocator.create(sg.StructValueLiteral);
         args_struct.* = .{
             .fields = arg_fields,
             .ty = .{ .struct_type = &deinit_fn.input },
@@ -3393,11 +3375,11 @@ pub const Semantizer = struct {
 
         const args_node = try self.makeNode(loc, .{ .struct_value_literal = args_struct }, null);
 
-        const fc_ptr = try self.allocator.create(sem.FunctionCall);
+        const fc_ptr = try self.allocator.create(sg.FunctionCall);
         fc_ptr.* = .{ .callee = deinit_fn, .input = args_node };
 
         const call_node = try self.makeNode(loc, .{ .function_call = fc_ptr }, null);
-        try self.registerDefer(s, &[_]*sem.SGNode{call_node});
+        try self.registerDefer(s, &[_]*sg.SGNode{call_node});
     }
 
     // ─────────────────────────────────────────────────── Helpers reintento
