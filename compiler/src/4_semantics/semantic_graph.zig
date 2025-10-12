@@ -20,6 +20,15 @@ pub const SGNode = struct {
     content: Content,
 };
 
+pub inline fn makeSGNode(content: Content, location: tok.Location, allocator: *const std.mem.Allocator) !*SGNode {
+    const node = try allocator.create(SGNode);
+    node.* = SGNode{
+        .location = location,
+        .content = content,
+    };
+    return node;
+}
+
 pub const Content = union(enum) {
     type_declaration: *TypeDeclaration,
     function_declaration: *FunctionDeclaration,
