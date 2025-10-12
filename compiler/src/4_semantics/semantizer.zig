@@ -1690,13 +1690,6 @@ pub const Semantizer = struct {
         return .{ .node = init_node, .ty = type_decl.ty };
     }
 
-    fn findFieldByName(st: *const sem.StructType, name: []const u8) ?*const sem.StructTypeField {
-        for (st.fields, 0..) |f, i| {
-            if (std.mem.eql(u8, f.name, name)) return &st.fields[i];
-        }
-        return null;
-    }
-
     fn typeUsesParam(self: *Semantizer, ty: syn.Type, param: []const u8) bool {
         return switch (ty) {
             .type_name => std.mem.eql(u8, ty.type_name.string, param),
@@ -1755,7 +1748,7 @@ pub const Semantizer = struct {
                 const actual_struct = actual_ty.struct_type;
                 for (st.fields) |fld| {
                     if (fld.type) |sub_ty| {
-                        if (findFieldByName(actual_struct, fld.name.string)) |actual_field| {
+                        if (typ.findFieldByName(actual_struct, fld.name.string)) |actual_field| {
                             if (self.extractTypeArgumentFromActual(sub_ty, actual_field.ty, param_name, s)) |res|
                                 return res;
                         }
@@ -1769,7 +1762,7 @@ pub const Semantizer = struct {
                     const actual_struct = actual_ty.struct_type;
                     for (tmpl.body.fields) |tmpl_field| {
                         if (tmpl_field.type) |sub_ty| {
-                            if (findFieldByName(actual_struct, tmpl_field.name.string)) |actual_field| {
+                            if (typ.findFieldByName(actual_struct, tmpl_field.name.string)) |actual_field| {
                                 if (self.extractTypeArgumentFromActual(sub_ty, actual_field.ty, param_name, s)) |res|
                                     return res;
                             }
@@ -1801,7 +1794,7 @@ pub const Semantizer = struct {
         for (tmpl.input.fields) |fld| {
             if (fld.type) |ty_node| {
                 if (!self.typeUsesParam(ty_node, param_name)) continue;
-                if (findFieldByName(actual, fld.name.string)) |actual_field| {
+                if (typ.findFieldByName(actual, fld.name.string)) |actual_field| {
                     if (self.extractTypeArgumentFromActual(ty_node, actual_field.ty, param_name, s)) |res|
                         return res;
                 }
@@ -1833,7 +1826,7 @@ pub const Semantizer = struct {
         var idx: usize = 0;
         while (idx < expected_fields.len) : (idx += 1) {
             const exp_field = expected_fields[idx];
-            const actual_field_ptr = findFieldByName(actual, exp_field.name);
+            const actual_field_ptr = typ.findFieldByName(actual, exp_field.name);
 
             var final_ty = exp_field.ty;
 
