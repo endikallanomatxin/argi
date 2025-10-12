@@ -1,3 +1,12 @@
+- Semantizer:
+
+    - Menos repetición en errores de overload. Hay unas 15 líneas repetidas 3 veces.
+
+    - Genéricos: unifica las dos rutas. instantiateGenericNamed y
+    instantiateGeneric comparten un 90%. Saca una función interna.
+
+    - Implement an arena allocator to avoid memory leaks in semantizer.
+
 - Choice types: Implement
 
 - Implement checks like: `let x: UInt8 = 300` → error de rango.
