@@ -8,7 +8,6 @@ const diagnostic = @import("../1_base/diagnostic.zig");
 const typ = @import("types.zig");
 const abs = @import("abstracts.zig");
 const gen = @import("generics.zig");
-const helpers = @import("helpers.zig");
 
 const Scope = @import("scope.zig").Scope;
 const SemErr = @import("errors.zig").SemErr;
