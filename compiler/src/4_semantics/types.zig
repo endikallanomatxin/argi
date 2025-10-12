@@ -219,6 +219,13 @@ pub fn builtinFromName(name: []const u8) ?sg.BuiltinType {
     return std.meta.stringToEnum(sg.BuiltinType, name);
 }
 
+pub fn findFieldByName(st: *const sg.StructType, name: []const u8) ?*const sg.StructTypeField {
+    for (st.fields, 0..) |f, i| {
+        if (std.mem.eql(u8, f.name, name)) return &st.fields[i];
+    }
+    return null;
+}
+
 fn appendType(buf: *std.ArrayList(u8), t: sg.Type) !void {
     switch (t) {
         .builtin => |bt| {
