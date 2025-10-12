@@ -1,12 +1,9 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
-const syn = @import("../3_syntax/syntax_tree.zig");
 const sg = @import("semantic_graph.zig");
-const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
 const typ = @import("types.zig");
-const helpers = @import("helpers.zig");
 
 const Scope = @import("scope.zig").Scope;
 const SemErr = @import("errors.zig").SemErr;
@@ -121,7 +118,7 @@ pub fn funcInputMatchesRequirement(
         const rf = req_in.fields[i];
         const cf = cand_in.fields[i];
 
-        if (helpers.containsIndex(rq.input_self_indices, @intCast(i))) {
+        if (containsIndex(rq.input_self_indices, @intCast(i))) {
             if (!typ.typesExactlyEqual(concrete, cf.ty)) return false;
             continue;
         }
@@ -226,7 +223,7 @@ pub fn ensureConformance(info: *AbstractInfo, concrete: sg.Type, s: *Scope, allo
 fn buildExpectedInputWithConcrete(rq: *const AbstractFunctionReqSem, concrete: sg.Type, allocator: *const std.mem.Allocator) !*sg.StructType {
     var fields = try allocator.alloc(sg.StructTypeField, rq.input.fields.len);
     for (rq.input.fields, 0..) |f, i| {
-        const is_self = helpers.containsIndex(rq.input_self_indices, @intCast(i));
+        const is_self = containsIndex(rq.input_self_indices, @intCast(i));
         fields[i] = .{ .name = f.name, .ty = if (is_self) concrete else f.ty, .default_value = null };
     }
     const st_ptr = try allocator.create(sg.StructType);
@@ -447,4 +444,9 @@ fn appendFunctionSignature(buf: *std.ArrayList(u8), f: *const sg.FunctionDeclara
         try typ.appendTypePretty(buf, ofld.ty, s);
     }
     try buf.appendSlice(")");
+}
+
+pub fn containsIndex(list: []const u32, idx: u32) bool {
+    for (list) |v| if (v == idx) return true;
+    return false;
 }
