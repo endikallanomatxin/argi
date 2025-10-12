@@ -607,11 +607,7 @@ pub const Semantizer = struct {
         reqs.deinit();
         try s.abstracts.put(ad.name.string, info);
 
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = undefined,
-            .content = .{ .type_declaration = td },
-        };
+        const n = try sg.makeSGNode(.{ .type_declaration = td }, undefined, self.allocator);
         try s.nodes.append(n);
         if (s.parent == null) try self.root_list.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
@@ -638,11 +634,7 @@ pub const Semantizer = struct {
 
         const empty = try self.allocator.create(sg.CodeBlock);
         empty.* = .{ .nodes = &.{}, .ret_val = null };
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = undefined,
-            .content = .{ .code_block = empty },
-        };
+        const n = try sg.makeSGNode(.{ .code_block = empty }, undefined, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -657,11 +649,7 @@ pub const Semantizer = struct {
         try s.abstract_defaults.put(rel.name.string, .{ .ty = concrete_ty, .location = loc });
         const empty = try self.allocator.create(sg.CodeBlock);
         empty.* = .{ .nodes = &.{}, .ret_val = null };
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = undefined,
-            .content = .{ .code_block = empty },
-        };
+        const n = try sg.makeSGNode(.{ .code_block = empty }, undefined, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -702,11 +690,7 @@ pub const Semantizer = struct {
 
         const ptr = try self.allocator.create(sg.ValueLiteral);
         ptr.* = value_literal;
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = undefined,
-            .content = .{ .value_literal = ptr.* },
-        };
+        const n = try sg.makeSGNode(.{ .value_literal = ptr.* }, undefined, self.allocator);
         return .{ .node = n, .ty = ty };
     }
 
@@ -717,11 +701,7 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         const b = s.lookupBinding(name) orelse return error.SymbolNotFound;
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = undefined,
-            .content = .{ .binding_use = b },
-        };
+        const n = try sg.makeSGNode(.{ .binding_use = b }, undefined, self.allocator);
         return .{ .node = n, .ty = b.ty };
     }
 
@@ -749,11 +729,7 @@ pub const Semantizer = struct {
         const cb = try self.allocator.create(sg.CodeBlock);
         cb.* = .{ .nodes = slice, .ret_val = null };
 
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = undefined,
-            .content = .{ .code_block = cb },
-        };
+        const n = try sg.makeSGNode(.{ .code_block = cb }, undefined, self.allocator);
         try parent.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -800,11 +776,7 @@ pub const Semantizer = struct {
         };
 
         try s.bindings.put(d.name.string, bd);
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = loc,
-            .content = .{ .binding_declaration = bd },
-        };
+        const n = try sg.makeSGNode(.{ .binding_declaration = bd }, loc, self.allocator);
         try s.nodes.append(n);
         if (s.parent == null) try self.root_list.append(n);
 
@@ -832,15 +804,11 @@ pub const Semantizer = struct {
                 try s.generic_types.put(d.name.string, new_list);
             }
             // No concrete type emitted now
-            const noop = try self.allocator.create(sg.SGNode);
-            noop.* = .{
-                .location = d.value.location,
-                .content = .{ .code_block = blk: {
-                    const empty = try self.allocator.create(sg.CodeBlock);
-                    empty.* = .{ .nodes = &.{}, .ret_val = null };
-                    break :blk empty;
-                } },
-            };
+            const noop = try sg.makeSGNode(.{ .code_block = blk: {
+                const empty = try self.allocator.create(sg.CodeBlock);
+                empty.* = .{ .nodes = &.{}, .ret_val = null };
+                break :blk empty;
+            } }, d.value.location, self.allocator);
             try s.nodes.append(noop);
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
         } else {
@@ -855,11 +823,7 @@ pub const Semantizer = struct {
                 td.* = .{ .name = d.name.string, .ty = .{ .struct_type = stub } };
                 try s.types.put(d.name.string, td);
                 // Emitir el nodo una sola vez cuando el stub se crea
-                const n0 = try self.allocator.create(sg.SGNode);
-                n0.* = .{
-                    .location = undefined,
-                    .content = .{ .type_declaration = td },
-                };
+                const n0 = try sg.makeSGNode(.{ .type_declaration = td }, d.value.location, self.allocator);
                 try s.nodes.append(n0);
                 if (s.parent == null) try self.root_list.append(n0);
             }
@@ -871,15 +835,12 @@ pub const Semantizer = struct {
             const dst: *sg.StructType = @constCast(dst_const); // hacemos mutable el pointee
             dst.fields = st_ptr.fields;
             // Devolver un no-op para no duplicar el nodo en root
-            const noop = try self.allocator.create(sg.SGNode);
-            noop.* = .{
-                .location = d.value.location,
-                .content = .{ .code_block = blk2: {
-                    const empty = try self.allocator.create(sg.CodeBlock);
-                    empty.* = .{ .nodes = &.{}, .ret_val = null };
-                    break :blk2 empty;
-                } },
-            };
+            const noop = try sg.makeSGNode(.{ .code_block = blk3: {
+                const empty = try self.allocator.create(sg.CodeBlock);
+                empty.* = .{ .nodes = &.{}, .ret_val = null };
+                break :blk3 empty;
+            } }, d.value.location, self.allocator);
+
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
         }
     }
@@ -915,15 +876,11 @@ pub const Semantizer = struct {
                 try p.generic_functions.put(f.name.string, new_list);
             }
             // Return a no-op node for generic template
-            const noop = try self.allocator.create(sg.SGNode);
-            noop.* = .{
-                .location = loc,
-                .content = .{ .code_block = blk: {
-                    const empty = try self.allocator.create(sg.CodeBlock);
-                    empty.* = .{ .nodes = &.{}, .ret_val = null };
-                    break :blk empty;
-                } },
-            };
+            const noop = try sg.makeSGNode(.{ .code_block = blk2: {
+                const empty = try self.allocator.create(sg.CodeBlock);
+                empty.* = .{ .nodes = &.{}, .ret_val = null };
+                break :blk2 empty;
+            } }, loc, self.allocator);
             try p.nodes.append(noop);
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
         }
@@ -1013,11 +970,7 @@ pub const Semantizer = struct {
             try p.functions.put(f.name.string, lst);
         }
         self.clearDeferred(&child);
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = loc,
-            .content = .{ .function_declaration = fn_ptr },
-        };
+        const n = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, loc, self.allocator);
         try p.nodes.append(n);
         if (p.parent == null) try self.root_list.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
@@ -1054,11 +1007,7 @@ pub const Semantizer = struct {
         const asg = try self.allocator.create(sg.Assignment);
         asg.* = .{ .sym_id = b, .value = rhs.node };
 
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = undefined,
-            .content = .{ .binding_assignment = asg },
-        };
+        const n = try sg.makeSGNode(.{ .binding_assignment = asg }, undefined, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -1084,11 +1033,7 @@ pub const Semantizer = struct {
         const lit = try self.allocator.create(sg.StructValueLiteral);
         lit.* = .{ .fields = fields, .ty = .{ .struct_type = st_ptr } };
 
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = undefined,
-            .content = .{ .struct_value_literal = lit },
-        };
+        const n = try sg.makeSGNode(.{ .struct_value_literal = lit }, undefined, self.allocator);
         return .{ .node = n, .ty = .{ .struct_type = st_ptr } };
     }
 
@@ -1121,11 +1066,7 @@ pub const Semantizer = struct {
         const lit_ptr = try self.allocator.create(sg.StructValueLiteral);
         lit_ptr.* = .{ .fields = vals, .ty = .{ .struct_type = st_ptr } };
 
-        const node_ptr = try self.allocator.create(sg.SGNode);
-        node_ptr.* = .{
-            .location = undefined,
-            .content = .{ .struct_value_literal = lit_ptr },
-        };
+        const node_ptr = try sg.makeSGNode(.{ .struct_value_literal = lit_ptr }, undefined, self.allocator);
         return .{ .node = node_ptr, .ty = .{ .struct_type = st_ptr } };
     }
 
@@ -1190,11 +1131,7 @@ pub const Semantizer = struct {
             .field_index = idx.?,
         };
 
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = undefined,
-            .content = .{ .struct_field_access = fa },
-        };
+        const n = try sg.makeSGNode(.{ .struct_field_access = fa }, undefined, self.allocator);
         return .{ .node = n, .ty = fty };
     }
 
@@ -1250,11 +1187,7 @@ pub const Semantizer = struct {
             .element_types = elem_types_slice,
         };
 
-        const node = try self.allocator.create(sg.SGNode);
-        node.* = .{
-            .location = undefined,
-            .content = .{ .list_literal = lit_ptr },
-        };
+        const node = try sg.makeSGNode(.{ .list_literal = lit_ptr }, undefined, self.allocator);
         return .{ .node = node, .ty = .{ .builtin = .Any } };
     }
 
@@ -1283,16 +1216,12 @@ pub const Semantizer = struct {
             const elem_ty = arr_type_ptr.*.element_type.*;
             const ro_self = try typ.ensureReadOnlyPointer(ia.value, base, self.allocator, self.diags);
 
-            const node = try self.allocator.create(sg.SGNode);
-            node.* = .{
-                .location = undefined,
-                .content = .{ .array_index = .{
-                    .array_ptr = ro_self.node,
-                    .index = idx_te.node,
-                    .element_type = elem_ty,
-                    .array_type = arr_type_ptr,
-                } },
-            };
+            const node = try sg.makeSGNode(.{ .array_index = .{
+                .array_ptr = ro_self.node,
+                .index = idx_te.node,
+                .element_type = elem_ty,
+                .array_type = arr_type_ptr,
+            } }, undefined, self.allocator);
             return .{ .node = node, .ty = elem_ty };
         }
 
@@ -1398,11 +1327,7 @@ pub const Semantizer = struct {
         const call_ptr = try self.allocator.create(sg.FunctionCall);
         call_ptr.* = .{ .callee = chosen, .input = input_te.node };
 
-        const node = try self.allocator.create(sg.SGNode);
-        node.* = .{
-            .location = undefined,
-            .content = .{ .function_call = call_ptr },
-        };
+        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, undefined, self.allocator);
         try s.nodes.append(node);
         return .{ .node = node, .ty = typ.functionReturnType(chosen) };
     }
@@ -1453,17 +1378,13 @@ pub const Semantizer = struct {
 
             const ptr_self = try typ.ensureMutablePointer(idx.value, base, s, self.allocator, self.diags);
 
-            const node = try self.allocator.create(sg.SGNode);
-            node.* = .{
-                .location = undefined,
-                .content = .{ .array_store = .{
-                    .array_ptr = ptr_self.node,
-                    .index = index_expr.node,
-                    .value = value_expr.node,
-                    .element_type = elem_ty,
-                    .array_type = arr_type_ptr,
-                } },
-            };
+            const node = try sg.makeSGNode(.{ .array_store = .{
+                .array_ptr = ptr_self.node,
+                .index = index_expr.node,
+                .value = value_expr.node,
+                .element_type = elem_ty,
+                .array_type = arr_type_ptr,
+            } }, undefined, self.allocator);
             try s.nodes.append(node);
             return .{ .node = node, .ty = .{ .builtin = .Any } };
         }
@@ -1528,11 +1449,7 @@ pub const Semantizer = struct {
         const call_ptr = try self.allocator.create(sg.FunctionCall);
         call_ptr.* = .{ .callee = chosen, .input = input_te.node };
 
-        const node = try self.allocator.create(sg.SGNode);
-        node.* = .{
-            .location = undefined,
-            .content = .{ .function_call = call_ptr },
-        };
+        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, undefined, self.allocator);
         try s.nodes.append(node);
         return .{ .node = node, .ty = .{ .builtin = .Any } };
     }
@@ -1689,11 +1606,7 @@ pub const Semantizer = struct {
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
         fc_ptr.* = .{ .callee = chosen, .input = tv_in.node };
 
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = undefined,
-            .content = .{ .function_call = fc_ptr },
-        };
+        const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, undefined, self.allocator);
         try s.nodes.append(n);
 
         const result_ty = typ.functionReturnType(chosen);
@@ -1776,11 +1689,7 @@ pub const Semantizer = struct {
             .args = tv_in.node,
         };
 
-        const init_node = try self.allocator.create(sg.SGNode);
-        init_node.* = .{
-            .location = undefined,
-            .content = .{ .type_initializer = type_init },
-        };
+        const init_node = try sg.makeSGNode(.{ .type_initializer = type_init }, undefined, self.allocator);
         return .{ .node = init_node, .ty = type_decl.ty };
     }
 
@@ -2050,11 +1959,7 @@ pub const Semantizer = struct {
                         try lst.append(fn_ptr);
                         try s.functions.put(name, lst);
                     }
-                    const n = try self.allocator.create(sg.SGNode);
-                    n.* = .{
-                        .location = tmpl.location,
-                        .content = .{ .function_declaration = fn_ptr },
-                    };
+                    const n = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, tmpl.location, self.allocator);
                     try self.root_list.append(n);
                     self.clearDeferred(&child);
                     return fn_ptr;
@@ -2141,11 +2046,7 @@ pub const Semantizer = struct {
                         try lst.append(fn_ptr);
                         try s.functions.put(name, lst);
                     }
-                    const n = try self.allocator.create(sg.SGNode);
-                    n.* = .{
-                        .location = tmpl.location,
-                        .content = .{ .function_declaration = fn_ptr },
-                    };
+                    const n = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, tmpl.location, self.allocator);
                     try self.root_list.append(n);
                     self.clearDeferred(&child);
                     return fn_ptr;
@@ -2236,11 +2137,7 @@ pub const Semantizer = struct {
 
             const bin = try self.allocator.create(sg.BinaryOperation);
             bin.* = .{ .operator = bo.operator, .left = lhs.node, .right = rhs.node };
-            const n = try self.allocator.create(sg.SGNode);
-            n.* = .{
-                .location = undefined,
-                .content = .{ .binary_operation = bin.* },
-            };
+            const n = try sg.makeSGNode(.{ .binary_operation = bin.* }, undefined, self.allocator);
             try s.nodes.append(n);
             return .{ .node = n, .ty = if (lhs_is_ptr) lhs.ty else rhs.ty };
         }
@@ -2268,11 +2165,7 @@ pub const Semantizer = struct {
         const bin = try self.allocator.create(sg.BinaryOperation);
         bin.* = .{ .operator = bo.operator, .left = lhs.node, .right = rhs.node };
 
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = undefined,
-            .content = .{ .binary_operation = bin.* },
-        };
+        const n = try sg.makeSGNode(.{ .binary_operation = bin.* }, undefined, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = lhs.ty };
     }
@@ -2312,13 +2205,9 @@ pub const Semantizer = struct {
             .right = rhs.node,
         };
 
-        const node_ptr = try self.allocator.create(sg.SGNode);
-        node_ptr.* = .{
-            .location = undefined,
-            .content = .{ .comparison = cmp_ptr.* },
-        };
-        try s.nodes.append(node_ptr);
-        return .{ .node = node_ptr, .ty = .{ .builtin = .Bool } };
+        const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, undefined, self.allocator);
+        try s.nodes.append(node);
+        return .{ .node = node, .ty = .{ .builtin = .Bool } };
     }
 
     //──────────────────────────────────────────────────── RETURN
@@ -2332,11 +2221,7 @@ pub const Semantizer = struct {
         const rs = try self.allocator.create(sg.ReturnStatement);
         rs.* = .{ .expression = if (e) |te| te.node else null };
 
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = undefined,
-            .content = .{ .return_statement = rs },
-        };
+        const n = try sg.makeSGNode(.{ .return_statement = rs }, undefined, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -2366,11 +2251,7 @@ pub const Semantizer = struct {
             .else_block = else_cb,
         };
 
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = undefined,
-            .content = .{ .if_statement = if_ptr },
-        };
+        const n = try sg.makeSGNode(.{ .if_statement = if_ptr }, undefined, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -2412,11 +2293,7 @@ pub const Semantizer = struct {
 
         const out_ty: sg.Type = .{ .pointer_type = ptr_ty };
 
-        const addr_node = try self.allocator.create(sg.SGNode);
-        addr_node.* = .{
-            .location = undefined,
-            .content = .{ .address_of = te.node },
-        };
+        const addr_node = try sg.makeSGNode(.{ .address_of = te.node }, undefined, self.allocator);
         return .{ .node = addr_node, .ty = out_ty };
     }
 
@@ -2463,11 +2340,8 @@ pub const Semantizer = struct {
         const der_ptr = try self.allocator.create(sg.Dereference);
         der_ptr.* = .{ .pointer = te.node, .ty = base_ty, .pointer_type = ptr_info_ptr };
 
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = undefined,
-            .content = .{ .dereference = der_ptr.* },
-        };
+        const n = try sg.makeSGNode(.{ .dereference = der_ptr.* }, undefined, self.allocator);
+
         return .{ .node = n, .ty = base_ty };
     }
 
@@ -2498,11 +2372,8 @@ pub const Semantizer = struct {
         const lit_ptr = try self.allocator.create(sg.StructValueLiteral);
         lit_ptr.* = .{ .fields = val_slice, .ty = .{ .struct_type = struct_ptr } };
 
-        const node = try self.allocator.create(sg.SGNode);
-        node.* = .{
-            .location = undefined,
-            .content = .{ .struct_value_literal = lit_ptr },
-        };
+        const node = try sg.makeSGNode(.{ .struct_value_literal = lit_ptr }, undefined, self.allocator);
+
         return .{ .node = node, .ty = .{ .struct_type = struct_ptr } };
     }
 
@@ -2565,11 +2436,7 @@ pub const Semantizer = struct {
                 .value = rhs.node,
             };
 
-            const node = try self.allocator.create(sg.SGNode);
-            node.* = .{
-                .location = undefined,
-                .content = .{ .struct_field_store = store },
-            };
+            const node = try sg.makeSGNode(.{ .struct_field_store = store }, undefined, self.allocator);
             try s.nodes.append(node);
             return .{ .node = node, .ty = .{ .builtin = .Any } };
         }
@@ -2610,14 +2477,10 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = undefined,
-            .content = .{ .pointer_assignment = .{
-                .pointer = deref_sg.pointer,
-                .value = rhs.node,
-            } },
-        };
+        const n = try sg.makeSGNode(.{ .pointer_assignment = .{
+            .pointer = deref_sg.pointer,
+            .value = rhs.node,
+        } }, undefined, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -3060,17 +2923,8 @@ pub const Semantizer = struct {
         const deinit_fn = s.findDeinit(binding.ty) orelse return;
         if (deinit_fn.input.fields.len != 1) return;
 
-        const binding_use = try self.allocator.create(sg.SGNode);
-        binding_use.* = .{
-            .location = loc,
-            .content = .{ .binding_use = binding },
-        };
-
-        const addr_node = try self.allocator.create(sg.SGNode);
-        addr_node.* = .{
-            .location = loc,
-            .content = .{ .address_of = binding_use },
-        };
+        const binding_use = try sg.makeSGNode(.{ .binding_use = binding }, loc, self.allocator);
+        const addr_node = try sg.makeSGNode(.{ .address_of = binding_use }, loc, self.allocator);
 
         const arg_fields = try self.allocator.alloc(sg.StructValueLiteralField, 1);
         arg_fields[0] = .{ .name = deinit_fn.input.fields[0].name, .value = addr_node };
@@ -3081,20 +2935,12 @@ pub const Semantizer = struct {
             .ty = .{ .struct_type = &deinit_fn.input },
         };
 
-        const args_node = try self.allocator.create(sg.SGNode);
-        args_node.* = .{
-            .location = loc,
-            .content = .{ .struct_value_literal = args_struct },
-        };
+        const args_node = try sg.makeSGNode(.{ .struct_value_literal = args_struct }, loc, self.allocator);
 
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
         fc_ptr.* = .{ .callee = deinit_fn, .input = args_node };
 
-        const call_node = try self.allocator.create(sg.SGNode);
-        call_node.* = .{
-            .location = loc,
-            .content = .{ .function_call = fc_ptr },
-        };
+        const call_node = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
         try self.registerDefer(s, &[_]*sg.SGNode{call_node});
     }
 
