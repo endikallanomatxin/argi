@@ -106,7 +106,7 @@ pub const Semantizer = struct {
     }
 
     //────────────────────────────────────────────────────────────────── visitors
-    fn visitNode(self: *Semantizer, n: syn.STNode, s: *Scope) SemErr!typ.TypedExpr {
+    pub fn visitNode(self: *Semantizer, n: syn.STNode, s: *Scope) SemErr!typ.TypedExpr {
         return switch (n.content) {
             .symbol_declaration => |d| self.handleSymbolDecl(d, s, n.location) catch |err| blk: {
                 switch (err) {
@@ -607,7 +607,12 @@ pub const Semantizer = struct {
         reqs.deinit();
         try s.abstracts.put(ad.name.string, info);
 
-        const n = try self.makeNode(undefined, .{ .type_declaration = td }, s);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = undefined,
+            .content = .{ .type_declaration = td },
+        };
+        try s.nodes.append(n);
         if (s.parent == null) try self.root_list.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -633,7 +638,12 @@ pub const Semantizer = struct {
 
         const empty = try self.allocator.create(sg.CodeBlock);
         empty.* = .{ .nodes = &.{}, .ret_val = null };
-        const n = try self.makeNode(undefined, .{ .code_block = empty }, s);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = undefined,
+            .content = .{ .code_block = empty },
+        };
+        try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
@@ -647,7 +657,12 @@ pub const Semantizer = struct {
         try s.abstract_defaults.put(rel.name.string, .{ .ty = concrete_ty, .location = loc });
         const empty = try self.allocator.create(sg.CodeBlock);
         empty.* = .{ .nodes = &.{}, .ret_val = null };
-        const n = try self.makeNode(undefined, .{ .code_block = empty }, s);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = undefined,
+            .content = .{ .code_block = empty },
+        };
+        try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
@@ -687,7 +702,11 @@ pub const Semantizer = struct {
 
         const ptr = try self.allocator.create(sg.ValueLiteral);
         ptr.* = value_literal;
-        const n = try self.makeNode(undefined, .{ .value_literal = ptr.* }, null);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = undefined,
+            .content = .{ .value_literal = ptr.* },
+        };
         return .{ .node = n, .ty = ty };
     }
 
@@ -698,7 +717,11 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         const b = s.lookupBinding(name) orelse return error.SymbolNotFound;
-        const n = try self.makeNode(undefined, .{ .binding_use = b }, null);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = undefined,
+            .content = .{ .binding_use = b },
+        };
         return .{ .node = n, .ty = b.ty };
     }
 
@@ -726,7 +749,12 @@ pub const Semantizer = struct {
         const cb = try self.allocator.create(sg.CodeBlock);
         cb.* = .{ .nodes = slice, .ret_val = null };
 
-        const n = try self.makeNode(undefined, .{ .code_block = cb }, parent);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = undefined,
+            .content = .{ .code_block = cb },
+        };
+        try parent.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
@@ -746,7 +774,6 @@ pub const Semantizer = struct {
             init_node = v;
             init_te_opt = try self.visitNode(v.*, s);
         }
-
         var ty: sg.Type = .{ .builtin = .Int32 };
         if (d.type) |t| {
             ty = try self.resolveType(t, s);
@@ -756,11 +783,11 @@ pub const Semantizer = struct {
 
         if (init_te_opt) |te_initial| {
             if (d.type) |_| {
-                init_te_opt = try self.coerceExprToType(ty, te_initial, init_node.?, s);
+                init_te_opt = try typ.coerceExprToType(ty, te_initial, init_node.?, s, self.allocator, self.diags);
             } else if (te_initial.node.content == .list_literal) {
                 const arr_info = try self.inferArrayTypeFromList(te_initial.node.content.list_literal, init_node.?.location, s);
                 ty = .{ .array_type = arr_info };
-                init_te_opt = try self.convertListLiteralToArray(te_initial, arr_info, init_node.?.location, s);
+                init_te_opt = try typ.convertListLiteralToArray(te_initial, arr_info, init_node.?.location, s, self.allocator, self.diags);
             }
         }
 
@@ -773,7 +800,12 @@ pub const Semantizer = struct {
         };
 
         try s.bindings.put(d.name.string, bd);
-        const n = try self.makeNode(loc, .{ .binding_declaration = bd }, s);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = loc,
+            .content = .{ .binding_declaration = bd },
+        };
+        try s.nodes.append(n);
         if (s.parent == null) try self.root_list.append(n);
 
         if (init_te_opt) |init_te| bd.initialization = init_te.node;
@@ -800,11 +832,16 @@ pub const Semantizer = struct {
                 try s.generic_types.put(d.name.string, new_list);
             }
             // No concrete type emitted now
-            const noop = try self.makeNode(d.value.location, .{ .code_block = blk: {
-                const empty = try self.allocator.create(sg.CodeBlock);
-                empty.* = .{ .nodes = &.{}, .ret_val = null };
-                break :blk empty;
-            } }, s);
+            const noop = try self.allocator.create(sg.SGNode);
+            noop.* = .{
+                .location = d.value.location,
+                .content = .{ .code_block = blk: {
+                    const empty = try self.allocator.create(sg.CodeBlock);
+                    empty.* = .{ .nodes = &.{}, .ret_val = null };
+                    break :blk empty;
+                } },
+            };
+            try s.nodes.append(noop);
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
         } else {
             // 1) Asegurar stub nominal para el nombre del tipo
@@ -818,7 +855,12 @@ pub const Semantizer = struct {
                 td.* = .{ .name = d.name.string, .ty = .{ .struct_type = stub } };
                 try s.types.put(d.name.string, td);
                 // Emitir el nodo una sola vez cuando el stub se crea
-                const n0 = try self.makeNode(undefined, .{ .type_declaration = td }, s);
+                const n0 = try self.allocator.create(sg.SGNode);
+                n0.* = .{
+                    .location = undefined,
+                    .content = .{ .type_declaration = td },
+                };
+                try s.nodes.append(n0);
                 if (s.parent == null) try self.root_list.append(n0);
             }
 
@@ -829,11 +871,15 @@ pub const Semantizer = struct {
             const dst: *sg.StructType = @constCast(dst_const); // hacemos mutable el pointee
             dst.fields = st_ptr.fields;
             // Devolver un no-op para no duplicar el nodo en root
-            const noop = try self.makeNode(d.value.location, .{ .code_block = blk2: {
-                const empty = try self.allocator.create(sg.CodeBlock);
-                empty.* = .{ .nodes = &.{}, .ret_val = null };
-                break :blk2 empty;
-            } }, null);
+            const noop = try self.allocator.create(sg.SGNode);
+            noop.* = .{
+                .location = d.value.location,
+                .content = .{ .code_block = blk2: {
+                    const empty = try self.allocator.create(sg.CodeBlock);
+                    empty.* = .{ .nodes = &.{}, .ret_val = null };
+                    break :blk2 empty;
+                } },
+            };
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
         }
     }
@@ -869,16 +915,20 @@ pub const Semantizer = struct {
                 try p.generic_functions.put(f.name.string, new_list);
             }
             // Return a no-op node for generic template
-            const noop = try self.makeNode(loc, .{ .code_block = blk: {
-                const empty = try self.allocator.create(sg.CodeBlock);
-                empty.* = .{ .nodes = &.{}, .ret_val = null };
-                break :blk empty;
-            } }, p);
+            const noop = try self.allocator.create(sg.SGNode);
+            noop.* = .{
+                .location = loc,
+                .content = .{ .code_block = blk: {
+                    const empty = try self.allocator.create(sg.CodeBlock);
+                    empty.* = .{ .nodes = &.{}, .ret_val = null };
+                    break :blk empty;
+                } },
+            };
+            try p.nodes.append(noop);
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
         }
 
         var child = try Scope.init(self.allocator, p, null);
-
         // ── entrada
         var in_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
         for (f.input.fields) |fld| {
@@ -963,7 +1013,12 @@ pub const Semantizer = struct {
             try p.functions.put(f.name.string, lst);
         }
         self.clearDeferred(&child);
-        const n = try self.makeNode(loc, .{ .function_declaration = fn_ptr }, p);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = loc,
+            .content = .{ .function_declaration = fn_ptr },
+        };
+        try p.nodes.append(n);
         if (p.parent == null) try self.root_list.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -979,7 +1034,7 @@ pub const Semantizer = struct {
             return error.ConstantReassignment;
 
         var rhs = try self.visitNode(a.value.*, s);
-        rhs = try self.coerceExprToType(b.ty, rhs, a.value, s);
+        rhs = try typ.coerceExprToType(b.ty, rhs, a.value, s, self.allocator, self.diags);
         if (!typ.typesExactlyEqual(b.ty, rhs.ty)) {
             const expected = try typ.formatType(b.ty, s, self.allocator);
             const actual = try typ.formatType(rhs.ty, s, self.allocator);
@@ -999,7 +1054,12 @@ pub const Semantizer = struct {
         const asg = try self.allocator.create(sg.Assignment);
         asg.* = .{ .sym_id = b, .value = rhs.node };
 
-        const n = try self.makeNode(undefined, .{ .binding_assignment = asg }, s);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = undefined,
+            .content = .{ .binding_assignment = asg },
+        };
+        try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
@@ -1024,7 +1084,11 @@ pub const Semantizer = struct {
         const lit = try self.allocator.create(sg.StructValueLiteral);
         lit.* = .{ .fields = fields, .ty = .{ .struct_type = st_ptr } };
 
-        const n = try self.makeNode(undefined, .{ .struct_value_literal = lit }, null);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = undefined,
+            .content = .{ .struct_value_literal = lit },
+        };
         return .{ .node = n, .ty = .{ .struct_type = st_ptr } };
     }
 
@@ -1057,7 +1121,11 @@ pub const Semantizer = struct {
         const lit_ptr = try self.allocator.create(sg.StructValueLiteral);
         lit_ptr.* = .{ .fields = vals, .ty = .{ .struct_type = st_ptr } };
 
-        const node_ptr = try self.makeNode(undefined, .{ .struct_value_literal = lit_ptr }, null);
+        const node_ptr = try self.allocator.create(sg.SGNode);
+        node_ptr.* = .{
+            .location = undefined,
+            .content = .{ .struct_value_literal = lit_ptr },
+        };
         return .{ .node = node_ptr, .ty = .{ .struct_type = st_ptr } };
     }
 
@@ -1122,7 +1190,11 @@ pub const Semantizer = struct {
             .field_index = idx.?,
         };
 
-        const n = try self.makeNode(undefined, .{ .struct_field_access = fa }, null);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = undefined,
+            .content = .{ .struct_field_access = fa },
+        };
         return .{ .node = n, .ty = fty };
     }
 
@@ -1178,7 +1250,11 @@ pub const Semantizer = struct {
             .element_types = elem_types_slice,
         };
 
-        const node = try self.makeNode(undefined, .{ .list_literal = lit_ptr }, null);
+        const node = try self.allocator.create(sg.SGNode);
+        node.* = .{
+            .location = undefined,
+            .content = .{ .list_literal = lit_ptr },
+        };
         return .{ .node = node, .ty = .{ .builtin = .Any } };
     }
 
@@ -1205,18 +1281,18 @@ pub const Semantizer = struct {
 
             const arr_type_ptr = base.ty.array_type;
             const elem_ty = arr_type_ptr.*.element_type.*;
-            const ro_self = try self.ensureReadOnlyPointer(ia.value, base);
+            const ro_self = try typ.ensureReadOnlyPointer(ia.value, base, self.allocator, self.diags);
 
-            const node = try self.makeNode(
-                undefined,
-                .{ .array_index = .{
+            const node = try self.allocator.create(sg.SGNode);
+            node.* = .{
+                .location = undefined,
+                .content = .{ .array_index = .{
                     .array_ptr = ro_self.node,
                     .index = idx_te.node,
                     .element_type = elem_ty,
                     .array_type = arr_type_ptr,
                 } },
-                null,
-            );
+            };
             return .{ .node = node, .ty = elem_ty };
         }
 
@@ -1266,7 +1342,7 @@ pub const Semantizer = struct {
 
         const idx = try self.visitNode(ia.index.*, s);
 
-        const ro_self = try self.ensureReadOnlyPointer(ia.value, base);
+        const ro_self = try typ.ensureReadOnlyPointer(ia.value, base, self.allocator, self.diags);
 
         const input_te = try self.buildCallInput(&[_]CallArg{
             .{ .name = "self", .expr = ro_self },
@@ -1322,7 +1398,12 @@ pub const Semantizer = struct {
         const call_ptr = try self.allocator.create(sg.FunctionCall);
         call_ptr.* = .{ .callee = chosen, .input = input_te.node };
 
-        const node = try self.makeNode(undefined, .{ .function_call = call_ptr }, s);
+        const node = try self.allocator.create(sg.SGNode);
+        node.* = .{
+            .location = undefined,
+            .content = .{ .function_call = call_ptr },
+        };
+        try s.nodes.append(node);
         return .{ .node = node, .ty = typ.functionReturnType(chosen) };
     }
 
@@ -1370,26 +1451,27 @@ pub const Semantizer = struct {
                 return error.Reported;
             }
 
-            const ptr_self = try self.ensureMutablePointer(idx.value, base, s);
+            const ptr_self = try typ.ensureMutablePointer(idx.value, base, s, self.allocator, self.diags);
 
-            const node = try self.makeNode(
-                undefined,
-                .{ .array_store = .{
+            const node = try self.allocator.create(sg.SGNode);
+            node.* = .{
+                .location = undefined,
+                .content = .{ .array_store = .{
                     .array_ptr = ptr_self.node,
                     .index = index_expr.node,
                     .value = value_expr.node,
                     .element_type = elem_ty,
                     .array_type = arr_type_ptr,
                 } },
-                s,
-            );
+            };
+            try s.nodes.append(node);
             return .{ .node = node, .ty = .{ .builtin = .Any } };
         }
 
         const index_expr = try self.visitNode(idx.index.*, s);
         const value_expr = try self.visitNode(ia.value.*, s);
 
-        const ptr_self = try self.ensureMutablePointer(idx.value, base, s);
+        const ptr_self = try typ.ensureMutablePointer(idx.value, base, s, self.allocator, self.diags);
 
         const input_te = try self.buildCallInput(&[_]CallArg{
             .{ .name = "self", .expr = ptr_self },
@@ -1446,18 +1528,22 @@ pub const Semantizer = struct {
         const call_ptr = try self.allocator.create(sg.FunctionCall);
         call_ptr.* = .{ .callee = chosen, .input = input_te.node };
 
-        const node = try self.makeNode(undefined, .{ .function_call = call_ptr }, s);
+        const node = try self.allocator.create(sg.SGNode);
+        node.* = .{
+            .location = undefined,
+            .content = .{ .function_call = call_ptr },
+        };
+        try s.nodes.append(node);
         return .{ .node = node, .ty = .{ .builtin = .Any } };
     }
 
     //────────────────────────────────────────────────────  AUX STRUCT TYPES
-    fn structTypeFromLiteral(
+    pub fn structTypeFromLiteral(
         self: *Semantizer,
         st: syn.StructTypeLiteral,
         s: *Scope,
     ) SemErr!*sg.StructType {
         var buf = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
-
         for (st.fields) |f| {
             const ty = try self.resolveType(f.type.?, s);
             const dvp = if (f.default_value) |n|
@@ -1476,7 +1562,7 @@ pub const Semantizer = struct {
         return ptr;
     }
 
-    fn structTypeFromLiteralWithSubst(
+    pub fn structTypeFromLiteralWithSubst(
         self: *Semantizer,
         st: syn.StructTypeLiteral,
         s: *Scope,
@@ -1603,7 +1689,12 @@ pub const Semantizer = struct {
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
         fc_ptr.* = .{ .callee = chosen, .input = tv_in.node };
 
-        const n = try self.makeNode(undefined, .{ .function_call = fc_ptr }, s);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = undefined,
+            .content = .{ .function_call = fc_ptr },
+        };
+        try s.nodes.append(n);
 
         const result_ty = typ.functionReturnType(chosen);
 
@@ -1685,7 +1776,11 @@ pub const Semantizer = struct {
             .args = tv_in.node,
         };
 
-        const init_node = try self.makeNode(undefined, .{ .type_initializer = type_init }, null);
+        const init_node = try self.allocator.create(sg.SGNode);
+        init_node.* = .{
+            .location = undefined,
+            .content = .{ .type_initializer = type_init },
+        };
         return .{ .node = init_node, .ty = type_decl.ty };
     }
 
@@ -1955,7 +2050,11 @@ pub const Semantizer = struct {
                         try lst.append(fn_ptr);
                         try s.functions.put(name, lst);
                     }
-                    const n = try self.makeNode(tmpl.location, .{ .function_declaration = fn_ptr }, null);
+                    const n = try self.allocator.create(sg.SGNode);
+                    n.* = .{
+                        .location = tmpl.location,
+                        .content = .{ .function_declaration = fn_ptr },
+                    };
                     try self.root_list.append(n);
                     self.clearDeferred(&child);
                     return fn_ptr;
@@ -2042,8 +2141,11 @@ pub const Semantizer = struct {
                         try lst.append(fn_ptr);
                         try s.functions.put(name, lst);
                     }
-                    const n = try self.makeNode(tmpl.location, .{ .function_declaration = fn_ptr }, null);
-                    // Always add instantiated functions at the root for codegen order
+                    const n = try self.allocator.create(sg.SGNode);
+                    n.* = .{
+                        .location = tmpl.location,
+                        .content = .{ .function_declaration = fn_ptr },
+                    };
                     try self.root_list.append(n);
                     self.clearDeferred(&child);
                     return fn_ptr;
@@ -2053,7 +2155,7 @@ pub const Semantizer = struct {
         return error.SymbolNotFound;
     }
 
-    fn instantiateGenericTypeNamed(
+    pub fn instantiateGenericTypeNamed(
         self: *Semantizer,
         name: []const u8,
         stargs: syn.StructTypeLiteral,
@@ -2134,12 +2236,17 @@ pub const Semantizer = struct {
 
             const bin = try self.allocator.create(sg.BinaryOperation);
             bin.* = .{ .operator = bo.operator, .left = lhs.node, .right = rhs.node };
-            const n = try self.makeNode(undefined, .{ .binary_operation = bin.* }, s);
+            const n = try self.allocator.create(sg.SGNode);
+            n.* = .{
+                .location = undefined,
+                .content = .{ .binary_operation = bin.* },
+            };
+            try s.nodes.append(n);
             return .{ .node = n, .ty = if (lhs_is_ptr) lhs.ty else rhs.ty };
         }
 
-        rhs = try self.coerceExprToType(lhs.ty, rhs, bo.right, s);
-        lhs = try self.coerceExprToType(rhs.ty, lhs, bo.left, s);
+        rhs = try typ.coerceExprToType(lhs.ty, rhs, bo.right, s, self.allocator, self.diags);
+        lhs = try typ.coerceExprToType(rhs.ty, lhs, bo.left, s, self.allocator, self.diags);
 
         if (!typ.typesExactlyEqual(lhs.ty, rhs.ty)) {
             const left_ty = try typ.formatType(lhs.ty, s, self.allocator);
@@ -2161,7 +2268,12 @@ pub const Semantizer = struct {
         const bin = try self.allocator.create(sg.BinaryOperation);
         bin.* = .{ .operator = bo.operator, .left = lhs.node, .right = rhs.node };
 
-        const n = try self.makeNode(undefined, .{ .binary_operation = bin.* }, s);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = undefined,
+            .content = .{ .binary_operation = bin.* },
+        };
+        try s.nodes.append(n);
         return .{ .node = n, .ty = lhs.ty };
     }
 
@@ -2174,8 +2286,8 @@ pub const Semantizer = struct {
         var lhs = try self.visitNode(c.left.*, s);
         var rhs = try self.visitNode(c.right.*, s);
 
-        rhs = try self.coerceExprToType(lhs.ty, rhs, c.right, s);
-        lhs = try self.coerceExprToType(rhs.ty, lhs, c.left, s);
+        rhs = try typ.coerceExprToType(lhs.ty, rhs, c.right, s, self.allocator, self.diags);
+        lhs = try typ.coerceExprToType(rhs.ty, lhs, c.left, s, self.allocator, self.diags);
 
         if (!typ.typesExactlyEqual(lhs.ty, rhs.ty)) {
             const left_ty = try typ.formatType(lhs.ty, s, self.allocator);
@@ -2200,7 +2312,12 @@ pub const Semantizer = struct {
             .right = rhs.node,
         };
 
-        const node_ptr = try self.makeNode(undefined, .{ .comparison = cmp_ptr.* }, s);
+        const node_ptr = try self.allocator.create(sg.SGNode);
+        node_ptr.* = .{
+            .location = undefined,
+            .content = .{ .comparison = cmp_ptr.* },
+        };
+        try s.nodes.append(node_ptr);
         return .{ .node = node_ptr, .ty = .{ .builtin = .Bool } };
     }
 
@@ -2215,7 +2332,12 @@ pub const Semantizer = struct {
         const rs = try self.allocator.create(sg.ReturnStatement);
         rs.* = .{ .expression = if (e) |te| te.node else null };
 
-        const n = try self.makeNode(undefined, .{ .return_statement = rs }, s);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = undefined,
+            .content = .{ .return_statement = rs },
+        };
+        try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
@@ -2244,7 +2366,12 @@ pub const Semantizer = struct {
             .else_block = else_cb,
         };
 
-        const n = try self.makeNode(undefined, .{ .if_statement = if_ptr }, s);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = undefined,
+            .content = .{ .if_statement = if_ptr },
+        };
+        try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
@@ -2285,7 +2412,11 @@ pub const Semantizer = struct {
 
         const out_ty: sg.Type = .{ .pointer_type = ptr_ty };
 
-        const addr_node = try self.makeNode(undefined, .{ .address_of = te.node }, null);
+        const addr_node = try self.allocator.create(sg.SGNode);
+        addr_node.* = .{
+            .location = undefined,
+            .content = .{ .address_of = te.node },
+        };
         return .{ .node = addr_node, .ty = out_ty };
     }
 
@@ -2332,7 +2463,11 @@ pub const Semantizer = struct {
         const der_ptr = try self.allocator.create(sg.Dereference);
         der_ptr.* = .{ .pointer = te.node, .ty = base_ty, .pointer_type = ptr_info_ptr };
 
-        const n = try self.makeNode(undefined, .{ .dereference = der_ptr.* }, null);
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = undefined,
+            .content = .{ .dereference = der_ptr.* },
+        };
         return .{ .node = n, .ty = base_ty };
     }
 
@@ -2363,7 +2498,11 @@ pub const Semantizer = struct {
         const lit_ptr = try self.allocator.create(sg.StructValueLiteral);
         lit_ptr.* = .{ .fields = val_slice, .ty = .{ .struct_type = struct_ptr } };
 
-        const node = try self.makeNode(undefined, .{ .struct_value_literal = lit_ptr }, null);
+        const node = try self.allocator.create(sg.SGNode);
+        node.* = .{
+            .location = undefined,
+            .content = .{ .struct_value_literal = lit_ptr },
+        };
         return .{ .node = node, .ty = .{ .struct_type = struct_ptr } };
     }
 
@@ -2382,7 +2521,7 @@ pub const Semantizer = struct {
             const sf = target_te.node.content.struct_field_access;
 
             const base = try self.visitNode(sa.struct_value.*, s);
-            const ptr_self = try self.ensureMutablePointer(sa.struct_value, base, s);
+            const ptr_self = try typ.ensureMutablePointer(sa.struct_value, base, s, self.allocator, self.diags);
 
             const ptr_info = ptr_self.ty.pointer_type.*;
             if (ptr_info.child.* != .struct_type) {
@@ -2401,7 +2540,7 @@ pub const Semantizer = struct {
             if (sf.field_index >= struct_type.fields.len) return error.SymbolNotFound;
             const field_info = struct_type.fields[sf.field_index];
 
-            rhs = try self.coerceExprToType(field_info.ty, rhs, pa.value, s);
+            rhs = try typ.coerceExprToType(field_info.ty, rhs, pa.value, s, self.allocator, self.diags);
             if (!typ.typesExactlyEqual(field_info.ty, rhs.ty)) {
                 const expected = try typ.formatType(field_info.ty, s, self.allocator);
                 const actual = try typ.formatType(rhs.ty, s, self.allocator);
@@ -2426,7 +2565,12 @@ pub const Semantizer = struct {
                 .value = rhs.node,
             };
 
-            const node = try self.makeNode(undefined, .{ .struct_field_store = store }, s);
+            const node = try self.allocator.create(sg.SGNode);
+            node.* = .{
+                .location = undefined,
+                .content = .{ .struct_field_store = store },
+            };
+            try s.nodes.append(node);
             return .{ .node = node, .ty = .{ .builtin = .Any } };
         }
 
@@ -2435,7 +2579,7 @@ pub const Semantizer = struct {
         const tgt_te = try self.visitNode(pa.target.*, s);
         const deref_sg = tgt_te.node.content.dereference;
 
-        rhs = try self.coerceExprToType(deref_sg.ty, rhs, pa.value, s);
+        rhs = try typ.coerceExprToType(deref_sg.ty, rhs, pa.value, s, self.allocator, self.diags);
 
         if (deref_sg.pointer_type.*.mutability != .read_write) {
             const ptr_ty: sg.Type = .{ .pointer_type = deref_sg.pointer_type };
@@ -2466,155 +2610,19 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const n = try self.makeNode(
-            undefined,
-            .{ .pointer_assignment = .{
+        const n = try self.allocator.create(sg.SGNode);
+        n.* = .{
+            .location = undefined,
+            .content = .{ .pointer_assignment = .{
                 .pointer = deref_sg.pointer,
                 .value = rhs.node,
             } },
-            s,
-        );
+        };
+        try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
-    //──────────────────────────────────────────────────── HELPERS
-    fn handleBuiltinTypeInfo(
-        self: *Semantizer,
-        kind: typ.BuiltinTypeInfoKind,
-        call: syn.FunctionCall,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        const target_ty = try self.extractTypeArgument(call, s);
-
-        const value = switch (kind) {
-            .size => try self.computeTypeSize(target_ty),
-            .alignment => try self.computeTypeAlignment(target_ty),
-        };
-
-        const loc = call.input.*.location;
-        if (value > std.math.maxInt(i32)) {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "result of builtin exceeds Int32 range",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        return try self.makeIntLiteral(loc, @intCast(value), .{ .builtin = .Int32 });
-    }
-
-    fn handleLengthBuiltin(
-        self: *Semantizer,
-        call: syn.FunctionCall,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        const arg_node = call.input.*;
-        const arg_loc = arg_node.location;
-
-        var value_te: typ.TypedExpr = undefined;
-        if (arg_node.content == .struct_value_literal) {
-            const sv = arg_node.content.struct_value_literal;
-            if (sv.fields.len != 1 or !std.mem.eql(u8, sv.fields[0].name.string, "value")) {
-                try self.diags.add(
-                    arg_loc,
-                    .semantic,
-                    "length expects a single '.value' argument when using named parameters",
-                    .{},
-                );
-                return error.Reported;
-            }
-            value_te = try self.visitNode(sv.fields[0].value.*, s);
-        } else {
-            value_te = try self.visitNode(arg_node, s);
-        }
-
-        switch (value_te.node.content) {
-            .list_literal => |ll| {
-                const len_u64: u64 = @intCast(ll.elements.len);
-                if (len_u64 > std.math.maxInt(i64)) {
-                    try self.diags.add(
-                        arg_loc,
-                        .semantic,
-                        "length result exceeds supported integer range",
-                        .{},
-                    );
-                    return error.Reported;
-                }
-                return try self.makeIntLiteral(arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
-            },
-            .array_literal => |al| {
-                const len_u64: u64 = @intCast(al.length);
-                if (len_u64 > std.math.maxInt(i64)) {
-                    try self.diags.add(
-                        arg_loc,
-                        .semantic,
-                        "length result exceeds supported integer range",
-                        .{},
-                    );
-                    return error.Reported;
-                }
-                return try self.makeIntLiteral(arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
-            },
-            else => {},
-        }
-
-        if (value_te.ty == .array_type) {
-            const arr = value_te.ty.array_type.*;
-            const len_u64: u64 = @intCast(arr.length);
-            if (len_u64 > std.math.maxInt(i64)) {
-                try self.diags.add(
-                    arg_loc,
-                    .semantic,
-                    "length result exceeds supported integer range",
-                    .{},
-                );
-                return error.Reported;
-            }
-            return try self.makeIntLiteral(arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
-        }
-
-        return error.SymbolNotFound;
-    }
-
-    fn handleTypeOf(
-        self: *Semantizer,
-        call: syn.FunctionCall,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        const arg_node = call.input.*;
-        if (arg_node.content != .struct_value_literal) {
-            try self.diags.add(
-                arg_node.location,
-                .semantic,
-                "type_of expects '.value' argument",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        const svl = arg_node.content.struct_value_literal;
-        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, "value")) {
-            try self.diags.add(
-                arg_node.location,
-                .semantic,
-                "type_of expects a single '.value' argument",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        const tv = try self.visitNode(svl.fields[0].value.*, s);
-        const loc = call.input.*.location;
-        return try self.makeTypeLiteral(loc, tv.ty);
-    }
-
-    fn extractTypeArgument(
-        self: *Semantizer,
-        call: syn.FunctionCall,
-        s: *Scope,
-    ) SemErr!sg.Type {
+    fn extractTypeArgument(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!sg.Type {
         const arg_node = call.input.*;
         if (arg_node.content != .struct_value_literal) {
             try self.diags.add(
@@ -2651,11 +2659,7 @@ pub const Semantizer = struct {
         return self.resolveTypeExpression(field.value, s);
     }
 
-    fn resolveTypeExpression(
-        self: *Semantizer,
-        node: *const syn.STNode,
-        s: *Scope,
-    ) SemErr!sg.Type {
+    fn resolveTypeExpression(self: *Semantizer, node: *const syn.STNode, s: *Scope) SemErr!sg.Type {
         return switch (node.content) {
             .identifier => |name| blk: {
                 const ty_ast = syn.Type{ .type_name = syn.Name{ .string = name, .location = node.location } };
@@ -2697,11 +2701,7 @@ pub const Semantizer = struct {
         };
     }
 
-    fn typeOfCallResultType(
-        self: *Semantizer,
-        call: syn.FunctionCall,
-        s: *Scope,
-    ) SemErr!sg.Type {
+    fn typeOfCallResultType(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!sg.Type {
         const arg_node = call.input.*;
         if (arg_node.content != .struct_value_literal) {
             try self.diags.add(
@@ -2727,424 +2727,6 @@ pub const Semantizer = struct {
         const value_expr = svl.fields[0].value;
         const tv = try self.visitNode(value_expr.*, s);
         return tv.ty;
-    }
-
-    fn computeTypeSize(
-        self: *Semantizer,
-        ty: sg.Type,
-    ) SemErr!u64 {
-        return switch (ty) {
-            .builtin => |bt| switch (bt) {
-                .Int8, .UInt8, .Char, .Bool => 1,
-                .Int16, .UInt16, .Float16 => 2,
-                .Int32, .UInt32, .Float32 => 4,
-                .Int64, .UInt64, .Float64 => 8,
-                .Type => typ.pointer_size_bytes,
-                .Any => typ.pointer_size_bytes,
-            },
-            .pointer_type => typ.pointer_size_bytes,
-            .struct_type => |st| blk: {
-                const max_align = try self.computeTypeAlignment(.{ .struct_type = st });
-                var size: u64 = 0;
-                var idx: usize = 0;
-                while (idx < st.fields.len) : (idx += 1) {
-                    const fld = st.fields[idx];
-                    const field_align = try self.computeTypeAlignment(fld.ty);
-                    const field_size = try self.computeTypeSize(fld.ty);
-                    size = alignForward(size, field_align);
-                    size += field_size;
-                }
-                break :blk alignForward(size, max_align);
-            },
-            .array_type => |arr_ptr| blk_arr: {
-                const elem_size = try self.computeTypeSize(arr_ptr.element_type.*);
-                const len_u64: u64 = @intCast(arr_ptr.length);
-                const total = elem_size * len_u64;
-                break :blk_arr total;
-            },
-        };
-    }
-
-    fn computeTypeAlignment(
-        self: *Semantizer,
-        ty: sg.Type,
-    ) SemErr!u64 {
-        return switch (ty) {
-            .builtin => |bt| switch (bt) {
-                .Int8, .UInt8, .Char, .Bool => 1,
-                .Int16, .UInt16, .Float16 => 2,
-                .Int32, .UInt32, .Float32 => 4,
-                .Int64, .UInt64, .Float64 => 8,
-                .Type => typ.pointer_alignment_bytes,
-                .Any => typ.pointer_alignment_bytes,
-            },
-            .pointer_type => typ.pointer_alignment_bytes,
-            .struct_type => |st| blk: {
-                var max_align: u64 = 1;
-                var idx: usize = 0;
-                while (idx < st.fields.len) : (idx += 1) {
-                    const fld_align = try self.computeTypeAlignment(st.fields[idx].ty);
-                    if (fld_align > max_align) max_align = fld_align;
-                }
-                break :blk if (max_align == 0) 1 else max_align;
-            },
-            .array_type => |arr_ptr| try self.computeTypeAlignment(arr_ptr.element_type.*),
-        };
-    }
-
-    fn alignForward(value: u64, alignment: u64) u64 {
-        if (alignment <= 1) return value;
-        const mask = alignment - 1;
-        return (value + mask) & ~mask;
-    }
-
-    fn makeIntLiteral(
-        self: *Semantizer,
-        loc: tok.Location,
-        value: i64,
-        ty: sg.Type,
-    ) !typ.TypedExpr {
-        const lit_ptr = try self.allocator.create(sg.ValueLiteral);
-        lit_ptr.* = .{ .int_literal = value };
-        const node = try self.makeNode(loc, .{ .value_literal = lit_ptr.* }, null);
-        return .{ .node = node, .ty = ty };
-    }
-
-    fn makeTypeLiteral(
-        self: *Semantizer,
-        loc: tok.Location,
-        ty: sg.Type,
-    ) !typ.TypedExpr {
-        const type_node = try self.allocator.create(sg.TypeLiteral);
-        type_node.* = .{ .ty = ty };
-        const node = try self.makeNode(loc, .{ .type_literal = type_node }, null);
-        return .{ .node = node, .ty = .{ .builtin = .Type } };
-    }
-
-    fn ensureReadOnlyPointer(
-        self: *Semantizer,
-        expr_node: *const syn.STNode,
-        te: typ.TypedExpr,
-    ) SemErr!typ.TypedExpr {
-        // Si ya es puntero (&T o $&T), sirve para un parámetro de solo lectura.
-        if (te.ty == .pointer_type) return te;
-
-        // Para tomar la dirección, exigimos una variable nombrada (mismo criterio que &).
-        if (te.node.content != .binding_use) {
-            try self.diags.add(
-                expr_node.location,
-                .semantic,
-                "cannot take the address of this expression; only named variables are addressable",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        const child_ty = try self.allocator.create(sg.Type);
-        child_ty.* = te.ty;
-
-        const ptr_info = try self.allocator.create(sg.PointerType);
-        ptr_info.* = .{ .mutability = .read_only, .child = child_ty };
-
-        const addr_node = try self.makeNode(undefined, .{ .address_of = te.node }, null);
-        return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
-    }
-
-    fn ensureMutablePointer(
-        self: *Semantizer,
-        expr_node: *const syn.STNode,
-        te: typ.TypedExpr,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        if (te.ty == .pointer_type) {
-            const info = te.ty.pointer_type.*;
-            if (info.mutability != .read_write) {
-                const ptr_str = try typ.formatType(.{ .pointer_type = te.ty.pointer_type }, s, self.allocator);
-                defer self.allocator.free(ptr_str);
-                try self.diags.add(
-                    expr_node.location,
-                    .semantic,
-                    "cannot assign through pointer '{s}' because it is read-only; use '$&' when acquiring it",
-                    .{ptr_str},
-                );
-                return error.Reported;
-            }
-            return te;
-        }
-
-        if (te.node.content != .binding_use) {
-            try self.diags.add(
-                expr_node.location,
-                .semantic,
-                "cannot assign through indexed expression; take '$&' explicitly",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        const binding = te.node.content.binding_use;
-        if (binding.mutability != .variable) {
-            try self.diags.add(
-                expr_node.location,
-                .semantic,
-                "binding '{s}' is immutable; declare it with '::' or use '&{s}'",
-                .{ binding.name, binding.name },
-            );
-            return error.Reported;
-        }
-
-        const child_ty = try self.allocator.create(sg.Type);
-        child_ty.* = te.ty;
-
-        const ptr_info = try self.allocator.create(sg.PointerType);
-        ptr_info.* = .{ .mutability = .read_write, .child = child_ty };
-
-        const addr_node = try self.makeNode(undefined, .{ .address_of = te.node }, null);
-        return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
-    }
-
-    fn coerceExprToType(
-        self: *Semantizer,
-        expected: sg.Type,
-        expr: typ.TypedExpr,
-        expr_node: *const syn.STNode,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        if (typ.typesExactlyEqual(expected, expr.ty)) return expr;
-
-        return switch (expected) {
-            .array_type => |arr_info| self.convertListLiteralToArray(expr, arr_info, expr_node.location, s),
-            .builtin => |bt| try self.coerceLiteralToBuiltin(bt, expr, expr_node),
-            .struct_type => |st| try self.coerceStructLiteral(st, expr, expr_node, s),
-            else => expr,
-        };
-    }
-
-    fn coerceLiteralToBuiltin(
-        self: *Semantizer,
-        target: sg.BuiltinType,
-        expr: typ.TypedExpr,
-        expr_node: *const syn.STNode,
-    ) SemErr!typ.TypedExpr {
-        if (expr.node.content != .value_literal) return expr;
-
-        const lit = expr.node.content.value_literal;
-        switch (lit) {
-            .int_literal => |value| {
-                const maybe = try self.intLiteralAs(target, value, expr_node.location);
-                if (maybe) |converted| return converted;
-            },
-            .float_literal => |value| {
-                const maybe = try self.floatLiteralAs(target, value, expr_node.location);
-                if (maybe) |converted| return converted;
-            },
-            else => {},
-        }
-        return expr;
-    }
-
-    fn intLiteralAs(
-        self: *Semantizer,
-        target: sg.BuiltinType,
-        value: i64,
-        loc: tok.Location,
-    ) SemErr!?typ.TypedExpr {
-        const type_name = @tagName(target);
-        return switch (target) {
-            .Int8, .Int16, .Int32, .Int64 => blk_signed: {
-                const Bounds = struct { min: i64, max: i64 };
-                const bounds: Bounds = switch (target) {
-                    .Int8 => .{ .min = @as(i64, std.math.minInt(i8)), .max = @as(i64, std.math.maxInt(i8)) },
-                    .Int16 => .{ .min = @as(i64, std.math.minInt(i16)), .max = @as(i64, std.math.maxInt(i16)) },
-                    .Int32 => .{ .min = @as(i64, std.math.minInt(i32)), .max = @as(i64, std.math.maxInt(i32)) },
-                    .Int64 => .{ .min = std.math.minInt(i64), .max = std.math.maxInt(i64) },
-                    else => unreachable,
-                };
-                if (value < bounds.min or value > bounds.max) {
-                    try self.diags.add(
-                        loc,
-                        .semantic,
-                        "integer literal {d} does not fit in '{s}' (min {d}, max {d})",
-                        .{ value, type_name, bounds.min, bounds.max },
-                    );
-                    return error.Reported;
-                }
-                break :blk_signed try self.makeIntLiteral(loc, value, .{ .builtin = target });
-            },
-            .UInt8, .UInt16, .UInt32, .UInt64 => blk_unsigned: {
-                if (value < 0) {
-                    try self.diags.add(
-                        loc,
-                        .semantic,
-                        "integer literal {d} does not fit in '{s}' (min 0)",
-                        .{ value, type_name },
-                    );
-                    return error.Reported;
-                }
-                const max_val: u64 = switch (target) {
-                    .UInt8 => std.math.maxInt(u8),
-                    .UInt16 => std.math.maxInt(u16),
-                    .UInt32 => std.math.maxInt(u32),
-                    .UInt64 => std.math.maxInt(u64),
-                    else => unreachable,
-                };
-                const unsigned_value: u64 = @intCast(value);
-                if (unsigned_value > max_val) {
-                    try self.diags.add(
-                        loc,
-                        .semantic,
-                        "integer literal {d} does not fit in '{s}' (max {d})",
-                        .{ value, type_name, max_val },
-                    );
-                    return error.Reported;
-                }
-                break :blk_unsigned try self.makeIntLiteral(loc, value, .{ .builtin = target });
-            },
-            else => null,
-        };
-    }
-
-    fn floatLiteralAs(
-        self: *Semantizer,
-        target: sg.BuiltinType,
-        value: f64,
-        loc: tok.Location,
-    ) SemErr!?typ.TypedExpr {
-        return switch (target) {
-            .Float16, .Float32, .Float64 => blk: {
-                const lit_ptr = try self.allocator.create(sg.ValueLiteral);
-                lit_ptr.* = .{ .float_literal = value };
-                const node = try self.makeNode(loc, .{ .value_literal = lit_ptr.* }, null);
-                break :blk typ.TypedExpr{ .node = node, .ty = .{ .builtin = target } };
-            },
-            else => null,
-        };
-    }
-
-    fn coerceStructLiteral(
-        self: *Semantizer,
-        expected: *const sg.StructType,
-        expr: typ.TypedExpr,
-        expr_node: *const syn.STNode,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        if (expr.node.content != .struct_value_literal) return expr;
-        const lit = expr.node.content.struct_value_literal;
-        const actual_struct = lit.ty.struct_type;
-
-        if (expected.fields.len != actual_struct.fields.len or
-            expected.fields.len != lit.fields.len)
-        {
-            // Shapes differ; let caller handle mismatch later.
-            return expr;
-        }
-
-        var coerced_fields = try self.allocator.alloc(sg.StructValueLiteralField, expected.fields.len);
-        var i: usize = 0;
-        while (i < expected.fields.len) : (i += 1) {
-            const exp_field = expected.fields[i];
-            const act_field = actual_struct.fields[i];
-            if (!std.mem.eql(u8, exp_field.name, act_field.name)) {
-                self.allocator.free(coerced_fields);
-                return expr;
-            }
-
-            const field_node = @constCast(lit.fields[i].value);
-            var field_expr = typ.TypedExpr{
-                .node = field_node,
-                .ty = act_field.ty,
-            };
-            field_expr = try self.coerceExprToType(exp_field.ty, field_expr, expr_node, s);
-            if (!typ.typesExactlyEqual(exp_field.ty, field_expr.ty)) {
-                const expected_ty = try typ.formatType(exp_field.ty, s, self.allocator);
-                const actual_ty = try typ.formatType(field_expr.ty, s, self.allocator);
-                defer {
-                    self.allocator.free(expected_ty);
-                    self.allocator.free(actual_ty);
-                }
-                try self.diags.add(
-                    expr_node.location,
-                    .semantic,
-                    "cannot initialize field '.{s}' with '{s}' (expected '{s}')",
-                    .{ exp_field.name, actual_ty, expected_ty },
-                );
-                self.allocator.free(coerced_fields);
-                return error.Reported;
-            }
-
-            coerced_fields[i] = .{ .name = exp_field.name, .value = field_expr.node };
-        }
-
-        const lit_ptr = try self.allocator.create(sg.StructValueLiteral);
-        lit_ptr.* = .{ .fields = coerced_fields, .ty = .{ .struct_type = expected } };
-
-        const node = try self.makeNode(expr_node.location, .{ .struct_value_literal = lit_ptr }, null);
-        return .{ .node = node, .ty = .{ .struct_type = expected } };
-    }
-
-    fn convertListLiteralToArray(
-        self: *Semantizer,
-        expr: typ.TypedExpr,
-        arr_info: *const sg.ArrayType,
-        loc: tok.Location,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        switch (expr.node.content) {
-            .list_literal => |ll| {
-                if (ll.elements.len != arr_info.length) {
-                    try self.diags.add(
-                        loc,
-                        .semantic,
-                        "array expects {d} elements, but list literal has {d}",
-                        .{ arr_info.length, ll.elements.len },
-                    );
-                    return error.Reported;
-                }
-
-                const expected_elem_ty = arr_info.element_type.*;
-                for (ll.element_types, 0..) |elem_ty, idx| {
-                    if (typ.typesStructurallyEqual(expected_elem_ty, elem_ty)) continue;
-                    const exp = try typ.formatType(expected_elem_ty, s, self.allocator);
-                    const got = try typ.formatType(elem_ty, s, self.allocator);
-                    defer {
-                        self.allocator.free(exp);
-                        self.allocator.free(got);
-                    }
-                    try self.diags.add(
-                        loc,
-                        .semantic,
-                        "array element {d} has type '{s}', expected '{s}'",
-                        .{ idx, got, exp },
-                    );
-                    return error.Reported;
-                }
-
-                const arr_lit = try self.allocator.create(sg.ArrayLiteral);
-                arr_lit.* = .{
-                    .elements = ll.elements,
-                    .element_type = expected_elem_ty,
-                    .length = arr_info.length,
-                };
-
-                const node = try self.makeNode(loc, .{ .array_literal = arr_lit }, null);
-                return .{ .node = node, .ty = .{ .array_type = arr_info } };
-            },
-            else => {},
-        }
-
-        const exp = try typ.formatType(.{ .array_type = arr_info }, s, self.allocator);
-        const got = try typ.formatType(expr.ty, s, self.allocator);
-        defer {
-            self.allocator.free(exp);
-            self.allocator.free(got);
-        }
-        try self.diags.add(
-            loc,
-            .semantic,
-            "cannot initialize array of type '{s}' with expression of type '{s}'",
-            .{ exp, got },
-        );
-        return error.Reported;
     }
 
     fn inferArrayTypeFromList(
@@ -3192,33 +2774,15 @@ pub const Semantizer = struct {
         return arr_info;
     }
 
-    fn makeNode(
-        self: *Semantizer,
-        loc: tok.Location,
-        content: sg.Content,
-        scope: ?*Scope,
-    ) !*sg.SGNode {
-        const n = try self.allocator.create(sg.SGNode);
-        n.* = .{
-            .location = loc, // de momento ‘undefined’ en la mayoría de llamadas
-            .content = content,
-        };
-        if (scope) |s| try s.nodes.append(n);
-        return n;
-    }
-
-    fn resolveType(self: *Semantizer, t: syn.Type, s: *Scope) !sg.Type {
+    fn resolveType(self: *Semantizer, t: syn.Type, s: *Scope) SemErr!sg.Type {
         return switch (t) {
             .type_name => |tn| blk: {
                 const id = tn.string;
                 if (typ.builtinFromName(id)) |bt|
                     break :blk .{ .builtin = bt };
-                // If it's an abstract, require a defaultsto to use as a type
                 if (s.lookupAbstractInfo(id)) |_| {
                     if (s.lookupAbstractDefault(id)) |def_entry|
                         break :blk def_entry.ty;
-                    // Treat abstract types without defaults as 'Any' so they can be
-                    // used in signatures; conformance is verified when instantiating.
                     break :blk .{ .builtin = .Any };
                 }
                 if (s.lookupType(id)) |td|
@@ -3228,7 +2792,6 @@ pub const Semantizer = struct {
             .generic_type_instantiation => |g| blk_g: {
                 const base_name = g.base_name.string;
                 if (s.lookupAbstractInfo(base_name)) |info| {
-                    // Basic arity validation: ensure all parameters are provided
                     for (info.param_names) |pname| {
                         var found = false;
                         for (g.args.fields) |fld| {
@@ -3278,7 +2841,12 @@ pub const Semantizer = struct {
         };
     }
 
-    fn resolveTypeWithSubst(self: *Semantizer, t: syn.Type, s: *Scope, subst: *std.StringHashMap(sg.Type)) !sg.Type {
+    fn resolveTypeWithSubst(
+        self: *Semantizer,
+        t: syn.Type,
+        s: *Scope,
+        subst: *std.StringHashMap(sg.Type),
+    ) SemErr!sg.Type {
         return switch (t) {
             .type_name => |tn| blk: {
                 const id = tn.string;
@@ -3301,7 +2869,6 @@ pub const Semantizer = struct {
                     break :blk_g .{ .builtin = .Any };
                 }
 
-                // For now, ignore outer substitutions for base_name; stargs are resolved inside
                 const st_ptr = self.instantiateGenericTypeNamed(base_name, g.args, s, subst) catch |err| switch (err) {
                     error.SymbolNotFound => break :blk_g error.UnknownType,
                     else => return err,
@@ -3338,6 +2905,139 @@ pub const Semantizer = struct {
         };
     }
 
+    //──────────────────────────────────────────────────── HELPERS
+    fn handleBuiltinTypeInfo(
+        self: *Semantizer,
+        kind: typ.BuiltinTypeInfoKind,
+        call: syn.FunctionCall,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const target_ty = try self.extractTypeArgument(call, s);
+
+        const value = switch (kind) {
+            .size => typ.computeTypeSize(target_ty),
+            .alignment => typ.computeTypeAlignment(target_ty),
+        };
+
+        const loc = call.input.*.location;
+        if (value > std.math.maxInt(i32)) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "result of builtin exceeds Int32 range",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        return try typ.makeIntLiteral(self.allocator, loc, @intCast(value), .{ .builtin = .Int32 });
+    }
+
+    fn handleLengthBuiltin(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const arg_node = call.input.*;
+        const arg_loc = arg_node.location;
+
+        var value_te: typ.TypedExpr = undefined;
+        if (arg_node.content == .struct_value_literal) {
+            const sv = arg_node.content.struct_value_literal;
+            if (sv.fields.len != 1 or !std.mem.eql(u8, sv.fields[0].name.string, "value")) {
+                try self.diags.add(
+                    arg_loc,
+                    .semantic,
+                    "length expects a single '.value' argument when using named parameters",
+                    .{},
+                );
+                return error.Reported;
+            }
+            value_te = try self.visitNode(sv.fields[0].value.*, s);
+        } else {
+            value_te = try self.visitNode(arg_node, s);
+        }
+
+        switch (value_te.node.content) {
+            .list_literal => |ll| {
+                const len_u64: u64 = @intCast(ll.elements.len);
+                if (len_u64 > std.math.maxInt(i64)) {
+                    try self.diags.add(
+                        arg_loc,
+                        .semantic,
+                        "length result exceeds supported integer range",
+                        .{},
+                    );
+                    return error.Reported;
+                }
+                return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
+            },
+            .array_literal => |al| {
+                const len_u64: u64 = @intCast(al.length);
+                if (len_u64 > std.math.maxInt(i64)) {
+                    try self.diags.add(
+                        arg_loc,
+                        .semantic,
+                        "length result exceeds supported integer range",
+                        .{},
+                    );
+                    return error.Reported;
+                }
+                return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
+            },
+            else => {},
+        }
+
+        if (value_te.ty == .array_type) {
+            const arr = value_te.ty.array_type.*;
+            const len_u64: u64 = @intCast(arr.length);
+            if (len_u64 > std.math.maxInt(i64)) {
+                try self.diags.add(
+                    arg_loc,
+                    .semantic,
+                    "length result exceeds supported integer range",
+                    .{},
+                );
+                return error.Reported;
+            }
+            return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
+        }
+
+        return error.SymbolNotFound;
+    }
+
+    fn handleTypeOf(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const arg_node = call.input.*;
+        if (arg_node.content != .struct_value_literal) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "type_of expects '.value' argument",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, "value")) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "type_of expects a single '.value' argument",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const tv = try self.visitNode(svl.fields[0].value.*, s);
+        const loc = call.input.*.location;
+        return try typ.makeTypeLiteral(self.allocator, loc, tv.ty);
+    }
+
     fn registerDefer(self: *Semantizer, s: *Scope, nodes: []const *sg.SGNode) !void {
         if (nodes.len == 0) return;
         const copy = try self.allocator.alloc(*sg.SGNode, nodes.len);
@@ -3360,9 +3060,17 @@ pub const Semantizer = struct {
         const deinit_fn = s.findDeinit(binding.ty) orelse return;
         if (deinit_fn.input.fields.len != 1) return;
 
-        const binding_use = try self.makeNode(loc, .{ .binding_use = binding }, null);
+        const binding_use = try self.allocator.create(sg.SGNode);
+        binding_use.* = .{
+            .location = loc,
+            .content = .{ .binding_use = binding },
+        };
 
-        const addr_node = try self.makeNode(loc, .{ .address_of = binding_use }, null);
+        const addr_node = try self.allocator.create(sg.SGNode);
+        addr_node.* = .{
+            .location = loc,
+            .content = .{ .address_of = binding_use },
+        };
 
         const arg_fields = try self.allocator.alloc(sg.StructValueLiteralField, 1);
         arg_fields[0] = .{ .name = deinit_fn.input.fields[0].name, .value = addr_node };
@@ -3373,12 +3081,20 @@ pub const Semantizer = struct {
             .ty = .{ .struct_type = &deinit_fn.input },
         };
 
-        const args_node = try self.makeNode(loc, .{ .struct_value_literal = args_struct }, null);
+        const args_node = try self.allocator.create(sg.SGNode);
+        args_node.* = .{
+            .location = loc,
+            .content = .{ .struct_value_literal = args_struct },
+        };
 
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
         fc_ptr.* = .{ .callee = deinit_fn, .input = args_node };
 
-        const call_node = try self.makeNode(loc, .{ .function_call = fc_ptr }, null);
+        const call_node = try self.allocator.create(sg.SGNode);
+        call_node.* = .{
+            .location = loc,
+            .content = .{ .function_call = fc_ptr },
+        };
         try self.registerDefer(s, &[_]*sg.SGNode{call_node});
     }
 
