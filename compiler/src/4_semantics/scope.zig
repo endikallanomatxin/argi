@@ -2,12 +2,15 @@ const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
 const sg = @import("semantic_graph.zig");
-const sem = @import("semantizer.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
 const abs = @import("abstracts.zig");
 const gen = @import("generics.zig");
+
+pub const DeferredGroup = struct {
+    nodes: []const *sg.SGNode,
+};
 
 pub const Scope = struct {
     parent: ?*Scope,
@@ -22,7 +25,7 @@ pub const Scope = struct {
     abstract_defaults: std.StringHashMap(abs.AbstractDefaultEntry),
     generic_functions: std.StringHashMap(std.ArrayList(gen.GenericTemplate)),
     generic_types: std.StringHashMap(std.ArrayList(gen.GenericTypeTemplate)),
-    deferred: std.ArrayList(sem.DeferredGroup),
+    deferred: std.ArrayList(DeferredGroup),
 
     current_fn: ?*sg.FunctionDeclaration,
 
@@ -43,7 +46,7 @@ pub const Scope = struct {
             .abstract_defaults = std.StringHashMap(abs.AbstractDefaultEntry).init(a.*),
             .generic_functions = std.StringHashMap(std.ArrayList(gen.GenericTemplate)).init(a.*),
             .generic_types = std.StringHashMap(std.ArrayList(gen.GenericTypeTemplate)).init(a.*),
-            .deferred = std.ArrayList(sem.DeferredGroup).init(a.*),
+            .deferred = std.ArrayList(DeferredGroup).init(a.*),
             .current_fn = fnc,
         };
     }

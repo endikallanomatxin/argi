@@ -11,25 +11,7 @@ const gen = @import("generics.zig");
 const helpers = @import("helpers.zig");
 
 const Scope = @import("scope.zig").Scope;
-
-pub const SemErr = error{
-    SymbolAlreadyDefined,
-    SymbolNotFound,
-    ConstantReassignment,
-    InvalidType,
-    UnknownType,
-    AbstractNeedsDefault,
-    MissingReturnValue,
-    NotYetImplemented,
-    OutOfMemory,
-    OptionalUnwrap,
-    AmbiguousOverload,
-    Reported,
-};
-
-pub const DeferredGroup = struct {
-    nodes: []const *sem.SGNode,
-};
+const SemErr = @import("errors.zig").SemErr;
 
 //──────────────────────────────────────────────────────────────────────────────
 //  SEMANTIZER

@@ -2,7 +2,6 @@ const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
 const sg = @import("semantic_graph.zig");
-const sem = @import("semantizer.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
@@ -10,6 +9,7 @@ const typ = @import("types.zig");
 const helpers = @import("helpers.zig");
 
 const Scope = @import("scope.zig").Scope;
+const SemErr = @import("errors.zig").SemErr;
 
 // Abstract typing support
 pub const AbstractFunctionReqSem = struct {
@@ -187,7 +187,7 @@ pub fn funcOutputMatchesRequirement(
     return true;
 }
 
-pub fn resolveOverload(name: []const u8, in_ty: sg.Type, s: *Scope) sem.SemErr!*sg.FunctionDeclaration {
+pub fn resolveOverload(name: []const u8, in_ty: sg.Type, s: *Scope) SemErr!*sg.FunctionDeclaration {
     var best: ?*sg.FunctionDeclaration = null;
     var best_score: u32 = std.math.maxInt(u32);
     var ambiguous = false;
@@ -216,7 +216,7 @@ pub fn resolveOverload(name: []const u8, in_ty: sg.Type, s: *Scope) sem.SemErr!*
     return best.?;
 }
 
-pub fn ensureConformance(info: *AbstractInfo, concrete: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) sem.SemErr!void {
+pub fn ensureConformance(info: *AbstractInfo, concrete: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) SemErr!void {
     for (info.requirements) |rq| {
         if (!(try existsFunctionForRequirement(info, rq, concrete, s, allocator)))
             return error.SymbolNotFound;
@@ -240,7 +240,7 @@ fn existsFunctionForRequirement(
     concrete: sg.Type,
     s: *Scope,
     allocator: *const std.mem.Allocator,
-) sem.SemErr!bool {
+) SemErr!bool {
     var cur: ?*Scope = s;
     while (cur) |sc| : (cur = sc.parent) {
         if (sc.functions.getPtr(rq.name)) |lst| {
