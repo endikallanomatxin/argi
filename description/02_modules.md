@@ -15,6 +15,24 @@ Every file in a directory can see each other, same namespace.
 The module system should stay deliberately boring. This is infrastructure, not
 one of the places where the language needs to be especially clever.
 
+## Current status
+
+Today the compiler implements:
+
+- folder-level modules: all `.rg` files in the same directory share namespace
+- `core/` autoimported
+- `more/` imported explicitly
+- named imports only: `m := #import("...")`
+- import path kinds:
+  - `./dep` relative to the current module
+  - `../dep` relative to the parent module
+  - `.../dep` relative to the project root
+- `_private_name` hidden across module boundaries
+- transitive imports
+- import cycle detection
+
+`#import("...")` as a standalone statement is intentionally not supported.
+
 ## Project layout
 
 There is two layout conventions:
@@ -87,27 +105,34 @@ configurable.
 
 `m := #import("module_path")`
 
-If it is just a name, it is checked in the dependencies table of the closest root.
+Bare names are resolved under `more/`.
 
-If the module starts with a . then it is relative to the current module. (inside)
-If it starts with .. then it is relative to the parent module. (outside)
-If it starts with / then it is relative to the root of the project.
+If the module starts with `./` then it is relative to the current module.
+If it starts with `../` then it is relative to the parent module.
+If it starts with `.../` then it is relative to the root of the project.
 
-/ are used to refer to modules inside other modules.
+Examples:
+
+```rg
+json := #import("codecs/serialization/json")
+sibling := #import("./sibling")
+parent_dep := #import("../shared")
+root_dep := #import(".../app/shared")
+```
+
+Imports should always be bound to a name.
 
 
 ## Importing stuff from modules
 
-To import stuff from other modules:
+Access is explicit through the module binding:
 
-- `some_function := #import("./module/").some_function`
+```rg
+math := #import("math/linear_algebra")
+result := math.solve(...)
+```
 
-- `[one, two] := #import("./module/").[one, two]`
-
-    o
-
-    `one = m.one`
-    `two = m.two`
+This keeps name origin visible and avoids implicit namespace pollution.
 
 > [!NOTE]
 > que sea una sintaxis acorde al código normal permite programar imports

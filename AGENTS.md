@@ -11,8 +11,9 @@ This repository contains a compiler for a new programming language written in Zi
         - The compiler is structured in four phases:
         tokenizing, syntaxing, semantizing and codegen.
     - `tests/`: Example `.rg` programs used as tests.
-        - Positive test cases live under `compiler/tests/cases/<case_name>/main.rg`.
+        - Test cases live under `compiler/tests/<case_name>/main.rg`.
         - Files in the same test case directory share namespace and are compiled together as one folder-level module.
+        - Negative tests should include `X` in their numeric prefix, e.g. `131X_multiple_dispatch_ambiguous`.
 
 - `more/`: Official library modules that are not part of `core/`.
 
@@ -23,7 +24,7 @@ This repository contains a compiler for a new programming language written in Zi
 
 - Build compiler: `cd compiler && zig build`
 - Run compiler tests: `cd compiler && zig build test`
-- Compile a test program: `./zig-out/bin/argi build tests/cases/00_minimal_main/main.rg`
+- Compile a test program: `./zig-out/bin/argi build tests/00_minimal_main/main.rg`
 
 > It might be necessary to set the following environment variables to make zig work:
 > `ZIG_LOCAL_CACHE_DIR="$PWD/.zig-cache"`
@@ -42,8 +43,8 @@ This repository contains a compiler for a new programming language written in Zi
 - To add a new feature:
     1. Checkout the language description and `more/` to understand the
        feature.
-    2. Create a `.rg` test that demonstrates the feature in `compiler/tests/cases/<case_name>/main.rg`.
-       Put positive executable cases under `compiler/tests/cases/<case_name>/main.rg`.
+    2. Create a `.rg` test that demonstrates the feature in `compiler/tests/<case_name>/main.rg`.
+       Put positive executable cases under `compiler/tests/<case_name>/main.rg`.
     3. Draft a small implementation plan, evaluating whether the change affects
        tokenizing, syntaxing, semantizing or codegen.
     4. Implement the feature in `compiler/src/` until it compiles.
@@ -64,6 +65,12 @@ feature first.
 
 - When validating the compiler locally, prefer:
   `cd compiler && env ZIG_LOCAL_CACHE_DIR=$PWD/.zig-cache ZIG_GLOBAL_CACHE_DIR=$PWD/.zig-global-cache zig build test`
+
+- Current module rules in the compiler:
+  - all `.rg` files in a folder share namespace
+  - `#import(...)` must be assigned to a name
+  - `./` is current module, `../` is parent, `.../` is project root
+  - bare import names resolve under `more/`
 
 - Follow Zig coding style:
     - spaces, snake_case for variables/functions/files, descriptive names.
