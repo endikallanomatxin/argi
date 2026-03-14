@@ -21,11 +21,19 @@ part of the core library.
 ## Usage
 
 - Build compiler: `cd compiler && zig build`
+- Run compiler tests: `cd compiler && zig build test`
 - Compile a test program: `./zig-out/bin/argi build tests/example_test.rg`
 
 > It might be necessary to set the following environment variables to make zig work:
 > `ZIG_LOCAL_CACHE_DIR="$PWD/.zig-cache"`
 > `ZIG_GLOBAL_CACHE_DIR="$PWD/.zig-global-cache"`
+>
+> In restricted environments, prefer running Zig commands with both cache
+> directories set inside `compiler/`.
+>
+> The current compiler has been updated to run with Zig `0.15.x`. If the local
+> Zig version differs significantly, check `compiler/build.zig` and stdlib API
+> usage before assuming a compiler regression.
 
 
 ## Guidelines
@@ -52,6 +60,9 @@ feature first.
 
 - Keep CLI help aligned with the tool's current capabilities.
 
+- When validating the compiler locally, prefer:
+  `cd compiler && env ZIG_LOCAL_CACHE_DIR=$PWD/.zig-cache ZIG_GLOBAL_CACHE_DIR=$PWD/.zig-global-cache zig build test`
+
 - Follow Zig coding style:
     - spaces, snake_case for variables/functions/files, descriptive names.
     - File naming: `snake_case.zig` (e.g., `parser.zig`, `type_checker.zig`).
@@ -66,5 +77,4 @@ literals to lexer").
 - If you think some important information is missing from this guide, please
 add it. If you learn something non-obvious, document it here so future work is
 faster.
-
 
