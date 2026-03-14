@@ -287,7 +287,7 @@ pub fn verifyAbstracts(s: *Scope, allocator: *const std.mem.Allocator, diags: *d
                 const candidates = buildOverloadCandidatesString(rq.name, in_ty, s, allocator) catch "";
 
                 // Build signature string
-                var buf = std.ArrayList(u8).init(allocator.*);
+                var buf = std.array_list.Managed(u8).init(allocator.*);
                 defer buf.deinit();
                 try buf.appendSlice(rq.name);
                 try buf.appendSlice(" (");
@@ -337,7 +337,7 @@ pub fn verifyAbstracts(s: *Scope, allocator: *const std.mem.Allocator, diags: *d
             const in_ty2: sg.Type = .{ .struct_type = exp_in2 };
             const candidates2 = buildOverloadCandidatesString(rq2.name, in_ty2, s, allocator) catch "";
 
-            var buf2 = std.ArrayList(u8).init(allocator.*);
+            var buf2 = std.array_list.Managed(u8).init(allocator.*);
             defer buf2.deinit();
             try buf2.appendSlice(rq2.name);
             try buf2.appendSlice(" (");
@@ -374,7 +374,7 @@ pub fn verifyAbstracts(s: *Scope, allocator: *const std.mem.Allocator, diags: *d
 }
 
 pub fn buildOverloadCandidatesString(name: []const u8, in_ty: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) ![]u8 {
-    var buf = std.ArrayList(u8).init(allocator.*);
+    var buf = std.array_list.Managed(u8).init(allocator.*);
     var cur: ?*Scope = s;
     var first: bool = true;
     while (cur) |sc| : (cur = sc.parent) {
@@ -398,7 +398,7 @@ pub fn buildOverloadCandidatesString(name: []const u8, in_ty: sg.Type, s: *Scope
 }
 
 pub fn collectFunctionSignatures(name: []const u8, s: *Scope, allocator: *const std.mem.Allocator) ![]u8 {
-    var buf = std.ArrayList(u8).init(allocator.*);
+    var buf = std.array_list.Managed(u8).init(allocator.*);
     errdefer buf.deinit();
 
     var cur: ?*Scope = s;
@@ -421,7 +421,7 @@ pub fn collectFunctionSignatures(name: []const u8, s: *Scope, allocator: *const 
     return try buf.toOwnedSlice();
 }
 
-fn appendFunctionSignature(buf: *std.ArrayList(u8), f: *const sg.FunctionDeclaration, s: *Scope) !void {
+fn appendFunctionSignature(buf: *std.array_list.Managed(u8), f: *const sg.FunctionDeclaration, s: *Scope) !void {
     try buf.appendSlice(f.name);
     try buf.appendSlice(" (");
     var i: usize = 0;

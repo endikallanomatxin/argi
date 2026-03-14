@@ -34,7 +34,7 @@ pub const Syntaxer = struct {
     tokens: []const tok.Token,
     index: usize,
     allocator: *const std.mem.Allocator,
-    st: std.ArrayList(*syn.STNode),
+    st: std.array_list.Managed(*syn.STNode),
     diags: *diagnostic.Diagnostics,
 
     pub fn init(alloc: *const std.mem.Allocator, toks: []const tok.Token, diags: *diagnostic.Diagnostics) Syntaxer {
@@ -42,7 +42,7 @@ pub const Syntaxer = struct {
             .tokens = toks,
             .index = 0,
             .allocator = alloc,
-            .st = std.ArrayList(*syn.STNode).init(alloc.*),
+            .st = std.array_list.Managed(*syn.STNode).init(alloc.*),
             .diags = diags,
         };
     }
@@ -168,7 +168,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var names = std.ArrayList([]const u8).init(self.allocator.*);
+        var names = std.array_list.Managed([]const u8).init(self.allocator.*);
         while (!self.tokenIs(.close_bracket)) {
             const n = try self.parseIdentifier();
             try names.append(n);
@@ -188,7 +188,7 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
         self.advanceOne();
         self.skipNewLinesAndComments();
-        var tys = std.ArrayList(syn.Type).init(self.allocator.*);
+        var tys = std.array_list.Managed(syn.Type).init(self.allocator.*);
         while (!self.tokenIs(.close_bracket)) {
             const t = (try self.parseType()).?; // types are mandatory here
             try tys.append(t);
@@ -320,8 +320,8 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var names = std.ArrayList([]const u8).init(self.allocator.*);
-        var funcs = std.ArrayList(syn.AbstractFunctionRequirement).init(self.allocator.*);
+        var names = std.array_list.Managed([]const u8).init(self.allocator.*);
+        var funcs = std.array_list.Managed(syn.AbstractFunctionRequirement).init(self.allocator.*);
 
         while (!self.tokenIs(.close_parenthesis)) {
             var name = try self.parseName();
@@ -363,7 +363,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var elems = std.ArrayList(*syn.STNode).init(self.allocator.*);
+        var elems = std.array_list.Managed(*syn.STNode).init(self.allocator.*);
 
         while (!self.tokenIs(.close_parenthesis)) {
             const elem = try self.parseExpression();
@@ -391,7 +391,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var fields = std.ArrayList(syn.StructTypeLiteralField).init(self.allocator.*);
+        var fields = std.array_list.Managed(syn.StructTypeLiteralField).init(self.allocator.*);
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
@@ -434,7 +434,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var fields = std.ArrayList(syn.StructValueLiteralField).init(self.allocator.*);
+        var fields = std.array_list.Managed(syn.StructValueLiteralField).init(self.allocator.*);
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
@@ -677,7 +677,7 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.hash)) {
             self.advanceOne();
             const gen_struct = try self.parseStructTypeLiteral();
-            var names = std.ArrayList([]const u8).init(self.allocator.*);
+            var names = std.array_list.Managed([]const u8).init(self.allocator.*);
             for (gen_struct.fields) |fld| try names.append(fld.name.string);
             generic_params = names.items;
         } else if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
@@ -844,8 +844,8 @@ pub const Syntaxer = struct {
     }
 
     // ─────────────────────────────  SENTENCES  ──────────────────────────────
-    fn parseSentences(self: *Syntaxer) !std.ArrayList(*syn.STNode) {
-        var list = std.ArrayList(*syn.STNode).init(self.allocator.*);
+    fn parseSentences(self: *Syntaxer) !std.array_list.Managed(*syn.STNode) {
+        var list = std.array_list.Managed(*syn.STNode).init(self.allocator.*);
 
         while (!self.tokenIs(.eof) and !self.tokenIs(.close_brace)) {
             switch (self.current().content) {

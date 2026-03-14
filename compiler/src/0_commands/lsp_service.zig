@@ -109,16 +109,16 @@ const Document = struct {
 
 pub const LanguageService = struct {
     allocator: std.mem.Allocator,
-    documents: std.ArrayList(Document),
+    documents: std.array_list.Managed(Document),
     root_path: ?[]u8 = null,
-    core_files: std.ArrayList(sf.SourceFile),
+    core_files: std.array_list.Managed(sf.SourceFile),
     core_loaded: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) LanguageService {
         return .{
             .allocator = allocator,
-            .documents = std.ArrayList(Document).init(allocator),
-            .core_files = std.ArrayList(sf.SourceFile).init(allocator),
+            .documents = std.array_list.Managed(Document).init(allocator),
+            .core_files = std.array_list.Managed(sf.SourceFile).init(allocator),
         };
     }
 
@@ -225,7 +225,7 @@ pub const LanguageService = struct {
         var diagnostics = diag.Diagnostics.init(&analysis_allocator, files);
         defer diagnostics.deinit();
 
-        var tokens = std.ArrayList(token.Token).init(analysis_allocator);
+        var tokens = std.array_list.Managed(token.Token).init(analysis_allocator);
         defer tokens.deinit();
 
         var pipeline_failed = false;
@@ -265,7 +265,7 @@ pub const LanguageService = struct {
             };
         }
 
-        var out = std.ArrayList(Diagnostic).init(self.allocator);
+        var out = std.array_list.Managed(Diagnostic).init(self.allocator);
         errdefer {
             for (out.items) |d| self.allocator.free(d.message);
             out.deinit();
@@ -300,13 +300,13 @@ pub const LanguageService = struct {
     fn ensureCoreFiles(self: *LanguageService) !void {
         if (self.core_loaded) return;
 
-        var owned_candidates = std.ArrayList([]u8).init(self.allocator);
+        var owned_candidates = std.array_list.Managed([]u8).init(self.allocator);
         defer {
             for (owned_candidates.items) |p| self.allocator.free(p);
             owned_candidates.deinit();
         }
 
-        var candidates = std.ArrayList([]const u8).init(self.allocator);
+        var candidates = std.array_list.Managed([]const u8).init(self.allocator);
         defer candidates.deinit();
 
         try candidates.append("core");
@@ -361,9 +361,9 @@ pub const LanguageService = struct {
         return any_loaded;
     }
 
-    pub fn semanticTokensFull(self: *LanguageService, uri: []const u8) !std.ArrayList(u32) {
+    pub fn semanticTokensFull(self: *LanguageService, uri: []const u8) !std.array_list.Managed(u32) {
         const gpa = self.allocator;
-        var out = std.ArrayList(u32).init(gpa);
+        var out = std.array_list.Managed(u32).init(gpa);
 
         const doc = try self.getDoc(uri);
         const text = doc.text;
@@ -392,7 +392,7 @@ pub const LanguageService = struct {
             try off2ix.put(tk.location.offset, i);
         }
 
-        var collected = std.ArrayList(SemanticToken).init(work);
+        var collected = std.array_list.Managed(SemanticToken).init(work);
         defer collected.deinit();
 
         // Lexical layer (no identifiers)
@@ -444,7 +444,7 @@ pub const LanguageService = struct {
         const RO: u32 = (1 << MOD_INDEX.readonly);
 
         const Emitter = struct {
-            sink: *std.ArrayList(SemanticToken),
+            sink: *std.array_list.Managed(SemanticToken),
             toks: []const token.Token,
             off2ix: *std.AutoHashMap(usize, usize),
 
@@ -501,7 +501,7 @@ pub const LanguageService = struct {
             .off2ix = &off2ix,
         };
 
-        var stack = std.ArrayList(*const st.STNode).init(work);
+        var stack = std.array_list.Managed(*const st.STNode).init(work);
         defer stack.deinit();
         for (st_nodes) |n| try stack.append(n);
 
@@ -634,7 +634,7 @@ pub fn decodeFileUri(allocator: std.mem.Allocator, uri: []const u8) !?[]u8 {
     const prefix = "file://";
     if (!std.mem.startsWith(u8, uri, prefix)) return null;
 
-    var builder = std.ArrayList(u8).init(allocator);
+    var builder = std.array_list.Managed(u8).init(allocator);
     errdefer builder.deinit();
 
     var i: usize = prefix.len;
@@ -658,7 +658,7 @@ pub fn decodeFileUri(allocator: std.mem.Allocator, uri: []const u8) !?[]u8 {
 }
 
 inline fn pushEncoded(
-    outp: *std.ArrayList(u32),
+    outp: *std.array_list.Managed(u32),
     prev_linep: *u32,
     prev_charp: *u32,
     line: u32,
@@ -698,7 +698,7 @@ inline fn classify(c: token.Content) ?u32 {
 }
 
 fn emitLexical(
-    out: *std.ArrayList(u32),
+    out: *std.array_list.Managed(u32),
     gpa: std.mem.Allocator,
     text: []const u8,
     toks: []const token.Token,
@@ -785,7 +785,7 @@ inline fn classify_lex_only(c: token.Content) ?u32 {
     };
 }
 
-inline fn popOrNull(comptime T: type, list: *std.ArrayList(T)) ?T {
+inline fn popOrNull(comptime T: type, list: *std.array_list.Managed(T)) ?T {
     if (list.items.len == 0) return null;
     return list.pop();
 }

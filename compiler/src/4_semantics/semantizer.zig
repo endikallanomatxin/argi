@@ -18,13 +18,13 @@ const SemErr = @import("errors.zig").SemErr;
 pub const Semantizer = struct {
     allocator: *const std.mem.Allocator,
     st_nodes: []const *syn.STNode, // entrada
-    root_list: std.ArrayList(*sg.SGNode), // buffer mut
+    root_list: std.array_list.Managed(*sg.SGNode), // buffer mut
     root_nodes: []const *sg.SGNode = &.{}, // slice final
     diags: *diagnostic.Diagnostics,
 
     // ── Reintentos top-level
-    pending_now: std.ArrayList(*const syn.STNode),
-    pending_next: std.ArrayList(*const syn.STNode),
+    pending_now: std.array_list.Managed(*const syn.STNode),
+    pending_next: std.array_list.Managed(*const syn.STNode),
     defer_unknown_top_level: bool = false,
     current_top_node: ?*const syn.STNode = null,
     max_retry_rounds: u32 = 8,
@@ -37,10 +37,10 @@ pub const Semantizer = struct {
         return .{
             .allocator = alloc,
             .st_nodes = st,
-            .root_list = std.ArrayList(*sg.SGNode).init(alloc.*),
+            .root_list = std.array_list.Managed(*sg.SGNode).init(alloc.*),
             .diags = diags,
-            .pending_now = std.ArrayList(*const syn.STNode).init(alloc.*),
-            .pending_next = std.ArrayList(*const syn.STNode).init(alloc.*),
+            .pending_now = std.array_list.Managed(*const syn.STNode).init(alloc.*),
+            .pending_next = std.array_list.Managed(*const syn.STNode).init(alloc.*),
         };
     }
 
@@ -455,14 +455,14 @@ pub const Semantizer = struct {
         try s.types.put(ad.name.string, td);
 
         // Store abstract info (resolved requirements) in scope
-        var reqs = std.ArrayList(abs.AbstractFunctionReqSem).init(self.allocator.*);
+        var reqs = std.array_list.Managed(abs.AbstractFunctionReqSem).init(self.allocator.*);
         const generic_params = ad.generic_params;
         for (ad.requires_functions) |rf| {
             // Build input struct resolving types; track Self/generic/abstract usages
-            var in_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
-            var input_generic = std.ArrayList(?u32).init(self.allocator.*);
-            var input_abstract = std.ArrayList(?[]const u8).init(self.allocator.*);
-            var self_idxs = std.ArrayList(u32).init(self.allocator.*);
+            var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
+            var input_generic = std.array_list.Managed(?u32).init(self.allocator.*);
+            var input_abstract = std.array_list.Managed(?[]const u8).init(self.allocator.*);
+            var self_idxs = std.array_list.Managed(u32).init(self.allocator.*);
 
             for (rf.input.fields, 0..) |fld, i| {
                 var ty: sg.Type = .{ .builtin = .Any };
@@ -525,9 +525,9 @@ pub const Semantizer = struct {
             input_abstract.deinit();
 
             // Build output struct, tracking generics/abstracts similarly
-            var out_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
-            var output_generic = std.ArrayList(?u32).init(self.allocator.*);
-            var output_abstract = std.ArrayList(?[]const u8).init(self.allocator.*);
+            var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
+            var output_generic = std.array_list.Managed(?u32).init(self.allocator.*);
+            var output_abstract = std.array_list.Managed(?[]const u8).init(self.allocator.*);
 
             for (rf.output.fields) |fld| {
                 var ty: sg.Type = .{ .builtin = .Any };
@@ -627,7 +627,7 @@ pub const Semantizer = struct {
         if (s.abstract_impls.getPtr(rel.name)) |lst| {
             try lst.append(.{ .ty = concrete_ty, .location = loc });
         } else {
-            var new_list = std.ArrayList(abs.AbstractImplEntry).init(self.allocator.*);
+            var new_list = std.array_list.Managed(abs.AbstractImplEntry).init(self.allocator.*);
             try new_list.append(.{ .ty = concrete_ty, .location = loc });
             try s.abstract_impls.put(rel.name, new_list);
         }
@@ -799,7 +799,7 @@ pub const Semantizer = struct {
             if (s.generic_types.getPtr(d.name.string)) |lst| {
                 try lst.append(.{ .name = d.name.string, .location = d.value.location, .param_names = d.generic_params, .body = st_lit });
             } else {
-                var new_list = std.ArrayList(gen.GenericTypeTemplate).init(self.allocator.*);
+                var new_list = std.array_list.Managed(gen.GenericTypeTemplate).init(self.allocator.*);
                 try new_list.append(.{ .name = d.name.string, .location = d.value.location, .param_names = d.generic_params, .body = st_lit });
                 try s.generic_types.put(d.name.string, new_list);
             }
@@ -864,7 +864,7 @@ pub const Semantizer = struct {
                     .body = f.body,
                 });
             } else {
-                var new_list = std.ArrayList(gen.GenericTemplate).init(self.allocator.*);
+                var new_list = std.array_list.Managed(gen.GenericTemplate).init(self.allocator.*);
                 try new_list.append(.{
                     .name = f.name.string,
                     .location = loc,
@@ -887,7 +887,7 @@ pub const Semantizer = struct {
 
         var child = try Scope.init(self.allocator, p, null);
         // ── entrada
-        var in_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+        var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         for (f.input.fields) |fld| {
             const ty = try self.resolveType(fld.type.?, &child);
             const dvp = if (fld.default_value) |n|
@@ -914,7 +914,7 @@ pub const Semantizer = struct {
         in_fields.deinit();
 
         // ── salida
-        var out_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+        var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         for (f.output.fields) |fld| {
             const ty = try self.resolveType(fld.type.?, &child);
             const dvp = if (fld.default_value) |n|
@@ -965,7 +965,7 @@ pub const Semantizer = struct {
             }
             try list_ptr.append(fn_ptr);
         } else {
-            var lst = std.ArrayList(*sg.FunctionDeclaration).init(self.allocator.*);
+            var lst = std.array_list.Managed(*sg.FunctionDeclaration).init(self.allocator.*);
             try lst.append(fn_ptr);
             try p.functions.put(f.name.string, lst);
         }
@@ -1018,7 +1018,7 @@ pub const Semantizer = struct {
         sl: syn.StructValueLiteral,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        var fields_buf = std.ArrayList(sg.StructValueLiteralField).init(self.allocator.*);
+        var fields_buf = std.array_list.Managed(sg.StructValueLiteralField).init(self.allocator.*);
 
         for (sl.fields) |f| {
             const tv = try self.visitNode(f.value.*, s);
@@ -1042,8 +1042,8 @@ pub const Semantizer = struct {
         st: syn.StructTypeLiteral,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        var val_fields = std.ArrayList(sg.StructValueLiteralField).init(self.allocator.*);
-        var ty_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+        var val_fields = std.array_list.Managed(sg.StructValueLiteralField).init(self.allocator.*);
+        var ty_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
 
         for (st.fields) |fld| {
             if (fld.default_value == null)
@@ -1146,8 +1146,8 @@ pub const Semantizer = struct {
             expected_elem_ty_opt = try self.resolveType(elt_ty_syn, s);
         }
 
-        var elems = std.ArrayList(*sg.SGNode).init(self.allocator.*);
-        var elem_types = std.ArrayList(sg.Type).init(self.allocator.*);
+        var elems = std.array_list.Managed(*sg.SGNode).init(self.allocator.*);
+        var elem_types = std.array_list.Managed(sg.Type).init(self.allocator.*);
         defer {
             elems.deinit();
             elem_types.deinit();
@@ -1460,7 +1460,7 @@ pub const Semantizer = struct {
         st: syn.StructTypeLiteral,
         s: *Scope,
     ) SemErr!*sg.StructType {
-        var buf = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+        var buf = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         for (st.fields) |f| {
             const ty = try self.resolveType(f.type.?, s);
             const dvp = if (f.default_value) |n|
@@ -1485,7 +1485,7 @@ pub const Semantizer = struct {
         s: *Scope,
         subst: *std.StringHashMap(sg.Type),
     ) SemErr!*sg.StructType {
-        var buf = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+        var buf = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         for (st.fields) |f| {
             const ty = try self.resolveTypeWithSubst(f.type.?, s, subst);
             const dvp = if (f.default_value) |n|
@@ -1506,7 +1506,7 @@ pub const Semantizer = struct {
         sv: syn.StructValueLiteral,
         s: *Scope,
     ) SemErr!*sg.StructType {
-        var buf = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+        var buf = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
 
         for (sv.fields) |f| {
             const tv = try self.visitNode(f.value.*, s);
@@ -1631,7 +1631,7 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        var init_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
+        var init_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         defer init_fields.deinit();
 
         const ptr_child = try self.allocator.create(sg.Type);
@@ -1955,7 +1955,7 @@ pub const Semantizer = struct {
                     if (s.functions.getPtr(name)) |list_ptr2| {
                         try list_ptr2.append(fn_ptr);
                     } else {
-                        var lst = std.ArrayList(*sg.FunctionDeclaration).init(self.allocator.*);
+                        var lst = std.array_list.Managed(*sg.FunctionDeclaration).init(self.allocator.*);
                         try lst.append(fn_ptr);
                         try s.functions.put(name, lst);
                     }
@@ -2042,7 +2042,7 @@ pub const Semantizer = struct {
                     if (s.functions.getPtr(name)) |list_ptr2| {
                         try list_ptr2.append(fn_ptr);
                     } else {
-                        var lst = std.ArrayList(*sg.FunctionDeclaration).init(self.allocator.*);
+                        var lst = std.array_list.Managed(*sg.FunctionDeclaration).init(self.allocator.*);
                         try lst.append(fn_ptr);
                         try s.functions.put(name, lst);
                     }
@@ -2352,8 +2352,8 @@ pub const Semantizer = struct {
     };
 
     fn buildCallInput(self: *Semantizer, args: []const CallArg) !typ.TypedExpr {
-        var ty_fields = std.ArrayList(sg.StructTypeField).init(self.allocator.*);
-        var val_fields = std.ArrayList(sg.StructValueLiteralField).init(self.allocator.*);
+        var ty_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
+        var val_fields = std.array_list.Managed(sg.StructValueLiteralField).init(self.allocator.*);
 
         for (args) |arg| {
             try ty_fields.append(.{ .name = arg.name, .ty = arg.expr.ty, .default_value = null });

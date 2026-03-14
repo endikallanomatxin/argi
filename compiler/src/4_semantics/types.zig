@@ -226,7 +226,7 @@ pub fn findFieldByName(st: *const sg.StructType, name: []const u8) ?*const sg.St
     return null;
 }
 
-fn appendType(buf: *std.ArrayList(u8), t: sg.Type) !void {
+fn appendType(buf: *std.array_list.Managed(u8), t: sg.Type) !void {
     switch (t) {
         .builtin => |bt| {
             const s = @tagName(bt);
@@ -255,13 +255,13 @@ fn appendType(buf: *std.ArrayList(u8), t: sg.Type) !void {
 }
 
 pub fn formatType(t: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) ![]u8 {
-    var buf = std.ArrayList(u8).init(allocator.*);
+    var buf = std.array_list.Managed(u8).init(allocator.*);
     errdefer buf.deinit();
     try appendTypePretty(&buf, t, s);
     return try buf.toOwnedSlice();
 }
 
-pub fn appendTypePretty(buf: *std.ArrayList(u8), t: sg.Type, s: *Scope) !void {
+pub fn appendTypePretty(buf: *std.array_list.Managed(u8), t: sg.Type, s: *Scope) !void {
     if (typeNameFor(s, t)) |nm| {
         try buf.appendSlice(nm);
         return;
@@ -294,7 +294,7 @@ pub fn appendTypePretty(buf: *std.ArrayList(u8), t: sg.Type, s: *Scope) !void {
 }
 
 pub fn formatCallInput(st: *const sg.StructType, s: *Scope, allocator: *const std.mem.Allocator) ![]u8 {
-    var buf = std.ArrayList(u8).init(allocator.*);
+    var buf = std.array_list.Managed(u8).init(allocator.*);
     errdefer buf.deinit();
 
     try buf.appendSlice("(");

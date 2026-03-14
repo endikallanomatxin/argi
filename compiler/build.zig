@@ -12,11 +12,15 @@ pub fn build(b: *std.Build) void {
     //
     // INSTALL EXECUTABLE (default step) --------------------------------------
 
-    const exe = b.addExecutable(.{
-        .name = "argi",
+    const exe_mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+    });
+
+    const exe = b.addExecutable(.{
+        .name = "argi",
+        .root_module = exe_mod,
     });
 
     exe.addIncludePath(llvm_include_path);
@@ -43,10 +47,14 @@ pub fn build(b: *std.Build) void {
     //
     // TEST -------------------------------------------------------------------
 
-    const exe_tests = b.addTest(.{
+    const tests_mod = b.createModule(.{
         .root_source_file = b.path("tests/test.zig"),
         .target = target,
         .optimize = optimize,
+    });
+
+    const exe_tests = b.addTest(.{
+        .root_module = tests_mod,
     });
     const run_exe_tests = b.addRunArtifact(exe_tests);
     run_exe_tests.step.dependOn(b.getInstallStep());
