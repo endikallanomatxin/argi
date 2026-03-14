@@ -236,7 +236,7 @@ test "64_import_missing_module" {
     try clean();
     try buildExpectFail(
         "tests/cases/64_import_missing_module/main.rg",
-        "failed to open module directory",
+        "cannot resolve import './missing_dep'",
     );
 }
 
@@ -328,4 +328,12 @@ test "76_root_relative_import" {
     try clean();
     try build("tests/cases/76_root_relative_import/project/app/main.rg");
     try run();
+}
+
+test "77_root_relative_missing_import" {
+    try clean();
+    try buildExpectFail(
+        "tests/cases/77_root_relative_missing_import/project/app/main.rg",
+        "cannot resolve import '.../missing_shared'",
+    );
 }
