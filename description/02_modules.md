@@ -1,5 +1,12 @@
 # Modules and project layout
 
+At the repository level, the official library is split into:
+
+- `core/`: always available base library
+- `more/`: official extended library, imported explicitly
+
+User code still uses the same folder-based module model.
+
 Folders as modules, como Go y odin. El nombre del módulo es el nombre de la
 carpeta.
 

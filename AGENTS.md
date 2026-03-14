@@ -14,8 +14,7 @@ This repository contains a compiler for a new programming language written in Zi
         - Positive test cases live under `compiler/tests/cases/<case_name>/main.rg`.
         - Files in the same test case directory share namespace and are compiled together as one folder-level module.
 
-- `modules/`: More modules' drafts that will be officially supported but not
-part of the core library.
+- `more/`: Official library modules that are not part of `core/`.
 
 - `description/`: Design documents and architecture notes.
 
@@ -41,7 +40,7 @@ part of the core library.
 ## Guidelines
 
 - To add a new feature:
-    1. Checkout the language description and draft-modules to understand the
+    1. Checkout the language description and `more/` to understand the
        feature.
     2. Create a `.rg` test that demonstrates the feature in `compiler/tests/`.
        Put positive executable cases under `compiler/tests/cases/<case_name>/main.rg`.
