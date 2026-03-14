@@ -32,180 +32,180 @@ fn run() !void {
 
 test "00_minimal_main" {
     try clean();
-    try build("tests/00_minimal_main.rg");
+    try build("tests/cases/00_minimal_main/main.rg");
     try run();
 }
 
 test "01_comments" {
     try clean();
-    try build("tests/01_comments.rg");
+    try build("tests/cases/01_comments/main.rg");
     try run();
 }
 
 test "02_constants_and_variables" {
     try clean();
-    try build("tests/02_constants_and_variables.rg");
+    try build("tests/cases/02_constants_and_variables/main.rg");
     try run();
 }
 
 test "03_expressions_and_type_inference" {
     try clean();
-    try build("tests/03_expressions_and_type_inference.rg");
+    try build("tests/cases/03_expressions_and_type_inference/main.rg");
     try run();
 }
 
 test "04_literals" {
     try clean();
-    try build("tests/04_literals.rg");
+    try build("tests/cases/04_literals/main.rg");
     try run();
 }
 
 test "050_anonymous_structs" {
     try clean();
-    try build("tests/050_anonymous_structs.rg");
+    try build("tests/cases/050_anonymous_structs/main.rg");
     try run();
 }
 
 test "051_struct_default_fields" {
     try clean();
-    try build("tests/051_struct_default_fields.rg");
+    try build("tests/cases/051_struct_default_fields/main.rg");
     try run();
 }
 
 test "052_struct_field_store" {
     try clean();
-    try build("tests/052_struct_field_store.rg");
+    try build("tests/cases/052_struct_field_store/main.rg");
     try run();
 }
 
 test "11_function_calling" {
     try clean();
-    try build("tests/11_function_calling.rg");
+    try build("tests/cases/11_function_calling/main.rg");
     try run();
 }
 
 test "12_function_args" {
     try clean();
-    try build("tests/12_function_args.rg");
+    try build("tests/cases/12_function_args/main.rg");
     try run();
 }
 
 test "130_multiple_dispatch" {
     try clean();
-    try build("tests/130_multiple_dispatch.rg");
+    try build("tests/cases/130_multiple_dispatch/main.rg");
     try run();
 }
 
 test "21_named_struct_types" {
     try clean();
-    try build("tests/21_named_struct_types.rg");
+    try build("tests/cases/21_named_struct_types/main.rg");
     try run();
 }
 
 test "221_pointers" {
     try clean();
-    try build("tests/221_pointers.rg");
+    try build("tests/cases/221_pointers/main.rg");
     try run();
 }
 
 test "222_read-only_vs_read-and-write_pointers" {
     try clean();
-    try build("tests/222_read-only_vs_read-and-write_pointers.rg");
+    try build("tests/cases/222_read-only_vs_read-and-write_pointers/main.rg");
     try run();
 }
 
 test "30_core_and_libc" {
     try clean();
-    try build("tests/30_core_and_libc.rg");
+    try build("tests/cases/30_core_and_libc/main.rg");
     try run();
 }
 
 test "321_generic_functions" {
     try clean();
-    try build("tests/321_generic_functions.rg");
+    try build("tests/cases/321_generic_functions/main.rg");
     try run();
 }
 
 test "322_generic_structs" {
     try clean();
-    try build("tests/322_generic_structs.rg");
+    try build("tests/cases/322_generic_structs/main.rg");
     try run();
 }
 
 test "323_generic_functions_multi" {
     try clean();
-    try build("tests/323_generic_functions_multi.rg");
+    try build("tests/cases/323_generic_functions_multi/main.rg");
     try run();
 }
 
 test "324_generic_structs_multi" {
     try clean();
-    try build("tests/324_generic_structs_multi.rg");
+    try build("tests/cases/324_generic_structs_multi/main.rg");
     try run();
 }
 
 test "331_abstract" {
     try clean();
-    try build("tests/331_abstract.rg");
+    try build("tests/cases/331_abstract/main.rg");
     try run();
 }
 
 test "334_abstract_instantiation" {
     try clean();
-    try build("tests/334_abstract_instantiation.rg");
+    try build("tests/cases/334_abstract_instantiation/main.rg");
     try run();
 }
 
 test "351_init" {
     try clean();
-    try build("tests/351_init.rg");
+    try build("tests/cases/351_init/main.rg");
     try run();
 }
 
 test "352_defer" {
     try clean();
-    try build("tests/352_defer.rg");
+    try build("tests/cases/352_defer/main.rg");
     try run();
 }
 
 test "353_deinit" {
     try clean();
-    try build("tests/353_deinit.rg");
+    try build("tests/cases/353_deinit/main.rg");
     try run();
 }
 
 test "36_get_and_set_index_operators" {
     try clean();
-    try build("tests/36_get_and_set_index_operators.rg");
+    try build("tests/cases/36_get_and_set_index_operators/main.rg");
     try run();
 }
 
 test "37_size_of_and_alignment_of_builtin_functions" {
     try clean();
-    try build("tests/37_size_of_and_alignment_of_builtin_functions.rg");
+    try build("tests/cases/37_size_of_and_alignment_of_builtin_functions/main.rg");
     try run();
 }
 
 test "411_list_literal_length" {
     try clean();
-    try build("tests/411_list_literal_length.rg");
+    try build("tests/cases/411_list_literal_length/main.rg");
     try run();
 }
 
 test "412_list_literal_access" {
     try clean();
-    try build("tests/412_list_literal_access.rg");
+    try build("tests/cases/412_list_literal_access/main.rg");
     try run();
 }
 
 test "413_arrays" {
     try clean();
-    try build("tests/413_arrays.rg");
+    try build("tests/cases/413_arrays/main.rg");
     try run();
 }
 
 test "62_folder_module_namespace" {
     try clean();
-    try build("tests/modules_namespace/main.rg");
+    try build("tests/cases/62_folder_module_namespace/main.rg");
     try run();
 }

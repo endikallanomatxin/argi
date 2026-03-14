@@ -67,11 +67,8 @@ pub fn collect(
     try collectRgFilesFromDir(alloc, &list, core_dir, null);
 
     // ─── carpeta del entrypoint del usuario ──────────────────────────────
-    // For folder-level modules, use `main.rg` as the entrypoint of the folder.
-    if (std.mem.eql(u8, std.fs.path.basename(user_path), "main.rg")) {
-        const user_dir = std.fs.path.dirname(user_path) orelse ".";
-        try collectRgFilesFromDir(alloc, &list, user_dir, user_path);
-    }
+    const user_dir = std.fs.path.dirname(user_path) orelse ".";
+    try collectRgFilesFromDir(alloc, &list, user_dir, user_path);
 
     // ─── entrypoint del usuario al final ─────────────────────────────────
     try list.append(try readFile(alloc, user_path));
