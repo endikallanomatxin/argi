@@ -386,11 +386,10 @@ pub fn buildOverloadCandidatesString(name: []const u8, in_ty: sg.Type, s: *Scope
                 first = false;
                 try buf.appendSlice("  - ");
                 try appendFunctionSignature(&buf, cand, s);
-                try buf.appendSlice("  [file: ");
+                try buf.appendSlice("\n      file: ");
                 try buf.appendSlice(cand.location.file);
                 try buf.appendSlice(":");
                 try buf.appendSlice(std.fmt.allocPrint(allocator.*, "{d}:{d}", .{ cand.location.line, cand.location.column }) catch "");
-                try buf.appendSlice("]");
             }
         }
     }
