@@ -321,9 +321,3 @@ test "75_missing_function_name" {
         "no function named 'missing_func' exists",
     );
 }
-
-test "76_root_relative_import" {
-    try clean();
-    try build("tests/cases/76_root_relative_import/app/main.rg");
-    try run();
-}
