@@ -19,7 +19,7 @@ pub const Diagnostic = struct {
 pub const Diagnostics = struct {
     arena: *const std.mem.Allocator,
     source_files: []const sf.SourceFile, // slice inmutable
-    list: std.ArrayList(Diagnostic),
+    list: std.array_list.Managed(Diagnostic),
 
     pub fn init(
         a: *const std.mem.Allocator,
@@ -28,7 +28,7 @@ pub const Diagnostics = struct {
         return .{
             .arena = a,
             .source_files = files,
-            .list = std.ArrayList(Diagnostic).init(a.*),
+            .list = std.array_list.Managed(Diagnostic).init(a.*),
         };
     }
 
@@ -52,7 +52,7 @@ pub const Diagnostics = struct {
         for (self.source_files) |f| {
             // pre-split en líneas para subrayado
             var lines_it = std.mem.splitAny(u8, f.code, "\n");
-            var lines = std.ArrayList([]const u8).init(std.heap.page_allocator);
+            var lines = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
             defer lines.deinit();
             while (lines_it.next()) |l| lines.append(l) catch {};
 

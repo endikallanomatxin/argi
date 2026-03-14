@@ -17,8 +17,8 @@ pub fn collect(
     alloc: *const std.mem.Allocator,
     core_dir: []const u8,
     user_path: []const u8,
-) !std.ArrayList(SourceFile) {
-    var list = std.ArrayList(SourceFile).init(alloc.*);
+) !std.array_list.Managed(SourceFile) {
+    var list = std.array_list.Managed(SourceFile).init(alloc.*);
 
     // ─── core/ ────────────────────────────────────────────────────────────
     // Desde Zig 0.14, `openIterableDir` fue eliminado; se usa openDir con iterate=true
@@ -51,7 +51,7 @@ pub fn collect(
 /// Libera los `code` y la lista.
 pub fn freeList(
     alloc: *const std.mem.Allocator,
-    list: *std.ArrayList(SourceFile),
+    list: *std.array_list.Managed(SourceFile),
 ) void {
     for (list.items) |f| alloc.free(f.code);
     list.deinit();

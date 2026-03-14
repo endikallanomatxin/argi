@@ -56,7 +56,7 @@ pub fn compile(args: []const []const u8) !void {
     defer diagnostics.deinit();
 
     // 3. Tokenizar todos (fusionando EOF) ─────────────────────────────────
-    var all_tokens = std.ArrayList(token.Token).init(allocator);
+    var all_tokens = std.array_list.Managed(token.Token).init(allocator);
     defer all_tokens.deinit();
 
     for (files.items, 0..) |f, idx| {

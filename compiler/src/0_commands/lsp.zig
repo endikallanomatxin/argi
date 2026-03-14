@@ -24,14 +24,14 @@ pub fn start() !void {
 
 const LanguageServer = struct {
     allocator: std.mem.Allocator,
-    buffer: std.ArrayList(u8),
+    buffer: std.array_list.Managed(u8),
     service: ?service.LanguageService = null,
     shutdown_requested: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) LanguageServer {
         return .{
             .allocator = allocator,
-            .buffer = std.ArrayList(u8).init(allocator),
+            .buffer = std.array_list.Managed(u8).init(allocator),
         };
     }
 
@@ -41,8 +41,8 @@ const LanguageServer = struct {
     }
 
     pub fn run(self: *LanguageServer) !void {
-        var reader = std.io.getStdIn().reader();
-        var writer = std.io.getStdOut().writer();
+        var reader = std.fs.File.stdin().deprecatedReader();
+        var writer = std.fs.File.stdout().deprecatedWriter();
 
         while (true) {
             const payload = self.readMessage(&reader) catch |err| switch (err) {
@@ -229,11 +229,10 @@ const LanguageServer = struct {
     }
 
     fn respondInitialize(self: *LanguageServer, writer: anytype, id_value: json.Value) !void {
-        var payload = std.ArrayList(u8).init(self.allocator);
+        var payload = std.Io.Writer.Allocating.init(self.allocator);
         defer payload.deinit();
 
-        var stream = json.writeStream(payload.writer(), .{});
-        defer stream.deinit();
+        var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
 
         try stream.beginObject();
         try stream.objectField("jsonrpc");
@@ -299,15 +298,14 @@ const LanguageServer = struct {
         try stream.endObject();
         try stream.endObject();
 
-        try self.sendMessage(writer, payload.items);
+        try self.sendMessage(writer, payload.writer.buffered());
     }
 
     fn respondNullResult(self: *LanguageServer, writer: anytype, id_value: json.Value) !void {
-        var payload = std.ArrayList(u8).init(self.allocator);
+        var payload = std.Io.Writer.Allocating.init(self.allocator);
         defer payload.deinit();
 
-        var stream = json.writeStream(payload.writer(), .{});
-        defer stream.deinit();
+        var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
 
         try stream.beginObject();
         try stream.objectField("jsonrpc");
@@ -318,7 +316,7 @@ const LanguageServer = struct {
         try stream.write(null);
         try stream.endObject();
 
-        try self.sendMessage(writer, payload.items);
+        try self.sendMessage(writer, payload.writer.buffered());
     }
 
     fn sendPublishDiagnostics(
@@ -327,11 +325,10 @@ const LanguageServer = struct {
         uri: []const u8,
         diagnostics: []const service.Diagnostic,
     ) !void {
-        var payload = std.ArrayList(u8).init(self.allocator);
+        var payload = std.Io.Writer.Allocating.init(self.allocator);
         defer payload.deinit();
 
-        var stream = json.writeStream(payload.writer(), .{});
-        defer stream.deinit();
+        var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
 
         try stream.beginObject();
         try stream.objectField("jsonrpc");
@@ -375,7 +372,7 @@ const LanguageServer = struct {
         try stream.endObject();
         try stream.endObject();
 
-        try self.sendMessage(writer, payload.items);
+        try self.sendMessage(writer, payload.writer.buffered());
     }
 
     fn handleSemanticTokensFull(self: *LanguageServer, writer: anytype, id_value: json.Value, params_value: ?json.Value) !void {
@@ -391,10 +388,9 @@ const LanguageServer = struct {
             var data = try svc.semanticTokensFull(uri_value.string); // ArrayList(u32)
             defer data.deinit();
 
-            var payload = std.ArrayList(u8).init(self.allocator);
+            var payload = std.Io.Writer.Allocating.init(self.allocator);
             defer payload.deinit();
-            var stream = json.writeStream(payload.writer(), .{});
-            defer stream.deinit();
+            var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
 
             try stream.beginObject();
             try stream.objectField("jsonrpc");
@@ -410,7 +406,7 @@ const LanguageServer = struct {
             try stream.endObject(); // result
             try stream.endObject(); // root
 
-            try self.sendMessage(writer, payload.items);
+            try self.sendMessage(writer, payload.writer.buffered());
         }
     }
 
@@ -437,10 +433,9 @@ const LanguageServer = struct {
             var data = try svc.semanticTokensFull(uri_value.string);
             defer data.deinit();
 
-            var payload = std.ArrayList(u8).init(self.allocator);
+            var payload = std.Io.Writer.Allocating.init(self.allocator);
             defer payload.deinit();
-            var stream = json.writeStream(payload.writer(), .{});
-            defer stream.deinit();
+            var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
 
             try stream.beginObject();
             try stream.objectField("jsonrpc");
@@ -456,7 +451,7 @@ const LanguageServer = struct {
             try stream.endObject(); // result
             try stream.endObject(); // root
 
-            try self.sendMessage(writer, payload.items);
+            try self.sendMessage(writer, payload.writer.buffered());
         }
     }
 
