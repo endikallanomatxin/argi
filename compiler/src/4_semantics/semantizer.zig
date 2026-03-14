@@ -1422,18 +1422,7 @@ pub const Semantizer = struct {
         } else {
             chosen = self.resolveVisibleOverload(name, input_te.ty, s, ia.value.*.location) catch |err| switch (err) {
                 error.SymbolNotFound => {
-                    const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
-                    const available = try abs.collectFunctionSignatures(name, s, self.allocator);
-                    defer {
-                        self.allocator.free(actual_sig);
-                        self.allocator.free(available);
-                    }
-                    try self.diags.add(
-                        ia.value.*.location,
-                        .semantic,
-                        "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
-                        .{ name, actual_sig, available },
-                    );
+                    try self.addMissingFunctionDiagnostic(name, input_te.ty, s, ia.value.*.location);
                     return error.Reported;
                 },
                 error.AmbiguousOverload => {
@@ -1544,18 +1533,7 @@ pub const Semantizer = struct {
         } else {
             chosen = self.resolveVisibleOverload(name, input_te.ty, s, ia.target.*.location) catch |err| switch (err) {
                 error.SymbolNotFound => {
-                    const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
-                    const available = try abs.collectFunctionSignatures(name, s, self.allocator);
-                    defer {
-                        self.allocator.free(actual_sig);
-                        self.allocator.free(available);
-                    }
-                    try self.diags.add(
-                        ia.target.*.location,
-                        .semantic,
-                        "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
-                        .{ name, actual_sig, available },
-                    );
+                    try self.addMissingFunctionDiagnostic(name, input_te.ty, s, ia.target.*.location);
                     return error.Reported;
                 },
                 error.AmbiguousOverload => {
@@ -1713,27 +1691,7 @@ pub const Semantizer = struct {
                 else
                     self.resolveVisibleOverload(call.callee, tv_in.ty, s, call.input.*.location) catch |err| switch (err) {
                     error.SymbolNotFound => {
-                        if (tv_in.ty == .struct_type) {
-                            const actual_sig = try typ.formatCallInput(tv_in.ty.struct_type, s, self.allocator);
-                            const available = try abs.collectFunctionSignatures(call.callee, s, self.allocator);
-                            defer {
-                                self.allocator.free(actual_sig);
-                                self.allocator.free(available);
-                            }
-                            try self.diags.add(
-                                call.input.*.location,
-                                .semantic,
-                                "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
-                                .{ call.callee, actual_sig, available },
-                            );
-                        } else {
-                            try self.diags.add(
-                                call.input.*.location,
-                                .semantic,
-                                "no overload of '{s}' matches the provided arguments",
-                                .{call.callee},
-                            );
-                        }
+                        try self.addMissingFunctionDiagnostic(call.callee, tv_in.ty, s, call.input.*.location);
                         return error.Reported;
                     },
                     else => return err,
@@ -1804,12 +1762,7 @@ pub const Semantizer = struct {
         }
 
         if (best == null) {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "module '{s}' has no overload '{s}' matching the provided arguments",
-                .{ module_name, fn_name },
-            );
+            try self.addMissingModuleFunctionDiagnostic(module_name, module_dir, fn_name, in_ty, s, loc);
             return error.Reported;
         }
         if (ambiguous) {
@@ -1868,6 +1821,182 @@ pub const Semantizer = struct {
         return best.?;
     }
 
+    fn hasVisibleFunctionNamed(
+        self: *Semantizer,
+        fn_name: []const u8,
+        s: *Scope,
+        loc: tok.Location,
+    ) !bool {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr(fn_name)) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (try self.functionIsVisible(cand, loc.file)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    fn collectVisibleFunctionSignatures(
+        self: *Semantizer,
+        fn_name: []const u8,
+        s: *Scope,
+        loc: tok.Location,
+    ) ![]u8 {
+        var buf = std.array_list.Managed(u8).init(self.allocator.*);
+        errdefer buf.deinit();
+
+        var cur: ?*Scope = s;
+        var first = true;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr(fn_name)) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (!(try self.functionIsVisible(cand, loc.file))) continue;
+                    if (!first) try buf.appendSlice("\n");
+                    first = false;
+                    try buf.appendSlice("  - ");
+                    try abs.appendFunctionSignature(&buf, cand, s);
+                }
+            }
+        }
+
+        if (first) try buf.appendSlice("  (none)");
+        return try buf.toOwnedSlice();
+    }
+
+    fn hasVisibleFunctionInModule(
+        self: *Semantizer,
+        module_dir: []const u8,
+        fn_name: []const u8,
+        s: *Scope,
+        loc: tok.Location,
+    ) !bool {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr(fn_name)) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (!std.mem.startsWith(u8, cand.location.file, module_dir)) continue;
+                    if (try self.functionIsVisible(cand, loc.file)) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    fn collectModuleFunctionSignatures(
+        self: *Semantizer,
+        module_dir: []const u8,
+        fn_name: []const u8,
+        s: *Scope,
+        loc: tok.Location,
+    ) ![]u8 {
+        var buf = std.array_list.Managed(u8).init(self.allocator.*);
+        errdefer buf.deinit();
+
+        var cur: ?*Scope = s;
+        var first = true;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr(fn_name)) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (!std.mem.startsWith(u8, cand.location.file, module_dir)) continue;
+                    if (!(try self.functionIsVisible(cand, loc.file))) continue;
+                    if (!first) try buf.appendSlice("\n");
+                    first = false;
+                    try buf.appendSlice("  - ");
+                    try abs.appendFunctionSignature(&buf, cand, s);
+                }
+            }
+        }
+
+        if (first) try buf.appendSlice("  (none)");
+        return try buf.toOwnedSlice();
+    }
+
+    fn addMissingFunctionDiagnostic(
+        self: *Semantizer,
+        fn_name: []const u8,
+        input_ty: sg.Type,
+        s: *Scope,
+        loc: tok.Location,
+    ) !void {
+        if (!(try self.hasVisibleFunctionNamed(fn_name, s, loc))) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "no function named '{s}' exists",
+                .{fn_name},
+            );
+            return;
+        }
+
+        if (input_ty == .struct_type) {
+            const actual_sig = try typ.formatCallInput(input_ty.struct_type, s, self.allocator);
+            const available = try self.collectVisibleFunctionSignatures(fn_name, s, loc);
+            defer {
+                self.allocator.free(actual_sig);
+                self.allocator.free(available);
+            }
+            try self.diags.add(
+                loc,
+                .semantic,
+                "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
+                .{ fn_name, actual_sig, available },
+            );
+            return;
+        }
+
+        try self.diags.add(
+            loc,
+            .semantic,
+            "function '{s}' exists, but no overload matches the provided arguments",
+            .{fn_name},
+        );
+    }
+
+    fn addMissingModuleFunctionDiagnostic(
+        self: *Semantizer,
+        module_name: []const u8,
+        module_dir: []const u8,
+        fn_name: []const u8,
+        input_ty: sg.Type,
+        s: *Scope,
+        loc: tok.Location,
+    ) !void {
+        if (!(try self.hasVisibleFunctionInModule(module_dir, fn_name, s, loc))) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "module '{s}' has no function named '{s}'",
+                .{ module_name, fn_name },
+            );
+            return;
+        }
+
+        if (input_ty == .struct_type) {
+            const actual_sig = try typ.formatCallInput(input_ty.struct_type, s, self.allocator);
+            const available = try self.collectModuleFunctionSignatures(module_dir, fn_name, s, loc);
+            defer {
+                self.allocator.free(actual_sig);
+                self.allocator.free(available);
+            }
+            try self.diags.add(
+                loc,
+                .semantic,
+                "module '{s}' has no overload '{s}' accepting arguments {s}. Available signatures:\n{s}",
+                .{ module_name, fn_name, actual_sig, available },
+            );
+            return;
+        }
+
+        try self.diags.add(
+            loc,
+            .semantic,
+            "module '{s}' has function '{s}', but no overload matches the provided arguments",
+            .{ module_name, fn_name },
+        );
+    }
+
     fn handleTypeInitializer(
         self: *Semantizer,
         call: syn.FunctionCall,
@@ -1908,8 +2037,17 @@ pub const Semantizer = struct {
 
         const init_fn = self.resolveVisibleOverload("init", init_input_ty, s, call.input.*.location) catch |err| switch (err) {
             error.SymbolNotFound => {
+                if (!(try self.hasVisibleFunctionNamed("init", s, call.input.*.location))) {
+                    try self.diags.add(
+                        call.input.*.location,
+                        .semantic,
+                        "failed to initialize type '{s}': no function named 'init' exists",
+                        .{call.callee},
+                    );
+                    return error.Reported;
+                }
                 const actual_sig = try typ.formatCallInput(user_struct, s, self.allocator);
-                const available = try abs.collectFunctionSignatures("init", s, self.allocator);
+                const available = try self.collectVisibleFunctionSignatures("init", s, call.input.*.location);
                 defer {
                     self.allocator.free(actual_sig);
                     self.allocator.free(available);
