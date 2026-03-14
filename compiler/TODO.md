@@ -29,7 +29,7 @@
     (por ahora no trabajar más en el defaultsto, que igual lo quitamos)
 
 
-- Modules: switch from file-based to directory-based modules
+- Modules: implement explicit `#import` on top of directory-based modules
 
 
 - **Índices/offsets de puntero: fija la política.**
@@ -72,4 +72,3 @@
     En handleBinOp para pointer + int exiges 64-bit exacto. Si te vale
     cualquier entero (con promoción), elimina ese check duro y usa
     typ.isIntegerType.
-
