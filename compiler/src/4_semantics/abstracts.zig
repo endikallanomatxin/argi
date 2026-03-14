@@ -421,7 +421,7 @@ pub fn collectFunctionSignatures(name: []const u8, s: *Scope, allocator: *const 
     return try buf.toOwnedSlice();
 }
 
-fn appendFunctionSignature(buf: *std.array_list.Managed(u8), f: *const sg.FunctionDeclaration, s: *Scope) !void {
+pub fn appendFunctionSignature(buf: *std.array_list.Managed(u8), f: *const sg.FunctionDeclaration, s: *Scope) !void {
     try buf.appendSlice(f.name);
     try buf.appendSlice(" (");
     var i: usize = 0;

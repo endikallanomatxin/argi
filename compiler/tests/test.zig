@@ -252,7 +252,7 @@ test "66_import_missing_overload" {
     try clean();
     try buildExpectFail(
         "tests/cases/66_import_missing_overload/main.rg",
-        "module 'dep' has no overload 'missing_func' matching the provided arguments",
+        "module 'dep' has no function named 'missing_func'",
     );
 }
 
@@ -311,5 +311,13 @@ test "74_import_statement_private" {
     try buildExpectFail(
         "tests/cases/74_import_statement_private/main.rg",
         "value '_hidden_value' is private to its module",
+    );
+}
+
+test "75_missing_function_name" {
+    try clean();
+    try buildExpectFail(
+        "tests/cases/75_missing_function_name/main.rg",
+        "no function named 'missing_func' exists",
     );
 }
