@@ -111,14 +111,11 @@ pub const LanguageService = struct {
     allocator: std.mem.Allocator,
     documents: std.array_list.Managed(Document),
     root_path: ?[]u8 = null,
-    core_files: std.array_list.Managed(sf.SourceFile),
-    core_loaded: bool = false,
 
     pub fn init(allocator: std.mem.Allocator) LanguageService {
         return .{
             .allocator = allocator,
             .documents = std.array_list.Managed(Document).init(allocator),
-            .core_files = std.array_list.Managed(sf.SourceFile).init(allocator),
         };
     }
 
@@ -127,12 +124,6 @@ pub const LanguageService = struct {
         self.documents.deinit();
 
         if (self.root_path) |path| self.allocator.free(path);
-
-        for (self.core_files.items) |core_file| {
-            self.allocator.free(core_file.path);
-            self.allocator.free(core_file.code);
-        }
-        self.core_files.deinit();
     }
 
     pub fn initialize(self: *LanguageService, root_uri: ?[]const u8) !void {
@@ -208,31 +199,45 @@ pub const LanguageService = struct {
     }
 
     fn analyzeDocument(self: *LanguageService, doc: *Document) !DiagnosticsResult {
-        try self.ensureCoreFiles();
-
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
 
         var analysis_allocator = arena.allocator();
 
-        const total_files = self.core_files.items.len + 1;
-        const files = try analysis_allocator.alloc(sf.SourceFile, total_files);
-        for (self.core_files.items, 0..) |core_file, idx| {
-            files[idx] = core_file;
-        }
-        files[total_files - 1] = .{ .path = doc.path, .code = doc.text };
+        const files_list = sf.collectWithEntrySource(&analysis_allocator, "core", doc.path, doc.text) catch {
+            const one_file = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
+            return try self.analyzeFiles(&analysis_allocator, &one_file);
+        };
+        const files = files_list.items;
 
-        var diagnostics = diag.Diagnostics.init(&analysis_allocator, files);
+        for (files_list.items) |*source_file| {
+            for (self.documents.items) |open_doc| {
+                if (std.mem.eql(u8, source_file.path, open_doc.path)) {
+                    source_file.code = open_doc.text;
+                    break;
+                }
+            }
+        }
+
+        return try self.analyzeFiles(&analysis_allocator, files);
+    }
+
+    fn analyzeFiles(
+        self: *LanguageService,
+        analysis_allocator: *std.mem.Allocator,
+        files: []const sf.SourceFile,
+    ) !DiagnosticsResult {
+        var diagnostics = diag.Diagnostics.init(analysis_allocator, files);
         defer diagnostics.deinit();
 
-        var tokens = std.array_list.Managed(token.Token).init(analysis_allocator);
+        var tokens = std.array_list.Managed(token.Token).init(analysis_allocator.*);
         defer tokens.deinit();
 
         var pipeline_failed = false;
 
         for (files, 0..) |source_file, idx| {
             var tokenizer_ctx = tokenizer.Tokenizer.init(
-                &analysis_allocator,
+                analysis_allocator,
                 &diagnostics,
                 source_file.code,
                 source_file.path,
@@ -242,7 +247,7 @@ pub const LanguageService = struct {
                 break;
             };
 
-            const slice = if (idx == total_files - 1)
+            const slice = if (idx == files.len - 1)
                 token_slice
             else
                 token_slice[0 .. token_slice.len - 1];
@@ -253,13 +258,13 @@ pub const LanguageService = struct {
         }
 
         if (!pipeline_failed) analysis: {
-            var syntax_ctx = syntaxer.Syntaxer.init(&analysis_allocator, tokens.items, &diagnostics);
+            var syntax_ctx = syntaxer.Syntaxer.init(analysis_allocator, tokens.items, &diagnostics);
             const st_nodes = syntax_ctx.parse() catch {
                 pipeline_failed = true;
                 break :analysis;
             };
 
-            var sem_ctx = semantizer.Semantizer.init(&analysis_allocator, st_nodes, &diagnostics);
+            var sem_ctx = semantizer.Semantizer.init(analysis_allocator, st_nodes, &diagnostics);
             _ = sem_ctx.analyze() catch {
                 pipeline_failed = true;
             };
@@ -295,70 +300,6 @@ pub const LanguageService = struct {
             .items = diag_slice,
             .owned = true,
         };
-    }
-
-    fn ensureCoreFiles(self: *LanguageService) !void {
-        if (self.core_loaded) return;
-
-        var owned_candidates = std.array_list.Managed([]u8).init(self.allocator);
-        defer {
-            for (owned_candidates.items) |p| self.allocator.free(p);
-            owned_candidates.deinit();
-        }
-
-        var candidates = std.array_list.Managed([]const u8).init(self.allocator);
-        defer candidates.deinit();
-
-        try candidates.append("core");
-
-        if (self.root_path) |root| {
-            const root_core = std.fs.path.join(self.allocator, &.{ root, "core" }) catch null;
-            if (root_core) |joined| {
-                try owned_candidates.append(joined);
-                try candidates.append(joined);
-            }
-            const root_compiler_core = std.fs.path.join(self.allocator, &.{ root, "compiler", "core" }) catch null;
-            if (root_compiler_core) |joined| {
-                try owned_candidates.append(joined);
-                try candidates.append(joined);
-            }
-        }
-
-        for (candidates.items) |candidate| {
-            if (try self.loadCoreDir(candidate)) {
-                self.core_loaded = true;
-                return;
-            }
-        }
-
-        self.core_loaded = true;
-    }
-
-    fn loadCoreDir(self: *LanguageService, dir_path: []const u8) !bool {
-        var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch return false;
-        defer dir.close();
-
-        var walker = dir.walk(self.allocator) catch return false;
-        defer walker.deinit();
-
-        var any_loaded = false;
-        while (try walker.next()) |entry| {
-            if (entry.kind != .file) continue;
-            if (!std.mem.endsWith(u8, entry.path, ".rg")) continue;
-
-            const full_path = try std.fs.path.join(self.allocator, &.{ dir_path, entry.path });
-            defer self.allocator.free(full_path);
-
-            const file = sf.readFile(&self.allocator, full_path) catch continue;
-            self.core_files.append(file) catch {
-                self.allocator.free(file.path);
-                self.allocator.free(file.code);
-                continue;
-            };
-            any_loaded = true;
-        }
-
-        return any_loaded;
     }
 
     pub fn semanticTokensFull(self: *LanguageService, uri: []const u8) !std.array_list.Managed(u32) {
