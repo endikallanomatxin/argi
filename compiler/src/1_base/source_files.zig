@@ -15,6 +15,44 @@ fn dirExists(path: []const u8) bool {
     return true;
 }
 
+fn fileExists(path: []const u8) bool {
+    std.fs.cwd().access(path, .{}) catch return false;
+    return true;
+}
+
+fn isProjectRoot(path: []const u8) bool {
+    const git_path = std.fs.path.join(std.heap.page_allocator, &.{ path, ".git" }) catch return false;
+    defer std.heap.page_allocator.free(git_path);
+    if (dirExists(git_path)) return true;
+
+    const argi_toml_path = std.fs.path.join(std.heap.page_allocator, &.{ path, "argi.toml" }) catch return false;
+    defer std.heap.page_allocator.free(argi_toml_path);
+    if (fileExists(argi_toml_path)) return true;
+
+    const build_zig_path = std.fs.path.join(std.heap.page_allocator, &.{ path, "build.zig" }) catch return false;
+    defer std.heap.page_allocator.free(build_zig_path);
+    return fileExists(build_zig_path);
+}
+
+fn findProjectRoot(alloc: *const std.mem.Allocator, importer_path: []const u8) ![]u8 {
+    var current = try std.fs.path.resolve(alloc.*, &.{std.fs.path.dirname(importer_path) orelse "."});
+    errdefer alloc.free(current);
+
+    while (true) {
+        if (isProjectRoot(current)) return current;
+
+        const parent = std.fs.path.dirname(current) orelse return current;
+        const resolved_parent = try std.fs.path.resolve(alloc.*, &.{parent});
+        if (std.mem.eql(u8, resolved_parent, current)) {
+            alloc.free(resolved_parent);
+            return current;
+        }
+
+        alloc.free(current);
+        current = resolved_parent;
+    }
+}
+
 fn firstExistingDir(
     alloc: *const std.mem.Allocator,
     candidates: []const []const u8,
@@ -172,7 +210,9 @@ pub fn resolveImportDir(
     }
 
     if (std.mem.startsWith(u8, import_path, "/")) {
-        return try std.fs.path.resolve(alloc.*, &.{ ".", import_path[1..] });
+        const project_root = try findProjectRoot(alloc, importer_path);
+        defer alloc.free(project_root);
+        return try std.fs.path.resolve(alloc.*, &.{ project_root, import_path[1..] });
     }
 
     const more_root = try resolveToolMoreDir(alloc);
