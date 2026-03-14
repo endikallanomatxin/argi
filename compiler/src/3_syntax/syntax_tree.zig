@@ -47,6 +47,7 @@ pub const Content = union(enum) {
     binary_operation: BinaryOperation,
     comparison: Comparison,
     if_statement: IfStatement,
+    import_statement: ImportStatement,
     defer_statement: *STNode,
     index_assignment: IndexAssignment,
     address_of: AddressOf,
@@ -221,6 +222,10 @@ pub const IfStatement = struct {
 
 pub const ReturnStatement = struct {
     expression: ?*STNode,
+};
+
+pub const ImportStatement = struct {
+    path: []const u8,
 };
 
 pub const PointerAssignment = struct {

@@ -403,6 +403,16 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
+            .import_statement => self.handleImportStatement(n.location) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in import statement: {s}",
+                    .{@errorName(err)},
+                );
+                break :blk err;
+            },
+
             .address_of => |p| self.handleAddressOf(p, s) catch |err| blk: {
                 if (err != error.Reported) {
                     try self.diags.add(
@@ -439,6 +449,10 @@ pub const Semantizer = struct {
                 break :blk err;
             },
         };
+    }
+
+    fn handleImportStatement(self: *Semantizer, loc: tok.Location) SemErr!typ.TypedExpr {
+        return try typ.makeTypeLiteral(self.allocator, loc, .{ .builtin = .Any });
     }
 
     //──────────────────────────────────────────────────── ABSTRACT DECLARATION

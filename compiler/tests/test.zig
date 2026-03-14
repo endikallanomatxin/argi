@@ -209,3 +209,9 @@ test "62_folder_module_namespace" {
     try build("tests/cases/62_folder_module_namespace/main.rg");
     try run();
 }
+
+test "63_import_relative" {
+    try clean();
+    try build("tests/cases/63_import_relative/main.rg");
+    try run();
+}
