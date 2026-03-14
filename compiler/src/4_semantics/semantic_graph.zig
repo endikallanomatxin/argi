@@ -183,6 +183,7 @@ pub const StructFieldStore = struct {
 
 pub const TypeDeclaration = struct {
     name: []const u8,
+    origin_file: []const u8,
     ty: Type,
 };
 
@@ -200,6 +201,7 @@ pub const FunctionDeclaration = struct {
 
 pub const BindingDeclaration = struct {
     name: []const u8,
+    origin_file: []const u8,
     mutability: syn.Mutability,
     ty: Type,
     initialization: ?*const SGNode,

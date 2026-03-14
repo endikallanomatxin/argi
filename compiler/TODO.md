@@ -1,3 +1,12 @@
+- Semantizer:
+
+    - Menos repetición en errores de overload. Hay unas 15 líneas repetidas 3 veces.
+
+    - Genéricos: unifica las dos rutas. instantiateGenericNamed y
+    instantiateGeneric comparten un 90%. Saca una función interna.
+
+    - Implement an arena allocator to avoid memory leaks in semantizer.
+
 - Choice types: Implement
 
 - Implement checks like: `let x: UInt8 = 300` → error de rango.
@@ -20,7 +29,7 @@
     (por ahora no trabajar más en el defaultsto, que igual lo quitamos)
 
 
-- Modules: switch from file-based to directory-based modules
+- Modules: implement explicit `#import` on top of directory-based modules
 
 
 - **Índices/offsets de puntero: fija la política.**
@@ -63,4 +72,3 @@
     En handleBinOp para pointer + int exiges 64-bit exacto. Si te vale
     cualquier entero (con promoción), elimina ese check duro y usa
     typ.isIntegerType.
-

@@ -6,6 +6,10 @@ Permite hacer:
 - Metaprogramming / macros, pero usando el mismo lenguaje.
 	This is particularly useful for building efficient and flexible abstractions.
 
+Comptime is powerful, but it should remain secondary to the core language
+model. It should not become the default escape hatch for missing features in
+types, modules or dispatch.
+
 Lo vamos a hacer con # (inspirado en Jai):
 
 https://github.com/Ivo-Balbaert/The_Way_to_Jai/blob/main/book/26A_Metaprogramming.md
@@ -50,6 +54,9 @@ Sí:
 > guardar/analizar con el lsp. y sirva para macros de auto-reescritura del
 > archivo al guardar
 
+> Conviene ir con cuidado con cualquier mecanismo que reescriba código de forma
+> poco visible. Aunque sea cómodo, puede perjudicar mucho la trazabilidad.
+
 
 No se:
 
@@ -85,5 +92,7 @@ https://www.scottredig.com/blog/bonkers_comptime/
 > lenguaje y que cuando se usa, el programa se vuelve muy difícil de debugear.
 > Así que igual es interesante ver qué pasa con ello en Zig y Jai antes de
 > implementarlo.
-
+>
+> Buena regla general: primero cerrar bien el lenguaje base; después añadir
+> comptime donde de verdad aporte algo y no solo tape huecos.
 

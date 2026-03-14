@@ -11,7 +11,7 @@ pub const Tokenizer = struct {
     allocator: *const std.mem.Allocator,
     diagnostics: *diag.Diagnostics,
     source: []const u8,
-    tokens: std.ArrayList(tok.Token),
+    tokens: std.array_list.Managed(tok.Token),
 
     location: tok.Location,
 
@@ -25,7 +25,7 @@ pub const Tokenizer = struct {
             .allocator = allocator,
             .diagnostics = diagnostics,
             .source = source,
-            .tokens = std.ArrayList(tok.Token).init(allocator.*),
+            .tokens = std.array_list.Managed(tok.Token).init(allocator.*),
             .location = tok.Location{
                 .file = file_name,
                 .offset = 0,
@@ -366,7 +366,7 @@ pub const Tokenizer = struct {
                 // saltamos la comilla inicial
                 try self.advanceOne();
 
-                var buf = std.ArrayList(u8).init(self.allocator.*);
+                var buf = std.array_list.Managed(u8).init(self.allocator.*);
                 defer buf.deinit();
 
                 // recopilamos caracteres, gestionando escapes

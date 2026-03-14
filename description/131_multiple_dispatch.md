@@ -21,3 +21,4 @@ dispatching.
 Thus, you cannot redefine a function with the same name and input fields, but
 with different input-field names compile-time-parameters or return types.
 
+> [!TODO] Idenfity antipatterns.

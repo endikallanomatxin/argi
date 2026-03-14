@@ -1,6 +1,7 @@
 pub const SemErr = error{
     SymbolAlreadyDefined,
     SymbolNotFound,
+    FieldsNotFound,
     ConstantReassignment,
     InvalidType,
     UnknownType,

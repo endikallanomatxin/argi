@@ -248,6 +248,10 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             if (ret.expression) |e| printNode(e.*, lvl + 1);
         },
 
+        .import_statement => |imp| {
+            std.debug.print("Import \"{s}\"\n", .{imp.path});
+        },
+
         .defer_statement => |df| {
             std.debug.print("Defer\n", .{});
             indent(lvl + 1);
