@@ -255,3 +255,27 @@ test "66_import_missing_overload" {
         "module 'dep' has no overload 'missing_func' matching the provided arguments",
     );
 }
+
+test "67_private_module_value" {
+    try clean();
+    try buildExpectFail(
+        "tests/cases/67_private_module_value/main.rg",
+        "value '_hidden_value' is private to its module",
+    );
+}
+
+test "68_private_module_type" {
+    try clean();
+    try buildExpectFail(
+        "tests/cases/68_private_module_type/main.rg",
+        "type '_HiddenStatus' is private to its module",
+    );
+}
+
+test "69_private_module_function" {
+    try clean();
+    try buildExpectFail(
+        "tests/cases/69_private_module_function/main.rg",
+        "function '_hidden_status' is private to its module",
+    );
+}

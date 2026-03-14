@@ -111,6 +111,7 @@ pub const Semantizer = struct {
         return switch (n.content) {
             .symbol_declaration => |d| self.handleSymbolDecl(d, s, n.location) catch |err| blk: {
                 switch (err) {
+                    error.Reported => break :blk err,
                     error.UnknownType => {
                         if (s.parent == null and self.defer_unknown_top_level) {
                             try self.pushTopLevelForRetry();
@@ -195,6 +196,7 @@ pub const Semantizer = struct {
             },
 
             .type_declaration => |d| self.handleTypeDecl(d, s) catch |err| blk: {
+                if (err == error.Reported) break :blk err;
                 if (err == error.UnknownType and s.parent == null and self.defer_unknown_top_level) {
                     try self.pushTopLevelForRetry();
                     break :blk error.Reported; // sin diagnóstico todavía
@@ -209,6 +211,7 @@ pub const Semantizer = struct {
             },
 
             .function_declaration => |d| self.handleFuncDecl(d, s, n.location) catch |err| blk: {
+                if (err == error.Reported) break :blk err;
                 if (err == error.UnknownType and s.parent == null and self.defer_unknown_top_level) {
                     try self.pushTopLevelForRetry();
                     break :blk error.Reported;
@@ -223,6 +226,7 @@ pub const Semantizer = struct {
             },
 
             .assignment => |a| self.handleAssignment(a, s) catch |err| blk: {
+                if (err == error.Reported) break :blk err;
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -232,7 +236,8 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
-            .identifier => |id| self.handleIdentifier(id, s) catch |err| blk: {
+            .identifier => |id| self.handleIdentifier(id, s, n.location) catch |err| blk: {
+                if (err == error.Reported) break :blk err;
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -273,6 +278,7 @@ pub const Semantizer = struct {
             },
 
             .struct_field_access => |sfa| self.handleStructFieldAccess(sfa, s) catch |err| blk: {
+                if (err == error.Reported) break :blk err;
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -454,6 +460,52 @@ pub const Semantizer = struct {
 
     fn handleImportStatement(self: *Semantizer, loc: tok.Location) SemErr!typ.TypedExpr {
         return try typ.makeTypeLiteral(self.allocator, loc, .{ .builtin = .Any });
+    }
+
+    fn isPrivateName(name: []const u8) bool {
+        return name.len > 0 and name[0] == '_';
+    }
+
+    fn moduleDirForFile(self: *Semantizer, file_path: []const u8) ![]u8 {
+        const dir = std.fs.path.dirname(file_path) orelse ".";
+        return try std.fs.path.resolve(self.allocator.*, &.{dir});
+    }
+
+    fn isSameModule(self: *Semantizer, lhs_file: []const u8, rhs_file: []const u8) !bool {
+        const lhs_dir = try self.moduleDirForFile(lhs_file);
+        defer self.allocator.free(lhs_dir);
+        const rhs_dir = try self.moduleDirForFile(rhs_file);
+        defer self.allocator.free(rhs_dir);
+        return std.mem.eql(u8, lhs_dir, rhs_dir);
+    }
+
+    fn bindingIsVisible(self: *Semantizer, binding: *const sg.BindingDeclaration, requester_file: []const u8) !bool {
+        if (!isPrivateName(binding.name)) return true;
+        return try self.isSameModule(requester_file, binding.origin_file);
+    }
+
+    fn typeIsVisible(self: *Semantizer, td: *const sg.TypeDeclaration, requester_file: []const u8) !bool {
+        if (!isPrivateName(td.name)) return true;
+        return try self.isSameModule(requester_file, td.origin_file);
+    }
+
+    fn functionIsVisible(self: *Semantizer, fd: *const sg.FunctionDeclaration, requester_file: []const u8) !bool {
+        if (!isPrivateName(fd.name)) return true;
+        return try self.isSameModule(requester_file, fd.location.file);
+    }
+
+    fn addPrivateMemberDiag(
+        self: *Semantizer,
+        loc: tok.Location,
+        kind: []const u8,
+        name: []const u8,
+    ) !void {
+        try self.diags.add(
+            loc,
+            .semantic,
+            "{s} '{s}' is private to its module",
+            .{ kind, name },
+        );
     }
 
     //──────────────────────────────────────────────────── ABSTRACT DECLARATION
@@ -714,8 +766,13 @@ pub const Semantizer = struct {
         self: *Semantizer,
         name: []const u8,
         s: *Scope,
+        loc: tok.Location,
     ) SemErr!typ.TypedExpr {
         const b = s.lookupBinding(name) orelse return error.SymbolNotFound;
+        if (!(try self.bindingIsVisible(b, loc.file))) {
+            try self.addPrivateMemberDiag(loc, "value", name);
+            return error.Reported;
+        }
         const n = try sg.makeSGNode(.{ .binding_use = b }, undefined, self.allocator);
         return .{ .node = n, .ty = b.ty };
     }
@@ -1011,6 +1068,10 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         const b = s.lookupBinding(a.name.string) orelse return error.SymbolNotFound;
+        if (!(try self.bindingIsVisible(b, a.name.location.file))) {
+            try self.addPrivateMemberDiag(a.name.location, "value", a.name.string);
+            return error.Reported;
+        }
         if (b.mutability == .constant and b.initialization != null)
             return error.ConstantReassignment;
 
@@ -1186,6 +1247,10 @@ pub const Semantizer = struct {
             );
             return error.Reported;
         };
+        if (!(try self.bindingIsVisible(binding, loc.file))) {
+            try self.addPrivateMemberDiag(loc, "value", field_name);
+            return error.Reported;
+        }
 
         const n = try sg.makeSGNode(.{ .binding_use = binding }, loc, self.allocator);
         return .{ .node = n, .ty = binding.ty };
@@ -1345,7 +1410,7 @@ pub const Semantizer = struct {
         if (inferred) |instantiated| {
             chosen = instantiated;
         } else {
-            chosen = abs.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
+            chosen = self.resolveVisibleOverload(name, input_te.ty, s, ia.value.*.location) catch |err| switch (err) {
                 error.SymbolNotFound => {
                     const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
                     const available = try abs.collectFunctionSignatures(name, s, self.allocator);
@@ -1467,7 +1532,7 @@ pub const Semantizer = struct {
         if (inferred) |instantiated| {
             chosen = instantiated;
         } else {
-            chosen = abs.resolveOverload(name, input_te.ty, s) catch |err| switch (err) {
+            chosen = self.resolveVisibleOverload(name, input_te.ty, s, ia.target.*.location) catch |err| switch (err) {
                 error.SymbolNotFound => {
                     const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
                     const available = try abs.collectFunctionSignatures(name, s, self.allocator);
@@ -1609,6 +1674,10 @@ pub const Semantizer = struct {
 
         const tv_in = try self.visitNode(call.input.*, s);
         if (s.lookupType(call.callee)) |type_decl| {
+            if (!(try self.typeIsVisible(type_decl, call.input.*.location.file))) {
+                try self.addPrivateMemberDiag(call.input.*.location, "type", call.callee);
+                return error.Reported;
+            }
             return self.handleTypeInitializer(call, tv_in, type_decl, s);
         }
 
@@ -1632,7 +1701,7 @@ pub const Semantizer = struct {
                 chosen = if (call.module_qualifier) |module_name|
                     try self.resolveQualifiedOverload(module_name, call.callee, tv_in.ty, s, call.input.*.location)
                 else
-                    abs.resolveOverload(call.callee, tv_in.ty, s) catch |err| switch (err) {
+                    self.resolveVisibleOverload(call.callee, tv_in.ty, s, call.input.*.location) catch |err| switch (err) {
                     error.SymbolNotFound => {
                         if (tv_in.ty == .struct_type) {
                             const actual_sig = try typ.formatCallInput(tv_in.ty.struct_type, s, self.allocator);
@@ -1690,6 +1759,14 @@ pub const Semantizer = struct {
             );
             return error.Reported;
         };
+        if (isPrivateName(fn_name)) {
+            const requester_dir = try self.moduleDirForFile(loc.file);
+            defer self.allocator.free(requester_dir);
+            if (!std.mem.eql(u8, requester_dir, module_dir)) {
+                try self.addPrivateMemberDiag(loc, "function", fn_name);
+                return error.Reported;
+            }
+        }
 
         var best: ?*sg.FunctionDeclaration = null;
         var best_score: u32 = std.math.maxInt(u32);
@@ -1700,6 +1777,7 @@ pub const Semantizer = struct {
             if (sc.functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
                     if (!std.mem.startsWith(u8, cand.location.file, module_dir)) continue;
+                    if (!(try self.functionIsVisible(cand, loc.file))) continue;
                     const expected: sg.Type = .{ .struct_type = &cand.input };
                     if (!typ.typesCompatible(expected, in_ty)) continue;
 
@@ -1733,6 +1811,50 @@ pub const Semantizer = struct {
             );
             return error.Reported;
         }
+        return best.?;
+    }
+
+    fn resolveVisibleOverload(
+        self: *Semantizer,
+        fn_name: []const u8,
+        in_ty: sg.Type,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!*sg.FunctionDeclaration {
+        var best: ?*sg.FunctionDeclaration = null;
+        var best_score: u32 = std.math.maxInt(u32);
+        var ambiguous = false;
+        var hidden_private_match = false;
+
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr(fn_name)) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    const expected: sg.Type = .{ .struct_type = &cand.input };
+                    if (!typ.typesCompatible(expected, in_ty)) continue;
+                    if (!(try self.functionIsVisible(cand, loc.file))) {
+                        hidden_private_match = true;
+                        continue;
+                    }
+
+                    const score = abs.specificityScore(expected, in_ty);
+                    if (best == null or score < best_score) {
+                        best = cand;
+                        best_score = score;
+                        ambiguous = false;
+                    } else if (score == best_score) {
+                        ambiguous = true;
+                    }
+                }
+            }
+        }
+
+        if (best == null and hidden_private_match and isPrivateName(fn_name)) {
+            try self.addPrivateMemberDiag(loc, "function", fn_name);
+            return error.Reported;
+        }
+        if (best == null) return error.SymbolNotFound;
+        if (ambiguous) return error.AmbiguousOverload;
         return best.?;
     }
 
@@ -1774,7 +1896,7 @@ pub const Semantizer = struct {
 
         const init_input_ty: sg.Type = .{ .struct_type = init_struct };
 
-        const init_fn = abs.resolveOverload("init", init_input_ty, s) catch |err| switch (err) {
+        const init_fn = self.resolveVisibleOverload("init", init_input_ty, s, call.input.*.location) catch |err| switch (err) {
             error.SymbolNotFound => {
                 const actual_sig = try typ.formatCallInput(user_struct, s, self.allocator);
                 const available = try abs.collectFunctionSignatures("init", s, self.allocator);
@@ -2767,8 +2889,13 @@ pub const Semantizer = struct {
                     const module_name = id[0..dot_idx];
                     const type_name = id[dot_idx + 1 ..];
                     const module_dir = s.lookupModuleAlias(module_name) orelse break :blk error.UnknownType;
-                    if (s.lookupTypeInModule(module_dir, type_name)) |td|
+                    if (s.lookupTypeInModule(module_dir, type_name)) |td| {
+                        if (!(try self.typeIsVisible(td, tn.location.file))) {
+                            try self.addPrivateMemberDiag(tn.location, "type", type_name);
+                            return error.Reported;
+                        }
                         break :blk td.ty;
+                    }
                     break :blk error.UnknownType;
                 }
                 if (typ.builtinFromName(id)) |bt|
@@ -2778,8 +2905,13 @@ pub const Semantizer = struct {
                         break :blk def_entry.ty;
                     break :blk .{ .builtin = .Any };
                 }
-                if (s.lookupType(id)) |td|
+                if (s.lookupType(id)) |td| {
+                    if (!(try self.typeIsVisible(td, tn.location.file))) {
+                        try self.addPrivateMemberDiag(tn.location, "type", id);
+                        return error.Reported;
+                    }
                     break :blk td.ty;
+                }
                 break :blk error.UnknownType;
             },
             .generic_type_instantiation => |g| blk_g: {
