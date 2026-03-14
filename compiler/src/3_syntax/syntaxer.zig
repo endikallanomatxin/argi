@@ -24,6 +24,7 @@ pub const SyntaxerError = error{
     ExpectedKeywordReturn,
     ExpectedKeywordIf,
     ExpectedAmpersand,
+    ExpectedStringLiteral,
     OutOfMemory,
 };
 
@@ -656,12 +657,43 @@ pub const Syntaxer = struct {
             const hash_loc = self.tokenLocation();
             self.advanceOne();
             const ident = try self.parseIdentifier();
-            if (!std.mem.eql(u8, ident, "defer")) {
-                try self.diags.add(hash_loc, .syntax, "unknown directive '#{s}'", .{ident});
-                return SyntaxerError.ExpectedDeclarationOrAssignment;
+            if (std.mem.eql(u8, ident, "defer")) {
+                const expr = try self.parseExpression();
+                return try self.makeNode(.{ .defer_statement = expr }, hash_loc);
             }
-            const expr = try self.parseExpression();
-            return try self.makeNode(.{ .defer_statement = expr }, hash_loc);
+            if (std.mem.eql(u8, ident, "import")) {
+                if (!self.tokenIs(.open_parenthesis)) {
+                    try self.diags.add(hash_loc, .syntax, "expected '(' after '#import'", .{});
+                    return SyntaxerError.ExpectedLeftParen;
+                }
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+                const lit = self.current();
+                const path = switch (lit.content) {
+                    .literal => |literal| switch (literal) {
+                        .string_literal => |text| text,
+                        else => {
+                            try self.diags.add(lit.location, .syntax, "#import expects a string literal path", .{});
+                            return SyntaxerError.ExpectedStringLiteral;
+                        },
+                    },
+                    else => {
+                        try self.diags.add(lit.location, .syntax, "#import expects a string literal path", .{});
+                        return SyntaxerError.ExpectedStringLiteral;
+                    },
+                };
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+                if (!self.tokenIs(.close_parenthesis)) {
+                    try self.diags.add(self.tokenLocation(), .syntax, "expected ')' after '#import' path", .{});
+                    return SyntaxerError.ExpectedRightParen;
+                }
+                self.advanceOne();
+                return try self.makeNode(.{ .import_statement = .{ .path = path } }, hash_loc);
+            }
+
+            try self.diags.add(hash_loc, .syntax, "unknown directive '#{s}'", .{ident});
+            return SyntaxerError.ExpectedDeclarationOrAssignment;
         }
 
         const id_loc = self.tokenLocation();
