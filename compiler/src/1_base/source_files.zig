@@ -15,8 +15,8 @@ fn collectRgFilesRecursively(
     seen_files: *DirSet,
 ) !void {
     var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |e| {
-        std.debug.print("No se pudo abrir {s}: {any}\n", .{ dir_path, e });
-        return;
+        std.debug.print("failed to open source directory '{s}': {any}\n", .{ dir_path, e });
+        return e;
     };
     defer dir.close();
 
@@ -57,8 +57,8 @@ fn collectRgFilesInDir(
     seen_files: *DirSet,
 ) !void {
     var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |e| {
-        std.debug.print("No se pudo abrir {s}: {any}\n", .{ dir_path, e });
-        return;
+        std.debug.print("failed to open module directory '{s}': {any}\n", .{ dir_path, e });
+        return e;
     };
     defer dir.close();
 

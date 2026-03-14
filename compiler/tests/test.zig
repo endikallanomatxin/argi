@@ -1,5 +1,6 @@
 const std = @import("std");
 const expect = std.testing.expect;
+const expectEqual = std.testing.expectEqual;
 const allocator = std.heap.page_allocator;
 // const allocator = std.testing.allocator;
 
@@ -16,10 +17,25 @@ fn clean() !void {
 
 fn build(name: []const u8) !void {
     // Ejecutar el comando de compilación
-    _ = try std.process.Child.run(.{
+    const result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = &[_][]const u8{ "./zig-out/bin/argi", "build", name },
     });
+    try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
+}
+
+fn buildExpectFail(name: []const u8, expected_stderr: []const u8) !void {
+    const result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = &[_][]const u8{ "./zig-out/bin/argi", "build", name },
+    });
+
+    switch (result.term) {
+        .Exited => |code| try expect(code != 0),
+        else => return error.UnexpectedProcessTermination,
+    }
+
+    try expect(std.mem.indexOf(u8, result.stderr, expected_stderr) != null);
 }
 
 fn run() !void {
@@ -214,4 +230,28 @@ test "63_import_relative" {
     try clean();
     try build("tests/cases/63_import_relative/main.rg");
     try run();
+}
+
+test "64_import_missing_module" {
+    try clean();
+    try buildExpectFail(
+        "tests/cases/64_import_missing_module/main.rg",
+        "failed to open module directory",
+    );
+}
+
+test "65_import_missing_value" {
+    try clean();
+    try buildExpectFail(
+        "tests/cases/65_import_missing_value/main.rg",
+        "module has no value '.missing_value'",
+    );
+}
+
+test "66_import_missing_overload" {
+    try clean();
+    try buildExpectFail(
+        "tests/cases/66_import_missing_overload/main.rg",
+        "module 'dep' has no overload 'missing_func' matching the provided arguments",
+    );
 }
