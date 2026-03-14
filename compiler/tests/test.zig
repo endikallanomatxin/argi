@@ -300,17 +300,19 @@ test "72_import_cycle" {
     );
 }
 
-test "73_import_statement_exports" {
-    try clean();
-    try build("tests/cases/73_import_statement_exports/main.rg");
-    try run();
-}
-
-test "74_import_statement_private" {
+test "73_import_requires_binding" {
     try clean();
     try buildExpectFail(
-        "tests/cases/74_import_statement_private/main.rg",
-        "value '_hidden_value' is private to its module",
+        "tests/cases/73_import_requires_binding/main.rg",
+        "#import must be assigned to a name",
+    );
+}
+
+test "74_import_requires_binding_nested" {
+    try clean();
+    try buildExpectFail(
+        "tests/cases/74_import_requires_binding_nested/main.rg",
+        "#import must be assigned to a name",
     );
 }
 
@@ -320,4 +322,10 @@ test "75_missing_function_name" {
         "tests/cases/75_missing_function_name/main.rg",
         "no function named 'missing_func' exists",
     );
+}
+
+test "76_root_relative_import" {
+    try clean();
+    try build("tests/cases/76_root_relative_import/project/app/main.rg");
+    try run();
 }
