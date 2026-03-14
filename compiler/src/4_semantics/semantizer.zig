@@ -337,6 +337,7 @@ pub const Semantizer = struct {
                         "ambiguous call to '{s}'. Possible overloads:\n{s}",
                         .{ fc.callee, details },
                     );
+                    break :blk error.Reported;
                 } else {
                     try self.diags.add(
                         n.location,
@@ -349,6 +350,7 @@ pub const Semantizer = struct {
             },
 
             .code_block => |blk| self.handleCodeBlock(blk, s) catch |err| blk_ret: {
+                if (err == error.Reported) break :blk_ret err;
                 try self.diags.add(
                     n.location,
                     .semantic,

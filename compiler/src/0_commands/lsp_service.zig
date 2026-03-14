@@ -204,9 +204,8 @@ pub const LanguageService = struct {
 
         var analysis_allocator = arena.allocator();
 
-        const files_list = sf.collectWithEntrySource(&analysis_allocator, "core", doc.path, doc.text) catch {
-            const one_file = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
-            return try self.analyzeFiles(&analysis_allocator, &one_file, doc.path);
+        const files_list = sf.collectWithEntrySource(&analysis_allocator, "core", doc.path, doc.text) catch |err| {
+            return try self.collectLoadFailureDiagnostics(doc, err);
         };
         const files = files_list.items;
 
@@ -300,6 +299,35 @@ pub const LanguageService = struct {
         return DiagnosticsResult{
             .allocator = self.allocator,
             .items = diag_slice,
+            .owned = true,
+        };
+    }
+
+    fn collectLoadFailureDiagnostics(
+        self: *LanguageService,
+        doc: *Document,
+        err: anyerror,
+    ) !DiagnosticsResult {
+        const range = firstImportRange(doc.text);
+        const message = switch (err) {
+            error.FileNotFound => "failed to load an imported module",
+            error.ImportCycle => "import cycle detected",
+            else => "failed to load module graph",
+        };
+
+        const msg_copy = try self.allocator.dupe(u8, message);
+        errdefer self.allocator.free(msg_copy);
+
+        const items = try self.allocator.alloc(Diagnostic, 1);
+        items[0] = .{
+            .range = range,
+            .severity = .err,
+            .message = msg_copy,
+        };
+
+        return .{
+            .allocator = self.allocator,
+            .items = items,
             .owned = true,
         };
     }
@@ -564,6 +592,30 @@ fn locationToRange(loc: token.Location) Range {
     return .{
         .start = .{ .line = start_line, .character = start_char },
         .end = .{ .line = start_line, .character = start_char + 1 },
+    };
+}
+
+fn firstImportRange(text: []const u8) Range {
+    if (std.mem.indexOf(u8, text, "#import(\"")) |offset| {
+        var line: u32 = 0;
+        var col: u32 = 0;
+        var idx: usize = 0;
+        while (idx < offset) : (idx += 1) {
+            if (text[idx] == '\n') {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        return .{
+            .start = .{ .line = line, .character = col },
+            .end = .{ .line = line, .character = col + 1 },
+        };
+    }
+    return .{
+        .start = .{ .line = 0, .character = 0 },
+        .end = .{ .line = 0, .character = 1 },
     };
 }
 
