@@ -1,5 +1,18 @@
 # Syntax overview
 
+## Design priorities
+
+The core goals are:
+
+- explicit data flow
+- visible side effects
+- function composition over object-like syntax
+- static dispatch by default
+- little semantic magic
+
+When in doubt between a shorter syntax and a more predictable one, prefer the
+more predictable one.
+
 ## Comments
 
 ```
@@ -319,5 +332,4 @@ MyGenericType#(.t: Type) : Type = (
 	.datos : List<t>
 )
 ```
-
 

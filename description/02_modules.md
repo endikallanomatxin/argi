@@ -5,6 +5,9 @@ carpeta.
 
 Every file in a directory can see each other, same namespace.
 
+The module system should stay deliberately boring. This is infrastructure, not
+one of the places where the language needs to be especially clever.
+
 ## Project layout
 
 There is two layout conventions:
@@ -69,6 +72,9 @@ project/
 
 No se si private/public o internal/external es mejor.
 
+Conviene priorizar una convención simple y estable frente a una demasiado
+configurable.
+
 
 ## Importing modules
 
@@ -89,16 +95,17 @@ To import stuff from other modules:
 
 - `some_function := #import("./module/").some_function`
 
-- `(one, two) := #import("./module/").(one, two)`
+- `[one, two] := #import("./module/").[one, two]`
 
     o
 
     `one = m.one`
     `two = m.two`
 
-(que sea una sintaxis acorde al código normal permite programar imports en
-compile time. No se hasta qué punto puede perjudicar, respecto a algo más
-simple como go)
+> [!NOTE]
+> que sea una sintaxis acorde al código normal permite programar imports
+> en compile time. No se hasta qué punto puede perjudicar, respecto a algo más
+> simple como go)
 
 
 ## C import
