@@ -279,3 +279,9 @@ test "69_private_module_function" {
         "function '_hidden_status' is private to its module",
     );
 }
+
+test "70_import_more_module" {
+    try clean();
+    try build("tests/cases/70_import_more_module/main.rg");
+    try run();
+}

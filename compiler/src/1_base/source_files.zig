@@ -8,6 +8,12 @@ pub const SourceFile = struct {
 
 const DirSet = std.StringHashMap(void);
 
+fn dirExists(path: []const u8) bool {
+    var dir = std.fs.cwd().openDir(path, .{}) catch return false;
+    dir.close();
+    return true;
+}
+
 fn collectRgFilesRecursively(
     alloc: *const std.mem.Allocator,
     list: *std.array_list.Managed(SourceFile),
@@ -94,7 +100,11 @@ pub fn resolveImportDir(
         return try std.fs.path.resolve(alloc.*, &.{ ".", import_path[1..] });
     }
 
-    return try std.fs.path.resolve(alloc.*, &.{ "more", import_path });
+    const local_more = try std.fs.path.resolve(alloc.*, &.{ "more", import_path });
+    if (dirExists(local_more)) return local_more;
+    alloc.free(local_more);
+
+    return try std.fs.path.resolve(alloc.*, &.{ "..", "more", import_path });
 }
 
 fn scanImports(
