@@ -466,7 +466,7 @@ pub const Semantizer = struct {
         if (s.types.contains(ad.name.string)) return error.SymbolAlreadyDefined;
 
         const td = try self.allocator.create(sg.TypeDeclaration);
-        td.* = .{ .name = ad.name.string, .ty = .{ .builtin = .Any } };
+        td.* = .{ .name = ad.name.string, .origin_file = ad.name.location.file, .ty = .{ .builtin = .Any } };
         try s.types.put(ad.name.string, td);
 
         // Store abstract info (resolved requirements) in scope
@@ -795,6 +795,7 @@ pub const Semantizer = struct {
         const bd = try self.allocator.create(sg.BindingDeclaration);
         bd.* = .{
             .name = d.name.string,
+            .origin_file = loc.file,
             .mutability = d.mutability,
             .ty = ty,
             .initialization = null,
@@ -845,7 +846,7 @@ pub const Semantizer = struct {
                 const stub = try self.allocator.create(sg.StructType);
                 stub.* = .{ .fields = &.{} };
                 td = try self.allocator.create(sg.TypeDeclaration);
-                td.* = .{ .name = d.name.string, .ty = .{ .struct_type = stub } };
+                td.* = .{ .name = d.name.string, .origin_file = d.value.location.file, .ty = .{ .struct_type = stub } };
                 try s.types.put(d.name.string, td);
                 // Emitir el nodo una sola vez cuando el stub se crea
                 const n0 = try sg.makeSGNode(.{ .type_declaration = td }, d.value.location, self.allocator);
@@ -929,6 +930,7 @@ pub const Semantizer = struct {
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{
                 .name = fld.name.string,
+                .origin_file = loc.file,
                 .mutability = .constant,
                 .ty = ty,
                 .initialization = dvp,
@@ -956,6 +958,7 @@ pub const Semantizer = struct {
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{
                 .name = fld.name.string,
+                .origin_file = loc.file,
                 .mutability = .variable,
                 .ty = ty,
                 .initialization = dvp,
@@ -1174,8 +1177,7 @@ pub const Semantizer = struct {
         s: *Scope,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
-        _ = module_dir;
-        const binding = s.lookupBinding(field_name) orelse {
+        const binding = s.lookupBindingInModule(module_dir, field_name) orelse {
             try self.diags.add(
                 loc,
                 .semantic,
@@ -2044,17 +2046,17 @@ pub const Semantizer = struct {
                     var it = subst.iterator();
                     while (it.next()) |entry| {
                         const td = try self.allocator.create(sg.TypeDeclaration);
-                        td.* = .{ .name = entry.key_ptr.*, .ty = entry.value_ptr.* };
+                        td.* = .{ .name = entry.key_ptr.*, .origin_file = tmpl.location.file, .ty = entry.value_ptr.* };
                         try child.types.put(entry.key_ptr.*, td);
                     }
                     for (in_struct_ptr.fields) |fld| {
                         const bd = try self.allocator.create(sg.BindingDeclaration);
-                        bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
+                        bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
                         try child.bindings.put(fld.name, bd);
                     }
                     for (out_struct_ptr.fields) |fld| {
                         const bd = try self.allocator.create(sg.BindingDeclaration);
-                        bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
+                        bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
                         try child.bindings.put(fld.name, bd);
                     }
 
@@ -2128,19 +2130,19 @@ pub const Semantizer = struct {
                     var it = subst.iterator();
                     while (it.next()) |entry| {
                         const td = try self.allocator.create(sg.TypeDeclaration);
-                        td.* = .{ .name = entry.key_ptr.*, .ty = entry.value_ptr.* };
+                        td.* = .{ .name = entry.key_ptr.*, .origin_file = tmpl.location.file, .ty = entry.value_ptr.* };
                         try child.types.put(entry.key_ptr.*, td);
                     }
 
                     // Register params in child scope
                     for (in_struct_ptr.fields) |fld| {
                         const bd = try self.allocator.create(sg.BindingDeclaration);
-                        bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
+                        bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
                         try child.bindings.put(fld.name, bd);
                     }
                     for (out_struct_ptr.fields) |fld| {
                         const bd = try self.allocator.create(sg.BindingDeclaration);
-                        bd.* = .{ .name = fld.name, .mutability = .variable, .ty = fld.ty, .initialization = null };
+                        bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
                         try child.bindings.put(fld.name, bd);
                     }
 
@@ -2761,6 +2763,14 @@ pub const Semantizer = struct {
         return switch (t) {
             .type_name => |tn| blk: {
                 const id = tn.string;
+                if (std.mem.indexOfScalar(u8, id, '.')) |dot_idx| {
+                    const module_name = id[0..dot_idx];
+                    const type_name = id[dot_idx + 1 ..];
+                    const module_dir = s.lookupModuleAlias(module_name) orelse break :blk error.UnknownType;
+                    if (s.lookupTypeInModule(module_dir, type_name)) |td|
+                        break :blk td.ty;
+                    break :blk error.UnknownType;
+                }
                 if (typ.builtinFromName(id)) |bt|
                     break :blk .{ .builtin = bt };
                 if (s.lookupAbstractInfo(id)) |_| {

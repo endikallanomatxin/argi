@@ -299,7 +299,15 @@ pub const Syntaxer = struct {
             return syn.Type{ .struct_type_literal = lit };
         }
 
-        const tname = try self.parseName();
+        var tname = try self.parseName();
+        if (self.tokenIs(.dot)) {
+            self.advanceOne();
+            const rhs = try self.parseName();
+            tname = .{
+                .string = try std.fmt.allocPrint(self.allocator.*, "{s}.{s}", .{ tname.string, rhs.string }),
+                .location = tname.location,
+            };
+        }
         if (self.tokenIs(.hash)) {
             self.advanceOne();
             const gen_args = try self.parseStructTypeLiteral();
