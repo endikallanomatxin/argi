@@ -62,7 +62,7 @@ test "04_literals" {
 
 test "050_anonymous_structs" {
     try clean();
-    try build("tests/05_anonymous_structs.rg");
+    try build("tests/050_anonymous_structs.rg");
     try run();
 }
 
@@ -90,9 +90,9 @@ test "12_function_args" {
     try run();
 }
 
-test "13_multiple_dispatch" {
+test "130_multiple_dispatch" {
     try clean();
-    try build("tests/13_multiple_dispatch.rg");
+    try build("tests/130_multiple_dispatch.rg");
     try run();
 }
 
