@@ -23,7 +23,7 @@ This repository contains a compiler for a new programming language written in Zi
 
 - Build compiler: `cd compiler && zig build`
 - Run compiler tests: `cd compiler && zig build test`
-- Compile a test program: `./zig-out/bin/argi build tests/example_test.rg`
+- Compile a test program: `./zig-out/bin/argi build tests/cases/00_minimal_main/main.rg`
 
 > It might be necessary to set the following environment variables to make zig work:
 > `ZIG_LOCAL_CACHE_DIR="$PWD/.zig-cache"`
@@ -42,7 +42,7 @@ This repository contains a compiler for a new programming language written in Zi
 - To add a new feature:
     1. Checkout the language description and `more/` to understand the
        feature.
-    2. Create a `.rg` test that demonstrates the feature in `compiler/tests/`.
+    2. Create a `.rg` test that demonstrates the feature in `compiler/tests/cases/<case_name>/main.rg`.
        Put positive executable cases under `compiler/tests/cases/<case_name>/main.rg`.
     3. Draft a small implementation plan, evaluating whether the change affects
        tokenizing, syntaxing, semantizing or codegen.
