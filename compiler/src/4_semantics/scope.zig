@@ -56,6 +56,16 @@ pub const Scope = struct {
         return null;
     }
 
+    pub fn lookupBindingInModule(self: *Scope, module_dir: []const u8, n: []const u8) ?*sg.BindingDeclaration {
+        var cur: ?*Scope = self;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.bindings.get(n)) |b| {
+                if (std.mem.startsWith(u8, b.origin_file, module_dir)) return b;
+            }
+        }
+        return null;
+    }
+
     pub fn lookupModuleAlias(self: *Scope, n: []const u8) ?[]const u8 {
         if (self.module_aliases.get(n)) |path| return path;
         if (self.parent) |p| return p.lookupModuleAlias(n);
@@ -65,6 +75,16 @@ pub const Scope = struct {
     pub fn lookupType(self: *Scope, n: []const u8) ?*sg.TypeDeclaration {
         if (self.types.get(n)) |t| return t;
         if (self.parent) |p| return p.lookupType(n);
+        return null;
+    }
+
+    pub fn lookupTypeInModule(self: *Scope, module_dir: []const u8, n: []const u8) ?*sg.TypeDeclaration {
+        var cur: ?*Scope = self;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.types.get(n)) |t| {
+                if (std.mem.startsWith(u8, t.origin_file, module_dir)) return t;
+            }
+        }
         return null;
     }
 
