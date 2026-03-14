@@ -7,6 +7,7 @@ pub const SourceFile = struct {
 };
 
 const DirSet = std.StringHashMap(void);
+const ImportList = std.array_list.Managed([]u8);
 
 fn dirExists(path: []const u8) bool {
     var dir = std.fs.cwd().openDir(path, .{}) catch return false;
@@ -126,6 +127,40 @@ fn collectRgFilesInDir(
     }
 }
 
+fn collectImportDirsFromSource(
+    alloc: *const std.mem.Allocator,
+    source_path: []const u8,
+    source_code: []const u8,
+    imports: *ImportList,
+) !void {
+    var rest = source_code;
+    const needle = "#import(\"";
+
+    while (std.mem.indexOf(u8, rest, needle)) |idx| {
+        rest = rest[idx + needle.len ..];
+        const end_idx = std.mem.indexOfScalar(u8, rest, '"') orelse break;
+        const import_path = rest[0..end_idx];
+        rest = rest[end_idx + 1 ..];
+
+        const resolved = try resolveImportDir(alloc, source_path, import_path);
+        errdefer alloc.free(resolved);
+        var already_known = false;
+
+        for (imports.items) |existing| {
+            if (std.mem.eql(u8, existing, resolved)) {
+                already_known = true;
+                break;
+            }
+        }
+        if (already_known) {
+            alloc.free(resolved);
+            continue;
+        }
+
+        try imports.append(resolved);
+    }
+}
+
 pub fn resolveImportDir(
     alloc: *const std.mem.Allocator,
     importer_path: []const u8,
@@ -150,21 +185,130 @@ fn scanImports(
     source: SourceFile,
     module_dirs: *DirSet,
 ) !void {
-    var rest = source.code;
-    const needle = "#import(\"";
+    var imports = ImportList.init(alloc.*);
+    defer {
+        for (imports.items) |path| alloc.free(path);
+        imports.deinit();
+    }
 
-    while (std.mem.indexOf(u8, rest, needle)) |idx| {
-        rest = rest[idx + needle.len ..];
-        const end_idx = std.mem.indexOfScalar(u8, rest, '"') orelse break;
-        const import_path = rest[0..end_idx];
-        rest = rest[end_idx + 1 ..];
-
-        const resolved = try resolveImportDir(alloc, source.path, import_path);
-        defer alloc.free(resolved);
-
+    try collectImportDirsFromSource(alloc, source.path, source.code, &imports);
+    for (imports.items) |resolved| {
         if (module_dirs.contains(resolved)) continue;
         try module_dirs.put(try alloc.dupe(u8, resolved), {});
     }
+}
+
+fn printImportCycle(stack: []const []const u8, repeated_dir: []const u8) void {
+    std.debug.print("import cycle detected: ", .{});
+    var start_idx: usize = 0;
+    while (start_idx < stack.len) : (start_idx += 1) {
+        if (std.mem.eql(u8, stack[start_idx], repeated_dir)) break;
+    }
+
+    var idx = start_idx;
+    while (idx < stack.len) : (idx += 1) {
+        if (idx != start_idx) std.debug.print(" -> ", .{});
+        std.debug.print("{s}", .{stack[idx]});
+    }
+    std.debug.print(" -> {s}\n", .{repeated_dir});
+}
+
+fn validateModuleGraphAcyclic(
+    alloc: *const std.mem.Allocator,
+    dir_path: []const u8,
+    skip_path: ?[]const u8,
+    entry_override: ?SourceFile,
+    visited_dirs: *DirSet,
+    stack: *std.array_list.Managed([]const u8),
+) !void {
+    for (stack.items) |active_dir| {
+        if (std.mem.eql(u8, active_dir, dir_path)) {
+            printImportCycle(stack.items, dir_path);
+            return error.ImportCycle;
+        }
+    }
+    if (visited_dirs.contains(dir_path)) return;
+
+    try stack.append(dir_path);
+    defer _ = stack.pop();
+
+    var module_files = std.array_list.Managed(SourceFile).init(alloc.*);
+    defer freeList(alloc, &module_files);
+    var seen_module_files = DirSet.init(alloc.*);
+    defer {
+        var it = seen_module_files.iterator();
+        while (it.next()) |entry| alloc.free(entry.key_ptr.*);
+        seen_module_files.deinit();
+    }
+
+    try collectRgFilesInDir(alloc, &module_files, dir_path, skip_path, &seen_module_files);
+    if (entry_override) |entry_source| {
+        try module_files.append(.{
+            .path = try alloc.dupe(u8, entry_source.path),
+            .code = try alloc.dupe(u8, entry_source.code),
+        });
+    }
+
+    var imports = ImportList.init(alloc.*);
+    defer {
+        for (imports.items) |path| alloc.free(path);
+        imports.deinit();
+    }
+
+    for (module_files.items) |source| {
+        try collectImportDirsFromSource(alloc, source.path, source.code, &imports);
+    }
+
+    for (imports.items) |import_dir| {
+        try validateModuleGraphAcyclic(alloc, import_dir, null, null, visited_dirs, stack);
+    }
+
+    try visited_dirs.put(try alloc.dupe(u8, dir_path), {});
+}
+
+fn collectModuleOrder(
+    alloc: *const std.mem.Allocator,
+    dir_path: []const u8,
+    skip_path: ?[]const u8,
+    entry_override: ?SourceFile,
+    visited_dirs: *DirSet,
+    ordered_dirs: *std.array_list.Managed([]const u8),
+) !void {
+    if (visited_dirs.contains(dir_path)) return;
+
+    var module_files = std.array_list.Managed(SourceFile).init(alloc.*);
+    defer freeList(alloc, &module_files);
+    var seen_module_files = DirSet.init(alloc.*);
+    defer {
+        var it = seen_module_files.iterator();
+        while (it.next()) |entry| alloc.free(entry.key_ptr.*);
+        seen_module_files.deinit();
+    }
+
+    try collectRgFilesInDir(alloc, &module_files, dir_path, skip_path, &seen_module_files);
+    if (entry_override) |entry_source| {
+        try module_files.append(.{
+            .path = try alloc.dupe(u8, entry_source.path),
+            .code = try alloc.dupe(u8, entry_source.code),
+        });
+    }
+
+    var imports = ImportList.init(alloc.*);
+    defer {
+        for (imports.items) |path| alloc.free(path);
+        imports.deinit();
+    }
+
+    for (module_files.items) |source| {
+        try collectImportDirsFromSource(alloc, source.path, source.code, &imports);
+    }
+
+    for (imports.items) |import_dir| {
+        try collectModuleOrder(alloc, import_dir, null, null, visited_dirs, ordered_dirs);
+    }
+
+    try visited_dirs.put(try alloc.dupe(u8, dir_path), {});
+    try ordered_dirs.append(try alloc.dupe(u8, dir_path));
 }
 
 /// Lee un único fichero.
@@ -179,10 +323,30 @@ pub fn collect(
     core_dir: []const u8,
     user_path: []const u8,
 ) !std.array_list.Managed(SourceFile) {
+    const entry_source = try readFile(alloc, user_path);
+    defer {
+        alloc.free(entry_source.path);
+        alloc.free(entry_source.code);
+    }
+
+    return try collectWithEntrySource(alloc, core_dir, user_path, entry_source.code);
+}
+
+pub fn collectWithEntrySource(
+    alloc: *const std.mem.Allocator,
+    core_dir: []const u8,
+    user_path: []const u8,
+    user_code: []const u8,
+) !std.array_list.Managed(SourceFile) {
     var list = std.array_list.Managed(SourceFile).init(alloc.*);
+    errdefer freeList(alloc, &list);
+
     const resolved_core_dir = try resolveToolCoreDir(alloc, core_dir);
     defer alloc.free(resolved_core_dir);
-    const entry_source = try readFile(alloc, user_path);
+    const entry_source = SourceFile{
+        .path = try alloc.dupe(u8, user_path),
+        .code = try alloc.dupe(u8, user_code),
+    };
     errdefer {
         alloc.free(entry_source.path);
         alloc.free(entry_source.code);
@@ -193,11 +357,24 @@ pub fn collect(
         while (it.next()) |entry| alloc.free(entry.key_ptr.*);
         seen_files.deinit();
     }
-    var module_dirs = DirSet.init(alloc.*);
+    var acyclic_dirs = DirSet.init(alloc.*);
     defer {
-        var it = module_dirs.iterator();
+        var it = acyclic_dirs.iterator();
         while (it.next()) |entry| alloc.free(entry.key_ptr.*);
-        module_dirs.deinit();
+        acyclic_dirs.deinit();
+    }
+    var stack = std.array_list.Managed([]const u8).init(alloc.*);
+    defer stack.deinit();
+    var ordered_dirs = std.array_list.Managed([]const u8).init(alloc.*);
+    defer {
+        for (ordered_dirs.items) |path| alloc.free(path);
+        ordered_dirs.deinit();
+    }
+    var ordered_seen = DirSet.init(alloc.*);
+    defer {
+        var it = ordered_seen.iterator();
+        while (it.next()) |entry| alloc.free(entry.key_ptr.*);
+        ordered_seen.deinit();
     }
 
     // ─── core/ ────────────────────────────────────────────────────────────
@@ -206,36 +383,26 @@ pub fn collect(
     // ─── carpeta del entrypoint del usuario y imports explícitos ─────────
     const user_dir = std.fs.path.dirname(user_path) orelse ".";
     const root_module_dir = try alloc.dupe(u8, user_dir);
-    try module_dirs.put(root_module_dir, {});
-    try scanImports(alloc, entry_source, &module_dirs);
+    try validateModuleGraphAcyclic(
+        alloc,
+        root_module_dir,
+        user_path,
+        entry_source,
+        &acyclic_dirs,
+        &stack,
+    );
+    try collectModuleOrder(
+        alloc,
+        root_module_dir,
+        user_path,
+        entry_source,
+        &ordered_seen,
+        &ordered_dirs,
+    );
 
-    var dir_queue = std.array_list.Managed([]const u8).init(alloc.*);
-    defer dir_queue.deinit();
-    try dir_queue.append(root_module_dir);
-
-    var dir_index: usize = 0;
-    while (dir_index < dir_queue.items.len) : (dir_index += 1) {
-        const dir_path = dir_queue.items[dir_index];
+    for (ordered_dirs.items) |dir_path| {
         const skip_path = if (std.mem.eql(u8, dir_path, user_dir)) user_path else null;
-        const start_len = list.items.len;
         try collectRgFilesInDir(alloc, &list, dir_path, skip_path, &seen_files);
-
-        var idx = start_len;
-        while (idx < list.items.len) : (idx += 1) {
-            try scanImports(alloc, list.items[idx], &module_dirs);
-        }
-
-        var keys_it = module_dirs.keyIterator();
-        while (keys_it.next()) |key_ptr| {
-            var known = false;
-            for (dir_queue.items) |queued| {
-                if (std.mem.eql(u8, queued, key_ptr.*)) {
-                    known = true;
-                    break;
-                }
-            }
-            if (!known) try dir_queue.append(key_ptr.*);
-        }
     }
 
     // ─── entrypoint del usuario al final ─────────────────────────────────

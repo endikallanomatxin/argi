@@ -285,3 +285,31 @@ test "70_import_more_module" {
     try build("tests/cases/70_import_more_module/main.rg");
     try run();
 }
+
+test "71_transitive_import" {
+    try clean();
+    try build("tests/cases/71_transitive_import/main.rg");
+    try run();
+}
+
+test "72_import_cycle" {
+    try clean();
+    try buildExpectFail(
+        "tests/cases/72_import_cycle/main.rg",
+        "import cycle detected",
+    );
+}
+
+test "73_import_statement_exports" {
+    try clean();
+    try build("tests/cases/73_import_statement_exports/main.rg");
+    try run();
+}
+
+test "74_import_statement_private" {
+    try clean();
+    try buildExpectFail(
+        "tests/cases/74_import_statement_private/main.rg",
+        "value '_hidden_value' is private to its module",
+    );
+}
