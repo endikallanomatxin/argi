@@ -4,6 +4,7 @@ const syn = @import("../3_syntax/syntax_tree.zig");
 const sg = @import("semantic_graph.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
+const source_files = @import("../1_base/source_files.zig");
 
 const typ = @import("types.zig");
 const abs = @import("abstracts.zig");
@@ -757,6 +758,16 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         if (s.bindings.contains(d.name.string))
             return error.SymbolAlreadyDefined;
+        if (s.lookupModuleAlias(d.name.string) != null)
+            return error.SymbolAlreadyDefined;
+
+        if (d.value) |v| {
+            if (v.*.content == .import_statement) {
+                const resolved = try source_files.resolveImportDir(self.allocator, loc.file, v.*.content.import_statement.path);
+                try s.module_aliases.put(d.name.string, resolved);
+                return try typ.makeTypeLiteral(self.allocator, loc, .{ .builtin = .Any });
+            }
+        }
 
         var init_node: ?*syn.STNode = null;
         var init_te_opt: ?typ.TypedExpr = null;
@@ -1090,6 +1101,13 @@ pub const Semantizer = struct {
         ma: syn.StructFieldAccess,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
+        if (ma.struct_value.*.content == .identifier) {
+            const base_name = ma.struct_value.*.content.identifier;
+            if (s.lookupModuleAlias(base_name)) |module_dir| {
+                return self.handleModuleFieldAccess(module_dir, ma.field_name.string, s, ma.struct_value.*.location);
+            }
+        }
+
         const base = try self.visitNode(ma.struct_value.*, s);
 
         if (base.ty == .array_type) {
@@ -1147,6 +1165,28 @@ pub const Semantizer = struct {
 
         const n = try sg.makeSGNode(.{ .struct_field_access = fa }, undefined, self.allocator);
         return .{ .node = n, .ty = fty };
+    }
+
+    fn handleModuleFieldAccess(
+        self: *Semantizer,
+        module_dir: []const u8,
+        field_name: []const u8,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        _ = module_dir;
+        const binding = s.lookupBinding(field_name) orelse {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "module has no value '.{s}'",
+                .{field_name},
+            );
+            return error.Reported;
+        };
+
+        const n = try sg.makeSGNode(.{ .binding_use = binding }, loc, self.allocator);
+        return .{ .node = n, .ty = binding.ty };
     }
 
     //──────────────────────────────────────────────────── LIST LITERAL
@@ -1587,7 +1627,10 @@ pub const Semantizer = struct {
             if (inferred) |instantiated| {
                 chosen = instantiated;
             } else {
-                chosen = abs.resolveOverload(call.callee, tv_in.ty, s) catch |err| switch (err) {
+                chosen = if (call.module_qualifier) |module_name|
+                    try self.resolveQualifiedOverload(module_name, call.callee, tv_in.ty, s, call.input.*.location)
+                else
+                    abs.resolveOverload(call.callee, tv_in.ty, s) catch |err| switch (err) {
                     error.SymbolNotFound => {
                         if (tv_in.ty == .struct_type) {
                             const actual_sig = try typ.formatCallInput(tv_in.ty.struct_type, s, self.allocator);
@@ -1626,6 +1669,69 @@ pub const Semantizer = struct {
         const result_ty = typ.functionReturnType(chosen);
 
         return .{ .node = n, .ty = result_ty };
+    }
+
+    fn resolveQualifiedOverload(
+        self: *Semantizer,
+        module_name: []const u8,
+        fn_name: []const u8,
+        in_ty: sg.Type,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!*sg.FunctionDeclaration {
+        const module_dir = s.lookupModuleAlias(module_name) orelse {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "unknown module alias '{s}'",
+                .{module_name},
+            );
+            return error.Reported;
+        };
+
+        var best: ?*sg.FunctionDeclaration = null;
+        var best_score: u32 = std.math.maxInt(u32);
+        var ambiguous = false;
+
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr(fn_name)) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (!std.mem.startsWith(u8, cand.location.file, module_dir)) continue;
+                    const expected: sg.Type = .{ .struct_type = &cand.input };
+                    if (!typ.typesCompatible(expected, in_ty)) continue;
+
+                    const score = abs.specificityScore(expected, in_ty);
+                    if (best == null or score < best_score) {
+                        best = cand;
+                        best_score = score;
+                        ambiguous = false;
+                    } else if (score == best_score) {
+                        ambiguous = true;
+                    }
+                }
+            }
+        }
+
+        if (best == null) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "module '{s}' has no overload '{s}' matching the provided arguments",
+                .{ module_name, fn_name },
+            );
+            return error.Reported;
+        }
+        if (ambiguous) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "module-qualified call '{s}.{s}' is ambiguous",
+                .{ module_name, fn_name },
+            );
+            return error.Reported;
+        }
+        return best.?;
     }
 
     fn handleTypeInitializer(
