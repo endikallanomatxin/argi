@@ -206,7 +206,7 @@ pub const LanguageService = struct {
 
         const files_list = sf.collectWithEntrySource(&analysis_allocator, "core", doc.path, doc.text) catch {
             const one_file = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
-            return try self.analyzeFiles(&analysis_allocator, &one_file);
+            return try self.analyzeFiles(&analysis_allocator, &one_file, doc.path);
         };
         const files = files_list.items;
 
@@ -219,13 +219,14 @@ pub const LanguageService = struct {
             }
         }
 
-        return try self.analyzeFiles(&analysis_allocator, files);
+        return try self.analyzeFiles(&analysis_allocator, files, doc.path);
     }
 
     fn analyzeFiles(
         self: *LanguageService,
         analysis_allocator: *std.mem.Allocator,
         files: []const sf.SourceFile,
+        primary_path: []const u8,
     ) !DiagnosticsResult {
         var diagnostics = diag.Diagnostics.init(analysis_allocator, files);
         defer diagnostics.deinit();
@@ -277,6 +278,7 @@ pub const LanguageService = struct {
         }
 
         for (diagnostics.list.items) |entry| {
+            if (!std.mem.eql(u8, entry.loc.file, primary_path)) continue;
             const msg_copy = self.allocator.dupe(u8, entry.msg) catch |err| {
                 return err;
             };
