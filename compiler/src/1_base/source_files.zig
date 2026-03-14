@@ -7,7 +7,13 @@ pub const SourceFile = struct {
 };
 
 const DirSet = std.StringHashMap(void);
-const ImportList = std.array_list.Managed([]u8);
+const ImportList = std.array_list.Managed(ResolvedImport);
+
+const ResolvedImport = struct {
+    raw_path: []const u8,
+    importer_path: []const u8,
+    resolved_dir: []u8,
+};
 
 fn dirExists(path: []const u8) bool {
     var dir = std.fs.cwd().openDir(path, .{}) catch return false;
@@ -181,7 +187,7 @@ fn collectImportDirsFromSource(
         var already_known = false;
 
         for (imports.items) |existing| {
-            if (std.mem.eql(u8, existing, resolved)) {
+            if (std.mem.eql(u8, existing.resolved_dir, resolved)) {
                 already_known = true;
                 break;
             }
@@ -191,8 +197,30 @@ fn collectImportDirsFromSource(
             continue;
         }
 
-        try imports.append(resolved);
+        try imports.append(.{
+            .raw_path = try alloc.dupe(u8, import_path),
+            .importer_path = try alloc.dupe(u8, source_path),
+            .resolved_dir = resolved,
+        });
     }
+}
+
+fn freeImportList(alloc: *const std.mem.Allocator, imports: *ImportList) void {
+    for (imports.items) |entry| {
+        alloc.free(entry.raw_path);
+        alloc.free(entry.importer_path);
+        alloc.free(entry.resolved_dir);
+    }
+    imports.deinit();
+}
+
+fn ensureImportDirExists(entry: ResolvedImport) !void {
+    if (dirExists(entry.resolved_dir)) return;
+    std.debug.print(
+        "cannot resolve import '{s}' from '{s}'\n",
+        .{ entry.raw_path, entry.importer_path },
+    );
+    return error.FileNotFound;
 }
 
 pub fn resolveImportDir(
@@ -222,15 +250,13 @@ fn scanImports(
     module_dirs: *DirSet,
 ) !void {
     var imports = ImportList.init(alloc.*);
-    defer {
-        for (imports.items) |path| alloc.free(path);
-        imports.deinit();
-    }
+    defer freeImportList(alloc, &imports);
 
     try collectImportDirsFromSource(alloc, source.path, source.code, &imports);
-    for (imports.items) |resolved| {
-        if (module_dirs.contains(resolved)) continue;
-        try module_dirs.put(try alloc.dupe(u8, resolved), {});
+    for (imports.items) |entry| {
+        try ensureImportDirExists(entry);
+        if (module_dirs.contains(entry.resolved_dir)) continue;
+        try module_dirs.put(try alloc.dupe(u8, entry.resolved_dir), {});
     }
 }
 
@@ -286,17 +312,15 @@ fn validateModuleGraphAcyclic(
     }
 
     var imports = ImportList.init(alloc.*);
-    defer {
-        for (imports.items) |path| alloc.free(path);
-        imports.deinit();
-    }
+    defer freeImportList(alloc, &imports);
 
     for (module_files.items) |source| {
         try collectImportDirsFromSource(alloc, source.path, source.code, &imports);
     }
 
-    for (imports.items) |import_dir| {
-        try validateModuleGraphAcyclic(alloc, import_dir, null, null, visited_dirs, stack);
+    for (imports.items) |entry| {
+        try ensureImportDirExists(entry);
+        try validateModuleGraphAcyclic(alloc, entry.resolved_dir, null, null, visited_dirs, stack);
     }
 
     try visited_dirs.put(try alloc.dupe(u8, dir_path), {});
@@ -330,17 +354,15 @@ fn collectModuleOrder(
     }
 
     var imports = ImportList.init(alloc.*);
-    defer {
-        for (imports.items) |path| alloc.free(path);
-        imports.deinit();
-    }
+    defer freeImportList(alloc, &imports);
 
     for (module_files.items) |source| {
         try collectImportDirsFromSource(alloc, source.path, source.code, &imports);
     }
 
-    for (imports.items) |import_dir| {
-        try collectModuleOrder(alloc, import_dir, null, null, visited_dirs, ordered_dirs);
+    for (imports.items) |entry| {
+        try ensureImportDirExists(entry);
+        try collectModuleOrder(alloc, entry.resolved_dir, null, null, visited_dirs, ordered_dirs);
     }
 
     try visited_dirs.put(try alloc.dupe(u8, dir_path), {});
