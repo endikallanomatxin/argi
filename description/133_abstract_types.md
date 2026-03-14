@@ -1,5 +1,8 @@
 # Abstract types
 
+Abstract types should be one of the main reusable abstraction mechanisms of the
+language. They are primarily for expressing static contracts.
+
 - Permiten definir qué funciones deben poder llamarse sobre un tipo.
 
 - Obligan a especificar explícitamente qué tipos subyacen al abstract type.
@@ -97,6 +100,10 @@ important not only that the compiler checks that the type implements the
 abstract contract, but it also has to check that no other function with the
 same name and compatible input types breaks the contract.
 
+This is one of the areas where it is worth preferring simpler rules over more
+expressive ones. If the interaction between abstracts, generics and multiple
+dispatch becomes difficult to explain, the design should be narrowed.
+
 
 ## Expresiveness
 
@@ -174,6 +181,9 @@ AbstractMatrix#(
 ---
 
 > [!TODO] Pensar si implementar orphan rule o permitir type piracy como julia.
+>
+> Conviene tomarse esto en serio pronto. Si se permite demasiada libertad aquí,
+> el lenguaje puede ganar expresividad pero perder modularidad y predictibilidad.
 
 > [!TODO] Subtyping con genéricos.
 > ¿Vector<Int64> es usable donde se espera Vector<Number>?
@@ -184,5 +194,4 @@ AbstractMatrix#(
 
 > [!TODO]
 > Se permite que el abstract aporte tipos asociados?
-
 
