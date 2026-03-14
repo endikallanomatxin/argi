@@ -80,7 +80,7 @@ fn collectRgFilesInDir(
     }
 }
 
-fn resolveImportDir(
+pub fn resolveImportDir(
     alloc: *const std.mem.Allocator,
     importer_path: []const u8,
     import_path: []const u8,

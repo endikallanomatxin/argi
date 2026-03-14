@@ -146,6 +146,7 @@ pub const Assignment = struct {
 pub const FunctionCall = struct {
     callee: []const u8,
     callee_loc: tok.Location,
+    module_qualifier: ?[]const u8,
     // Optional explicit type arguments on call site (e.g. foo[Int32, &Char])
     type_arguments: ?[]const Type,
     // Alternative syntax: named type arguments via struct-like block: #(.T: Int32)

@@ -482,6 +482,26 @@ pub const Syntaxer = struct {
                 continue;
             }
 
+            if (self.tokenIs(.open_parenthesis)) {
+                if (node.content == .struct_field_access and node.content.struct_field_access.struct_value.*.content == .identifier) {
+                    const sfa = node.content.struct_field_access;
+                    const module_name = sfa.struct_value.*.content.identifier;
+                    const struct_value_literal = try self.parseStructValueLiteral();
+                    node = try self.makeNode(
+                        .{ .function_call = .{
+                            .callee = sfa.field_name.string,
+                            .callee_loc = sfa.field_name.location,
+                            .module_qualifier = module_name,
+                            .type_arguments = null,
+                            .type_arguments_struct = null,
+                            .input = struct_value_literal,
+                        } },
+                        sfa.field_name.location,
+                    );
+                    continue;
+                }
+            }
+
             if (self.tokenIs(.open_bracket)) {
                 const bracket_loc = self.tokenLocation();
                 self.advanceOne();
@@ -538,6 +558,33 @@ pub const Syntaxer = struct {
             return try self.makeNode(.{ .address_of = .{ .value = inner, .mutability = mutability } }, op_loc);
         }
 
+        if (self.tokenIs(.hash)) {
+            const hash_loc = self.tokenLocation();
+            self.advanceOne();
+            const ident = try self.parseIdentifier();
+            if (!std.mem.eql(u8, ident, "import")) {
+                try self.diags.add(hash_loc, .syntax, "unknown directive '#{s}' in expression position", .{ident});
+                return SyntaxerError.ExpectedDeclarationOrAssignment;
+            }
+            if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+            const lit = self.current();
+            const path = switch (lit.content) {
+                .literal => |literal| switch (literal) {
+                    .string_literal => |text| text,
+                    else => return SyntaxerError.ExpectedStringLiteral,
+                },
+                else => return SyntaxerError.ExpectedStringLiteral,
+            };
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+            if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+            self.advanceOne();
+            const node = try self.makeNode(.{ .import_statement = .{ .path = path } }, hash_loc);
+            return try self.parsePostfix(node);
+        }
+
         const base: *syn.STNode = switch (t.content) {
             // ─── ident  /  call ─────────────────────────────────────────────
             .identifier => blk: {
@@ -558,6 +605,7 @@ pub const Syntaxer = struct {
                         .{ .function_call = .{
                             .callee = name,
                             .callee_loc = t.location,
+                            .module_qualifier = null,
                             .type_arguments = type_args,
                             .type_arguments_struct = type_args_struct,
                             .input = struct_value_literal,
@@ -786,12 +834,13 @@ pub const Syntaxer = struct {
                 // call: Name(...)
                 const input_node = try self.makeNode(.{ .struct_type_literal = input }, id_loc);
                 return try self.makeNode(
-                    .{ .function_call = .{
-                        .callee = name.string,
-                        .callee_loc = id_loc,
-                        .type_arguments = null,
-                        .type_arguments_struct = null,
-                        .input = input_node,
+                        .{ .function_call = .{
+                            .callee = name.string,
+                            .callee_loc = id_loc,
+                            .module_qualifier = null,
+                            .type_arguments = null,
+                            .type_arguments_struct = null,
+                            .input = input_node,
                     } },
                     id_loc,
                 );

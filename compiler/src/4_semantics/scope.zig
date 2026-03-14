@@ -14,6 +14,7 @@ pub const Scope = struct {
     allocator: *const std.mem.Allocator,
 
     nodes: std.array_list.Managed(*sg.SGNode),
+    module_aliases: std.StringHashMap([]const u8),
     bindings: std.StringHashMap(*sg.BindingDeclaration),
     functions: std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)),
     types: std.StringHashMap(*sg.TypeDeclaration),
@@ -35,6 +36,7 @@ pub const Scope = struct {
             .parent = p,
             .allocator = a,
             .nodes = std.array_list.Managed(*sg.SGNode).init(a.*),
+            .module_aliases = std.StringHashMap([]const u8).init(a.*),
             .bindings = std.StringHashMap(*sg.BindingDeclaration).init(a.*),
             .functions = std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)).init(a.*),
             .types = std.StringHashMap(*sg.TypeDeclaration).init(a.*),
@@ -51,6 +53,12 @@ pub const Scope = struct {
     pub fn lookupBinding(self: *Scope, n: []const u8) ?*sg.BindingDeclaration {
         if (self.bindings.get(n)) |b| return b;
         if (self.parent) |p| return p.lookupBinding(n);
+        return null;
+    }
+
+    pub fn lookupModuleAlias(self: *Scope, n: []const u8) ?[]const u8 {
+        if (self.module_aliases.get(n)) |path| return path;
+        if (self.parent) |p| return p.lookupModuleAlias(n);
         return null;
     }
 
