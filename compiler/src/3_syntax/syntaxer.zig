@@ -24,6 +24,7 @@ pub const SyntaxerError = error{
     ExpectedKeywordReturn,
     ExpectedKeywordIf,
     ExpectedAmpersand,
+    ExpectedStringLiteral,
     OutOfMemory,
 };
 
@@ -34,7 +35,7 @@ pub const Syntaxer = struct {
     tokens: []const tok.Token,
     index: usize,
     allocator: *const std.mem.Allocator,
-    st: std.ArrayList(*syn.STNode),
+    st: std.array_list.Managed(*syn.STNode),
     diags: *diagnostic.Diagnostics,
 
     pub fn init(alloc: *const std.mem.Allocator, toks: []const tok.Token, diags: *diagnostic.Diagnostics) Syntaxer {
@@ -42,7 +43,7 @@ pub const Syntaxer = struct {
             .tokens = toks,
             .index = 0,
             .allocator = alloc,
-            .st = std.ArrayList(*syn.STNode).init(alloc.*),
+            .st = std.array_list.Managed(*syn.STNode).init(alloc.*),
             .diags = diags,
         };
     }
@@ -168,7 +169,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var names = std.ArrayList([]const u8).init(self.allocator.*);
+        var names = std.array_list.Managed([]const u8).init(self.allocator.*);
         while (!self.tokenIs(.close_bracket)) {
             const n = try self.parseIdentifier();
             try names.append(n);
@@ -188,7 +189,7 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
         self.advanceOne();
         self.skipNewLinesAndComments();
-        var tys = std.ArrayList(syn.Type).init(self.allocator.*);
+        var tys = std.array_list.Managed(syn.Type).init(self.allocator.*);
         while (!self.tokenIs(.close_bracket)) {
             const t = (try self.parseType()).?; // types are mandatory here
             try tys.append(t);
@@ -298,7 +299,15 @@ pub const Syntaxer = struct {
             return syn.Type{ .struct_type_literal = lit };
         }
 
-        const tname = try self.parseName();
+        var tname = try self.parseName();
+        if (self.tokenIs(.dot)) {
+            self.advanceOne();
+            const rhs = try self.parseName();
+            tname = .{
+                .string = try std.fmt.allocPrint(self.allocator.*, "{s}.{s}", .{ tname.string, rhs.string }),
+                .location = tname.location,
+            };
+        }
         if (self.tokenIs(.hash)) {
             self.advanceOne();
             const gen_args = try self.parseStructTypeLiteral();
@@ -320,8 +329,8 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var names = std.ArrayList([]const u8).init(self.allocator.*);
-        var funcs = std.ArrayList(syn.AbstractFunctionRequirement).init(self.allocator.*);
+        var names = std.array_list.Managed([]const u8).init(self.allocator.*);
+        var funcs = std.array_list.Managed(syn.AbstractFunctionRequirement).init(self.allocator.*);
 
         while (!self.tokenIs(.close_parenthesis)) {
             var name = try self.parseName();
@@ -363,7 +372,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var elems = std.ArrayList(*syn.STNode).init(self.allocator.*);
+        var elems = std.array_list.Managed(*syn.STNode).init(self.allocator.*);
 
         while (!self.tokenIs(.close_parenthesis)) {
             const elem = try self.parseExpression();
@@ -391,7 +400,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var fields = std.ArrayList(syn.StructTypeLiteralField).init(self.allocator.*);
+        var fields = std.array_list.Managed(syn.StructTypeLiteralField).init(self.allocator.*);
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
@@ -434,7 +443,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var fields = std.ArrayList(syn.StructValueLiteralField).init(self.allocator.*);
+        var fields = std.array_list.Managed(syn.StructValueLiteralField).init(self.allocator.*);
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
@@ -479,6 +488,26 @@ pub const Syntaxer = struct {
                     dot_loc,
                 );
                 continue;
+            }
+
+            if (self.tokenIs(.open_parenthesis)) {
+                if (node.content == .struct_field_access and node.content.struct_field_access.struct_value.*.content == .identifier) {
+                    const sfa = node.content.struct_field_access;
+                    const module_name = sfa.struct_value.*.content.identifier;
+                    const struct_value_literal = try self.parseStructValueLiteral();
+                    node = try self.makeNode(
+                        .{ .function_call = .{
+                            .callee = sfa.field_name.string,
+                            .callee_loc = sfa.field_name.location,
+                            .module_qualifier = module_name,
+                            .type_arguments = null,
+                            .type_arguments_struct = null,
+                            .input = struct_value_literal,
+                        } },
+                        sfa.field_name.location,
+                    );
+                    continue;
+                }
             }
 
             if (self.tokenIs(.open_bracket)) {
@@ -537,6 +566,33 @@ pub const Syntaxer = struct {
             return try self.makeNode(.{ .address_of = .{ .value = inner, .mutability = mutability } }, op_loc);
         }
 
+        if (self.tokenIs(.hash)) {
+            const hash_loc = self.tokenLocation();
+            self.advanceOne();
+            const ident = try self.parseIdentifier();
+            if (!std.mem.eql(u8, ident, "import")) {
+                try self.diags.add(hash_loc, .syntax, "unknown directive '#{s}' in expression position", .{ident});
+                return SyntaxerError.ExpectedDeclarationOrAssignment;
+            }
+            if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+            const lit = self.current();
+            const path = switch (lit.content) {
+                .literal => |literal| switch (literal) {
+                    .string_literal => |text| text,
+                    else => return SyntaxerError.ExpectedStringLiteral,
+                },
+                else => return SyntaxerError.ExpectedStringLiteral,
+            };
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+            if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+            self.advanceOne();
+            const node = try self.makeNode(.{ .import_statement = .{ .path = path } }, hash_loc);
+            return try self.parsePostfix(node);
+        }
+
         const base: *syn.STNode = switch (t.content) {
             // ─── ident  /  call ─────────────────────────────────────────────
             .identifier => blk: {
@@ -557,6 +613,7 @@ pub const Syntaxer = struct {
                         .{ .function_call = .{
                             .callee = name,
                             .callee_loc = t.location,
+                            .module_qualifier = null,
                             .type_arguments = type_args,
                             .type_arguments_struct = type_args_struct,
                             .input = struct_value_literal,
@@ -656,12 +713,17 @@ pub const Syntaxer = struct {
             const hash_loc = self.tokenLocation();
             self.advanceOne();
             const ident = try self.parseIdentifier();
-            if (!std.mem.eql(u8, ident, "defer")) {
-                try self.diags.add(hash_loc, .syntax, "unknown directive '#{s}'", .{ident});
+            if (std.mem.eql(u8, ident, "defer")) {
+                const expr = try self.parseExpression();
+                return try self.makeNode(.{ .defer_statement = expr }, hash_loc);
+            }
+            if (std.mem.eql(u8, ident, "import")) {
+                try self.diags.add(hash_loc, .syntax, "#import must be assigned to a name", .{});
                 return SyntaxerError.ExpectedDeclarationOrAssignment;
             }
-            const expr = try self.parseExpression();
-            return try self.makeNode(.{ .defer_statement = expr }, hash_loc);
+
+            try self.diags.add(hash_loc, .syntax, "unknown directive '#{s}'", .{ident});
+            return SyntaxerError.ExpectedDeclarationOrAssignment;
         }
 
         const id_loc = self.tokenLocation();
@@ -677,7 +739,7 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.hash)) {
             self.advanceOne();
             const gen_struct = try self.parseStructTypeLiteral();
-            var names = std.ArrayList([]const u8).init(self.allocator.*);
+            var names = std.array_list.Managed([]const u8).init(self.allocator.*);
             for (gen_struct.fields) |fld| try names.append(fld.name.string);
             generic_params = names.items;
         } else if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
@@ -754,12 +816,13 @@ pub const Syntaxer = struct {
                 // call: Name(...)
                 const input_node = try self.makeNode(.{ .struct_type_literal = input }, id_loc);
                 return try self.makeNode(
-                    .{ .function_call = .{
-                        .callee = name.string,
-                        .callee_loc = id_loc,
-                        .type_arguments = null,
-                        .type_arguments_struct = null,
-                        .input = input_node,
+                        .{ .function_call = .{
+                            .callee = name.string,
+                            .callee_loc = id_loc,
+                            .module_qualifier = null,
+                            .type_arguments = null,
+                            .type_arguments_struct = null,
+                            .input = input_node,
                     } },
                     id_loc,
                 );
@@ -844,8 +907,8 @@ pub const Syntaxer = struct {
     }
 
     // ─────────────────────────────  SENTENCES  ──────────────────────────────
-    fn parseSentences(self: *Syntaxer) !std.ArrayList(*syn.STNode) {
-        var list = std.ArrayList(*syn.STNode).init(self.allocator.*);
+    fn parseSentences(self: *Syntaxer) !std.array_list.Managed(*syn.STNode) {
+        var list = std.array_list.Managed(*syn.STNode).init(self.allocator.*);
 
         while (!self.tokenIs(.eof) and !self.tokenIs(.close_brace)) {
             switch (self.current().content) {

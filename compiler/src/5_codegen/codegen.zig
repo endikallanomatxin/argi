@@ -393,7 +393,7 @@ pub const CodeGenerator = struct {
         return name.len == 4 and name[0] == 'm' and name[1] == 'a' and name[2] == 'i' and name[3] == 'n';
     }
 
-    fn encodeType(self: *CodeGenerator, buf: *std.ArrayList(u8), t: sem.Type) !void {
+    fn encodeType(self: *CodeGenerator, buf: *std.array_list.Managed(u8), t: sem.Type) !void {
         switch (t) {
             .builtin => |bt| {
                 const s = switch (bt) {
@@ -445,7 +445,7 @@ pub const CodeGenerator = struct {
     }
 
     fn mangledNameFor(self: *CodeGenerator, f: *const sem.FunctionDeclaration) ![]u8 {
-        var buf = std.ArrayList(u8).init(self.allocator.*);
+        var buf = std.array_list.Managed(u8).init(self.allocator.*);
         try buf.appendSlice(f.name);
         try buf.appendSlice("__in_");
         try self.encodeType(&buf, .{ .struct_type = &f.input });
@@ -534,6 +534,7 @@ pub const CodeGenerator = struct {
         for (f.input.fields) |fld| {
             const bd = sem.BindingDeclaration{
                 .name = fld.name,
+                .origin_file = f.location.file,
                 .mutability = syn.Mutability.constant,
                 .ty = fld.ty,
                 .initialization = null,
@@ -554,6 +555,7 @@ pub const CodeGenerator = struct {
         for (f.output.fields) |fld| {
             const bd = sem.BindingDeclaration{
                 .name = fld.name,
+                .origin_file = f.location.file,
                 .mutability = syn.Mutability.variable,
                 .ty = fld.ty,
                 .initialization = null,

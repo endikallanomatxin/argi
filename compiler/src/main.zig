@@ -29,7 +29,7 @@ pub fn main() !void {
         const build_args = args[2..];
         build_cmd.compile(build_args) catch |err| {
             std.debug.print("Build error: {any}\n", .{err});
-            return;
+            return err;
         };
     } else if (std.mem.eql(u8, command, "lsp")) {
         try lsp_cmd.start();

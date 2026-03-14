@@ -13,16 +13,17 @@ pub const Scope = struct {
     parent: ?*Scope,
     allocator: *const std.mem.Allocator,
 
-    nodes: std.ArrayList(*sg.SGNode),
+    nodes: std.array_list.Managed(*sg.SGNode),
+    module_aliases: std.StringHashMap([]const u8),
     bindings: std.StringHashMap(*sg.BindingDeclaration),
-    functions: std.StringHashMap(std.ArrayList(*sg.FunctionDeclaration)),
+    functions: std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)),
     types: std.StringHashMap(*sg.TypeDeclaration),
     abstracts: std.StringHashMap(*abs.AbstractInfo),
-    abstract_impls: std.StringHashMap(std.ArrayList(abs.AbstractImplEntry)),
+    abstract_impls: std.StringHashMap(std.array_list.Managed(abs.AbstractImplEntry)),
     abstract_defaults: std.StringHashMap(abs.AbstractDefaultEntry),
-    generic_functions: std.StringHashMap(std.ArrayList(gen.GenericTemplate)),
-    generic_types: std.StringHashMap(std.ArrayList(gen.GenericTypeTemplate)),
-    deferred: std.ArrayList(DeferredGroup),
+    generic_functions: std.StringHashMap(std.array_list.Managed(gen.GenericTemplate)),
+    generic_types: std.StringHashMap(std.array_list.Managed(gen.GenericTypeTemplate)),
+    deferred: std.array_list.Managed(DeferredGroup),
 
     current_fn: ?*sg.FunctionDeclaration,
 
@@ -34,16 +35,17 @@ pub const Scope = struct {
         return .{
             .parent = p,
             .allocator = a,
-            .nodes = std.ArrayList(*sg.SGNode).init(a.*),
+            .nodes = std.array_list.Managed(*sg.SGNode).init(a.*),
+            .module_aliases = std.StringHashMap([]const u8).init(a.*),
             .bindings = std.StringHashMap(*sg.BindingDeclaration).init(a.*),
-            .functions = std.StringHashMap(std.ArrayList(*sg.FunctionDeclaration)).init(a.*),
+            .functions = std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)).init(a.*),
             .types = std.StringHashMap(*sg.TypeDeclaration).init(a.*),
             .abstracts = std.StringHashMap(*abs.AbstractInfo).init(a.*),
-            .abstract_impls = std.StringHashMap(std.ArrayList(abs.AbstractImplEntry)).init(a.*),
+            .abstract_impls = std.StringHashMap(std.array_list.Managed(abs.AbstractImplEntry)).init(a.*),
             .abstract_defaults = std.StringHashMap(abs.AbstractDefaultEntry).init(a.*),
-            .generic_functions = std.StringHashMap(std.ArrayList(gen.GenericTemplate)).init(a.*),
-            .generic_types = std.StringHashMap(std.ArrayList(gen.GenericTypeTemplate)).init(a.*),
-            .deferred = std.ArrayList(DeferredGroup).init(a.*),
+            .generic_functions = std.StringHashMap(std.array_list.Managed(gen.GenericTemplate)).init(a.*),
+            .generic_types = std.StringHashMap(std.array_list.Managed(gen.GenericTypeTemplate)).init(a.*),
+            .deferred = std.array_list.Managed(DeferredGroup).init(a.*),
             .current_fn = fnc,
         };
     }
@@ -54,9 +56,35 @@ pub const Scope = struct {
         return null;
     }
 
+    pub fn lookupBindingInModule(self: *Scope, module_dir: []const u8, n: []const u8) ?*sg.BindingDeclaration {
+        var cur: ?*Scope = self;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.bindings.get(n)) |b| {
+                if (std.mem.startsWith(u8, b.origin_file, module_dir)) return b;
+            }
+        }
+        return null;
+    }
+
+    pub fn lookupModuleAlias(self: *Scope, n: []const u8) ?[]const u8 {
+        if (self.module_aliases.get(n)) |path| return path;
+        if (self.parent) |p| return p.lookupModuleAlias(n);
+        return null;
+    }
+
     pub fn lookupType(self: *Scope, n: []const u8) ?*sg.TypeDeclaration {
         if (self.types.get(n)) |t| return t;
         if (self.parent) |p| return p.lookupType(n);
+        return null;
+    }
+
+    pub fn lookupTypeInModule(self: *Scope, module_dir: []const u8, n: []const u8) ?*sg.TypeDeclaration {
+        var cur: ?*Scope = self;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.types.get(n)) |t| {
+                if (std.mem.startsWith(u8, t.origin_file, module_dir)) return t;
+            }
+        }
         return null;
     }
 

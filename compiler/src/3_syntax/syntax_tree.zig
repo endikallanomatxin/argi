@@ -47,6 +47,7 @@ pub const Content = union(enum) {
     binary_operation: BinaryOperation,
     comparison: Comparison,
     if_statement: IfStatement,
+    import_statement: ImportStatement,
     defer_statement: *STNode,
     index_assignment: IndexAssignment,
     address_of: AddressOf,
@@ -145,6 +146,7 @@ pub const Assignment = struct {
 pub const FunctionCall = struct {
     callee: []const u8,
     callee_loc: tok.Location,
+    module_qualifier: ?[]const u8,
     // Optional explicit type arguments on call site (e.g. foo[Int32, &Char])
     type_arguments: ?[]const Type,
     // Alternative syntax: named type arguments via struct-like block: #(.T: Int32)
@@ -221,6 +223,10 @@ pub const IfStatement = struct {
 
 pub const ReturnStatement = struct {
     expression: ?*STNode,
+};
+
+pub const ImportStatement = struct {
+    path: []const u8,
 };
 
 pub const PointerAssignment = struct {
