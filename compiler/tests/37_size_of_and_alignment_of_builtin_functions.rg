@@ -18,7 +18,8 @@ main () -> (.status_code: Int32) := {
         return
     }
 
-    v :: Vector2 = (.x = 1, .y = 2)
+    y_value : Int16 = 2
+    v :: Vector2 = (.x = 1, .y = y_value)
 
     size_vec_from_type :: Int32 = size_of(.type = Vector2)
     if size_vec_from_type != 8 {
