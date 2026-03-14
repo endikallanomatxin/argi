@@ -14,6 +14,46 @@ fn dirExists(path: []const u8) bool {
     return true;
 }
 
+fn firstExistingDir(
+    alloc: *const std.mem.Allocator,
+    candidates: []const []const u8,
+) ![]u8 {
+    for (candidates) |candidate| {
+        const resolved = try std.fs.path.resolve(alloc.*, &.{candidate});
+        if (dirExists(resolved)) return resolved;
+        alloc.free(resolved);
+    }
+    return error.FileNotFound;
+}
+
+fn resolveToolCoreDir(alloc: *const std.mem.Allocator, preferred: []const u8) ![]u8 {
+    const exe_dir = try std.fs.selfExeDirPathAlloc(alloc.*);
+    defer alloc.free(exe_dir);
+
+    const bundled_core = try std.fs.path.resolve(alloc.*, &.{ exe_dir, "..", "..", "core" });
+    defer alloc.free(bundled_core);
+
+    return try firstExistingDir(alloc, &.{
+        preferred,
+        "compiler/core",
+        bundled_core,
+    });
+}
+
+fn resolveToolMoreDir(alloc: *const std.mem.Allocator) ![]u8 {
+    const exe_dir = try std.fs.selfExeDirPathAlloc(alloc.*);
+    defer alloc.free(exe_dir);
+
+    const bundled_more = try std.fs.path.resolve(alloc.*, &.{ exe_dir, "..", "..", "..", "more" });
+    defer alloc.free(bundled_more);
+
+    return try firstExistingDir(alloc, &.{
+        "more",
+        "../more",
+        bundled_more,
+    });
+}
+
 fn collectRgFilesRecursively(
     alloc: *const std.mem.Allocator,
     list: *std.array_list.Managed(SourceFile),
@@ -100,11 +140,9 @@ pub fn resolveImportDir(
         return try std.fs.path.resolve(alloc.*, &.{ ".", import_path[1..] });
     }
 
-    const local_more = try std.fs.path.resolve(alloc.*, &.{ "more", import_path });
-    if (dirExists(local_more)) return local_more;
-    alloc.free(local_more);
-
-    return try std.fs.path.resolve(alloc.*, &.{ "..", "more", import_path });
+    const more_root = try resolveToolMoreDir(alloc);
+    defer alloc.free(more_root);
+    return try std.fs.path.resolve(alloc.*, &.{ more_root, import_path });
 }
 
 fn scanImports(
@@ -142,6 +180,8 @@ pub fn collect(
     user_path: []const u8,
 ) !std.array_list.Managed(SourceFile) {
     var list = std.array_list.Managed(SourceFile).init(alloc.*);
+    const resolved_core_dir = try resolveToolCoreDir(alloc, core_dir);
+    defer alloc.free(resolved_core_dir);
     const entry_source = try readFile(alloc, user_path);
     errdefer {
         alloc.free(entry_source.path);
@@ -161,7 +201,7 @@ pub fn collect(
     }
 
     // ─── core/ ────────────────────────────────────────────────────────────
-    try collectRgFilesRecursively(alloc, &list, core_dir, &seen_files);
+    try collectRgFilesRecursively(alloc, &list, resolved_core_dir, &seen_files);
 
     // ─── carpeta del entrypoint del usuario y imports explícitos ─────────
     const user_dir = std.fs.path.dirname(user_path) orelse ".";

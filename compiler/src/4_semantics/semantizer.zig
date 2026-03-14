@@ -820,7 +820,15 @@ pub const Semantizer = struct {
 
         if (d.value) |v| {
             if (v.*.content == .import_statement) {
-                const resolved = try source_files.resolveImportDir(self.allocator, loc.file, v.*.content.import_statement.path);
+                const resolved = source_files.resolveImportDir(self.allocator, loc.file, v.*.content.import_statement.path) catch {
+                    try self.diags.add(
+                        v.*.location,
+                        .semantic,
+                        "failed to resolve import '{s}'",
+                        .{v.*.content.import_statement.path},
+                    );
+                    return error.Reported;
+                };
                 try s.module_aliases.put(d.name.string, resolved);
                 return try typ.makeTypeLiteral(self.allocator, loc, .{ .builtin = .Any });
             }
