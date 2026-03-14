@@ -6,6 +6,49 @@ pub const SourceFile = struct {
     code: []const u8, // contenido completo
 };
 
+fn collectRgFilesFromDir(
+    alloc: *const std.mem.Allocator,
+    list: *std.array_list.Managed(SourceFile),
+    dir_path: []const u8,
+    skip_path: ?[]const u8,
+) !void {
+    var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |e| {
+        std.debug.print("No se pudo abrir {s}: {any}\n", .{ dir_path, e });
+        return;
+    };
+    defer dir.close();
+
+    var walker = dir.walk(alloc.*) catch unreachable;
+    defer walker.deinit();
+
+    var paths = std.array_list.Managed([]u8).init(alloc.*);
+    defer {
+        for (paths.items) |path| alloc.free(path);
+        paths.deinit();
+    }
+
+    while (try walker.next()) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.path, ".rg")) continue;
+
+        const full_path = try std.fs.path.join(alloc.*, &.{ dir_path, entry.path });
+        errdefer alloc.free(full_path);
+
+        if (skip_path) |skip| {
+            if (std.mem.eql(u8, full_path, skip)) {
+                alloc.free(full_path);
+                continue;
+            }
+        }
+
+        try paths.append(full_path);
+    }
+
+    for (paths.items) |full_path| {
+        try list.append(try readFile(alloc, full_path));
+    }
+}
+
 /// Lee un único fichero.
 pub fn readFile(alloc: *const std.mem.Allocator, path: []const u8) !SourceFile {
     const code = try std.fs.cwd().readFileAlloc(alloc.*, path, 1 << 24); // 16 MiB máx.
@@ -21,28 +64,16 @@ pub fn collect(
     var list = std.array_list.Managed(SourceFile).init(alloc.*);
 
     // ─── core/ ────────────────────────────────────────────────────────────
-    // Desde Zig 0.14, `openIterableDir` fue eliminado; se usa openDir con iterate=true
-    var dir = std.fs.cwd().openDir(core_dir, .{ .iterate = true }) catch |e| {
-        std.debug.print("No se pudo abrir {s}: {any}\n", .{ core_dir, e });
-        return list; // seguimos sin stdlib; el usuario recibirá diagnóstico
-    };
-    defer dir.close();
+    try collectRgFilesFromDir(alloc, &list, core_dir, null);
 
-    var walker = dir.walk(alloc.*) catch unreachable;
-    defer walker.deinit();
-
-    while (try walker.next()) |entry| {
-        if (entry.kind != .file) continue;
-        if (!std.mem.endsWith(u8, entry.path, ".rg")) continue;
-
-        // El `walker` devuelve rutas relativas a `core_dir`; las juntamos.
-        const full_path = try std.fs.path.join(alloc.*, &.{ core_dir, entry.path });
-        defer alloc.free(full_path); // readFile duplica la ruta, por eso la liberamos
-
-        try list.append(try readFile(alloc, full_path));
+    // ─── carpeta del entrypoint del usuario ──────────────────────────────
+    // For folder-level modules, use `main.rg` as the entrypoint of the folder.
+    if (std.mem.eql(u8, std.fs.path.basename(user_path), "main.rg")) {
+        const user_dir = std.fs.path.dirname(user_path) orelse ".";
+        try collectRgFilesFromDir(alloc, &list, user_dir, user_path);
     }
 
-    // ─── fuente del usuario ──────────────────────────────────────────────
+    // ─── entrypoint del usuario al final ─────────────────────────────────
     try list.append(try readFile(alloc, user_path));
 
     return list;
@@ -53,6 +84,9 @@ pub fn freeList(
     alloc: *const std.mem.Allocator,
     list: *std.array_list.Managed(SourceFile),
 ) void {
-    for (list.items) |f| alloc.free(f.code);
+    for (list.items) |f| {
+        alloc.free(f.path);
+        alloc.free(f.code);
+    }
     list.deinit();
 }

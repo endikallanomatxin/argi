@@ -203,3 +203,9 @@ test "413_arrays" {
     try build("tests/413_arrays.rg");
     try run();
 }
+
+test "62_folder_module_namespace" {
+    try clean();
+    try build("tests/modules_namespace/main.rg");
+    try run();
+}
