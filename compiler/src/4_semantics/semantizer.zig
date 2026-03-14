@@ -1226,7 +1226,7 @@ pub const Semantizer = struct {
                 break;
             }
         }
-        if (idx == null) return error.FieldNotFound;
+        if (idx == null) return error.FieldsNotFound;
 
         const fa = try self.allocator.create(sg.StructFieldAccess);
         fa.* = .{
