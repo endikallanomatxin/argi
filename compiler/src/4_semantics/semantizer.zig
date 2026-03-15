@@ -2314,62 +2314,9 @@ pub const Semantizer = struct {
                         }
                     }
                     if (!ok) continue;
-
-                    const in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, &subst);
-                    const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, &subst);
-
-                    if (!(try self.refineStructTypeWithActual(in_struct_ptr, call_input.ty))) continue;
-
-                    if (s.functions.getPtr(name)) |fns| {
-                        for (fns.items) |cand| {
-                            if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
-                                return cand;
-                        }
+                    if (try self.instantiateGenericTemplate(name, tmpl, call_input, s, &subst)) |instantiated| {
+                        return instantiated;
                     }
-
-                    var child = try Scope.init(self.allocator, s, null);
-                    var it = subst.iterator();
-                    while (it.next()) |entry| {
-                        const td = try self.allocator.create(sg.TypeDeclaration);
-                        td.* = .{ .name = entry.key_ptr.*, .origin_file = tmpl.location.file, .ty = entry.value_ptr.* };
-                        try child.types.put(entry.key_ptr.*, td);
-                    }
-                    for (in_struct_ptr.fields) |fld| {
-                        const bd = try self.allocator.create(sg.BindingDeclaration);
-                        bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
-                        try child.bindings.put(fld.name, bd);
-                    }
-                    for (out_struct_ptr.fields) |fld| {
-                        const bd = try self.allocator.create(sg.BindingDeclaration);
-                        bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
-                        try child.bindings.put(fld.name, bd);
-                    }
-
-                    var body_cb: ?*sg.CodeBlock = null;
-                    if (tmpl.body) |body_node| {
-                        const body_te = try self.visitNode(body_node.*, &child);
-                        body_cb = body_te.node.content.code_block;
-                    }
-
-                    const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
-                    fn_ptr.* = .{
-                        .name = tmpl.name,
-                        .location = tmpl.location,
-                        .input = in_struct_ptr.*,
-                        .output = out_struct_ptr.*,
-                        .body = body_cb,
-                    };
-                    if (s.functions.getPtr(name)) |list_ptr2| {
-                        try list_ptr2.append(fn_ptr);
-                    } else {
-                        var lst = std.array_list.Managed(*sg.FunctionDeclaration).init(self.allocator.*);
-                        try lst.append(fn_ptr);
-                        try s.functions.put(name, lst);
-                    }
-                    const n = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, tmpl.location, self.allocator);
-                    try self.root_list.append(n);
-                    self.clearDeferred(&child);
-                    return fn_ptr;
                 }
             }
         }
@@ -2396,71 +2343,81 @@ pub const Semantizer = struct {
                         const resolved = try self.resolveTypeWithSubst(type_args_syn[i], s, &subst);
                         try subst.put(tmpl.param_names[i], resolved);
                     }
-
-                    const in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, &subst);
-                    const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, &subst);
-
-                    if (!(try self.refineStructTypeWithActual(in_struct_ptr, call_input.ty))) continue;
-
-                    // Check if already instantiated
-                    if (s.functions.getPtr(name)) |fns| {
-                        for (fns.items) |cand| {
-                            if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
-                                return cand;
-                        }
+                    if (try self.instantiateGenericTemplate(name, tmpl, call_input, s, &subst)) |instantiated| {
+                        return instantiated;
                     }
-
-                    // Create child scope with type aliases
-                    var child = try Scope.init(self.allocator, s, null);
-                    var it = subst.iterator();
-                    while (it.next()) |entry| {
-                        const td = try self.allocator.create(sg.TypeDeclaration);
-                        td.* = .{ .name = entry.key_ptr.*, .origin_file = tmpl.location.file, .ty = entry.value_ptr.* };
-                        try child.types.put(entry.key_ptr.*, td);
-                    }
-
-                    // Register params in child scope
-                    for (in_struct_ptr.fields) |fld| {
-                        const bd = try self.allocator.create(sg.BindingDeclaration);
-                        bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
-                        try child.bindings.put(fld.name, bd);
-                    }
-                    for (out_struct_ptr.fields) |fld| {
-                        const bd = try self.allocator.create(sg.BindingDeclaration);
-                        bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
-                        try child.bindings.put(fld.name, bd);
-                    }
-
-                    var body_cb: ?*sg.CodeBlock = null;
-                    if (tmpl.body) |body_node| {
-                        const body_te = try self.visitNode(body_node.*, &child);
-                        body_cb = body_te.node.content.code_block;
-                    }
-
-                    const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
-                    fn_ptr.* = .{
-                        .name = tmpl.name,
-                        .location = tmpl.location,
-                        .input = in_struct_ptr.*,
-                        .output = out_struct_ptr.*,
-                        .body = body_cb,
-                    };
-
-                    if (s.functions.getPtr(name)) |list_ptr2| {
-                        try list_ptr2.append(fn_ptr);
-                    } else {
-                        var lst = std.array_list.Managed(*sg.FunctionDeclaration).init(self.allocator.*);
-                        try lst.append(fn_ptr);
-                        try s.functions.put(name, lst);
-                    }
-                    const n = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, tmpl.location, self.allocator);
-                    try self.root_list.append(n);
-                    self.clearDeferred(&child);
-                    return fn_ptr;
                 }
             }
         }
         return error.SymbolNotFound;
+    }
+
+    fn instantiateGenericTemplate(
+        self: *Semantizer,
+        name: []const u8,
+        tmpl: gen.GenericTemplate,
+        call_input: typ.TypedExpr,
+        s: *Scope,
+        subst: *std.StringHashMap(sg.Type),
+    ) SemErr!?*sg.FunctionDeclaration {
+        const in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, subst);
+        const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, subst);
+
+        if (!(try self.refineStructTypeWithActual(in_struct_ptr, call_input.ty))) return null;
+
+        if (s.functions.getPtr(name)) |fns| {
+            for (fns.items) |cand| {
+                if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr })) {
+                    return cand;
+                }
+            }
+        }
+
+        var child = try Scope.init(self.allocator, s, null);
+        var it = subst.iterator();
+        while (it.next()) |entry| {
+            const td = try self.allocator.create(sg.TypeDeclaration);
+            td.* = .{ .name = entry.key_ptr.*, .origin_file = tmpl.location.file, .ty = entry.value_ptr.* };
+            try child.types.put(entry.key_ptr.*, td);
+        }
+
+        for (in_struct_ptr.fields) |fld| {
+            const bd = try self.allocator.create(sg.BindingDeclaration);
+            bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
+            try child.bindings.put(fld.name, bd);
+        }
+        for (out_struct_ptr.fields) |fld| {
+            const bd = try self.allocator.create(sg.BindingDeclaration);
+            bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
+            try child.bindings.put(fld.name, bd);
+        }
+
+        var body_cb: ?*sg.CodeBlock = null;
+        if (tmpl.body) |body_node| {
+            const body_te = try self.visitNode(body_node.*, &child);
+            body_cb = body_te.node.content.code_block;
+        }
+
+        const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
+        fn_ptr.* = .{
+            .name = tmpl.name,
+            .location = tmpl.location,
+            .input = in_struct_ptr.*,
+            .output = out_struct_ptr.*,
+            .body = body_cb,
+        };
+
+        if (s.functions.getPtr(name)) |list_ptr| {
+            try list_ptr.append(fn_ptr);
+        } else {
+            var list = std.array_list.Managed(*sg.FunctionDeclaration).init(self.allocator.*);
+            try list.append(fn_ptr);
+            try s.functions.put(name, list);
+        }
+        const node = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, tmpl.location, self.allocator);
+        try self.root_list.append(node);
+        self.clearDeferred(&child);
+        return fn_ptr;
     }
 
     pub fn instantiateGenericTypeNamed(
