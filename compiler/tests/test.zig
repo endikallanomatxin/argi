@@ -275,6 +275,20 @@ test "334_abstract_instantiation" {
     try run();
 }
 
+test "339_abstract_self_output" {
+    try clean();
+    try build("tests/339_abstract_self_output/main.rg");
+    try run();
+}
+
+test "340X_abstract_self_output_wrong" {
+    try clean();
+    try buildExpectFail(
+        "tests/340X_abstract_self_output_wrong/main.rg",
+        "type does not implement abstract 'Animal':\n  missing function: clone (.who: Dog)",
+    );
+}
+
 test "336X_abstract_function_input_requires_default" {
     try clean();
     try buildExpectFail(

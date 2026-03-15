@@ -602,8 +602,9 @@ pub const Semantizer = struct {
             var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
             var output_generic = std.array_list.Managed(?u32).init(self.allocator.*);
             var output_abstract = std.array_list.Managed(?[]const u8).init(self.allocator.*);
+            var output_self_idxs = std.array_list.Managed(u32).init(self.allocator.*);
 
-            for (rf.output.fields) |fld| {
+            for (rf.output.fields, 0..) |fld, i| {
                 var ty: sg.Type = .{ .builtin = .Any };
                 var generic_idx_opt: ?u32 = null;
                 var abstract_req: ?[]const u8 = null;
@@ -612,19 +613,23 @@ pub const Semantizer = struct {
                     switch (t) {
                         .type_name => |tn| {
                             const name = tn.string;
-                            var found: bool = false;
-                            for (generic_params, 0..) |gp, gi| {
-                                if (std.mem.eql(u8, gp, name)) {
-                                    generic_idx_opt = @intCast(gi);
-                                    found = true;
-                                    break;
+                            if (std.mem.eql(u8, name, "Self")) {
+                                try output_self_idxs.append(@intCast(i));
+                            } else {
+                                var found: bool = false;
+                                for (generic_params, 0..) |gp, gi| {
+                                    if (std.mem.eql(u8, gp, name)) {
+                                        generic_idx_opt = @intCast(gi);
+                                        found = true;
+                                        break;
+                                    }
                                 }
-                            }
-                            if (!found) {
-                                if (s.lookupAbstractInfo(name) != null) {
-                                    abstract_req = name;
-                                } else {
-                                    ty = try self.resolveType(t, s);
+                                if (!found) {
+                                    if (s.lookupAbstractInfo(name) != null) {
+                                        abstract_req = name;
+                                    } else {
+                                        ty = try self.resolveType(t, s);
+                                    }
                                 }
                             }
                         },
@@ -662,12 +667,14 @@ pub const Semantizer = struct {
                 .input = in_struct,
                 .output = out_struct,
                 .input_self_indices = try self_idxs.toOwnedSlice(),
+                .output_self_indices = try output_self_idxs.toOwnedSlice(),
                 .input_generic_param_indices = input_generic_slice,
                 .output_generic_param_indices = output_generic_slice,
                 .input_abstract_requirements = input_abstract_slice,
                 .output_abstract_requirements = output_abstract_slice,
             });
             self_idxs.deinit();
+            output_self_idxs.deinit();
         }
 
         const info = try self.allocator.create(abs.AbstractInfo);

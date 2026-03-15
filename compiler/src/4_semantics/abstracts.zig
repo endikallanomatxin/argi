@@ -15,6 +15,7 @@ pub const AbstractFunctionReqSem = struct {
     output: sg.StructType,
     // indices of input fields whose type was 'Self'
     input_self_indices: []const u32,
+    output_self_indices: []const u32,
     // parallel slices to track generic parameter usage per field
     input_generic_param_indices: []const ?u32,
     output_generic_param_indices: []const ?u32,
@@ -205,6 +206,7 @@ pub fn funcInputMatchesRequirement(
 pub fn funcOutputMatchesRequirement(
     rq: *const AbstractFunctionReqSem,
     cand_out: *const sg.StructType,
+    concrete: sg.Type,
     param_bindings: []?sg.Type,
     s: *Scope,
 ) bool {
@@ -214,6 +216,11 @@ pub fn funcOutputMatchesRequirement(
     while (i < rq.output.fields.len) : (i += 1) {
         const ro = rq.output.fields[i];
         const co = cand_out.fields[i];
+
+        if (containsIndex(rq.output_self_indices, @intCast(i))) {
+            if (!typ.typesExactlyEqual(concrete, co.ty)) return false;
+            continue;
+        }
 
         if (rq.output_abstract_requirements.len > i) {
             if (rq.output_abstract_requirements[i]) |abs_name| {
@@ -301,7 +308,7 @@ fn existsFunctionForRequirement(
                     const empty: []?sg.Type = &[_]?sg.Type{};
                     if (!funcInputMatchesRequirement(&rq, &cand.input, concrete, empty, s))
                         continue;
-                    if (!funcOutputMatchesRequirement(&rq, &cand.output, empty, s))
+                    if (!funcOutputMatchesRequirement(&rq, &cand.output, concrete, empty, s))
                         continue;
                     return true;
                 } else {
@@ -311,7 +318,7 @@ fn existsFunctionForRequirement(
 
                     if (!funcInputMatchesRequirement(&rq, &cand.input, concrete, bindings, s))
                         continue;
-                    if (!funcOutputMatchesRequirement(&rq, &cand.output, bindings, s))
+                    if (!funcOutputMatchesRequirement(&rq, &cand.output, concrete, bindings, s))
                         continue;
                     return true;
                 }
