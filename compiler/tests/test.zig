@@ -268,6 +268,22 @@ test "334_abstract_instantiation" {
     try run();
 }
 
+test "336X_abstract_function_input_requires_default" {
+    try clean();
+    try buildExpectFail(
+        "tests/336X_abstract_function_input_requires_default/main.rg",
+        "abstract types without a default are not supported in this function signature position yet",
+    );
+}
+
+test "338X_abstract_function_output_requires_default" {
+    try clean();
+    try buildExpectFail(
+        "tests/338X_abstract_function_output_requires_default/main.rg",
+        "abstract types without a default are not supported in this function signature position yet",
+    );
+}
+
 test "351_init" {
     try clean();
     try build("tests/351_init/main.rg");
