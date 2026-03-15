@@ -390,6 +390,71 @@ pub fn collect(
     return try collectWithEntrySource(alloc, core_dir, user_path, entry_source.code);
 }
 
+pub fn collectModule(
+    alloc: *const std.mem.Allocator,
+    core_dir: []const u8,
+    module_dir: []const u8,
+) !std.array_list.Managed(SourceFile) {
+    var list = std.array_list.Managed(SourceFile).init(alloc.*);
+    errdefer freeList(alloc, &list);
+
+    const resolved_core_dir = try resolveToolCoreDir(alloc, core_dir);
+    defer alloc.free(resolved_core_dir);
+    const resolved_module_dir = try std.fs.path.resolve(alloc.*, &.{module_dir});
+    defer alloc.free(resolved_module_dir);
+
+    var seen_files = DirSet.init(alloc.*);
+    defer {
+        var it = seen_files.iterator();
+        while (it.next()) |entry| alloc.free(entry.key_ptr.*);
+        seen_files.deinit();
+    }
+    var acyclic_dirs = DirSet.init(alloc.*);
+    defer {
+        var it = acyclic_dirs.iterator();
+        while (it.next()) |entry| alloc.free(entry.key_ptr.*);
+        acyclic_dirs.deinit();
+    }
+    var stack = std.array_list.Managed([]const u8).init(alloc.*);
+    defer stack.deinit();
+    var ordered_dirs = std.array_list.Managed([]const u8).init(alloc.*);
+    defer {
+        for (ordered_dirs.items) |path| alloc.free(path);
+        ordered_dirs.deinit();
+    }
+    var ordered_seen = DirSet.init(alloc.*);
+    defer {
+        var it = ordered_seen.iterator();
+        while (it.next()) |entry| alloc.free(entry.key_ptr.*);
+        ordered_seen.deinit();
+    }
+
+    try collectRgFilesRecursively(alloc, &list, resolved_core_dir, &seen_files);
+
+    try validateModuleGraphAcyclic(
+        alloc,
+        resolved_module_dir,
+        null,
+        null,
+        &acyclic_dirs,
+        &stack,
+    );
+    try collectModuleOrder(
+        alloc,
+        resolved_module_dir,
+        null,
+        null,
+        &ordered_seen,
+        &ordered_dirs,
+    );
+
+    for (ordered_dirs.items) |dir_path| {
+        try collectRgFilesInDir(alloc, &list, dir_path, null, &seen_files);
+    }
+
+    return list;
+}
+
 pub fn collectWithEntrySource(
     alloc: *const std.mem.Allocator,
     core_dir: []const u8,

@@ -4,6 +4,13 @@ const expectEqual = std.testing.expectEqual;
 const allocator = std.heap.page_allocator;
 // const allocator = std.testing.allocator;
 
+fn modulePathFor(path: []const u8) []const u8 {
+    if (std.mem.endsWith(u8, path, "/main.rg")) {
+        return std.fs.path.dirname(path) orelse path;
+    }
+    return path;
+}
+
 fn clean() !void {
     // Borrar ./output y ./output.ll si existen
     const cwd = std.fs.cwd();
@@ -19,7 +26,7 @@ fn build(name: []const u8) !void {
     // Ejecutar el comando de compilación
     const result = try std.process.Child.run(.{
         .allocator = allocator,
-        .argv = &[_][]const u8{ "./zig-out/bin/argi", "build", name },
+        .argv = &[_][]const u8{ "./zig-out/bin/argi", "build", modulePathFor(name) },
     });
     try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
 }
@@ -27,7 +34,7 @@ fn build(name: []const u8) !void {
 fn buildExpectFail(name: []const u8, expected_stderr: []const u8) !void {
     const result = try std.process.Child.run(.{
         .allocator = allocator,
-        .argv = &[_][]const u8{ "./zig-out/bin/argi", "build", name },
+        .argv = &[_][]const u8{ "./zig-out/bin/argi", "build", modulePathFor(name) },
     });
 
     switch (result.term) {
