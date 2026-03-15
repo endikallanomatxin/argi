@@ -91,6 +91,7 @@ pub const BuiltinType = enum {
     Int16,
     Int32,
     Int64,
+    UIntNative,
     UInt8,
     UInt16,
     UInt32,

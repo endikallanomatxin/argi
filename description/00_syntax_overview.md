@@ -87,6 +87,8 @@ aritmética y luego volverlo a convertir en un puntero. Es suficientemente
 incómodo como para no hacerlo sin querer, te obliga a ser explícito para
 cagarla.
 
+El tipo numérico canónico para eso es `UIntNative`.
+
 
 ### Read-only vs read-write pointers
 

@@ -2,6 +2,7 @@ const std = @import("std");
 const llvm = @import("llvm.zig");
 const c = llvm.c;
 const sem = @import("../4_semantics/semantic_graph.zig");
+const sem_types = @import("../4_semantics/types.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
@@ -39,7 +40,7 @@ fn isUnsignedBuiltin(sem_ty: ?sem.Type) bool {
     if (sem_ty) |t| {
         if (t == .builtin) {
             return switch (t.builtin) {
-                .UInt8, .UInt16, .UInt32, .UInt64 => true,
+                .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64 => true,
                 else => false,
             };
         }
@@ -341,6 +342,12 @@ pub const CodeGenerator = struct {
                 .Int16 => c.LLVMInt16Type(),
                 .Int32 => c.LLVMInt32Type(),
                 .Int64 => c.LLVMInt64Type(),
+                .UIntNative => switch (sem_types.pointer_size_bytes) {
+                    2 => c.LLVMInt16Type(),
+                    4 => c.LLVMInt32Type(),
+                    8 => c.LLVMInt64Type(),
+                    else => return CodegenError.InvalidType,
+                },
                 .UInt8 => c.LLVMInt8Type(), // Checkear lo de signed o unsigned.
                 .UInt16 => c.LLVMInt16Type(),
                 .UInt32 => c.LLVMInt32Type(),
@@ -405,6 +412,7 @@ pub const CodeGenerator = struct {
                     .Int16 => "i16",
                     .Int32 => "i32",
                     .Int64 => "i64",
+                    .UIntNative => "unative",
                     .UInt8 => "u8",
                     .UInt16 => "u16",
                     .UInt32 => "u32",
@@ -1443,7 +1451,7 @@ pub const CodeGenerator = struct {
         const source_is_ptr = source_sem_ty == .pointer_type;
         const source_is_int = switch (source_sem_ty) {
             .builtin => |bt| switch (bt) {
-                .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64 => true,
+                .UIntNative => true,
                 else => false,
             },
             else => false,
@@ -1451,7 +1459,7 @@ pub const CodeGenerator = struct {
         const target_is_ptr = ec.target_type == .pointer_type;
         const target_is_int = switch (ec.target_type) {
             .builtin => |bt| switch (bt) {
-                .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64 => true,
+                .UIntNative => true,
                 else => false,
             },
             else => false,

@@ -119,7 +119,7 @@ pub fn isAny(t: sg.Type) bool {
 pub fn isIntegerType(t: sg.Type) bool {
     return switch (t) {
         .builtin => |bt| switch (bt) {
-            .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64 => true,
+            .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64 => true,
             else => false,
         },
         else => false,
@@ -319,6 +319,7 @@ pub fn computeTypeSize(ty: sg.Type) u64 {
             .Int16, .UInt16, .Float16 => 2,
             .Int32, .UInt32, .Float32 => 4,
             .Int64, .UInt64, .Float64 => 8,
+            .UIntNative => pointer_size_bytes,
             .Type => pointer_size_bytes,
             .Any => pointer_size_bytes,
         },
@@ -351,6 +352,7 @@ pub fn computeTypeAlignment(ty: sg.Type) u64 {
             .Int16, .UInt16, .Float16 => 2,
             .Int32, .UInt32, .Float32 => 4,
             .Int64, .UInt64, .Float64 => 8,
+            .UIntNative => pointer_alignment_bytes,
             .Type => pointer_alignment_bytes,
             .Any => pointer_alignment_bytes,
         },
@@ -432,7 +434,7 @@ pub fn intLiteralAs(
             }
             break :blk_signed try makeIntLiteral(allocator, loc, value, .{ .builtin = target });
         },
-        .UInt8, .UInt16, .UInt32, .UInt64 => blk_unsigned: {
+        .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64 => blk_unsigned: {
             if (value < 0) {
                 try diags.add(
                     loc,
@@ -443,6 +445,7 @@ pub fn intLiteralAs(
                 return error.Reported;
             }
             const max_val: u64 = switch (target) {
+                .UIntNative => std.math.maxInt(usize),
                 .UInt8 => std.math.maxInt(u8),
                 .UInt16 => std.math.maxInt(u16),
                 .UInt32 => std.math.maxInt(u32),

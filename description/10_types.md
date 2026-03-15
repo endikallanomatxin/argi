@@ -63,6 +63,9 @@ Se resuelve gracias al multiple dispatch.
 
 Types are not automatically casted for arithmetic operations. 
 
+Low-level casts that reinterpret addresses should use `UIntNative` as the
+canonical integer type for pointer-sized values.
+
 
 ## Type checking
 
@@ -113,4 +116,3 @@ To make variables private, just use:
 - UTF8 names? to insert LaTeX symbols: `\delta` + Tab. (from julia)
 - Si dices que `x: float` y luego dices `x = 1`, sabe que en realidad quieres decir `1.0`. (from Odin)
 - `x, y = y, x` se tiene que poder hacer.
-
