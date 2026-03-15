@@ -7,9 +7,15 @@
 
     - Implement an arena allocator to avoid memory leaks in semantizer.
 
+    - Revisar `refineStructTypeWithActual`: ahora muta `StructType.fields`
+    in-place al refinar genéricos. Riesgo de aliasing y de contaminar otras
+    rutas de resolución. Mejor clonar/internar el tipo refinado.
+
 - Choice types: Implement
 
-- Implement checks like: `let x: UInt8 = 300` → error de rango.
+- `let x: UInt8 = 300` → el check de rango para literales ya está
+  implementado. Quitar esta entrada y añadir tests negativos dedicados para
+  overflow/underflow de enteros con anotación explícita.
 
 - Abstracts:
 
@@ -28,8 +34,23 @@
 
     (por ahora no trabajar más en el defaultsto, que igual lo quitamos)
 
+    - Añadir al harness los tests negativos de abstracts que ya existen
+    (`332X`, `333X`, `335X`) para que estos errores no regresen sin enterarnos.
+
 
 - Modules: implement explicit `#import` on top of directory-based modules
+
+    - El harness no está ejecutando algunos casos de módulos/imports que ya
+    existen (`62_folder_imports_overview`).
+
+    - Dejar de pensar el build alrededor de `main.rg`/`build <file>` y mover el
+    modelo al nivel de directorio-módulo. Compilar un directorio completo
+    encaja mejor con la regla actual de que todos los `.rg` de una carpeta
+    comparten namespace.
+
+    - Revisar el CLI para pasar de `build <file.rg>` a `build <directory>` (o
+    equivalente), y adaptar resolución de entrypoint, tests y mensajes de uso a
+    ese modelo.
 
 
 - **Índices/offsets de puntero: fija la política.**
@@ -66,9 +87,52 @@
     esa restricción, quita el check y devuelve UInt64 siempre (ahorras
     diagnósticos y conversiones).
 
+    - Revisar también la coherencia con `length`, que ahora devuelve `UInt64`.
+
 
 - Restricción de “sólo Int64/UInt64” en suma de punteros
 
     En handleBinOp para pointer + int exiges 64-bit exacto. Si te vale
     cualquier entero (con promoción), elimina ese check duro y usa
     typ.isIntegerType.
+
+
+- Tests / cobertura:
+
+    - Añadir al harness `compiler/tests/test.zig` los casos que ya existen pero
+    no se están ejecutando: `06_if`, `131X_multiple_dispatch_ambiguous`,
+    `223X`, `224X`, `225X`, `414`, `415`, `416`, `43_alias`, `61_system`,
+    `71_loops`.
+
+    - `42_choice`, `81_comptime` y `90_build_system` existen pero sus
+    `main.rg` están vacíos. Decidir si son placeholders o features a
+    implementar y actuar en consecuencia.
+
+    - Añadir tests específicos para la política final de offsets de puntero,
+    para `size_of/alignment_of` una vez fijado el tipo de retorno, y para
+    evitar coerciones implícitas desde codegen.
+
+
+- LSP:
+
+    - Endurecer el servidor: ahora varias rutas silencian errores con
+    `catch {}` / `catch return`. Conviene responder errores del protocolo o al
+    menos loggarlos para no perder fallos de análisis o de parsing JSON.
+
+    - Añadir tests del `LanguageService` y de `semanticTokens`. Ahora no hay
+    cobertura visible para esa capa.
+
+
+- CLI / docs:
+
+    - Alinear `README.md` con el CLI real:
+      * usar `tests/` en vez de `test/`
+      * documentar el nuevo modelo de build por directorio cuando se haga el
+        cambio
+      * reflejar los flags de build y el comando `lsp`
+
+    - Mantener la ayuda del CLI sincronizada con lo que realmente soporta el
+    compilador.
+
+    - Cuando se haga el cambio a build por directorio, revisar también el
+    harness de tests para no seguir compilando rutas a fichero individuales.
