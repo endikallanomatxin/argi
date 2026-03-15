@@ -143,7 +143,7 @@ pub const Semantizer = struct {
                                     "cannot use abstract '{s}' as a type for a symbol. Use a concrete type or add a default concrete type to the abstract type ('{s} defaultsto <Type>')",
                                     .{ tp2.type_name.string, tp2.type_name.string },
                                 );
-                                break :blk err;
+                                break :blk error.Reported;
                             }
                         }
                         try self.diags.add(
@@ -152,6 +152,7 @@ pub const Semantizer = struct {
                             "cannot use abstract type without a default (add 'defaultsto' or use a concrete type)",
                             .{},
                         );
+                        break :blk error.Reported;
                     },
                     else => {
                         try self.diags.add(
