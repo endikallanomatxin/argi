@@ -628,7 +628,7 @@ pub const CodeGenerator = struct {
             .initialized = init_tv != null,
         });
 
-        // 5) almacenar valor inicial, manejando struct-parciales
+        // 5) almacenar valor inicial
         if (init_tv) |tv_raw| {
             const tv = tv_raw;
             // Global initializers must be constant; for now, only allow none
@@ -637,74 +637,9 @@ pub const CodeGenerator = struct {
                 // (could enhance by constant-folding later)
                 return;
             }
-            const target_ty = llvm_decl_ty;
 
             if (tv.type_ref == llvm_decl_ty) {
-                // tipos idénticos → copiar tal cual
                 _ = c.LLVMBuildStore(self.builder, tv.value_ref, storage);
-            } else if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMPointerTypeKind and
-                c.LLVMGetTypeKind(target_ty) == c.LLVMGetTypeKind(tv.type_ref))
-            {
-                const casted = c.LLVMBuildBitCast(self.builder, tv.value_ref, target_ty, "ptr.cast");
-                _ = c.LLVMBuildStore(self.builder, casted, storage);
-            } else if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMStructTypeKind and
-                c.LLVMGetTypeKind(target_ty) != c.LLVMStructTypeKind)
-            {
-                const field_count = c.LLVMCountStructElementTypes(tv.type_ref);
-                var extracted = false;
-                var idx: u32 = 0;
-                while (idx < field_count) : (idx += 1) {
-                    const fty = c.LLVMStructGetTypeAtIndex(tv.type_ref, idx);
-                    if (fty == target_ty) {
-                        const elem = c.LLVMBuildExtractValue(self.builder, tv.value_ref, idx, "init.extract");
-                        _ = c.LLVMBuildStore(self.builder, elem, storage);
-                        extracted = true;
-                        break;
-                    }
-                }
-                if (!extracted) return CodegenError.InvalidType;
-            } else if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMStructTypeKind and
-                c.LLVMGetTypeKind(llvm_decl_ty) == c.LLVMStructTypeKind)
-            {
-                // El literal proporciona solo un subconjunto de campos:
-                // construimos un agregado del tamaño correcto, rellenando
-                // con `undef` los campos faltantes.
-                var agg = c.LLVMGetUndef(llvm_decl_ty);
-
-                const provided_cnt = c.LLVMCountStructElementTypes(tv.type_ref);
-                var idx: u32 = 0;
-                while (idx < provided_cnt) : (idx += 1) {
-                    const elem = c.LLVMBuildExtractValue(
-                        self.builder,
-                        tv.value_ref,
-                        idx,
-                        "init.extract",
-                    );
-                    agg = c.LLVMBuildInsertValue(
-                        self.builder,
-                        agg,
-                        elem,
-                        idx,
-                        "init.insert",
-                    );
-                }
-
-                // después de haber copiado los que sí aporta el literal…
-                var i: u32 = provided_cnt;
-                while (i < c.LLVMCountStructElementTypes(llvm_decl_ty)) : (i += 1) {
-                    // 1) buscamos si el campo i tiene default_value semántico
-                    const field_sem = b.ty.struct_type.fields[i];
-                    if (field_sem.default_value) |dflt_node| {
-                        // evaluamos el nodo (debería dar un TypedValue constante)
-                        const tv_default = (try self.visitNode(dflt_node)).?;
-                        agg = c.LLVMBuildInsertValue(self.builder, agg, tv_default.value_ref, i, "init.default");
-                    } else {
-                        // 2) si no hay default explícito ya dejamos el `undef` (comporta‐miento previo)
-                        agg = c.LLVMBuildInsertValue(self.builder, agg, c.LLVMGetUndef(c.LLVMStructGetTypeAtIndex(llvm_decl_ty, i)), i, "init.undef");
-                    }
-                }
-
-                _ = c.LLVMBuildStore(self.builder, agg, storage);
             } else {
                 return CodegenError.InvalidType;
             }
