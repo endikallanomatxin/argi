@@ -1323,16 +1323,18 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         const base = try self.visitNode(ia.value.*, s);
+        const native_uint_ty: sg.Type = .{ .builtin = .UIntNative };
 
         if (base.ty == .array_type) {
-            const idx_te = try self.visitNode(ia.index.*, s);
-            if (!typ.isIntegerType(idx_te.ty)) {
+            var idx_te = try self.visitNode(ia.index.*, s);
+            idx_te = try typ.coerceExprToType(native_uint_ty, idx_te, ia.index, s, self.allocator, self.diags);
+            if (!typ.typesExactlyEqual(idx_te.ty, native_uint_ty)) {
                 const idx_ty = try typ.formatType(idx_te.ty, s, self.allocator);
                 defer self.allocator.free(idx_ty);
                 try self.diags.add(
                     ia.index.*.location,
                     .semantic,
-                    "array index must be an integer type, got '{s}'",
+                    "array index must be 'UIntNative', got '{s}'",
                     .{idx_ty},
                 );
                 return error.Reported;
@@ -1353,13 +1355,26 @@ pub const Semantizer = struct {
 
         if (base.node.content == .list_literal) {
             const ll = base.node.content.list_literal;
-            const idx_te = try self.visitNode(ia.index.*, s);
+            var idx_te = try self.visitNode(ia.index.*, s);
+            idx_te = try typ.coerceExprToType(native_uint_ty, idx_te, ia.index, s, self.allocator, self.diags);
+
+            if (!typ.typesExactlyEqual(idx_te.ty, native_uint_ty)) {
+                const idx_ty = try typ.formatType(idx_te.ty, s, self.allocator);
+                defer self.allocator.free(idx_ty);
+                try self.diags.add(
+                    ia.index.*.location,
+                    .semantic,
+                    "list literal index must be 'UIntNative', got '{s}'",
+                    .{idx_ty},
+                );
+                return error.Reported;
+            }
 
             if (idx_te.node.content != .value_literal) {
                 try self.diags.add(
                     ia.index.*.location,
                     .semantic,
-                    "index into a list literal must be an integer literal",
+                    "index into a list literal must be a 'UIntNative' integer literal",
                     .{},
                 );
                 return error.Reported;
@@ -1372,7 +1387,7 @@ pub const Semantizer = struct {
                     try self.diags.add(
                         ia.index.*.location,
                         .semantic,
-                        "index into a list literal must be an integer literal",
+                        "index into a list literal must be a 'UIntNative' integer literal",
                         .{},
                     );
                     break :blk 0;
@@ -1443,18 +1458,20 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         if (ia.target.*.content != .index_access) return error.InvalidType;
         const idx = ia.target.*.content.index_access;
+        const native_uint_ty: sg.Type = .{ .builtin = .UIntNative };
 
         const base = try self.visitNode(idx.value.*, s);
 
         if (base.ty == .array_type) {
-            const index_expr = try self.visitNode(idx.index.*, s);
-            if (!typ.isIntegerType(index_expr.ty)) {
+            var index_expr = try self.visitNode(idx.index.*, s);
+            index_expr = try typ.coerceExprToType(native_uint_ty, index_expr, idx.index, s, self.allocator, self.diags);
+            if (!typ.typesExactlyEqual(index_expr.ty, native_uint_ty)) {
                 const idx_ty = try typ.formatType(index_expr.ty, s, self.allocator);
                 defer self.allocator.free(idx_ty);
                 try self.diags.add(
                     idx.index.*.location,
                     .semantic,
-                    "array index must be an integer type, got '{s}'",
+                    "array index must be 'UIntNative', got '{s}'",
                     .{idx_ty},
                 );
                 return error.Reported;
