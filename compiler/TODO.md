@@ -1,16 +1,23 @@
-- Semantizer:
-    - Implement an arena allocator to avoid memory leaks in semantizer.
+- Prioridad de coherencia con `description/`:
 
-    - Revisar `refineStructTypeWithActual`: ahora muta `StructType.fields`
-    in-place al refinar genéricos. Riesgo de aliasing y de contaminar otras
-    rutas de resolución. Mejor clonar/internar el tipo refinado.
+    - `Abstract` es ahora mismo el mayor hueco entre diseño e implementación.
+    En la descripción es un mecanismo central del lenguaje, pero en el
+    compilador sigue teniendo piezas provisionales y restricciones semánticas
+    importantes.
 
-- Choice types: Implement
+    - Después de `Abstract`, la siguiente incoherencia grande es el modelo de
+    build: la descripción ya piensa en módulos por carpeta, pero la CLI sigue
+    orientada a `build <file.rg>`.
 
 - Abstracts:
 
 - Añadir test negativo de underflow de enteros anotados cuando exista sintaxis
   de literales negativos (`-1` ahora falla en parsing antes del check de rango).
+
+    - Hacer que el abstract deje de vivir como placeholder semántico y pase a
+    ser un tipo del compilador de pleno derecho. Mientras siga apoyándose en
+    aproximaciones, los diagnósticos y los casos avanzados seguirán siendo
+    frágiles.
 
     - Fix: Actualmente el símbolo del abstract se registra como “tipo nominal”
     placeholder que internamente mapea a Any. Además, no se permite usar un
@@ -31,15 +38,15 @@
     (`332X`, `333X`, `335X`) para que estos errores no regresen sin enterarnos.
 
 
-- Modules: implement explicit `#import` on top of directory-based modules
+- Modules / build model:
 
     - El harness no está ejecutando algunos casos de módulos/imports que ya
     existen (`62_folder_imports_overview`).
 
-    - Dejar de pensar el build alrededor de `main.rg`/`build <file>` y mover el
-    modelo al nivel de directorio-módulo. Compilar un directorio completo
+    - Dejar de pensar el build alrededor de `main.rg`/`build <file>` y mover
+    el modelo al nivel de directorio-módulo. Compilar un directorio completo
     encaja mejor con la regla actual de que todos los `.rg` de una carpeta
-    comparten namespace.
+    comparten namespace y con la descripción del lenguaje.
 
     - Revisar el CLI para pasar de `build <file.rg>` a `build <directory>` (o
     equivalente), y adaptar resolución de entrypoint, tests y mensajes de uso a
@@ -52,8 +59,17 @@
    * Decidir si el indexado debe seguir estricto (`UIntNative`) o aceptar otros enteros mediante coerción semántica más adelante.
 
 
+- Semantizer:
+    - Implement an arena allocator to avoid memory leaks in semantizer.
+
 - **`refineStructTypeWithActual` mutando in-place.**
    Riesgo de aliasing. Mejor clonar el `StructType` refinado e internarlo, no modificar el original.
+
+   - Revisar `refineStructTypeWithActual`: ahora muta `StructType.fields`
+   in-place al refinar genéricos. Riesgo de aliasing y de contaminar otras
+   rutas de resolución. Mejor clonar/internar el tipo refinado.
+
+- Choice types: Implement
 
 - Really avoid implicit conversions/coercions:
 
