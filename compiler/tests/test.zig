@@ -188,6 +188,20 @@ test "225X_pass_readonly_pointer_to_mutable_param" {
     );
 }
 
+test "226_explicit_pointer_casts" {
+    try clean();
+    try build("tests/226_explicit_pointer_casts/main.rg");
+    try run();
+}
+
+test "227X_pointer_arithmetic_requires_cast" {
+    try clean();
+    try buildExpectFail(
+        "tests/227X_pointer_arithmetic_requires_cast/main.rg",
+        "pointer arithmetic is not allowed; cast explicitly to an integer, perform the arithmetic, and cast back",
+    );
+}
+
 test "30_core_and_libc" {
     try clean();
     try build("tests/30_core_and_libc/main.rg");

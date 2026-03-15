@@ -74,13 +74,6 @@
        “struct-coercions”, que sea en el semantizador; por ahora, **igualdad
        estricta**.
 
-- Restricción de “sólo Int64/UInt64” en suma de punteros
-
-    En handleBinOp para pointer + int exiges 64-bit exacto. Si te vale
-    cualquier entero (con promoción), elimina ese check duro y usa
-    typ.isIntegerType.
-
-
 - Tests / cobertura:
 
     - Añadir al harness `compiler/tests/test.zig` los casos que ya existen pero
