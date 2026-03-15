@@ -48,9 +48,8 @@
 
 - **Índices/offsets de puntero: fija la política.**
 
-   * Mejor: exige **`UIntNative`** en el semantizador para indexado.
-   * En codegen, convierte `UIntNative` al ancho que pida LLVM con `LLVMIntPtrType` (+ `zext/sext` si hace falta). Ese *widen* es solo *lowering*, no semántica.
-   * `length`, `size_of`, `alignment_of` y casts puntero↔entero deberían mantenerse coherentes con `UIntNative`.
+   * `length`, `size_of`, `alignment_of`, casts puntero↔entero e indexado de arrays ya usan `UIntNative`.
+   * Decidir si el indexado debe seguir estricto (`UIntNative`) o aceptar otros enteros mediante coerción semántica más adelante.
 
 
 - **`refineStructTypeWithActual` mutando in-place.**

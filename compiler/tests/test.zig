@@ -202,6 +202,14 @@ test "227X_pointer_arithmetic_requires_cast" {
     );
 }
 
+test "228X_array_index_requires_uint_native" {
+    try clean();
+    try buildExpectFail(
+        "tests/228X_array_index_requires_uint_native/main.rg",
+        "array index must be 'UIntNative'",
+    );
+}
+
 test "30_core_and_libc" {
     try clean();
     try build("tests/30_core_and_libc/main.rg");
@@ -305,6 +313,12 @@ test "412_list_literal_access" {
 test "413_arrays" {
     try clean();
     try build("tests/413_arrays/main.rg");
+    try run();
+}
+
+test "417_array_index_uint_native" {
+    try clean();
+    try build("tests/417_array_index_uint_native/main.rg");
     try run();
 }
 

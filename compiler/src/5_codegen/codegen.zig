@@ -758,11 +758,11 @@ pub const CodeGenerator = struct {
         return .{ .value_ref = agg, .type_ref = array_ty_ref };
     }
 
-    fn castIndexToI32(self: *CodeGenerator, tv: TypedValue) !llvm.c.LLVMValueRef {
-        if (tv.type_ref == c.LLVMInt32Type()) return tv.value_ref;
-        if (c.LLVMGetTypeKind(tv.type_ref) != c.LLVMIntegerTypeKind)
+    fn expectNativeIndex(self: *CodeGenerator, tv: TypedValue) !llvm.c.LLVMValueRef {
+        const native_index_ty = try self.toLLVMType(.{ .builtin = .UIntNative });
+        if (tv.type_ref != native_index_ty)
             return CodegenError.InvalidType;
-        return c.LLVMBuildIntCast(self.builder, tv.value_ref, c.LLVMInt32Type(), "array.idx.cast");
+        return tv.value_ref;
     }
 
     fn genArrayElementPointer(
@@ -771,7 +771,8 @@ pub const CodeGenerator = struct {
         array_ty_ref: llvm.c.LLVMTypeRef,
         index_val: llvm.c.LLVMValueRef,
     ) !llvm.c.LLVMValueRef {
-        const zero = c.LLVMConstInt(c.LLVMInt32Type(), 0, 0);
+        const index_ty = try self.toLLVMType(.{ .builtin = .UIntNative });
+        const zero = c.LLVMConstInt(index_ty, 0, 0);
         var indices = [_]llvm.c.LLVMValueRef{ zero, index_val };
         return c.LLVMBuildGEP2(self.builder, array_ty_ref, array_ptr_tv.value_ref, &indices, 2, "array.elem.ptr");
     }
@@ -782,7 +783,7 @@ pub const CodeGenerator = struct {
 
         const idx_tv_opt = try self.visitNode(ai.index);
         const idx_tv = idx_tv_opt orelse return CodegenError.ValueNotFound;
-        const index_val = try self.castIndexToI32(idx_tv);
+        const index_val = try self.expectNativeIndex(idx_tv);
         const array_ty_ref = try self.toLLVMType(.{ .array_type = ai.array_type });
         const elem_ptr = try self.genArrayElementPointer(array_ptr_tv, array_ty_ref, index_val);
         const elem_ty_ref = try self.toLLVMType(ai.element_type);
@@ -796,7 +797,7 @@ pub const CodeGenerator = struct {
 
         const idx_tv_opt = try self.visitNode(as.index);
         const idx_tv = idx_tv_opt orelse return CodegenError.ValueNotFound;
-        const index_val = try self.castIndexToI32(idx_tv);
+        const index_val = try self.expectNativeIndex(idx_tv);
 
         const array_ty_ref = try self.toLLVMType(.{ .array_type = as.array_type });
         const elem_ptr = try self.genArrayElementPointer(array_ptr_tv, array_ty_ref, index_val);
