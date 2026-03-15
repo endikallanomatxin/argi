@@ -53,7 +53,7 @@ m2 = m1  -- Aquí se debe hacer deep copy
 > Entonces igual no hemos conseguido solucionar nada en nuestro lenguaje no?
 
 
-Solución:
+idea de solución:
 
 - Los tipos que almacenan la información (DynamicArray), implementan copy() haciendo
   deep copy de sus datos.
