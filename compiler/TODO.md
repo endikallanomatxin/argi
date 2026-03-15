@@ -63,13 +63,6 @@
       implícitas en `genBinaryOp`, `genComparison`, stores de campos e init de
       bindings; el resto debería seguir la misma línea.
 
-    - **Asignación de structs “reempacando” en codegen.**
-
-       Quita el bloque que reconstruye agregados cuando los LLVM structs difieren.
-       Eso es conversión implícita encubierta. Si algún día soportas
-       “struct-coercions”, que sea en el semantizador; por ahora, **igualdad
-       estricta**.
-
 - Tests / cobertura:
 
     - Añadir al harness `compiler/tests/test.zig` los casos que ya existen pero

@@ -613,48 +613,63 @@ pub fn coerceStructLiteral(
     const lit = expr.node.content.struct_value_literal;
     const actual_struct = lit.ty.struct_type;
 
-    if (expected.fields.len != actual_struct.fields.len or
-        expected.fields.len != lit.fields.len)
-    {
+    if (lit.fields.len != actual_struct.fields.len) {
         return expr;
     }
 
     var coerced_fields = try allocator.alloc(sg.StructValueLiteralField, expected.fields.len);
     errdefer allocator.free(coerced_fields);
 
-    var i: usize = 0;
-    while (i < expected.fields.len) : (i += 1) {
-        const exp_field = expected.fields[i];
-        const act_field = actual_struct.fields[i];
-        if (!std.mem.eql(u8, exp_field.name, act_field.name)) {
+    for (lit.fields) |actual_field| {
+        if (findFieldByName(expected, actual_field.name) == null) {
             allocator.free(coerced_fields);
             return expr;
         }
+    }
 
-        const field_node = @constCast(lit.fields[i].value);
-        var field_expr = TypedExpr{
-            .node = field_node,
-            .ty = act_field.ty,
-        };
-        field_expr = try coerceExprToType(exp_field.ty, field_expr, expr_node, s, allocator, diags);
-        if (!typesExactlyEqual(exp_field.ty, field_expr.ty)) {
-            const expected_ty = try formatType(exp_field.ty, s, allocator);
-            const actual_ty = try formatType(field_expr.ty, s, allocator);
-            defer {
-                allocator.free(expected_ty);
-                allocator.free(actual_ty);
+    var i: usize = 0;
+    while (i < expected.fields.len) : (i += 1) {
+        const exp_field = expected.fields[i];
+        const act_field_ptr = findFieldByName(actual_struct, exp_field.name);
+        const lit_field_ptr = findStructValueFieldByName(lit, exp_field.name);
+
+        if (act_field_ptr != null and lit_field_ptr != null) {
+            const act_field = act_field_ptr.?;
+            const lit_field = lit_field_ptr.?;
+            const field_node = @constCast(lit_field.value);
+            var field_expr = TypedExpr{
+                .node = field_node,
+                .ty = act_field.ty,
+            };
+            field_expr = try coerceExprToType(exp_field.ty, field_expr, expr_node, s, allocator, diags);
+            if (!typesExactlyEqual(exp_field.ty, field_expr.ty)) {
+                const expected_ty = try formatType(exp_field.ty, s, allocator);
+                const actual_ty = try formatType(field_expr.ty, s, allocator);
+                defer {
+                    allocator.free(expected_ty);
+                    allocator.free(actual_ty);
+                }
+                try diags.add(
+                    expr_node.location,
+                    .semantic,
+                    "cannot initialize field '.{s}' with '{s}' (expected '{s}')",
+                    .{ exp_field.name, actual_ty, expected_ty },
+                );
+                allocator.free(coerced_fields);
+                return error.Reported;
             }
-            try diags.add(
-                expr_node.location,
-                .semantic,
-                "cannot initialize field '.{s}' with '{s}' (expected '{s}')",
-                .{ exp_field.name, actual_ty, expected_ty },
-            );
-            allocator.free(coerced_fields);
-            return error.Reported;
+
+            coerced_fields[i] = .{ .name = exp_field.name, .value = field_expr.node };
+            continue;
         }
 
-        coerced_fields[i] = .{ .name = exp_field.name, .value = field_expr.node };
+        if (exp_field.default_value) |default_node| {
+            coerced_fields[i] = .{ .name = exp_field.name, .value = default_node };
+            continue;
+        }
+
+        allocator.free(coerced_fields);
+        return expr;
     }
 
     const lit_ptr = try allocator.create(sg.StructValueLiteral);
@@ -666,6 +681,13 @@ pub fn coerceStructLiteral(
         .content = .{ .struct_value_literal = lit_ptr },
     };
     return .{ .node = node, .ty = .{ .struct_type = expected } };
+}
+
+fn findStructValueFieldByName(lit: *const sg.StructValueLiteral, name: []const u8) ?*const sg.StructValueLiteralField {
+    for (lit.fields) |*field| {
+        if (std.mem.eql(u8, field.name, name)) return field;
+    }
+    return null;
 }
 
 pub fn ensureReadOnlyPointer(expr_node: *const syn.STNode, te: TypedExpr, allocator: *const std.mem.Allocator, diags: *diagnostics.Diagnostics) err.SemErr!TypedExpr {
