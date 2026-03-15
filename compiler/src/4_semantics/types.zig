@@ -26,9 +26,14 @@ pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
             .builtin => |bb| ab == bb,
             else => false,
         },
+        .abstract_type => |aat| switch (b) {
+            .abstract_type => |bat| std.mem.eql(u8, aat.name, bat.name),
+            else => false,
+        },
 
         .struct_type => |ast| switch (b) {
             .builtin => false,
+            .abstract_type => false,
 
             .struct_type => |bst| blk: {
                 // Keep for legacy: structural comparison of anonymous structs
@@ -82,6 +87,10 @@ pub fn typesExactlyEqual(a: sg.Type, b: sg.Type) bool {
     return switch (a) {
         .builtin => |ab| switch (b) {
             .builtin => |bb| ab == bb,
+            else => false,
+        },
+        .abstract_type => |aat| switch (b) {
+            .abstract_type => |bat| std.mem.eql(u8, aat.name, bat.name),
             else => false,
         },
         .struct_type => |ast| switch (b) {
@@ -150,6 +159,10 @@ pub fn typesCompatible(expected: sg.Type, actual: sg.Type) bool {
     return switch (expected) {
         .builtin => |eb| switch (actual) {
             .builtin => |ab| eb == ab,
+            else => false,
+        },
+        .abstract_type => |eat| switch (actual) {
+            .abstract_type => |aat| std.mem.eql(u8, eat.name, aat.name),
             else => false,
         },
         .struct_type => |est| switch (actual) {
@@ -232,6 +245,7 @@ fn appendType(buf: *std.array_list.Managed(u8), t: sg.Type) !void {
             const s = @tagName(bt);
             try buf.appendSlice(s);
         },
+        .abstract_type => |at| try buf.appendSlice(at.name),
         .pointer_type => |ptr_info_ptr| {
             const ptr_info = ptr_info_ptr.*;
             const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
@@ -271,6 +285,7 @@ pub fn appendTypePretty(buf: *std.array_list.Managed(u8), t: sg.Type, s: *Scope)
             const sname = @tagName(bt);
             try buf.appendSlice(sname);
         },
+        .abstract_type => |at| try buf.appendSlice(at.name),
         .pointer_type => |ptr_info_ptr| {
             const ptr_info = ptr_info_ptr.*;
             const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
@@ -323,6 +338,7 @@ pub fn computeTypeSize(ty: sg.Type) u64 {
             .Type => pointer_size_bytes,
             .Any => pointer_size_bytes,
         },
+        .abstract_type => 0,
         .pointer_type => pointer_size_bytes,
         .struct_type => |st| blk: {
             const max_align = computeTypeAlignment(.{ .struct_type = st });
@@ -356,6 +372,7 @@ pub fn computeTypeAlignment(ty: sg.Type) u64 {
             .Type => pointer_alignment_bytes,
             .Any => pointer_alignment_bytes,
         },
+        .abstract_type => 1,
         .pointer_type => pointer_alignment_bytes,
         .struct_type => |st| blk: {
             var max_align: u64 = 1;

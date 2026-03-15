@@ -66,6 +66,7 @@ pub fn typeImplementsAbstract(
 pub fn specificityScore(expected: sg.Type, actual: sg.Type) u32 {
     return switch (expected) {
         .builtin => 0,
+        .abstract_type => 0,
         .struct_type => |est| blk: {
             var sum: u32 = 0;
             const ast = actual.struct_type;

@@ -73,9 +73,14 @@ pub const Content = union(enum) {
 
 pub const Type = union(enum) {
     builtin: BuiltinType,
+    abstract_type: *const AbstractType,
     struct_type: *const StructType,
     pointer_type: *const PointerType,
     array_type: *const ArrayType,
+};
+
+pub const AbstractType = struct {
+    name: []const u8,
 };
 
 pub const PointerType = struct {

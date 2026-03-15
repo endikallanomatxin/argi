@@ -511,11 +511,13 @@ pub const Semantizer = struct {
         ad: syn.AbstractDeclaration,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        // Register abstract as a nominal type placeholder (maps to Any for now)
+        // Register abstract as a nominal semantic type.
         if (s.types.contains(ad.name.string)) return error.SymbolAlreadyDefined;
 
+        const abs_ty = try self.allocator.create(sg.AbstractType);
+        abs_ty.* = .{ .name = ad.name.string };
         const td = try self.allocator.create(sg.TypeDeclaration);
-        td.* = .{ .name = ad.name.string, .origin_file = ad.name.location.file, .ty = .{ .builtin = .Any } };
+        td.* = .{ .name = ad.name.string, .origin_file = ad.name.location.file, .ty = .{ .abstract_type = abs_ty } };
         try s.types.put(ad.name.string, td);
 
         // Store abstract info (resolved requirements) in scope
@@ -549,13 +551,11 @@ pub const Semantizer = struct {
                                     }
                                 }
                                 if (!found) {
-                                    ty = self.resolveType(t, s) catch |err| switch (err) {
-                                        error.AbstractNeedsDefault => blk: {
-                                            abstract_req = name;
-                                            break :blk .{ .builtin = .Any };
-                                        },
-                                        else => return err,
-                                    };
+                                    if (s.lookupAbstractInfo(name) != null) {
+                                        abstract_req = name;
+                                    } else {
+                                        ty = try self.resolveType(t, s);
+                                    }
                                 }
                             }
                         },
@@ -611,13 +611,11 @@ pub const Semantizer = struct {
                                 }
                             }
                             if (!found) {
-                                ty = self.resolveType(t, s) catch |err| switch (err) {
-                                    error.AbstractNeedsDefault => blk: {
-                                        abstract_req = name;
-                                        break :blk .{ .builtin = .Any };
-                                    },
-                                    else => return err,
-                                };
+                                if (s.lookupAbstractInfo(name) != null) {
+                                    abstract_req = name;
+                                } else {
+                                    ty = try self.resolveType(t, s);
+                                }
                             }
                         },
                         else => {
@@ -840,6 +838,7 @@ pub const Semantizer = struct {
         var ty: sg.Type = .{ .builtin = .Int32 };
         if (d.type) |t| {
             ty = try self.resolveType(t, s);
+            if (ty == .abstract_type) return error.AbstractNeedsDefault;
         } else if (init_te_opt) |te| {
             ty = te.ty;
         }
@@ -3139,7 +3138,7 @@ pub const Semantizer = struct {
                 if (s.lookupAbstractInfo(id)) |_| {
                     if (s.lookupAbstractDefault(id)) |def_entry|
                         break :blk def_entry.ty;
-                    break :blk .{ .builtin = .Any };
+                    break :blk error.AbstractNeedsDefault;
                 }
                 if (s.lookupType(id)) |td| {
                     if (!(try self.typeIsVisible(td, tn.location.file))) {
@@ -3163,7 +3162,9 @@ pub const Semantizer = struct {
                         }
                         if (!found) break :blk_g error.UnknownType;
                     }
-                    break :blk_g .{ .builtin = .Any };
+                    if (s.lookupAbstractDefault(base_name)) |def_entry|
+                        break :blk_g def_entry.ty;
+                    break :blk_g error.AbstractNeedsDefault;
                 }
 
                 const st_ptr = self.instantiateGenericTypeNamed(base_name, g.args, s, null) catch |err| switch (err) {
@@ -3227,7 +3228,9 @@ pub const Semantizer = struct {
                         }
                         if (!found) break :blk_g error.UnknownType;
                     }
-                    break :blk_g .{ .builtin = .Any };
+                    if (s.lookupAbstractDefault(base_name)) |def_entry|
+                        break :blk_g def_entry.ty;
+                    break :blk_g error.AbstractNeedsDefault;
                 }
 
                 const st_ptr = self.instantiateGenericTypeNamed(base_name, g.args, s, subst) catch |err| switch (err) {
