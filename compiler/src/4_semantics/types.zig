@@ -385,6 +385,7 @@ pub fn makeIntLiteral(
     const node = try allocator.create(sg.SGNode);
     node.* = .{
         .location = loc,
+        .sem_type = ty,
         .content = .{ .value_literal = .{ .int_literal = value } },
     };
     return .{ .node = node, .ty = ty };
@@ -400,6 +401,7 @@ pub fn makeTypeLiteral(
     const node = try allocator.create(sg.SGNode);
     node.* = .{
         .location = loc,
+        .sem_type = .{ .builtin = .Type },
         .content = .{ .type_literal = type_node },
     };
     return .{ .node = node, .ty = .{ .builtin = .Type } };

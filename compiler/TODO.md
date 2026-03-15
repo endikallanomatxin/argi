@@ -58,14 +58,10 @@
 
 - Really avoid implicit conversions/coercions:
 
-    - **No castear literales en codegen.**
-       Deja toda la fijación de literales en el **semantizador** (`coerceLiteralToBuiltin`, `coerceStructLiteral`, etc.).
-       **Acción:** elimina de `codegen.zig` `literalAsInteger/intLiteralValue` y las ramas que los usan en:
-
-       * `genBinaryOp`
-       * `genStructValueLiteral`
-       * init de bindings
-         Si tipos LLVM no coinciden → `InvalidType`. Codegen solo baja lo ya tipado.
+    - Revisar los literales no fijados por el semantizador para que lleguen a
+      codegen con `sem_type` cuando corresponda. Ya se quitaron las coerciones
+      implícitas en `genBinaryOp`, `genComparison`, stores de campos e init de
+      bindings; el resto debería seguir la misma línea.
 
     - **Asignación de structs “reempacando” en codegen.**
 

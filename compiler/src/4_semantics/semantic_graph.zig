@@ -17,6 +17,7 @@ pub const Scope = struct {
 
 pub const SGNode = struct {
     location: tok.Location,
+    sem_type: ?Type = null,
     content: Content,
 };
 
@@ -24,6 +25,7 @@ pub inline fn makeSGNode(content: Content, location: tok.Location, allocator: *c
     const node = try allocator.create(SGNode);
     node.* = SGNode{
         .location = location,
+        .sem_type = null,
         .content = content,
     };
     return node;
