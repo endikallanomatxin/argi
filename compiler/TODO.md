@@ -94,9 +94,11 @@
 - Tests / cobertura:
 
     - Añadir al harness `compiler/tests/test.zig` los casos que ya existen pero
-    no se están ejecutando: `06_if`, `131X_multiple_dispatch_ambiguous`,
-    `223X`, `224X`, `225X`, `414`, `415`, `416`, `43_alias`, `61_system`,
-    `71_loops`.
+    aún no están listos o no se están ejecutando: `414`, `415`, `416`,
+    `43_alias`, `61_system`, `71_loops`.
+
+    - `62_folder_imports_overview` sigue vacío; decidir si se implementa como
+    caso real o se elimina.
 
     - `42_choice`, `81_comptime` y `90_build_system` existen pero sus
     `main.rg` están vacíos. Decidir si son placeholders o features a
