@@ -325,17 +325,12 @@ pub const Semantizer = struct {
             .function_call => |fc| self.handleCall(fc, s) catch |err| blk: {
                 if (err == error.Reported) break :blk err;
                 if (err == error.AmbiguousOverload) {
-                    // try to produce detailed candidates list
                     const tv_in = self.visitNode(fc.input.*, s) catch null;
-                    var details: []const u8 = "";
-                    if (tv_in) |te| if (te.ty == .struct_type) {
-                        details = abs.buildOverloadCandidatesString(fc.callee, te.ty, s, self.allocator) catch "";
-                    };
-                    try self.diags.add(
+                    try self.addAmbiguousFunctionDiagnostic(
+                        fc.callee,
+                        if (tv_in) |te| te.ty else null,
+                        s,
                         n.location,
-                        .semantic,
-                        "ambiguous call to '{s}'. Possible overloads:\n{s}",
-                        .{ fc.callee, details },
                     );
                     break :blk error.Reported;
                 } else {
@@ -1426,18 +1421,7 @@ pub const Semantizer = struct {
                     return error.Reported;
                 },
                 error.AmbiguousOverload => {
-                    const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
-                    const available = try abs.collectFunctionSignatures(name, s, self.allocator);
-                    defer {
-                        self.allocator.free(actual_sig);
-                        self.allocator.free(available);
-                    }
-                    try self.diags.add(
-                        ia.value.*.location,
-                        .semantic,
-                        "ambiguous call to '{s}' for arguments {s}. Possible overloads:\n{s}",
-                        .{ name, actual_sig, available },
-                    );
+                    try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.value.*.location);
                     return error.Reported;
                 },
                 else => return err,
@@ -1537,18 +1521,7 @@ pub const Semantizer = struct {
                     return error.Reported;
                 },
                 error.AmbiguousOverload => {
-                    const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
-                    const available = try abs.collectFunctionSignatures(name, s, self.allocator);
-                    defer {
-                        self.allocator.free(actual_sig);
-                        self.allocator.free(available);
-                    }
-                    try self.diags.add(
-                        ia.target.*.location,
-                        .semantic,
-                        "ambiguous call to '{s}' for arguments {s}. Possible overloads:\n{s}",
-                        .{ name, actual_sig, available },
-                    );
+                    try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.target.*.location);
                     return error.Reported;
                 },
                 else => return err,
@@ -1951,6 +1924,48 @@ pub const Semantizer = struct {
             .semantic,
             "function '{s}' exists, but no overload matches the provided arguments",
             .{fn_name},
+        );
+    }
+
+    fn addAmbiguousFunctionDiagnostic(
+        self: *Semantizer,
+        fn_name: []const u8,
+        maybe_input_ty: ?sg.Type,
+        s: *Scope,
+        loc: tok.Location,
+    ) !void {
+        if (maybe_input_ty) |input_ty| {
+            if (input_ty == .struct_type) {
+                const actual_sig = try typ.formatCallInput(input_ty.struct_type, s, self.allocator);
+                const available = try self.collectVisibleFunctionSignatures(fn_name, s, loc);
+                defer {
+                    self.allocator.free(actual_sig);
+                    self.allocator.free(available);
+                }
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "ambiguous call to '{s}' for arguments {s}. Possible overloads:\n{s}",
+                    .{ fn_name, actual_sig, available },
+                );
+                return;
+            }
+        }
+
+        const candidates_result = abs.buildOverloadCandidatesString(
+            fn_name,
+            if (maybe_input_ty) |input_ty| input_ty else .{ .builtin = .Any },
+            s,
+            self.allocator,
+        ) catch null;
+        const candidates = candidates_result orelse "";
+        defer if (candidates_result) |owned| self.allocator.free(owned);
+
+        try self.diags.add(
+            loc,
+            .semantic,
+            "ambiguous call to '{s}'. Possible overloads:\n{s}",
+            .{ fn_name, candidates },
         );
     }
 
