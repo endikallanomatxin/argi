@@ -2,6 +2,11 @@
 
 Similar to zig, they are are used to allocate and deallocate memory.
 
+Ownership and copying are defined separately in `32_copying_behaviour.md`.
+They are orthogonal concepts.
+In particular, using an allocator and implementing `deinit()` does not make a
+type automatically copyable.
+
 ```
 Allocator : Abstract = (
 	alloc (_, size: Int) -> HeapAllocation
@@ -93,11 +98,19 @@ init (.allocator: Allocator, content: MapLiteral) -> (.hm: HashMap#(f, t)) :=  {
 deinit (.hm:$&Hashmap&) -> () := {
 	hm.data|dealloc(_)
 }
+
+copy (.hm: HashMap#(f, t), .allocator: &Allocator) -> (.out: HashMap#(f, t)) := {
+	-- allocate new storage and duplicate the contents
+}
 ```
 
 ```
 my_map : HashMap#(String,Int32) = init (my_allocator, ("a"=1, "b"=2))
 ```
+
+If `HashMap` provides `copy()`, then passing it by value or assigning it means
+creating an independent map. If it does not provide `copy()`, then it must be
+passed by `&` or `$&`.
 
 > [!FIX] Reflexionar sobre la sintaxis para incializar un mapa.
 > Lo ideal sería:
@@ -106,6 +119,4 @@ my_map : HashMap#(String,Int32) = init (my_allocator, ("a"=1, "b"=2))
 > ```
 > El no tener un default allocator perjudica mucho la ergonomía del lenguaje.
 > Pensar en hacer que no sea una capability
-
-
 

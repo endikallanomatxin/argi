@@ -272,6 +272,9 @@ init(out: $&MyType, ...) -> Errable#((), InitError)
 On scope exit, `deinit` is automatically called for all types that are not in the result struct.
 That way, everything behaves as if it were a stack variable.
 
+Passing by value follows the copy semantics. value position requires an
+independent value, obtained through `copy()` when the type is copyable.
+
 > [!NOTE]
 > Si hay rutas de error/early-return, garantiza que el valor queda en estado
 > no-inicializado (no se llamará deinit), o que se limpia parcial antes de
@@ -318,6 +321,17 @@ keep my_thing with my_pointer
 
 This is a very confortable way of manual memory management. Almost automatic.
 
+> [!IDEA]
+> In the future, if it turns out to be useful, `keep` could support explicit
+> lifetime-management backends:
+> `keep my_view on rc_heap`
+> `keep my_object on gc_runtime`
+>
+> The idea would be that plain `keep` preserves the current manual model, while
+> `keep ... on ...` would hand the lifetime over to an explicit runtime or
+> manager, potentially returning a different type such as a shared view or a
+> GC-managed reference.
+
 
 ## Generics
 
@@ -332,4 +346,3 @@ MyGenericType#(.t: Type) : Type = (
 	.datos : List<t>
 )
 ```
-
