@@ -319,6 +319,7 @@ pub const CodeGenerator = struct {
                 .Type => c.LLVMPointerType(c.LLVMInt8Type(), 0),
                 .Any => c.LLVMInt8Type(), // &Any es i8*
             },
+            .abstract_type => CodegenError.InvalidType,
             .struct_type => |st| blk: {
                 // Anonymous struct generation with the given fields
                 var fields = try self.allocator.alloc(llvm.c.LLVMTypeRef, st.fields.len);
@@ -385,6 +386,10 @@ pub const CodeGenerator = struct {
                     .Any => "any",
                 };
                 try buf.appendSlice(s);
+            },
+            .abstract_type => |at| {
+                try buf.appendSlice("abs_");
+                try buf.appendSlice(at.name);
             },
             .pointer_type => |ptr_info_ptr| {
                 const ptr_info = ptr_info_ptr.*;

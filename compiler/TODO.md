@@ -14,14 +14,12 @@
 - Añadir test negativo de underflow de enteros anotados cuando exista sintaxis
   de literales negativos (`-1` ahora falla en parsing antes del check de rango).
 
-    - Hacer que el abstract deje de vivir como placeholder semántico y pase a
-    ser un tipo del compilador de pleno derecho. Mientras siga apoyándose en
-    aproximaciones, los diagnósticos y los casos avanzados seguirán siendo
-    frágiles.
+    - Seguir integrando el abstract como tipo del compilador de pleno derecho.
+    Ya no se registra como `Any`, pero aún quedan restricciones semánticas
+    importantes para usarlo fuera de los casos con `defaultsto`.
 
-    - Fix: Actualmente el símbolo del abstract se registra como “tipo nominal”
-    placeholder que internamente mapea a Any. Además, no se permite usar un
-    abstract como tipo de símbolo si no hay defaultsto.
+    - Fix: Aunque el abstract ya tiene representación nominal propia, todavía
+    no se permite usarlo como tipo de símbolo si no hay `defaultsto`.
 
     - Self en salidas: extender el checker para sustituir Self también en
     retornos antes de comparar, igual que ya hacéis para entradas. Pequeño

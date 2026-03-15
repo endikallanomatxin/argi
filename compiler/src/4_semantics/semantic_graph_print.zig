@@ -9,6 +9,7 @@ fn indent(lvl: usize) void {
 fn typeToString(t: sem.Type) []const u8 {
     return switch (t) {
         .builtin => |b| @tagName(b),
+        .abstract_type => |at| at.name,
         .struct_type => |_| "struct",
         .pointer_type => |ptr| switch (ptr.*.mutability) {
             .read_only => "&",
