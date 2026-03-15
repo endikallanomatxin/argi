@@ -213,6 +213,15 @@ pub const Semantizer = struct {
 
             .function_declaration => |d| self.handleFuncDecl(d, s, n.location) catch |err| blk: {
                 if (err == error.Reported) break :blk err;
+                if (err == error.AbstractNeedsDefault) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "abstract types without a default are not supported in this function signature position yet",
+                        .{},
+                    );
+                    break :blk error.Reported;
+                }
                 if (err == error.UnknownType and s.parent == null and self.defer_unknown_top_level) {
                     try self.pushTopLevelForRetry();
                     break :blk error.Reported;
@@ -1742,7 +1751,7 @@ pub const Semantizer = struct {
                     if (!std.mem.startsWith(u8, cand.location.file, module_dir)) continue;
                     if (!(try self.functionIsVisible(cand, loc.file))) continue;
                     const expected: sg.Type = .{ .struct_type = &cand.input };
-                    if (!typ.typesCompatible(expected, in_ty)) continue;
+                    if (!abs.typesCompatibleForDispatch(expected, in_ty, s)) continue;
 
                     const score = abs.specificityScore(expected, in_ty);
                     if (best == null or score < best_score) {
@@ -1789,7 +1798,7 @@ pub const Semantizer = struct {
             if (sc.functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
                     const expected: sg.Type = .{ .struct_type = &cand.input };
-                    if (!typ.typesCompatible(expected, in_ty)) continue;
+                    if (!abs.typesCompatibleForDispatch(expected, in_ty, s)) continue;
                     if (!(try self.functionIsVisible(cand, loc.file))) {
                         hidden_private_match = true;
                         continue;
@@ -3203,6 +3212,7 @@ pub const Semantizer = struct {
             },
         };
     }
+
 
     fn resolveTypeWithSubst(
         self: *Semantizer,

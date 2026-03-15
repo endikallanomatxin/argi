@@ -66,7 +66,10 @@ pub fn typeImplementsAbstract(
 pub fn specificityScore(expected: sg.Type, actual: sg.Type) u32 {
     return switch (expected) {
         .builtin => 0,
-        .abstract_type => 0,
+        .abstract_type => switch (actual) {
+            .abstract_type => 0,
+            else => 1,
+        },
         .struct_type => |est| blk: {
             var sum: u32 = 0;
             const ast = actual.struct_type;
@@ -100,6 +103,57 @@ pub fn specificityScore(expected: sg.Type, actual: sg.Type) u32 {
             const aat = aat_ptr.*;
             if (eat.length != aat.length) break :blk_arr 10;
             break :blk_arr specificityScore(eat.element_type.*, aat.element_type.*);
+        },
+    };
+}
+
+pub fn typesCompatibleForDispatch(expected: sg.Type, actual: sg.Type, s: *Scope) bool {
+    return switch (expected) {
+        .builtin => |eb| switch (actual) {
+            .builtin => |ab| eb == ab,
+            else => false,
+        },
+        .abstract_type => |eat| switch (actual) {
+            .abstract_type => |aat| std.mem.eql(u8, eat.name, aat.name),
+            else => typeImplementsAbstract(eat.name, actual, s),
+        },
+        .struct_type => |est| switch (actual) {
+            .struct_type => |ast| blk: {
+                if (est.fields.len != ast.fields.len) break :blk false;
+                var i: usize = 0;
+                while (i < est.fields.len) : (i += 1) {
+                    if (!typesCompatibleForDispatch(est.fields[i].ty, ast.fields[i].ty, s)) break :blk false;
+                }
+                break :blk true;
+            },
+            else => false,
+        },
+        .pointer_type => |ept_ptr| switch (actual) {
+            .pointer_type => |apt_ptr| blk: {
+                const ept = ept_ptr.*;
+                const apt = apt_ptr.*;
+
+                if (!typ.pointerMutabilityCompatible(ept.mutability, apt.mutability))
+                    break :blk false;
+
+                const expected_child = ept.child.*;
+                const actual_child = apt.child.*;
+
+                if (typ.isAny(expected_child) or typ.isAny(actual_child))
+                    break :blk true;
+
+                break :blk typesCompatibleForDispatch(expected_child, actual_child, s);
+            },
+            else => false,
+        },
+        .array_type => |eat_ptr| switch (actual) {
+            .array_type => |aat_ptr| blk_arr: {
+                const eat = eat_ptr.*;
+                const aat = aat_ptr.*;
+                if (eat.length != aat.length) break :blk_arr false;
+                break :blk_arr typesCompatibleForDispatch(eat.element_type.*, aat.element_type.*, s);
+            },
+            else => false,
         },
     };
 }
@@ -195,7 +249,7 @@ pub fn resolveOverload(name: []const u8, in_ty: sg.Type, s: *Scope) SemErr!*sg.F
         if (sc.functions.getPtr(name)) |list_ptr| {
             for (list_ptr.items) |cand| {
                 const expected: sg.Type = .{ .struct_type = &cand.input };
-                if (!typ.typesCompatible(expected, in_ty)) continue;
+                if (!typesCompatibleForDispatch(expected, in_ty, s)) continue;
 
                 const score = specificityScore(expected, in_ty);
                 if (best == null or score < best_score) {
@@ -382,7 +436,7 @@ pub fn buildOverloadCandidatesString(name: []const u8, in_ty: sg.Type, s: *Scope
         if (sc.functions.getPtr(name)) |list_ptr| {
             for (list_ptr.items) |cand| {
                 const expected: sg.Type = .{ .struct_type = &cand.input };
-                if (!typ.typesCompatible(expected, in_ty)) continue;
+                if (!typesCompatibleForDispatch(expected, in_ty, s)) continue;
                 if (!first) try buf.appendSlice("\n");
                 first = false;
                 try buf.appendSlice("  - ");
