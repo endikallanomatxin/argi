@@ -48,9 +48,9 @@
 
 - **Índices/offsets de puntero: fija la política.**
 
-   * Mejor: exige **`usize`** en el semantizador para `ptr + n` y indexado.
-   * En codegen, convierte `usize` al ancho que pida LLVM con `LLVMIntPtrType` (+ `zext/sext` si hace falta). Ese *widen* es solo *lowering*, no semántica.
-     Si prefieres atarte a 64-bit, documenta que es decisión de lenguaje y mantén todo coherente (también `length: UInt64`).
+   * Mejor: exige **`UIntNative`** en el semantizador para indexado.
+   * En codegen, convierte `UIntNative` al ancho que pida LLVM con `LLVMIntPtrType` (+ `zext/sext` si hace falta). Ese *widen* es solo *lowering*, no semántica.
+   * `length`, `size_of`, `alignment_of` y casts puntero↔entero deberían mantenerse coherentes con `UIntNative`.
 
 
 - **`refineStructTypeWithActual` mutando in-place.**

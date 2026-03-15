@@ -2888,7 +2888,7 @@ pub const Semantizer = struct {
             try self.diags.add(
                 call.callee_loc,
                 .semantic,
-                "cast expects named type arguments like cast#(.to: UInt64)(.value = ...)",
+                "cast expects named type arguments like cast#(.to: UIntNative)(.value = ...)",
                 .{},
             );
             return error.Reported;
@@ -2957,11 +2957,11 @@ pub const Semantizer = struct {
         }
 
         const source_is_ptr = value_te.ty == .pointer_type;
-        const source_is_int = typ.isIntegerType(value_te.ty);
         const target_is_ptr = target_ty == .pointer_type;
-        const target_is_int = typ.isIntegerType(target_ty);
+        const source_is_native_uint = value_te.ty == .builtin and value_te.ty.builtin == .UIntNative;
+        const target_is_native_uint = target_ty == .builtin and target_ty.builtin == .UIntNative;
 
-        if (!((source_is_ptr and target_is_int) or (source_is_int and target_is_ptr))) {
+        if (!((source_is_ptr and target_is_native_uint) or (source_is_native_uint and target_is_ptr))) {
             const source_str = try typ.formatType(value_te.ty, s, self.allocator);
             const target_str = try typ.formatType(target_ty, s, self.allocator);
             defer {
@@ -3265,7 +3265,7 @@ pub const Semantizer = struct {
 
         const loc = call.input.*.location;
         if (value > std.math.maxInt(i64)) return error.InvalidType;
-        return try typ.makeIntLiteral(self.allocator, loc, @intCast(value), .{ .builtin = .UInt64 });
+        return try typ.makeIntLiteral(self.allocator, loc, @intCast(value), .{ .builtin = .UIntNative });
     }
 
     fn handleLengthBuiltin(
@@ -3305,7 +3305,7 @@ pub const Semantizer = struct {
                     );
                     return error.Reported;
                 }
-                return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
+                return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UIntNative });
             },
             .array_literal => |al| {
                 const len_u64: u64 = @intCast(al.length);
@@ -3318,7 +3318,7 @@ pub const Semantizer = struct {
                     );
                     return error.Reported;
                 }
-                return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
+                return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UIntNative });
             },
             else => {},
         }
@@ -3335,7 +3335,7 @@ pub const Semantizer = struct {
                 );
                 return error.Reported;
             }
-            return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
+            return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UIntNative });
         }
 
         return error.SymbolNotFound;

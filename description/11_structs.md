@@ -183,4 +183,5 @@ El lenguaje debe proporcionar funciones estándar para interactuar con el layout
 - **`size_of`**: Devuelve el tamaño de un tipo.
 - **`offset_of`**: Devuelve el offset de un campo en una estructura.
 
+`size_of` y `align_of` deberían devolver `UIntNative`.
 

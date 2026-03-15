@@ -6,13 +6,13 @@ Vector2 : Type = (
 )
 
 main () -> (.status_code: Int32) := {
-    size_int32 :: UInt64 = size_of(.type = Int32)
+    size_int32 :: UIntNative = size_of(.type = Int32)
     if size_int32 != 4 {
         status_code = 1
         return
     }
 
-    align_int32 :: UInt64 = alignment_of(.type = Int32)
+    align_int32 :: UIntNative = alignment_of(.type = Int32)
     if align_int32 != 4 {
         status_code = 2
         return
@@ -21,32 +21,32 @@ main () -> (.status_code: Int32) := {
     y_value : Int16 = 2
     v :: Vector2 = (.x = 1, .y = y_value)
 
-    size_vec_from_type :: UInt64 = size_of(.type = Vector2)
+    size_vec_from_type :: UIntNative = size_of(.type = Vector2)
     if size_vec_from_type != 8 {
         status_code = 3
         return
     }
 
-    size_vec_from_value :: UInt64 = size_of(.type = type_of(.value = v))
+    size_vec_from_value :: UIntNative = size_of(.type = type_of(.value = v))
     if size_vec_from_value != 8 {
         status_code = 4
         return
     }
 
-    align_vec :: UInt64 = alignment_of(.type = Vector2)
+    align_vec :: UIntNative = alignment_of(.type = Vector2)
     if align_vec != 4 {
         status_code = 5
         return
     }
 
     ptr : $&Vector2 = $&v
-    size_ptr :: UInt64 = size_of(.type = type_of(.value = ptr))
+    size_ptr :: UIntNative = size_of(.type = type_of(.value = ptr))
     if size_ptr != 8 {
         status_code = 6
         return
     }
 
-    align_ptr :: UInt64 = alignment_of(.type = type_of(.value = ptr))
+    align_ptr :: UIntNative = alignment_of(.type = type_of(.value = ptr))
     if align_ptr != 8 {
         status_code = 7
         return

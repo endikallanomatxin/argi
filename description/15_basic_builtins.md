@@ -24,6 +24,7 @@ RealNumber (Abstract)
     ├── UInt8
     ├── UInt16
     ├── UInt32
+    ├── UIntNative
     ├── UInt64
     └── UInt128
 └── Float (Abstract)
@@ -42,5 +43,4 @@ Numbers only allow operatiions and comparisons between same types, so, if you wa
 
 
 ## Characters and Strings
-
 
