@@ -308,14 +308,14 @@ pub fn verifyAbstracts(s: *Scope, allocator: *const std.mem.Allocator, diags: *d
                     try diags.add(
                         impl.location,
                         .semantic,
-                        "type does not implement abstract '{s}': missing function '{s}'. Possible overloads:\n{s}",
+                        "type does not implement abstract '{s}':\n  missing function: {s}\n  possible overloads:\n{s}",
                         .{ abs_name, buf.items, candidates },
                     );
                 } else {
                     try diags.add(
                         impl.location,
                         .semantic,
-                        "type does not implement abstract '{s}': missing function '{s}'.",
+                        "type does not implement abstract '{s}':\n  missing function: {s}",
                         .{ abs_name, buf.items },
                     );
                 }
@@ -357,14 +357,14 @@ pub fn verifyAbstracts(s: *Scope, allocator: *const std.mem.Allocator, diags: *d
                 try diags.add(
                     def_entry.location,
                     .semantic,
-                    "default type does not implement abstract '{s}': missing function '{s}'. Possible overloads:\n{s}",
+                    "default type does not implement abstract '{s}':\n  missing function: {s}\n  possible overloads:\n{s}",
                     .{ abs_name2, buf2.items, candidates2 },
                 );
             } else {
                 try diags.add(
                     def_entry.location,
                     .semantic,
-                    "default type does not implement abstract '{s}': missing function '{s}'.",
+                    "default type does not implement abstract '{s}':\n  missing function: {s}",
                     .{ abs_name2, buf2.items },
                 );
             }

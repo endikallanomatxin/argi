@@ -250,7 +250,7 @@ test "332X_abstract_missing_requirement" {
     try clean();
     try buildExpectFail(
         "tests/332X_abstract_missing_requirement/main.rg",
-        "type does not implement abstract 'Animal': missing function 'speak (.who: Dog)'",
+        "type does not implement abstract 'Animal':\n  missing function: speak (.who: Dog)",
     );
 }
 
@@ -258,7 +258,7 @@ test "333X_abstract_wrong_signature" {
     try clean();
     try buildExpectFail(
         "tests/333X_abstract_wrong_signature/main.rg",
-        "type does not implement abstract 'Animal': missing function 'speak (.who: Dog)'",
+        "type does not implement abstract 'Animal':\n  missing function: speak (.who: Dog)",
     );
 }
 
