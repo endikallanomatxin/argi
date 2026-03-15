@@ -3165,17 +3165,8 @@ pub const Semantizer = struct {
         };
 
         const loc = call.input.*.location;
-        if (value > std.math.maxInt(i32)) {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "result of builtin exceeds Int32 range",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        return try typ.makeIntLiteral(self.allocator, loc, @intCast(value), .{ .builtin = .Int32 });
+        if (value > std.math.maxInt(i64)) return error.InvalidType;
+        return try typ.makeIntLiteral(self.allocator, loc, @intCast(value), .{ .builtin = .UInt64 });
     }
 
     fn handleLengthBuiltin(
