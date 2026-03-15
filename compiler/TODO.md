@@ -1,7 +1,4 @@
 - Semantizer:
-
-    - Menos repetición en errores de overload. Hay unas 15 líneas repetidas 3 veces.
-
     - Genéricos: unifica las dos rutas. instantiateGenericNamed y
     instantiateGeneric comparten un 90%. Saca una función interna.
 
