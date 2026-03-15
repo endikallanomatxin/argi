@@ -74,15 +74,6 @@
        “struct-coercions”, que sea en el semantizador; por ahora, **igualdad
        estricta**.
 
-- Capado a Int32 en size_of/alignment_of
-
-    Estás calculando en u64 y luego fallas si supera Int32. Si no te hace falta
-    esa restricción, quita el check y devuelve UInt64 siempre (ahorras
-    diagnósticos y conversiones).
-
-    - Revisar también la coherencia con `length`, que ahora devuelve `UInt64`.
-
-
 - Restricción de “sólo Int64/UInt64” en suma de punteros
 
     En handleBinOp para pointer + int exiges 64-bit exacto. Si te vale
@@ -103,9 +94,8 @@
     `main.rg` están vacíos. Decidir si son placeholders o features a
     implementar y actuar en consecuencia.
 
-    - Añadir tests específicos para la política final de offsets de puntero,
-    para `size_of/alignment_of` una vez fijado el tipo de retorno, y para
-    evitar coerciones implícitas desde codegen.
+    - Añadir tests específicos para la política final de offsets de puntero y
+    para evitar coerciones implícitas desde codegen.
 
 
 - LSP:
