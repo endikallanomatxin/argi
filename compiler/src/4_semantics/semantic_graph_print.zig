@@ -261,6 +261,15 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             std.debug.print("type: {s}\n", .{typeToString(tl.ty)});
         },
 
+        .explicit_cast => |ec| {
+            std.debug.print("ExplicitCast\n", .{});
+            indent(lvl + 1);
+            std.debug.print("value:\n", .{});
+            printNode(ec.value, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("target_type: {s}\n", .{typeToString(ec.target_type)});
+        },
+
         else => std.debug.print("Unknown SG node\n", .{}),
     }
 }

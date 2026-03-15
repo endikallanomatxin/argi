@@ -326,6 +326,10 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "type values are compile-time only", .{});
                 return CodegenError.NotYetImplemented;
             },
+            .explicit_cast => |ec| self.genExplicitCast(ec) catch |e| {
+                try self.diags.add(n.location, .codegen, "error generating explicit cast: {s}", .{@errorName(e)});
+                return e;
+            },
             else => CodegenError.UnknownNode,
         };
     }
@@ -1429,6 +1433,40 @@ pub const CodeGenerator = struct {
 
         const deref_val = c.LLVMBuildLoad2(self.builder, pointee_ty, tv.value_ref, "deref");
         return .{ .value_ref = deref_val, .type_ref = pointee_ty };
+    }
+
+    fn genExplicitCast(self: *CodeGenerator, ec: sem.ExplicitCast) !TypedValue {
+        const value_tv = (try self.visitNode(ec.value)) orelse return CodegenError.ValueNotFound;
+        const target_ty = try self.toLLVMType(ec.target_type);
+
+        const source_sem_ty = value_tv.sem_type orelse return CodegenError.InvalidType;
+        const source_is_ptr = source_sem_ty == .pointer_type;
+        const source_is_int = switch (source_sem_ty) {
+            .builtin => |bt| switch (bt) {
+                .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64 => true,
+                else => false,
+            },
+            else => false,
+        };
+        const target_is_ptr = ec.target_type == .pointer_type;
+        const target_is_int = switch (ec.target_type) {
+            .builtin => |bt| switch (bt) {
+                .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64 => true,
+                else => false,
+            },
+            else => false,
+        };
+
+        if (source_is_ptr and target_is_int) {
+            const casted = c.LLVMBuildPtrToInt(self.builder, value_tv.value_ref, target_ty, "ptr.to.int");
+            return .{ .value_ref = casted, .type_ref = target_ty, .sem_type = ec.target_type };
+        }
+        if (source_is_int and target_is_ptr) {
+            const casted = c.LLVMBuildIntToPtr(self.builder, value_tv.value_ref, target_ty, "int.to.ptr");
+            return .{ .value_ref = casted, .type_ref = target_ty, .sem_type = ec.target_type };
+        }
+
+        return CodegenError.InvalidType;
     }
 
     //──────────────────────────────────────── pointer store ──

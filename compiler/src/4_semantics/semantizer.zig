@@ -1619,6 +1619,11 @@ pub const Semantizer = struct {
                 error.Reported => return err,
                 else => err,
             };
+        if (std.mem.eql(u8, call.callee, "cast"))
+            return self.handleCastBuiltin(call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                else => err,
+            };
         if (std.mem.eql(u8, call.callee, "type_of"))
             return self.handleTypeOf(call, s) catch |err| switch (err) {
                 error.Reported => return err,
@@ -2483,27 +2488,14 @@ pub const Semantizer = struct {
 
         const lhs_is_ptr = lhs.ty == .pointer_type;
         const rhs_is_ptr = rhs.ty == .pointer_type;
-        if (bo.operator == .addition and lhs_is_ptr != rhs_is_ptr) {
-            const int_ty = if (lhs_is_ptr) rhs.ty else lhs.ty;
-            const int_node = if (lhs_is_ptr) bo.right else bo.left;
-            const is_valid_index = int_ty == .builtin and (int_ty.builtin == .Int64 or int_ty.builtin == .UInt64);
-            if (!is_valid_index) {
-                const other_str = try typ.formatType(int_ty, s, self.allocator);
-                defer self.allocator.free(other_str);
-                try self.diags.add(
-                    int_node.*.location,
-                    .semantic,
-                    "pointer addition requires a 64-bit integer offset, but '{s}' was provided",
-                    .{other_str},
-                );
-                return error.Reported;
-            }
-
-            const bin = try self.allocator.create(sg.BinaryOperation);
-            bin.* = .{ .operator = bo.operator, .left = lhs.node, .right = rhs.node };
-            const n = try sg.makeSGNode(.{ .binary_operation = bin.* }, undefined, self.allocator);
-            try s.nodes.append(n);
-            return .{ .node = n, .ty = if (lhs_is_ptr) lhs.ty else rhs.ty };
+        if ((bo.operator == .addition or bo.operator == .subtraction) and lhs_is_ptr != rhs_is_ptr) {
+            try self.diags.add(
+                bo.left.*.location,
+                .semantic,
+                "pointer arithmetic is not allowed; cast explicitly to an integer, perform the arithmetic, and cast back",
+                .{},
+            );
+            return error.Reported;
         }
 
         rhs = try typ.coerceExprToType(lhs.ty, rhs, bo.right, s, self.allocator, self.diags);
@@ -2884,6 +2876,113 @@ pub const Semantizer = struct {
         }
 
         return self.resolveTypeExpression(field.value, s);
+    }
+
+    fn extractNamedTypeArgument(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        arg_name: []const u8,
+        s: *Scope,
+    ) SemErr!sg.Type {
+        const stargs = call.type_arguments_struct orelse {
+            try self.diags.add(
+                call.callee_loc,
+                .semantic,
+                "cast expects named type arguments like cast#(.to: UInt64)(.value = ...)",
+                .{},
+            );
+            return error.Reported;
+        };
+
+        for (stargs.fields) |field| {
+            if (!std.mem.eql(u8, field.name.string, arg_name)) continue;
+            const field_ty = field.type orelse {
+                try self.diags.add(
+                    field.name.location,
+                    .semantic,
+                    "type argument '.{s}' must specify a type",
+                    .{arg_name},
+                );
+                return error.Reported;
+            };
+            return self.resolveType(field_ty, s);
+        }
+
+        try self.diags.add(
+            call.callee_loc,
+            .semantic,
+            "cast expects type argument '.{s}'",
+            .{arg_name},
+        );
+        return error.Reported;
+    }
+
+    fn extractValueArgument(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        arg_name: []const u8,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const arg_node = call.input.*;
+        if (arg_node.content != .struct_value_literal) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "builtin expects '.{s}' argument",
+                .{arg_name},
+            );
+            return error.Reported;
+        }
+
+        const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, arg_name)) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "builtin expects a single '.{s}' argument",
+                .{arg_name},
+            );
+            return error.Reported;
+        }
+
+        return self.visitNode(svl.fields[0].value.*, s);
+    }
+
+    fn handleCastBuiltin(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!typ.TypedExpr {
+        const value_te = try self.extractValueArgument(call, "value", s);
+        const target_ty = try self.extractNamedTypeArgument(call, "to", s);
+
+        if (typ.typesExactlyEqual(value_te.ty, target_ty)) {
+            return value_te;
+        }
+
+        const source_is_ptr = value_te.ty == .pointer_type;
+        const source_is_int = typ.isIntegerType(value_te.ty);
+        const target_is_ptr = target_ty == .pointer_type;
+        const target_is_int = typ.isIntegerType(target_ty);
+
+        if (!((source_is_ptr and target_is_int) or (source_is_int and target_is_ptr))) {
+            const source_str = try typ.formatType(value_te.ty, s, self.allocator);
+            const target_str = try typ.formatType(target_ty, s, self.allocator);
+            defer {
+                self.allocator.free(source_str);
+                self.allocator.free(target_str);
+            }
+            try self.diags.add(
+                call.input.*.location,
+                .semantic,
+                "unsupported explicit cast from '{s}' to '{s}'",
+                .{ source_str, target_str },
+            );
+            return error.Reported;
+        }
+
+        const cast_node = try sg.makeSGNode(.{ .explicit_cast = .{
+            .value = value_te.node,
+            .target_type = target_ty,
+        } }, call.input.*.location, self.allocator);
+        try s.nodes.append(cast_node);
+        return .{ .node = cast_node, .ty = target_ty };
     }
 
     fn resolveTypeExpression(self: *Semantizer, node: *const syn.STNode, s: *Scope) SemErr!sg.Type {

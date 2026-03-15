@@ -63,6 +63,7 @@ pub const Content = union(enum) {
     pointer_assignment: PointerAssignment,
     type_initializer: TypeInitializer,
     type_literal: *const TypeLiteral,
+    explicit_cast: ExplicitCast,
 };
 
 //
@@ -152,6 +153,11 @@ pub const ArrayStore = struct {
 
 pub const TypeLiteral = struct {
     ty: Type,
+};
+
+pub const ExplicitCast = struct {
+    value: *const SGNode,
+    target_type: Type,
 };
 
 pub const StructValueLiteral = struct {
