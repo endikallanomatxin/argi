@@ -7,11 +7,10 @@
 
 - Choice types: Implement
 
-- `let x: UInt8 = 300` → el check de rango para literales ya está
-  implementado. Quitar esta entrada y añadir tests negativos dedicados para
-  overflow/underflow de enteros con anotación explícita.
-
 - Abstracts:
+
+- Añadir test negativo de underflow de enteros anotados cuando exista sintaxis
+  de literales negativos (`-1` ahora falla en parsing antes del check de rango).
 
     - Fix: Actualmente el símbolo del abstract se registra como “tipo nominal”
     placeholder que internamente mapea a Any. Además, no se permite usar un

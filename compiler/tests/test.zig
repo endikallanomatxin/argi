@@ -104,6 +104,22 @@ test "052_struct_field_store" {
     try run();
 }
 
+test "053X_integer_literal_overflow" {
+    try clean();
+    try buildExpectFail(
+        "tests/053X_integer_literal_overflow/main.rg",
+        "integer literal 300 does not fit in 'UInt8' (max 255)",
+    );
+}
+
+test "054X_signed_integer_literal_overflow" {
+    try clean();
+    try buildExpectFail(
+        "tests/054X_signed_integer_literal_overflow/main.rg",
+        "integer literal 128 does not fit in 'Int8' (min -128, max 127)",
+    );
+}
+
 test "11_function_calling" {
     try clean();
     try build("tests/11_function_calling/main.rg");
