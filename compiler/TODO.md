@@ -110,12 +110,6 @@
 
 - CLI / docs:
 
-    - Alinear `README.md` con el CLI real:
-      * usar `tests/` en vez de `test/`
-      * documentar el nuevo modelo de build por directorio cuando se haga el
-        cambio
-      * reflejar los flags de build y el comando `lsp`
-
     - Mantener la ayuda del CLI sincronizada con lo que realmente soporta el
     compilador.
 
