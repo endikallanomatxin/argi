@@ -31,9 +31,9 @@ fn isProjectRoot(path: []const u8) bool {
     defer std.heap.page_allocator.free(git_path);
     if (dirExists(git_path)) return true;
 
-    const build_zig_path = std.fs.path.join(std.heap.page_allocator, &.{ path, "build.zig" }) catch return false;
-    defer std.heap.page_allocator.free(build_zig_path);
-    return fileExists(build_zig_path);
+    const argi_toml_path = std.fs.path.join(std.heap.page_allocator, &.{ path, "argi.toml" }) catch return false;
+    defer std.heap.page_allocator.free(argi_toml_path);
+    return fileExists(argi_toml_path);
 }
 
 fn findProjectRoot(alloc: *const std.mem.Allocator, importer_path: []const u8) ![]u8 {
