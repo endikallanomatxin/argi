@@ -626,9 +626,6 @@ pub const Syntaxer = struct {
             }
             if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
             self.advanceOne();
-        } else if (self.tokenIs(.ampersand) or self.tokenIs(.dollar)) {
-            const arg = try self.parseExpression();
-            try args.append(arg);
         }
 
         return .{
