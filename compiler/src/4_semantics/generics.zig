@@ -23,5 +23,5 @@ pub const GenericTypeTemplate = struct {
     name: []const u8,
     location: tok.Location,
     param_names: []const []const u8,
-    body: syn.StructTypeLiteral,
+    body: *syn.STNode,
 };

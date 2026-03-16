@@ -10,6 +10,7 @@ fn typeToString(t: sem.Type) []const u8 {
     return switch (t) {
         .builtin => |b| @tagName(b),
         .abstract_type => |at| at.name,
+        .choice_type => |_| "choice",
         .struct_type => |_| "struct",
         .pointer_type => |ptr| switch (ptr.*.mutability) {
             .read_only => "&",
@@ -95,6 +96,20 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
         },
 
         .value_literal => |v| printValueLiteral(&v, lvl),
+        .choice_literal => |lit| {
+            std.debug.print("ChoiceLiteral tag={d}\n", .{lit.variant_index});
+            if (lit.payload) |payload| {
+                indent(lvl + 1);
+                std.debug.print("Payload:\n", .{});
+                printNode(payload, lvl + 2);
+            }
+        },
+        .choice_payload_access => |acc| {
+            std.debug.print("ChoicePayloadAccess variant={d}\n", .{acc.variant_index});
+            indent(lvl + 1);
+            std.debug.print("Choice:\n", .{});
+            printNode(acc.choice_value, lvl + 2);
+        },
 
         .list_literal => |ll| {
             indent(lvl);
@@ -224,7 +239,22 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
 
         .while_statement => |_| std.debug.print("WhileStatement\n", .{}),
         .for_statement => |_| std.debug.print("ForStatement\n", .{}),
-        .switch_statement => |_| std.debug.print("SwitchStatement\n", .{}),
+        .switch_statement => |sw| {
+            std.debug.print("SwitchStatement\n", .{});
+            indent(lvl + 1);
+            std.debug.print("Expression:\n", .{});
+            printNode(sw.expression, lvl + 2);
+            for (sw.cases) |case_item| {
+                indent(lvl + 1);
+                std.debug.print("Case:\n", .{});
+                printNode(case_item.value, lvl + 2);
+                const b: sem.SGNode = .{
+                    .location = node.location,
+                    .content = .{ .code_block = @constCast(case_item.body) },
+                };
+                printNode(&b, lvl + 2);
+            }
+        },
         .break_statement => |_| std.debug.print("Break\n", .{}),
         .continue_statement => |_| std.debug.print("Continue\n", .{}),
 

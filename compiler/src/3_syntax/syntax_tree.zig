@@ -38,15 +38,19 @@ pub const Content = union(enum) {
     literal: tok.Literal,
     list_literal: ListLiteral,
     struct_type_literal: StructTypeLiteral,
+    choice_type_literal: ChoiceTypeLiteral,
     struct_value_literal: StructValueLiteral,
+    choice_literal: ChoiceLiteral,
 
     struct_field_access: StructFieldAccess,
+    choice_payload_access: ChoicePayloadAccess,
     index_access: IndexAccess,
 
     return_statement: ReturnStatement,
     binary_operation: BinaryOperation,
     comparison: Comparison,
     if_statement: IfStatement,
+    match_statement: MatchStatement,
     import_statement: ImportStatement,
     defer_statement: *STNode,
     index_assignment: IndexAssignment,
@@ -96,7 +100,7 @@ pub const SymbolDeclaration = struct {
 pub const TypeDeclaration = struct {
     name: Name,
     generic_params: []const []const u8,
-    value: *STNode, // StructTypeLiteral
+    value: *STNode,
 };
 
 // Abstract type declarations (interface-like)
@@ -183,6 +187,21 @@ pub const StructValueLiteral = struct {
     fields: []const StructValueLiteralField,
 };
 
+pub const ChoiceTypeLiteral = struct {
+    variants: []const ChoiceTypeLiteralVariant,
+};
+
+pub const ChoiceTypeLiteralVariant = struct {
+    name: Name,
+    is_default: bool,
+    payload_type: ?StructTypeLiteral = null,
+};
+
+pub const ChoiceLiteral = struct {
+    name: Name,
+    payload: ?*STNode,
+};
+
 pub const StructValueLiteralField = struct {
     name: Name,
     value: *STNode,
@@ -191,6 +210,11 @@ pub const StructValueLiteralField = struct {
 pub const StructFieldAccess = struct {
     struct_value: *STNode,
     field_name: Name,
+};
+
+pub const ChoicePayloadAccess = struct {
+    choice_value: *STNode,
+    variant_name: Name,
 };
 
 pub const IndexAccess = struct {
@@ -219,6 +243,17 @@ pub const IfStatement = struct {
     condition: *STNode,
     then_block: *STNode,
     else_block: ?*STNode,
+};
+
+pub const MatchStatement = struct {
+    value: *STNode,
+    cases: []const MatchCase,
+};
+
+pub const MatchCase = struct {
+    variant_name: Name,
+    payload_binding: ?Name,
+    body: *STNode,
 };
 
 pub const ReturnStatement = struct {

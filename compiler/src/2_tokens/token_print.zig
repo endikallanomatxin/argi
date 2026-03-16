@@ -39,6 +39,9 @@ pub fn printToken(token: tok.Token) void {
         .dot => {
             std.debug.print("dot\n", .{});
         },
+        .double_dot => {
+            std.debug.print("double_dot\n", .{});
+        },
         .comma => {
             std.debug.print("comma\n", .{});
         },
@@ -50,6 +53,9 @@ pub fn printToken(token: tok.Token) void {
         },
         .keyword_else => {
             std.debug.print("keyword_else\n", .{});
+        },
+        .keyword_match => {
+            std.debug.print("keyword_match\n", .{});
         },
         .literal => |lit| {
             switch (lit) {

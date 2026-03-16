@@ -111,7 +111,13 @@ pub const Tokenizer = struct {
             return;
         }
 
-        // Dot
+        // Double dot / dot
+        if (self.this() == '.' and self.next() catch 0 == '.') {
+            try self.addToken(tok.Content{ .double_dot = .{} }, loc);
+            try self.advanceOne();
+            try self.advanceOne();
+            return;
+        }
         if (self.this() == '.') {
             try self.addToken(tok.Content{ .dot = .{} }, loc);
             try self.advanceOne();
@@ -212,6 +218,8 @@ pub const Tokenizer = struct {
                 try self.addToken(tok.Content{ .keyword_if = .{} }, loc);
             } else if (std.mem.eql(u8, word, "else")) {
                 try self.addToken(tok.Content{ .keyword_else = .{} }, loc);
+            } else if (std.mem.eql(u8, word, "match")) {
+                try self.addToken(tok.Content{ .keyword_match = .{} }, loc);
             } else {
                 try self.addToken(tok.Content{ .identifier = word }, loc);
             }

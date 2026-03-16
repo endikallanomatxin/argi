@@ -210,6 +210,10 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "error generating value literal: {s}", .{@errorName(e)});
                 return e;
             },
+            .choice_literal => |lit| self.genChoiceLiteral(lit) catch |e| {
+                try self.diags.add(n.location, .codegen, "error generating choice literal: {s}", .{@errorName(e)});
+                return e;
+            },
             .array_literal => |al| self.genArrayLiteral(al) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating array literal: {s}", .{@errorName(e)});
                 return e;
@@ -236,6 +240,13 @@ pub const CodeGenerator = struct {
                 };
                 return null;
             },
+            .switch_statement => |sw| {
+                self.genSwitchStatement(sw) catch |e| {
+                    try self.diags.add(n.location, .codegen, "error generating switch statement: {s}", .{@errorName(e)});
+                    return e;
+                };
+                return null;
+            },
             .function_call => |fc| self.genFunctionCall(fc) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating function call: {s}", .{@errorName(e)});
                 return e;
@@ -250,6 +261,10 @@ pub const CodeGenerator = struct {
             },
             .struct_field_access => |sfa| self.genStructFieldAccess(sfa) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating struct field access: {s}", .{@errorName(e)});
+                return e;
+            },
+            .choice_payload_access => |acc| self.genChoicePayloadAccess(acc) catch |e| {
+                try self.diags.add(n.location, .codegen, "error generating choice payload access: {s}", .{@errorName(e)});
                 return e;
             },
             .address_of => |a| self.genAddressOf(a) catch |e| {
@@ -319,6 +334,16 @@ pub const CodeGenerator = struct {
                 .Type => c.LLVMPointerType(c.LLVMInt8Type(), 0),
                 .Any => c.LLVMInt8Type(), // &Any es i8*
             },
+            .choice_type => |ct| blk_choice: {
+                const field_count: usize = ct.variants.len + 1;
+                var fields = try self.allocator.alloc(llvm.c.LLVMTypeRef, field_count);
+                fields[0] = c.LLVMInt32Type();
+                for (ct.variants, 0..) |variant, idx| {
+                    const payload_ty = variant.payload_type orelse sem.Type{ .builtin = .UInt8 };
+                    fields[idx + 1] = try self.toLLVMType(payload_ty);
+                }
+                break :blk_choice c.LLVMStructType(fields.ptr, @intCast(field_count), 0);
+            },
             .abstract_type => CodegenError.InvalidType,
             .struct_type => |st| blk: {
                 // Anonymous struct generation with the given fields
@@ -386,6 +411,9 @@ pub const CodeGenerator = struct {
                     .Any => "any",
                 };
                 try buf.appendSlice(s);
+            },
+            .choice_type => |_| {
+                try buf.appendSlice("choice");
             },
             .abstract_type => |at| {
                 try buf.appendSlice("abs_");
@@ -722,6 +750,28 @@ pub const CodeGenerator = struct {
         };
     }
 
+    fn genChoiceLiteral(self: *CodeGenerator, lit: *const sem.ChoiceLiteral) !TypedValue {
+        const choice_ty = sem.Type{ .choice_type = lit.choice_type };
+        const llvm_ty = try self.toLLVMType(choice_ty);
+
+        var agg = c.LLVMGetUndef(llvm_ty);
+        const tag_val = c.LLVMConstInt(c.LLVMInt32Type(), @intCast(lit.variant_index), 0);
+        agg = c.LLVMBuildInsertValue(self.builder, agg, tag_val, 0, "choice.tag");
+
+        if (lit.payload) |payload_node| {
+            const payload_tv = (try self.visitNode(payload_node)) orelse return CodegenError.ValueNotFound;
+            agg = c.LLVMBuildInsertValue(
+                self.builder,
+                agg,
+                payload_tv.value_ref,
+                lit.variant_index + 1,
+                "choice.payload",
+            );
+        }
+
+        return .{ .value_ref = agg, .type_ref = llvm_ty, .sem_type = choice_ty };
+    }
+
     fn inferLiteralSemType(self: *CodeGenerator, n: *const sem.SGNode) ?sem.Type {
         _ = self;
         return switch (n.content.value_literal) {
@@ -882,6 +932,22 @@ pub const CodeGenerator = struct {
         if (lhs_tv.type_ref != rhs_tv.type_ref)
             return CodegenError.InvalidType;
 
+        if (lhs_tv.sem_type) |lhs_sem_ty| {
+            if (lhs_sem_ty == .choice_type) {
+                const lhs_tag = c.LLVMBuildExtractValue(self.builder, lhs_tv.value_ref, 0, "choice.lhs.tag");
+                const rhs_tag = c.LLVMBuildExtractValue(self.builder, rhs_tv.value_ref, 0, "choice.rhs.tag");
+                const val = switch (co.operator) {
+                    .equal => c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, lhs_tag, rhs_tag, "choice.eq"),
+                    .not_equal => c.LLVMBuildICmp(self.builder, c.LLVMIntNE, lhs_tag, rhs_tag, "choice.ne"),
+                    .less_than => c.LLVMBuildICmp(self.builder, c.LLVMIntSLT, lhs_tag, rhs_tag, "choice.lt"),
+                    .greater_than => c.LLVMBuildICmp(self.builder, c.LLVMIntSGT, lhs_tag, rhs_tag, "choice.gt"),
+                    .less_than_or_equal => c.LLVMBuildICmp(self.builder, c.LLVMIntSLE, lhs_tag, rhs_tag, "choice.le"),
+                    .greater_than_or_equal => c.LLVMBuildICmp(self.builder, c.LLVMIntSGE, lhs_tag, rhs_tag, "choice.ge"),
+                };
+                return .{ .value_ref = val, .type_ref = c.LLVMInt1Type() };
+            }
+        }
+
         const is_float = lhs_tv.type_ref == c.LLVMFloatType();
         const use_unsigned = isUnsignedBuiltin(lhs_tv.sem_type);
 
@@ -955,6 +1021,45 @@ pub const CodeGenerator = struct {
             if (c.LLVMGetBasicBlockTerminator(elseB.?) == null)
                 _ = c.LLVMBuildBr(self.builder, endB);
         }
+        c.LLVMPositionBuilderAtEnd(self.builder, endB);
+    }
+
+    fn genSwitchStatement(self: *CodeGenerator, sw: *const sem.SwitchStatement) !void {
+        const expr_tv = (try self.visitNode(sw.expression)) orelse return CodegenError.ValueNotFound;
+        const tag_val = c.LLVMBuildExtractValue(self.builder, expr_tv.value_ref, 0, "match.tag");
+
+        const cur_bb = c.LLVMGetInsertBlock(self.builder);
+        const fnc = c.LLVMGetBasicBlockParent(cur_bb);
+        const endB = c.LLVMAppendBasicBlock(fnc, "match.end");
+        const defaultB = if (sw.default_case != null) c.LLVMAppendBasicBlock(fnc, "match.default") else endB;
+
+        const switch_inst = c.LLVMBuildSwitch(self.builder, tag_val, defaultB, @intCast(sw.cases.len));
+        var case_blocks = try self.allocator.alloc(c.LLVMBasicBlockRef, sw.cases.len);
+        defer self.allocator.free(case_blocks);
+
+        for (sw.cases, 0..) |case_item, idx| {
+            const case_name = try std.fmt.allocPrint(self.allocator.*, "match.case.{d}", .{idx});
+            const case_name_z = try self.dupZ(case_name);
+            case_blocks[idx] = c.LLVMAppendBasicBlock(fnc, case_name_z.ptr);
+            const case_lit = case_item.value.content.choice_literal;
+            const case_tag = c.LLVMConstInt(c.LLVMInt32Type(), case_lit.variant_index, 0);
+            c.LLVMAddCase(switch_inst, case_tag, case_blocks[idx]);
+        }
+
+        for (sw.cases, 0..) |case_item, idx| {
+            c.LLVMPositionBuilderAtEnd(self.builder, case_blocks[idx]);
+            try self.genCodeBlock(case_item.body);
+            if (c.LLVMGetBasicBlockTerminator(case_blocks[idx]) == null)
+                _ = c.LLVMBuildBr(self.builder, endB);
+        }
+
+        if (sw.default_case) |default_case| {
+            c.LLVMPositionBuilderAtEnd(self.builder, defaultB);
+            try self.genCodeBlock(default_case);
+            if (c.LLVMGetBasicBlockTerminator(defaultB) == null)
+                _ = c.LLVMBuildBr(self.builder, endB);
+        }
+
         c.LLVMPositionBuilderAtEnd(self.builder, endB);
     }
 
@@ -1239,6 +1344,13 @@ pub const CodeGenerator = struct {
         }
 
         return .{ .value_ref = val, .type_ref = field_ty, .sem_type = field_sem_ty };
+    }
+
+    fn genChoicePayloadAccess(self: *CodeGenerator, acc: *const sem.ChoicePayloadAccess) !TypedValue {
+        const base = (try self.visitNode(acc.choice_value)) orelse return CodegenError.ValueNotFound;
+        const val = c.LLVMBuildExtractValue(self.builder, base.value_ref, acc.variant_index + 1, "choice.payload");
+        const payload_ty = try self.toLLVMType(acc.payload_type);
+        return .{ .value_ref = val, .type_ref = payload_ty, .sem_type = acc.payload_type };
     }
 
     fn genStructFieldStore(self: *CodeGenerator, sf: *const sem.StructFieldStore) !void {

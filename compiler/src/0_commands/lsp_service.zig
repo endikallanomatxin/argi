@@ -534,6 +534,26 @@ pub const LanguageService = struct {
                         if (f.default_value) |dv| try stack.append(dv);
                     }
                 },
+                .choice_type_literal => |ctl| {
+                    for (ctl.variants) |v| {
+                        try em.identAt(v.name.location, TOKEN_INDEX.property, DECL);
+                        if (v.payload_type) |stl| {
+                            for (stl.fields) |f| {
+                                try em.identAt(f.name.location, TOKEN_INDEX.property, DECL);
+                                if (f.type) |ty| try em.colorType(ty, DECL);
+                                if (f.default_value) |dv| try stack.append(dv);
+                            }
+                        }
+                    }
+                },
+                .choice_literal => |lit| {
+                    try em.identAt(lit.name.location, TOKEN_INDEX.property, 0);
+                    if (lit.payload) |payload| try stack.append(payload);
+                },
+                .choice_payload_access => |acc| {
+                    try em.identAt(acc.variant_name.location, TOKEN_INDEX.property, 0);
+                    try stack.append(acc.choice_value);
+                },
                 .code_block => |cb| {
                     for (cb.items) |sub| try stack.append(sub);
                 },
@@ -550,6 +570,14 @@ pub const LanguageService = struct {
                     try stack.append(ifs.condition);
                     try stack.append(ifs.then_block);
                     if (ifs.else_block) |e| try stack.append(e);
+                },
+                .match_statement => |m| {
+                    try stack.append(m.value);
+                    for (m.cases) |c| {
+                        try em.identAt(c.variant_name.location, TOKEN_INDEX.property, 0);
+                        if (c.payload_binding) |pb| try em.identAt(pb.location, TOKEN_INDEX.variable, DECL);
+                        try stack.append(c.body);
+                    }
                 },
                 .list_literal => |ll| for (ll.elements) |e| try stack.append(e),
                 .index_access => |ia| {
@@ -684,7 +712,7 @@ inline fn classify(c: token.Content) ?u32 {
             else => TOKEN_INDEX.number,
         },
 
-        .keyword_return, .keyword_if, .keyword_else => TOKEN_INDEX.keyword,
+        .keyword_return, .keyword_if, .keyword_else, .keyword_match => TOKEN_INDEX.keyword,
 
         .comparison_operator, .binary_operator, .equal, .arrow, .colon, .double_colon, .dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar => TOKEN_INDEX.operator,
 
@@ -753,6 +781,7 @@ fn tokenLenBytes(tk: token.Token) usize {
         .keyword_return => "return".len,
         .keyword_if => "if".len,
         .keyword_else => "else".len,
+        .keyword_match => "match".len,
 
         .double_colon => 2,
         .arrow => 2,
@@ -762,6 +791,7 @@ fn tokenLenBytes(tk: token.Token) usize {
         .new_line => 1,
 
         .equal, .colon, .dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar, .eof => 1,
+        .double_dot => 2,
     };
 }
 
@@ -773,8 +803,8 @@ inline fn classify_lex_only(c: token.Content) ?u32 {
             .string_literal, .char_literal => TOKEN_INDEX.string,
             .bool_literal => TOKEN_INDEX.keyword,
         },
-        .keyword_return, .keyword_if, .keyword_else => TOKEN_INDEX.keyword,
-        .comparison_operator, .binary_operator, .equal, .arrow, .colon, .double_colon, .dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar => TOKEN_INDEX.operator,
+        .keyword_return, .keyword_if, .keyword_else, .keyword_match => TOKEN_INDEX.keyword,
+        .comparison_operator, .binary_operator, .equal, .arrow, .colon, .double_colon, .dot, .double_dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar => TOKEN_INDEX.operator,
         .identifier => null,
         .new_line, .eof => null,
     };

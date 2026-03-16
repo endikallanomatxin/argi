@@ -87,6 +87,10 @@ pub fn specificityScore(expected: sg.Type, actual: sg.Type) u32 {
             .abstract_type => 0,
             else => 1,
         },
+        .choice_type => switch (actual) {
+            .choice_type => 0,
+            else => 10,
+        },
         .struct_type => |est| blk: {
             var sum: u32 = 0;
             const ast = actual.struct_type;
@@ -133,6 +137,10 @@ pub fn typesCompatibleForDispatch(expected: sg.Type, actual: sg.Type, s: *Scope)
         .abstract_type => |eat| switch (actual) {
             .abstract_type => |aat| std.mem.eql(u8, eat.name, aat.name),
             else => typeImplementsAbstract(eat.name, actual, s),
+        },
+        .choice_type => |ect| switch (actual) {
+            .choice_type => |act| ect == act,
+            else => false,
         },
         .struct_type => |est| switch (actual) {
             .struct_type => |ast| blk: {

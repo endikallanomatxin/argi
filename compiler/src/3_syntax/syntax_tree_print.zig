@@ -58,6 +58,22 @@ fn printStructTypeLiteral(st: syn.StructTypeLiteral, lvl: usize) void {
     std.debug.print(")", .{});
 }
 
+fn printChoiceTypeLiteral(ct: syn.ChoiceTypeLiteral, lvl: usize) void {
+    std.debug.print("choice (\n", .{});
+    for (ct.variants) |v| {
+        indent(lvl + 1);
+        if (v.is_default) std.debug.print("=", .{});
+        std.debug.print("..{s}", .{v.name.string});
+        if (v.payload_type) |pt| {
+            std.debug.print(" ", .{});
+            printStructTypeLiteral(pt, lvl + 1);
+        }
+        std.debug.print("\n", .{});
+    }
+    indent(lvl);
+    std.debug.print(")", .{});
+}
+
 // ── impresión de literales de valor ─────────────────────────────────────────
 fn printStructValueLiteral(sl: syn.StructValueLiteral, lvl: usize) void {
     std.debug.print("(\n", .{});
@@ -158,7 +174,7 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
         // ── TYPE DECLARATION ──────────────────────────────────────────────
         .type_declaration => |td| {
             std.debug.print("TypeDecl  \"{s}\"\n", .{td.name.string});
-            printNode(td.value.*, lvl + 1); // el valor es un struct_type_literal
+            printNode(td.value.*, lvl + 1);
         },
 
         // ── FUNCTION DECLARATION ──────────────────────────────────────────
@@ -200,12 +216,44 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             printStructTypeLiteral(st, lvl);
             std.debug.print("\n", .{});
         },
+        .choice_type_literal => |ct| {
+            std.debug.print("ChoiceTypeLiteral ", .{});
+            printChoiceTypeLiteral(ct, lvl);
+            std.debug.print("\n", .{});
+        },
+        .choice_literal => |lit| {
+            std.debug.print("ChoiceLiteral ..{s}", .{lit.name.string});
+            if (lit.payload) |p| {
+                std.debug.print("(\n", .{});
+                printNode(p.*, lvl + 1);
+                indent(lvl);
+                std.debug.print(")", .{});
+            }
+            std.debug.print("\n", .{});
+        },
+        .choice_payload_access => |acc| {
+            std.debug.print("ChoicePayloadAccess ..{s}\n", .{acc.variant_name.string});
+            printNode(acc.choice_value.*, lvl + 1);
+        },
 
         // ── STRUCT VALUE LITERAL ─────────────────────────────────────────
         .struct_value_literal => |sv| {
             std.debug.print("StructValueLiteral ", .{});
             printStructValueLiteral(sv, lvl);
             std.debug.print("\n", .{});
+        },
+        .match_statement => |m| {
+            std.debug.print("Match\n", .{});
+            indent(lvl + 1);
+            std.debug.print("Value:\n", .{});
+            printNode(m.value.*, lvl + 2);
+            for (m.cases) |c| {
+                indent(lvl + 1);
+                std.debug.print("Case ..{s}", .{c.variant_name.string});
+                if (c.payload_binding) |pb| std.debug.print("({s})", .{pb.string});
+                std.debug.print("\n", .{});
+                printNode(c.body.*, lvl + 2);
+            }
         },
 
         // ── STRUCT FIELD ACCESS ──────────────────────────────────────────

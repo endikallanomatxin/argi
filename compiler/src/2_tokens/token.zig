@@ -33,12 +33,14 @@ pub const Content = union(enum) {
     hash: struct {},
 
     dot: struct {},
+    double_dot: struct {},
     comma: struct {},
 
     // Keywords
     keyword_return: struct {},
     keyword_if: struct {},
     keyword_else: struct {},
+    keyword_match: struct {},
 
     // Variables and constants
     colon: struct {},
