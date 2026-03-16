@@ -200,10 +200,11 @@
 
     - `refineStructTypeWithActual`
 
-        - Dejar de mutar `StructType.fields` in-place.
+        - Ya no muta `StructType.fields` in-place durante instanciación.
 
-        - Internar o clonar el tipo refinado para evitar aliasing y
-          contaminación entre instancias.
+        - Revisar si conviene internar tipos refinados compartidos o si basta
+          con seguir clonándolos cuando una instanciación necesita precisión
+          adicional.
 
     - Seguir quitando coerciones implícitas residuales
 
