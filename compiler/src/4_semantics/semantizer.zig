@@ -1871,6 +1871,9 @@ pub const Semantizer = struct {
                                 else => return inner_err,
                             };
                             if (abstract_inferred) |instantiated_abstract| break :blk instantiated_abstract;
+                            if (try self.addMissingAbstractImplementationDiagnostic(call.callee, tv_in.ty, s, call.input.*.location)) {
+                                return error.Reported;
+                            }
                             try self.addMissingFunctionDiagnostic(call.callee, tv_in.ty, s, call.input.*.location);
                             return error.Reported;
                         },
@@ -2133,6 +2136,62 @@ pub const Semantizer = struct {
             "function '{s}' exists, but no overload matches the provided arguments",
             .{fn_name},
         );
+    }
+
+    fn findTemplateFieldUsingParam(
+        self: *Semantizer,
+        tmpl: gen.GenericTemplate,
+        param_name: []const u8,
+    ) ?[]const u8 {
+        for (tmpl.input.fields) |fld| {
+            if (fld.type) |ty_node| {
+                if (self.typeUsesParam(ty_node, param_name)) return fld.name.string;
+            }
+        }
+        return null;
+    }
+
+    fn addMissingAbstractImplementationDiagnostic(
+        self: *Semantizer,
+        fn_name: []const u8,
+        input_ty: sg.Type,
+        s: *Scope,
+        loc: tok.Location,
+    ) !bool {
+        if (input_ty != .struct_type) return false;
+
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.generic_functions.getPtr(fn_name)) |list_ptr| {
+                for (list_ptr.items) |tmpl| {
+                    if (tmpl.dispatch_kind != .abstract_contract) continue;
+
+                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
+                    defer subst.deinit();
+
+                    var i: usize = 0;
+                    while (i < tmpl.param_names.len) : (i += 1) {
+                        const constraint = tmpl.param_abstract_constraints[i] orelse continue;
+                        const param_name = tmpl.param_names[i];
+                        const actual = self.inferGenericParamFromCall(tmpl, param_name, input_ty, s, &subst) orelse continue;
+                        if (abs.typeImplementsAbstract(constraint, actual, s)) continue;
+
+                        const actual_str = try typ.formatType(actual, s, self.allocator);
+                        defer self.allocator.free(actual_str);
+                        const field_name = self.findTemplateFieldUsingParam(tmpl, param_name) orelse param_name;
+                        try self.diags.add(
+                            loc,
+                            .semantic,
+                            "type '{s}' does not implement abstract '{s}' required by parameter '.{s}' of '{s}'",
+                            .{ actual_str, constraint, field_name, fn_name },
+                        );
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     fn addAmbiguousFunctionDiagnostic(
