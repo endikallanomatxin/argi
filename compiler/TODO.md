@@ -81,7 +81,7 @@
     - Pipe operator
 
         - Ya existe un corte usable:
-          `lhs | f`, `lhs | f(...)`, `lhs | module.f(...)`,
+          `lhs | f(...)`, `lhs | module.f(...)`,
           con `_`, `&_`, `$&_` y `_.field` dentro de los paréntesis del RHS.
 
         - Falta ampliarlo para:

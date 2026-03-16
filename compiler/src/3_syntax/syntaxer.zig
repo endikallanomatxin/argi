@@ -612,21 +612,29 @@ pub const Syntaxer = struct {
         self.parsing_pipe_rhs = true;
         defer self.parsing_pipe_rhs = prev_pipe_rhs;
 
-        if (self.tokenIs(.open_parenthesis)) {
-            self.advanceOne();
-            self.skipNewLinesAndComments();
-            while (!self.tokenIs(.close_parenthesis)) {
-                const arg = try self.parseExpression();
-                try args.append(arg);
-                self.skipNewLinesAndComments();
-                if (self.tokenIs(.comma)) {
-                    self.advanceOne();
-                    self.skipNewLinesAndComments();
-                } else break;
-            }
-            if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
-            self.advanceOne();
+        if (!self.tokenIs(.open_parenthesis)) {
+            try self.diags.add(
+                self.tokenLocation(),
+                .syntax,
+                "pipe right-hand side must be a call with parentheses",
+                .{},
+            );
+            return SyntaxerError.ExpectedLeftParen;
         }
+
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+        while (!self.tokenIs(.close_parenthesis)) {
+            const arg = try self.parseExpression();
+            try args.append(arg);
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            } else break;
+        }
+        if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+        self.advanceOne();
 
         return .{
             .callee = callee_name,

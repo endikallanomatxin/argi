@@ -18,5 +18,5 @@ main () -> (.status_code: Int32) := {
     )
 
     total : Int32 = p | sum_point(_.x, _.y)
-    status_code = total | add_one
+    status_code = total | add_one(_)
 }
