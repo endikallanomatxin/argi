@@ -54,16 +54,89 @@
 
     - Ownership, copying y memoria
 
-        - Implementar de verdad la historia de copia que se describe en
-          `description/32_copying_behaviour.md`.
+        - Este es probablemente el hueco más grande entre `description/` y el
+          compilador real.
 
-        - Cerrar qué tipos son copyables, movibles o solo pasables por `&`/`$&`
-          y hacer que el compilador lo verifique.
+        - Hoy el compilador:
+            - no modela `copy()` como parte de la semántica,
+            - no distingue tipos copyables vs no-copyables,
+            - agenda `deinit` de forma superficial al salir de scope si existe
+              una función `deinit`,
+            - y no lleva una historia real de ownership/move/aliasing.
 
-        - Conectar esto con `init/deinit`, auto-deinit y asignadores.
+        - La `description` ya apunta a una política bastante clara:
+            - value position significa pedir un valor independiente,
+            - eso implica `copy()` implícito o error,
+            - `&T` es lectura compartida,
+            - `$&T` es acceso mutable exclusivo,
+            - `deinit` se inserta automáticamente solo para valores
+              inicializados.
 
-        - Revisar punteros, slices, arrays y listas para que la semántica de
-          aliasing y mutabilidad sea consistente.
+        - Conviene implementar esto por fases pequeñas, no como un gran
+          sistema de borrow-checking:
+
+            - Fase 1: copyability explícita
+                - Introducir una consulta semántica clara:
+                  “¿este tipo es copyable?”.
+                - Empezar por una política dura y fácil de explicar:
+                    - builtins triviales: copyables,
+                    - arrays de copyables: copyables,
+                    - pointers/views/choice/structs: solo si todos sus
+                      componentes lo permiten o si declaran `copy()`,
+                    - tipos con `deinit()` pero sin `copy()`: no-copyables.
+                - Hacer que asignación, paso por valor, inicialización de
+                  fields y retorno por valor usen esa consulta y fallen con
+                  diagnósticos concretos.
+
+            - Fase 2: `copy()` implícito en value position
+                - Resolver la función `copy()` igual que hoy se resuelve
+                  `deinit()`.
+                - Insertar la llamada implícita en:
+                    - asignación a otro binding,
+                    - paso a parámetro `Type`,
+                    - retorno por valor,
+                    - almacenamiento by-value dentro de structs/choices/arrays.
+                - Si no existe `copy()`, dar error y sugerir `&` o `$&`.
+
+            - Fase 3: auto-deinit bien definido
+                - Mantener por ahora `deinit` al salir de scope, no al último
+                  uso. Eso ya encaja con `description/34_automatic_deinitialization.md`
+                  y es mucho más abordable.
+                - No programar `deinit` para bindings sin inicialización real.
+                - Preparar el terreno para distinguir:
+                    - valor inicializado,
+                    - valor movido,
+                    - valor no inicializado.
+                - Más adelante: optimizar al último uso.
+
+            - Fase 4: exclusividad mínima de `$&`
+                - Sin llegar a Rust, conviene verificar al menos el caso más
+                  grosero: no permitir pasar el mismo binding como `$&` y `&`
+                  o dos veces como `$&` en la misma llamada.
+                - Esto cerraría una parte importante de la promesa de
+                  `description/33_function_args.md` sin introducir lifetimes
+                  complejos todavía.
+
+            - Fase 5: `init/deinit` con estado real
+                - Separar mejor los estados:
+                    - reservado pero no inicializado,
+                    - inicializado,
+                    - fallido/parcialmente limpiado.
+                - Eso es importante para hacer creíble la historia de
+                  `init(out: $&T, ...) -> Errable#(...)`.
+
+        - Revisar punteros, slices, arrays, listas y views con esta política
+          ya en mente:
+            - copiar un view no debe fingir ownership,
+            - casts puntero↔entero ya están restringidos a `UIntNative`,
+            - el siguiente paso es decidir qué views son copyables y cuáles no.
+
+        - Orden recomendado de implementación:
+            1. consulta semántica `isTypeCopyable` / búsqueda de `copy()`,
+            2. errores en value position para tipos no-copyables,
+            3. inserción implícita de `copy()`,
+            4. exclusividad mínima de `$&`,
+            5. refinar auto-`deinit` e `init`.
 
     - Choice / nullability / errores
 
