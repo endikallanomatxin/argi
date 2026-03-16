@@ -1,10 +1,10 @@
 Result : Type = (
-    ..ok(Int32),
-    ..error(Char),
+    ..ok(.value: Int32),
+    ..error(.code: Char),
 )
 
 main () -> (.status_code: Int32) := {
-    value : Result = ..ok(7)
-    payload : Int32 = value..ok
-    status_code = payload - 7
+    value : Result = ..ok((.value = 7))
+    payload := value..ok
+    status_code = payload.value - 7
 }

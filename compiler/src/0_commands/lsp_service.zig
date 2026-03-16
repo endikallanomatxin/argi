@@ -537,7 +537,13 @@ pub const LanguageService = struct {
                 .choice_type_literal => |ctl| {
                     for (ctl.variants) |v| {
                         try em.identAt(v.name.location, TOKEN_INDEX.property, DECL);
-                        if (v.payload_type) |ty| try em.colorType(ty, DECL);
+                        if (v.payload_type) |stl| {
+                            for (stl.fields) |f| {
+                                try em.identAt(f.name.location, TOKEN_INDEX.property, DECL);
+                                if (f.type) |ty| try em.colorType(ty, DECL);
+                                if (f.default_value) |dv| try stack.append(dv);
+                            }
+                        }
                     }
                 },
                 .choice_literal => |lit| {

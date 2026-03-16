@@ -1088,7 +1088,7 @@ pub const Semantizer = struct {
 
                     var variants = std.array_list.Managed(sg.ChoiceVariant).init(self.allocator.*);
                     for (ct_lit.variants, 0..) |variant, idx| {
-                        const payload_type = if (variant.payload_type) |pt| try self.resolveType(pt, s) else null;
+                        const payload_type = if (variant.payload_type) |pt| sg.Type{ .struct_type = try self.structTypeFromLiteral(pt, s) } else null;
                         try variants.append(.{
                             .name = variant.name.string,
                             .value = @intCast(idx),
