@@ -109,9 +109,9 @@
         - En particular, hace falta un allocator tipo arena/bump usable para
           el semantizador y para futuras fases reescritas en Argi.
 
-        - El semantizador actual en Zig también debería pasar a usar arena
-          para evitar fugas y para aproximarse al estilo de implementación que
-          luego tendrá sentido en Argi.
+        - `build` y LSP ya analizan módulos dentro de una arena; el siguiente
+          paso es que el semantizador y sus helpers internos adopten ese mismo
+          modelo de lifetime, en vez de depender de allocations dispersas.
 
     - Testing language-side
 
@@ -192,8 +192,11 @@
 
     - Semantizer arena allocator
 
-        - Implementar un allocator de arena para el semantizador y dejar de
-          depender de allocations dispersas.
+        - El pipeline principal ya usa arena en `build` y LSP.
+
+        - Falta migrar las estructuras internas del semantizador para que
+          asuman ese modelo de lifetime y poder eliminar allocations/frees
+          sueltos dentro de la fase.
 
     - `refineStructTypeWithActual`
 

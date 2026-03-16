@@ -1,6 +1,5 @@
 const std = @import("std");
 const fs = std.fs;
-const allocator = std.heap.page_allocator;
 
 const llvm = @import("../5_codegen/llvm.zig");
 const c = llvm.c;
@@ -44,7 +43,7 @@ fn printTokenList(all: []const token.Token) void {
     }
 }
 
-fn resolveBuildModuleDir(path: []const u8) ![]u8 {
+fn resolveBuildModuleDir(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     if (std.fs.cwd().openDir(path, .{})) |opened_dir| {
         var dir = opened_dir;
         dir.close();
@@ -60,21 +59,21 @@ fn resolveBuildModuleDir(path: []const u8) ![]u8 {
 }
 
 pub fn compile(args: []const []const u8) !void {
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
     const target_path = args[0];
     const flags = parseFlags(args[1..]);
-    const module_dir = try resolveBuildModuleDir(target_path);
-    defer allocator.free(module_dir);
+    const module_dir = try resolveBuildModuleDir(allocator, target_path);
     // 1. Reunir ficheros ──────────────────────────────────────────────────
-    var files = try sf.collectModule(&allocator, "core", module_dir);
-    defer sf.freeList(&allocator, &files);
+    const files = try sf.collectModule(&allocator, "core", module_dir);
 
     // 2. Diagnósticos globales ────────────────────────────────────────────
     var diagnostics = diag.Diagnostics.init(&allocator, files.items);
-    defer diagnostics.deinit();
 
     // 3. Tokenizar todos (fusionando EOF) ─────────────────────────────────
     var all_tokens = std.array_list.Managed(token.Token).init(allocator);
-    defer all_tokens.deinit();
 
     for (files.items, 0..) |f, idx| {
         var tokenizer = tokzr.Tokenizer.init(
@@ -144,9 +143,6 @@ pub fn compile(args: []const []const u8) !void {
     }
 
     // 9. Enlazar con libc y generar el binario final ──────────────────────
-    var env = std.process.getEnvMap(allocator) catch return;
-    defer env.deinit();
-
     const triple_cstr = c.LLVMGetDefaultTargetTriple();
     defer c.LLVMDisposeMessage(triple_cstr);
     const triple = std.mem.span(triple_cstr);
