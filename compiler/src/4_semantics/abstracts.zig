@@ -38,6 +38,15 @@ pub const AbstractDefaultEntry = struct {
     location: tok.Location,
 };
 
+const OwnedText = struct {
+    allocator: *const std.mem.Allocator,
+    bytes: []u8,
+
+    fn deinit(self: OwnedText) void {
+        self.allocator.free(self.bytes);
+    }
+};
+
 const MissingRequirementContext = struct {
     label: []const u8,
     abstract_name: []const u8,
@@ -337,13 +346,11 @@ fn existsFunctionForRequirement(
 
 fn appendRequirementSignature(
     buf: *std.array_list.Managed(u8),
-    rq: *const AbstractFunctionReqSem,
-    concrete: sg.Type,
+    rq_name: []const u8,
+    exp_in: *const sg.StructType,
     s: *Scope,
-    allocator: *const std.mem.Allocator,
 ) !void {
-    const exp_in = try buildExpectedInputWithConcrete(rq, concrete, allocator);
-    try buf.appendSlice(rq.name);
+    try buf.appendSlice(rq_name);
     try buf.appendSlice(" (");
     for (exp_in.fields, 0..) |fld, i| {
         if (i != 0) try buf.appendSlice(", ");
@@ -355,6 +362,13 @@ fn appendRequirementSignature(
     try buf.appendSlice(")");
 }
 
+fn buildOverloadCandidatesText(name: []const u8, in_ty: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) !OwnedText {
+    return .{
+        .allocator = allocator,
+        .bytes = try buildOverloadCandidatesString(name, in_ty, s, allocator),
+    };
+}
+
 fn reportMissingRequirement(
     ctx: MissingRequirementContext,
     rq: *const AbstractFunctionReqSem,
@@ -364,11 +378,13 @@ fn reportMissingRequirement(
 ) !void {
     const exp_in = try buildExpectedInputWithConcrete(rq, ctx.concrete, allocator);
     const in_ty: sg.Type = .{ .struct_type = exp_in };
-    const candidates = buildOverloadCandidatesString(rq.name, in_ty, s, allocator) catch "";
+    const candidates_result = buildOverloadCandidatesText(rq.name, in_ty, s, allocator) catch null;
+    const candidates = if (candidates_result) |owned| owned.bytes else "";
+    defer if (candidates_result) |owned| owned.deinit();
 
     var signature = std.array_list.Managed(u8).init(allocator.*);
     defer signature.deinit();
-    try appendRequirementSignature(&signature, rq, ctx.concrete, s, allocator);
+    try appendRequirementSignature(&signature, rq.name, exp_in, s);
 
     if (candidates.len > 0) {
         try diags.add(
