@@ -149,6 +149,18 @@ test "12_function_args" {
     try runExpect(42);
 }
 
+test "13_pipe_operator" {
+    try clean();
+    try expectSuccessfulBuild("tests/13_pipe_operator/main.rg");
+    try runExpect(42);
+}
+
+test "14_pipe_pointer" {
+    try clean();
+    try expectSuccessfulBuild("tests/14_pipe_pointer/main.rg");
+    try runExpect(43);
+}
+
 test "130_multiple_dispatch" {
     try clean();
     try expectSuccessfulBuild("tests/130_multiple_dispatch/main.rg");

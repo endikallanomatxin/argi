@@ -30,7 +30,9 @@ pub const Content = union(enum) {
     function_declaration: FunctionDeclaration,
     assignment: Assignment,
     identifier: []const u8,
+    pipe_placeholder: struct {},
     function_call: FunctionCall,
+    pipe_expression: PipeExpression,
     code_block: CodeBlock,
 
     // Literals
@@ -156,6 +158,18 @@ pub const FunctionCall = struct {
     // Alternative syntax: named type arguments via struct-like block: #(.T: Int32)
     type_arguments_struct: ?StructTypeLiteral,
     input: *const STNode, // Arguments
+};
+
+pub const PipeExpression = struct {
+    left: *STNode,
+    call: PipeCall,
+};
+
+pub const PipeCall = struct {
+    callee: []const u8,
+    callee_loc: tok.Location,
+    module_qualifier: ?[]const u8,
+    args: []const *STNode,
 };
 
 pub const Mutability = enum {

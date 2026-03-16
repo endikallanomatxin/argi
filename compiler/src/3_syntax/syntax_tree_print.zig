@@ -208,7 +208,23 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
 
         // ── IDENTIFIER & LITERAL ─────────────────────────────────────────
         .identifier => |id| std.debug.print("Identifier \"{s}\"\n", .{id}),
+        .pipe_placeholder => std.debug.print("PipePlaceholder \"_\"\n", .{}),
         .literal => |lit| printLiteral(lit),
+        .pipe_expression => |pe| {
+            std.debug.print("PipeExpression\n", .{});
+            indent(lvl + 1);
+            std.debug.print("Left:\n", .{});
+            printNode(pe.left.*, lvl + 2);
+            indent(lvl + 1);
+            if (pe.call.module_qualifier) |module_name| {
+                std.debug.print("Call: {s}.{s}\n", .{ module_name, pe.call.callee });
+            } else {
+                std.debug.print("Call: {s}\n", .{pe.call.callee});
+            }
+            for (pe.call.args) |arg| {
+                printNode(arg.*, lvl + 2);
+            }
+        },
 
         // ── STRUCT TYPE LITERAL (stand-alone) ────────────────────────────
         .struct_type_literal => |st| {
