@@ -177,6 +177,20 @@ pub const Semantizer = struct {
         };
     }
 
+    fn buildOverloadCandidatesText(
+        self: *Semantizer,
+        fn_name: []const u8,
+        input_ty: sg.Type,
+        s: *Scope,
+    ) !OwnedText {
+        return self.formatOwnedText(try abs.buildOverloadCandidatesString(
+            fn_name,
+            input_ty,
+            s,
+            self.allocator,
+        ));
+    }
+
     //────────────────────────────────────────────────────────────────── visitors
     pub fn visitNode(self: *Semantizer, n: syn.STNode, s: *Scope) SemErr!typ.TypedExpr {
         return switch (n.content) {
@@ -544,16 +558,14 @@ pub const Semantizer = struct {
         return name.len > 0 and name[0] == '_';
     }
 
-    fn moduleDirForFile(self: *Semantizer, file_path: []const u8) ![]u8 {
-        const dir = std.fs.path.dirname(file_path) orelse ".";
-        return try std.fs.path.resolve(self.allocator.*, &.{dir});
+    fn moduleDirForFile(self: *Semantizer, file_path: []const u8) []const u8 {
+        _ = self;
+        return std.fs.path.dirname(file_path) orelse ".";
     }
 
     fn isSameModule(self: *Semantizer, lhs_file: []const u8, rhs_file: []const u8) !bool {
-        const lhs_dir = try self.moduleDirForFile(lhs_file);
-        defer self.allocator.free(lhs_dir);
-        const rhs_dir = try self.moduleDirForFile(rhs_file);
-        defer self.allocator.free(rhs_dir);
+        const lhs_dir = self.moduleDirForFile(lhs_file);
+        const rhs_dir = self.moduleDirForFile(rhs_file);
         return std.mem.eql(u8, lhs_dir, rhs_dir);
     }
 
@@ -1971,8 +1983,7 @@ pub const Semantizer = struct {
             return error.Reported;
         };
         if (isPrivateName(fn_name)) {
-            const requester_dir = try self.moduleDirForFile(loc.file);
-            defer self.allocator.free(requester_dir);
+            const requester_dir = self.moduleDirForFile(loc.file);
             if (!std.mem.eql(u8, requester_dir, module_dir)) {
                 try self.addPrivateMemberDiag(loc, "function", fn_name);
                 return error.Reported;
@@ -2270,14 +2281,13 @@ pub const Semantizer = struct {
             }
         }
 
-        const candidates_result = abs.buildOverloadCandidatesString(
+        const candidates_result = self.buildOverloadCandidatesText(
             fn_name,
             if (maybe_input_ty) |input_ty| input_ty else .{ .builtin = .Any },
             s,
-            self.allocator,
         ) catch null;
-        const candidates = candidates_result orelse "";
-        defer if (candidates_result) |owned| self.allocator.free(owned);
+        const candidates = if (candidates_result) |owned| owned.bytes else "";
+        defer if (candidates_result) |owned| owned.deinit();
 
         try self.diags.add(
             loc,
@@ -2386,9 +2396,9 @@ pub const Semantizer = struct {
                 return error.Reported;
             },
             error.AmbiguousOverload => {
-                const candidates_result = abs.buildOverloadCandidatesString("init", init_input_ty, s, self.allocator) catch null;
-                const candidates = candidates_result orelse "";
-                defer if (candidates_result) |owned| self.allocator.free(owned);
+                const candidates_result = self.buildOverloadCandidatesText("init", init_input_ty, s) catch null;
+                const candidates = if (candidates_result) |owned| owned.bytes else "";
+                defer if (candidates_result) |owned| owned.deinit();
                 try self.diags.add(
                     call.input.*.location,
                     .semantic,
