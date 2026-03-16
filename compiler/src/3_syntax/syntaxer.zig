@@ -457,12 +457,9 @@ pub const Syntaxer = struct {
             }
             self.advanceOne();
             const vname = try self.parseName();
-            var payload_type: ?syn.Type = null;
+            var payload_type: ?syn.StructTypeLiteral = null;
             if (self.tokenIs(.open_parenthesis)) {
-                self.advanceOne();
-                payload_type = (try self.parseType()).?;
-                if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
-                self.advanceOne();
+                payload_type = try self.parseStructTypeLiteral();
             }
             try variants.append(.{ .name = vname, .is_default = is_default, .payload_type = payload_type });
 

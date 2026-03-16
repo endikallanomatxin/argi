@@ -193,7 +193,7 @@ pub const ChoiceTypeLiteral = struct {
 pub const ChoiceTypeLiteralVariant = struct {
     name: Name,
     is_default: bool,
-    payload_type: ?Type = null,
+    payload_type: ?StructTypeLiteral = null,
 };
 
 pub const ChoiceLiteral = struct {

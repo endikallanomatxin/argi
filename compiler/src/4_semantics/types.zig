@@ -614,7 +614,7 @@ pub fn coerceExprToType(
     return switch (expected) {
         .array_type => |arr_info| convertListLiteralToArray(expr, arr_info, expr_node.location, s, allocator, diags),
         .builtin => |bt| try coerceLiteralToBuiltin(bt, expr, expr_node, allocator, diags),
-        .choice_type => |ct| try coerceChoiceLiteral(ct, expr, expr_node.location, s, allocator, diags),
+        .choice_type => |ct| try coerceChoiceLiteral(ct, expr, expr_node, s, allocator, diags),
         .struct_type => |st| try coerceStructLiteral(st, expr, expr_node, s, allocator, diags),
         else => expr,
     };
@@ -623,7 +623,7 @@ pub fn coerceExprToType(
 fn coerceChoiceLiteral(
     expected: *const sg.ChoiceType,
     expr: TypedExpr,
-    loc: tok.Location,
+    expr_node: *const syn.STNode,
     s: *Scope,
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
@@ -632,6 +632,7 @@ fn coerceChoiceLiteral(
 
     const choice_lit = expr.node.content.choice_literal;
     const variant_name = choice_lit.variant_name;
+    const loc = expr_node.location;
 
     for (expected.variants, 0..) |variant, idx| {
         if (std.mem.eql(u8, variant.name, variant_name)) {
@@ -648,18 +649,12 @@ fn coerceChoiceLiteral(
 
                 const payload_expr = choice_lit.payload.?;
                 const payload_expr_ty = payload_expr.sem_type orelse return error.InvalidType;
-                if (!typesExactlyEqual(payload_ty, payload_expr_ty)) {
-                    const pair = try formatTypePairText(payload_ty, payload_expr_ty, s, allocator);
-                    defer pair.deinit();
-                    try diags.add(
-                        loc,
-                        .semantic,
-                        "choice payload for '..{s}' has type '{s}', expected '{s}'",
-                        .{ variant_name, pair.actual.bytes, pair.expected.bytes },
-                    );
-                    return error.Reported;
-                }
-                break :blk payload_expr;
+                const payload_typed = TypedExpr{
+                    .node = @constCast(payload_expr),
+                    .ty = payload_expr_ty,
+                };
+                const coerced = try coerceExprToType(payload_ty, payload_typed, expr_node, s, allocator, diags);
+                break :blk coerced.node;
             } else blk: {
                 if (choice_lit.payload != null) {
                     try diags.add(
