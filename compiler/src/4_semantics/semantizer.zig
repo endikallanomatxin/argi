@@ -2381,11 +2381,17 @@ pub const Semantizer = struct {
         defer evaluated_args.deinit();
 
         if (pipe.call.args.len == 0) {
-            try evaluated_args.append(left_te);
-        } else {
-            for (pipe.call.args) |arg| {
-                try evaluated_args.append(try self.evalPipeArg(arg, left_te, s));
-            }
+            try self.diags.add(
+                loc,
+                .semantic,
+                "pipe right-hand side must use at least one argument placeholder",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        for (pipe.call.args) |arg| {
+            try evaluated_args.append(try self.evalPipeArg(arg, left_te, s));
         }
 
         var best: ?*sg.FunctionDeclaration = null;
