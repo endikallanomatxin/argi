@@ -217,7 +217,7 @@ pub const Semantizer = struct {
                     try self.diags.add(
                         n.location,
                         .semantic,
-                        "abstract types without a default are not supported in this function signature position yet",
+                        "abstract types without a default are not supported in function outputs yet",
                         .{},
                     );
                     break :blk error.Reported;
