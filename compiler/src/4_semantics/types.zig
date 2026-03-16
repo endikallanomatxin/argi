@@ -17,6 +17,25 @@ pub const BuiltinTypeInfoKind = enum {
     alignment,
 };
 
+const OwnedText = struct {
+    allocator: *const std.mem.Allocator,
+    bytes: []u8,
+
+    fn deinit(self: OwnedText) void {
+        self.allocator.free(self.bytes);
+    }
+};
+
+const TypePairText = struct {
+    expected: OwnedText,
+    actual: OwnedText,
+
+    fn deinit(self: TypePairText) void {
+        self.expected.deinit();
+        self.actual.deinit();
+    }
+};
+
 pub const pointer_size_bytes: u64 = @sizeOf(*usize);
 pub const pointer_alignment_bytes: u64 = pointer_size_bytes;
 
@@ -273,6 +292,21 @@ pub fn formatType(t: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) ![
     errdefer buf.deinit();
     try appendTypePretty(&buf, t, s);
     return try buf.toOwnedSlice();
+}
+
+fn formatOwnedText(bytes: []u8, allocator: *const std.mem.Allocator) OwnedText {
+    return .{ .allocator = allocator, .bytes = bytes };
+}
+
+fn formatTypeText(ty: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) !OwnedText {
+    return formatOwnedText(try formatType(ty, s, allocator), allocator);
+}
+
+fn formatTypePairText(expected: sg.Type, actual: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) !TypePairText {
+    return .{
+        .expected = try formatTypeText(expected, s, allocator),
+        .actual = try formatTypeText(actual, s, allocator),
+    };
 }
 
 pub fn appendTypePretty(buf: *std.array_list.Managed(u8), t: sg.Type, s: *Scope) !void {
@@ -571,17 +605,13 @@ pub fn convertListLiteralToArray(
             const expected_elem_ty = arr_info.element_type.*;
             for (ll.element_types, 0..) |elem_ty, idx| {
                 if (typesStructurallyEqual(expected_elem_ty, elem_ty)) continue;
-                const exp = try formatType(expected_elem_ty, s, allocator);
-                const got = try formatType(elem_ty, s, allocator);
-                defer {
-                    allocator.free(exp);
-                    allocator.free(got);
-                }
+                const pair = try formatTypePairText(expected_elem_ty, elem_ty, s, allocator);
+                defer pair.deinit();
                 try diags.add(
                     loc,
                     .semantic,
                     "array element {d} has type '{s}', expected '{s}'",
-                    .{ idx, got, exp },
+                    .{ idx, pair.actual.bytes, pair.expected.bytes },
                 );
                 return error.Reported;
             }
@@ -603,17 +633,13 @@ pub fn convertListLiteralToArray(
         else => {},
     }
 
-    const exp = try formatType(.{ .array_type = arr_info }, s, allocator);
-    const got = try formatType(expr.ty, s, allocator);
-    defer {
-        allocator.free(exp);
-        allocator.free(got);
-    }
+    const pair = try formatTypePairText(.{ .array_type = arr_info }, expr.ty, s, allocator);
+    defer pair.deinit();
     try diags.add(
         loc,
         .semantic,
         "cannot initialize array of type '{s}' with expression of type '{s}'",
-        .{ exp, got },
+        .{ pair.expected.bytes, pair.actual.bytes },
     );
     return error.Reported;
 }
@@ -660,17 +686,13 @@ pub fn coerceStructLiteral(
             };
             field_expr = try coerceExprToType(exp_field.ty, field_expr, expr_node, s, allocator, diags);
             if (!typesExactlyEqual(exp_field.ty, field_expr.ty)) {
-                const expected_ty = try formatType(exp_field.ty, s, allocator);
-                const actual_ty = try formatType(field_expr.ty, s, allocator);
-                defer {
-                    allocator.free(expected_ty);
-                    allocator.free(actual_ty);
-                }
+                const pair = try formatTypePairText(exp_field.ty, field_expr.ty, s, allocator);
+                defer pair.deinit();
                 try diags.add(
                     expr_node.location,
                     .semantic,
                     "cannot initialize field '.{s}' with '{s}' (expected '{s}')",
-                    .{ exp_field.name, actual_ty, expected_ty },
+                    .{ exp_field.name, pair.actual.bytes, pair.expected.bytes },
                 );
                 allocator.free(coerced_fields);
                 return error.Reported;
@@ -744,13 +766,13 @@ pub fn ensureMutablePointer(
     if (te.ty == .pointer_type) {
         const info = te.ty.pointer_type.*;
         if (info.mutability != .read_write) {
-            const ptr_str = try formatType(.{ .pointer_type = te.ty.pointer_type }, s, allocator);
-            defer allocator.free(ptr_str);
+            const ptr_str = try formatTypeText(.{ .pointer_type = te.ty.pointer_type }, s, allocator);
+            defer ptr_str.deinit();
             try diags.add(
                 expr_node.location,
                 .semantic,
                 "cannot assign through pointer '{s}' because it is read-only; use '$&' when acquiring it",
-                .{ptr_str},
+                .{ptr_str.bytes},
             );
             return error.Reported;
         }
