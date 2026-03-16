@@ -377,6 +377,12 @@ test "44X_choice_missing_payload" {
     );
 }
 
+test "45_choice_is_builtin" {
+    try clean();
+    try expectSuccessfulBuild("tests/45_choice_is_builtin/main.rg");
+    try run();
+}
+
 test "411_list_literal_length" {
     try clean();
     try expectSuccessfulBuild("tests/411_list_literal_length/main.rg");
