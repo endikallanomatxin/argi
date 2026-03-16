@@ -2306,42 +2306,7 @@ pub const Semantizer = struct {
 
         if (tv_in.ty != .struct_type) return error.InvalidType;
 
-        var chosen: *sg.FunctionDeclaration = undefined;
-        if (call.type_arguments_struct) |stargs| {
-            chosen = try self.instantiateGenericNamed(call.callee, stargs, tv_in, s, .regular);
-        } else if (call.type_arguments) |targs| {
-            chosen = try self.instantiateGeneric(call.callee, targs, tv_in, s, .regular);
-        } else {
-            const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-            const inferred = self.instantiateGenericNamed(call.callee, empty_args, tv_in, s, .regular) catch |err| switch (err) {
-                error.SymbolNotFound => null,
-                else => return err,
-            };
-
-            if (inferred) |instantiated| {
-                chosen = instantiated;
-            } else {
-                if (call.module_qualifier) |module_name| {
-                    chosen = try self.resolveQualifiedOverload(module_name, call.callee, tv_in.ty, s, call.input.*.location);
-                } else {
-                    chosen = self.resolveVisibleOverload(call.callee, tv_in.ty, s, call.input.*.location) catch |err| switch (err) {
-                        error.SymbolNotFound => blk: {
-                            const abstract_inferred = self.instantiateGenericNamed(call.callee, empty_args, tv_in, s, .abstract_contract) catch |inner_err| switch (inner_err) {
-                                error.SymbolNotFound => null,
-                                else => return inner_err,
-                            };
-                            if (abstract_inferred) |instantiated_abstract| break :blk instantiated_abstract;
-                            if (try self.addMissingAbstractImplementationDiagnostic(call.callee, tv_in.ty, s, call.input.*.location)) {
-                                return error.Reported;
-                            }
-                            try self.addMissingFunctionDiagnostic(call.callee, tv_in.ty, s, call.input.*.location);
-                            return error.Reported;
-                        },
-                        else => return err,
-                    };
-                }
-            }
-        }
+        const chosen = try self.resolveRegularCallCallee(call, tv_in.ty, s, call.input.*.location);
 
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
         fc_ptr.* = .{ .callee = chosen, .input = tv_in.node };
@@ -2352,6 +2317,55 @@ pub const Semantizer = struct {
         const result_ty = typ.functionReturnType(chosen);
 
         return .{ .node = n, .ty = result_ty };
+    }
+
+    fn resolveRegularCallCallee(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        input_ty: sg.Type,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!*sg.FunctionDeclaration {
+        var chosen: *sg.FunctionDeclaration = undefined;
+        if (call.type_arguments_struct) |stargs| {
+            const input_te = typ.TypedExpr{ .node = undefined, .ty = input_ty };
+            chosen = try self.instantiateGenericNamed(call.callee, stargs, input_te, s, .regular);
+        } else if (call.type_arguments) |targs| {
+            const input_te = typ.TypedExpr{ .node = undefined, .ty = input_ty };
+            chosen = try self.instantiateGeneric(call.callee, targs, input_te, s, .regular);
+        } else {
+            const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+            const input_te = typ.TypedExpr{ .node = undefined, .ty = input_ty };
+            const inferred = self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .regular) catch |err| switch (err) {
+                error.SymbolNotFound => null,
+                else => return err,
+            };
+
+            if (inferred) |instantiated| {
+                chosen = instantiated;
+            } else {
+                if (call.module_qualifier) |module_name| {
+                    chosen = try self.resolveQualifiedOverload(module_name, call.callee, input_ty, s, loc);
+                } else {
+                    chosen = self.resolveVisibleOverload(call.callee, input_ty, s, loc) catch |err| switch (err) {
+                        error.SymbolNotFound => blk: {
+                            const abstract_inferred = self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .abstract_contract) catch |inner_err| switch (inner_err) {
+                                error.SymbolNotFound => null,
+                                else => return inner_err,
+                            };
+                            if (abstract_inferred) |instantiated_abstract| break :blk instantiated_abstract;
+                            if (try self.addMissingAbstractImplementationDiagnostic(call.callee, input_ty, s, loc)) {
+                                return error.Reported;
+                            }
+                            try self.addMissingFunctionDiagnostic(call.callee, input_ty, s, loc);
+                            return error.Reported;
+                        },
+                        else => return err,
+                    };
+                }
+            }
+        }
+        return chosen;
     }
 
     fn buildNamedPipeInput(
@@ -2497,7 +2511,6 @@ pub const Semantizer = struct {
         }
         return error.SymbolNotFound;
     }
-
     fn handlePipe(
         self: *Semantizer,
         pipe: syn.PipeExpression,
@@ -2540,11 +2553,15 @@ pub const Semantizer = struct {
             try evaluated_args.append(try self.evalPipeArg(arg, left_te, s));
         }
 
-        var best: ?*sg.FunctionDeclaration = null;
-        var best_score: u32 = std.math.maxInt(u32);
-        var ambiguous = false;
+        const field_storage = try self.allocator.alloc(sg.StructTypeField, evaluated_args.items.len);
+        for (evaluated_args.items, 0..) |arg, idx| {
+            const name = try std.fmt.allocPrint(self.allocator.*, "arg{d}", .{idx});
+            field_storage[idx] = .{ .name = name, .ty = arg.ty, .default_value = null };
+        }
+        const actual_struct = try self.allocator.create(sg.StructType);
+        actual_struct.* = .{ .fields = field_storage };
+        const actual_input_ty: sg.Type = .{ .struct_type = actual_struct };
 
-        var cur: ?*Scope = s;
         const module_dir = if (pipe.call.module_qualifier) |module_name|
             s.lookupModuleAlias(module_name) orelse {
                 try self.diags.add(
@@ -2621,70 +2638,27 @@ pub const Semantizer = struct {
             return .{ .node = n, .ty = typ.functionReturnType(generic_fn) };
         }
 
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.functions.getPtr(pipe.call.callee)) |list_ptr| {
-                for (list_ptr.items) |cand| {
-                    if (!(try self.functionMatchesVisibilityFilter(cand, loc.file, module_dir))) continue;
-                    if (cand.input.fields.len != evaluated_args.items.len) continue;
+        const chosen = try self.resolveRegularCallCallee(
+            .{
+                .callee = pipe.call.callee,
+                .callee_loc = pipe.call.callee_loc,
+                .module_qualifier = pipe.call.module_qualifier,
+                .type_arguments = pipe.call.type_arguments,
+                .type_arguments_struct = pipe.call.type_arguments_struct,
+                .input = undefined,
+            },
+            actual_input_ty,
+            s,
+            loc,
+        );
 
-                    const input_te = try self.buildNamedPipeInput(cand.input.fields, evaluated_args.items);
-                    const expected: sg.Type = .{ .struct_type = &cand.input };
-                    if (!abs.typesCompatibleForDispatch(expected, input_te.ty, s)) continue;
-
-                    const score = abs.specificityScore(expected, input_te.ty);
-                    if (best == null or score < best_score) {
-                        best = cand;
-                        best_score = score;
-                        ambiguous = false;
-                    } else if (score == best_score) {
-                        ambiguous = true;
-                    }
-                }
-            }
-        }
-
-        if (best == null) {
-            const field_storage = try self.allocator.alloc(sg.StructTypeField, evaluated_args.items.len);
-            for (evaluated_args.items, 0..) |arg, idx| {
-                const name = try std.fmt.allocPrint(self.allocator.*, "arg{d}", .{idx});
-                field_storage[idx] = .{ .name = name, .ty = arg.ty, .default_value = null };
-            }
-            const actual_struct = try self.allocator.create(sg.StructType);
-            actual_struct.* = .{ .fields = field_storage };
-            const actual_input_ty: sg.Type = .{ .struct_type = actual_struct };
-
-            if (pipe.call.module_qualifier) |module_name| {
-                try self.addMissingModuleFunctionDiagnostic(
-                    module_name,
-                    module_dir.?,
-                    pipe.call.callee,
-                    actual_input_ty,
-                    s,
-                    loc,
-                );
-            } else {
-                try self.addMissingFunctionDiagnostic(pipe.call.callee, actual_input_ty, s, loc);
-            }
-            return error.Reported;
-        }
-
-        if (ambiguous) {
-            try self.addAmbiguousFunctionDiagnostic(
-                pipe.call.callee,
-                .{ .struct_type = &best.?.input },
-                s,
-                loc,
-            );
-            return error.Reported;
-        }
-
-        const input_te = try self.buildNamedPipeInput(best.?.input.fields, evaluated_args.items);
+        const input_te = try self.buildNamedPipeInput(chosen.input.fields, evaluated_args.items);
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
-        fc_ptr.* = .{ .callee = best.?, .input = input_te.node };
+        fc_ptr.* = .{ .callee = chosen, .input = input_te.node };
 
         const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
         try s.nodes.append(n);
-        return .{ .node = n, .ty = typ.functionReturnType(best.?) };
+        return .{ .node = n, .ty = typ.functionReturnType(chosen) };
     }
 
     fn resolveQualifiedOverload(
