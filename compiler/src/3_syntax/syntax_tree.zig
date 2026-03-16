@@ -169,6 +169,8 @@ pub const PipeCall = struct {
     callee: []const u8,
     callee_loc: tok.Location,
     module_qualifier: ?[]const u8,
+    type_arguments: ?[]const Type,
+    type_arguments_struct: ?StructTypeLiteral,
     args: []const *STNode,
 };
 

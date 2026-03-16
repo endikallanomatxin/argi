@@ -221,6 +221,20 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             } else {
                 std.debug.print("Call: {s}\n", .{pe.call.callee});
             }
+            if (pe.call.type_arguments) |type_args| {
+                indent(lvl + 1);
+                std.debug.print("TypeArgs: [", .{});
+                for (type_args, 0..) |type_arg, idx| {
+                    if (idx != 0) std.debug.print(", ", .{});
+                    printType(type_arg, lvl + 1);
+                }
+                std.debug.print("]\n", .{});
+            } else if (pe.call.type_arguments_struct) |type_args_struct| {
+                indent(lvl + 1);
+                std.debug.print("TypeArgs: ", .{});
+                printStructTypeLiteral(type_args_struct, lvl + 1);
+                std.debug.print("\n", .{});
+            }
             for (pe.call.args) |arg| {
                 printNode(arg.*, lvl + 2);
             }
