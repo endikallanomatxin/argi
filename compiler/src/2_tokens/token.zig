@@ -40,6 +40,7 @@ pub const Content = union(enum) {
     keyword_return: struct {},
     keyword_if: struct {},
     keyword_else: struct {},
+    keyword_match: struct {},
 
     // Variables and constants
     colon: struct {},

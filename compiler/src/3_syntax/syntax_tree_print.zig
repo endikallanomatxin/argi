@@ -242,6 +242,19 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             printStructValueLiteral(sv, lvl);
             std.debug.print("\n", .{});
         },
+        .match_statement => |m| {
+            std.debug.print("Match\n", .{});
+            indent(lvl + 1);
+            std.debug.print("Value:\n", .{});
+            printNode(m.value.*, lvl + 2);
+            for (m.cases) |c| {
+                indent(lvl + 1);
+                std.debug.print("Case ..{s}", .{c.variant_name.string});
+                if (c.payload_binding) |pb| std.debug.print("({s})", .{pb.string});
+                std.debug.print("\n", .{});
+                printNode(c.body.*, lvl + 2);
+            }
+        },
 
         // ── STRUCT FIELD ACCESS ──────────────────────────────────────────
         .struct_field_access => |sfa| {

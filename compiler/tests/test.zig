@@ -383,6 +383,18 @@ test "45_choice_is_builtin" {
     try run();
 }
 
+test "46_choice_match" {
+    try clean();
+    try expectSuccessfulBuild("tests/46_choice_match/main.rg");
+    try run();
+}
+
+test "47_choice_match_payload_binding" {
+    try clean();
+    try expectSuccessfulBuild("tests/47_choice_match_payload_binding/main.rg");
+    try run();
+}
+
 test "411_list_literal_length" {
     try clean();
     try expectSuccessfulBuild("tests/411_list_literal_length/main.rg");
