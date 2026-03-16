@@ -289,11 +289,23 @@ test "340X_abstract_self_output_wrong" {
     );
 }
 
-test "336X_abstract_function_input_requires_default" {
+test "341_abstract_function_input_monomorphization" {
+    try clean();
+    try build("tests/341_abstract_function_input_monomorphization/main.rg");
+    try runExpect(7);
+}
+
+test "342_abstract_dispatch_prefers_concrete" {
+    try clean();
+    try build("tests/342_abstract_dispatch_prefers_concrete/main.rg");
+    try runExpect(2);
+}
+
+test "336X_abstract_function_input_requires_implementation" {
     try clean();
     try buildExpectFail(
-        "tests/336X_abstract_function_input_requires_default/main.rg",
-        "abstract types without a default are not supported in this function signature position yet",
+        "tests/336X_abstract_function_input_requires_implementation/main.rg",
+        "no function named 'use_value' exists",
     );
 }
 

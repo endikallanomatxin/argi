@@ -18,6 +18,10 @@
     Ya no se registra como `Any`, pero aún quedan restricciones semánticas
     importantes para usarlo fuera de los casos con `defaultsto`.
 
+    - Las funciones con inputs abstractos ya se monomorfizan en llamadas
+    simples. Queda extender eso a casos más ricos (múltiples parámetros
+    abstractos, reglas más finas de empate y más interacción con generics).
+
     - Fix: Aunque el abstract ya tiene representación nominal propia, todavía
     no se permite usarlo como tipo de símbolo si no hay `defaultsto`.
 
