@@ -1,8 +1,9 @@
 const std = @import("std");
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
-const allocator = std.heap.page_allocator;
-// const allocator = std.testing.allocator;
+
+const argi_bin = "./zig-out/bin/argi";
+const output_bin = "./output";
 
 fn modulePathFor(path: []const u8) []const u8 {
     if (std.mem.endsWith(u8, path, "/main.rg")) {
@@ -12,30 +13,40 @@ fn modulePathFor(path: []const u8) []const u8 {
 }
 
 fn clean() !void {
-    // Borrar ./output y ./output.ll si existen
     const cwd = std.fs.cwd();
     cwd.deleteFile("output.ll") catch |err| {
-        if (err != error.FileNotFound) return err; // Ignorar si no existe
+        if (err != error.FileNotFound) return err;
     };
     cwd.deleteFile("output") catch |err| {
-        if (err != error.FileNotFound) return err; // Ignorar si no existe
+        if (err != error.FileNotFound) return err;
+    };
+    cwd.deleteFile("output.o") catch |err| {
+        if (err != error.FileNotFound) return err;
     };
 }
 
-fn build(name: []const u8) !void {
-    // Ejecutar el comando de compilación
-    const result = try std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = &[_][]const u8{ "./zig-out/bin/argi", "build", modulePathFor(name) },
+fn runChild(argv: []const []const u8) !std.process.Child.RunResult {
+    return std.process.Child.run(.{
+        .allocator = std.testing.allocator,
+        .argv = argv,
     });
+}
+
+fn buildResult(name: []const u8) !std.process.Child.RunResult {
+    return runChild(&[_][]const u8{ argi_bin, "build", modulePathFor(name) });
+}
+
+fn expectSuccessfulBuild(name: []const u8) !void {
+    const result = try buildResult(name);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
     try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
 }
 
 fn buildExpectFail(name: []const u8, expected_stderr: []const u8) !void {
-    const result = try std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = &[_][]const u8{ "./zig-out/bin/argi", "build", modulePathFor(name) },
-    });
+    const result = try buildResult(name);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
 
     switch (result.term) {
         .Exited => |code| try expect(code != 0),
@@ -46,10 +57,9 @@ fn buildExpectFail(name: []const u8, expected_stderr: []const u8) !void {
 }
 
 fn runExpect(expected_code: u8) !void {
-    const result = try std.process.Child.run(.{
-        .allocator = allocator,
-        .argv = &[_][]const u8{"./output"},
-    });
+    const result = try runChild(&[_][]const u8{output_bin});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
     try expectEqual(std.process.Child.Term{ .Exited = expected_code }, result.term);
 }
 
@@ -59,55 +69,55 @@ fn run() !void {
 
 test "00_minimal_main" {
     try clean();
-    try build("tests/00_minimal_main/main.rg");
+    try expectSuccessfulBuild("tests/00_minimal_main/main.rg");
     try run();
 }
 
 test "01_comments" {
     try clean();
-    try build("tests/01_comments/main.rg");
+    try expectSuccessfulBuild("tests/01_comments/main.rg");
     try run();
 }
 
 test "02_constants_and_variables" {
     try clean();
-    try build("tests/02_constants_and_variables/main.rg");
+    try expectSuccessfulBuild("tests/02_constants_and_variables/main.rg");
     try run();
 }
 
 test "03_expressions_and_type_inference" {
     try clean();
-    try build("tests/03_expressions_and_type_inference/main.rg");
+    try expectSuccessfulBuild("tests/03_expressions_and_type_inference/main.rg");
     try runExpect(3);
 }
 
 test "04_literals" {
     try clean();
-    try build("tests/04_literals/main.rg");
+    try expectSuccessfulBuild("tests/04_literals/main.rg");
     try run();
 }
 
 test "06_if" {
     try clean();
-    try build("tests/06_if/main.rg");
+    try expectSuccessfulBuild("tests/06_if/main.rg");
     try run();
 }
 
 test "050_anonymous_structs" {
     try clean();
-    try build("tests/050_anonymous_structs/main.rg");
+    try expectSuccessfulBuild("tests/050_anonymous_structs/main.rg");
     try run();
 }
 
 test "051_struct_default_fields" {
     try clean();
-    try build("tests/051_struct_default_fields/main.rg");
+    try expectSuccessfulBuild("tests/051_struct_default_fields/main.rg");
     try run();
 }
 
 test "052_struct_field_store" {
     try clean();
-    try build("tests/052_struct_field_store/main.rg");
+    try expectSuccessfulBuild("tests/052_struct_field_store/main.rg");
     try run();
 }
 
@@ -129,19 +139,19 @@ test "054X_signed_integer_literal_overflow" {
 
 test "11_function_calling" {
     try clean();
-    try build("tests/11_function_calling/main.rg");
+    try expectSuccessfulBuild("tests/11_function_calling/main.rg");
     try runExpect(42);
 }
 
 test "12_function_args" {
     try clean();
-    try build("tests/12_function_args/main.rg");
+    try expectSuccessfulBuild("tests/12_function_args/main.rg");
     try runExpect(42);
 }
 
 test "130_multiple_dispatch" {
     try clean();
-    try build("tests/130_multiple_dispatch/main.rg");
+    try expectSuccessfulBuild("tests/130_multiple_dispatch/main.rg");
     try runExpect(2);
 }
 
@@ -155,19 +165,19 @@ test "131X_multiple_dispatch_ambiguous" {
 
 test "21_named_struct_types" {
     try clean();
-    try build("tests/21_named_struct_types/main.rg");
+    try expectSuccessfulBuild("tests/21_named_struct_types/main.rg");
     try run();
 }
 
 test "221_pointers" {
     try clean();
-    try build("tests/221_pointers/main.rg");
+    try expectSuccessfulBuild("tests/221_pointers/main.rg");
     try run();
 }
 
 test "222_read-only_vs_read-and-write_pointers" {
     try clean();
-    try build("tests/222_read-only_vs_read-and-write_pointers/main.rg");
+    try expectSuccessfulBuild("tests/222_read-only_vs_read-and-write_pointers/main.rg");
     try run();
 }
 
@@ -197,7 +207,7 @@ test "225X_pass_readonly_pointer_to_mutable_param" {
 
 test "226_explicit_pointer_casts" {
     try clean();
-    try build("tests/226_explicit_pointer_casts/main.rg");
+    try expectSuccessfulBuild("tests/226_explicit_pointer_casts/main.rg");
     try run();
 }
 
@@ -219,37 +229,37 @@ test "228X_array_index_requires_uint_native" {
 
 test "30_core_and_libc" {
     try clean();
-    try build("tests/30_core_and_libc/main.rg");
+    try expectSuccessfulBuild("tests/30_core_and_libc/main.rg");
     try run();
 }
 
 test "321_generic_functions" {
     try clean();
-    try build("tests/321_generic_functions/main.rg");
+    try expectSuccessfulBuild("tests/321_generic_functions/main.rg");
     try runExpect(42);
 }
 
 test "322_generic_structs" {
     try clean();
-    try build("tests/322_generic_structs/main.rg");
+    try expectSuccessfulBuild("tests/322_generic_structs/main.rg");
     try runExpect(42);
 }
 
 test "323_generic_functions_multi" {
     try clean();
-    try build("tests/323_generic_functions_multi/main.rg");
+    try expectSuccessfulBuild("tests/323_generic_functions_multi/main.rg");
     try runExpect(42);
 }
 
 test "324_generic_structs_multi" {
     try clean();
-    try build("tests/324_generic_structs_multi/main.rg");
+    try expectSuccessfulBuild("tests/324_generic_structs_multi/main.rg");
     try runExpect(20);
 }
 
 test "331_abstract" {
     try clean();
-    try build("tests/331_abstract/main.rg");
+    try expectSuccessfulBuild("tests/331_abstract/main.rg");
     try run();
 }
 
@@ -271,13 +281,13 @@ test "333X_abstract_wrong_signature" {
 
 test "334_abstract_instantiation" {
     try clean();
-    try build("tests/334_abstract_instantiation/main.rg");
+    try expectSuccessfulBuild("tests/334_abstract_instantiation/main.rg");
     try run();
 }
 
 test "339_abstract_self_output" {
     try clean();
-    try build("tests/339_abstract_self_output/main.rg");
+    try expectSuccessfulBuild("tests/339_abstract_self_output/main.rg");
     try run();
 }
 
@@ -291,13 +301,13 @@ test "340X_abstract_self_output_wrong" {
 
 test "341_abstract_function_input_monomorphization" {
     try clean();
-    try build("tests/341_abstract_function_input_monomorphization/main.rg");
+    try expectSuccessfulBuild("tests/341_abstract_function_input_monomorphization/main.rg");
     try runExpect(7);
 }
 
 test "342_abstract_dispatch_prefers_concrete" {
     try clean();
-    try build("tests/342_abstract_dispatch_prefers_concrete/main.rg");
+    try expectSuccessfulBuild("tests/342_abstract_dispatch_prefers_concrete/main.rg");
     try runExpect(2);
 }
 
@@ -319,67 +329,67 @@ test "338X_abstract_function_output_requires_default" {
 
 test "351_init" {
     try clean();
-    try build("tests/351_init/main.rg");
+    try expectSuccessfulBuild("tests/351_init/main.rg");
     try run();
 }
 
 test "352_defer" {
     try clean();
-    try build("tests/352_defer/main.rg");
+    try expectSuccessfulBuild("tests/352_defer/main.rg");
     try run();
 }
 
 test "353_deinit" {
     try clean();
-    try build("tests/353_deinit/main.rg");
+    try expectSuccessfulBuild("tests/353_deinit/main.rg");
     try run();
 }
 
 test "36_get_and_set_index_operators" {
     try clean();
-    try build("tests/36_get_and_set_index_operators/main.rg");
+    try expectSuccessfulBuild("tests/36_get_and_set_index_operators/main.rg");
     try run();
 }
 
 test "37_size_of_and_alignment_of_builtin_functions" {
     try clean();
-    try build("tests/37_size_of_and_alignment_of_builtin_functions/main.rg");
+    try expectSuccessfulBuild("tests/37_size_of_and_alignment_of_builtin_functions/main.rg");
     try run();
 }
 
 test "411_list_literal_length" {
     try clean();
-    try build("tests/411_list_literal_length/main.rg");
+    try expectSuccessfulBuild("tests/411_list_literal_length/main.rg");
     try run();
 }
 
 test "412_list_literal_access" {
     try clean();
-    try build("tests/412_list_literal_access/main.rg");
+    try expectSuccessfulBuild("tests/412_list_literal_access/main.rg");
     try run();
 }
 
 test "413_arrays" {
     try clean();
-    try build("tests/413_arrays/main.rg");
+    try expectSuccessfulBuild("tests/413_arrays/main.rg");
     try run();
 }
 
 test "417_array_index_uint_native" {
     try clean();
-    try build("tests/417_array_index_uint_native/main.rg");
+    try expectSuccessfulBuild("tests/417_array_index_uint_native/main.rg");
     try run();
 }
 
 test "62_folder_module_namespace" {
     try clean();
-    try build("tests/62_folder_module_namespace/main.rg");
+    try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");
     try runExpect(1);
 }
 
 test "63_import_current_relative" {
     try clean();
-    try build("tests/63_import_current_relative/main.rg");
+    try expectSuccessfulBuild("tests/63_import_current_relative/main.rg");
     try run();
 }
 
@@ -433,13 +443,13 @@ test "69X_private_module_function" {
 
 test "70_import_more_library" {
     try clean();
-    try build("tests/70_import_more_library/main.rg");
+    try expectSuccessfulBuild("tests/70_import_more_library/main.rg");
     try run();
 }
 
 test "71_import_transitive" {
     try clean();
-    try build("tests/71_import_transitive/main.rg");
+    try expectSuccessfulBuild("tests/71_import_transitive/main.rg");
     try run();
 }
 
@@ -477,7 +487,7 @@ test "75X_missing_function_name" {
 
 test "76_import_root_relative" {
     try clean();
-    try build("tests/76_import_root_relative/project/app/main.rg");
+    try expectSuccessfulBuild("tests/76_import_root_relative/project/app/main.rg");
     try run();
 }
 
