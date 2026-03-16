@@ -305,7 +305,7 @@ test "336X_abstract_function_input_requires_implementation" {
     try clean();
     try buildExpectFail(
         "tests/336X_abstract_function_input_requires_implementation/main.rg",
-        "no function named 'use_value' exists",
+        "type 'Int32' does not implement abstract 'ExampleAbstract' required by parameter '.value' of 'use_value'",
     );
 }
 
