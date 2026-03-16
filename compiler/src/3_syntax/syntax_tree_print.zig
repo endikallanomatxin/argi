@@ -63,7 +63,13 @@ fn printChoiceTypeLiteral(ct: syn.ChoiceTypeLiteral, lvl: usize) void {
     for (ct.variants) |v| {
         indent(lvl + 1);
         if (v.is_default) std.debug.print("=", .{});
-        std.debug.print("..{s}\n", .{v.name.string});
+        std.debug.print("..{s}", .{v.name.string});
+        if (v.payload_type) |pt| {
+            std.debug.print("(", .{});
+            printType(pt, lvl + 1);
+            std.debug.print(")", .{});
+        }
+        std.debug.print("\n", .{});
     }
     indent(lvl);
     std.debug.print(")", .{});
@@ -216,8 +222,19 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             printChoiceTypeLiteral(ct, lvl);
             std.debug.print("\n", .{});
         },
-        .choice_literal => |name| {
-            std.debug.print("ChoiceLiteral ..{s}\n", .{name.string});
+        .choice_literal => |lit| {
+            std.debug.print("ChoiceLiteral ..{s}", .{lit.name.string});
+            if (lit.payload) |p| {
+                std.debug.print("(\n", .{});
+                printNode(p.*, lvl + 1);
+                indent(lvl);
+                std.debug.print(")", .{});
+            }
+            std.debug.print("\n", .{});
+        },
+        .choice_payload_access => |acc| {
+            std.debug.print("ChoicePayloadAccess ..{s}\n", .{acc.variant_name.string});
+            printNode(acc.choice_value.*, lvl + 1);
         },
 
         // ── STRUCT VALUE LITERAL ─────────────────────────────────────────

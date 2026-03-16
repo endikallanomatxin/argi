@@ -363,6 +363,20 @@ test "42_choice" {
     try run();
 }
 
+test "43_choice_payloads" {
+    try clean();
+    try expectSuccessfulBuild("tests/43_choice_payloads/main.rg");
+    try run();
+}
+
+test "44X_choice_missing_payload" {
+    try clean();
+    try buildExpectFail(
+        "tests/44X_choice_missing_payload/main.rg",
+        "choice variant '..ok' requires a payload",
+    );
+}
+
 test "411_list_literal_length" {
     try clean();
     try expectSuccessfulBuild("tests/411_list_literal_length/main.rg");

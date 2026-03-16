@@ -388,7 +388,19 @@ pub fn computeTypeSize(ty: sg.Type) u64 {
             .Any => pointer_size_bytes,
         },
         .abstract_type => 0,
-        .choice_type => 4,
+        .choice_type => |ct| blk_choice: {
+            var size: u64 = 0;
+            const tag_align = computeTypeAlignment(.{ .builtin = .Int32 });
+            size = alignForward(size, tag_align);
+            size += computeTypeSize(.{ .builtin = .Int32 });
+            for (ct.variants) |variant| {
+                const payload_ty: sg.Type = variant.payload_type orelse sg.Type{ .builtin = .UInt8 };
+                const payload_align = computeTypeAlignment(payload_ty);
+                size = alignForward(size, payload_align);
+                size += computeTypeSize(payload_ty);
+            }
+            break :blk_choice alignForward(size, computeTypeAlignment(ty));
+        },
         .pointer_type => pointer_size_bytes,
         .struct_type => |st| blk: {
             const max_align = computeTypeAlignment(.{ .struct_type = st });
@@ -423,7 +435,15 @@ pub fn computeTypeAlignment(ty: sg.Type) u64 {
             .Any => pointer_alignment_bytes,
         },
         .abstract_type => 1,
-        .choice_type => 4,
+        .choice_type => |ct| blk_choice: {
+            var max_align: u64 = computeTypeAlignment(.{ .builtin = .Int32 });
+            for (ct.variants) |variant| {
+                const payload_ty: sg.Type = variant.payload_type orelse sg.Type{ .builtin = .UInt8 };
+                const payload_align = computeTypeAlignment(payload_ty);
+                if (payload_align > max_align) max_align = payload_align;
+            }
+            break :blk_choice max_align;
+        },
         .pointer_type => pointer_alignment_bytes,
         .struct_type => |st| blk: {
             var max_align: u64 = 1;
@@ -594,7 +614,7 @@ pub fn coerceExprToType(
     return switch (expected) {
         .array_type => |arr_info| convertListLiteralToArray(expr, arr_info, expr_node.location, s, allocator, diags),
         .builtin => |bt| try coerceLiteralToBuiltin(bt, expr, expr_node, allocator, diags),
-        .choice_type => |ct| try coerceChoiceLiteral(ct, expr, expr_node.location, allocator, diags),
+        .choice_type => |ct| try coerceChoiceLiteral(ct, expr, expr_node.location, s, allocator, diags),
         .struct_type => |st| try coerceStructLiteral(st, expr, expr_node, s, allocator, diags),
         else => expr,
     };
@@ -604,15 +624,66 @@ fn coerceChoiceLiteral(
     expected: *const sg.ChoiceType,
     expr: TypedExpr,
     loc: tok.Location,
+    s: *Scope,
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
 ) err.SemErr!TypedExpr {
     if (expr.node.content != .choice_literal) return expr;
 
-    const variant_name = expr.node.content.choice_literal;
-    for (expected.variants) |variant| {
+    const choice_lit = expr.node.content.choice_literal;
+    const variant_name = choice_lit.variant_name;
+
+    for (expected.variants, 0..) |variant, idx| {
         if (std.mem.eql(u8, variant.name, variant_name)) {
-            return try makeIntLiteral(allocator, loc, variant.value, .{ .choice_type = expected });
+            const coerced_payload = if (variant.payload_type) |payload_ty| blk: {
+                if (choice_lit.payload == null) {
+                    try diags.add(
+                        loc,
+                        .semantic,
+                        "choice variant '..{s}' requires a payload",
+                        .{variant_name},
+                    );
+                    return error.Reported;
+                }
+
+                const payload_expr = choice_lit.payload.?;
+                const payload_expr_ty = payload_expr.sem_type orelse return error.InvalidType;
+                if (!typesExactlyEqual(payload_ty, payload_expr_ty)) {
+                    const pair = try formatTypePairText(payload_ty, payload_expr_ty, s, allocator);
+                    defer pair.deinit();
+                    try diags.add(
+                        loc,
+                        .semantic,
+                        "choice payload for '..{s}' has type '{s}', expected '{s}'",
+                        .{ variant_name, pair.actual.bytes, pair.expected.bytes },
+                    );
+                    return error.Reported;
+                }
+                break :blk payload_expr;
+            } else blk: {
+                if (choice_lit.payload != null) {
+                    try diags.add(
+                        loc,
+                        .semantic,
+                        "choice variant '..{s}' does not accept a payload",
+                        .{variant_name},
+                    );
+                    return error.Reported;
+                }
+                break :blk null;
+            };
+
+            const typed = try allocator.create(sg.ChoiceLiteral);
+            typed.* = .{
+                .variant_name = variant_name,
+                .choice_type = expected,
+                .variant_index = @intCast(idx),
+                .payload = coerced_payload,
+            };
+
+            const node = try sg.makeSGNode(.{ .choice_literal = typed }, loc, allocator);
+            node.sem_type = .{ .choice_type = expected };
+            return .{ .node = node, .ty = .{ .choice_type = expected } };
         }
     }
 

@@ -374,13 +374,13 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
-            .choice_literal => |name| self.handleChoiceLiteral(name) catch |err| blk: {
+            .choice_literal => |name| self.handleChoiceLiteral(name, s) catch |err| blk: {
                 if (err == error.Reported) break :blk err;
                 try self.diags.add(
                     n.location,
                     .semantic,
                     "error in choice literal '..{s}': {s}",
-                    .{ name.string, @errorName(err) },
+                    .{ name.name.string, @errorName(err) },
                 );
                 break :blk err;
             },
@@ -422,6 +422,17 @@ pub const Semantizer = struct {
                     .semantic,
                     "error in struct field access '{s}': {s}",
                     .{ sfa.field_name.string, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .choice_payload_access => |acc| self.handleChoicePayloadAccess(acc, s) catch |err| blk: {
+                if (err == error.Reported) break :blk err;
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in choice payload access '..{s}': {s}",
+                    .{ acc.variant_name.string, @errorName(err) },
                 );
                 break :blk err;
             },
@@ -889,8 +900,22 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = ty };
     }
 
-    fn handleChoiceLiteral(self: *Semantizer, name: syn.Name) SemErr!typ.TypedExpr {
-        const n = try sg.makeSGNode(.{ .choice_literal = name.string }, name.location, self.allocator);
+    fn handleChoiceLiteral(self: *Semantizer, lit: syn.ChoiceLiteral, s: *Scope) SemErr!typ.TypedExpr {
+        var payload: ?*const sg.SGNode = null;
+        if (lit.payload) |payload_node| {
+            const payload_te = try self.visitNode(payload_node.*, s);
+            payload_te.node.sem_type = payload_te.ty;
+            payload = payload_te.node;
+        }
+
+        const node = try self.allocator.create(sg.ChoiceLiteral);
+        node.* = .{
+            .variant_name = lit.name.string,
+            .choice_type = undefined,
+            .variant_index = 0,
+            .payload = payload,
+        };
+        const n = try sg.makeSGNode(.{ .choice_literal = node }, lit.name.location, self.allocator);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
@@ -1063,9 +1088,11 @@ pub const Semantizer = struct {
 
                     var variants = std.array_list.Managed(sg.ChoiceVariant).init(self.allocator.*);
                     for (ct_lit.variants, 0..) |variant, idx| {
+                        const payload_type = if (variant.payload_type) |pt| try self.resolveType(pt, s) else null;
                         try variants.append(.{
                             .name = variant.name.string,
                             .value = @intCast(idx),
+                            .payload_type = payload_type,
                         });
                     }
 
@@ -1521,6 +1548,56 @@ pub const Semantizer = struct {
 
         const n = try sg.makeSGNode(.{ .struct_field_access = fa }, undefined, self.allocator);
         return .{ .node = n, .ty = fty };
+    }
+
+    fn handleChoicePayloadAccess(
+        self: *Semantizer,
+        acc: syn.ChoicePayloadAccess,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const base = try self.visitNode(acc.choice_value.*, s);
+        if (base.ty != .choice_type) {
+            const desc = try self.formatTypeText(base.ty, s);
+            defer desc.deinit();
+            try self.diags.add(
+                acc.choice_value.*.location,
+                .semantic,
+                "type '{s}' has no choice payload '..{s}'",
+                .{ desc.bytes, acc.variant_name.string },
+            );
+            return error.Reported;
+        }
+
+        const choice_ty = base.ty.choice_type;
+        for (choice_ty.variants, 0..) |variant, idx| {
+            if (!std.mem.eql(u8, variant.name, acc.variant_name.string)) continue;
+            const payload_ty = variant.payload_type orelse {
+                try self.diags.add(
+                    acc.variant_name.location,
+                    .semantic,
+                    "choice variant '..{s}' has no payload",
+                    .{acc.variant_name.string},
+                );
+                return error.Reported;
+            };
+
+            const access = try self.allocator.create(sg.ChoicePayloadAccess);
+            access.* = .{
+                .choice_value = base.node,
+                .variant_index = @intCast(idx),
+                .payload_type = payload_ty,
+            };
+            const node = try sg.makeSGNode(.{ .choice_payload_access = access }, acc.variant_name.location, self.allocator);
+            return .{ .node = node, .ty = payload_ty };
+        }
+
+        try self.diags.add(
+            acc.variant_name.location,
+            .semantic,
+            "choice has no variant '..{s}'",
+            .{acc.variant_name.string},
+        );
+        return error.Reported;
     }
 
     fn handleModuleFieldAccess(

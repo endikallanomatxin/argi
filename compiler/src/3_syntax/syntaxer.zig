@@ -457,7 +457,14 @@ pub const Syntaxer = struct {
             }
             self.advanceOne();
             const vname = try self.parseName();
-            try variants.append(.{ .name = vname, .is_default = is_default });
+            var payload_type: ?syn.Type = null;
+            if (self.tokenIs(.open_parenthesis)) {
+                self.advanceOne();
+                payload_type = (try self.parseType()).?;
+                if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+                self.advanceOne();
+            }
+            try variants.append(.{ .name = vname, .is_default = is_default, .payload_type = payload_type });
 
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
@@ -521,6 +528,20 @@ pub const Syntaxer = struct {
                 node = try self.makeNode(
                     .{ .struct_field_access = .{ .struct_value = node, .field_name = syn.Name{ .string = fname.string, .location = floc } } },
                     dot_loc,
+                );
+                continue;
+            }
+
+            if (self.tokenIs(.double_dot)) {
+                const dd_loc = self.tokenLocation();
+                self.advanceOne();
+                const vname = try self.parseName();
+                node = try self.makeNode(
+                    .{ .choice_payload_access = .{
+                        .choice_value = node,
+                        .variant_name = vname,
+                    } },
+                    dd_loc,
                 );
                 continue;
             }
@@ -632,7 +653,17 @@ pub const Syntaxer = struct {
             .double_dot => blk: {
                 self.advanceOne();
                 const variant = try self.parseName();
-                break :blk try self.makeNode(.{ .choice_literal = variant }, t.location);
+                var payload: ?*syn.STNode = null;
+                if (self.tokenIs(.open_parenthesis)) {
+                    self.advanceOne();
+                    payload = try self.parseExpression();
+                    if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+                    self.advanceOne();
+                }
+                break :blk try self.makeNode(.{ .choice_literal = .{
+                    .name = variant,
+                    .payload = payload,
+                } }, t.location);
             },
 
             // ─── ident  /  call ─────────────────────────────────────────────
