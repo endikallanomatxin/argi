@@ -652,10 +652,7 @@ pub const Syntaxer = struct {
                 const variant = try self.parseName();
                 var payload: ?*syn.STNode = null;
                 if (self.tokenIs(.open_parenthesis)) {
-                    self.advanceOne();
-                    payload = try self.parseExpression();
-                    if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
-                    self.advanceOne();
+                    payload = try self.parseStructValueLiteral();
                 }
                 break :blk try self.makeNode(.{ .choice_literal = .{
                     .name = variant,
