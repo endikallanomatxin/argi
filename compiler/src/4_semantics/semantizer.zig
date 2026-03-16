@@ -2488,17 +2488,17 @@ pub const Semantizer = struct {
         return null;
     }
 
-    fn refineStructTypeWithActual(
+    fn refinedStructTypeWithActual(
         self: *Semantizer,
-        expected_ptr: *sg.StructType,
+        expected_ptr: *const sg.StructType,
         actual_ty: sg.Type,
-    ) !bool {
-        if (actual_ty != .struct_type) return false;
+    ) !?*sg.StructType {
+        if (actual_ty != .struct_type) return null;
         const actual = actual_ty.struct_type;
 
         const expected_fields = expected_ptr.fields;
-        var refined = try self.allocator.alloc(sg.StructTypeField, expected_fields.len);
-        errdefer self.allocator.free(refined);
+        const refined = try self.allocator.alloc(sg.StructTypeField, expected_fields.len);
+        var changed = false;
 
         var idx: usize = 0;
         while (idx < expected_fields.len) : (idx += 1) {
@@ -2510,19 +2510,22 @@ pub const Semantizer = struct {
             if (actual_field_ptr) |af| {
                 const actual_ty_field = af.ty;
                 if (typ.typesStructurallyEqual(exp_field.ty, actual_ty_field)) {
-                    final_ty = actual_ty_field;
+                    if (!typ.typesExactlyEqual(exp_field.ty, actual_ty_field)) {
+                        final_ty = actual_ty_field;
+                        changed = true;
+                    }
                 } else if (typ.isAny(exp_field.ty)) {
                     final_ty = actual_ty_field;
+                    changed = true;
                 } else if (typ.typesCompatible(exp_field.ty, actual_ty_field)) {
                     final_ty = actual_ty_field;
+                    changed = true;
                 } else {
-                    self.allocator.free(refined);
-                    return false;
+                    return null;
                 }
             } else {
                 if (exp_field.default_value == null) {
-                    self.allocator.free(refined);
-                    return false;
+                    return null;
                 }
             }
 
@@ -2533,10 +2536,11 @@ pub const Semantizer = struct {
             };
         }
 
-        const old_slice = expected_ptr.fields;
-        expected_ptr.fields = refined;
-        self.allocator.free(@constCast(old_slice));
-        return true;
+        if (!changed) return @constCast(expected_ptr);
+
+        const refined_ptr = try self.allocator.create(sg.StructType);
+        refined_ptr.* = .{ .fields = refined };
+        return refined_ptr;
     }
 
     fn instantiateGenericNamed(
@@ -2649,10 +2653,10 @@ pub const Semantizer = struct {
         s: *Scope,
         subst: *std.StringHashMap(sg.Type),
     ) SemErr!?*sg.FunctionDeclaration {
-        const in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, subst);
+        var in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, subst);
         const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, subst);
 
-        if (!(try self.refineStructTypeWithActual(in_struct_ptr, call_input.ty))) return null;
+        in_struct_ptr = (try self.refinedStructTypeWithActual(in_struct_ptr, call_input.ty)) orelse return null;
 
         if (s.functions.getPtr(name)) |fns| {
             for (fns.items) |cand| {
