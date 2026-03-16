@@ -357,6 +357,88 @@ test "37_size_of_and_alignment_of_builtin_functions" {
     try run();
 }
 
+test "42_choice" {
+    try clean();
+    try expectSuccessfulBuild("tests/42_choice/main.rg");
+    try run();
+}
+
+test "43_choice_payloads" {
+    try clean();
+    try expectSuccessfulBuild("tests/43_choice_payloads/main.rg");
+    try run();
+}
+
+test "44X_choice_missing_payload" {
+    try clean();
+    try buildExpectFail(
+        "tests/44X_choice_missing_payload/main.rg",
+        "choice variant '..ok' requires a payload",
+    );
+}
+
+test "45_choice_is_builtin" {
+    try clean();
+    try expectSuccessfulBuild("tests/45_choice_is_builtin/main.rg");
+    try run();
+}
+
+test "46_choice_match" {
+    try clean();
+    try expectSuccessfulBuild("tests/46_choice_match/main.rg");
+    try run();
+}
+
+test "47_choice_match_payload_binding" {
+    try clean();
+    try expectSuccessfulBuild("tests/47_choice_match_payload_binding/main.rg");
+    try run();
+}
+
+test "48_nullable_generic" {
+    try clean();
+    try expectSuccessfulBuild("tests/48_nullable_generic/main.rg");
+    try run();
+}
+
+test "49_errable_generic" {
+    try clean();
+    try expectSuccessfulBuild("tests/49_errable_generic/main.rg");
+    try run();
+}
+
+test "50X_choice_unknown_variant" {
+    try clean();
+    try buildExpectFail(
+        "tests/50X_choice_unknown_variant/main.rg",
+        "choice has no variant '..east'",
+    );
+}
+
+test "51X_choice_payload_access_without_payload" {
+    try clean();
+    try buildExpectFail(
+        "tests/51X_choice_payload_access_without_payload/main.rg",
+        "choice variant '..north' has no payload",
+    );
+}
+
+test "52X_match_non_choice" {
+    try clean();
+    try buildExpectFail(
+        "tests/52X_match_non_choice/main.rg",
+        "match expects a choice value, found 'Int32'",
+    );
+}
+
+test "54X_match_bind_payload_without_payload" {
+    try clean();
+    try buildExpectFail(
+        "tests/54X_match_bind_payload_without_payload/main.rg",
+        "choice variant '..north' has no payload to bind",
+    );
+}
+
 test "411_list_literal_length" {
     try clean();
     try expectSuccessfulBuild("tests/411_list_literal_length/main.rg");

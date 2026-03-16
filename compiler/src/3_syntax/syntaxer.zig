@@ -436,6 +436,45 @@ pub const Syntaxer = struct {
         return .{ .fields = fields.items };
     }
 
+    fn parseChoiceTypeLiteral(self: *Syntaxer) SyntaxerError!syn.ChoiceTypeLiteral {
+        if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        var variants = std.array_list.Managed(syn.ChoiceTypeLiteralVariant).init(self.allocator.*);
+
+        while (!self.tokenIs(.close_parenthesis)) {
+            var is_default = false;
+            if (self.tokenIs(.equal)) {
+                is_default = true;
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            }
+
+            if (!self.tokenIs(.double_dot)) {
+                try self.diags.add(self.tokenLocation(), .syntax, "expected choice variant '..name'", .{});
+                return SyntaxerError.ExpectedIdentifier;
+            }
+            self.advanceOne();
+            const vname = try self.parseName();
+            var payload_type: ?syn.StructTypeLiteral = null;
+            if (self.tokenIs(.open_parenthesis)) {
+                payload_type = try self.parseStructTypeLiteral();
+            }
+            try variants.append(.{ .name = vname, .is_default = is_default, .payload_type = payload_type });
+
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            }
+        }
+
+        if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+        self.advanceOne();
+        return .{ .variants = variants.items };
+    }
+
     // ─────── struct VALUE literal  (p.e.  (.x=1, .y=2) ) ─────────────────────
     fn parseStructValueLiteral(self: *Syntaxer) SyntaxerError!*syn.STNode {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
@@ -486,6 +525,20 @@ pub const Syntaxer = struct {
                 node = try self.makeNode(
                     .{ .struct_field_access = .{ .struct_value = node, .field_name = syn.Name{ .string = fname.string, .location = floc } } },
                     dot_loc,
+                );
+                continue;
+            }
+
+            if (self.tokenIs(.double_dot)) {
+                const dd_loc = self.tokenLocation();
+                self.advanceOne();
+                const vname = try self.parseName();
+                node = try self.makeNode(
+                    .{ .choice_payload_access = .{
+                        .choice_value = node,
+                        .variant_name = vname,
+                    } },
+                    dd_loc,
                 );
                 continue;
             }
@@ -594,6 +647,19 @@ pub const Syntaxer = struct {
         }
 
         const base: *syn.STNode = switch (t.content) {
+            .double_dot => blk: {
+                self.advanceOne();
+                const variant = try self.parseName();
+                var payload: ?*syn.STNode = null;
+                if (self.tokenIs(.open_parenthesis)) {
+                    payload = try self.parseStructValueLiteral();
+                }
+                break :blk try self.makeNode(.{ .choice_literal = .{
+                    .name = variant,
+                    .payload = payload,
+                } }, t.location);
+            },
+
             // ─── ident  /  call ─────────────────────────────────────────────
             .identifier => blk: {
                 const name = try self.parseIdentifier();
@@ -706,6 +772,7 @@ pub const Syntaxer = struct {
         switch (self.current().content) {
             .keyword_return => return self.parseReturn(),
             .keyword_if => return self.parseIf(),
+            .keyword_match => return self.parseMatch(),
             else => {},
         }
 
@@ -860,8 +927,36 @@ pub const Syntaxer = struct {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                     self.advanceOne();
                     if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
-                    const stlit = try self.parseStructTypeLiteral();
-                    const lit_node = try self.makeNode(.{ .struct_type_literal = stlit }, id_loc);
+                    var idx = self.index + 1;
+                    var parse_choice = false;
+                    while (idx < self.tokens.len) : (idx += 1) {
+                        const tag = std.meta.activeTag(self.tokens[idx].content);
+                        switch (tag) {
+                            .new_line, .comment => continue,
+                            .double_dot => parse_choice = true,
+                            .equal => {
+                                var j = idx + 1;
+                                while (j < self.tokens.len) : (j += 1) {
+                                    const next_tag = std.meta.activeTag(self.tokens[j].content);
+                                    switch (next_tag) {
+                                        .new_line, .comment => continue,
+                                        .double_dot => parse_choice = true,
+                                        else => {},
+                                    }
+                                    break;
+                                }
+                            },
+                            else => {},
+                        }
+                        break;
+                    }
+                    const lit_node = if (parse_choice) blk: {
+                        const chlit = try self.parseChoiceTypeLiteral();
+                        break :blk try self.makeNode(.{ .choice_type_literal = chlit }, id_loc);
+                    } else blk: {
+                        const stlit = try self.parseStructTypeLiteral();
+                        break :blk try self.makeNode(.{ .struct_type_literal = stlit }, id_loc);
+                    };
 
                     const tdecl = syn.TypeDeclaration{
                         .name = name,
@@ -947,6 +1042,47 @@ pub const Syntaxer = struct {
             .{ .if_statement = .{ .condition = cond, .then_block = thenB, .else_block = elseB } },
             start,
         );
+    }
+
+    fn parseMatch(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        const start = self.tokenLocation();
+        if (!self.tokenIs(.keyword_match)) return SyntaxerError.ExpectedDeclarationOrAssignment;
+        self.advanceOne();
+        const value = try self.parseExpression();
+        self.skipNewLinesAndComments();
+        if (!self.tokenIs(.open_brace)) return SyntaxerError.ExpectedLeftBrace;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        var cases = std.array_list.Managed(syn.MatchCase).init(self.allocator.*);
+        while (!self.tokenIs(.close_brace)) {
+            if (!self.tokenIs(.double_dot)) return SyntaxerError.ExpectedIdentifier;
+            self.advanceOne();
+            const variant_name = try self.parseName();
+
+            var payload_binding: ?syn.Name = null;
+            if (self.tokenIs(.open_parenthesis)) {
+                self.advanceOne();
+                payload_binding = try self.parseName();
+                if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+                self.advanceOne();
+            }
+
+            self.skipNewLinesAndComments();
+            const body = try self.parseCodeBlock();
+            try cases.append(.{
+                .variant_name = variant_name,
+                .payload_binding = payload_binding,
+                .body = body,
+            });
+            self.skipNewLinesAndComments();
+        }
+
+        self.advanceOne();
+        return try self.makeNode(.{ .match_statement = .{
+            .value = value,
+            .cases = cases.items,
+        } }, start);
     }
     fn parseReturn(self: *Syntaxer) SyntaxerError!*syn.STNode {
         const start = self.tokenLocation();
