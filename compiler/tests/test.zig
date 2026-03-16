@@ -185,6 +185,12 @@ test "17X_pipe_expression_placeholder_not_supported" {
     );
 }
 
+test "18_pipe_chain" {
+    try clean();
+    try expectSuccessfulBuild("tests/18_pipe_chain/main.rg");
+    try runExpect(42);
+}
+
 test "130_multiple_dispatch" {
     try clean();
     try expectSuccessfulBuild("tests/130_multiple_dispatch/main.rg");
