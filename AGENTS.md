@@ -24,7 +24,7 @@ This repository contains a compiler for a new programming language written in Zi
 
 - Build compiler: `cd compiler && zig build`
 - Run compiler tests: `cd compiler && zig build test`
-- Compile a test program: `./zig-out/bin/argi build tests/00_minimal_main/main.rg`
+- Compile a test program: `./zig-out/bin/argi build tests/00_minimal_main`
 
 > It might be necessary to set the following environment variables to make zig work:
 > `ZIG_LOCAL_CACHE_DIR="$PWD/.zig-cache"`
@@ -68,6 +68,7 @@ feature first.
 
 - Current module rules in the compiler:
   - all `.rg` files in a folder share namespace
+  - `argi build` compiles a folder module, not a single `.rg` file
   - `#import(...)` must be assigned to a name
   - `./` is current module, `../` is parent, `.../` is project root
   - bare import names resolve under `more/`

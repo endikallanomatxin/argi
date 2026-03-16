@@ -32,3 +32,40 @@ Biggest, most important TODO: Define memory management further.
 (all description files starting with 3)
 There are some ideas, but it is still on the air.
 
+
+## Compiler usage
+
+Build the compiler:
+
+```sh
+cd compiler
+zig build
+```
+
+If Zig needs writable caches, run commands with:
+
+```sh
+ZIG_LOCAL_CACHE_DIR="$PWD/.zig-cache" \
+ZIG_GLOBAL_CACHE_DIR="$PWD/.zig-global-cache"
+```
+
+Compile a program:
+
+```sh
+./zig-out/bin/argi build tests/00_minimal_main/main.rg
+```
+
+Start the language server:
+
+```sh
+./zig-out/bin/argi lsp
+```
+
+Available build diagnostics flags:
+
+```text
+--on-build-error-show-cascade
+--on-build-error-show-syntax-tree
+--on-build-error-show-semantic-graph
+--on-build-error-show-token-list
+```

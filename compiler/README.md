@@ -25,16 +25,16 @@ zig build
 
 That will create a binary called `argi` in the `zig-out/bin/` directory.
 
-Then you can build a `.rg` file by running:
+Then you can build a folder module by running:
 
 ```bash
-./zig-out/bin/argi build file.rg
+./zig-out/bin/argi build tests/00_minimal_main
 ```
 
 You can also run the compiler directly with:
 
 ```bash
-zig build run -- build file.rg
+zig build run -- build tests/00_minimal_main
 ```
 
 ## Running Tests
@@ -50,6 +50,5 @@ independently:
 
 ```bash
 zig build
-./zig-out/bin/argi specific_test_file.rg
+./zig-out/bin/argi build tests/00_minimal_main
 ```
-
