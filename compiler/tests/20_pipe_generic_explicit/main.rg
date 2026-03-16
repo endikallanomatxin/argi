@@ -3,5 +3,5 @@ id #(.t: Type) (.x: t) -> (.y: t) := {
 }
 
 main () -> (.status_code: Int32) := {
-    status_code = 42 | id#(.t: Int32)(_)
+    status_code = 42 | id#(.t: Int32)(.x = _)
 }

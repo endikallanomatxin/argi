@@ -9,12 +9,12 @@ read_value (.value: &Int32) -> (.r: Int32) := {
 
 main () -> (.status_code: Int32) := {
     value :: Int32 = 41
-    done : Int32 = value | increment_in_place($&_)
+    done : Int32 = value | increment_in_place(.value = $&_)
 
     if done != 1 {
         status_code = 1
         return
     }
 
-    status_code = value | read_value(&_)
+    status_code = value | read_value(.value = &_)
 }

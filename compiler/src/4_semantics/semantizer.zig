@@ -240,10 +240,6 @@ pub const Semantizer = struct {
         };
     }
 
-    fn pipeArgCount(call: syn.PipeCall) usize {
-        return if (call.args.len == 0) 1 else call.args.len;
-    }
-
     fn handlePipeFieldAccess(
         self: *Semantizer,
         base: typ.TypedExpr,
@@ -2319,6 +2315,128 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = result_ty };
     }
 
+    fn handleIsBuiltinFromInput(
+        self: *Semantizer,
+        input_te: typ.TypedExpr,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (input_te.ty != .struct_type or input_te.node.content != .struct_value_literal) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "is expects '.value' and '.variant' arguments",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const input_struct = input_te.ty.struct_type;
+        const input_value = input_te.node.content.struct_value_literal;
+
+        var value_idx: ?usize = null;
+        var variant_idx: ?usize = null;
+        for (input_struct.fields, 0..) |field, idx| {
+            if (std.mem.eql(u8, field.name, "value")) {
+                value_idx = idx;
+            } else if (std.mem.eql(u8, field.name, "variant")) {
+                variant_idx = idx;
+            } else {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "is only accepts '.value' and '.variant' arguments",
+                    .{},
+                );
+                return error.Reported;
+            }
+        }
+
+        if (value_idx == null or variant_idx == null) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "is expects '.value' and '.variant' arguments",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const value_field = input_value.fields[value_idx.?];
+        const variant_field = input_value.fields[variant_idx.?];
+        const value_ty = input_struct.fields[value_idx.?].ty;
+
+        if (value_ty != .choice_type) {
+            const desc = try self.formatTypeText(value_ty, s);
+            defer desc.deinit();
+            try self.diags.add(
+                loc,
+                .semantic,
+                "is expects '.value' to be a choice, found '{s}'",
+                .{desc.bytes},
+            );
+            return error.Reported;
+        }
+
+        const variant_te = blk_variant: {
+            const variant_node = variant_field.value.*;
+            if (variant_node.content == .choice_literal) {
+                const raw_variant = variant_node.content.choice_literal;
+                if (raw_variant.payload == null) {
+                    const choice_ty = value_ty.choice_type;
+                    for (choice_ty.variants, 0..) |variant, idx| {
+                        if (!std.mem.eql(u8, variant.name, raw_variant.variant_name)) continue;
+
+                        const typed = try self.allocator.create(sg.ChoiceLiteral);
+                        typed.* = .{
+                            .variant_name = raw_variant.variant_name,
+                            .choice_type = choice_ty,
+                            .variant_index = @intCast(idx),
+                            .payload = null,
+                        };
+                        const typed_node = try sg.makeSGNode(.{ .choice_literal = typed }, loc, self.allocator);
+                        typed_node.sem_type = value_ty;
+                        break :blk_variant typ.TypedExpr{ .node = typed_node, .ty = value_ty };
+                    }
+
+                    try self.diags.add(
+                        loc,
+                        .semantic,
+                        "choice has no variant '..{s}'",
+                        .{raw_variant.variant_name},
+                    );
+                    return error.Reported;
+                }
+            }
+
+            break :blk_variant typ.TypedExpr{
+                .node = @constCast(variant_field.value),
+                .ty = input_struct.fields[variant_idx.?].ty,
+            };
+        };
+
+        if (!typ.typesExactlyEqual(variant_te.ty, value_ty)) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "is expects '.variant' to belong to the same choice type as '.value'",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const cmp_ptr = try self.allocator.create(sg.Comparison);
+        cmp_ptr.* = .{
+            .operator = .equal,
+            .left = value_field.value,
+            .right = variant_te.node,
+        };
+
+        const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, loc, self.allocator);
+        try s.nodes.append(node);
+        return .{ .node = node, .ty = .{ .builtin = .Bool } };
+    }
+
     fn resolveRegularCallCallee(
         self: *Semantizer,
         call: syn.FunctionCall,
@@ -2370,146 +2488,17 @@ pub const Semantizer = struct {
 
     fn buildNamedPipeInput(
         self: *Semantizer,
-        input_fields: []const sg.StructTypeField,
+        field_names: []const []const u8,
         args: []const typ.TypedExpr,
     ) !typ.TypedExpr {
         var call_args = std.array_list.Managed(CallArg).init(self.allocator.*);
         defer call_args.deinit();
 
-        for (input_fields, 0..) |field, idx| {
-            try call_args.append(.{ .name = field.name, .expr = args[idx] });
+        for (field_names, 0..) |field_name, idx| {
+            try call_args.append(.{ .name = field_name, .expr = args[idx] });
         }
 
         return self.buildCallInput(call_args.items);
-    }
-
-    fn buildNamedPipeInputFromTemplate(
-        self: *Semantizer,
-        input_fields: []const syn.StructTypeLiteralField,
-        args: []const typ.TypedExpr,
-    ) !typ.TypedExpr {
-        var call_args = std.array_list.Managed(CallArg).init(self.allocator.*);
-        defer call_args.deinit();
-
-        for (input_fields, 0..) |field, idx| {
-            try call_args.append(.{ .name = field.name.string, .expr = args[idx] });
-        }
-
-        return self.buildCallInput(call_args.items);
-    }
-
-    fn genericTemplateMatchesPipeVisibility(
-        self: *Semantizer,
-        tmpl: gen.GenericTemplate,
-        requester_file: []const u8,
-        module_dir: ?[]const u8,
-    ) bool {
-        if (module_dir) |dir| {
-            if (!std.mem.startsWith(u8, tmpl.location.file, dir)) return false;
-        }
-        if (isPrivateName(tmpl.name)) {
-            const requester_dir = self.moduleDirForFile(requester_file);
-            const tmpl_dir = self.moduleDirForFile(tmpl.location.file);
-            return std.mem.eql(u8, requester_dir, tmpl_dir);
-        }
-        return true;
-    }
-
-    fn instantiatePipeGenericNamed(
-        self: *Semantizer,
-        name: []const u8,
-        stargs: syn.StructTypeLiteral,
-        args: []const typ.TypedExpr,
-        s: *Scope,
-        allowed_kind: gen.GenericDispatchKind,
-        requester_file: []const u8,
-        module_dir: ?[]const u8,
-    ) SemErr!*sg.FunctionDeclaration {
-        var cur: ?*Scope = s;
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.generic_functions.getPtr(name)) |list_ptr| {
-                for (list_ptr.items) |tmpl| {
-                    if (tmpl.dispatch_kind != allowed_kind) continue;
-                    if (!self.genericTemplateMatchesPipeVisibility(tmpl, requester_file, module_dir)) continue;
-                    if (tmpl.input.fields.len != args.len) continue;
-
-                    const call_input = try self.buildNamedPipeInputFromTemplate(tmpl.input.fields, args);
-                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
-                    defer subst.deinit();
-
-                    var ok: bool = true;
-                    for (tmpl.param_names) |pname| {
-                        var found: bool = false;
-                        for (stargs.fields) |fld| {
-                            if (std.mem.eql(u8, fld.name.string, pname)) {
-                                if (fld.type) |ty_node| {
-                                    const resolved = try self.resolveTypeWithSubst(ty_node, s, &subst);
-                                    try subst.put(pname, resolved);
-                                } else if (fld.default_value) |def_node| {
-                                    const resolved = try self.resolveTypeExpression(def_node, s);
-                                    try subst.put(pname, resolved);
-                                }
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found) {
-                            if (self.inferGenericParamFromCall(tmpl, pname, call_input.ty, s, &subst)) |inferred| {
-                                try subst.put(pname, inferred);
-                                found = true;
-                            }
-                        }
-                        if (!found) {
-                            ok = false;
-                            break;
-                        }
-                    }
-                    if (!ok) continue;
-                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) continue;
-                    if (try self.instantiateGenericTemplate(name, tmpl, call_input, s, &subst)) |instantiated| {
-                        return instantiated;
-                    }
-                }
-            }
-        }
-        return error.SymbolNotFound;
-    }
-
-    fn instantiatePipeGeneric(
-        self: *Semantizer,
-        name: []const u8,
-        type_args_syn: []const syn.Type,
-        args: []const typ.TypedExpr,
-        s: *Scope,
-        allowed_kind: gen.GenericDispatchKind,
-        requester_file: []const u8,
-        module_dir: ?[]const u8,
-    ) SemErr!*sg.FunctionDeclaration {
-        var cur: ?*Scope = s;
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.generic_functions.getPtr(name)) |list_ptr| {
-                for (list_ptr.items) |tmpl| {
-                    if (tmpl.dispatch_kind != allowed_kind) continue;
-                    if (!self.genericTemplateMatchesPipeVisibility(tmpl, requester_file, module_dir)) continue;
-                    if (tmpl.param_names.len != type_args_syn.len) continue;
-                    if (tmpl.input.fields.len != args.len) continue;
-
-                    const call_input = try self.buildNamedPipeInputFromTemplate(tmpl.input.fields, args);
-                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
-                    defer subst.deinit();
-                    var i: usize = 0;
-                    while (i < tmpl.param_names.len) : (i += 1) {
-                        const resolved = try self.resolveTypeWithSubst(type_args_syn[i], s, &subst);
-                        try subst.put(tmpl.param_names[i], resolved);
-                    }
-                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) continue;
-                    if (try self.instantiateGenericTemplate(name, tmpl, call_input, s, &subst)) |instantiated| {
-                        return instantiated;
-                    }
-                }
-            }
-        }
-        return error.SymbolNotFound;
     }
     fn handlePipe(
         self: *Semantizer,
@@ -2519,10 +2508,18 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         const left_te = try self.visitNode(pipe.left.*, s);
 
-        var evaluated_args = std.array_list.Managed(typ.TypedExpr).init(self.allocator.*);
-        defer evaluated_args.deinit();
+        if (pipe.call.input.*.content != .struct_value_literal) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "pipe right-hand side must use named arguments",
+                .{},
+            );
+            return error.Reported;
+        }
 
-        if (pipe.call.args.len == 0) {
+        const sv = pipe.call.input.*.content.struct_value_literal;
+        if (sv.fields.len == 0) {
             try self.diags.add(
                 loc,
                 .semantic,
@@ -2532,9 +2529,14 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
+        var field_names = std.array_list.Managed([]const u8).init(self.allocator.*);
+        defer field_names.deinit();
+        var evaluated_args = std.array_list.Managed(typ.TypedExpr).init(self.allocator.*);
+        defer evaluated_args.deinit();
+
         var found_placeholder = false;
-        for (pipe.call.args) |arg| {
-            if (syntaxNodeContainsPipePlaceholder(arg)) {
+        for (sv.fields) |field| {
+            if (syntaxNodeContainsPipePlaceholder(field.value)) {
                 found_placeholder = true;
                 break;
             }
@@ -2549,93 +2551,15 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        for (pipe.call.args) |arg| {
-            try evaluated_args.append(try self.evalPipeArg(arg, left_te, s));
+        for (sv.fields) |field| {
+            try field_names.append(field.name.string);
+            try evaluated_args.append(try self.evalPipeArg(field.value, left_te, s));
         }
 
-        const field_storage = try self.allocator.alloc(sg.StructTypeField, evaluated_args.items.len);
-        for (evaluated_args.items, 0..) |arg, idx| {
-            const name = try std.fmt.allocPrint(self.allocator.*, "arg{d}", .{idx});
-            field_storage[idx] = .{ .name = name, .ty = arg.ty, .default_value = null };
-        }
-        const actual_struct = try self.allocator.create(sg.StructType);
-        actual_struct.* = .{ .fields = field_storage };
-        const actual_input_ty: sg.Type = .{ .struct_type = actual_struct };
+        const input_te = try self.buildNamedPipeInput(field_names.items, evaluated_args.items);
 
-        const module_dir = if (pipe.call.module_qualifier) |module_name|
-            s.lookupModuleAlias(module_name) orelse {
-                try self.diags.add(
-                    loc,
-                    .semantic,
-                    "unknown module alias '{s}'",
-                    .{module_name},
-                );
-                return error.Reported;
-            }
-        else
-            null;
-
-        if (pipe.call.module_qualifier != null and (pipe.call.type_arguments != null or pipe.call.type_arguments_struct != null)) {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "explicit generic arguments are not supported yet on module-qualified pipe calls",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        var chosen_generic: ?*sg.FunctionDeclaration = null;
-        if (pipe.call.type_arguments_struct) |stargs| {
-            chosen_generic = self.instantiatePipeGenericNamed(
-                pipe.call.callee,
-                stargs,
-                evaluated_args.items,
-                s,
-                .regular,
-                loc.file,
-                module_dir,
-            ) catch |err| switch (err) {
-                error.SymbolNotFound => null,
-                else => return err,
-            };
-        } else if (pipe.call.type_arguments) |targs| {
-            chosen_generic = self.instantiatePipeGeneric(
-                pipe.call.callee,
-                targs,
-                evaluated_args.items,
-                s,
-                .regular,
-                loc.file,
-                module_dir,
-            ) catch |err| switch (err) {
-                error.SymbolNotFound => null,
-                else => return err,
-            };
-        } else {
-            const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-            chosen_generic = self.instantiatePipeGenericNamed(
-                pipe.call.callee,
-                empty_args,
-                evaluated_args.items,
-                s,
-                .regular,
-                loc.file,
-                module_dir,
-            ) catch |err| switch (err) {
-                error.SymbolNotFound => null,
-                else => return err,
-            };
-        }
-
-        if (chosen_generic) |generic_fn| {
-            const input_te = try self.buildNamedPipeInput(generic_fn.input.fields, evaluated_args.items);
-            const fc_ptr = try self.allocator.create(sg.FunctionCall);
-            fc_ptr.* = .{ .callee = generic_fn, .input = input_te.node };
-
-            const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
-            try s.nodes.append(n);
-            return .{ .node = n, .ty = typ.functionReturnType(generic_fn) };
+        if (std.mem.eql(u8, pipe.call.callee, "is")) {
+            return self.handleIsBuiltinFromInput(input_te, loc, s);
         }
 
         const chosen = try self.resolveRegularCallCallee(
@@ -2645,14 +2569,13 @@ pub const Semantizer = struct {
                 .module_qualifier = pipe.call.module_qualifier,
                 .type_arguments = pipe.call.type_arguments,
                 .type_arguments_struct = pipe.call.type_arguments_struct,
-                .input = undefined,
+                .input = pipe.call.input,
             },
-            actual_input_ty,
+            input_te.ty,
             s,
             loc,
         );
 
-        const input_te = try self.buildNamedPipeInput(chosen.input.fields, evaluated_args.items);
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
         fc_ptr.* = .{ .callee = chosen, .input = input_te.node };
 
