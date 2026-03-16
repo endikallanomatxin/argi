@@ -313,7 +313,7 @@ test "338X_abstract_function_output_requires_default" {
     try clean();
     try buildExpectFail(
         "tests/338X_abstract_function_output_requires_default/main.rg",
-        "abstract types without a default are not supported in this function signature position yet",
+        "abstract types without a default are not supported in function outputs yet",
     );
 }
 
