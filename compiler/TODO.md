@@ -83,7 +83,8 @@
         - Ya existe un corte usable:
           `lhs | f(...)`, `lhs | module.f(...)`, cadenas básicas de `pipe`,
           y genéricos básicos en el RHS,
-          con `_`, `&_`, `$&_` y `_.field` dentro de los paréntesis del RHS.
+          usando argumentos nombrados normales en el RHS con `_`, `&_`, `$&_`
+          y `_.field` como valores.
 
         - Falta ampliarlo para:
           placeholders en expresiones más complejas,

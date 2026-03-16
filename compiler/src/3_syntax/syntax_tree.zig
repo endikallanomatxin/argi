@@ -171,7 +171,7 @@ pub const PipeCall = struct {
     module_qualifier: ?[]const u8,
     type_arguments: ?[]const Type,
     type_arguments_struct: ?StructTypeLiteral,
-    args: []const *STNode,
+    input: *const STNode,
 };
 
 pub const Mutability = enum {

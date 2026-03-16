@@ -235,9 +235,9 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
                 printStructTypeLiteral(type_args_struct, lvl + 1);
                 std.debug.print("\n", .{});
             }
-            for (pe.call.args) |arg| {
-                printNode(arg.*, lvl + 2);
-            }
+            indent(lvl + 1);
+            std.debug.print("Input:\n", .{});
+            printNode(pe.call.input.*, lvl + 2);
         },
 
         // ── STRUCT TYPE LITERAL (stand-alone) ────────────────────────────

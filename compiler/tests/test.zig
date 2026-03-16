@@ -173,7 +173,7 @@ test "16X_pipe_requires_placeholder" {
     try clean();
     try buildExpectFail(
         "tests/16X_pipe_requires_placeholder/main.rg",
-        "pipe right-hand side must use at least one argument placeholder",
+        "expected struct field",
     );
 }
 
@@ -181,7 +181,7 @@ test "17X_pipe_expression_placeholder_not_supported" {
     try clean();
     try buildExpectFail(
         "tests/17X_pipe_expression_placeholder_not_supported/main.rg",
-        "pipe placeholders are only supported as '_', '&_', '$&_', '_.field', or '..variant' payload access for now",
+        "expected struct field",
     );
 }
 
@@ -201,6 +201,12 @@ test "20_pipe_generic_explicit" {
     try clean();
     try expectSuccessfulBuild("tests/20_pipe_generic_explicit/main.rg");
     try runExpect(42);
+}
+
+test "21_pipe_builtin_is" {
+    try clean();
+    try expectSuccessfulBuild("tests/21_pipe_builtin_is/main.rg");
+    try run();
 }
 
 test "130_multiple_dispatch" {
