@@ -1056,15 +1056,12 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         if (d.generic_params.len > 0) {
-            if (d.value.*.content != .struct_type_literal)
-                return error.NotYetImplemented;
-            const st_lit = d.value.*.content.struct_type_literal;
             // Register as generic type template
             try s.appendGenericTypeTemplate(d.name.string, .{
                 .name = d.name.string,
                 .location = d.value.location,
                 .param_names = d.generic_params,
-                .body = st_lit,
+                .body = d.value,
             });
             // No concrete type emitted now
             const noop = try self.makeNoopNode(d.value.location);
@@ -1968,6 +1965,31 @@ pub const Semantizer = struct {
         return ptr;
     }
 
+    pub fn choiceTypeFromLiteralWithSubst(
+        self: *Semantizer,
+        ct: syn.ChoiceTypeLiteral,
+        s: *Scope,
+        subst: *std.StringHashMap(sg.Type),
+    ) SemErr!*sg.ChoiceType {
+        var variants = std.array_list.Managed(sg.ChoiceVariant).init(self.allocator.*);
+        for (ct.variants, 0..) |variant, idx| {
+            const payload_type = if (variant.payload_type) |pt|
+                sg.Type{ .struct_type = try self.structTypeFromLiteralWithSubst(pt, s, subst) }
+            else
+                null;
+            try variants.append(.{
+                .name = variant.name.string,
+                .value = @intCast(idx),
+                .payload_type = payload_type,
+            });
+        }
+
+        const ptr = try self.allocator.create(sg.ChoiceType);
+        ptr.* = .{ .variants = try variants.toOwnedSlice() };
+        variants.deinit();
+        return ptr;
+    }
+
     fn structTypeFromVal(
         self: *Semantizer,
         sv: syn.StructValueLiteral,
@@ -2610,11 +2632,13 @@ pub const Semantizer = struct {
                 if (tmpl_ptr != null and actual_ty == .struct_type) {
                     const tmpl = tmpl_ptr.?;
                     const actual_struct = actual_ty.struct_type;
-                    for (tmpl.body.fields) |tmpl_field| {
-                        if (tmpl_field.type) |sub_ty| {
-                            if (typ.findFieldByName(actual_struct, tmpl_field.name.string)) |actual_field| {
-                                if (self.extractTypeArgumentFromActual(sub_ty, actual_field.ty, param_name, s)) |res|
-                                    return res;
+                    if (tmpl.body.*.content == .struct_type_literal) {
+                        for (tmpl.body.content.struct_type_literal.fields) |tmpl_field| {
+                            if (tmpl_field.type) |sub_ty| {
+                                if (typ.findFieldByName(actual_struct, tmpl_field.name.string)) |actual_field| {
+                                    if (self.extractTypeArgumentFromActual(sub_ty, actual_field.ty, param_name, s)) |res|
+                                        return res;
+                                }
                             }
                         }
                     }
@@ -2886,7 +2910,7 @@ pub const Semantizer = struct {
         stargs: syn.StructTypeLiteral,
         s: *Scope,
         outer_subst: ?*std.StringHashMap(sg.Type),
-    ) SemErr!*sg.StructType {
+    ) SemErr!sg.Type {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.generic_types.getPtr(name)) |list_ptr| {
@@ -2924,8 +2948,11 @@ pub const Semantizer = struct {
                     }
                     if (!ok) continue;
 
-                    const st_ptr = try self.structTypeFromLiteralWithSubst(tmpl.body, s, &subst);
-                    return st_ptr;
+                    return switch (tmpl.body.*.content) {
+                        .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteralWithSubst(st, s, &subst) },
+                        .choice_type_literal => |ct| .{ .choice_type = try self.choiceTypeFromLiteralWithSubst(ct, s, &subst) },
+                        else => error.NotYetImplemented,
+                    };
                 }
             }
         }
@@ -3723,11 +3750,11 @@ pub const Semantizer = struct {
                     break :blk_g error.AbstractNeedsDefault;
                 }
 
-                const st_ptr = self.instantiateGenericTypeNamed(base_name, g.args, s, null) catch |err| switch (err) {
+                const ty = self.instantiateGenericTypeNamed(base_name, g.args, s, null) catch |err| switch (err) {
                     error.SymbolNotFound => break :blk_g error.UnknownType,
                     else => return err,
                 };
-                break :blk_g .{ .struct_type = st_ptr };
+                break :blk_g ty;
             },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
             .pointer_type => |ptr_info| blk: {
@@ -3790,11 +3817,11 @@ pub const Semantizer = struct {
                     break :blk_g error.AbstractNeedsDefault;
                 }
 
-                const st_ptr = self.instantiateGenericTypeNamed(base_name, g.args, s, subst) catch |err| switch (err) {
+                const ty = self.instantiateGenericTypeNamed(base_name, g.args, s, subst) catch |err| switch (err) {
                     error.SymbolNotFound => break :blk_g error.UnknownType,
                     else => return err,
                 };
-                break :blk_g .{ .struct_type = st_ptr };
+                break :blk_g ty;
             },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteralWithSubst(st, s, subst) },
             .pointer_type => |ptr_info| blk: {
