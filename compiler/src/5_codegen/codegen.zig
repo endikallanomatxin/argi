@@ -210,6 +210,10 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "error generating value literal: {s}", .{@errorName(e)});
                 return e;
             },
+            .choice_literal => {
+                try self.diags.add(n.location, .codegen, "choice literals must be type-checked before codegen", .{});
+                return CodegenError.InvalidType;
+            },
             .array_literal => |al| self.genArrayLiteral(al) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating array literal: {s}", .{@errorName(e)});
                 return e;
@@ -319,6 +323,7 @@ pub const CodeGenerator = struct {
                 .Type => c.LLVMPointerType(c.LLVMInt8Type(), 0),
                 .Any => c.LLVMInt8Type(), // &Any es i8*
             },
+            .choice_type => c.LLVMInt32Type(),
             .abstract_type => CodegenError.InvalidType,
             .struct_type => |st| blk: {
                 // Anonymous struct generation with the given fields
@@ -386,6 +391,9 @@ pub const CodeGenerator = struct {
                     .Any => "any",
                 };
                 try buf.appendSlice(s);
+            },
+            .choice_type => |_| {
+                try buf.appendSlice("choice");
             },
             .abstract_type => |at| {
                 try buf.appendSlice("abs_");

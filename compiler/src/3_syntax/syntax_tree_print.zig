@@ -58,6 +58,17 @@ fn printStructTypeLiteral(st: syn.StructTypeLiteral, lvl: usize) void {
     std.debug.print(")", .{});
 }
 
+fn printChoiceTypeLiteral(ct: syn.ChoiceTypeLiteral, lvl: usize) void {
+    std.debug.print("choice (\n", .{});
+    for (ct.variants) |v| {
+        indent(lvl + 1);
+        if (v.is_default) std.debug.print("=", .{});
+        std.debug.print("..{s}\n", .{v.name.string});
+    }
+    indent(lvl);
+    std.debug.print(")", .{});
+}
+
 // ── impresión de literales de valor ─────────────────────────────────────────
 fn printStructValueLiteral(sl: syn.StructValueLiteral, lvl: usize) void {
     std.debug.print("(\n", .{});
@@ -158,7 +169,7 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
         // ── TYPE DECLARATION ──────────────────────────────────────────────
         .type_declaration => |td| {
             std.debug.print("TypeDecl  \"{s}\"\n", .{td.name.string});
-            printNode(td.value.*, lvl + 1); // el valor es un struct_type_literal
+            printNode(td.value.*, lvl + 1);
         },
 
         // ── FUNCTION DECLARATION ──────────────────────────────────────────
@@ -199,6 +210,14 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             std.debug.print("StructTypeLiteral ", .{});
             printStructTypeLiteral(st, lvl);
             std.debug.print("\n", .{});
+        },
+        .choice_type_literal => |ct| {
+            std.debug.print("ChoiceTypeLiteral ", .{});
+            printChoiceTypeLiteral(ct, lvl);
+            std.debug.print("\n", .{});
+        },
+        .choice_literal => |name| {
+            std.debug.print("ChoiceLiteral ..{s}\n", .{name.string});
         },
 
         // ── STRUCT VALUE LITERAL ─────────────────────────────────────────

@@ -374,6 +374,17 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
+            .choice_literal => |name| self.handleChoiceLiteral(name) catch |err| blk: {
+                if (err == error.Reported) break :blk err;
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in choice literal '..{s}': {s}",
+                    .{ name.string, @errorName(err) },
+                );
+                break :blk err;
+            },
+
             .struct_value_literal => |sl| self.handleStructValLit(sl, s) catch |err| blk: {
                 try self.diags.add(
                     n.location,
@@ -392,6 +403,16 @@ pub const Semantizer = struct {
                     .{@errorName(err)},
                 );
                 break :blk err;
+            },
+
+            .choice_type_literal => blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "choice type literals are only valid inside type declarations",
+                    .{},
+                );
+                break :blk error.Reported;
             },
 
             .struct_field_access => |sfa| self.handleStructFieldAccess(sfa, s) catch |err| blk: {
@@ -868,6 +889,11 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = ty };
     }
 
+    fn handleChoiceLiteral(self: *Semantizer, name: syn.Name) SemErr!typ.TypedExpr {
+        const n = try sg.makeSGNode(.{ .choice_literal = name.string }, name.location, self.allocator);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
     //─────────────────────────────────────────────────────────  IDENTIFIER
     fn handleIdentifier(
         self: *Semantizer,
@@ -992,8 +1018,10 @@ pub const Semantizer = struct {
         d: syn.TypeDeclaration,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        const st_lit = d.value.*.content.struct_type_literal;
         if (d.generic_params.len > 0) {
+            if (d.value.*.content != .struct_type_literal)
+                return error.NotYetImplemented;
+            const st_lit = d.value.*.content.struct_type_literal;
             // Register as generic type template
             try s.appendGenericTypeTemplate(d.name.string, .{
                 .name = d.name.string,
@@ -1006,32 +1034,62 @@ pub const Semantizer = struct {
             try s.nodes.append(noop);
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
         } else {
-            // 1) Asegurar stub nominal para el nombre del tipo
-            var td: *sg.TypeDeclaration = undefined;
-            if (s.types.get(d.name.string)) |existing| {
-                td = existing;
-            } else {
-                const stub = try self.allocator.create(sg.StructType);
-                stub.* = .{ .fields = &.{} };
-                td = try self.allocator.create(sg.TypeDeclaration);
-                td.* = .{ .name = d.name.string, .origin_file = d.value.location.file, .ty = .{ .struct_type = stub } };
-                try s.types.put(d.name.string, td);
-                // Emitir el nodo una sola vez cuando el stub se crea
-                const n0 = try sg.makeSGNode(.{ .type_declaration = td }, d.value.location, self.allocator);
-                try s.nodes.append(n0);
-                if (s.parent == null) try self.root_list.append(n0);
-            }
+            return switch (d.value.*.content) {
+                .struct_type_literal => |st_lit| blk_struct: {
+                    var td: *sg.TypeDeclaration = undefined;
+                    if (s.types.get(d.name.string)) |existing| {
+                        td = existing;
+                    } else {
+                        const stub = try self.allocator.create(sg.StructType);
+                        stub.* = .{ .fields = &.{} };
+                        td = try self.allocator.create(sg.TypeDeclaration);
+                        td.* = .{ .name = d.name.string, .origin_file = d.value.location.file, .ty = .{ .struct_type = stub } };
+                        try s.types.put(d.name.string, td);
+                        const n0 = try sg.makeSGNode(.{ .type_declaration = td }, d.value.location, self.allocator);
+                        try s.nodes.append(n0);
+                        if (s.parent == null) try self.root_list.append(n0);
+                    }
 
-            // 2) Intentar completar el cuerpo ahora (puede fallar con UnknownType)
-            const st_ptr = try self.structTypeFromLiteral(st_lit, s);
-            // Rellenar el stub in-place (puntero estable). struct_type es *const; necesitamos mutarlo.
-            const dst_const = td.ty.struct_type; // *const sem.StructType
-            const dst: *sg.StructType = @constCast(dst_const); // hacemos mutable el pointee
-            dst.fields = st_ptr.fields;
-            // Devolver un no-op para no duplicar el nodo en root
-            const noop = try self.makeNoopNode(d.value.location);
+                    const st_ptr = try self.structTypeFromLiteral(st_lit, s);
+                    const dst_const = td.ty.struct_type;
+                    const dst: *sg.StructType = @constCast(dst_const);
+                    dst.fields = st_ptr.fields;
+                    const noop = try self.makeNoopNode(d.value.location);
+                    break :blk_struct .{ .node = noop, .ty = .{ .builtin = .Any } };
+                },
+                .choice_type_literal => |ct_lit| blk_choice: {
+                    if (s.types.contains(d.name.string))
+                        return error.SymbolAlreadyDefined;
 
-            return .{ .node = noop, .ty = .{ .builtin = .Any } };
+                    var variants = std.array_list.Managed(sg.ChoiceVariant).init(self.allocator.*);
+                    for (ct_lit.variants, 0..) |variant, idx| {
+                        try variants.append(.{
+                            .name = variant.name.string,
+                            .value = @intCast(idx),
+                        });
+                    }
+
+                    const choice_ptr = try self.allocator.create(sg.ChoiceType);
+                    choice_ptr.* = .{ .variants = try variants.toOwnedSlice() };
+                    variants.deinit();
+
+                    const td = try self.allocator.create(sg.TypeDeclaration);
+                    td.* = .{
+                        .name = d.name.string,
+                        .origin_file = d.value.location.file,
+                        .ty = .{ .choice_type = choice_ptr },
+                    };
+                    try s.types.put(d.name.string, td);
+
+                    const n0 = try sg.makeSGNode(.{ .type_declaration = td }, d.value.location, self.allocator);
+                    try s.nodes.append(n0);
+                    if (s.parent == null) try self.root_list.append(n0);
+
+                    const noop = try self.makeNoopNode(d.value.location);
+                    break :blk_choice .{ .node = noop, .ty = .{ .builtin = .Any } };
+                },
+                else => error.NotYetImplemented,
+            };
         }
     }
 

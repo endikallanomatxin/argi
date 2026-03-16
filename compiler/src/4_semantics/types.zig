@@ -49,10 +49,15 @@ pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
             .abstract_type => |bat| std.mem.eql(u8, aat.name, bat.name),
             else => false,
         },
+        .choice_type => |act| switch (b) {
+            .choice_type => |bct| act == bct,
+            else => false,
+        },
 
         .struct_type => |ast| switch (b) {
             .builtin => false,
             .abstract_type => false,
+            .choice_type => false,
 
             .struct_type => |bst| blk: {
                 // Keep for legacy: structural comparison of anonymous structs
@@ -110,6 +115,10 @@ pub fn typesExactlyEqual(a: sg.Type, b: sg.Type) bool {
         },
         .abstract_type => |aat| switch (b) {
             .abstract_type => |bat| std.mem.eql(u8, aat.name, bat.name),
+            else => false,
+        },
+        .choice_type => |act| switch (b) {
+            .choice_type => |bct| act == bct,
             else => false,
         },
         .struct_type => |ast| switch (b) {
@@ -182,6 +191,10 @@ pub fn typesCompatible(expected: sg.Type, actual: sg.Type) bool {
         },
         .abstract_type => |eat| switch (actual) {
             .abstract_type => |aat| std.mem.eql(u8, eat.name, aat.name),
+            else => false,
+        },
+        .choice_type => |ect| switch (actual) {
+            .choice_type => |act| ect == act,
             else => false,
         },
         .struct_type => |est| switch (actual) {
@@ -265,6 +278,7 @@ fn appendType(buf: *std.array_list.Managed(u8), t: sg.Type) !void {
             try buf.appendSlice(s);
         },
         .abstract_type => |at| try buf.appendSlice(at.name),
+        .choice_type => |_| try buf.appendSlice("choice"),
         .pointer_type => |ptr_info_ptr| {
             const ptr_info = ptr_info_ptr.*;
             const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
@@ -320,6 +334,7 @@ pub fn appendTypePretty(buf: *std.array_list.Managed(u8), t: sg.Type, s: *Scope)
             try buf.appendSlice(sname);
         },
         .abstract_type => |at| try buf.appendSlice(at.name),
+        .choice_type => |_| try buf.appendSlice("choice"),
         .pointer_type => |ptr_info_ptr| {
             const ptr_info = ptr_info_ptr.*;
             const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
@@ -373,6 +388,7 @@ pub fn computeTypeSize(ty: sg.Type) u64 {
             .Any => pointer_size_bytes,
         },
         .abstract_type => 0,
+        .choice_type => 4,
         .pointer_type => pointer_size_bytes,
         .struct_type => |st| blk: {
             const max_align = computeTypeAlignment(.{ .struct_type = st });
@@ -407,6 +423,7 @@ pub fn computeTypeAlignment(ty: sg.Type) u64 {
             .Any => pointer_alignment_bytes,
         },
         .abstract_type => 1,
+        .choice_type => 4,
         .pointer_type => pointer_alignment_bytes,
         .struct_type => |st| blk: {
             var max_align: u64 = 1;
@@ -577,9 +594,35 @@ pub fn coerceExprToType(
     return switch (expected) {
         .array_type => |arr_info| convertListLiteralToArray(expr, arr_info, expr_node.location, s, allocator, diags),
         .builtin => |bt| try coerceLiteralToBuiltin(bt, expr, expr_node, allocator, diags),
+        .choice_type => |ct| try coerceChoiceLiteral(ct, expr, expr_node.location, allocator, diags),
         .struct_type => |st| try coerceStructLiteral(st, expr, expr_node, s, allocator, diags),
         else => expr,
     };
+}
+
+fn coerceChoiceLiteral(
+    expected: *const sg.ChoiceType,
+    expr: TypedExpr,
+    loc: tok.Location,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    if (expr.node.content != .choice_literal) return expr;
+
+    const variant_name = expr.node.content.choice_literal;
+    for (expected.variants) |variant| {
+        if (std.mem.eql(u8, variant.name, variant_name)) {
+            return try makeIntLiteral(allocator, loc, variant.value, .{ .choice_type = expected });
+        }
+    }
+
+    try diags.add(
+        loc,
+        .semantic,
+        "choice has no variant '..{s}'",
+        .{variant_name},
+    );
+    return error.Reported;
 }
 
 pub fn convertListLiteralToArray(

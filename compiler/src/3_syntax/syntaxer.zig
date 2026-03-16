@@ -436,6 +436,41 @@ pub const Syntaxer = struct {
         return .{ .fields = fields.items };
     }
 
+    fn parseChoiceTypeLiteral(self: *Syntaxer) SyntaxerError!syn.ChoiceTypeLiteral {
+        if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        var variants = std.array_list.Managed(syn.ChoiceTypeLiteralVariant).init(self.allocator.*);
+
+        while (!self.tokenIs(.close_parenthesis)) {
+            var is_default = false;
+            if (self.tokenIs(.equal)) {
+                is_default = true;
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            }
+
+            if (!self.tokenIs(.double_dot)) {
+                try self.diags.add(self.tokenLocation(), .syntax, "expected choice variant '..name'", .{});
+                return SyntaxerError.ExpectedIdentifier;
+            }
+            self.advanceOne();
+            const vname = try self.parseName();
+            try variants.append(.{ .name = vname, .is_default = is_default });
+
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            }
+        }
+
+        if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+        self.advanceOne();
+        return .{ .variants = variants.items };
+    }
+
     // ─────── struct VALUE literal  (p.e.  (.x=1, .y=2) ) ─────────────────────
     fn parseStructValueLiteral(self: *Syntaxer) SyntaxerError!*syn.STNode {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
@@ -594,6 +629,12 @@ pub const Syntaxer = struct {
         }
 
         const base: *syn.STNode = switch (t.content) {
+            .double_dot => blk: {
+                self.advanceOne();
+                const variant = try self.parseName();
+                break :blk try self.makeNode(.{ .choice_literal = variant }, t.location);
+            },
+
             // ─── ident  /  call ─────────────────────────────────────────────
             .identifier => blk: {
                 const name = try self.parseIdentifier();
@@ -860,8 +901,36 @@ pub const Syntaxer = struct {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                     self.advanceOne();
                     if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
-                    const stlit = try self.parseStructTypeLiteral();
-                    const lit_node = try self.makeNode(.{ .struct_type_literal = stlit }, id_loc);
+                    var idx = self.index + 1;
+                    var parse_choice = false;
+                    while (idx < self.tokens.len) : (idx += 1) {
+                        const tag = std.meta.activeTag(self.tokens[idx].content);
+                        switch (tag) {
+                            .new_line, .comment => continue,
+                            .double_dot => parse_choice = true,
+                            .equal => {
+                                var j = idx + 1;
+                                while (j < self.tokens.len) : (j += 1) {
+                                    const next_tag = std.meta.activeTag(self.tokens[j].content);
+                                    switch (next_tag) {
+                                        .new_line, .comment => continue,
+                                        .double_dot => parse_choice = true,
+                                        else => {},
+                                    }
+                                    break;
+                                }
+                            },
+                            else => {},
+                        }
+                        break;
+                    }
+                    const lit_node = if (parse_choice) blk: {
+                        const chlit = try self.parseChoiceTypeLiteral();
+                        break :blk try self.makeNode(.{ .choice_type_literal = chlit }, id_loc);
+                    } else blk: {
+                        const stlit = try self.parseStructTypeLiteral();
+                        break :blk try self.makeNode(.{ .struct_type_literal = stlit }, id_loc);
+                    };
 
                     const tdecl = syn.TypeDeclaration{
                         .name = name,

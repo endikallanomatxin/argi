@@ -38,7 +38,9 @@ pub const Content = union(enum) {
     literal: tok.Literal,
     list_literal: ListLiteral,
     struct_type_literal: StructTypeLiteral,
+    choice_type_literal: ChoiceTypeLiteral,
     struct_value_literal: StructValueLiteral,
+    choice_literal: Name,
 
     struct_field_access: StructFieldAccess,
     index_access: IndexAccess,
@@ -96,7 +98,7 @@ pub const SymbolDeclaration = struct {
 pub const TypeDeclaration = struct {
     name: Name,
     generic_params: []const []const u8,
-    value: *STNode, // StructTypeLiteral
+    value: *STNode,
 };
 
 // Abstract type declarations (interface-like)
@@ -181,6 +183,15 @@ pub const StructTypeLiteralField = struct {
 
 pub const StructValueLiteral = struct {
     fields: []const StructValueLiteralField,
+};
+
+pub const ChoiceTypeLiteral = struct {
+    variants: []const ChoiceTypeLiteralVariant,
+};
+
+pub const ChoiceTypeLiteralVariant = struct {
+    name: Name,
+    is_default: bool,
 };
 
 pub const StructValueLiteralField = struct {

@@ -33,6 +33,7 @@ pub const Content = union(enum) {
     hash: struct {},
 
     dot: struct {},
+    double_dot: struct {},
     comma: struct {},
 
     // Keywords

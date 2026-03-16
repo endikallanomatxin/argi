@@ -250,10 +250,15 @@
       runner más uniforme y limpieza explícita de artefactos.
 
     - Eliminar o activar placeholders:
-        - `42_choice`
         - `81_comptime`
         - `90_build_system`
         - `62_folder_imports_overview`
+
+    - Ampliar la cobertura de `choice` más allá del corte mínimo actual:
+        - payloads,
+        - `match`,
+        - `Nullable`,
+        - `Errable`.
 
     - Añadir golden tests de diagnósticos donde el wording importe.
 
