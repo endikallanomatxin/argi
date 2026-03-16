@@ -2002,6 +2002,11 @@ pub const Semantizer = struct {
                 error.Reported => return err,
                 else => err,
             };
+        if (std.mem.eql(u8, call.callee, "is"))
+            return self.handleIsBuiltin(call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                else => err,
+            };
         if (std.mem.eql(u8, call.callee, "length")) len_blk: {
             const len_res = self.handleLengthBuiltin(call, s) catch |err| switch (err) {
                 error.Reported => return err,
@@ -3790,6 +3795,123 @@ pub const Semantizer = struct {
         const tv = try self.visitNode(svl.fields[0].value.*, s);
         const loc = call.input.*.location;
         return try typ.makeTypeLiteral(self.allocator, loc, tv.ty);
+    }
+
+    fn handleIsBuiltin(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const arg_node = call.input.*;
+        if (arg_node.content != .struct_value_literal) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "is expects '.value' and '.variant' arguments",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const svl = arg_node.content.struct_value_literal;
+        var value_field: ?syn.StructValueLiteralField = null;
+        var variant_field: ?syn.StructValueLiteralField = null;
+
+        for (svl.fields) |field| {
+            if (std.mem.eql(u8, field.name.string, "value")) {
+                value_field = field;
+            } else if (std.mem.eql(u8, field.name.string, "variant")) {
+                variant_field = field;
+            } else {
+                try self.diags.add(
+                    field.name.location,
+                    .semantic,
+                    "is only accepts '.value' and '.variant' arguments",
+                    .{},
+                );
+                return error.Reported;
+            }
+        }
+
+        if (value_field == null or variant_field == null) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "is expects '.value' and '.variant' arguments",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const value_te = try self.visitNode(value_field.?.value.*, s);
+        if (value_te.ty != .choice_type) {
+            const desc = try self.formatTypeText(value_te.ty, s);
+            defer desc.deinit();
+            try self.diags.add(
+                value_field.?.value.location,
+                .semantic,
+                "is expects '.value' to be a choice, found '{s}'",
+                .{desc.bytes},
+            );
+            return error.Reported;
+        }
+
+        const variant_te = blk_variant: {
+            const variant_node = variant_field.?.value.*;
+            if (variant_node.content == .choice_literal) {
+                const raw_variant = variant_node.content.choice_literal;
+                if (raw_variant.payload == null) {
+                    const choice_ty = value_te.ty.choice_type;
+                    for (choice_ty.variants, 0..) |variant, idx| {
+                        if (!std.mem.eql(u8, variant.name, raw_variant.name.string)) continue;
+
+                        const typed = try self.allocator.create(sg.ChoiceLiteral);
+                        typed.* = .{
+                            .variant_name = raw_variant.name.string,
+                            .choice_type = choice_ty,
+                            .variant_index = @intCast(idx),
+                            .payload = null,
+                        };
+                        const typed_node = try sg.makeSGNode(.{ .choice_literal = typed }, variant_node.location, self.allocator);
+                        typed_node.sem_type = value_te.ty;
+                        break :blk_variant typ.TypedExpr{ .node = typed_node, .ty = value_te.ty };
+                    }
+
+                    try self.diags.add(
+                        variant_node.location,
+                        .semantic,
+                        "choice has no variant '..{s}'",
+                        .{raw_variant.name.string},
+                    );
+                    return error.Reported;
+                }
+            }
+
+            var coerced = try self.visitNode(variant_node, s);
+            coerced = try typ.coerceExprToType(value_te.ty, coerced, variant_field.?.value, s, self.allocator, self.diags);
+            break :blk_variant coerced;
+        };
+
+        if (!typ.typesExactlyEqual(value_te.ty, variant_te.ty)) {
+            try self.diags.add(
+                variant_field.?.value.location,
+                .semantic,
+                "is expects '.variant' to belong to the same choice type as '.value'",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const cmp_ptr = try self.allocator.create(sg.Comparison);
+        cmp_ptr.* = .{
+            .operator = .equal,
+            .left = value_te.node,
+            .right = variant_te.node,
+        };
+
+        const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, arg_node.location, self.allocator);
+        try s.nodes.append(node);
+        return .{ .node = node, .ty = .{ .builtin = .Bool } };
     }
 
     fn registerDefer(self: *Semantizer, s: *Scope, nodes: []const *sg.SGNode) !void {
