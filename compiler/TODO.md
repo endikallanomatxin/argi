@@ -255,8 +255,7 @@
         - `62_folder_imports_overview`
 
     - Ampliar la cobertura de `choice` más allá del corte mínimo actual:
-        - `Nullable`,
-        - `Errable`.
+        - operadores de nullability / errables (`?`, `unwrap_or`, `!`, etc.).
 
     - Añadir golden tests de diagnósticos donde el wording importe.
 

@@ -395,6 +395,18 @@ test "47_choice_match_payload_binding" {
     try run();
 }
 
+test "48_nullable_generic" {
+    try clean();
+    try expectSuccessfulBuild("tests/48_nullable_generic/main.rg");
+    try run();
+}
+
+test "49_errable_generic" {
+    try clean();
+    try expectSuccessfulBuild("tests/49_errable_generic/main.rg");
+    try run();
+}
+
 test "411_list_literal_length" {
     try clean();
     try expectSuccessfulBuild("tests/411_list_literal_length/main.rg");
