@@ -407,6 +407,38 @@ test "49_errable_generic" {
     try run();
 }
 
+test "50X_choice_unknown_variant" {
+    try clean();
+    try buildExpectFail(
+        "tests/50X_choice_unknown_variant/main.rg",
+        "choice has no variant '..east'",
+    );
+}
+
+test "51X_choice_payload_access_without_payload" {
+    try clean();
+    try buildExpectFail(
+        "tests/51X_choice_payload_access_without_payload/main.rg",
+        "choice variant '..north' has no payload",
+    );
+}
+
+test "52X_match_non_choice" {
+    try clean();
+    try buildExpectFail(
+        "tests/52X_match_non_choice/main.rg",
+        "match expects a choice value, found 'Int32'",
+    );
+}
+
+test "54X_match_bind_payload_without_payload" {
+    try clean();
+    try buildExpectFail(
+        "tests/54X_match_bind_payload_without_payload/main.rg",
+        "choice variant '..north' has no payload to bind",
+    );
+}
+
 test "411_list_literal_length" {
     try clean();
     try expectSuccessfulBuild("tests/411_list_literal_length/main.rg");
