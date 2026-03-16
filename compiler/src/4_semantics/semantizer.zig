@@ -1571,7 +1571,7 @@ pub const Semantizer = struct {
             try self.diags.add(
                 acc.choice_value.*.location,
                 .semantic,
-                "type '{s}' has no choice payload '..{s}'",
+                "cannot access choice payload '..{s}' on value of type '{s}'",
                 .{ desc.bytes, acc.variant_name.string },
             );
             return error.Reported;
