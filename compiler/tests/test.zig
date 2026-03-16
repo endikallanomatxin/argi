@@ -191,6 +191,18 @@ test "18_pipe_chain" {
     try runExpect(42);
 }
 
+test "19_pipe_generic_inferred" {
+    try clean();
+    try expectSuccessfulBuild("tests/19_pipe_generic_inferred/main.rg");
+    try runExpect(42);
+}
+
+test "20_pipe_generic_explicit" {
+    try clean();
+    try expectSuccessfulBuild("tests/20_pipe_generic_explicit/main.rg");
+    try runExpect(42);
+}
+
 test "130_multiple_dispatch" {
     try clean();
     try expectSuccessfulBuild("tests/130_multiple_dispatch/main.rg");

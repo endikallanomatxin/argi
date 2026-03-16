@@ -82,12 +82,13 @@
 
         - Ya existe un corte usable:
           `lhs | f(...)`, `lhs | module.f(...)`, cadenas básicas de `pipe`,
+          y genéricos básicos en el RHS,
           con `_`, `&_`, `$&_` y `_.field` dentro de los paréntesis del RHS.
 
         - Falta ampliarlo para:
           placeholders en expresiones más complejas,
-          genéricos,
           builtins,
+          casos cualificados con genéricos,
           y cadenas de `pipe` con semántica y precedencia ya cerradas.
 
     - Comptime

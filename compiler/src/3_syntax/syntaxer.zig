@@ -606,6 +606,15 @@ pub const Syntaxer = struct {
             final_callee_loc = rhs_name.location;
         }
 
+        var type_args: ?[]const syn.Type = null;
+        var type_args_struct: ?syn.StructTypeLiteral = null;
+        if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
+            type_args = try self.parseTypeList();
+        } else if (self.tokenIs(.hash)) {
+            self.advanceOne();
+            type_args_struct = try self.parseStructTypeLiteral();
+        }
+
         var args = std.array_list.Managed(*syn.STNode).init(self.allocator.*);
 
         const prev_pipe_rhs = self.parsing_pipe_rhs;
@@ -640,6 +649,8 @@ pub const Syntaxer = struct {
             .callee = callee_name,
             .callee_loc = final_callee_loc,
             .module_qualifier = module_qualifier,
+            .type_arguments = type_args,
+            .type_arguments_struct = type_args_struct,
             .args = args.items,
         };
     }

@@ -2369,6 +2369,135 @@ pub const Semantizer = struct {
         return self.buildCallInput(call_args.items);
     }
 
+    fn buildNamedPipeInputFromTemplate(
+        self: *Semantizer,
+        input_fields: []const syn.StructTypeLiteralField,
+        args: []const typ.TypedExpr,
+    ) !typ.TypedExpr {
+        var call_args = std.array_list.Managed(CallArg).init(self.allocator.*);
+        defer call_args.deinit();
+
+        for (input_fields, 0..) |field, idx| {
+            try call_args.append(.{ .name = field.name.string, .expr = args[idx] });
+        }
+
+        return self.buildCallInput(call_args.items);
+    }
+
+    fn genericTemplateMatchesPipeVisibility(
+        self: *Semantizer,
+        tmpl: gen.GenericTemplate,
+        requester_file: []const u8,
+        module_dir: ?[]const u8,
+    ) bool {
+        if (module_dir) |dir| {
+            if (!std.mem.startsWith(u8, tmpl.location.file, dir)) return false;
+        }
+        if (isPrivateName(tmpl.name)) {
+            const requester_dir = self.moduleDirForFile(requester_file);
+            const tmpl_dir = self.moduleDirForFile(tmpl.location.file);
+            return std.mem.eql(u8, requester_dir, tmpl_dir);
+        }
+        return true;
+    }
+
+    fn instantiatePipeGenericNamed(
+        self: *Semantizer,
+        name: []const u8,
+        stargs: syn.StructTypeLiteral,
+        args: []const typ.TypedExpr,
+        s: *Scope,
+        allowed_kind: gen.GenericDispatchKind,
+        requester_file: []const u8,
+        module_dir: ?[]const u8,
+    ) SemErr!*sg.FunctionDeclaration {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.generic_functions.getPtr(name)) |list_ptr| {
+                for (list_ptr.items) |tmpl| {
+                    if (tmpl.dispatch_kind != allowed_kind) continue;
+                    if (!self.genericTemplateMatchesPipeVisibility(tmpl, requester_file, module_dir)) continue;
+                    if (tmpl.input.fields.len != args.len) continue;
+
+                    const call_input = try self.buildNamedPipeInputFromTemplate(tmpl.input.fields, args);
+                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
+                    defer subst.deinit();
+
+                    var ok: bool = true;
+                    for (tmpl.param_names) |pname| {
+                        var found: bool = false;
+                        for (stargs.fields) |fld| {
+                            if (std.mem.eql(u8, fld.name.string, pname)) {
+                                if (fld.type) |ty_node| {
+                                    const resolved = try self.resolveTypeWithSubst(ty_node, s, &subst);
+                                    try subst.put(pname, resolved);
+                                } else if (fld.default_value) |def_node| {
+                                    const resolved = try self.resolveTypeExpression(def_node, s);
+                                    try subst.put(pname, resolved);
+                                }
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (!found) {
+                            if (self.inferGenericParamFromCall(tmpl, pname, call_input.ty, s, &subst)) |inferred| {
+                                try subst.put(pname, inferred);
+                                found = true;
+                            }
+                        }
+                        if (!found) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if (!ok) continue;
+                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) continue;
+                    if (try self.instantiateGenericTemplate(name, tmpl, call_input, s, &subst)) |instantiated| {
+                        return instantiated;
+                    }
+                }
+            }
+        }
+        return error.SymbolNotFound;
+    }
+
+    fn instantiatePipeGeneric(
+        self: *Semantizer,
+        name: []const u8,
+        type_args_syn: []const syn.Type,
+        args: []const typ.TypedExpr,
+        s: *Scope,
+        allowed_kind: gen.GenericDispatchKind,
+        requester_file: []const u8,
+        module_dir: ?[]const u8,
+    ) SemErr!*sg.FunctionDeclaration {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.generic_functions.getPtr(name)) |list_ptr| {
+                for (list_ptr.items) |tmpl| {
+                    if (tmpl.dispatch_kind != allowed_kind) continue;
+                    if (!self.genericTemplateMatchesPipeVisibility(tmpl, requester_file, module_dir)) continue;
+                    if (tmpl.param_names.len != type_args_syn.len) continue;
+                    if (tmpl.input.fields.len != args.len) continue;
+
+                    const call_input = try self.buildNamedPipeInputFromTemplate(tmpl.input.fields, args);
+                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
+                    defer subst.deinit();
+                    var i: usize = 0;
+                    while (i < tmpl.param_names.len) : (i += 1) {
+                        const resolved = try self.resolveTypeWithSubst(type_args_syn[i], s, &subst);
+                        try subst.put(tmpl.param_names[i], resolved);
+                    }
+                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) continue;
+                    if (try self.instantiateGenericTemplate(name, tmpl, call_input, s, &subst)) |instantiated| {
+                        return instantiated;
+                    }
+                }
+            }
+        }
+        return error.SymbolNotFound;
+    }
+
     fn handlePipe(
         self: *Semantizer,
         pipe: syn.PipeExpression,
@@ -2428,6 +2557,69 @@ pub const Semantizer = struct {
             }
         else
             null;
+
+        if (pipe.call.module_qualifier != null and (pipe.call.type_arguments != null or pipe.call.type_arguments_struct != null)) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "explicit generic arguments are not supported yet on module-qualified pipe calls",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        var chosen_generic: ?*sg.FunctionDeclaration = null;
+        if (pipe.call.type_arguments_struct) |stargs| {
+            chosen_generic = self.instantiatePipeGenericNamed(
+                pipe.call.callee,
+                stargs,
+                evaluated_args.items,
+                s,
+                .regular,
+                loc.file,
+                module_dir,
+            ) catch |err| switch (err) {
+                error.SymbolNotFound => null,
+                else => return err,
+            };
+        } else if (pipe.call.type_arguments) |targs| {
+            chosen_generic = self.instantiatePipeGeneric(
+                pipe.call.callee,
+                targs,
+                evaluated_args.items,
+                s,
+                .regular,
+                loc.file,
+                module_dir,
+            ) catch |err| switch (err) {
+                error.SymbolNotFound => null,
+                else => return err,
+            };
+        } else {
+            const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+            chosen_generic = self.instantiatePipeGenericNamed(
+                pipe.call.callee,
+                empty_args,
+                evaluated_args.items,
+                s,
+                .regular,
+                loc.file,
+                module_dir,
+            ) catch |err| switch (err) {
+                error.SymbolNotFound => null,
+                else => return err,
+            };
+        }
+
+        if (chosen_generic) |generic_fn| {
+            const input_te = try self.buildNamedPipeInput(generic_fn.input.fields, evaluated_args.items);
+            const fc_ptr = try self.allocator.create(sg.FunctionCall);
+            fc_ptr.* = .{ .callee = generic_fn, .input = input_te.node };
+
+            const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
+            try s.nodes.append(n);
+            return .{ .node = n, .ty = typ.functionReturnType(generic_fn) };
+        }
 
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.functions.getPtr(pipe.call.callee)) |list_ptr| {
