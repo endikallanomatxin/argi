@@ -191,6 +191,16 @@ pub const Semantizer = struct {
         ));
     }
 
+    fn makeEmptyCodeBlock(self: *Semantizer) !*sg.CodeBlock {
+        const empty = try self.allocator.create(sg.CodeBlock);
+        empty.* = .{ .nodes = &.{}, .ret_val = null };
+        return empty;
+    }
+
+    fn makeNoopNode(self: *Semantizer, loc: tok.Location) !*sg.SGNode {
+        return sg.makeSGNode(.{ .code_block = try self.makeEmptyCodeBlock() }, loc, self.allocator);
+    }
+
     //────────────────────────────────────────────────────────────────── visitors
     pub fn visitNode(self: *Semantizer, n: syn.STNode, s: *Scope) SemErr!typ.TypedExpr {
         return switch (n.content) {
@@ -788,9 +798,7 @@ pub const Semantizer = struct {
 
         try s.appendAbstractImpl(rel.name, .{ .ty = concrete_ty, .location = loc });
 
-        const empty = try self.allocator.create(sg.CodeBlock);
-        empty.* = .{ .nodes = &.{}, .ret_val = null };
-        const n = try sg.makeSGNode(.{ .code_block = empty }, undefined, self.allocator);
+        const n = try self.makeNoopNode(loc);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -803,9 +811,7 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         const concrete_ty = try self.resolveType(rel.ty, s);
         try s.abstract_defaults.put(rel.name.string, .{ .ty = concrete_ty, .location = loc });
-        const empty = try self.allocator.create(sg.CodeBlock);
-        empty.* = .{ .nodes = &.{}, .ret_val = null };
-        const n = try sg.makeSGNode(.{ .code_block = empty }, undefined, self.allocator);
+        const n = try self.makeNoopNode(loc);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -984,11 +990,7 @@ pub const Semantizer = struct {
                 .body = st_lit,
             });
             // No concrete type emitted now
-            const noop = try sg.makeSGNode(.{ .code_block = blk: {
-                const empty = try self.allocator.create(sg.CodeBlock);
-                empty.* = .{ .nodes = &.{}, .ret_val = null };
-                break :blk empty;
-            } }, d.value.location, self.allocator);
+            const noop = try self.makeNoopNode(d.value.location);
             try s.nodes.append(noop);
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
         } else {
@@ -1015,11 +1017,7 @@ pub const Semantizer = struct {
             const dst: *sg.StructType = @constCast(dst_const); // hacemos mutable el pointee
             dst.fields = st_ptr.fields;
             // Devolver un no-op para no duplicar el nodo en root
-            const noop = try sg.makeSGNode(.{ .code_block = blk3: {
-                const empty = try self.allocator.create(sg.CodeBlock);
-                empty.* = .{ .nodes = &.{}, .ret_val = null };
-                break :blk3 empty;
-            } }, d.value.location, self.allocator);
+            const noop = try self.makeNoopNode(d.value.location);
 
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
         }
@@ -1045,21 +1043,13 @@ pub const Semantizer = struct {
                 .body = f.body,
             });
             // Return a no-op node for generic template
-            const noop = try sg.makeSGNode(.{ .code_block = blk2: {
-                const empty = try self.allocator.create(sg.CodeBlock);
-                empty.* = .{ .nodes = &.{}, .ret_val = null };
-                break :blk2 empty;
-            } }, loc, self.allocator);
+            const noop = try self.makeNoopNode(loc);
             try p.nodes.append(noop);
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
         }
 
         if (try self.registerAbstractContractTemplateIfNeeded(f, p, loc)) {
-            const noop = try sg.makeSGNode(.{ .code_block = blk2: {
-                const empty = try self.allocator.create(sg.CodeBlock);
-                empty.* = .{ .nodes = &.{}, .ret_val = null };
-                break :blk2 empty;
-            } }, loc, self.allocator);
+            const noop = try self.makeNoopNode(loc);
             try p.nodes.append(noop);
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
         }
