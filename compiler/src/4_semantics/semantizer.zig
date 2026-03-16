@@ -786,13 +786,7 @@ pub const Semantizer = struct {
 
         // Defer conformance checks until call sites or a validation pass.
 
-        if (s.abstract_impls.getPtr(rel.name)) |lst| {
-            try lst.append(.{ .ty = concrete_ty, .location = loc });
-        } else {
-            var new_list = std.array_list.Managed(abs.AbstractImplEntry).init(self.allocator.*);
-            try new_list.append(.{ .ty = concrete_ty, .location = loc });
-            try s.abstract_impls.put(rel.name, new_list);
-        }
+        try s.appendAbstractImpl(rel.name, .{ .ty = concrete_ty, .location = loc });
 
         const empty = try self.allocator.create(sg.CodeBlock);
         empty.* = .{ .nodes = &.{}, .ret_val = null };
@@ -983,13 +977,12 @@ pub const Semantizer = struct {
         const st_lit = d.value.*.content.struct_type_literal;
         if (d.generic_params.len > 0) {
             // Register as generic type template
-            if (s.generic_types.getPtr(d.name.string)) |lst| {
-                try lst.append(.{ .name = d.name.string, .location = d.value.location, .param_names = d.generic_params, .body = st_lit });
-            } else {
-                var new_list = std.array_list.Managed(gen.GenericTypeTemplate).init(self.allocator.*);
-                try new_list.append(.{ .name = d.name.string, .location = d.value.location, .param_names = d.generic_params, .body = st_lit });
-                try s.generic_types.put(d.name.string, new_list);
-            }
+            try s.appendGenericTypeTemplate(d.name.string, .{
+                .name = d.name.string,
+                .location = d.value.location,
+                .param_names = d.generic_params,
+                .body = st_lit,
+            });
             // No concrete type emitted now
             const noop = try sg.makeSGNode(.{ .code_block = blk: {
                 const empty = try self.allocator.create(sg.CodeBlock);
@@ -1041,31 +1034,16 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         // Register generic template and skip direct emission
         if (f.generic_params.len > 0) {
-            if (p.generic_functions.getPtr(f.name.string)) |lst| {
-                try lst.append(.{
-                    .name = f.name.string,
-                    .location = loc,
-                    .param_names = f.generic_params,
-                    .param_abstract_constraints = try self.allocEmptyAbstractConstraintSlice(f.generic_params.len),
-                    .dispatch_kind = .regular,
-                    .input = f.input,
-                    .output = f.output,
-                    .body = f.body,
-                });
-            } else {
-                var new_list = std.array_list.Managed(gen.GenericTemplate).init(self.allocator.*);
-                try new_list.append(.{
-                    .name = f.name.string,
-                    .location = loc,
-                    .param_names = f.generic_params,
-                    .param_abstract_constraints = try self.allocEmptyAbstractConstraintSlice(f.generic_params.len),
-                    .dispatch_kind = .regular,
-                    .input = f.input,
-                    .output = f.output,
-                    .body = f.body,
-                });
-                try p.generic_functions.put(f.name.string, new_list);
-            }
+            try p.appendGenericFunctionTemplate(f.name.string, .{
+                .name = f.name.string,
+                .location = loc,
+                .param_names = f.generic_params,
+                .param_abstract_constraints = try self.allocEmptyAbstractConstraintSlice(f.generic_params.len),
+                .dispatch_kind = .regular,
+                .input = f.input,
+                .output = f.output,
+                .body = f.body,
+            });
             // Return a no-op node for generic template
             const noop = try sg.makeSGNode(.{ .code_block = blk2: {
                 const empty = try self.allocator.create(sg.CodeBlock);
@@ -1166,12 +1144,8 @@ pub const Semantizer = struct {
                 if (typ.typesExactlyEqual(.{ .struct_type = &existing.input }, .{ .struct_type = &fn_ptr.input }))
                     return error.SymbolAlreadyDefined;
             }
-            try list_ptr.append(fn_ptr);
-        } else {
-            var lst = std.array_list.Managed(*sg.FunctionDeclaration).init(self.allocator.*);
-            try lst.append(fn_ptr);
-            try p.functions.put(f.name.string, lst);
         }
+        try p.appendFunction(f.name.string, fn_ptr);
         self.clearDeferred(&child);
         const n = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, loc, self.allocator);
         try p.nodes.append(n);
@@ -1318,13 +1292,7 @@ pub const Semantizer = struct {
             .body = f.body,
         };
 
-        if (p.generic_functions.getPtr(f.name.string)) |lst| {
-            try lst.append(template);
-        } else {
-            var new_list = std.array_list.Managed(gen.GenericTemplate).init(self.allocator.*);
-            try new_list.append(template);
-            try p.generic_functions.put(f.name.string, new_list);
-        }
+        try p.appendGenericFunctionTemplate(f.name.string, template);
 
         return true;
     }
@@ -2753,13 +2721,7 @@ pub const Semantizer = struct {
             .body = body_cb,
         };
 
-        if (s.functions.getPtr(name)) |list_ptr| {
-            try list_ptr.append(fn_ptr);
-        } else {
-            var list = std.array_list.Managed(*sg.FunctionDeclaration).init(self.allocator.*);
-            try list.append(fn_ptr);
-            try s.functions.put(name, list);
-        }
+        try s.appendFunction(name, fn_ptr);
         const node = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, tmpl.location, self.allocator);
         try self.root_list.append(node);
         self.clearDeferred(&child);
