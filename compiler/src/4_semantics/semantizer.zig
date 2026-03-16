@@ -201,6 +201,18 @@ pub const Semantizer = struct {
         return sg.makeSGNode(.{ .code_block = try self.makeEmptyCodeBlock() }, loc, self.allocator);
     }
 
+    fn functionMatchesVisibilityFilter(
+        self: *Semantizer,
+        cand: *sg.FunctionDeclaration,
+        requester_file: []const u8,
+        module_dir: ?[]const u8,
+    ) !bool {
+        if (module_dir) |dir| {
+            if (!std.mem.startsWith(u8, cand.location.file, dir)) return false;
+        }
+        return self.functionIsVisible(cand, requester_file);
+    }
+
     //────────────────────────────────────────────────────────────────── visitors
     pub fn visitNode(self: *Semantizer, n: syn.STNode, s: *Scope) SemErr!typ.TypedExpr {
         return switch (n.content) {
@@ -2007,7 +2019,7 @@ pub const Semantizer = struct {
                 for (list_ptr.items) |cand| {
                     const expected: sg.Type = .{ .struct_type = &cand.input };
                     if (!abs.typesCompatibleForDispatch(expected, in_ty, s)) continue;
-                    if (!(try self.functionIsVisible(cand, loc.file))) {
+                    if (!(try self.functionMatchesVisibilityFilter(cand, loc.file, null))) {
                         hidden_private_match = true;
                         continue;
                     }
@@ -2043,7 +2055,7 @@ pub const Semantizer = struct {
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
-                    if (try self.functionIsVisible(cand, loc.file)) return true;
+                    if (try self.functionMatchesVisibilityFilter(cand, loc.file, null)) return true;
                 }
             }
         }
@@ -2064,7 +2076,7 @@ pub const Semantizer = struct {
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
-                    if (!(try self.functionIsVisible(cand, loc.file))) continue;
+                    if (!(try self.functionMatchesVisibilityFilter(cand, loc.file, null))) continue;
                     if (!first) try buf.appendSlice("\n");
                     first = false;
                     try buf.appendSlice("  - ");
@@ -2088,8 +2100,7 @@ pub const Semantizer = struct {
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
-                    if (!std.mem.startsWith(u8, cand.location.file, module_dir)) continue;
-                    if (try self.functionIsVisible(cand, loc.file)) return true;
+                    if (try self.functionMatchesVisibilityFilter(cand, loc.file, module_dir)) return true;
                 }
             }
         }
@@ -2111,8 +2122,7 @@ pub const Semantizer = struct {
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
-                    if (!std.mem.startsWith(u8, cand.location.file, module_dir)) continue;
-                    if (!(try self.functionIsVisible(cand, loc.file))) continue;
+                    if (!(try self.functionMatchesVisibilityFilter(cand, loc.file, module_dir))) continue;
                     if (!first) try buf.appendSlice("\n");
                     first = false;
                     try buf.appendSlice("  - ");
