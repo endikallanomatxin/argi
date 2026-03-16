@@ -255,7 +255,6 @@
         - `62_folder_imports_overview`
 
     - Ampliar la cobertura de `choice` más allá del corte mínimo actual:
-        - `match`,
         - `Nullable`,
         - `Errable`.
 

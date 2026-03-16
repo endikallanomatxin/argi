@@ -772,6 +772,7 @@ pub const Syntaxer = struct {
         switch (self.current().content) {
             .keyword_return => return self.parseReturn(),
             .keyword_if => return self.parseIf(),
+            .keyword_match => return self.parseMatch(),
             else => {},
         }
 
@@ -1041,6 +1042,47 @@ pub const Syntaxer = struct {
             .{ .if_statement = .{ .condition = cond, .then_block = thenB, .else_block = elseB } },
             start,
         );
+    }
+
+    fn parseMatch(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        const start = self.tokenLocation();
+        if (!self.tokenIs(.keyword_match)) return SyntaxerError.ExpectedDeclarationOrAssignment;
+        self.advanceOne();
+        const value = try self.parseExpression();
+        self.skipNewLinesAndComments();
+        if (!self.tokenIs(.open_brace)) return SyntaxerError.ExpectedLeftBrace;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        var cases = std.array_list.Managed(syn.MatchCase).init(self.allocator.*);
+        while (!self.tokenIs(.close_brace)) {
+            if (!self.tokenIs(.double_dot)) return SyntaxerError.ExpectedIdentifier;
+            self.advanceOne();
+            const variant_name = try self.parseName();
+
+            var payload_binding: ?syn.Name = null;
+            if (self.tokenIs(.open_parenthesis)) {
+                self.advanceOne();
+                payload_binding = try self.parseName();
+                if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+                self.advanceOne();
+            }
+
+            self.skipNewLinesAndComments();
+            const body = try self.parseCodeBlock();
+            try cases.append(.{
+                .variant_name = variant_name,
+                .payload_binding = payload_binding,
+                .body = body,
+            });
+            self.skipNewLinesAndComments();
+        }
+
+        self.advanceOne();
+        return try self.makeNode(.{ .match_statement = .{
+            .value = value,
+            .cases = cases.items,
+        } }, start);
     }
     fn parseReturn(self: *Syntaxer) SyntaxerError!*syn.STNode {
         const start = self.tokenLocation();

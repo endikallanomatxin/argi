@@ -50,6 +50,7 @@ pub const Content = union(enum) {
     binary_operation: BinaryOperation,
     comparison: Comparison,
     if_statement: IfStatement,
+    match_statement: MatchStatement,
     import_statement: ImportStatement,
     defer_statement: *STNode,
     index_assignment: IndexAssignment,
@@ -242,6 +243,17 @@ pub const IfStatement = struct {
     condition: *STNode,
     then_block: *STNode,
     else_block: ?*STNode,
+};
+
+pub const MatchStatement = struct {
+    value: *STNode,
+    cases: []const MatchCase,
+};
+
+pub const MatchCase = struct {
+    variant_name: Name,
+    payload_binding: ?Name,
+    body: *STNode,
 };
 
 pub const ReturnStatement = struct {

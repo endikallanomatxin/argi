@@ -556,6 +556,18 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
+            .match_statement => |m| self.handleMatch(m, s) catch |err| blk: {
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in match statement: {s}",
+                        .{@errorName(err)},
+                    );
+                }
+                break :blk err;
+            },
+
             .import_statement => self.handleImportStatement(n.location) catch |err| blk: {
                 try self.diags.add(
                     n.location,
@@ -3045,6 +3057,147 @@ pub const Semantizer = struct {
         const n = try sg.makeSGNode(.{ .if_statement = if_ptr }, undefined, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleMatch(
+        self: *Semantizer,
+        m: syn.MatchStatement,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const start_len = s.nodes.items.len;
+        const value_te = try self.visitNode(m.value.*, s);
+        if (value_te.ty != .choice_type) {
+            const desc = try self.formatTypeText(value_te.ty, s);
+            defer desc.deinit();
+            try self.diags.add(
+                m.value.location,
+                .semantic,
+                "match expects a choice value, found '{s}'",
+                .{desc.bytes},
+            );
+            return error.Reported;
+        }
+
+        const choice_ty = value_te.ty.choice_type;
+        var cases = std.array_list.Managed(sg.SwitchCase).init(self.allocator.*);
+
+        for (m.cases) |case_syn| {
+            var found_idx: ?u32 = null;
+            var payload_ty: ?sg.Type = null;
+            for (choice_ty.variants, 0..) |variant, idx| {
+                if (std.mem.eql(u8, variant.name, case_syn.variant_name.string)) {
+                    found_idx = @intCast(idx);
+                    payload_ty = variant.payload_type;
+                    break;
+                }
+            }
+
+            if (found_idx == null) {
+                try self.diags.add(
+                    case_syn.variant_name.location,
+                    .semantic,
+                    "choice has no variant '..{s}'",
+                    .{case_syn.variant_name.string},
+                );
+                return error.Reported;
+            }
+
+            const case_body = try self.handleMatchCaseBody(value_te.node, found_idx.?, payload_ty, case_syn, s);
+
+            const lit_ptr = try self.allocator.create(sg.ChoiceLiteral);
+            lit_ptr.* = .{
+                .variant_name = case_syn.variant_name.string,
+                .choice_type = choice_ty,
+                .variant_index = found_idx.?,
+                .payload = null,
+            };
+            const lit_node = try sg.makeSGNode(.{ .choice_literal = lit_ptr }, case_syn.variant_name.location, self.allocator);
+            lit_node.sem_type = value_te.ty;
+
+            try cases.append(.{
+                .value = lit_node,
+                .body = case_body,
+            });
+        }
+
+        s.nodes.items.len = start_len;
+
+        const switch_ptr = try self.allocator.create(sg.SwitchStatement);
+        switch_ptr.* = .{
+            .expression = value_te.node,
+            .cases = try cases.toOwnedSlice(),
+            .default_case = null,
+        };
+
+        const node = try sg.makeSGNode(.{ .switch_statement = switch_ptr }, m.value.location, self.allocator);
+        try s.nodes.append(node);
+        return .{ .node = node, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleMatchCaseBody(
+        self: *Semantizer,
+        choice_value: *const sg.SGNode,
+        variant_index: u32,
+        payload_ty: ?sg.Type,
+        case_syn: syn.MatchCase,
+        parent: *Scope,
+    ) SemErr!*const sg.CodeBlock {
+        var child = try Scope.init(self.allocator, parent, null);
+
+        if (case_syn.payload_binding) |binding_name| {
+            const resolved_payload_ty = payload_ty orelse {
+                try self.diags.add(
+                    binding_name.location,
+                    .semantic,
+                    "choice variant '..{s}' has no payload to bind",
+                    .{case_syn.variant_name.string},
+                );
+                return error.Reported;
+            };
+
+            const access = try self.allocator.create(sg.ChoicePayloadAccess);
+            access.* = .{
+                .choice_value = choice_value,
+                .variant_index = variant_index,
+                .payload_type = resolved_payload_ty,
+            };
+            const access_node = try sg.makeSGNode(.{ .choice_payload_access = access }, binding_name.location, self.allocator);
+            access_node.sem_type = resolved_payload_ty;
+
+            const bd = try self.allocator.create(sg.BindingDeclaration);
+            bd.* = .{
+                .name = binding_name.string,
+                .origin_file = binding_name.location.file,
+                .mutability = .constant,
+                .ty = resolved_payload_ty,
+                .initialization = access_node,
+            };
+
+            try child.bindings.put(binding_name.string, bd);
+            const decl_node = try sg.makeSGNode(.{ .binding_declaration = bd }, binding_name.location, self.allocator);
+            try child.nodes.append(decl_node);
+            try self.maybeScheduleAutoDeinit(bd, binding_name.location, &child);
+        } else if (payload_ty != null) {
+            // payload exists but binding is optional
+        }
+
+        const body_cb = case_syn.body.content.code_block;
+        for (body_cb.items) |st|
+            _ = try self.visitNode(st.*, &child);
+
+        var d_idx: usize = child.deferred.items.len;
+        while (d_idx > 0) : (d_idx -= 1) {
+            const group = child.deferred.items[d_idx - 1];
+            for (group.nodes) |node| try child.nodes.append(node);
+        }
+
+        const slice = try child.nodes.toOwnedSlice();
+        child.nodes.deinit();
+        self.clearDeferred(&child);
+
+        const cb = try self.allocator.create(sg.CodeBlock);
+        cb.* = .{ .nodes = slice, .ret_val = null };
+        return cb;
     }
 
     //──────────────────────────────────────────────────── ADDRESS OF

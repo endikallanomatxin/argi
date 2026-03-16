@@ -240,6 +240,13 @@ pub const CodeGenerator = struct {
                 };
                 return null;
             },
+            .switch_statement => |sw| {
+                self.genSwitchStatement(sw) catch |e| {
+                    try self.diags.add(n.location, .codegen, "error generating switch statement: {s}", .{@errorName(e)});
+                    return e;
+                };
+                return null;
+            },
             .function_call => |fc| self.genFunctionCall(fc) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating function call: {s}", .{@errorName(e)});
                 return e;
@@ -1014,6 +1021,45 @@ pub const CodeGenerator = struct {
             if (c.LLVMGetBasicBlockTerminator(elseB.?) == null)
                 _ = c.LLVMBuildBr(self.builder, endB);
         }
+        c.LLVMPositionBuilderAtEnd(self.builder, endB);
+    }
+
+    fn genSwitchStatement(self: *CodeGenerator, sw: *const sem.SwitchStatement) !void {
+        const expr_tv = (try self.visitNode(sw.expression)) orelse return CodegenError.ValueNotFound;
+        const tag_val = c.LLVMBuildExtractValue(self.builder, expr_tv.value_ref, 0, "match.tag");
+
+        const cur_bb = c.LLVMGetInsertBlock(self.builder);
+        const fnc = c.LLVMGetBasicBlockParent(cur_bb);
+        const endB = c.LLVMAppendBasicBlock(fnc, "match.end");
+        const defaultB = if (sw.default_case != null) c.LLVMAppendBasicBlock(fnc, "match.default") else endB;
+
+        const switch_inst = c.LLVMBuildSwitch(self.builder, tag_val, defaultB, @intCast(sw.cases.len));
+        var case_blocks = try self.allocator.alloc(c.LLVMBasicBlockRef, sw.cases.len);
+        defer self.allocator.free(case_blocks);
+
+        for (sw.cases, 0..) |case_item, idx| {
+            const case_name = try std.fmt.allocPrint(self.allocator.*, "match.case.{d}", .{idx});
+            const case_name_z = try self.dupZ(case_name);
+            case_blocks[idx] = c.LLVMAppendBasicBlock(fnc, case_name_z.ptr);
+            const case_lit = case_item.value.content.choice_literal;
+            const case_tag = c.LLVMConstInt(c.LLVMInt32Type(), case_lit.variant_index, 0);
+            c.LLVMAddCase(switch_inst, case_tag, case_blocks[idx]);
+        }
+
+        for (sw.cases, 0..) |case_item, idx| {
+            c.LLVMPositionBuilderAtEnd(self.builder, case_blocks[idx]);
+            try self.genCodeBlock(case_item.body);
+            if (c.LLVMGetBasicBlockTerminator(case_blocks[idx]) == null)
+                _ = c.LLVMBuildBr(self.builder, endB);
+        }
+
+        if (sw.default_case) |default_case| {
+            c.LLVMPositionBuilderAtEnd(self.builder, defaultB);
+            try self.genCodeBlock(default_case);
+            if (c.LLVMGetBasicBlockTerminator(defaultB) == null)
+                _ = c.LLVMBuildBr(self.builder, endB);
+        }
+
         c.LLVMPositionBuilderAtEnd(self.builder, endB);
     }
 
