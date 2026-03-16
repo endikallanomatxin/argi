@@ -13,6 +13,35 @@ const gen = @import("generics.zig");
 const Scope = @import("scope.zig").Scope;
 const SemErr = @import("errors.zig").SemErr;
 
+const OwnedText = struct {
+    allocator: *const std.mem.Allocator,
+    bytes: []u8,
+
+    fn deinit(self: OwnedText) void {
+        self.allocator.free(self.bytes);
+    }
+};
+
+const TypePairText = struct {
+    expected: OwnedText,
+    actual: OwnedText,
+
+    fn deinit(self: TypePairText) void {
+        self.expected.deinit();
+        self.actual.deinit();
+    }
+};
+
+const SignatureText = struct {
+    actual: OwnedText,
+    available: OwnedText,
+
+    fn deinit(self: SignatureText) void {
+        self.actual.deinit();
+        self.available.deinit();
+    }
+};
+
 //──────────────────────────────────────────────────────────────────────────────
 //  SEMANTIZER
 //──────────────────────────────────────────────────────────────────────────────
@@ -104,6 +133,48 @@ pub const Semantizer = struct {
     pub fn printSG(self: *Semantizer) void {
         std.debug.print("\nSEMANTIC GRAPH:\n", .{});
         for (self.root_nodes) |n| sgp.printNode(n, 0);
+    }
+
+    fn formatOwnedText(self: *Semantizer, bytes: []u8) OwnedText {
+        return .{ .allocator = self.allocator, .bytes = bytes };
+    }
+
+    fn formatTypeText(self: *Semantizer, ty: sg.Type, s: *Scope) !OwnedText {
+        return self.formatOwnedText(try typ.formatType(ty, s, self.allocator));
+    }
+
+    fn formatTypePairText(self: *Semantizer, expected: sg.Type, actual: sg.Type, s: *Scope) !TypePairText {
+        return .{
+            .expected = try self.formatTypeText(expected, s),
+            .actual = try self.formatTypeText(actual, s),
+        };
+    }
+
+    fn collectVisibleSignatureText(
+        self: *Semantizer,
+        fn_name: []const u8,
+        input: *const sg.StructType,
+        s: *Scope,
+        loc: tok.Location,
+    ) !SignatureText {
+        return .{
+            .actual = self.formatOwnedText(try typ.formatCallInput(input, s, self.allocator)),
+            .available = self.formatOwnedText(try self.collectVisibleFunctionSignatures(fn_name, s, loc)),
+        };
+    }
+
+    fn collectModuleSignatureText(
+        self: *Semantizer,
+        module_dir: []const u8,
+        fn_name: []const u8,
+        input: *const sg.StructType,
+        s: *Scope,
+        loc: tok.Location,
+    ) !SignatureText {
+        return .{
+            .actual = self.formatOwnedText(try typ.formatCallInput(input, s, self.allocator)),
+            .available = self.formatOwnedText(try self.collectModuleFunctionSignatures(module_dir, fn_name, s, loc)),
+        };
     }
 
     //────────────────────────────────────────────────────────────────── visitors
@@ -1263,17 +1334,13 @@ pub const Semantizer = struct {
         var rhs = try self.visitNode(a.value.*, s);
         rhs = try typ.coerceExprToType(b.ty, rhs, a.value, s, self.allocator, self.diags);
         if (!typ.typesExactlyEqual(b.ty, rhs.ty)) {
-            const expected = try typ.formatType(b.ty, s, self.allocator);
-            const actual = try typ.formatType(rhs.ty, s, self.allocator);
-            defer {
-                self.allocator.free(expected);
-                self.allocator.free(actual);
-            }
+            const pair = try self.formatTypePairText(b.ty, rhs.ty, s);
+            defer pair.deinit();
             try self.diags.add(
                 a.value.*.location,
                 .semantic,
                 "cannot assign '{s}' to '{s}' (explicit casts not supported yet)",
-                .{ actual, expected },
+                .{ pair.actual.bytes, pair.expected.bytes },
             );
             return error.Reported;
         }
@@ -1360,13 +1427,13 @@ pub const Semantizer = struct {
         const base = try self.visitNode(ma.struct_value.*, s);
 
         if (base.ty == .array_type) {
-            const desc = try typ.formatType(base.ty, s, self.allocator);
-            defer self.allocator.free(desc);
+            const desc = try self.formatTypeText(base.ty, s);
+            defer desc.deinit();
             try self.diags.add(
                 ma.struct_value.*.location,
                 .semantic,
                 "type '{s}' has no field '.{s}'",
-                .{ desc, ma.field_name.string },
+                .{ desc.bytes, ma.field_name.string },
             );
             return error.Reported;
         }
@@ -1382,13 +1449,13 @@ pub const Semantizer = struct {
                 }
             }
 
-            const desc = try typ.formatType(base.ty, s, self.allocator);
-            defer self.allocator.free(desc);
+            const desc = try self.formatTypeText(base.ty, s);
+            defer desc.deinit();
             try self.diags.add(
                 ma.struct_value.*.location,
                 .semantic,
                 "cannot access field '.{s}' on value of type '{s}'",
-                .{ ma.field_name.string, desc },
+                .{ ma.field_name.string, desc.bytes },
             );
             return error.Reported;
         }
@@ -1464,17 +1531,13 @@ pub const Semantizer = struct {
 
             if (expected_elem_ty_opt) |exp_ty| {
                 if (!typ.typesStructurallyEqual(exp_ty, elem_te.ty)) {
-                    const exp = try typ.formatType(exp_ty, s, self.allocator);
-                    const got = try typ.formatType(elem_te.ty, s, self.allocator);
-                    defer {
-                        self.allocator.free(exp);
-                        self.allocator.free(got);
-                    }
+                    const pair = try self.formatTypePairText(exp_ty, elem_te.ty, s);
+                    defer pair.deinit();
                     try self.diags.add(
                         elem_node.*.location,
                         .semantic,
                         "list element {d} has type '{s}', expected '{s}'",
-                        .{ idx, got, exp },
+                        .{ idx, pair.actual.bytes, pair.expected.bytes },
                     );
                     return error.Reported;
                 }
@@ -1509,13 +1572,13 @@ pub const Semantizer = struct {
             var idx_te = try self.visitNode(ia.index.*, s);
             idx_te = try typ.coerceExprToType(native_uint_ty, idx_te, ia.index, s, self.allocator, self.diags);
             if (!typ.typesExactlyEqual(idx_te.ty, native_uint_ty)) {
-                const idx_ty = try typ.formatType(idx_te.ty, s, self.allocator);
-                defer self.allocator.free(idx_ty);
+                const idx_ty = try self.formatTypeText(idx_te.ty, s);
+                defer idx_ty.deinit();
                 try self.diags.add(
                     ia.index.*.location,
                     .semantic,
                     "array index must be 'UIntNative', got '{s}'",
-                    .{idx_ty},
+                    .{idx_ty.bytes},
                 );
                 return error.Reported;
             }
@@ -1539,13 +1602,13 @@ pub const Semantizer = struct {
             idx_te = try typ.coerceExprToType(native_uint_ty, idx_te, ia.index, s, self.allocator, self.diags);
 
             if (!typ.typesExactlyEqual(idx_te.ty, native_uint_ty)) {
-                const idx_ty = try typ.formatType(idx_te.ty, s, self.allocator);
-                defer self.allocator.free(idx_ty);
+                const idx_ty = try self.formatTypeText(idx_te.ty, s);
+                defer idx_ty.deinit();
                 try self.diags.add(
                     ia.index.*.location,
                     .semantic,
                     "list literal index must be 'UIntNative', got '{s}'",
-                    .{idx_ty},
+                    .{idx_ty.bytes},
                 );
                 return error.Reported;
             }
@@ -1646,13 +1709,13 @@ pub const Semantizer = struct {
             var index_expr = try self.visitNode(idx.index.*, s);
             index_expr = try typ.coerceExprToType(native_uint_ty, index_expr, idx.index, s, self.allocator, self.diags);
             if (!typ.typesExactlyEqual(index_expr.ty, native_uint_ty)) {
-                const idx_ty = try typ.formatType(index_expr.ty, s, self.allocator);
-                defer self.allocator.free(idx_ty);
+                const idx_ty = try self.formatTypeText(index_expr.ty, s);
+                defer idx_ty.deinit();
                 try self.diags.add(
                     idx.index.*.location,
                     .semantic,
                     "array index must be 'UIntNative', got '{s}'",
-                    .{idx_ty},
+                    .{idx_ty.bytes},
                 );
                 return error.Reported;
             }
@@ -1662,17 +1725,13 @@ pub const Semantizer = struct {
             const elem_ty = arr_type_ptr.*.element_type.*;
 
             if (!typ.typesStructurallyEqual(elem_ty, value_expr.ty)) {
-                const expected = try typ.formatType(elem_ty, s, self.allocator);
-                const actual = try typ.formatType(value_expr.ty, s, self.allocator);
-                defer {
-                    self.allocator.free(expected);
-                    self.allocator.free(actual);
-                }
+                const pair = try self.formatTypePairText(elem_ty, value_expr.ty, s);
+                defer pair.deinit();
                 try self.diags.add(
                     ia.value.*.location,
                     .semantic,
                     "cannot assign value of type '{s}' to array element of type '{s}'",
-                    .{ actual, expected },
+                    .{ pair.actual.bytes, pair.expected.bytes },
                 );
                 return error.Reported;
             }
@@ -2115,17 +2174,13 @@ pub const Semantizer = struct {
         }
 
         if (input_ty == .struct_type) {
-            const actual_sig = try typ.formatCallInput(input_ty.struct_type, s, self.allocator);
-            const available = try self.collectVisibleFunctionSignatures(fn_name, s, loc);
-            defer {
-                self.allocator.free(actual_sig);
-                self.allocator.free(available);
-            }
+            const sigs = try self.collectVisibleSignatureText(fn_name, input_ty.struct_type, s, loc);
+            defer sigs.deinit();
             try self.diags.add(
                 loc,
                 .semantic,
                 "no overload of '{s}' accepts arguments {s}. Available signatures:\n{s}",
-                .{ fn_name, actual_sig, available },
+                .{ fn_name, sigs.actual.bytes, sigs.available.bytes },
             );
             return;
         }
@@ -2176,14 +2231,14 @@ pub const Semantizer = struct {
                         const actual = self.inferGenericParamFromCall(tmpl, param_name, input_ty, s, &subst) orelse continue;
                         if (abs.typeImplementsAbstract(constraint, actual, s)) continue;
 
-                        const actual_str = try typ.formatType(actual, s, self.allocator);
-                        defer self.allocator.free(actual_str);
+                        const actual_str = try self.formatTypeText(actual, s);
+                        defer actual_str.deinit();
                         const field_name = self.findTemplateFieldUsingParam(tmpl, param_name) orelse param_name;
                         try self.diags.add(
                             loc,
                             .semantic,
                             "type '{s}' does not implement abstract '{s}' required by parameter '.{s}' of '{s}'",
-                            .{ actual_str, constraint, field_name, fn_name },
+                            .{ actual_str.bytes, constraint, field_name, fn_name },
                         );
                         return true;
                     }
@@ -2203,17 +2258,13 @@ pub const Semantizer = struct {
     ) !void {
         if (maybe_input_ty) |input_ty| {
             if (input_ty == .struct_type) {
-                const actual_sig = try typ.formatCallInput(input_ty.struct_type, s, self.allocator);
-                const available = try self.collectVisibleFunctionSignatures(fn_name, s, loc);
-                defer {
-                    self.allocator.free(actual_sig);
-                    self.allocator.free(available);
-                }
+                const sigs = try self.collectVisibleSignatureText(fn_name, input_ty.struct_type, s, loc);
+                defer sigs.deinit();
                 try self.diags.add(
                     loc,
                     .semantic,
                     "ambiguous call to '{s}' for arguments {s}. Possible overloads:\n{s}",
-                    .{ fn_name, actual_sig, available },
+                    .{ fn_name, sigs.actual.bytes, sigs.available.bytes },
                 );
                 return;
             }
@@ -2256,17 +2307,13 @@ pub const Semantizer = struct {
         }
 
         if (input_ty == .struct_type) {
-            const actual_sig = try typ.formatCallInput(input_ty.struct_type, s, self.allocator);
-            const available = try self.collectModuleFunctionSignatures(module_dir, fn_name, s, loc);
-            defer {
-                self.allocator.free(actual_sig);
-                self.allocator.free(available);
-            }
+            const sigs = try self.collectModuleSignatureText(module_dir, fn_name, input_ty.struct_type, s, loc);
+            defer sigs.deinit();
             try self.diags.add(
                 loc,
                 .semantic,
                 "module '{s}' has no overload '{s}' accepting arguments {s}. Available signatures:\n{s}",
-                .{ module_name, fn_name, actual_sig, available },
+                .{ module_name, fn_name, sigs.actual.bytes, sigs.available.bytes },
             );
             return;
         }
@@ -2328,17 +2375,13 @@ pub const Semantizer = struct {
                     );
                     return error.Reported;
                 }
-                const actual_sig = try typ.formatCallInput(user_struct, s, self.allocator);
-                const available = try self.collectVisibleFunctionSignatures("init", s, call.input.*.location);
-                defer {
-                    self.allocator.free(actual_sig);
-                    self.allocator.free(available);
-                }
+                const sigs = try self.collectVisibleSignatureText("init", user_struct, s, call.input.*.location);
+                defer sigs.deinit();
                 try self.diags.add(
                     call.input.*.location,
                     .semantic,
                     "failed to initialize type '{s}': no 'init' overload accepts arguments {s}. Available overloads:\n{s}",
-                    .{ call.callee, actual_sig, available },
+                    .{ call.callee, sigs.actual.bytes, sigs.available.bytes },
                 );
                 return error.Reported;
             },
@@ -2790,18 +2833,14 @@ pub const Semantizer = struct {
         lhs = try typ.coerceExprToType(rhs.ty, lhs, bo.left, s, self.allocator, self.diags);
 
         if (!typ.typesExactlyEqual(lhs.ty, rhs.ty)) {
-            const left_ty = try typ.formatType(lhs.ty, s, self.allocator);
-            const right_ty = try typ.formatType(rhs.ty, s, self.allocator);
-            defer {
-                self.allocator.free(left_ty);
-                self.allocator.free(right_ty);
-            }
+            const pair = try self.formatTypePairText(lhs.ty, rhs.ty, s);
+            defer pair.deinit();
             const verb = binaryOpVerb(bo.operator);
             try self.diags.add(
                 bo.left.*.location,
                 .semantic,
                 "cannot {s} '{s}' and '{s}'",
-                .{ verb, left_ty, right_ty },
+                .{ verb, pair.expected.bytes, pair.actual.bytes },
             );
             return error.Reported;
         }
@@ -2827,17 +2866,13 @@ pub const Semantizer = struct {
         lhs = try typ.coerceExprToType(rhs.ty, lhs, c.left, s, self.allocator, self.diags);
 
         if (!typ.typesExactlyEqual(lhs.ty, rhs.ty)) {
-            const left_ty = try typ.formatType(lhs.ty, s, self.allocator);
-            const right_ty = try typ.formatType(rhs.ty, s, self.allocator);
-            defer {
-                self.allocator.free(left_ty);
-                self.allocator.free(right_ty);
-            }
+            const pair = try self.formatTypePairText(lhs.ty, rhs.ty, s);
+            defer pair.deinit();
             try self.diags.add(
                 c.left.*.location,
                 .semantic,
                 "cannot compare '{s}' and '{s}'",
-                .{ left_ty, right_ty },
+                .{ pair.expected.bytes, pair.actual.bytes },
             );
             return error.Reported;
         }
@@ -2967,13 +3002,13 @@ pub const Semantizer = struct {
         const te = try self.visitNode(inner.*, s);
 
         if (te.ty != .pointer_type) {
-            const ty_str = try typ.formatType(te.ty, s, self.allocator);
-            defer self.allocator.free(ty_str);
+            const ty_str = try self.formatTypeText(te.ty, s);
+            defer ty_str.deinit();
             try self.diags.add(
                 inner.*.location,
                 .semantic,
                 "cannot dereference value of type '{s}'; expected a pointer",
-                .{ty_str},
+                .{ty_str.bytes},
             );
             return error.Reported;
         }
@@ -3040,13 +3075,13 @@ pub const Semantizer = struct {
 
             const ptr_info = ptr_self.ty.pointer_type.*;
             if (ptr_info.child.* != .struct_type) {
-                const desc = try typ.formatType(ptr_self.ty, s, self.allocator);
-                defer self.allocator.free(desc);
+                const desc = try self.formatTypeText(ptr_self.ty, s);
+                defer desc.deinit();
                 try self.diags.add(
                     sa.struct_value.location,
                     .semantic,
                     "cannot assign field on value of type '{s}'",
-                    .{desc},
+                    .{desc.bytes},
                 );
                 return error.Reported;
             }
@@ -3057,17 +3092,13 @@ pub const Semantizer = struct {
 
             rhs = try typ.coerceExprToType(field_info.ty, rhs, pa.value, s, self.allocator, self.diags);
             if (!typ.typesExactlyEqual(field_info.ty, rhs.ty)) {
-                const expected = try typ.formatType(field_info.ty, s, self.allocator);
-                const actual = try typ.formatType(rhs.ty, s, self.allocator);
-                defer {
-                    self.allocator.free(expected);
-                    self.allocator.free(actual);
-                }
+                const pair = try self.formatTypePairText(field_info.ty, rhs.ty, s);
+                defer pair.deinit();
                 try self.diags.add(
                     pa.value.*.location,
                     .semantic,
                     "cannot assign '{s}' to '{s}' (explicit casts not supported yet)",
-                    .{ actual, expected },
+                    .{ pair.actual.bytes, pair.expected.bytes },
                 );
                 return error.Reported;
             }
@@ -3094,29 +3125,25 @@ pub const Semantizer = struct {
 
         if (deref_sg.pointer_type.*.mutability != .read_write) {
             const ptr_ty: sg.Type = .{ .pointer_type = deref_sg.pointer_type };
-            const ptr_str = try typ.formatType(ptr_ty, s, self.allocator);
-            defer self.allocator.free(ptr_str);
+            const ptr_str = try self.formatTypeText(ptr_ty, s);
+            defer ptr_str.deinit();
             try self.diags.add(
                 pa.target.*.location,
                 .semantic,
                 "cannot assign through pointer '{s}' because it is read-only; use '$&' when acquiring it",
-                .{ptr_str},
+                .{ptr_str.bytes},
             );
             return error.Reported;
         }
 
         if (!typ.typesStructurallyEqual(deref_sg.ty, rhs.ty)) {
-            const expected = try typ.formatType(deref_sg.ty, s, self.allocator);
-            const actual = try typ.formatType(rhs.ty, s, self.allocator);
-            defer {
-                self.allocator.free(expected);
-                self.allocator.free(actual);
-            }
+            const pair = try self.formatTypePairText(deref_sg.ty, rhs.ty, s);
+            defer pair.deinit();
             try self.diags.add(
                 pa.value.*.location,
                 .semantic,
                 "cannot assign '{s}' to '{s}' (explicit casts not supported yet)",
-                .{ actual, expected },
+                .{ pair.actual.bytes, pair.expected.bytes },
             );
             return error.Reported;
         }
@@ -3250,17 +3277,13 @@ pub const Semantizer = struct {
         const target_is_native_uint = target_ty == .builtin and target_ty.builtin == .UIntNative;
 
         if (!((source_is_ptr and target_is_native_uint) or (source_is_native_uint and target_is_ptr))) {
-            const source_str = try typ.formatType(value_te.ty, s, self.allocator);
-            const target_str = try typ.formatType(target_ty, s, self.allocator);
-            defer {
-                self.allocator.free(source_str);
-                self.allocator.free(target_str);
-            }
+            const pair = try self.formatTypePairText(target_ty, value_te.ty, s);
+            defer pair.deinit();
             try self.diags.add(
                 call.input.*.location,
                 .semantic,
                 "unsupported explicit cast from '{s}' to '{s}'",
-                .{ source_str, target_str },
+                .{ pair.actual.bytes, pair.expected.bytes },
             );
             return error.Reported;
         }
@@ -3362,17 +3385,13 @@ pub const Semantizer = struct {
         const first_ty = ll.element_types[0];
         for (ll.element_types, 0..) |elem_ty, idx| {
             if (typ.typesStructurallyEqual(first_ty, elem_ty)) continue;
-            const exp = try typ.formatType(first_ty, s, self.allocator);
-            const got = try typ.formatType(elem_ty, s, self.allocator);
-            defer {
-                self.allocator.free(exp);
-                self.allocator.free(got);
-            }
+            const pair = try self.formatTypePairText(first_ty, elem_ty, s);
+            defer pair.deinit();
             try self.diags.add(
                 loc,
                 .semantic,
                 "array element {d} has type '{s}', expected '{s}'",
-                .{ idx, got, exp },
+                .{ idx, pair.actual.bytes, pair.expected.bytes },
             );
             return error.Reported;
         }
