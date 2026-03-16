@@ -143,7 +143,7 @@ pub const Semantizer = struct {
                                     "cannot use abstract '{s}' as a type for a symbol. Use a concrete type or add a default concrete type to the abstract type ('{s} defaultsto <Type>')",
                                     .{ tp2.type_name.string, tp2.type_name.string },
                                 );
-                                break :blk err;
+                                break :blk error.Reported;
                             }
                         }
                         try self.diags.add(
@@ -152,6 +152,7 @@ pub const Semantizer = struct {
                             "cannot use abstract type without a default (add 'defaultsto' or use a concrete type)",
                             .{},
                         );
+                        break :blk error.Reported;
                     },
                     else => {
                         try self.diags.add(
@@ -212,6 +213,15 @@ pub const Semantizer = struct {
 
             .function_declaration => |d| self.handleFuncDecl(d, s, n.location) catch |err| blk: {
                 if (err == error.Reported) break :blk err;
+                if (err == error.AbstractNeedsDefault) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "abstract types without a default are not supported in function outputs yet",
+                        .{},
+                    );
+                    break :blk error.Reported;
+                }
                 if (err == error.UnknownType and s.parent == null and self.defer_unknown_top_level) {
                     try self.pushTopLevelForRetry();
                     break :blk error.Reported;
@@ -325,17 +335,12 @@ pub const Semantizer = struct {
             .function_call => |fc| self.handleCall(fc, s) catch |err| blk: {
                 if (err == error.Reported) break :blk err;
                 if (err == error.AmbiguousOverload) {
-                    // try to produce detailed candidates list
                     const tv_in = self.visitNode(fc.input.*, s) catch null;
-                    var details: []const u8 = "";
-                    if (tv_in) |te| if (te.ty == .struct_type) {
-                        details = abs.buildOverloadCandidatesString(fc.callee, te.ty, s, self.allocator) catch "";
-                    };
-                    try self.diags.add(
+                    try self.addAmbiguousFunctionDiagnostic(
+                        fc.callee,
+                        if (tv_in) |te| te.ty else null,
+                        s,
                         n.location,
-                        .semantic,
-                        "ambiguous call to '{s}'. Possible overloads:\n{s}",
-                        .{ fc.callee, details },
                     );
                     break :blk error.Reported;
                 } else {
@@ -516,11 +521,13 @@ pub const Semantizer = struct {
         ad: syn.AbstractDeclaration,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        // Register abstract as a nominal type placeholder (maps to Any for now)
+        // Register abstract as a nominal semantic type.
         if (s.types.contains(ad.name.string)) return error.SymbolAlreadyDefined;
 
+        const abs_ty = try self.allocator.create(sg.AbstractType);
+        abs_ty.* = .{ .name = ad.name.string };
         const td = try self.allocator.create(sg.TypeDeclaration);
-        td.* = .{ .name = ad.name.string, .origin_file = ad.name.location.file, .ty = .{ .builtin = .Any } };
+        td.* = .{ .name = ad.name.string, .origin_file = ad.name.location.file, .ty = .{ .abstract_type = abs_ty } };
         try s.types.put(ad.name.string, td);
 
         // Store abstract info (resolved requirements) in scope
@@ -554,13 +561,11 @@ pub const Semantizer = struct {
                                     }
                                 }
                                 if (!found) {
-                                    ty = self.resolveType(t, s) catch |err| switch (err) {
-                                        error.AbstractNeedsDefault => blk: {
-                                            abstract_req = name;
-                                            break :blk .{ .builtin = .Any };
-                                        },
-                                        else => return err,
-                                    };
+                                    if (s.lookupAbstractInfo(name) != null) {
+                                        abstract_req = name;
+                                    } else {
+                                        ty = try self.resolveType(t, s);
+                                    }
                                 }
                             }
                         },
@@ -597,8 +602,9 @@ pub const Semantizer = struct {
             var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
             var output_generic = std.array_list.Managed(?u32).init(self.allocator.*);
             var output_abstract = std.array_list.Managed(?[]const u8).init(self.allocator.*);
+            var output_self_idxs = std.array_list.Managed(u32).init(self.allocator.*);
 
-            for (rf.output.fields) |fld| {
+            for (rf.output.fields, 0..) |fld, i| {
                 var ty: sg.Type = .{ .builtin = .Any };
                 var generic_idx_opt: ?u32 = null;
                 var abstract_req: ?[]const u8 = null;
@@ -607,22 +613,24 @@ pub const Semantizer = struct {
                     switch (t) {
                         .type_name => |tn| {
                             const name = tn.string;
-                            var found: bool = false;
-                            for (generic_params, 0..) |gp, gi| {
-                                if (std.mem.eql(u8, gp, name)) {
-                                    generic_idx_opt = @intCast(gi);
-                                    found = true;
-                                    break;
+                            if (std.mem.eql(u8, name, "Self")) {
+                                try output_self_idxs.append(@intCast(i));
+                            } else {
+                                var found: bool = false;
+                                for (generic_params, 0..) |gp, gi| {
+                                    if (std.mem.eql(u8, gp, name)) {
+                                        generic_idx_opt = @intCast(gi);
+                                        found = true;
+                                        break;
+                                    }
                                 }
-                            }
-                            if (!found) {
-                                ty = self.resolveType(t, s) catch |err| switch (err) {
-                                    error.AbstractNeedsDefault => blk: {
+                                if (!found) {
+                                    if (s.lookupAbstractInfo(name) != null) {
                                         abstract_req = name;
-                                        break :blk .{ .builtin = .Any };
-                                    },
-                                    else => return err,
-                                };
+                                    } else {
+                                        ty = try self.resolveType(t, s);
+                                    }
+                                }
                             }
                         },
                         else => {
@@ -659,12 +667,14 @@ pub const Semantizer = struct {
                 .input = in_struct,
                 .output = out_struct,
                 .input_self_indices = try self_idxs.toOwnedSlice(),
+                .output_self_indices = try output_self_idxs.toOwnedSlice(),
                 .input_generic_param_indices = input_generic_slice,
                 .output_generic_param_indices = output_generic_slice,
                 .input_abstract_requirements = input_abstract_slice,
                 .output_abstract_requirements = output_abstract_slice,
             });
             self_idxs.deinit();
+            output_self_idxs.deinit();
         }
 
         const info = try self.allocator.create(abs.AbstractInfo);
@@ -845,6 +855,7 @@ pub const Semantizer = struct {
         var ty: sg.Type = .{ .builtin = .Int32 };
         if (d.type) |t| {
             ty = try self.resolveType(t, s);
+            if (ty == .abstract_type) return error.AbstractNeedsDefault;
         } else if (init_te_opt) |te| {
             ty = te.ty;
         }
@@ -952,6 +963,8 @@ pub const Semantizer = struct {
                     .name = f.name.string,
                     .location = loc,
                     .param_names = f.generic_params,
+                    .param_abstract_constraints = try self.allocEmptyAbstractConstraintSlice(f.generic_params.len),
+                    .dispatch_kind = .regular,
                     .input = f.input,
                     .output = f.output,
                     .body = f.body,
@@ -962,6 +975,8 @@ pub const Semantizer = struct {
                     .name = f.name.string,
                     .location = loc,
                     .param_names = f.generic_params,
+                    .param_abstract_constraints = try self.allocEmptyAbstractConstraintSlice(f.generic_params.len),
+                    .dispatch_kind = .regular,
                     .input = f.input,
                     .output = f.output,
                     .body = f.body,
@@ -969,6 +984,16 @@ pub const Semantizer = struct {
                 try p.generic_functions.put(f.name.string, new_list);
             }
             // Return a no-op node for generic template
+            const noop = try sg.makeSGNode(.{ .code_block = blk2: {
+                const empty = try self.allocator.create(sg.CodeBlock);
+                empty.* = .{ .nodes = &.{}, .ret_val = null };
+                break :blk2 empty;
+            } }, loc, self.allocator);
+            try p.nodes.append(noop);
+            return .{ .node = noop, .ty = .{ .builtin = .Any } };
+        }
+
+        if (try self.registerAbstractContractTemplateIfNeeded(f, p, loc)) {
             const noop = try sg.makeSGNode(.{ .code_block = blk2: {
                 const empty = try self.allocator.create(sg.CodeBlock);
                 empty.* = .{ .nodes = &.{}, .ret_val = null };
@@ -1069,6 +1094,156 @@ pub const Semantizer = struct {
         try p.nodes.append(n);
         if (p.parent == null) try self.root_list.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn allocEmptyAbstractConstraintSlice(self: *Semantizer, len: usize) ![]const ?[]const u8 {
+        const slice = try self.allocator.alloc(?[]const u8, len);
+        for (slice, 0..) |_, i| slice[i] = null;
+        return slice;
+    }
+
+    fn rewriteAbstractTypeForTemplate(
+        self: *Semantizer,
+        ty: syn.Type,
+        hidden_name: []const u8,
+        abstract_name: []const u8,
+    ) !syn.Type {
+        return switch (ty) {
+            .type_name => |tn| {
+                if (std.mem.eql(u8, tn.string, abstract_name)) {
+                    return .{ .type_name = .{ .string = hidden_name, .location = tn.location } };
+                }
+                return ty;
+            },
+            .pointer_type => |ptr_info| blk: {
+                const child = try self.allocator.create(syn.Type);
+                child.* = try self.rewriteAbstractTypeForTemplate(ptr_info.child.*, hidden_name, abstract_name);
+
+                const ptr = try self.allocator.create(syn.PointerType);
+                ptr.* = .{
+                    .mutability = ptr_info.mutability,
+                    .child = child,
+                };
+                break :blk .{ .pointer_type = ptr };
+            },
+            .array_type => |arr_info| blk: {
+                const element = try self.allocator.create(syn.Type);
+                element.* = try self.rewriteAbstractTypeForTemplate(arr_info.element.*, hidden_name, abstract_name);
+
+                const arr = try self.allocator.create(syn.ArrayType);
+                arr.* = .{
+                    .length = arr_info.length,
+                    .element = element,
+                };
+                break :blk .{ .array_type = arr };
+            },
+            .struct_type_literal => |st| blk: {
+                var fields = try self.allocator.alloc(syn.StructTypeLiteralField, st.fields.len);
+                for (st.fields, 0..) |field, i| {
+                    fields[i] = field;
+                    if (field.type) |field_ty| {
+                        fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, abstract_name);
+                    }
+                }
+                break :blk .{ .struct_type_literal = .{ .fields = fields } };
+            },
+            .generic_type_instantiation => ty,
+        };
+    }
+
+    fn outputUsesAbstractWithoutDefault(self: *Semantizer, ty: syn.Type, s: *Scope) bool {
+        return switch (ty) {
+            .type_name => |tn| {
+                if (s.lookupAbstractInfo(tn.string) != null and s.lookupAbstractDefault(tn.string) == null) return true;
+                return false;
+            },
+            .pointer_type => |ptr_info| self.outputUsesAbstractWithoutDefault(ptr_info.child.*, s),
+            .array_type => |arr_info| self.outputUsesAbstractWithoutDefault(arr_info.element.*, s),
+            .struct_type_literal => |st| blk: {
+                for (st.fields) |field| {
+                    if (field.type) |field_ty| {
+                        if (self.outputUsesAbstractWithoutDefault(field_ty, s)) break :blk true;
+                    }
+                }
+                break :blk false;
+            },
+            .generic_type_instantiation => false,
+        };
+    }
+
+    fn registerAbstractContractTemplateIfNeeded(
+        self: *Semantizer,
+        f: syn.FunctionDeclaration,
+        p: *Scope,
+        loc: tok.Location,
+    ) SemErr!bool {
+        if (f.generic_params.len != 0) return false;
+
+        var rewritten_input_fields = try self.allocator.alloc(syn.StructTypeLiteralField, f.input.fields.len);
+        var hidden_param_names = std.array_list.Managed([]const u8).init(self.allocator.*);
+        defer hidden_param_names.deinit();
+        var hidden_constraints = std.array_list.Managed(?[]const u8).init(self.allocator.*);
+        defer hidden_constraints.deinit();
+        var has_abstract_input = false;
+
+        for (f.input.fields, 0..) |field, i| {
+            rewritten_input_fields[i] = field;
+            if (field.type) |field_ty| {
+                switch (field_ty) {
+                    .type_name => |tn| {
+                        if (p.lookupAbstractInfo(tn.string) != null and p.lookupAbstractDefault(tn.string) == null) {
+                            has_abstract_input = true;
+                            const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
+                            try hidden_param_names.append(hidden_name);
+                            try hidden_constraints.append(tn.string);
+                            rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, tn.string);
+                        }
+                    },
+                    .pointer_type => |ptr_info| {
+                        if (ptr_info.child.* == .type_name) {
+                            const child_name = ptr_info.child.*.type_name.string;
+                            if (p.lookupAbstractInfo(child_name) != null and p.lookupAbstractDefault(child_name) == null) {
+                                has_abstract_input = true;
+                                const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
+                                try hidden_param_names.append(hidden_name);
+                                try hidden_constraints.append(child_name);
+                                rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, child_name);
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+
+        if (!has_abstract_input) return false;
+
+        for (f.output.fields) |field| {
+            if (field.type) |field_ty| {
+                if (self.outputUsesAbstractWithoutDefault(field_ty, p)) return error.AbstractNeedsDefault;
+            }
+        }
+
+        const template = gen.GenericTemplate{
+            .name = f.name.string,
+            .location = loc,
+            .param_names = try hidden_param_names.toOwnedSlice(),
+            .param_abstract_constraints = try hidden_constraints.toOwnedSlice(),
+            .dispatch_kind = .abstract_contract,
+            .input = .{ .fields = rewritten_input_fields },
+            .output = f.output,
+            .body = f.body,
+        };
+
+        if (p.generic_functions.getPtr(f.name.string)) |lst| {
+            try lst.append(template);
+        } else {
+            var new_list = std.array_list.Managed(gen.GenericTemplate).init(self.allocator.*);
+            try new_list.append(template);
+            try p.generic_functions.put(f.name.string, new_list);
+        }
+
+        return true;
     }
 
     //──────────────────────────────────────────────────── ASSIGNMENT
@@ -1328,16 +1503,18 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         const base = try self.visitNode(ia.value.*, s);
+        const native_uint_ty: sg.Type = .{ .builtin = .UIntNative };
 
         if (base.ty == .array_type) {
-            const idx_te = try self.visitNode(ia.index.*, s);
-            if (!typ.isIntegerType(idx_te.ty)) {
+            var idx_te = try self.visitNode(ia.index.*, s);
+            idx_te = try typ.coerceExprToType(native_uint_ty, idx_te, ia.index, s, self.allocator, self.diags);
+            if (!typ.typesExactlyEqual(idx_te.ty, native_uint_ty)) {
                 const idx_ty = try typ.formatType(idx_te.ty, s, self.allocator);
                 defer self.allocator.free(idx_ty);
                 try self.diags.add(
                     ia.index.*.location,
                     .semantic,
-                    "array index must be an integer type, got '{s}'",
+                    "array index must be 'UIntNative', got '{s}'",
                     .{idx_ty},
                 );
                 return error.Reported;
@@ -1358,13 +1535,26 @@ pub const Semantizer = struct {
 
         if (base.node.content == .list_literal) {
             const ll = base.node.content.list_literal;
-            const idx_te = try self.visitNode(ia.index.*, s);
+            var idx_te = try self.visitNode(ia.index.*, s);
+            idx_te = try typ.coerceExprToType(native_uint_ty, idx_te, ia.index, s, self.allocator, self.diags);
+
+            if (!typ.typesExactlyEqual(idx_te.ty, native_uint_ty)) {
+                const idx_ty = try typ.formatType(idx_te.ty, s, self.allocator);
+                defer self.allocator.free(idx_ty);
+                try self.diags.add(
+                    ia.index.*.location,
+                    .semantic,
+                    "list literal index must be 'UIntNative', got '{s}'",
+                    .{idx_ty},
+                );
+                return error.Reported;
+            }
 
             if (idx_te.node.content != .value_literal) {
                 try self.diags.add(
                     ia.index.*.location,
                     .semantic,
-                    "index into a list literal must be an integer literal",
+                    "index into a list literal must be a 'UIntNative' integer literal",
                     .{},
                 );
                 return error.Reported;
@@ -1377,7 +1567,7 @@ pub const Semantizer = struct {
                     try self.diags.add(
                         ia.index.*.location,
                         .semantic,
-                        "index into a list literal must be an integer literal",
+                        "index into a list literal must be a 'UIntNative' integer literal",
                         .{},
                     );
                     break :blk 0;
@@ -1411,7 +1601,7 @@ pub const Semantizer = struct {
 
         const name = "operator get[]";
         const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-        const inferred = self.instantiateGenericNamed(name, empty_args, input_te, s) catch |err| switch (err) {
+        const inferred = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
             error.SymbolNotFound => null,
             else => return err,
         };
@@ -1426,18 +1616,7 @@ pub const Semantizer = struct {
                     return error.Reported;
                 },
                 error.AmbiguousOverload => {
-                    const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
-                    const available = try abs.collectFunctionSignatures(name, s, self.allocator);
-                    defer {
-                        self.allocator.free(actual_sig);
-                        self.allocator.free(available);
-                    }
-                    try self.diags.add(
-                        ia.value.*.location,
-                        .semantic,
-                        "ambiguous call to '{s}' for arguments {s}. Possible overloads:\n{s}",
-                        .{ name, actual_sig, available },
-                    );
+                    try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.value.*.location);
                     return error.Reported;
                 },
                 else => return err,
@@ -1459,18 +1638,20 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         if (ia.target.*.content != .index_access) return error.InvalidType;
         const idx = ia.target.*.content.index_access;
+        const native_uint_ty: sg.Type = .{ .builtin = .UIntNative };
 
         const base = try self.visitNode(idx.value.*, s);
 
         if (base.ty == .array_type) {
-            const index_expr = try self.visitNode(idx.index.*, s);
-            if (!typ.isIntegerType(index_expr.ty)) {
+            var index_expr = try self.visitNode(idx.index.*, s);
+            index_expr = try typ.coerceExprToType(native_uint_ty, index_expr, idx.index, s, self.allocator, self.diags);
+            if (!typ.typesExactlyEqual(index_expr.ty, native_uint_ty)) {
                 const idx_ty = try typ.formatType(index_expr.ty, s, self.allocator);
                 defer self.allocator.free(idx_ty);
                 try self.diags.add(
                     idx.index.*.location,
                     .semantic,
-                    "array index must be an integer type, got '{s}'",
+                    "array index must be 'UIntNative', got '{s}'",
                     .{idx_ty},
                 );
                 return error.Reported;
@@ -1522,7 +1703,7 @@ pub const Semantizer = struct {
 
         const name = "operator set[]";
         const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-        const inferred = self.instantiateGenericNamed(name, empty_args, input_te, s) catch |err| switch (err) {
+        const inferred = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
             error.SymbolNotFound => null,
             else => return err,
         };
@@ -1537,18 +1718,7 @@ pub const Semantizer = struct {
                     return error.Reported;
                 },
                 error.AmbiguousOverload => {
-                    const actual_sig = try typ.formatCallInput(input_te.ty.struct_type, s, self.allocator);
-                    const available = try abs.collectFunctionSignatures(name, s, self.allocator);
-                    defer {
-                        self.allocator.free(actual_sig);
-                        self.allocator.free(available);
-                    }
-                    try self.diags.add(
-                        ia.target.*.location,
-                        .semantic,
-                        "ambiguous call to '{s}' for arguments {s}. Possible overloads:\n{s}",
-                        .{ name, actual_sig, available },
-                    );
+                    try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.target.*.location);
                     return error.Reported;
                 },
                 else => return err,
@@ -1646,6 +1816,11 @@ pub const Semantizer = struct {
                 error.Reported => return err,
                 else => err,
             };
+        if (std.mem.eql(u8, call.callee, "cast"))
+            return self.handleCastBuiltin(call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                else => err,
+            };
         if (std.mem.eql(u8, call.callee, "type_of"))
             return self.handleTypeOf(call, s) catch |err| switch (err) {
                 error.Reported => return err,
@@ -1673,12 +1848,12 @@ pub const Semantizer = struct {
 
         var chosen: *sg.FunctionDeclaration = undefined;
         if (call.type_arguments_struct) |stargs| {
-            chosen = try self.instantiateGenericNamed(call.callee, stargs, tv_in, s);
+            chosen = try self.instantiateGenericNamed(call.callee, stargs, tv_in, s, .regular);
         } else if (call.type_arguments) |targs| {
-            chosen = try self.instantiateGeneric(call.callee, targs, tv_in, s);
+            chosen = try self.instantiateGeneric(call.callee, targs, tv_in, s, .regular);
         } else {
             const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-            const inferred = self.instantiateGenericNamed(call.callee, empty_args, tv_in, s) catch |err| switch (err) {
+            const inferred = self.instantiateGenericNamed(call.callee, empty_args, tv_in, s, .regular) catch |err| switch (err) {
                 error.SymbolNotFound => null,
                 else => return err,
             };
@@ -1686,16 +1861,25 @@ pub const Semantizer = struct {
             if (inferred) |instantiated| {
                 chosen = instantiated;
             } else {
-                chosen = if (call.module_qualifier) |module_name|
-                    try self.resolveQualifiedOverload(module_name, call.callee, tv_in.ty, s, call.input.*.location)
-                else
-                    self.resolveVisibleOverload(call.callee, tv_in.ty, s, call.input.*.location) catch |err| switch (err) {
-                    error.SymbolNotFound => {
-                        try self.addMissingFunctionDiagnostic(call.callee, tv_in.ty, s, call.input.*.location);
-                        return error.Reported;
-                    },
-                    else => return err,
-                };
+                if (call.module_qualifier) |module_name| {
+                    chosen = try self.resolveQualifiedOverload(module_name, call.callee, tv_in.ty, s, call.input.*.location);
+                } else {
+                    chosen = self.resolveVisibleOverload(call.callee, tv_in.ty, s, call.input.*.location) catch |err| switch (err) {
+                        error.SymbolNotFound => blk: {
+                            const abstract_inferred = self.instantiateGenericNamed(call.callee, empty_args, tv_in, s, .abstract_contract) catch |inner_err| switch (inner_err) {
+                                error.SymbolNotFound => null,
+                                else => return inner_err,
+                            };
+                            if (abstract_inferred) |instantiated_abstract| break :blk instantiated_abstract;
+                            if (try self.addMissingAbstractImplementationDiagnostic(call.callee, tv_in.ty, s, call.input.*.location)) {
+                                return error.Reported;
+                            }
+                            try self.addMissingFunctionDiagnostic(call.callee, tv_in.ty, s, call.input.*.location);
+                            return error.Reported;
+                        },
+                        else => return err,
+                    };
+                }
             }
         }
 
@@ -1747,7 +1931,7 @@ pub const Semantizer = struct {
                     if (!std.mem.startsWith(u8, cand.location.file, module_dir)) continue;
                     if (!(try self.functionIsVisible(cand, loc.file))) continue;
                     const expected: sg.Type = .{ .struct_type = &cand.input };
-                    if (!typ.typesCompatible(expected, in_ty)) continue;
+                    if (!abs.typesCompatibleForDispatch(expected, in_ty, s)) continue;
 
                     const score = abs.specificityScore(expected, in_ty);
                     if (best == null or score < best_score) {
@@ -1794,7 +1978,7 @@ pub const Semantizer = struct {
             if (sc.functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
                     const expected: sg.Type = .{ .struct_type = &cand.input };
-                    if (!typ.typesCompatible(expected, in_ty)) continue;
+                    if (!abs.typesCompatibleForDispatch(expected, in_ty, s)) continue;
                     if (!(try self.functionIsVisible(cand, loc.file))) {
                         hidden_private_match = true;
                         continue;
@@ -1951,6 +2135,104 @@ pub const Semantizer = struct {
             .semantic,
             "function '{s}' exists, but no overload matches the provided arguments",
             .{fn_name},
+        );
+    }
+
+    fn findTemplateFieldUsingParam(
+        self: *Semantizer,
+        tmpl: gen.GenericTemplate,
+        param_name: []const u8,
+    ) ?[]const u8 {
+        for (tmpl.input.fields) |fld| {
+            if (fld.type) |ty_node| {
+                if (self.typeUsesParam(ty_node, param_name)) return fld.name.string;
+            }
+        }
+        return null;
+    }
+
+    fn addMissingAbstractImplementationDiagnostic(
+        self: *Semantizer,
+        fn_name: []const u8,
+        input_ty: sg.Type,
+        s: *Scope,
+        loc: tok.Location,
+    ) !bool {
+        if (input_ty != .struct_type) return false;
+
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.generic_functions.getPtr(fn_name)) |list_ptr| {
+                for (list_ptr.items) |tmpl| {
+                    if (tmpl.dispatch_kind != .abstract_contract) continue;
+
+                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
+                    defer subst.deinit();
+
+                    var i: usize = 0;
+                    while (i < tmpl.param_names.len) : (i += 1) {
+                        const constraint = tmpl.param_abstract_constraints[i] orelse continue;
+                        const param_name = tmpl.param_names[i];
+                        const actual = self.inferGenericParamFromCall(tmpl, param_name, input_ty, s, &subst) orelse continue;
+                        if (abs.typeImplementsAbstract(constraint, actual, s)) continue;
+
+                        const actual_str = try typ.formatType(actual, s, self.allocator);
+                        defer self.allocator.free(actual_str);
+                        const field_name = self.findTemplateFieldUsingParam(tmpl, param_name) orelse param_name;
+                        try self.diags.add(
+                            loc,
+                            .semantic,
+                            "type '{s}' does not implement abstract '{s}' required by parameter '.{s}' of '{s}'",
+                            .{ actual_str, constraint, field_name, fn_name },
+                        );
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    fn addAmbiguousFunctionDiagnostic(
+        self: *Semantizer,
+        fn_name: []const u8,
+        maybe_input_ty: ?sg.Type,
+        s: *Scope,
+        loc: tok.Location,
+    ) !void {
+        if (maybe_input_ty) |input_ty| {
+            if (input_ty == .struct_type) {
+                const actual_sig = try typ.formatCallInput(input_ty.struct_type, s, self.allocator);
+                const available = try self.collectVisibleFunctionSignatures(fn_name, s, loc);
+                defer {
+                    self.allocator.free(actual_sig);
+                    self.allocator.free(available);
+                }
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "ambiguous call to '{s}' for arguments {s}. Possible overloads:\n{s}",
+                    .{ fn_name, actual_sig, available },
+                );
+                return;
+            }
+        }
+
+        const candidates_result = abs.buildOverloadCandidatesString(
+            fn_name,
+            if (maybe_input_ty) |input_ty| input_ty else .{ .builtin = .Any },
+            s,
+            self.allocator,
+        ) catch null;
+        const candidates = candidates_result orelse "";
+        defer if (candidates_result) |owned| self.allocator.free(owned);
+
+        try self.diags.add(
+            loc,
+            .semantic,
+            "ambiguous call to '{s}'. Possible overloads:\n{s}",
+            .{ fn_name, candidates },
         );
     }
 
@@ -2263,11 +2545,13 @@ pub const Semantizer = struct {
         stargs: syn.StructTypeLiteral,
         call_input: typ.TypedExpr,
         s: *Scope,
+        allowed_kind: gen.GenericDispatchKind,
     ) SemErr!*sg.FunctionDeclaration {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.generic_functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
+                    if (tmpl.dispatch_kind != allowed_kind) continue;
                     var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
                     defer subst.deinit();
 
@@ -2299,62 +2583,10 @@ pub const Semantizer = struct {
                         }
                     }
                     if (!ok) continue;
-
-                    const in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, &subst);
-                    const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, &subst);
-
-                    if (!(try self.refineStructTypeWithActual(in_struct_ptr, call_input.ty))) continue;
-
-                    if (s.functions.getPtr(name)) |fns| {
-                        for (fns.items) |cand| {
-                            if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
-                                return cand;
-                        }
+                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) continue;
+                    if (try self.instantiateGenericTemplate(name, tmpl, call_input, s, &subst)) |instantiated| {
+                        return instantiated;
                     }
-
-                    var child = try Scope.init(self.allocator, s, null);
-                    var it = subst.iterator();
-                    while (it.next()) |entry| {
-                        const td = try self.allocator.create(sg.TypeDeclaration);
-                        td.* = .{ .name = entry.key_ptr.*, .origin_file = tmpl.location.file, .ty = entry.value_ptr.* };
-                        try child.types.put(entry.key_ptr.*, td);
-                    }
-                    for (in_struct_ptr.fields) |fld| {
-                        const bd = try self.allocator.create(sg.BindingDeclaration);
-                        bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
-                        try child.bindings.put(fld.name, bd);
-                    }
-                    for (out_struct_ptr.fields) |fld| {
-                        const bd = try self.allocator.create(sg.BindingDeclaration);
-                        bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
-                        try child.bindings.put(fld.name, bd);
-                    }
-
-                    var body_cb: ?*sg.CodeBlock = null;
-                    if (tmpl.body) |body_node| {
-                        const body_te = try self.visitNode(body_node.*, &child);
-                        body_cb = body_te.node.content.code_block;
-                    }
-
-                    const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
-                    fn_ptr.* = .{
-                        .name = tmpl.name,
-                        .location = tmpl.location,
-                        .input = in_struct_ptr.*,
-                        .output = out_struct_ptr.*,
-                        .body = body_cb,
-                    };
-                    if (s.functions.getPtr(name)) |list_ptr2| {
-                        try list_ptr2.append(fn_ptr);
-                    } else {
-                        var lst = std.array_list.Managed(*sg.FunctionDeclaration).init(self.allocator.*);
-                        try lst.append(fn_ptr);
-                        try s.functions.put(name, lst);
-                    }
-                    const n = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, tmpl.location, self.allocator);
-                    try self.root_list.append(n);
-                    self.clearDeferred(&child);
-                    return fn_ptr;
                 }
             }
         }
@@ -2367,11 +2599,13 @@ pub const Semantizer = struct {
         type_args_syn: []const syn.Type,
         call_input: typ.TypedExpr,
         s: *Scope,
+        allowed_kind: gen.GenericDispatchKind,
     ) SemErr!*sg.FunctionDeclaration {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.generic_functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
+                    if (tmpl.dispatch_kind != allowed_kind) continue;
                     if (tmpl.param_names.len != type_args_syn.len) continue;
 
                     var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
@@ -2381,71 +2615,98 @@ pub const Semantizer = struct {
                         const resolved = try self.resolveTypeWithSubst(type_args_syn[i], s, &subst);
                         try subst.put(tmpl.param_names[i], resolved);
                     }
-
-                    const in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, &subst);
-                    const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, &subst);
-
-                    if (!(try self.refineStructTypeWithActual(in_struct_ptr, call_input.ty))) continue;
-
-                    // Check if already instantiated
-                    if (s.functions.getPtr(name)) |fns| {
-                        for (fns.items) |cand| {
-                            if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr }))
-                                return cand;
-                        }
+                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) continue;
+                    if (try self.instantiateGenericTemplate(name, tmpl, call_input, s, &subst)) |instantiated| {
+                        return instantiated;
                     }
-
-                    // Create child scope with type aliases
-                    var child = try Scope.init(self.allocator, s, null);
-                    var it = subst.iterator();
-                    while (it.next()) |entry| {
-                        const td = try self.allocator.create(sg.TypeDeclaration);
-                        td.* = .{ .name = entry.key_ptr.*, .origin_file = tmpl.location.file, .ty = entry.value_ptr.* };
-                        try child.types.put(entry.key_ptr.*, td);
-                    }
-
-                    // Register params in child scope
-                    for (in_struct_ptr.fields) |fld| {
-                        const bd = try self.allocator.create(sg.BindingDeclaration);
-                        bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
-                        try child.bindings.put(fld.name, bd);
-                    }
-                    for (out_struct_ptr.fields) |fld| {
-                        const bd = try self.allocator.create(sg.BindingDeclaration);
-                        bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
-                        try child.bindings.put(fld.name, bd);
-                    }
-
-                    var body_cb: ?*sg.CodeBlock = null;
-                    if (tmpl.body) |body_node| {
-                        const body_te = try self.visitNode(body_node.*, &child);
-                        body_cb = body_te.node.content.code_block;
-                    }
-
-                    const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
-                    fn_ptr.* = .{
-                        .name = tmpl.name,
-                        .location = tmpl.location,
-                        .input = in_struct_ptr.*,
-                        .output = out_struct_ptr.*,
-                        .body = body_cb,
-                    };
-
-                    if (s.functions.getPtr(name)) |list_ptr2| {
-                        try list_ptr2.append(fn_ptr);
-                    } else {
-                        var lst = std.array_list.Managed(*sg.FunctionDeclaration).init(self.allocator.*);
-                        try lst.append(fn_ptr);
-                        try s.functions.put(name, lst);
-                    }
-                    const n = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, tmpl.location, self.allocator);
-                    try self.root_list.append(n);
-                    self.clearDeferred(&child);
-                    return fn_ptr;
                 }
             }
         }
         return error.SymbolNotFound;
+    }
+
+    fn substSatisfiesAbstractConstraints(
+        self: *Semantizer,
+        tmpl: gen.GenericTemplate,
+        subst: *std.StringHashMap(sg.Type),
+        s: *Scope,
+    ) bool {
+        _ = self;
+        var i: usize = 0;
+        while (i < tmpl.param_names.len) : (i += 1) {
+            const constraint = tmpl.param_abstract_constraints[i] orelse continue;
+            const actual = subst.get(tmpl.param_names[i]) orelse return false;
+            if (!abs.typeImplementsAbstract(constraint, actual, s)) return false;
+        }
+        return true;
+    }
+
+    fn instantiateGenericTemplate(
+        self: *Semantizer,
+        name: []const u8,
+        tmpl: gen.GenericTemplate,
+        call_input: typ.TypedExpr,
+        s: *Scope,
+        subst: *std.StringHashMap(sg.Type),
+    ) SemErr!?*sg.FunctionDeclaration {
+        const in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, subst);
+        const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, subst);
+
+        if (!(try self.refineStructTypeWithActual(in_struct_ptr, call_input.ty))) return null;
+
+        if (s.functions.getPtr(name)) |fns| {
+            for (fns.items) |cand| {
+                if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr })) {
+                    return cand;
+                }
+            }
+        }
+
+        var child = try Scope.init(self.allocator, s, null);
+        var it = subst.iterator();
+        while (it.next()) |entry| {
+            const td = try self.allocator.create(sg.TypeDeclaration);
+            td.* = .{ .name = entry.key_ptr.*, .origin_file = tmpl.location.file, .ty = entry.value_ptr.* };
+            try child.types.put(entry.key_ptr.*, td);
+        }
+
+        for (in_struct_ptr.fields) |fld| {
+            const bd = try self.allocator.create(sg.BindingDeclaration);
+            bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
+            try child.bindings.put(fld.name, bd);
+        }
+        for (out_struct_ptr.fields) |fld| {
+            const bd = try self.allocator.create(sg.BindingDeclaration);
+            bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
+            try child.bindings.put(fld.name, bd);
+        }
+
+        var body_cb: ?*sg.CodeBlock = null;
+        if (tmpl.body) |body_node| {
+            const body_te = try self.visitNode(body_node.*, &child);
+            body_cb = body_te.node.content.code_block;
+        }
+
+        const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
+        fn_ptr.* = .{
+            .name = tmpl.name,
+            .location = tmpl.location,
+            .input = in_struct_ptr.*,
+            .output = out_struct_ptr.*,
+            .body = body_cb,
+        };
+
+        if (s.functions.getPtr(name)) |list_ptr| {
+            try list_ptr.append(fn_ptr);
+        } else {
+            var list = std.array_list.Managed(*sg.FunctionDeclaration).init(self.allocator.*);
+            try list.append(fn_ptr);
+            try s.functions.put(name, list);
+        }
+        const node = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, tmpl.location, self.allocator);
+        try self.root_list.append(node);
+        self.clearDeferred(&child);
+        return fn_ptr;
     }
 
     pub fn instantiateGenericTypeNamed(
@@ -2511,27 +2772,14 @@ pub const Semantizer = struct {
 
         const lhs_is_ptr = lhs.ty == .pointer_type;
         const rhs_is_ptr = rhs.ty == .pointer_type;
-        if (bo.operator == .addition and lhs_is_ptr != rhs_is_ptr) {
-            const int_ty = if (lhs_is_ptr) rhs.ty else lhs.ty;
-            const int_node = if (lhs_is_ptr) bo.right else bo.left;
-            const is_valid_index = int_ty == .builtin and (int_ty.builtin == .Int64 or int_ty.builtin == .UInt64);
-            if (!is_valid_index) {
-                const other_str = try typ.formatType(int_ty, s, self.allocator);
-                defer self.allocator.free(other_str);
-                try self.diags.add(
-                    int_node.*.location,
-                    .semantic,
-                    "pointer addition requires a 64-bit integer offset, but '{s}' was provided",
-                    .{other_str},
-                );
-                return error.Reported;
-            }
-
-            const bin = try self.allocator.create(sg.BinaryOperation);
-            bin.* = .{ .operator = bo.operator, .left = lhs.node, .right = rhs.node };
-            const n = try sg.makeSGNode(.{ .binary_operation = bin.* }, undefined, self.allocator);
-            try s.nodes.append(n);
-            return .{ .node = n, .ty = if (lhs_is_ptr) lhs.ty else rhs.ty };
+        if ((bo.operator == .addition or bo.operator == .subtraction) and lhs_is_ptr != rhs_is_ptr) {
+            try self.diags.add(
+                bo.left.*.location,
+                .semantic,
+                "pointer arithmetic is not allowed; cast explicitly to an integer, perform the arithmetic, and cast back",
+                .{},
+            );
+            return error.Reported;
         }
 
         rhs = try typ.coerceExprToType(lhs.ty, rhs, bo.right, s, self.allocator, self.diags);
@@ -2914,6 +3162,113 @@ pub const Semantizer = struct {
         return self.resolveTypeExpression(field.value, s);
     }
 
+    fn extractNamedTypeArgument(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        arg_name: []const u8,
+        s: *Scope,
+    ) SemErr!sg.Type {
+        const stargs = call.type_arguments_struct orelse {
+            try self.diags.add(
+                call.callee_loc,
+                .semantic,
+                "cast expects named type arguments like cast#(.to: UIntNative)(.value = ...)",
+                .{},
+            );
+            return error.Reported;
+        };
+
+        for (stargs.fields) |field| {
+            if (!std.mem.eql(u8, field.name.string, arg_name)) continue;
+            const field_ty = field.type orelse {
+                try self.diags.add(
+                    field.name.location,
+                    .semantic,
+                    "type argument '.{s}' must specify a type",
+                    .{arg_name},
+                );
+                return error.Reported;
+            };
+            return self.resolveType(field_ty, s);
+        }
+
+        try self.diags.add(
+            call.callee_loc,
+            .semantic,
+            "cast expects type argument '.{s}'",
+            .{arg_name},
+        );
+        return error.Reported;
+    }
+
+    fn extractValueArgument(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        arg_name: []const u8,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const arg_node = call.input.*;
+        if (arg_node.content != .struct_value_literal) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "builtin expects '.{s}' argument",
+                .{arg_name},
+            );
+            return error.Reported;
+        }
+
+        const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, arg_name)) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "builtin expects a single '.{s}' argument",
+                .{arg_name},
+            );
+            return error.Reported;
+        }
+
+        return self.visitNode(svl.fields[0].value.*, s);
+    }
+
+    fn handleCastBuiltin(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!typ.TypedExpr {
+        const value_te = try self.extractValueArgument(call, "value", s);
+        const target_ty = try self.extractNamedTypeArgument(call, "to", s);
+
+        if (typ.typesExactlyEqual(value_te.ty, target_ty)) {
+            return value_te;
+        }
+
+        const source_is_ptr = value_te.ty == .pointer_type;
+        const target_is_ptr = target_ty == .pointer_type;
+        const source_is_native_uint = value_te.ty == .builtin and value_te.ty.builtin == .UIntNative;
+        const target_is_native_uint = target_ty == .builtin and target_ty.builtin == .UIntNative;
+
+        if (!((source_is_ptr and target_is_native_uint) or (source_is_native_uint and target_is_ptr))) {
+            const source_str = try typ.formatType(value_te.ty, s, self.allocator);
+            const target_str = try typ.formatType(target_ty, s, self.allocator);
+            defer {
+                self.allocator.free(source_str);
+                self.allocator.free(target_str);
+            }
+            try self.diags.add(
+                call.input.*.location,
+                .semantic,
+                "unsupported explicit cast from '{s}' to '{s}'",
+                .{ source_str, target_str },
+            );
+            return error.Reported;
+        }
+
+        const cast_node = try sg.makeSGNode(.{ .explicit_cast = .{
+            .value = value_te.node,
+            .target_type = target_ty,
+        } }, call.input.*.location, self.allocator);
+        try s.nodes.append(cast_node);
+        return .{ .node = cast_node, .ty = target_ty };
+    }
+
     fn resolveTypeExpression(self: *Semantizer, node: *const syn.STNode, s: *Scope) SemErr!sg.Type {
         return switch (node.content) {
             .identifier => |name| blk: {
@@ -3051,7 +3406,7 @@ pub const Semantizer = struct {
                 if (s.lookupAbstractInfo(id)) |_| {
                     if (s.lookupAbstractDefault(id)) |def_entry|
                         break :blk def_entry.ty;
-                    break :blk .{ .builtin = .Any };
+                    break :blk error.AbstractNeedsDefault;
                 }
                 if (s.lookupType(id)) |td| {
                     if (!(try self.typeIsVisible(td, tn.location.file))) {
@@ -3075,7 +3430,9 @@ pub const Semantizer = struct {
                         }
                         if (!found) break :blk_g error.UnknownType;
                     }
-                    break :blk_g .{ .builtin = .Any };
+                    if (s.lookupAbstractDefault(base_name)) |def_entry|
+                        break :blk_g def_entry.ty;
+                    break :blk_g error.AbstractNeedsDefault;
                 }
 
                 const st_ptr = self.instantiateGenericTypeNamed(base_name, g.args, s, null) catch |err| switch (err) {
@@ -3114,6 +3471,7 @@ pub const Semantizer = struct {
         };
     }
 
+
     fn resolveTypeWithSubst(
         self: *Semantizer,
         t: syn.Type,
@@ -3139,7 +3497,9 @@ pub const Semantizer = struct {
                         }
                         if (!found) break :blk_g error.UnknownType;
                     }
-                    break :blk_g .{ .builtin = .Any };
+                    if (s.lookupAbstractDefault(base_name)) |def_entry|
+                        break :blk_g def_entry.ty;
+                    break :blk_g error.AbstractNeedsDefault;
                 }
 
                 const st_ptr = self.instantiateGenericTypeNamed(base_name, g.args, s, subst) catch |err| switch (err) {
@@ -3193,17 +3553,8 @@ pub const Semantizer = struct {
         };
 
         const loc = call.input.*.location;
-        if (value > std.math.maxInt(i32)) {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "result of builtin exceeds Int32 range",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        return try typ.makeIntLiteral(self.allocator, loc, @intCast(value), .{ .builtin = .Int32 });
+        if (value > std.math.maxInt(i64)) return error.InvalidType;
+        return try typ.makeIntLiteral(self.allocator, loc, @intCast(value), .{ .builtin = .UIntNative });
     }
 
     fn handleLengthBuiltin(
@@ -3243,7 +3594,7 @@ pub const Semantizer = struct {
                     );
                     return error.Reported;
                 }
-                return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
+                return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UIntNative });
             },
             .array_literal => |al| {
                 const len_u64: u64 = @intCast(al.length);
@@ -3256,7 +3607,7 @@ pub const Semantizer = struct {
                     );
                     return error.Reported;
                 }
-                return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
+                return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UIntNative });
             },
             else => {},
         }
@@ -3273,7 +3624,7 @@ pub const Semantizer = struct {
                 );
                 return error.Reported;
             }
-            return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UInt64 });
+            return try typ.makeIntLiteral(self.allocator, arg_loc, @intCast(len_u64), .{ .builtin = .UIntNative });
         }
 
         return error.SymbolNotFound;

@@ -4,6 +4,13 @@ const expectEqual = std.testing.expectEqual;
 const allocator = std.heap.page_allocator;
 // const allocator = std.testing.allocator;
 
+fn modulePathFor(path: []const u8) []const u8 {
+    if (std.mem.endsWith(u8, path, "/main.rg")) {
+        return std.fs.path.dirname(path) orelse path;
+    }
+    return path;
+}
+
 fn clean() !void {
     // Borrar ./output y ./output.ll si existen
     const cwd = std.fs.cwd();
@@ -19,7 +26,7 @@ fn build(name: []const u8) !void {
     // Ejecutar el comando de compilación
     const result = try std.process.Child.run(.{
         .allocator = allocator,
-        .argv = &[_][]const u8{ "./zig-out/bin/argi", "build", name },
+        .argv = &[_][]const u8{ "./zig-out/bin/argi", "build", modulePathFor(name) },
     });
     try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
 }
@@ -27,7 +34,7 @@ fn build(name: []const u8) !void {
 fn buildExpectFail(name: []const u8, expected_stderr: []const u8) !void {
     const result = try std.process.Child.run(.{
         .allocator = allocator,
-        .argv = &[_][]const u8{ "./zig-out/bin/argi", "build", name },
+        .argv = &[_][]const u8{ "./zig-out/bin/argi", "build", modulePathFor(name) },
     });
 
     switch (result.term) {
@@ -38,12 +45,16 @@ fn buildExpectFail(name: []const u8, expected_stderr: []const u8) !void {
     try expect(std.mem.indexOf(u8, result.stderr, expected_stderr) != null);
 }
 
-fn run() !void {
-    // Ejecutar el comando de compilación
-    _ = try std.process.Child.run(.{
+fn runExpect(expected_code: u8) !void {
+    const result = try std.process.Child.run(.{
         .allocator = allocator,
         .argv = &[_][]const u8{"./output"},
     });
+    try expectEqual(std.process.Child.Term{ .Exited = expected_code }, result.term);
+}
+
+fn run() !void {
+    try runExpect(0);
 }
 
 test "00_minimal_main" {
@@ -67,12 +78,18 @@ test "02_constants_and_variables" {
 test "03_expressions_and_type_inference" {
     try clean();
     try build("tests/03_expressions_and_type_inference/main.rg");
-    try run();
+    try runExpect(3);
 }
 
 test "04_literals" {
     try clean();
     try build("tests/04_literals/main.rg");
+    try run();
+}
+
+test "06_if" {
+    try clean();
+    try build("tests/06_if/main.rg");
     try run();
 }
 
@@ -94,22 +111,46 @@ test "052_struct_field_store" {
     try run();
 }
 
+test "053X_integer_literal_overflow" {
+    try clean();
+    try buildExpectFail(
+        "tests/053X_integer_literal_overflow/main.rg",
+        "integer literal 300 does not fit in 'UInt8' (max 255)",
+    );
+}
+
+test "054X_signed_integer_literal_overflow" {
+    try clean();
+    try buildExpectFail(
+        "tests/054X_signed_integer_literal_overflow/main.rg",
+        "integer literal 128 does not fit in 'Int8' (min -128, max 127)",
+    );
+}
+
 test "11_function_calling" {
     try clean();
     try build("tests/11_function_calling/main.rg");
-    try run();
+    try runExpect(42);
 }
 
 test "12_function_args" {
     try clean();
     try build("tests/12_function_args/main.rg");
-    try run();
+    try runExpect(42);
 }
 
 test "130_multiple_dispatch" {
     try clean();
     try build("tests/130_multiple_dispatch/main.rg");
-    try run();
+    try runExpect(2);
+}
+
+test "131X_multiple_dispatch_ambiguous" {
+    try clean();
+    try buildExpectFail(
+        "tests/131X_multiple_dispatch_ambiguous/main.rg",
+        "ambiguous call to 'choose2'",
+    );
 }
 
 test "21_named_struct_types" {
@@ -130,6 +171,52 @@ test "222_read-only_vs_read-and-write_pointers" {
     try run();
 }
 
+test "223X_assign_through_readonly_pointer" {
+    try clean();
+    try buildExpectFail(
+        "tests/223X_assign_through_readonly_pointer/main.rg",
+        "cannot assign through pointer '&Int32' because it is read-only",
+    );
+}
+
+test "224X_read-write_pointer_to_constant" {
+    try clean();
+    try buildExpectFail(
+        "tests/224X_read-write_pointer_to_constant/main.rg",
+        "binding 'value' is immutable",
+    );
+}
+
+test "225X_pass_readonly_pointer_to_mutable_param" {
+    try clean();
+    try buildExpectFail(
+        "tests/225X_pass_readonly_pointer_to_mutable_param/main.rg",
+        "no overload of 'increment' accepts arguments (.ptr: &Int32)",
+    );
+}
+
+test "226_explicit_pointer_casts" {
+    try clean();
+    try build("tests/226_explicit_pointer_casts/main.rg");
+    try run();
+}
+
+test "227X_pointer_arithmetic_requires_cast" {
+    try clean();
+    try buildExpectFail(
+        "tests/227X_pointer_arithmetic_requires_cast/main.rg",
+        "pointer arithmetic is not allowed; cast explicitly to an integer, perform the arithmetic, and cast back",
+    );
+}
+
+test "228X_array_index_requires_uint_native" {
+    try clean();
+    try buildExpectFail(
+        "tests/228X_array_index_requires_uint_native/main.rg",
+        "array index must be 'UIntNative'",
+    );
+}
+
 test "30_core_and_libc" {
     try clean();
     try build("tests/30_core_and_libc/main.rg");
@@ -139,25 +226,25 @@ test "30_core_and_libc" {
 test "321_generic_functions" {
     try clean();
     try build("tests/321_generic_functions/main.rg");
-    try run();
+    try runExpect(42);
 }
 
 test "322_generic_structs" {
     try clean();
     try build("tests/322_generic_structs/main.rg");
-    try run();
+    try runExpect(42);
 }
 
 test "323_generic_functions_multi" {
     try clean();
     try build("tests/323_generic_functions_multi/main.rg");
-    try run();
+    try runExpect(42);
 }
 
 test "324_generic_structs_multi" {
     try clean();
     try build("tests/324_generic_structs_multi/main.rg");
-    try run();
+    try runExpect(20);
 }
 
 test "331_abstract" {
@@ -166,10 +253,68 @@ test "331_abstract" {
     try run();
 }
 
+test "332X_abstract_missing_requirement" {
+    try clean();
+    try buildExpectFail(
+        "tests/332X_abstract_missing_requirement/main.rg",
+        "type does not implement abstract 'Animal':\n  missing function: speak (.who: Dog)",
+    );
+}
+
+test "333X_abstract_wrong_signature" {
+    try clean();
+    try buildExpectFail(
+        "tests/333X_abstract_wrong_signature/main.rg",
+        "type does not implement abstract 'Animal':\n  missing function: speak (.who: Dog)",
+    );
+}
+
 test "334_abstract_instantiation" {
     try clean();
     try build("tests/334_abstract_instantiation/main.rg");
     try run();
+}
+
+test "339_abstract_self_output" {
+    try clean();
+    try build("tests/339_abstract_self_output/main.rg");
+    try run();
+}
+
+test "340X_abstract_self_output_wrong" {
+    try clean();
+    try buildExpectFail(
+        "tests/340X_abstract_self_output_wrong/main.rg",
+        "type does not implement abstract 'Animal':\n  missing function: clone (.who: Dog)",
+    );
+}
+
+test "341_abstract_function_input_monomorphization" {
+    try clean();
+    try build("tests/341_abstract_function_input_monomorphization/main.rg");
+    try runExpect(7);
+}
+
+test "342_abstract_dispatch_prefers_concrete" {
+    try clean();
+    try build("tests/342_abstract_dispatch_prefers_concrete/main.rg");
+    try runExpect(2);
+}
+
+test "336X_abstract_function_input_requires_implementation" {
+    try clean();
+    try buildExpectFail(
+        "tests/336X_abstract_function_input_requires_implementation/main.rg",
+        "type 'Int32' does not implement abstract 'ExampleAbstract' required by parameter '.value' of 'use_value'",
+    );
+}
+
+test "338X_abstract_function_output_requires_default" {
+    try clean();
+    try buildExpectFail(
+        "tests/338X_abstract_function_output_requires_default/main.rg",
+        "abstract types without a default are not supported in function outputs yet",
+    );
 }
 
 test "351_init" {
@@ -220,10 +365,16 @@ test "413_arrays" {
     try run();
 }
 
+test "417_array_index_uint_native" {
+    try clean();
+    try build("tests/417_array_index_uint_native/main.rg");
+    try run();
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try build("tests/62_folder_module_namespace/main.rg");
-    try run();
+    try runExpect(1);
 }
 
 test "63_import_current_relative" {

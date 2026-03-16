@@ -47,3 +47,17 @@ All values will be automatically deinitialized after their last use.
 
 All types must implement init() and deinit() methods.
 
+Also, passing a value by value must mean getting an independent value.
+
+That means:
+
+- If a type implements `copy()`, assigning it or passing it by value performs
+  an implicit deep copy.
+- If a type does not implement `copy()`, it cannot be used in value position.
+  The compiler should reject it and suggest using `&` or `$&`.
+- `deinit()` is still inserted automatically, so the user keeps the stack-like
+  mental model for destruction.
+
+This avoids shallow-copy surprises while keeping manual memory management
+explicit where a true copy does not make sense.
+

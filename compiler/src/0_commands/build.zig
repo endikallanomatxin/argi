@@ -44,11 +44,28 @@ fn printTokenList(all: []const token.Token) void {
     }
 }
 
+fn resolveBuildModuleDir(path: []const u8) ![]u8 {
+    if (std.fs.cwd().openDir(path, .{})) |opened_dir| {
+        var dir = opened_dir;
+        dir.close();
+        return std.fs.path.resolve(allocator, &.{path});
+    } else |dir_err| switch (dir_err) {
+        error.NotDir, error.FileNotFound => {},
+        else => return dir_err,
+    }
+
+    _ = try std.fs.cwd().statFile(path);
+    const dir = std.fs.path.dirname(path) orelse ".";
+    return std.fs.path.resolve(allocator, &.{dir});
+}
+
 pub fn compile(args: []const []const u8) !void {
-    const user_path = args[0];
+    const target_path = args[0];
     const flags = parseFlags(args[1..]);
+    const module_dir = try resolveBuildModuleDir(target_path);
+    defer allocator.free(module_dir);
     // 1. Reunir ficheros ──────────────────────────────────────────────────
-    var files = try sf.collect(&allocator, "core", user_path);
+    var files = try sf.collectModule(&allocator, "core", module_dir);
     defer sf.freeList(&allocator, &files);
 
     // 2. Diagnósticos globales ────────────────────────────────────────────

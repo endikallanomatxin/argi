@@ -7,9 +7,9 @@ pub fn main() !void {
     defer std.process.argsFree(std.heap.page_allocator, args);
 
     if (args.len < 2) {
-        std.debug.print("Usage: argi <command> [file] [options]\n", .{});
+        std.debug.print("Usage: argi <command> [module-directory] [options]\n", .{});
         std.debug.print("Available commands:\n", .{});
-        std.debug.print("  build <file.rg> [flags]  - Compile program to a binary\n", .{});
+        std.debug.print("  build <directory> [flags] - Compile a folder module to a binary\n", .{});
         std.debug.print("  lsp                       - Start LSP server\n", .{});
         std.debug.print("\nBuild flags (on build error):\n", .{});
         std.debug.print("  --on-build-error-show-cascade          Print all cascading diagnostics\n", .{});
@@ -23,7 +23,7 @@ pub fn main() !void {
 
     if (std.mem.eql(u8, command, "build")) {
         if (args.len < 3) {
-            std.debug.print("Error: file path required\n", .{});
+            std.debug.print("Error: module directory required\n", .{});
             return;
         }
         const build_args = args[2..];

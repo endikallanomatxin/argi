@@ -8,6 +8,11 @@ When passsing arguments to functions/structs:
 - $&value (MUT  in mojo). Reference and can mutate
 -   value (OWN  in mojo). Owned, can mutate
 
+Passing by value means requesting an independent value. For non-trivial types
+that should translate to an implicit call to `copy()`. If the type does not
+implement `copy()`, using it as a value argument is a compile error and the
+user must switch to `&` or `$&`.
+
 
 Use:
 
@@ -25,6 +30,22 @@ foo (.v:  &Type&)
 foo (.v: $&Type&)
 foo (.v:   Type)
 ```
+
+Examples:
+
+```
+print_twice (.s: String) -> () := {
+    ...
+}
+
+write_to_file (.f: $&File, .content: String) -> () := {
+    ...
+}
+```
+
+In the first case `String` is copied on entry if needed. In the second case
+`File` is passed by mutable reference because files are not expected to be
+copyable.
 
 > También tiene sentido usarlo en los access de los structs
 
@@ -100,4 +121,10 @@ passing the same value into two `Int` arguments, the callee will receive two
 copies of the value.
 
 
----
+## Summary
+
+- `Type` means independent value semantics
+- `&Type` means shared read access
+- `$&Type` means exclusive mutable access
+- non-copyable types cannot be passed as `Type`
+

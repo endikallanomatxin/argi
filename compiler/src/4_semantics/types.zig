@@ -26,9 +26,14 @@ pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
             .builtin => |bb| ab == bb,
             else => false,
         },
+        .abstract_type => |aat| switch (b) {
+            .abstract_type => |bat| std.mem.eql(u8, aat.name, bat.name),
+            else => false,
+        },
 
         .struct_type => |ast| switch (b) {
             .builtin => false,
+            .abstract_type => false,
 
             .struct_type => |bst| blk: {
                 // Keep for legacy: structural comparison of anonymous structs
@@ -84,6 +89,10 @@ pub fn typesExactlyEqual(a: sg.Type, b: sg.Type) bool {
             .builtin => |bb| ab == bb,
             else => false,
         },
+        .abstract_type => |aat| switch (b) {
+            .abstract_type => |bat| std.mem.eql(u8, aat.name, bat.name),
+            else => false,
+        },
         .struct_type => |ast| switch (b) {
             .struct_type => |bst| ast == bst, // nominal: same named type instance
             else => false,
@@ -119,7 +128,7 @@ pub fn isAny(t: sg.Type) bool {
 pub fn isIntegerType(t: sg.Type) bool {
     return switch (t) {
         .builtin => |bt| switch (bt) {
-            .Int8, .Int16, .Int32, .Int64, .UInt8, .UInt16, .UInt32, .UInt64 => true,
+            .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64 => true,
             else => false,
         },
         else => false,
@@ -150,6 +159,10 @@ pub fn typesCompatible(expected: sg.Type, actual: sg.Type) bool {
     return switch (expected) {
         .builtin => |eb| switch (actual) {
             .builtin => |ab| eb == ab,
+            else => false,
+        },
+        .abstract_type => |eat| switch (actual) {
+            .abstract_type => |aat| std.mem.eql(u8, eat.name, aat.name),
             else => false,
         },
         .struct_type => |est| switch (actual) {
@@ -232,6 +245,7 @@ fn appendType(buf: *std.array_list.Managed(u8), t: sg.Type) !void {
             const s = @tagName(bt);
             try buf.appendSlice(s);
         },
+        .abstract_type => |at| try buf.appendSlice(at.name),
         .pointer_type => |ptr_info_ptr| {
             const ptr_info = ptr_info_ptr.*;
             const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
@@ -271,6 +285,7 @@ pub fn appendTypePretty(buf: *std.array_list.Managed(u8), t: sg.Type, s: *Scope)
             const sname = @tagName(bt);
             try buf.appendSlice(sname);
         },
+        .abstract_type => |at| try buf.appendSlice(at.name),
         .pointer_type => |ptr_info_ptr| {
             const ptr_info = ptr_info_ptr.*;
             const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
@@ -319,9 +334,11 @@ pub fn computeTypeSize(ty: sg.Type) u64 {
             .Int16, .UInt16, .Float16 => 2,
             .Int32, .UInt32, .Float32 => 4,
             .Int64, .UInt64, .Float64 => 8,
+            .UIntNative => pointer_size_bytes,
             .Type => pointer_size_bytes,
             .Any => pointer_size_bytes,
         },
+        .abstract_type => 0,
         .pointer_type => pointer_size_bytes,
         .struct_type => |st| blk: {
             const max_align = computeTypeAlignment(.{ .struct_type = st });
@@ -351,9 +368,11 @@ pub fn computeTypeAlignment(ty: sg.Type) u64 {
             .Int16, .UInt16, .Float16 => 2,
             .Int32, .UInt32, .Float32 => 4,
             .Int64, .UInt64, .Float64 => 8,
+            .UIntNative => pointer_alignment_bytes,
             .Type => pointer_alignment_bytes,
             .Any => pointer_alignment_bytes,
         },
+        .abstract_type => 1,
         .pointer_type => pointer_alignment_bytes,
         .struct_type => |st| blk: {
             var max_align: u64 = 1;
@@ -383,6 +402,7 @@ pub fn makeIntLiteral(
     const node = try allocator.create(sg.SGNode);
     node.* = .{
         .location = loc,
+        .sem_type = ty,
         .content = .{ .value_literal = .{ .int_literal = value } },
     };
     return .{ .node = node, .ty = ty };
@@ -398,6 +418,7 @@ pub fn makeTypeLiteral(
     const node = try allocator.create(sg.SGNode);
     node.* = .{
         .location = loc,
+        .sem_type = .{ .builtin = .Type },
         .content = .{ .type_literal = type_node },
     };
     return .{ .node = node, .ty = .{ .builtin = .Type } };
@@ -432,7 +453,7 @@ pub fn intLiteralAs(
             }
             break :blk_signed try makeIntLiteral(allocator, loc, value, .{ .builtin = target });
         },
-        .UInt8, .UInt16, .UInt32, .UInt64 => blk_unsigned: {
+        .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64 => blk_unsigned: {
             if (value < 0) {
                 try diags.add(
                     loc,
@@ -443,6 +464,7 @@ pub fn intLiteralAs(
                 return error.Reported;
             }
             const max_val: u64 = switch (target) {
+                .UIntNative => std.math.maxInt(usize),
                 .UInt8 => std.math.maxInt(u8),
                 .UInt16 => std.math.maxInt(u16),
                 .UInt32 => std.math.maxInt(u32),
@@ -608,48 +630,63 @@ pub fn coerceStructLiteral(
     const lit = expr.node.content.struct_value_literal;
     const actual_struct = lit.ty.struct_type;
 
-    if (expected.fields.len != actual_struct.fields.len or
-        expected.fields.len != lit.fields.len)
-    {
+    if (lit.fields.len != actual_struct.fields.len) {
         return expr;
     }
 
     var coerced_fields = try allocator.alloc(sg.StructValueLiteralField, expected.fields.len);
     errdefer allocator.free(coerced_fields);
 
-    var i: usize = 0;
-    while (i < expected.fields.len) : (i += 1) {
-        const exp_field = expected.fields[i];
-        const act_field = actual_struct.fields[i];
-        if (!std.mem.eql(u8, exp_field.name, act_field.name)) {
+    for (lit.fields) |actual_field| {
+        if (findFieldByName(expected, actual_field.name) == null) {
             allocator.free(coerced_fields);
             return expr;
         }
+    }
 
-        const field_node = @constCast(lit.fields[i].value);
-        var field_expr = TypedExpr{
-            .node = field_node,
-            .ty = act_field.ty,
-        };
-        field_expr = try coerceExprToType(exp_field.ty, field_expr, expr_node, s, allocator, diags);
-        if (!typesExactlyEqual(exp_field.ty, field_expr.ty)) {
-            const expected_ty = try formatType(exp_field.ty, s, allocator);
-            const actual_ty = try formatType(field_expr.ty, s, allocator);
-            defer {
-                allocator.free(expected_ty);
-                allocator.free(actual_ty);
+    var i: usize = 0;
+    while (i < expected.fields.len) : (i += 1) {
+        const exp_field = expected.fields[i];
+        const act_field_ptr = findFieldByName(actual_struct, exp_field.name);
+        const lit_field_ptr = findStructValueFieldByName(lit, exp_field.name);
+
+        if (act_field_ptr != null and lit_field_ptr != null) {
+            const act_field = act_field_ptr.?;
+            const lit_field = lit_field_ptr.?;
+            const field_node = @constCast(lit_field.value);
+            var field_expr = TypedExpr{
+                .node = field_node,
+                .ty = act_field.ty,
+            };
+            field_expr = try coerceExprToType(exp_field.ty, field_expr, expr_node, s, allocator, diags);
+            if (!typesExactlyEqual(exp_field.ty, field_expr.ty)) {
+                const expected_ty = try formatType(exp_field.ty, s, allocator);
+                const actual_ty = try formatType(field_expr.ty, s, allocator);
+                defer {
+                    allocator.free(expected_ty);
+                    allocator.free(actual_ty);
+                }
+                try diags.add(
+                    expr_node.location,
+                    .semantic,
+                    "cannot initialize field '.{s}' with '{s}' (expected '{s}')",
+                    .{ exp_field.name, actual_ty, expected_ty },
+                );
+                allocator.free(coerced_fields);
+                return error.Reported;
             }
-            try diags.add(
-                expr_node.location,
-                .semantic,
-                "cannot initialize field '.{s}' with '{s}' (expected '{s}')",
-                .{ exp_field.name, actual_ty, expected_ty },
-            );
-            allocator.free(coerced_fields);
-            return error.Reported;
+
+            coerced_fields[i] = .{ .name = exp_field.name, .value = field_expr.node };
+            continue;
         }
 
-        coerced_fields[i] = .{ .name = exp_field.name, .value = field_expr.node };
+        if (exp_field.default_value) |default_node| {
+            coerced_fields[i] = .{ .name = exp_field.name, .value = default_node };
+            continue;
+        }
+
+        allocator.free(coerced_fields);
+        return expr;
     }
 
     const lit_ptr = try allocator.create(sg.StructValueLiteral);
@@ -661,6 +698,13 @@ pub fn coerceStructLiteral(
         .content = .{ .struct_value_literal = lit_ptr },
     };
     return .{ .node = node, .ty = .{ .struct_type = expected } };
+}
+
+fn findStructValueFieldByName(lit: *const sg.StructValueLiteral, name: []const u8) ?*const sg.StructValueLiteralField {
+    for (lit.fields) |*field| {
+        if (std.mem.eql(u8, field.name, name)) return field;
+    }
+    return null;
 }
 
 pub fn ensureReadOnlyPointer(expr_node: *const syn.STNode, te: TypedExpr, allocator: *const std.mem.Allocator, diags: *diagnostics.Diagnostics) err.SemErr!TypedExpr {

@@ -17,6 +17,7 @@ pub const Scope = struct {
 
 pub const SGNode = struct {
     location: tok.Location,
+    sem_type: ?Type = null,
     content: Content,
 };
 
@@ -24,6 +25,7 @@ pub inline fn makeSGNode(content: Content, location: tok.Location, allocator: *c
     const node = try allocator.create(SGNode);
     node.* = SGNode{
         .location = location,
+        .sem_type = null,
         .content = content,
     };
     return node;
@@ -63,6 +65,7 @@ pub const Content = union(enum) {
     pointer_assignment: PointerAssignment,
     type_initializer: TypeInitializer,
     type_literal: *const TypeLiteral,
+    explicit_cast: ExplicitCast,
 };
 
 //
@@ -70,9 +73,14 @@ pub const Content = union(enum) {
 
 pub const Type = union(enum) {
     builtin: BuiltinType,
+    abstract_type: *const AbstractType,
     struct_type: *const StructType,
     pointer_type: *const PointerType,
     array_type: *const ArrayType,
+};
+
+pub const AbstractType = struct {
+    name: []const u8,
 };
 
 pub const PointerType = struct {
@@ -90,6 +98,7 @@ pub const BuiltinType = enum {
     Int16,
     Int32,
     Int64,
+    UIntNative,
     UInt8,
     UInt16,
     UInt32,
@@ -152,6 +161,11 @@ pub const ArrayStore = struct {
 
 pub const TypeLiteral = struct {
     ty: Type,
+};
+
+pub const ExplicitCast = struct {
+    value: *const SGNode,
+    target_type: Type,
 };
 
 pub const StructValueLiteral = struct {
