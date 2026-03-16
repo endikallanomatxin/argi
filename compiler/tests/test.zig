@@ -161,6 +161,30 @@ test "14_pipe_pointer" {
     try runExpect(43);
 }
 
+test "15X_pipe_requires_parentheses" {
+    try clean();
+    try buildExpectFail(
+        "tests/15X_pipe_requires_parentheses/main.rg",
+        "pipe right-hand side must be a call with parentheses",
+    );
+}
+
+test "16X_pipe_requires_placeholder" {
+    try clean();
+    try buildExpectFail(
+        "tests/16X_pipe_requires_placeholder/main.rg",
+        "pipe right-hand side must use at least one argument placeholder",
+    );
+}
+
+test "17X_pipe_expression_placeholder_not_supported" {
+    try clean();
+    try buildExpectFail(
+        "tests/17X_pipe_expression_placeholder_not_supported/main.rg",
+        "pipe placeholders are only supported as '_', '&_', '$&_', '_.field', or '..variant' payload access for now",
+    );
+}
+
 test "130_multiple_dispatch" {
     try clean();
     try expectSuccessfulBuild("tests/130_multiple_dispatch/main.rg");

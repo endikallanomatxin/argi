@@ -2390,6 +2390,23 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
+        var found_placeholder = false;
+        for (pipe.call.args) |arg| {
+            if (syntaxNodeContainsPipePlaceholder(arg)) {
+                found_placeholder = true;
+                break;
+            }
+        }
+        if (!found_placeholder) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "pipe right-hand side must use at least one argument placeholder",
+                .{},
+            );
+            return error.Reported;
+        }
+
         for (pipe.call.args) |arg| {
             try evaluated_args.append(try self.evalPipeArg(arg, left_te, s));
         }
