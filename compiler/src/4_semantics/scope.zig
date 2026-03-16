@@ -50,6 +50,50 @@ pub const Scope = struct {
         };
     }
 
+    pub fn appendAbstractImpl(self: *Scope, name: []const u8, entry: abs.AbstractImplEntry) !void {
+        if (self.abstract_impls.getPtr(name)) |list_ptr| {
+            try list_ptr.append(entry);
+            return;
+        }
+
+        var list = std.array_list.Managed(abs.AbstractImplEntry).init(self.allocator.*);
+        try list.append(entry);
+        try self.abstract_impls.put(name, list);
+    }
+
+    pub fn appendGenericFunctionTemplate(self: *Scope, name: []const u8, tmpl: gen.GenericTemplate) !void {
+        if (self.generic_functions.getPtr(name)) |list_ptr| {
+            try list_ptr.append(tmpl);
+            return;
+        }
+
+        var list = std.array_list.Managed(gen.GenericTemplate).init(self.allocator.*);
+        try list.append(tmpl);
+        try self.generic_functions.put(name, list);
+    }
+
+    pub fn appendGenericTypeTemplate(self: *Scope, name: []const u8, tmpl: gen.GenericTypeTemplate) !void {
+        if (self.generic_types.getPtr(name)) |list_ptr| {
+            try list_ptr.append(tmpl);
+            return;
+        }
+
+        var list = std.array_list.Managed(gen.GenericTypeTemplate).init(self.allocator.*);
+        try list.append(tmpl);
+        try self.generic_types.put(name, list);
+    }
+
+    pub fn appendFunction(self: *Scope, name: []const u8, fd: *sg.FunctionDeclaration) !void {
+        if (self.functions.getPtr(name)) |list_ptr| {
+            try list_ptr.append(fd);
+            return;
+        }
+
+        var list = std.array_list.Managed(*sg.FunctionDeclaration).init(self.allocator.*);
+        try list.append(fd);
+        try self.functions.put(name, list);
+    }
+
     pub fn lookupBinding(self: *Scope, n: []const u8) ?*sg.BindingDeclaration {
         if (self.bindings.get(n)) |b| return b;
         if (self.parent) |p| return p.lookupBinding(n);
