@@ -791,14 +791,14 @@ pub const Syntaxer = struct {
     }
 
     fn parseExpression(self: *Syntaxer) SyntaxerError!*syn.STNode {
-        const lhs = try self.parsePrimary();
+        var lhs = try self.parsePrimary();
 
-        if (self.tokenIs(.pipe)) {
+        while (self.tokenIs(.pipe)) {
             const pipe_loc = self.tokenLocation();
             self.advanceOne();
             self.skipNewLinesAndComments();
             const call = try self.parsePipeCall();
-            return try self.makeNode(
+            lhs = try self.makeNode(
                 .{ .pipe_expression = .{ .left = lhs, .call = call } },
                 pipe_loc,
             );
