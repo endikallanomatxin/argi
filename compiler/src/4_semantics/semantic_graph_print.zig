@@ -96,8 +96,19 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
         },
 
         .value_literal => |v| printValueLiteral(&v, lvl),
-        .choice_literal => |name| {
-            std.debug.print("ChoiceLiteral ..{s}\n", .{name});
+        .choice_literal => |lit| {
+            std.debug.print("ChoiceLiteral tag={d}\n", .{lit.variant_index});
+            if (lit.payload) |payload| {
+                indent(lvl + 1);
+                std.debug.print("Payload:\n", .{});
+                printNode(payload, lvl + 2);
+            }
+        },
+        .choice_payload_access => |acc| {
+            std.debug.print("ChoicePayloadAccess variant={d}\n", .{acc.variant_index});
+            indent(lvl + 1);
+            std.debug.print("Choice:\n", .{});
+            printNode(acc.choice_value, lvl + 2);
         },
 
         .list_literal => |ll| {

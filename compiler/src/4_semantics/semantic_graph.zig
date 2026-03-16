@@ -42,10 +42,11 @@ pub const Content = union(enum) {
     function_call: *FunctionCall,
     code_block: *CodeBlock,
     value_literal: ValueLiteral,
-    choice_literal: []const u8,
+    choice_literal: *const ChoiceLiteral,
     list_literal: *const ListLiteral,
     struct_value_literal: *const StructValueLiteral,
     struct_field_access: *const StructFieldAccess,
+    choice_payload_access: *const ChoicePayloadAccess,
     array_literal: *const ArrayLiteral,
     array_index: ArrayIndex,
     array_store: ArrayStore,
@@ -92,6 +93,20 @@ pub const ChoiceType = struct {
 pub const ChoiceVariant = struct {
     name: []const u8,
     value: i32,
+    payload_type: ?Type = null,
+};
+
+pub const ChoiceLiteral = struct {
+    variant_name: []const u8,
+    choice_type: *const ChoiceType,
+    variant_index: u32,
+    payload: ?*const SGNode,
+};
+
+pub const ChoicePayloadAccess = struct {
+    choice_value: *const SGNode,
+    variant_index: u32,
+    payload_type: Type,
 };
 
 pub const PointerType = struct {

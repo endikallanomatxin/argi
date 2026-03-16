@@ -40,9 +40,10 @@ pub const Content = union(enum) {
     struct_type_literal: StructTypeLiteral,
     choice_type_literal: ChoiceTypeLiteral,
     struct_value_literal: StructValueLiteral,
-    choice_literal: Name,
+    choice_literal: ChoiceLiteral,
 
     struct_field_access: StructFieldAccess,
+    choice_payload_access: ChoicePayloadAccess,
     index_access: IndexAccess,
 
     return_statement: ReturnStatement,
@@ -192,6 +193,12 @@ pub const ChoiceTypeLiteral = struct {
 pub const ChoiceTypeLiteralVariant = struct {
     name: Name,
     is_default: bool,
+    payload_type: ?Type = null,
+};
+
+pub const ChoiceLiteral = struct {
+    name: Name,
+    payload: ?*STNode,
 };
 
 pub const StructValueLiteralField = struct {
@@ -202,6 +209,11 @@ pub const StructValueLiteralField = struct {
 pub const StructFieldAccess = struct {
     struct_value: *STNode,
     field_name: Name,
+};
+
+pub const ChoicePayloadAccess = struct {
+    choice_value: *STNode,
+    variant_name: Name,
 };
 
 pub const IndexAccess = struct {
