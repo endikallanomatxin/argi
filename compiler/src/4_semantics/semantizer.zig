@@ -963,6 +963,8 @@ pub const Semantizer = struct {
                     .name = f.name.string,
                     .location = loc,
                     .param_names = f.generic_params,
+                    .param_abstract_constraints = try self.allocEmptyAbstractConstraintSlice(f.generic_params.len),
+                    .dispatch_kind = .regular,
                     .input = f.input,
                     .output = f.output,
                     .body = f.body,
@@ -973,6 +975,8 @@ pub const Semantizer = struct {
                     .name = f.name.string,
                     .location = loc,
                     .param_names = f.generic_params,
+                    .param_abstract_constraints = try self.allocEmptyAbstractConstraintSlice(f.generic_params.len),
+                    .dispatch_kind = .regular,
                     .input = f.input,
                     .output = f.output,
                     .body = f.body,
@@ -980,6 +984,16 @@ pub const Semantizer = struct {
                 try p.generic_functions.put(f.name.string, new_list);
             }
             // Return a no-op node for generic template
+            const noop = try sg.makeSGNode(.{ .code_block = blk2: {
+                const empty = try self.allocator.create(sg.CodeBlock);
+                empty.* = .{ .nodes = &.{}, .ret_val = null };
+                break :blk2 empty;
+            } }, loc, self.allocator);
+            try p.nodes.append(noop);
+            return .{ .node = noop, .ty = .{ .builtin = .Any } };
+        }
+
+        if (try self.registerAbstractContractTemplateIfNeeded(f, p, loc)) {
             const noop = try sg.makeSGNode(.{ .code_block = blk2: {
                 const empty = try self.allocator.create(sg.CodeBlock);
                 empty.* = .{ .nodes = &.{}, .ret_val = null };
@@ -1080,6 +1094,156 @@ pub const Semantizer = struct {
         try p.nodes.append(n);
         if (p.parent == null) try self.root_list.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn allocEmptyAbstractConstraintSlice(self: *Semantizer, len: usize) ![]const ?[]const u8 {
+        const slice = try self.allocator.alloc(?[]const u8, len);
+        for (slice, 0..) |_, i| slice[i] = null;
+        return slice;
+    }
+
+    fn rewriteAbstractTypeForTemplate(
+        self: *Semantizer,
+        ty: syn.Type,
+        hidden_name: []const u8,
+        abstract_name: []const u8,
+    ) !syn.Type {
+        return switch (ty) {
+            .type_name => |tn| {
+                if (std.mem.eql(u8, tn.string, abstract_name)) {
+                    return .{ .type_name = .{ .string = hidden_name, .location = tn.location } };
+                }
+                return ty;
+            },
+            .pointer_type => |ptr_info| blk: {
+                const child = try self.allocator.create(syn.Type);
+                child.* = try self.rewriteAbstractTypeForTemplate(ptr_info.child.*, hidden_name, abstract_name);
+
+                const ptr = try self.allocator.create(syn.PointerType);
+                ptr.* = .{
+                    .mutability = ptr_info.mutability,
+                    .child = child,
+                };
+                break :blk .{ .pointer_type = ptr };
+            },
+            .array_type => |arr_info| blk: {
+                const element = try self.allocator.create(syn.Type);
+                element.* = try self.rewriteAbstractTypeForTemplate(arr_info.element.*, hidden_name, abstract_name);
+
+                const arr = try self.allocator.create(syn.ArrayType);
+                arr.* = .{
+                    .length = arr_info.length,
+                    .element = element,
+                };
+                break :blk .{ .array_type = arr };
+            },
+            .struct_type_literal => |st| blk: {
+                var fields = try self.allocator.alloc(syn.StructTypeLiteralField, st.fields.len);
+                for (st.fields, 0..) |field, i| {
+                    fields[i] = field;
+                    if (field.type) |field_ty| {
+                        fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, abstract_name);
+                    }
+                }
+                break :blk .{ .struct_type_literal = .{ .fields = fields } };
+            },
+            .generic_type_instantiation => ty,
+        };
+    }
+
+    fn outputUsesAbstractWithoutDefault(self: *Semantizer, ty: syn.Type, s: *Scope) bool {
+        return switch (ty) {
+            .type_name => |tn| {
+                if (s.lookupAbstractInfo(tn.string) != null and s.lookupAbstractDefault(tn.string) == null) return true;
+                return false;
+            },
+            .pointer_type => |ptr_info| self.outputUsesAbstractWithoutDefault(ptr_info.child.*, s),
+            .array_type => |arr_info| self.outputUsesAbstractWithoutDefault(arr_info.element.*, s),
+            .struct_type_literal => |st| blk: {
+                for (st.fields) |field| {
+                    if (field.type) |field_ty| {
+                        if (self.outputUsesAbstractWithoutDefault(field_ty, s)) break :blk true;
+                    }
+                }
+                break :blk false;
+            },
+            .generic_type_instantiation => false,
+        };
+    }
+
+    fn registerAbstractContractTemplateIfNeeded(
+        self: *Semantizer,
+        f: syn.FunctionDeclaration,
+        p: *Scope,
+        loc: tok.Location,
+    ) SemErr!bool {
+        if (f.generic_params.len != 0) return false;
+
+        var rewritten_input_fields = try self.allocator.alloc(syn.StructTypeLiteralField, f.input.fields.len);
+        var hidden_param_names = std.array_list.Managed([]const u8).init(self.allocator.*);
+        defer hidden_param_names.deinit();
+        var hidden_constraints = std.array_list.Managed(?[]const u8).init(self.allocator.*);
+        defer hidden_constraints.deinit();
+        var has_abstract_input = false;
+
+        for (f.input.fields, 0..) |field, i| {
+            rewritten_input_fields[i] = field;
+            if (field.type) |field_ty| {
+                switch (field_ty) {
+                    .type_name => |tn| {
+                        if (p.lookupAbstractInfo(tn.string) != null and p.lookupAbstractDefault(tn.string) == null) {
+                            has_abstract_input = true;
+                            const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
+                            try hidden_param_names.append(hidden_name);
+                            try hidden_constraints.append(tn.string);
+                            rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, tn.string);
+                        }
+                    },
+                    .pointer_type => |ptr_info| {
+                        if (ptr_info.child.* == .type_name) {
+                            const child_name = ptr_info.child.*.type_name.string;
+                            if (p.lookupAbstractInfo(child_name) != null and p.lookupAbstractDefault(child_name) == null) {
+                                has_abstract_input = true;
+                                const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
+                                try hidden_param_names.append(hidden_name);
+                                try hidden_constraints.append(child_name);
+                                rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, child_name);
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+
+        if (!has_abstract_input) return false;
+
+        for (f.output.fields) |field| {
+            if (field.type) |field_ty| {
+                if (self.outputUsesAbstractWithoutDefault(field_ty, p)) return error.AbstractNeedsDefault;
+            }
+        }
+
+        const template = gen.GenericTemplate{
+            .name = f.name.string,
+            .location = loc,
+            .param_names = try hidden_param_names.toOwnedSlice(),
+            .param_abstract_constraints = try hidden_constraints.toOwnedSlice(),
+            .dispatch_kind = .abstract_contract,
+            .input = .{ .fields = rewritten_input_fields },
+            .output = f.output,
+            .body = f.body,
+        };
+
+        if (p.generic_functions.getPtr(f.name.string)) |lst| {
+            try lst.append(template);
+        } else {
+            var new_list = std.array_list.Managed(gen.GenericTemplate).init(self.allocator.*);
+            try new_list.append(template);
+            try p.generic_functions.put(f.name.string, new_list);
+        }
+
+        return true;
     }
 
     //──────────────────────────────────────────────────── ASSIGNMENT
@@ -1437,7 +1601,7 @@ pub const Semantizer = struct {
 
         const name = "operator get[]";
         const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-        const inferred = self.instantiateGenericNamed(name, empty_args, input_te, s) catch |err| switch (err) {
+        const inferred = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
             error.SymbolNotFound => null,
             else => return err,
         };
@@ -1539,7 +1703,7 @@ pub const Semantizer = struct {
 
         const name = "operator set[]";
         const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-        const inferred = self.instantiateGenericNamed(name, empty_args, input_te, s) catch |err| switch (err) {
+        const inferred = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
             error.SymbolNotFound => null,
             else => return err,
         };
@@ -1684,12 +1848,12 @@ pub const Semantizer = struct {
 
         var chosen: *sg.FunctionDeclaration = undefined;
         if (call.type_arguments_struct) |stargs| {
-            chosen = try self.instantiateGenericNamed(call.callee, stargs, tv_in, s);
+            chosen = try self.instantiateGenericNamed(call.callee, stargs, tv_in, s, .regular);
         } else if (call.type_arguments) |targs| {
-            chosen = try self.instantiateGeneric(call.callee, targs, tv_in, s);
+            chosen = try self.instantiateGeneric(call.callee, targs, tv_in, s, .regular);
         } else {
             const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-            const inferred = self.instantiateGenericNamed(call.callee, empty_args, tv_in, s) catch |err| switch (err) {
+            const inferred = self.instantiateGenericNamed(call.callee, empty_args, tv_in, s, .regular) catch |err| switch (err) {
                 error.SymbolNotFound => null,
                 else => return err,
             };
@@ -1697,16 +1861,22 @@ pub const Semantizer = struct {
             if (inferred) |instantiated| {
                 chosen = instantiated;
             } else {
-                chosen = if (call.module_qualifier) |module_name|
-                    try self.resolveQualifiedOverload(module_name, call.callee, tv_in.ty, s, call.input.*.location)
-                else
-                    self.resolveVisibleOverload(call.callee, tv_in.ty, s, call.input.*.location) catch |err| switch (err) {
-                    error.SymbolNotFound => {
-                        try self.addMissingFunctionDiagnostic(call.callee, tv_in.ty, s, call.input.*.location);
-                        return error.Reported;
-                    },
-                    else => return err,
-                };
+                if (call.module_qualifier) |module_name| {
+                    chosen = try self.resolveQualifiedOverload(module_name, call.callee, tv_in.ty, s, call.input.*.location);
+                } else {
+                    chosen = self.resolveVisibleOverload(call.callee, tv_in.ty, s, call.input.*.location) catch |err| switch (err) {
+                        error.SymbolNotFound => blk: {
+                            const abstract_inferred = self.instantiateGenericNamed(call.callee, empty_args, tv_in, s, .abstract_contract) catch |inner_err| switch (inner_err) {
+                                error.SymbolNotFound => null,
+                                else => return inner_err,
+                            };
+                            if (abstract_inferred) |instantiated_abstract| break :blk instantiated_abstract;
+                            try self.addMissingFunctionDiagnostic(call.callee, tv_in.ty, s, call.input.*.location);
+                            return error.Reported;
+                        },
+                        else => return err,
+                    };
+                }
             }
         }
 
@@ -2316,11 +2486,13 @@ pub const Semantizer = struct {
         stargs: syn.StructTypeLiteral,
         call_input: typ.TypedExpr,
         s: *Scope,
+        allowed_kind: gen.GenericDispatchKind,
     ) SemErr!*sg.FunctionDeclaration {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.generic_functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
+                    if (tmpl.dispatch_kind != allowed_kind) continue;
                     var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
                     defer subst.deinit();
 
@@ -2352,6 +2524,7 @@ pub const Semantizer = struct {
                         }
                     }
                     if (!ok) continue;
+                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) continue;
                     if (try self.instantiateGenericTemplate(name, tmpl, call_input, s, &subst)) |instantiated| {
                         return instantiated;
                     }
@@ -2367,11 +2540,13 @@ pub const Semantizer = struct {
         type_args_syn: []const syn.Type,
         call_input: typ.TypedExpr,
         s: *Scope,
+        allowed_kind: gen.GenericDispatchKind,
     ) SemErr!*sg.FunctionDeclaration {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.generic_functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
+                    if (tmpl.dispatch_kind != allowed_kind) continue;
                     if (tmpl.param_names.len != type_args_syn.len) continue;
 
                     var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
@@ -2381,6 +2556,7 @@ pub const Semantizer = struct {
                         const resolved = try self.resolveTypeWithSubst(type_args_syn[i], s, &subst);
                         try subst.put(tmpl.param_names[i], resolved);
                     }
+                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) continue;
                     if (try self.instantiateGenericTemplate(name, tmpl, call_input, s, &subst)) |instantiated| {
                         return instantiated;
                     }
@@ -2388,6 +2564,22 @@ pub const Semantizer = struct {
             }
         }
         return error.SymbolNotFound;
+    }
+
+    fn substSatisfiesAbstractConstraints(
+        self: *Semantizer,
+        tmpl: gen.GenericTemplate,
+        subst: *std.StringHashMap(sg.Type),
+        s: *Scope,
+    ) bool {
+        _ = self;
+        var i: usize = 0;
+        while (i < tmpl.param_names.len) : (i += 1) {
+            const constraint = tmpl.param_abstract_constraints[i] orelse continue;
+            const actual = subst.get(tmpl.param_names[i]) orelse return false;
+            if (!abs.typeImplementsAbstract(constraint, actual, s)) return false;
+        }
+        return true;
     }
 
     fn instantiateGenericTemplate(
