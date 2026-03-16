@@ -107,11 +107,12 @@
           `description/35_allocation.md`.
 
         - En particular, hace falta un allocator tipo arena/bump usable para
-          el semantizador y para futuras fases reescritas en Argi.
+          futuras fases reescritas en Argi.
 
-        - `build` y LSP ya analizan módulos dentro de una arena; el siguiente
-          paso es que el semantizador y sus helpers internos adopten ese mismo
-          modelo de lifetime, en vez de depender de allocations dispersas.
+        - `build` y LSP ya analizan módulos dentro de una arena, y el
+          semantizador ya ha reducido bastante su dependencia de temporales con
+          `alloc/free` manual. El siguiente paso es terminar de empujar ese
+          modelo de lifetime hacia helpers internos y estructuras auxiliares.
 
     - Testing language-side
 
@@ -194,13 +195,13 @@
 
         - El pipeline principal ya usa arena en `build` y LSP.
 
-        - Falta migrar las estructuras internas del semantizador para que
-          asuman ese modelo de lifetime y poder eliminar allocations/frees
-          sueltos dentro de la fase.
+        - El semantizador y `types.zig` ya han eliminado bastante boilerplate
+          de ownership temporal y varias allocations auxiliares.
+
+        - Falta rematar helpers internos y estructuras auxiliares para que la
+          fase deje de depender de cleanup manual disperso.
 
     - `refineStructTypeWithActual`
-
-        - Ya no muta `StructType.fields` in-place durante instanciación.
 
         - Revisar si conviene internar tipos refinados compartidos o si basta
           con seguir clonándolos cuando una instanciación necesita precisión
@@ -236,13 +237,17 @@
         - diagnóstico incremental.
 
     - Mantener el LSP usando exactamente el mismo pipeline que `build`.
-      Cada divergencia aquí complica muchísimo el futuro self-hosting.
+      Eso ya está bastante mejor alineado; toca evitar regresiones y seguir
+      cerrando diferencias de diagnóstico o errores degradados.
 
 
 - Tests y cobertura
 
     - Seguir ampliando el harness para cubrir las features ya soportadas,
       especialmente en los puntos nuevos de `Abstract`, módulos e inferencia.
+
+    - Mantener el harness limpio y con menos boilerplate ahora que ya usa un
+      runner más uniforme y limpieza explícita de artefactos.
 
     - Eliminar o activar placeholders:
         - `42_choice`
