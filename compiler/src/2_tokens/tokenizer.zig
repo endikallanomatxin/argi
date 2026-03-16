@@ -111,7 +111,13 @@ pub const Tokenizer = struct {
             return;
         }
 
-        // Dot
+        // Double dot / dot
+        if (self.this() == '.' and self.next() catch 0 == '.') {
+            try self.addToken(tok.Content{ .double_dot = .{} }, loc);
+            try self.advanceOne();
+            try self.advanceOne();
+            return;
+        }
         if (self.this() == '.') {
             try self.addToken(tok.Content{ .dot = .{} }, loc);
             try self.advanceOne();

@@ -357,6 +357,12 @@ test "37_size_of_and_alignment_of_builtin_functions" {
     try run();
 }
 
+test "42_choice" {
+    try clean();
+    try expectSuccessfulBuild("tests/42_choice/main.rg");
+    try run();
+}
+
 test "411_list_literal_length" {
     try clean();
     try expectSuccessfulBuild("tests/411_list_literal_length/main.rg");

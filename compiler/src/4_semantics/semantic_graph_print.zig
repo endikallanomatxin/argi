@@ -10,6 +10,7 @@ fn typeToString(t: sem.Type) []const u8 {
     return switch (t) {
         .builtin => |b| @tagName(b),
         .abstract_type => |at| at.name,
+        .choice_type => |_| "choice",
         .struct_type => |_| "struct",
         .pointer_type => |ptr| switch (ptr.*.mutability) {
             .read_only => "&",
@@ -95,6 +96,9 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
         },
 
         .value_literal => |v| printValueLiteral(&v, lvl),
+        .choice_literal => |name| {
+            std.debug.print("ChoiceLiteral ..{s}\n", .{name});
+        },
 
         .list_literal => |ll| {
             indent(lvl);

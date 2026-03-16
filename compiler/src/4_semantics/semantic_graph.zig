@@ -42,6 +42,7 @@ pub const Content = union(enum) {
     function_call: *FunctionCall,
     code_block: *CodeBlock,
     value_literal: ValueLiteral,
+    choice_literal: []const u8,
     list_literal: *const ListLiteral,
     struct_value_literal: *const StructValueLiteral,
     struct_field_access: *const StructFieldAccess,
@@ -74,6 +75,7 @@ pub const Content = union(enum) {
 pub const Type = union(enum) {
     builtin: BuiltinType,
     abstract_type: *const AbstractType,
+    choice_type: *const ChoiceType,
     struct_type: *const StructType,
     pointer_type: *const PointerType,
     array_type: *const ArrayType,
@@ -81,6 +83,15 @@ pub const Type = union(enum) {
 
 pub const AbstractType = struct {
     name: []const u8,
+};
+
+pub const ChoiceType = struct {
+    variants: []const ChoiceVariant,
+};
+
+pub const ChoiceVariant = struct {
+    name: []const u8,
+    value: i32,
 };
 
 pub const PointerType = struct {
