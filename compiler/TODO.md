@@ -59,10 +59,11 @@
 
         - Hoy el compilador:
             - no modela `copy()` como parte de la semántica,
-            - no distingue tipos copyables vs no-copyables,
+            - ya ha empezado a distinguir tipos copyables vs no-copyables, pero
+              solo con una política mínima y sin `copy()` implícito todavía,
             - agenda `deinit` de forma superficial al salir de scope si existe
               una función `deinit`,
-            - y no lleva una historia real de ownership/move/aliasing.
+            - y no lleva una historia completa de ownership/move/aliasing.
 
         - La `description` ya apunta a una política bastante clara:
             - value position significa pedir un valor independiente,
@@ -78,6 +79,11 @@
             - Fase 1: copyability explícita
                 - Introducir una consulta semántica clara:
                   “¿este tipo es copyable?”.
+                - Ya hay un primer corte:
+                    - builtins y punteros: copyables,
+                    - arrays/structs/choices: copyables solo si sus
+                      componentes también lo son,
+                    - tipos con `deinit()` pero sin `copy()`: no-copyables.
                 - Empezar por una política dura y fácil de explicar:
                     - builtins triviales: copyables,
                     - arrays de copyables: copyables,
@@ -113,6 +119,8 @@
                 - Sin llegar a Rust, conviene verificar al menos el caso más
                   grosero: no permitir pasar el mismo binding como `$&` y `&`
                   o dos veces como `$&` en la misma llamada.
+                - Ya existe un primer check local para llamadas normales con
+                  ese caso básico de aliasing evidente.
                 - Esto cerraría una parte importante de la promesa de
                   `description/33_function_args.md` sin introducir lifetimes
                   complejos todavía.

@@ -405,6 +405,68 @@ test "353_deinit" {
     try run();
 }
 
+test "354_noncopyable_fresh_values" {
+    try clean();
+    try expectSuccessfulBuild("tests/354_noncopyable_fresh_values/main.rg");
+    try run();
+}
+
+test "355X_noncopyable_assignment" {
+    try clean();
+    try buildExpectFail(
+        "tests/355X_noncopyable_assignment/main.rg",
+        "type 'Resource' is not copyable, so it cannot be used by value here",
+    );
+}
+
+test "356X_noncopyable_argument_by_value" {
+    try clean();
+    try buildExpectFail(
+        "tests/356X_noncopyable_argument_by_value/main.rg",
+        "type 'Resource' is not copyable, so it cannot be used by value here",
+    );
+}
+
+test "357X_noncopyable_struct_field" {
+    try clean();
+    try buildExpectFail(
+        "tests/357X_noncopyable_struct_field/main.rg",
+        "type 'Resource' is not copyable, so it cannot be used by value here",
+    );
+}
+
+test "358X_noncopyable_output_binding" {
+    try clean();
+    try buildExpectFail(
+        "tests/358X_noncopyable_output_binding/main.rg",
+        "type 'Resource' is not copyable, so it cannot be used by value here",
+    );
+}
+
+test "359X_mutable_and_read_alias_same_call" {
+    try clean();
+    try buildExpectFail(
+        "tests/359X_mutable_and_read_alias_same_call/main.rg",
+        "binding 'value' cannot be passed as '$&' and '&' in the same call to 'mix'",
+    );
+}
+
+test "360X_mutable_and_value_alias_same_call" {
+    try clean();
+    try buildExpectFail(
+        "tests/360X_mutable_and_value_alias_same_call/main.rg",
+        "binding 'value' cannot be passed as '$&' and 'value' in the same call to 'mix'",
+    );
+}
+
+test "361X_double_mutable_alias_same_call" {
+    try clean();
+    try buildExpectFail(
+        "tests/361X_double_mutable_alias_same_call/main.rg",
+        "binding 'value' cannot be passed as '$&' and '$&' in the same call to 'mix'",
+    );
+}
+
 test "36_get_and_set_index_operators" {
     try clean();
     try expectSuccessfulBuild("tests/36_get_and_set_index_operators/main.rg");
