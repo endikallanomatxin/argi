@@ -97,6 +97,13 @@
             - Fase 2: `copy()` implícito en value position
                 - Resolver la función `copy()` igual que hoy se resuelve
                   `deinit()`.
+                - Ya existe un primer corte:
+                    - si un tipo no es trivially copyable pero sí tiene
+                      `copy(.x: T) -> (.out: T)`, el compilador inserta esa
+                      llamada en algunos value positions.
+                    - La firma asumida por ahora es deliberadamente mínima y
+                      puede revisarse más adelante si la story de allocators
+                      para `copy()` cambia.
                 - Insertar la llamada implícita en:
                     - asignación a otro binding,
                     - paso a parámetro `Type`,

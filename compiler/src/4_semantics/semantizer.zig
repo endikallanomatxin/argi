@@ -1167,8 +1167,8 @@ pub const Semantizer = struct {
     fn handleChoiceLiteral(self: *Semantizer, lit: syn.ChoiceLiteral, s: *Scope) SemErr!typ.TypedExpr {
         var payload: ?*const sg.SGNode = null;
         if (lit.payload) |payload_node| {
-            const payload_te = try self.visitNode(payload_node.*, s);
-            try typ.ensureValuePositionAllowed(payload_te, payload_node.location, s, self.allocator, self.diags);
+            var payload_te = try self.visitNode(payload_node.*, s);
+            payload_te = try typ.ensureValuePositionAllowed(payload_te, payload_node.location, s, self.allocator, self.diags);
             payload_te.node.sem_type = payload_te.ty;
             payload = payload_te.node;
         }
@@ -1282,7 +1282,7 @@ pub const Semantizer = struct {
         }
 
         if (init_te_opt) |init_te| {
-            try typ.ensureValuePositionAllowed(init_te, init_node.?.location, s, self.allocator, self.diags);
+            init_te_opt = try typ.ensureValuePositionAllowed(init_te, init_node.?.location, s, self.allocator, self.diags);
         }
 
         const bd = try self.allocator.create(sg.BindingDeclaration);
@@ -1666,7 +1666,7 @@ pub const Semantizer = struct {
 
         var rhs = try self.visitNode(a.value.*, s);
         rhs = try typ.coerceExprToType(b.ty, rhs, a.value, s, self.allocator, self.diags);
-        try typ.ensureValuePositionAllowed(rhs, a.value.location, s, self.allocator, self.diags);
+        rhs = try typ.ensureValuePositionAllowed(rhs, a.value.location, s, self.allocator, self.diags);
         if (!typ.typesExactlyEqual(b.ty, rhs.ty)) {
             const pair = try self.formatTypePairText(b.ty, rhs.ty, s);
             defer pair.deinit();
@@ -1696,8 +1696,8 @@ pub const Semantizer = struct {
         var fields_buf = std.array_list.Managed(sg.StructValueLiteralField).init(self.allocator.*);
 
         for (sl.fields) |f| {
-            const tv = try self.visitNode(f.value.*, s);
-            try typ.ensureValuePositionAllowed(tv, f.value.location, s, self.allocator, self.diags);
+            var tv = try self.visitNode(f.value.*, s);
+            tv = try typ.ensureValuePositionAllowed(tv, f.value.location, s, self.allocator, self.diags);
             try fields_buf.append(.{ .name = f.name.string, .value = tv.node });
         }
 
@@ -3607,9 +3607,9 @@ pub const Semantizer = struct {
         r: syn.ReturnStatement,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        const e = if (r.expression) |ex| (try self.visitNode(ex.*, s)) else null;
+        var e = if (r.expression) |ex| (try self.visitNode(ex.*, s)) else null;
         if (r.expression) |ex| {
-            if (e) |te| try typ.ensureValuePositionAllowed(te, ex.location, s, self.allocator, self.diags);
+            if (e) |te| e = try typ.ensureValuePositionAllowed(te, ex.location, s, self.allocator, self.diags);
         }
 
         const rs = try self.allocator.create(sg.ReturnStatement);

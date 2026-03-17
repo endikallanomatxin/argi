@@ -181,4 +181,22 @@ pub const Scope = struct {
         }
         return null;
     }
+
+    pub fn findCopy(s: *Scope, ty: sg.Type) ?*sg.FunctionDeclaration {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr("copy")) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (cand.input.fields.len != 1) continue;
+                    if (cand.output.fields.len != 1) continue;
+                    const in_ty = cand.input.fields[0].ty;
+                    const out_ty = cand.output.fields[0].ty;
+                    if (!typ.typesExactlyEqual(in_ty, ty)) continue;
+                    if (!typ.typesExactlyEqual(out_ty, ty)) continue;
+                    return cand;
+                }
+            }
+        }
+        return null;
+    }
 };
