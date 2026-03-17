@@ -467,6 +467,12 @@ test "361X_double_mutable_alias_same_call" {
     );
 }
 
+test "362_copy_function_value_positions" {
+    try clean();
+    try expectSuccessfulBuild("tests/362_copy_function_value_positions/main.rg");
+    try run();
+}
+
 test "36_get_and_set_index_operators" {
     try clean();
     try expectSuccessfulBuild("tests/36_get_and_set_index_operators/main.rg");

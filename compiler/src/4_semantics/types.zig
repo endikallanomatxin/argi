@@ -39,29 +39,33 @@ const TypePairText = struct {
 pub const pointer_size_bytes: u64 = @sizeOf(*usize);
 pub const pointer_alignment_bytes: u64 = pointer_size_bytes;
 
-pub fn isTypeCopyable(ty: sg.Type, s: *Scope) bool {
+pub fn isTypeTriviallyCopyable(ty: sg.Type, s: *Scope) bool {
     if (s.findDeinit(ty) != null) return false;
 
     return switch (ty) {
         .builtin => true,
         .pointer_type => true,
         .abstract_type => false,
-        .array_type => |arr_info| isTypeCopyable(arr_info.element_type.*, s),
+        .array_type => |arr_info| isTypeTriviallyCopyable(arr_info.element_type.*, s),
         .struct_type => |st| blk: {
             for (st.fields) |field| {
-                if (!isTypeCopyable(field.ty, s)) break :blk false;
+                if (!isTypeTriviallyCopyable(field.ty, s)) break :blk false;
             }
             break :blk true;
         },
         .choice_type => |ct| blk: {
             for (ct.variants) |variant| {
                 if (variant.payload_type) |payload_ty| {
-                    if (!isTypeCopyable(payload_ty, s)) break :blk false;
+                    if (!isTypeTriviallyCopyable(payload_ty, s)) break :blk false;
                 }
             }
             break :blk true;
         },
     };
+}
+
+pub fn isTypeCopyable(ty: sg.Type, s: *Scope) bool {
+    return isTypeTriviallyCopyable(ty, s) or s.findCopy(ty) != null;
 }
 
 pub fn expressionNeedsCopyForValuePosition(node: *const sg.SGNode) bool {
@@ -82,9 +86,28 @@ pub fn ensureValuePositionAllowed(
     s: *Scope,
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
-) err.SemErr!void {
-    if (!expressionNeedsCopyForValuePosition(expr.node)) return;
-    if (isTypeCopyable(expr.ty, s)) return;
+) err.SemErr!TypedExpr {
+    if (!expressionNeedsCopyForValuePosition(expr.node)) return expr;
+    if (isTypeTriviallyCopyable(expr.ty, s)) return expr;
+
+    if (s.findCopy(expr.ty)) |copy_fn| {
+        const arg_fields = try allocator.alloc(sg.StructValueLiteralField, 1);
+        arg_fields[0] = .{ .name = copy_fn.input.fields[0].name, .value = expr.node };
+
+        const args_struct = try allocator.create(sg.StructValueLiteral);
+        args_struct.* = .{
+            .fields = arg_fields,
+            .ty = .{ .struct_type = &copy_fn.input },
+        };
+
+        const args_node = try sg.makeSGNode(.{ .struct_value_literal = args_struct }, loc, allocator);
+
+        const fc_ptr = try allocator.create(sg.FunctionCall);
+        fc_ptr.* = .{ .callee = copy_fn, .input = args_node };
+
+        const call_node = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, allocator);
+        return .{ .node = call_node, .ty = functionReturnType(copy_fn) };
+    }
 
     const ty_text = try formatTypeText(expr.ty, s, allocator);
     defer ty_text.deinit();
@@ -783,17 +806,20 @@ pub fn convertListLiteralToArray(
                 return error.Reported;
             }
 
+            var adjusted_elements = try allocator.alloc(*const sg.SGNode, ll.elements.len);
+            errdefer allocator.free(adjusted_elements);
             for (ll.elements, 0..) |elem_node, idx| {
-                const elem_expr = TypedExpr{
+                var elem_expr = TypedExpr{
                     .node = @constCast(elem_node),
                     .ty = ll.element_types[idx],
                 };
-                try ensureValuePositionAllowed(elem_expr, loc, s, allocator, diags);
+                elem_expr = try ensureValuePositionAllowed(elem_expr, loc, s, allocator, diags);
+                adjusted_elements[idx] = elem_expr.node;
             }
 
             const arr_lit = try allocator.create(sg.ArrayLiteral);
             arr_lit.* = .{
-                .elements = ll.elements,
+                .elements = adjusted_elements,
                 .element_type = expected_elem_ty,
                 .length = arr_info.length,
             };
