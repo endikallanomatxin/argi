@@ -67,13 +67,30 @@
 
     - Choice / nullability / errores
 
-        - Implementar `choice` types y el mínimo de nullability/error handling
-          que ya aparece en `description/12_choice.md`, `51_nullability.md` y
-          `59_errors.md`.
+        - Ya existe un corte usable de `choice`:
+          variantes simples, payloads estructurados, `is`, `match`,
+          `Nullable#(...)` y `Errable#(...)`.
+
+        - Falta la capa de ergonomía y propagación:
+          `?`, `unwrap_or`, `unwrap_or_do`, `!` y similares.
 
         - Esto es importante no solo por completitud del lenguaje, sino porque
           un compilador escrito en Argi necesitará representar fallos,
           resultados y variantes de forma nativa.
+
+    - Pipe operator
+
+        - Ya existe un corte usable:
+          `lhs | f(...)`, `lhs | module.f(...)`, cadenas básicas de `pipe`,
+          y genéricos básicos en el RHS,
+          usando argumentos nombrados normales en el RHS con `_`, `&_`, `$&_`
+          y `_.field` como valores.
+
+        - Falta ampliarlo para:
+          placeholders en expresiones más complejas,
+          builtins,
+          casos cualificados con genéricos,
+          y cadenas de `pipe` con semántica y precedencia ya cerradas.
 
     - Comptime
 
@@ -256,6 +273,12 @@
 
     - Ampliar la cobertura de `choice` más allá del corte mínimo actual:
         - operadores de nullability / errables (`?`, `unwrap_or`, `!`, etc.).
+        - checks/runtime safety adicionales sobre acceso a payload si hace falta.
+
+    - Ampliar la cobertura del `pipe`:
+        - genéricos y abstracts,
+        - placeholders anidados en expresiones arbitrarias,
+        - mejores diagnósticos de overload posicional.
 
     - Añadir golden tests de diagnósticos donde el wording importe.
 
