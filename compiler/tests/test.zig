@@ -149,6 +149,66 @@ test "12_function_args" {
     try runExpect(42);
 }
 
+test "13_pipe_operator" {
+    try clean();
+    try expectSuccessfulBuild("tests/13_pipe_operator/main.rg");
+    try runExpect(42);
+}
+
+test "14_pipe_pointer" {
+    try clean();
+    try expectSuccessfulBuild("tests/14_pipe_pointer/main.rg");
+    try runExpect(43);
+}
+
+test "15X_pipe_requires_parentheses" {
+    try clean();
+    try buildExpectFail(
+        "tests/15X_pipe_requires_parentheses/main.rg",
+        "pipe right-hand side must be a call with parentheses",
+    );
+}
+
+test "16X_pipe_requires_placeholder" {
+    try clean();
+    try buildExpectFail(
+        "tests/16X_pipe_requires_placeholder/main.rg",
+        "expected struct field",
+    );
+}
+
+test "17X_pipe_expression_placeholder_not_supported" {
+    try clean();
+    try buildExpectFail(
+        "tests/17X_pipe_expression_placeholder_not_supported/main.rg",
+        "expected struct field",
+    );
+}
+
+test "18_pipe_chain" {
+    try clean();
+    try expectSuccessfulBuild("tests/18_pipe_chain/main.rg");
+    try runExpect(42);
+}
+
+test "19_pipe_generic_inferred" {
+    try clean();
+    try expectSuccessfulBuild("tests/19_pipe_generic_inferred/main.rg");
+    try runExpect(42);
+}
+
+test "20_pipe_generic_explicit" {
+    try clean();
+    try expectSuccessfulBuild("tests/20_pipe_generic_explicit/main.rg");
+    try runExpect(42);
+}
+
+test "21_pipe_builtin_is" {
+    try clean();
+    try expectSuccessfulBuild("tests/21_pipe_builtin_is/main.rg");
+    try run();
+}
+
 test "130_multiple_dispatch" {
     try clean();
     try expectSuccessfulBuild("tests/130_multiple_dispatch/main.rg");

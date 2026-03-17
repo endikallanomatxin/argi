@@ -37,6 +37,7 @@ pub const Syntaxer = struct {
     allocator: *const std.mem.Allocator,
     st: std.array_list.Managed(*syn.STNode),
     diags: *diagnostic.Diagnostics,
+    parsing_pipe_rhs: bool,
 
     pub fn init(alloc: *const std.mem.Allocator, toks: []const tok.Token, diags: *diagnostic.Diagnostics) Syntaxer {
         return .{
@@ -45,6 +46,7 @@ pub const Syntaxer = struct {
             .allocator = alloc,
             .st = std.array_list.Managed(*syn.STNode).init(alloc.*),
             .diags = diags,
+            .parsing_pipe_rhs = false,
         };
     }
 
@@ -589,6 +591,56 @@ pub const Syntaxer = struct {
         return node;
     }
 
+    fn parsePipeCall(self: *Syntaxer) SyntaxerError!syn.PipeCall {
+        const callee_loc = self.tokenLocation();
+        const first_name = try self.parseName();
+
+        var module_qualifier: ?[]const u8 = null;
+        var callee_name = first_name.string;
+        var final_callee_loc = callee_loc;
+        if (self.tokenIs(.dot)) {
+            self.advanceOne();
+            const rhs_name = try self.parseName();
+            module_qualifier = first_name.string;
+            callee_name = rhs_name.string;
+            final_callee_loc = rhs_name.location;
+        }
+
+        var type_args: ?[]const syn.Type = null;
+        var type_args_struct: ?syn.StructTypeLiteral = null;
+        if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
+            type_args = try self.parseTypeList();
+        } else if (self.tokenIs(.hash)) {
+            self.advanceOne();
+            type_args_struct = try self.parseStructTypeLiteral();
+        }
+
+        const prev_pipe_rhs = self.parsing_pipe_rhs;
+        self.parsing_pipe_rhs = true;
+        defer self.parsing_pipe_rhs = prev_pipe_rhs;
+
+        if (!self.tokenIs(.open_parenthesis)) {
+            try self.diags.add(
+                self.tokenLocation(),
+                .syntax,
+                "pipe right-hand side must be a call with parentheses",
+                .{},
+            );
+            return SyntaxerError.ExpectedLeftParen;
+        }
+
+        const input = try self.parseStructValueLiteral();
+
+        return .{
+            .callee = callee_name,
+            .callee_loc = final_callee_loc,
+            .module_qualifier = module_qualifier,
+            .type_arguments = type_args,
+            .type_arguments_struct = type_args_struct,
+            .input = input,
+        };
+    }
+
     // ─────────────────────────────  EXPRESSIONS  ─────────────────────────────
     /// [primary] {'.' fld}  (bin-op rhs)?
     fn parsePrimary(self: *Syntaxer) !*syn.STNode {
@@ -663,6 +715,9 @@ pub const Syntaxer = struct {
             // ─── ident  /  call ─────────────────────────────────────────────
             .identifier => blk: {
                 const name = try self.parseIdentifier();
+                if (self.parsing_pipe_rhs and std.mem.eql(u8, name, "_")) {
+                    break :blk try self.makeNode(.{ .pipe_placeholder = .{} }, t.location);
+                }
                 var type_args: ?[]const syn.Type = null;
                 var type_args_struct: ?syn.StructTypeLiteral = null;
                 if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
@@ -733,7 +788,18 @@ pub const Syntaxer = struct {
     }
 
     fn parseExpression(self: *Syntaxer) SyntaxerError!*syn.STNode {
-        const lhs = try self.parsePrimary();
+        var lhs = try self.parsePrimary();
+
+        while (self.tokenIs(.pipe)) {
+            const pipe_loc = self.tokenLocation();
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+            const call = try self.parsePipeCall();
+            lhs = try self.makeNode(
+                .{ .pipe_expression = .{ .left = lhs, .call = call } },
+                pipe_loc,
+            );
+        }
 
         // (solo bin-op derecha-recursivo por ahora)
         if (self.current().content == .binary_operator) {

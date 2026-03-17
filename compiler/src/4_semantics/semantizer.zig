@@ -213,6 +213,226 @@ pub const Semantizer = struct {
         return self.functionIsVisible(cand, requester_file);
     }
 
+    fn syntaxNodeContainsPipePlaceholder(n: *const syn.STNode) bool {
+        return switch (n.content) {
+            .pipe_placeholder => true,
+            .struct_field_access => |sfa| syntaxNodeContainsPipePlaceholder(sfa.struct_value),
+            .choice_payload_access => |acc| syntaxNodeContainsPipePlaceholder(acc.choice_value),
+            .address_of => |addr| syntaxNodeContainsPipePlaceholder(addr.value),
+            .binary_operation => |bo| syntaxNodeContainsPipePlaceholder(bo.left) or syntaxNodeContainsPipePlaceholder(bo.right),
+            .comparison => |cmp| syntaxNodeContainsPipePlaceholder(cmp.left) or syntaxNodeContainsPipePlaceholder(cmp.right),
+            .index_access => |ia| syntaxNodeContainsPipePlaceholder(ia.value) or syntaxNodeContainsPipePlaceholder(ia.index),
+            .function_call => |fc| syntaxNodeContainsPipePlaceholder(fc.input),
+            .struct_value_literal => |sv| blk: {
+                for (sv.fields) |field| {
+                    if (syntaxNodeContainsPipePlaceholder(field.value)) break :blk true;
+                }
+                break :blk false;
+            },
+            .list_literal => |ll| blk: {
+                for (ll.elements) |elem| {
+                    if (syntaxNodeContainsPipePlaceholder(elem)) break :blk true;
+                }
+                break :blk false;
+            },
+            .choice_literal => |cl| if (cl.payload) |payload| syntaxNodeContainsPipePlaceholder(payload) else false,
+            else => false,
+        };
+    }
+
+    fn handlePipeFieldAccess(
+        self: *Semantizer,
+        base: typ.TypedExpr,
+        field_name: syn.Name,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (base.ty == .array_type) {
+            const desc = try self.formatTypeText(base.ty, s);
+            defer desc.deinit();
+            try self.diags.add(
+                loc,
+                .semantic,
+                "type '{s}' has no field '.{s}'",
+                .{ desc.bytes, field_name.string },
+            );
+            return error.Reported;
+        }
+
+        if (base.ty != .struct_type) {
+            if (base.node.content == .function_call) {
+                const fc = base.node.content.function_call;
+                if (fc.callee.output.fields.len == 1) {
+                    const only_field = fc.callee.output.fields[0];
+                    if (std.mem.eql(u8, only_field.name, field_name.string)) {
+                        return base;
+                    }
+                }
+            }
+
+            const desc = try self.formatTypeText(base.ty, s);
+            defer desc.deinit();
+            try self.diags.add(
+                loc,
+                .semantic,
+                "cannot access field '.{s}' on value of type '{s}'",
+                .{ field_name.string, desc.bytes },
+            );
+            return error.Reported;
+        }
+
+        const st = base.ty.struct_type;
+        var idx: ?u32 = null;
+        var fty: sg.Type = undefined;
+        for (st.fields, 0..) |f, i| {
+            if (std.mem.eql(u8, f.name, field_name.string)) {
+                idx = @intCast(i);
+                fty = f.ty;
+                break;
+            }
+        }
+        if (idx == null) return error.FieldsNotFound;
+
+        const fa = try self.allocator.create(sg.StructFieldAccess);
+        fa.* = .{
+            .struct_value = base.node,
+            .field_name = field_name.string,
+            .field_index = idx.?,
+        };
+
+        const node = try sg.makeSGNode(.{ .struct_field_access = fa }, loc, self.allocator);
+        return .{ .node = node, .ty = fty };
+    }
+
+    fn handlePipeChoicePayloadAccess(
+        self: *Semantizer,
+        base: typ.TypedExpr,
+        variant_name: syn.Name,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (base.ty != .choice_type) {
+            const desc = try self.formatTypeText(base.ty, s);
+            defer desc.deinit();
+            try self.diags.add(
+                loc,
+                .semantic,
+                "cannot access choice payload '..{s}' on value of type '{s}'",
+                .{ desc.bytes, variant_name.string },
+            );
+            return error.Reported;
+        }
+
+        const choice_ty = base.ty.choice_type;
+        for (choice_ty.variants, 0..) |variant, idx| {
+            if (!std.mem.eql(u8, variant.name, variant_name.string)) continue;
+            const payload_ty = variant.payload_type orelse {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "choice variant '..{s}' has no payload",
+                    .{variant_name.string},
+                );
+                return error.Reported;
+            };
+
+            const access = try self.allocator.create(sg.ChoicePayloadAccess);
+            access.* = .{
+                .choice_value = base.node,
+                .variant_index = @intCast(idx),
+                .payload_type = payload_ty,
+            };
+            const node = try sg.makeSGNode(.{ .choice_payload_access = access }, loc, self.allocator);
+            return .{ .node = node, .ty = payload_ty };
+        }
+
+        try self.diags.add(
+            loc,
+            .semantic,
+            "choice has no variant '..{s}'",
+            .{variant_name.string},
+        );
+        return error.Reported;
+    }
+
+    fn handlePipeAddressOf(
+        self: *Semantizer,
+        inner: typ.TypedExpr,
+        mutability: syn.PointerMutability,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        if (inner.node.content != .binding_use) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "cannot take the address of this expression; only named variables are addressable",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const binding = inner.node.content.binding_use;
+        if (mutability == .read_write and binding.mutability != .variable) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "binding '{s}' is immutable; declare it with '::' or take '&{s}' instead of '$&{s}'",
+                .{ binding.name, binding.name, binding.name },
+            );
+            return error.Reported;
+        }
+
+        const child = try self.allocator.create(sg.Type);
+        child.* = inner.ty;
+
+        const ptr_ty = try self.allocator.create(sg.PointerType);
+        ptr_ty.* = .{ .mutability = mutability, .child = child };
+
+        const addr_node = try sg.makeSGNode(.{ .address_of = inner.node }, loc, self.allocator);
+        return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_ty } };
+    }
+
+    fn evalPipeArg(
+        self: *Semantizer,
+        arg: *const syn.STNode,
+        left: typ.TypedExpr,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (!syntaxNodeContainsPipePlaceholder(arg)) {
+            return self.visitNode(arg.*, s);
+        }
+
+        return switch (arg.content) {
+            .pipe_placeholder => left,
+            .struct_field_access => |sfa| self.handlePipeFieldAccess(
+                try self.evalPipeArg(sfa.struct_value, left, s),
+                sfa.field_name,
+                arg.location,
+                s,
+            ),
+            .choice_payload_access => |acc| self.handlePipeChoicePayloadAccess(
+                try self.evalPipeArg(acc.choice_value, left, s),
+                acc.variant_name,
+                arg.location,
+                s,
+            ),
+            .address_of => |addr| self.handlePipeAddressOf(
+                try self.evalPipeArg(addr.value, left, s),
+                addr.mutability,
+                arg.location,
+            ),
+            else => blk: {
+                try self.diags.add(
+                    arg.location,
+                    .semantic,
+                    "pipe placeholders are only supported as '_', '&_', '$&_', '_.field', or '..variant' payload access for now",
+                    .{},
+                );
+                break :blk error.Reported;
+            },
+        };
+    }
+
     //────────────────────────────────────────────────────────────────── visitors
     pub fn visitNode(self: *Semantizer, n: syn.STNode, s: *Scope) SemErr!typ.TypedExpr {
         return switch (n.content) {
@@ -364,6 +584,16 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
+            .pipe_placeholder => blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "the '_' pipe placeholder is only valid on the right-hand side of a pipe expression",
+                    .{},
+                );
+                break :blk error.Reported;
+            },
+
             .literal => |l| self.handleLiteral(l) catch |err| blk: {
                 try self.diags.add(
                     n.location,
@@ -490,6 +720,17 @@ pub const Semantizer = struct {
                         .{ fc.callee, @errorName(err) },
                     );
                 }
+                break :blk err;
+            },
+
+            .pipe_expression => |pe| self.handlePipe(pe, s, n.location) catch |err| blk: {
+                if (err == error.Reported) break :blk err;
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in pipe expression to '{s}': {s}",
+                    .{ pe.call.callee, @errorName(err) },
+                );
                 break :blk err;
             },
 
@@ -2061,42 +2302,7 @@ pub const Semantizer = struct {
 
         if (tv_in.ty != .struct_type) return error.InvalidType;
 
-        var chosen: *sg.FunctionDeclaration = undefined;
-        if (call.type_arguments_struct) |stargs| {
-            chosen = try self.instantiateGenericNamed(call.callee, stargs, tv_in, s, .regular);
-        } else if (call.type_arguments) |targs| {
-            chosen = try self.instantiateGeneric(call.callee, targs, tv_in, s, .regular);
-        } else {
-            const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-            const inferred = self.instantiateGenericNamed(call.callee, empty_args, tv_in, s, .regular) catch |err| switch (err) {
-                error.SymbolNotFound => null,
-                else => return err,
-            };
-
-            if (inferred) |instantiated| {
-                chosen = instantiated;
-            } else {
-                if (call.module_qualifier) |module_name| {
-                    chosen = try self.resolveQualifiedOverload(module_name, call.callee, tv_in.ty, s, call.input.*.location);
-                } else {
-                    chosen = self.resolveVisibleOverload(call.callee, tv_in.ty, s, call.input.*.location) catch |err| switch (err) {
-                        error.SymbolNotFound => blk: {
-                            const abstract_inferred = self.instantiateGenericNamed(call.callee, empty_args, tv_in, s, .abstract_contract) catch |inner_err| switch (inner_err) {
-                                error.SymbolNotFound => null,
-                                else => return inner_err,
-                            };
-                            if (abstract_inferred) |instantiated_abstract| break :blk instantiated_abstract;
-                            if (try self.addMissingAbstractImplementationDiagnostic(call.callee, tv_in.ty, s, call.input.*.location)) {
-                                return error.Reported;
-                            }
-                            try self.addMissingFunctionDiagnostic(call.callee, tv_in.ty, s, call.input.*.location);
-                            return error.Reported;
-                        },
-                        else => return err,
-                    };
-                }
-            }
-        }
+        const chosen = try self.resolveRegularCallCallee(call, tv_in.ty, s, call.input.*.location);
 
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
         fc_ptr.* = .{ .callee = chosen, .input = tv_in.node };
@@ -2107,6 +2313,275 @@ pub const Semantizer = struct {
         const result_ty = typ.functionReturnType(chosen);
 
         return .{ .node = n, .ty = result_ty };
+    }
+
+    fn handleIsBuiltinFromInput(
+        self: *Semantizer,
+        input_te: typ.TypedExpr,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (input_te.ty != .struct_type or input_te.node.content != .struct_value_literal) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "is expects '.value' and '.variant' arguments",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const input_struct = input_te.ty.struct_type;
+        const input_value = input_te.node.content.struct_value_literal;
+
+        var value_idx: ?usize = null;
+        var variant_idx: ?usize = null;
+        for (input_struct.fields, 0..) |field, idx| {
+            if (std.mem.eql(u8, field.name, "value")) {
+                value_idx = idx;
+            } else if (std.mem.eql(u8, field.name, "variant")) {
+                variant_idx = idx;
+            } else {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "is only accepts '.value' and '.variant' arguments",
+                    .{},
+                );
+                return error.Reported;
+            }
+        }
+
+        if (value_idx == null or variant_idx == null) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "is expects '.value' and '.variant' arguments",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const value_field = input_value.fields[value_idx.?];
+        const variant_field = input_value.fields[variant_idx.?];
+        const value_ty = input_struct.fields[value_idx.?].ty;
+
+        if (value_ty != .choice_type) {
+            const desc = try self.formatTypeText(value_ty, s);
+            defer desc.deinit();
+            try self.diags.add(
+                loc,
+                .semantic,
+                "is expects '.value' to be a choice, found '{s}'",
+                .{desc.bytes},
+            );
+            return error.Reported;
+        }
+
+        const variant_te = blk_variant: {
+            const variant_node = variant_field.value.*;
+            if (variant_node.content == .choice_literal) {
+                const raw_variant = variant_node.content.choice_literal;
+                if (raw_variant.payload == null) {
+                    const choice_ty = value_ty.choice_type;
+                    for (choice_ty.variants, 0..) |variant, idx| {
+                        if (!std.mem.eql(u8, variant.name, raw_variant.variant_name)) continue;
+
+                        const typed = try self.allocator.create(sg.ChoiceLiteral);
+                        typed.* = .{
+                            .variant_name = raw_variant.variant_name,
+                            .choice_type = choice_ty,
+                            .variant_index = @intCast(idx),
+                            .payload = null,
+                        };
+                        const typed_node = try sg.makeSGNode(.{ .choice_literal = typed }, loc, self.allocator);
+                        typed_node.sem_type = value_ty;
+                        break :blk_variant typ.TypedExpr{ .node = typed_node, .ty = value_ty };
+                    }
+
+                    try self.diags.add(
+                        loc,
+                        .semantic,
+                        "choice has no variant '..{s}'",
+                        .{raw_variant.variant_name},
+                    );
+                    return error.Reported;
+                }
+            }
+
+            break :blk_variant typ.TypedExpr{
+                .node = @constCast(variant_field.value),
+                .ty = input_struct.fields[variant_idx.?].ty,
+            };
+        };
+
+        if (!typ.typesExactlyEqual(variant_te.ty, value_ty)) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "is expects '.variant' to belong to the same choice type as '.value'",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const cmp_ptr = try self.allocator.create(sg.Comparison);
+        cmp_ptr.* = .{
+            .operator = .equal,
+            .left = value_field.value,
+            .right = variant_te.node,
+        };
+
+        const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, loc, self.allocator);
+        try s.nodes.append(node);
+        return .{ .node = node, .ty = .{ .builtin = .Bool } };
+    }
+
+    fn resolveRegularCallCallee(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        input_ty: sg.Type,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!*sg.FunctionDeclaration {
+        var chosen: *sg.FunctionDeclaration = undefined;
+        if (call.type_arguments_struct) |stargs| {
+            const input_te = typ.TypedExpr{ .node = undefined, .ty = input_ty };
+            chosen = try self.instantiateGenericNamed(call.callee, stargs, input_te, s, .regular);
+        } else if (call.type_arguments) |targs| {
+            const input_te = typ.TypedExpr{ .node = undefined, .ty = input_ty };
+            chosen = try self.instantiateGeneric(call.callee, targs, input_te, s, .regular);
+        } else {
+            const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+            const input_te = typ.TypedExpr{ .node = undefined, .ty = input_ty };
+            const inferred = self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .regular) catch |err| switch (err) {
+                error.SymbolNotFound => null,
+                else => return err,
+            };
+
+            if (inferred) |instantiated| {
+                chosen = instantiated;
+            } else {
+                if (call.module_qualifier) |module_name| {
+                    chosen = try self.resolveQualifiedOverload(module_name, call.callee, input_ty, s, loc);
+                } else {
+                    chosen = self.resolveVisibleOverload(call.callee, input_ty, s, loc) catch |err| switch (err) {
+                        error.SymbolNotFound => blk: {
+                            const abstract_inferred = self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .abstract_contract) catch |inner_err| switch (inner_err) {
+                                error.SymbolNotFound => null,
+                                else => return inner_err,
+                            };
+                            if (abstract_inferred) |instantiated_abstract| break :blk instantiated_abstract;
+                            if (try self.addMissingAbstractImplementationDiagnostic(call.callee, input_ty, s, loc)) {
+                                return error.Reported;
+                            }
+                            try self.addMissingFunctionDiagnostic(call.callee, input_ty, s, loc);
+                            return error.Reported;
+                        },
+                        else => return err,
+                    };
+                }
+            }
+        }
+        return chosen;
+    }
+
+    fn buildNamedPipeInput(
+        self: *Semantizer,
+        field_names: []const []const u8,
+        args: []const typ.TypedExpr,
+    ) !typ.TypedExpr {
+        var call_args = std.array_list.Managed(CallArg).init(self.allocator.*);
+        defer call_args.deinit();
+
+        for (field_names, 0..) |field_name, idx| {
+            try call_args.append(.{ .name = field_name, .expr = args[idx] });
+        }
+
+        return self.buildCallInput(call_args.items);
+    }
+    fn handlePipe(
+        self: *Semantizer,
+        pipe: syn.PipeExpression,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        const left_te = try self.visitNode(pipe.left.*, s);
+
+        if (pipe.call.input.*.content != .struct_value_literal) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "pipe right-hand side must use named arguments",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const sv = pipe.call.input.*.content.struct_value_literal;
+        if (sv.fields.len == 0) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "pipe right-hand side must use at least one argument placeholder",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        var field_names = std.array_list.Managed([]const u8).init(self.allocator.*);
+        defer field_names.deinit();
+        var evaluated_args = std.array_list.Managed(typ.TypedExpr).init(self.allocator.*);
+        defer evaluated_args.deinit();
+
+        var found_placeholder = false;
+        for (sv.fields) |field| {
+            if (syntaxNodeContainsPipePlaceholder(field.value)) {
+                found_placeholder = true;
+                break;
+            }
+        }
+        if (!found_placeholder) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "pipe right-hand side must use at least one argument placeholder",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        for (sv.fields) |field| {
+            try field_names.append(field.name.string);
+            try evaluated_args.append(try self.evalPipeArg(field.value, left_te, s));
+        }
+
+        const input_te = try self.buildNamedPipeInput(field_names.items, evaluated_args.items);
+
+        if (std.mem.eql(u8, pipe.call.callee, "is")) {
+            return self.handleIsBuiltinFromInput(input_te, loc, s);
+        }
+
+        const chosen = try self.resolveRegularCallCallee(
+            .{
+                .callee = pipe.call.callee,
+                .callee_loc = pipe.call.callee_loc,
+                .module_qualifier = pipe.call.module_qualifier,
+                .type_arguments = pipe.call.type_arguments,
+                .type_arguments_struct = pipe.call.type_arguments_struct,
+                .input = pipe.call.input,
+            },
+            input_te.ty,
+            s,
+            loc,
+        );
+
+        const fc_ptr = try self.allocator.create(sg.FunctionCall);
+        fc_ptr.* = .{ .callee = chosen, .input = input_te.node };
+
+        const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
+        try s.nodes.append(n);
+        return .{ .node = n, .ty = typ.functionReturnType(chosen) };
     }
 
     fn resolveQualifiedOverload(
