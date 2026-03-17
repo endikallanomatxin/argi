@@ -39,6 +39,64 @@ const TypePairText = struct {
 pub const pointer_size_bytes: u64 = @sizeOf(*usize);
 pub const pointer_alignment_bytes: u64 = pointer_size_bytes;
 
+pub fn isTypeCopyable(ty: sg.Type, s: *Scope) bool {
+    if (s.findDeinit(ty) != null) return false;
+
+    return switch (ty) {
+        .builtin => true,
+        .pointer_type => true,
+        .abstract_type => false,
+        .array_type => |arr_info| isTypeCopyable(arr_info.element_type.*, s),
+        .struct_type => |st| blk: {
+            for (st.fields) |field| {
+                if (!isTypeCopyable(field.ty, s)) break :blk false;
+            }
+            break :blk true;
+        },
+        .choice_type => |ct| blk: {
+            for (ct.variants) |variant| {
+                if (variant.payload_type) |payload_ty| {
+                    if (!isTypeCopyable(payload_ty, s)) break :blk false;
+                }
+            }
+            break :blk true;
+        },
+    };
+}
+
+pub fn expressionNeedsCopyForValuePosition(node: *const sg.SGNode) bool {
+    return switch (node.content) {
+        .binding_use,
+        .struct_field_access,
+        .choice_payload_access,
+        .array_index,
+        .dereference,
+        => true,
+        else => false,
+    };
+}
+
+pub fn ensureValuePositionAllowed(
+    expr: TypedExpr,
+    loc: tok.Location,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!void {
+    if (!expressionNeedsCopyForValuePosition(expr.node)) return;
+    if (isTypeCopyable(expr.ty, s)) return;
+
+    const ty_text = try formatTypeText(expr.ty, s, allocator);
+    defer ty_text.deinit();
+    try diags.add(
+        loc,
+        .semantic,
+        "type '{s}' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'",
+        .{ty_text.bytes},
+    );
+    return error.Reported;
+}
+
 pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
     return switch (a) {
         .builtin => |ab| switch (b) {
@@ -723,6 +781,14 @@ pub fn convertListLiteralToArray(
                     .{ idx, pair.actual.bytes, pair.expected.bytes },
                 );
                 return error.Reported;
+            }
+
+            for (ll.elements, 0..) |elem_node, idx| {
+                const elem_expr = TypedExpr{
+                    .node = @constCast(elem_node),
+                    .ty = ll.element_types[idx],
+                };
+                try ensureValuePositionAllowed(elem_expr, loc, s, allocator, diags);
             }
 
             const arr_lit = try allocator.create(sg.ArrayLiteral);

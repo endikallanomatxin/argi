@@ -42,6 +42,17 @@ const SignatureText = struct {
     }
 };
 
+const CallAccessMode = enum {
+    value,
+    read,
+    write,
+};
+
+const CallBindingAccess = struct {
+    name: []const u8,
+    mode: CallAccessMode,
+};
+
 //──────────────────────────────────────────────────────────────────────────────
 //  SEMANTIZER
 //──────────────────────────────────────────────────────────────────────────────
@@ -1157,6 +1168,7 @@ pub const Semantizer = struct {
         var payload: ?*const sg.SGNode = null;
         if (lit.payload) |payload_node| {
             const payload_te = try self.visitNode(payload_node.*, s);
+            try typ.ensureValuePositionAllowed(payload_te, payload_node.location, s, self.allocator, self.diags);
             payload_te.node.sem_type = payload_te.ty;
             payload = payload_te.node;
         }
@@ -1267,6 +1279,10 @@ pub const Semantizer = struct {
                 ty = .{ .array_type = arr_info };
                 init_te_opt = try typ.convertListLiteralToArray(te_initial, arr_info, init_node.?.location, s, self.allocator, self.diags);
             }
+        }
+
+        if (init_te_opt) |init_te| {
+            try typ.ensureValuePositionAllowed(init_te, init_node.?.location, s, self.allocator, self.diags);
         }
 
         const bd = try self.allocator.create(sg.BindingDeclaration);
@@ -1650,6 +1666,7 @@ pub const Semantizer = struct {
 
         var rhs = try self.visitNode(a.value.*, s);
         rhs = try typ.coerceExprToType(b.ty, rhs, a.value, s, self.allocator, self.diags);
+        try typ.ensureValuePositionAllowed(rhs, a.value.location, s, self.allocator, self.diags);
         if (!typ.typesExactlyEqual(b.ty, rhs.ty)) {
             const pair = try self.formatTypePairText(b.ty, rhs.ty, s);
             defer pair.deinit();
@@ -1680,6 +1697,7 @@ pub const Semantizer = struct {
 
         for (sl.fields) |f| {
             const tv = try self.visitNode(f.value.*, s);
+            try typ.ensureValuePositionAllowed(tv, f.value.location, s, self.allocator, self.diags);
             try fields_buf.append(.{ .name = f.name.string, .value = tv.node });
         }
 
@@ -2292,6 +2310,7 @@ pub const Semantizer = struct {
         }
 
         const tv_in = try self.visitNode(call.input.*, s);
+        try self.checkCallBindingExclusivity(call.callee, tv_in, call.input.*.location);
         if (s.lookupType(call.callee)) |type_decl| {
             if (!(try self.typeIsVisible(type_decl, call.input.*.location.file))) {
                 try self.addPrivateMemberDiag(call.input.*.location, "type", call.callee);
@@ -2313,6 +2332,73 @@ pub const Semantizer = struct {
         const result_ty = typ.functionReturnType(chosen);
 
         return .{ .node = n, .ty = result_ty };
+    }
+
+    fn extractCallBindingAccess(
+        self: *Semantizer,
+        field_value: *const sg.SGNode,
+        field_ty: sg.Type,
+    ) ?CallBindingAccess {
+        _ = self;
+        return switch (field_value.content) {
+            .binding_use => |binding| .{ .name = binding.name, .mode = .value },
+            .address_of => |inner| blk: {
+                if (inner.content != .binding_use) break :blk null;
+                if (field_ty != .pointer_type) break :blk null;
+
+                const mode: CallAccessMode = switch (field_ty.pointer_type.mutability) {
+                    .read_only => .read,
+                    .read_write => .write,
+                };
+                break :blk .{ .name = inner.content.binding_use.name, .mode = mode };
+            },
+            else => null,
+        };
+    }
+
+    fn callModesConflict(a: CallAccessMode, b: CallAccessMode) bool {
+        return a == .write or b == .write;
+    }
+
+    fn modeText(mode: CallAccessMode) []const u8 {
+        return switch (mode) {
+            .value => "value",
+            .read => "&",
+            .write => "$&",
+        };
+    }
+
+    fn checkCallBindingExclusivity(
+        self: *Semantizer,
+        callee_name: []const u8,
+        input_te: typ.TypedExpr,
+        loc: tok.Location,
+    ) SemErr!void {
+        if (input_te.ty != .struct_type) return;
+        if (input_te.node.content != .struct_value_literal) return;
+
+        const input_ty = input_te.ty.struct_type;
+        const input_value = input_te.node.content.struct_value_literal;
+
+        var i: usize = 0;
+        while (i < input_value.fields.len) : (i += 1) {
+            const left = self.extractCallBindingAccess(input_value.fields[i].value, input_ty.fields[i].ty) orelse continue;
+
+            var j: usize = i + 1;
+            while (j < input_value.fields.len) : (j += 1) {
+                const right = self.extractCallBindingAccess(input_value.fields[j].value, input_ty.fields[j].ty) orelse continue;
+                if (!std.mem.eql(u8, left.name, right.name)) continue;
+                if (!callModesConflict(left.mode, right.mode)) continue;
+
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "binding '{s}' cannot be passed as '{s}' and '{s}' in the same call to '{s}'",
+                    .{ left.name, modeText(left.mode), modeText(right.mode), callee_name },
+                );
+                return error.Reported;
+            }
+        }
     }
 
     fn handleIsBuiltinFromInput(
@@ -3522,6 +3608,9 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         const e = if (r.expression) |ex| (try self.visitNode(ex.*, s)) else null;
+        if (r.expression) |ex| {
+            if (e) |te| try typ.ensureValuePositionAllowed(te, ex.location, s, self.allocator, self.diags);
+        }
 
         const rs = try self.allocator.create(sg.ReturnStatement);
         rs.* = .{ .expression = if (e) |te| te.node else null };
