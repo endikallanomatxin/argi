@@ -7,11 +7,18 @@ Two literals:
 - `'c'` for characters
 - `"string"` for strings
 
-Una lista string, se debería poder "ver" como una lista de chars o una lista de bytes. Un char puede ser de múltiples bytes (UTF8)
+Un string se debería poder "ver" como una secuencia de bytes o, más adelante,
+como una secuencia de code points. Un char puede ser de múltiples bytes (UTF-8).
+
+`String` no debería ser indexable directamente por defecto. Eso mezcla dos
+preguntas distintas:
+
+- acceso por byte,
+- acceso por unidad de texto (`code point`, y quizá más adelante grapheme).
 
 ```
-my_string(5)            -- The fifth character
 my_string | bytes_get(&_, 4)  -- The fourth byte
+my_string | codepoints(&_) | _[4]  -- Future explicit text/code-point view
 ```
 
 
@@ -84,6 +91,8 @@ Current implementation direction:
 - byte-level access is explicit:
   - `bytes_get(.string = &string, .index = i)`
   - `bytes_set(.string = $&string, .index = i, .value = b)`
+- future text-level indexing should happen through an explicit view such as
+  `codepoints(.string = &string)`, not directly on `String`.
 - borrowed `StringViewRO/RW` types still make sense as the longer-term shape for
   explicit windows into a string, but byte indexing should not live directly on
   `String`.
@@ -91,10 +100,6 @@ Current implementation direction:
 This is intentionally narrower than the long-term text model. UTF-8-aware
 character indexing and higher-level string construction can be layered on top
 later, but the base owner/view split should already be real and usable.
-
-The more advanced concerns, such as UTF-8 indexing helpers, cached rune
-offsets, or specialized dynamic-string growth strategies, can be layered on top
-later.
 
 
 > [!IDEA]

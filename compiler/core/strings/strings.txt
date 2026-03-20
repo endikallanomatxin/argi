@@ -3,6 +3,8 @@ String should follow the same ownership split as lists:
 - `String` is the owning type.
 - it should be backed by `Allocation`.
 - borrowed string views should stay separate and non-owning.
+- direct indexing on `String` itself should stay unavailable.
+- byte-level or text-level indexing should go through explicit views/operations.
 
 Proposed minimal direction:
 
@@ -31,3 +33,9 @@ The important design point is the same as for list views:
 - not the backing bytes,
 - and not the ownership.
 
+Likely split:
+
+- explicit byte access for the owning `String`,
+- later, an explicit `codepoints(...)` view for text indexing,
+- and any UTF-8 acceleration data should stay an implementation detail of that
+  text view rather than part of `String`'s surface API.
