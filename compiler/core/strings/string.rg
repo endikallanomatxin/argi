@@ -1,9 +1,13 @@
 String : Type = (
     --
-    -- Intended long-term representation:
-    -- ._allocation : Allocation
-    -- ._length     : UIntNative
+    -- Owning string storage.
     --
-    -- `String` owns its bytes. Non-owning string slices/views should be
-    -- modeled separately as plain borrowed descriptors.
+    -- `String` should be the standard-library owner for heap-backed text
+    -- data, built on top of `Allocation`.
+    --
+    -- Non-owning string slices/views should remain separate borrowed
+    -- descriptors.
+    --
+    .allocation : Allocation
+    .length     : UIntNative
 )

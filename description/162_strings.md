@@ -43,37 +43,39 @@ Several escape sequences are supported:
 
 ## Implementation
 
-Similar to lists
+Strings should follow the same ownership split as lists:
+
+- `String` is the owning type.
+- it should be backed by `Allocation`.
+- string views should stay borrowed and non-owning.
+
+One reasonable base direction is:
 
 ```
-String#(
-    .b: Int32      -- bytes
-    .nsbc: Int32   -- non-single-byte characters
-) : Type = (
-
-    .data   : [b]Uint8
-    .length : Int32
-
-    .nsbc_indeces            : [nsbc]Int32
-    .extra_bytes_accumulated : [nsbc]Int32
-    -- searching in nsbc_indeeces is done with binary search O(log nsbc)
-    -- then finding the exact byte index is almost instantáneous O(1)
+String : Type = (
+    .allocation : Allocation
+    .length     : UIntNative
 )
 
-DynamicString : Type = (
-    .data                    : DynamicArray#(Uint8)
-    .nsbc_indeces            : DynamicArray#(Int32)
-    .extra_bytes_accumulated : DynamicArray#(Int32)
+StringViewRO : Type = (
+    .string : &String
+    .start  : UIntNative
+    .length : UIntNative
 )
 
-StringView : Type = (
-    .data : &String
-    .start: Int32
+StringViewRW : Type = (
+    .string : $&String
+    .start  : UIntNative
+    .length : UIntNative
 )
 ```
 
-When a constant string is defined: String
-When a variable string is defined: DynamicString
+Copying a string view should copy only the descriptor. It should never imply
+ownership of the underlying bytes.
+
+The more advanced concerns, such as UTF-8 indexing helpers, cached rune
+offsets, or specialized dynamic-string growth strategies, can be layered on top
+later.
 
 
 > [!IDEA]
@@ -89,4 +91,3 @@ When a variable string is defined: DynamicString
 > 	"""
 > ```
 > Podría hacerse conectándose al lsp de turno.
-
