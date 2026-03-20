@@ -81,6 +81,12 @@ feature first.
 design decisions. If you leave comments, ensure they are descriptive and
 timeless; not refering to the current change.
 
+- In `compiler/core/`, when a `feature.rg` has become a reasonably complete
+implementation, remove the corresponding `feature.txt` scratch/design file and
+move any still-useful notes into comments in `feature.rg`. If some ideas remain
+unfinished, leave them commented there rather than keeping a parallel `.txt`
+file around.
+
 - Commits: focused, descriptive subject in imperative mood (e.g., "add binary
 literals to lexer").
 
