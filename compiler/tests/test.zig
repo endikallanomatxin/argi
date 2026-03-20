@@ -667,6 +667,12 @@ test "422_array_explicit_type" {
     try run();
 }
 
+test "423_array_iterator_manual" {
+    try clean();
+    try expectSuccessfulBuild("tests/423_array_iterator_manual/main.rg");
+    try run();
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");

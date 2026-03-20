@@ -2467,6 +2467,30 @@ pub const Semantizer = struct {
                 error.Reported => return err,
                 else => err,
             };
+        if (std.mem.eql(u8, call.callee, "to_iterator")) to_iterator_blk: {
+            const res = self.handleToIteratorBuiltin(call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                error.SymbolNotFound => break :to_iterator_blk,
+                else => return err,
+            };
+            return res;
+        }
+        if (std.mem.eql(u8, call.callee, "has_next")) has_next_blk: {
+            const res = self.handleHasNextBuiltin(call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                error.SymbolNotFound => break :has_next_blk,
+                else => return err,
+            };
+            return res;
+        }
+        if (std.mem.eql(u8, call.callee, "next")) next_blk: {
+            const res = self.handleNextBuiltin(call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                error.SymbolNotFound => break :next_blk,
+                else => return err,
+            };
+            return res;
+        }
         if (std.mem.eql(u8, call.callee, "length")) len_blk: {
             const len_res = self.handleLengthBuiltin(call, s) catch |err| switch (err) {
                 error.Reported => return err,
@@ -4107,124 +4131,7 @@ pub const Semantizer = struct {
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
         const iterable_te = try self.visitNode(f.iterable.*, s);
-        if (iterable_te.ty == .array_type) {
-            return self.lowerForOverArray(f, s, loc);
-        }
-
         return self.lowerForOverIterator(f, iterable_te.ty, s, loc);
-    }
-
-    fn lowerForOverArray(
-        self: *Semantizer,
-        f: syn.ForStatement,
-        s: *Scope,
-        loc: tok.Location,
-    ) SemErr!typ.TypedExpr {
-        const iterable_te = try self.visitNode(f.iterable.*, s);
-        const iterable_copyable = typ.isTypeCopyable(iterable_te.ty, s);
-        const iterable_name = try self.makeSyntheticName("iterable");
-        const index_name = try self.makeSyntheticName("index");
-
-        const iterable_ref = if (iterable_copyable) blk: {
-            break :blk try self.makeSynNode(.{ .identifier = iterable_name }, loc);
-        } else switch (f.iterable.*.content) {
-            .identifier => f.iterable,
-            else => {
-                try self.diags.add(
-                    f.iterable.location,
-                    .semantic,
-                    "for cannot iterate a non-copyable array expression directly; bind it to a name first",
-                    .{},
-                );
-                return error.Reported;
-            },
-        };
-        const index_ident = try self.makeSynNode(.{ .identifier = index_name }, loc);
-        const zero_lit = try self.makeSynNode(.{ .literal = .{ .decimal_int_literal = "0" } }, loc);
-        const one_lit = try self.makeSynNode(.{ .literal = .{ .decimal_int_literal = "1" } }, loc);
-
-        const index_decl = try self.makeSynNode(.{ .symbol_declaration = .{
-            .name = .{ .string = index_name, .location = loc },
-            .type = .{ .type_name = .{ .string = "UIntNative", .location = loc } },
-            .mutability = .variable,
-            .value = zero_lit,
-        } }, loc);
-
-        const length_fields = try self.allocator.alloc(syn.StructValueLiteralField, 1);
-        length_fields[0] = .{
-            .name = .{ .string = "value", .location = loc },
-            .value = iterable_ref,
-        };
-        const length_arg = try self.makeSynNode(.{ .struct_value_literal = .{
-            .fields = length_fields,
-        } }, loc);
-        const length_call = try self.makeSynNode(.{ .function_call = .{
-            .callee = "length",
-            .callee_loc = loc,
-            .module_qualifier = null,
-            .type_arguments = null,
-            .type_arguments_struct = null,
-            .input = length_arg,
-        } }, loc);
-        const cond = try self.makeSynNode(.{ .comparison = .{
-            .operator = .less_than,
-            .left = index_ident,
-            .right = length_call,
-        } }, loc);
-
-        const item_index = try self.makeSynNode(.{ .index_access = .{
-            .value = iterable_ref,
-            .index = index_ident,
-        } }, loc);
-        const item_decl = try self.makeSynNode(.{ .symbol_declaration = .{
-            .name = f.item_name,
-            .type = null,
-            .mutability = .constant,
-            .value = item_index,
-        } }, loc);
-
-        const increment_expr = try self.makeSynNode(.{ .binary_operation = .{
-            .operator = .addition,
-            .left = index_ident,
-            .right = one_lit,
-        } }, loc);
-        const increment = try self.makeSynNode(.{ .assignment = .{
-            .name = .{ .string = index_name, .location = loc },
-            .value = increment_expr,
-        } }, loc);
-
-        const while_body_items = try self.allocator.alloc(*syn.STNode, 3);
-        while_body_items[0] = item_decl;
-        while_body_items[1] = f.body;
-        while_body_items[2] = increment;
-        const while_body = try self.makeSynNode(.{ .code_block = .{
-            .items = while_body_items,
-        } }, loc);
-        const while_stmt = try self.makeSynNode(.{ .while_statement = .{
-            .condition = cond,
-            .body = while_body,
-        } }, loc);
-
-        const lowered_items = try self.allocator.alloc(*syn.STNode, if (iterable_copyable) 3 else 2);
-        if (iterable_copyable) {
-            const iterable_decl = try self.makeSynNode(.{ .symbol_declaration = .{
-                .name = .{ .string = iterable_name, .location = loc },
-                .type = null,
-                .mutability = .constant,
-                .value = f.iterable,
-            } }, loc);
-            lowered_items[0] = iterable_decl;
-            lowered_items[1] = index_decl;
-            lowered_items[2] = while_stmt;
-        } else {
-            lowered_items[0] = index_decl;
-            lowered_items[1] = while_stmt;
-        }
-
-        const lowered = try self.makeSynNode(.{ .code_block = .{
-            .items = lowered_items,
-        } }, loc);
-        return self.visitNode(lowered.*, s);
     }
 
     fn lowerForOverIterator(
@@ -4544,6 +4451,7 @@ pub const Semantizer = struct {
         const out_ty: sg.Type = .{ .pointer_type = ptr_ty };
 
         const addr_node = try sg.makeSGNode(.{ .address_of = te.node }, undefined, self.allocator);
+        addr_node.sem_type = out_ty;
         return .{ .node = addr_node, .ty = out_ty };
     }
 
@@ -4834,6 +4742,300 @@ pub const Semantizer = struct {
         }
 
         return self.visitNode(svl.fields[0].value.*, s);
+    }
+
+    fn extractValueArgumentNode(self: *Semantizer, call: syn.FunctionCall, arg_name: []const u8) SemErr!*const syn.STNode {
+        const arg_node = call.input.*;
+        if (arg_node.content != .struct_value_literal) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "builtin expects '.{s}' argument",
+                .{arg_name},
+            );
+            return error.Reported;
+        }
+        const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, arg_name)) {
+            try self.diags.add(
+                arg_node.location,
+                .semantic,
+                "builtin expects a single '.{s}' argument",
+                .{arg_name},
+            );
+            return error.Reported;
+        }
+        return svl.fields[0].value;
+    }
+
+    fn makeArrayIteratorType(self: *Semantizer, elem_ty: sg.Type) !sg.Type {
+        // TODO: Replace this synthetic iterator type with a real core type such
+        // as `ArrayIterator#(.n = ..., .t: ...)` once non-type generic
+        // parameters are supported throughout generic identity and instantiation.
+        const data_field_ty = try self.allocator.create(sg.Type);
+        data_field_ty.* = .{ .builtin = .UIntNative };
+        const length_field_ty = try self.allocator.create(sg.Type);
+        length_field_ty.* = .{ .builtin = .UIntNative };
+        const index_field_ty = try self.allocator.create(sg.Type);
+        index_field_ty.* = .{ .builtin = .UIntNative };
+
+        const fields = try self.allocator.alloc(sg.StructTypeField, 3);
+        fields[0] = .{ .name = "data", .ty = data_field_ty.*, .default_value = null };
+        fields[1] = .{ .name = "length", .ty = length_field_ty.*, .default_value = null };
+        fields[2] = .{ .name = "index", .ty = index_field_ty.*, .default_value = null };
+
+        const st_ptr = try self.allocator.create(sg.StructType);
+        st_ptr.* = .{ .fields = fields };
+
+        const arg_names = try self.allocator.alloc([]const u8, 1);
+        arg_names[0] = "t";
+        const arg_types = try self.allocator.alloc(sg.Type, 1);
+        arg_types[0] = elem_ty;
+
+        const identity = try self.allocator.create(sg.GenericTypeIdentity);
+        identity.* = .{
+            .base_name = "ArrayIterator",
+            .arg_names = arg_names,
+            .arg_types = arg_types,
+        };
+        st_ptr.generic_identity = identity;
+        return .{ .struct_type = st_ptr };
+    }
+
+    fn getArrayIteratorElementType(self: *Semantizer, ty: sg.Type) ?sg.Type {
+        _ = self;
+        if (ty != .struct_type) return null;
+        const identity = ty.struct_type.generic_identity orelse return null;
+        if (!std.mem.eql(u8, identity.base_name, "ArrayIterator")) return null;
+        if (identity.arg_types.len != 1) return null;
+        return identity.arg_types[0];
+    }
+
+    fn makeStructFieldAccessExpr(
+        self: *Semantizer,
+        base: *const sg.SGNode,
+        base_ty: *const sg.StructType,
+        field_name: []const u8,
+        loc: tok.Location,
+    ) !typ.TypedExpr {
+        for (base_ty.fields, 0..) |field, idx| {
+            if (!std.mem.eql(u8, field.name, field_name)) continue;
+            const access = try self.allocator.create(sg.StructFieldAccess);
+            access.* = .{
+                .struct_value = base,
+                .field_name = field.name,
+                .field_index = @intCast(idx),
+            };
+            const node = try sg.makeSGNode(.{ .struct_field_access = access }, loc, self.allocator);
+            return .{ .node = node, .ty = field.ty };
+        }
+        return error.FieldsNotFound;
+    }
+
+    fn makeArrayIteratorDerefExpr(
+        self: *Semantizer,
+        ptr_expr: typ.TypedExpr,
+        loc: tok.Location,
+    ) !typ.TypedExpr {
+        const ptr_info = ptr_expr.ty.pointer_type;
+        const deref = try sg.makeSGNode(.{ .dereference = .{
+            .pointer = ptr_expr.node,
+            .ty = ptr_info.child.*,
+            .pointer_type = ptr_info,
+        } }, loc, self.allocator);
+        return .{ .node = deref, .ty = ptr_info.child.* };
+    }
+
+    fn handleToIteratorBuiltin(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!typ.TypedExpr {
+        // TODO: This array-specific builtin path should disappear once arrays
+        // can use the same generic/core iterator machinery as other iterable
+        // types instead of relying on semantizer-built synthetic iterators.
+        const value_node = try self.extractValueArgumentNode(call, "value");
+        var value_te = try self.visitNode(value_node.*, s);
+
+        var array_ty_ptr: *const sg.ArrayType = undefined;
+        if (value_te.ty == .pointer_type and value_te.ty.pointer_type.child.* == .array_type) {
+            array_ty_ptr = value_te.ty.pointer_type.child.*.array_type;
+        } else if (value_te.ty == .array_type) {
+            value_te = try typ.ensureReadOnlyPointer(value_node, value_te, self.allocator, self.diags);
+            array_ty_ptr = value_te.ty.pointer_type.child.*.array_type;
+        } else {
+            return error.SymbolNotFound;
+        }
+
+        const data_cast = try sg.makeSGNode(.{ .explicit_cast = .{
+            .value = value_te.node,
+            .target_type = .{ .builtin = .UIntNative },
+        } }, call.input.*.location, self.allocator);
+        const length_lit = try typ.makeIntLiteral(
+            self.allocator,
+            call.input.*.location,
+            @intCast(array_ty_ptr.length),
+            .{ .builtin = .UIntNative },
+        );
+        const zero_lit = try typ.makeIntLiteral(
+            self.allocator,
+            call.input.*.location,
+            0,
+            .{ .builtin = .UIntNative },
+        );
+
+        const iterator_ty = try self.makeArrayIteratorType(array_ty_ptr.element_type.*);
+        const fields = try self.allocator.alloc(sg.StructValueLiteralField, 3);
+        fields[0] = .{ .name = "data", .value = data_cast };
+        fields[1] = .{ .name = "length", .value = length_lit.node };
+        fields[2] = .{ .name = "index", .value = zero_lit.node };
+
+        const value_ptr = try self.allocator.create(sg.StructValueLiteral);
+        value_ptr.* = .{
+            .fields = fields,
+            .ty = iterator_ty,
+        };
+
+        const node = try sg.makeSGNode(.{ .struct_value_literal = value_ptr }, call.input.*.location, self.allocator);
+        return .{ .node = node, .ty = iterator_ty };
+    }
+
+    fn handleHasNextBuiltin(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!typ.TypedExpr {
+        // TODO: Fold this array builtin into normal overload resolution once
+        // `ArrayIterator` exists as a real generic type in core.
+        const self_te = try self.extractValueArgument(call, "self", s);
+        if (self_te.ty != .pointer_type) return error.SymbolNotFound;
+        const iterator_ty = self_te.ty.pointer_type.child.*;
+        if (self.getArrayIteratorElementType(iterator_ty) == null) return error.SymbolNotFound;
+
+        const deref_te = try self.makeArrayIteratorDerefExpr(self_te, call.input.*.location);
+        const index_te = try self.makeStructFieldAccessExpr(deref_te.node, deref_te.ty.struct_type, "index", call.input.*.location);
+        const length_te = try self.makeStructFieldAccessExpr(deref_te.node, deref_te.ty.struct_type, "length", call.input.*.location);
+
+        const cmp_ptr = try self.allocator.create(sg.Comparison);
+        cmp_ptr.* = .{
+            .operator = .less_than,
+            .left = index_te.node,
+            .right = length_te.node,
+        };
+        const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, call.input.*.location, self.allocator);
+        return .{ .node = node, .ty = .{ .builtin = .Bool } };
+    }
+
+    fn handleNextBuiltin(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!typ.TypedExpr {
+        // TODO: Replace this synthetic block-based array `next` lowering with a
+        // regular core implementation when array iterators become first-class
+        // generic types with non-type parameters.
+        const self_te = try self.extractValueArgument(call, "self", s);
+        if (self_te.ty != .pointer_type) return error.SymbolNotFound;
+        if (self_te.ty.pointer_type.mutability != .read_write) {
+            try self.diags.add(
+                call.input.*.location,
+                .semantic,
+                "next expects '.self' to be a '$&' iterator",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const iterator_ty = self_te.ty.pointer_type.child.*;
+        const elem_ty = self.getArrayIteratorElementType(iterator_ty) orelse return error.SymbolNotFound;
+        const deref_te = try self.makeArrayIteratorDerefExpr(self_te, call.input.*.location);
+        const iterator_struct = deref_te.ty.struct_type;
+
+        const data_te = try self.makeStructFieldAccessExpr(deref_te.node, iterator_struct, "data", call.input.*.location);
+        const length_te = try self.makeStructFieldAccessExpr(deref_te.node, iterator_struct, "length", call.input.*.location);
+        const index_te = try self.makeStructFieldAccessExpr(deref_te.node, iterator_struct, "index", call.input.*.location);
+
+        const elem_size_lit = try typ.makeIntLiteral(
+            self.allocator,
+            call.input.*.location,
+            @intCast(typ.computeTypeSize(elem_ty)),
+            .{ .builtin = .UIntNative },
+        );
+        const mul_ptr = try self.allocator.create(sg.BinaryOperation);
+        mul_ptr.* = .{
+            .operator = .multiplication,
+            .left = index_te.node,
+            .right = elem_size_lit.node,
+        };
+        const mul_node = try sg.makeSGNode(.{ .binary_operation = mul_ptr.* }, call.input.*.location, self.allocator);
+
+        const add_ptr = try self.allocator.create(sg.BinaryOperation);
+        add_ptr.* = .{
+            .operator = .addition,
+            .left = data_te.node,
+            .right = mul_node,
+        };
+        const addr_node = try sg.makeSGNode(.{ .binary_operation = add_ptr.* }, call.input.*.location, self.allocator);
+
+        const elem_ptr_ty = try self.allocator.create(sg.Type);
+        elem_ptr_ty.* = elem_ty;
+        const elem_ptr_info = try self.allocator.create(sg.PointerType);
+        elem_ptr_info.* = .{
+            .mutability = .read_only,
+            .child = elem_ptr_ty,
+        };
+        const cast_node = try sg.makeSGNode(.{ .explicit_cast = .{
+            .value = addr_node,
+            .target_type = .{ .pointer_type = elem_ptr_info },
+        } }, call.input.*.location, self.allocator);
+        const value_node = try sg.makeSGNode(.{ .dereference = .{
+            .pointer = cast_node,
+            .ty = elem_ty,
+            .pointer_type = elem_ptr_info,
+        } }, call.input.*.location, self.allocator);
+
+        const temp_name = try self.makeSyntheticName("array_next_value");
+        const temp_binding = try self.allocator.create(sg.BindingDeclaration);
+        temp_binding.* = .{
+            .name = temp_name,
+            .origin_file = call.input.*.location.file,
+            .mutability = .constant,
+            .ty = elem_ty,
+            .initialization = value_node,
+        };
+        const temp_decl = try sg.makeSGNode(.{ .binding_declaration = temp_binding }, call.input.*.location, self.allocator);
+        const temp_use = try sg.makeSGNode(.{ .binding_use = temp_binding }, call.input.*.location, self.allocator);
+
+        const one_lit = try typ.makeIntLiteral(
+            self.allocator,
+            call.input.*.location,
+            1,
+            .{ .builtin = .UIntNative },
+        );
+        const next_index_ptr = try self.allocator.create(sg.BinaryOperation);
+        next_index_ptr.* = .{
+            .operator = .addition,
+            .left = index_te.node,
+            .right = one_lit.node,
+        };
+        const next_index_node = try sg.makeSGNode(.{ .binary_operation = next_index_ptr.* }, call.input.*.location, self.allocator);
+
+        const updated_fields = try self.allocator.alloc(sg.StructValueLiteralField, 3);
+        updated_fields[0] = .{ .name = "data", .value = data_te.node };
+        updated_fields[1] = .{ .name = "length", .value = length_te.node };
+        updated_fields[2] = .{ .name = "index", .value = next_index_node };
+        const updated_value_ptr = try self.allocator.create(sg.StructValueLiteral);
+        updated_value_ptr.* = .{
+            .fields = updated_fields,
+            .ty = iterator_ty,
+        };
+        const updated_node = try sg.makeSGNode(.{ .struct_value_literal = updated_value_ptr }, call.input.*.location, self.allocator);
+
+        const assign_ptr = try self.allocator.create(sg.PointerAssignment);
+        assign_ptr.* = .{
+            .pointer = self_te.node,
+            .value = updated_node,
+        };
+        const assign_node = try sg.makeSGNode(.{ .pointer_assignment = assign_ptr.* }, call.input.*.location, self.allocator);
+
+        const body_nodes = try self.allocator.alloc(*sg.SGNode, 2);
+        body_nodes[0] = temp_decl;
+        body_nodes[1] = assign_node;
+        const block = try self.allocator.create(sg.CodeBlock);
+        block.* = .{
+            .nodes = body_nodes,
+            .ret_val = temp_use,
+        };
+        const node = try sg.makeSGNode(.{ .code_block = block }, call.input.*.location, self.allocator);
+        return .{ .node = node, .ty = elem_ty };
     }
 
     fn handleCastBuiltin(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!typ.TypedExpr {

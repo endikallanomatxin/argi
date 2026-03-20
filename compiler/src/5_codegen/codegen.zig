@@ -204,11 +204,10 @@ pub const CodeGenerator = struct {
                 return null;
             },
             .code_block => |cb| {
-                self.genCodeBlock(cb) catch |e| {
+                return self.genCodeBlock(cb) catch |e| {
                     try self.diags.add(n.location, .codegen, "error generating code block: {s}", .{@errorName(e)});
                     return e;
                 };
-                return null;
             },
             .return_statement => |r| {
                 self.genReturn(r) catch |e| {
@@ -285,7 +284,7 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "error generating choice payload access: {s}", .{@errorName(e)});
                 return e;
             },
-            .address_of => |a| self.genAddressOf(a) catch |e| {
+            .address_of => |_| self.genAddressOf(n) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating address-of: {s}", .{@errorName(e)});
                 return e;
             },
@@ -586,7 +585,7 @@ pub const CodeGenerator = struct {
         }
 
         // cuerpo del usuario
-        try self.genCodeBlock(f.body.?);
+        _ = try self.genCodeBlock(f.body.?);
 
         // return implícito si falta
         const cur_bb = c.LLVMGetInsertBlock(self.builder);
@@ -1082,13 +1081,13 @@ pub const CodeGenerator = struct {
         _ = c.LLVMBuildCondBr(self.builder, cond_val, thenB, elseB orelse endB);
 
         c.LLVMPositionBuilderAtEnd(self.builder, thenB);
-        try self.genCodeBlock(i.then_block);
+        _ = try self.genCodeBlock(i.then_block);
         if (c.LLVMGetBasicBlockTerminator(thenB) == null)
             _ = c.LLVMBuildBr(self.builder, endB);
 
         if (i.else_block) |eb| {
             c.LLVMPositionBuilderAtEnd(self.builder, elseB.?);
-            try self.genCodeBlock(eb);
+            _ = try self.genCodeBlock(eb);
             if (c.LLVMGetBasicBlockTerminator(elseB.?) == null)
                 _ = c.LLVMBuildBr(self.builder, endB);
         }
@@ -1109,7 +1108,7 @@ pub const CodeGenerator = struct {
         _ = c.LLVMBuildCondBr(self.builder, cond_tv.value_ref, bodyB, endB);
 
         c.LLVMPositionBuilderAtEnd(self.builder, bodyB);
-        try self.genCodeBlock(w.body);
+        _ = try self.genCodeBlock(w.body);
         if (c.LLVMGetBasicBlockTerminator(bodyB) == null)
             _ = c.LLVMBuildBr(self.builder, condB);
 
@@ -1140,14 +1139,14 @@ pub const CodeGenerator = struct {
 
         for (sw.cases, 0..) |case_item, idx| {
             c.LLVMPositionBuilderAtEnd(self.builder, case_blocks[idx]);
-            try self.genCodeBlock(case_item.body);
+            _ = try self.genCodeBlock(case_item.body);
             if (c.LLVMGetBasicBlockTerminator(case_blocks[idx]) == null)
                 _ = c.LLVMBuildBr(self.builder, endB);
         }
 
         if (sw.default_case) |default_case| {
             c.LLVMPositionBuilderAtEnd(self.builder, defaultB);
-            try self.genCodeBlock(default_case);
+            _ = try self.genCodeBlock(default_case);
             if (c.LLVMGetBasicBlockTerminator(defaultB) == null)
                 _ = c.LLVMBuildBr(self.builder, endB);
         }
@@ -1472,13 +1471,13 @@ pub const CodeGenerator = struct {
 
     // ────────────────────────────────────────── address-of ──
     fn genAddressOf(self: *CodeGenerator, node: *const sem.SGNode) !TypedValue {
-        // node es el SG del binding_use
-        const bu = node.content.binding_use;
+        const target = node.content.address_of;
+        const bu = target.content.binding_use;
         const sym = self.current_scope.lookup(bu.name) orelse
             return CodegenError.SymbolNotFound;
 
         const ptr_ty = c.LLVMPointerType(sym.type_ref, 0);
-        return .{ .value_ref = sym.ref, .type_ref = ptr_ty };
+        return .{ .value_ref = sym.ref, .type_ref = ptr_ty, .sem_type = node.sem_type };
     }
 
     fn genDereference(self: *CodeGenerator, d: *const sem.Dereference) !TypedValue {
@@ -1539,10 +1538,14 @@ pub const CodeGenerator = struct {
         _ = c.LLVMBuildStore(self.builder, rhs_tv.value_ref, ptr_tv.value_ref);
     }
     // ────────────────────────────────────────── misc helpers ──
-    fn genCodeBlock(self: *CodeGenerator, cb: *const sem.CodeBlock) !void {
+    fn genCodeBlock(self: *CodeGenerator, cb: *const sem.CodeBlock) !?TypedValue {
         try self.pushScope();
         defer self.popScope();
         for (cb.nodes) |n| _ = try self.visitNode(n);
+        if (cb.ret_val) |ret_val| {
+            return try self.visitNode(ret_val);
+        }
+        return null;
     }
 
     fn dupZ(self: *CodeGenerator, s: []const u8) ![]u8 {
