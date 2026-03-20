@@ -251,6 +251,13 @@ pub const CodeGenerator = struct {
                 };
                 return null;
             },
+            .while_statement => |w| {
+                self.genWhileStatement(w) catch |e| {
+                    try self.diags.add(n.location, .codegen, "error generating while statement: {s}", .{@errorName(e)});
+                    return e;
+                };
+                return null;
+            },
             .switch_statement => |sw| {
                 self.genSwitchStatement(sw) catch |e| {
                     try self.diags.add(n.location, .codegen, "error generating switch statement: {s}", .{@errorName(e)});
@@ -1073,6 +1080,27 @@ pub const CodeGenerator = struct {
             if (c.LLVMGetBasicBlockTerminator(elseB.?) == null)
                 _ = c.LLVMBuildBr(self.builder, endB);
         }
+        c.LLVMPositionBuilderAtEnd(self.builder, endB);
+    }
+
+    fn genWhileStatement(self: *CodeGenerator, w: *const sem.WhileStatement) !void {
+        const cur_bb = c.LLVMGetInsertBlock(self.builder);
+        const fnc = c.LLVMGetBasicBlockParent(cur_bb);
+        const condB = c.LLVMAppendBasicBlock(fnc, "while.cond");
+        const bodyB = c.LLVMAppendBasicBlock(fnc, "while.body");
+        const endB = c.LLVMAppendBasicBlock(fnc, "while.end");
+
+        _ = c.LLVMBuildBr(self.builder, condB);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, condB);
+        const cond_tv = (try self.visitNode(w.condition)) orelse return CodegenError.ValueNotFound;
+        _ = c.LLVMBuildCondBr(self.builder, cond_tv.value_ref, bodyB, endB);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, bodyB);
+        try self.genCodeBlock(w.body);
+        if (c.LLVMGetBasicBlockTerminator(bodyB) == null)
+            _ = c.LLVMBuildBr(self.builder, condB);
+
         c.LLVMPositionBuilderAtEnd(self.builder, endB);
     }
 

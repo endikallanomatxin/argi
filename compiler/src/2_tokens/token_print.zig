@@ -57,6 +57,9 @@ pub fn printToken(token: tok.Token) void {
         .keyword_match => {
             std.debug.print("keyword_match\n", .{});
         },
+        .keyword_while => {
+            std.debug.print("keyword_while\n", .{});
+        },
         .literal => |lit| {
             switch (lit) {
                 .bool_literal => |val| {

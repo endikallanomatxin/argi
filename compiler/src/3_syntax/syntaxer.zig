@@ -23,6 +23,7 @@ pub const SyntaxerError = error{
     ExpectedDeclarationOrAssignment,
     ExpectedKeywordReturn,
     ExpectedKeywordIf,
+    ExpectedKeywordWhile,
     ExpectedAmpersand,
     ExpectedStringLiteral,
     OutOfMemory,
@@ -804,6 +805,7 @@ pub const Syntaxer = struct {
             .keyword_return => return self.parseReturn(),
             .keyword_if => return self.parseIf(),
             .keyword_match => return self.parseMatch(),
+            .keyword_while => return self.parseWhile(),
             else => {},
         }
 
@@ -1122,6 +1124,19 @@ pub const Syntaxer = struct {
             .cases = cases.items,
         } }, start);
     }
+
+    fn parseWhile(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        const start = self.tokenLocation();
+        if (!self.tokenIs(.keyword_while)) return SyntaxerError.ExpectedKeywordWhile;
+        self.advanceOne();
+        const cond = try self.parseExpression();
+        const body = try self.parseCodeBlock();
+        return try self.makeNode(.{ .while_statement = .{
+            .condition = cond,
+            .body = body,
+        } }, start);
+    }
+
     fn parseReturn(self: *Syntaxer) SyntaxerError!*syn.STNode {
         const start = self.tokenLocation();
         if (!self.tokenIs(.keyword_return))
