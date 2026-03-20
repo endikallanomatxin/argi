@@ -1,7 +1,3 @@
-add_one (.i: Int32) -> (.o: Int32) := {
-    o = i + 1
-}
-
 sum_pair (.a: Int32, .b: Int32) -> (.sum: Int32) := {
     sum = a + b
 }
@@ -13,11 +9,11 @@ main () -> (.status_code: Int32) := {
     arr ::= DynamicArray#(.t: Int32)(.capacity = capacity)
     #defer deinit(.self = $&arr)
 
-    push(.self = $&arr, .value = 40)
-    push(.self = $&arr, .value = 1 | add_one(.i = _))
-    insert(.self = $&arr, .i = middle, .value = arr[0] | add_one(.i = _))
+    arr | push(.self = $&_, .value = 40)
+    arr | push(.self = $&_, .value = 2)
+    arr | insert(.self = $&_, .i = middle, .value = arr[0])
 
-    popped ::= pop(.self = $&arr).value
+    popped ::= arr | pop(.self = $&_) | _.value
 
     if popped != 2 {
         status_code = 1

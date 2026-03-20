@@ -584,6 +584,21 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
+            .expression_statement => |expr| blk: {
+                const te = self.visitNode(expr.*, s) catch |err| {
+                    if (err == error.Reported) break :blk err;
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in expression statement: {s}",
+                        .{@errorName(err)},
+                    );
+                    break :blk err;
+                };
+                try s.nodes.append(te.node);
+                break :blk .{ .node = te.node, .ty = te.ty };
+            },
+
             .identifier => |id| self.handleIdentifier(id, s, n.location) catch |err| blk: {
                 if (err == error.Reported) break :blk err;
                 try self.diags.add(
@@ -750,8 +765,8 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error in pipe expression to '{s}': {s}",
-                    .{ pe.call.callee, @errorName(err) },
+                    "error in pipe expression: {s}",
+                    .{@errorName(err)},
                 );
                 break :blk err;
             },
@@ -2728,41 +2743,85 @@ pub const Semantizer = struct {
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
         const left_te = try self.visitNode(pipe.left.*, s);
+        if (pipe.right.content == .function_call) {
+            const call = pipe.right.content.function_call;
 
-        if (pipe.call.input.*.content != .struct_value_literal) {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "pipe right-hand side must use named arguments",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        const sv = pipe.call.input.*.content.struct_value_literal;
-        if (sv.fields.len == 0) {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "pipe right-hand side must use at least one argument placeholder",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        var field_names = std.array_list.Managed([]const u8).init(self.allocator.*);
-        defer field_names.deinit();
-        var evaluated_args = std.array_list.Managed(typ.TypedExpr).init(self.allocator.*);
-        defer evaluated_args.deinit();
-
-        var found_placeholder = false;
-        for (sv.fields) |field| {
-            if (syntaxNodeContainsPipePlaceholder(field.value)) {
-                found_placeholder = true;
-                break;
+            if (call.input.*.content != .struct_value_literal) {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "pipe right-hand side must use named arguments",
+                    .{},
+                );
+                return error.Reported;
             }
+
+            const sv = call.input.*.content.struct_value_literal;
+            if (sv.fields.len == 0) {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "pipe right-hand side must use at least one argument placeholder",
+                    .{},
+                );
+                return error.Reported;
+            }
+
+            var field_names = std.array_list.Managed([]const u8).init(self.allocator.*);
+            defer field_names.deinit();
+            var evaluated_args = std.array_list.Managed(typ.TypedExpr).init(self.allocator.*);
+            defer evaluated_args.deinit();
+
+            var found_placeholder = false;
+            for (sv.fields) |field| {
+                if (syntaxNodeContainsPipePlaceholder(field.value)) {
+                    found_placeholder = true;
+                    break;
+                }
+            }
+            if (!found_placeholder) {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "pipe right-hand side must use at least one argument placeholder",
+                    .{},
+                );
+                return error.Reported;
+            }
+
+            for (sv.fields) |field| {
+                try field_names.append(field.name.string);
+                try evaluated_args.append(try self.evalPipeArg(field.value, left_te, s));
+            }
+
+            const input_te = try self.buildNamedPipeInput(field_names.items, evaluated_args.items);
+
+            if (std.mem.eql(u8, call.callee, "is")) {
+                return self.handleIsBuiltinFromInput(input_te, loc, s);
+            }
+
+            const chosen = try self.resolveRegularCallCallee(
+                .{
+                    .callee = call.callee,
+                    .callee_loc = call.callee_loc,
+                    .module_qualifier = call.module_qualifier,
+                    .type_arguments = call.type_arguments,
+                    .type_arguments_struct = call.type_arguments_struct,
+                    .input = call.input,
+                },
+                input_te.ty,
+                s,
+                loc,
+            );
+
+            const fc_ptr = try self.allocator.create(sg.FunctionCall);
+            fc_ptr.* = .{ .callee = chosen, .input = input_te.node };
+
+            const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
+            return .{ .node = n, .ty = typ.functionReturnType(chosen) };
         }
-        if (!found_placeholder) {
+
+        if (!syntaxNodeContainsPipePlaceholder(pipe.right)) {
             try self.diags.add(
                 loc,
                 .semantic,
@@ -2772,36 +2831,7 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        for (sv.fields) |field| {
-            try field_names.append(field.name.string);
-            try evaluated_args.append(try self.evalPipeArg(field.value, left_te, s));
-        }
-
-        const input_te = try self.buildNamedPipeInput(field_names.items, evaluated_args.items);
-
-        if (std.mem.eql(u8, pipe.call.callee, "is")) {
-            return self.handleIsBuiltinFromInput(input_te, loc, s);
-        }
-
-        const chosen = try self.resolveRegularCallCallee(
-            .{
-                .callee = pipe.call.callee,
-                .callee_loc = pipe.call.callee_loc,
-                .module_qualifier = pipe.call.module_qualifier,
-                .type_arguments = pipe.call.type_arguments,
-                .type_arguments_struct = pipe.call.type_arguments_struct,
-                .input = pipe.call.input,
-            },
-            input_te.ty,
-            s,
-            loc,
-        );
-
-        const fc_ptr = try self.allocator.create(sg.FunctionCall);
-        fc_ptr.* = .{ .callee = chosen, .input = input_te.node };
-
-        const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
-        return .{ .node = n, .ty = typ.functionReturnType(chosen) };
+        return self.evalPipeArg(pipe.right, left_te, s);
     }
 
     fn resolveQualifiedOverload(

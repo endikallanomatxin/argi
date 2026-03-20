@@ -205,6 +205,10 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             std.debug.print("Assignment \"{s}\"\n", .{a.name.string});
             printNode(a.value.*, lvl + 1);
         },
+        .expression_statement => |expr| {
+            std.debug.print("ExpressionStatement\n", .{});
+            printNode(expr.*, lvl + 1);
+        },
 
         // ── IDENTIFIER & LITERAL ─────────────────────────────────────────
         .identifier => |id| std.debug.print("Identifier \"{s}\"\n", .{id}),
@@ -220,28 +224,9 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             std.debug.print("Left:\n", .{});
             printNode(pe.left.*, lvl + 2);
             indent(lvl + 1);
-            if (pe.call.module_qualifier) |module_name| {
-                std.debug.print("Call: {s}.{s}\n", .{ module_name, pe.call.callee });
-            } else {
-                std.debug.print("Call: {s}\n", .{pe.call.callee});
-            }
-            if (pe.call.type_arguments) |type_args| {
-                indent(lvl + 1);
-                std.debug.print("TypeArgs: [", .{});
-                for (type_args, 0..) |type_arg, idx| {
-                    if (idx != 0) std.debug.print(", ", .{});
-                    printType(type_arg, lvl + 1);
-                }
-                std.debug.print("]\n", .{});
-            } else if (pe.call.type_arguments_struct) |type_args_struct| {
-                indent(lvl + 1);
-                std.debug.print("TypeArgs: ", .{});
-                printStructTypeLiteral(type_args_struct, lvl + 1);
-                std.debug.print("\n", .{});
-            }
             indent(lvl + 1);
-            std.debug.print("Input:\n", .{});
-            printNode(pe.call.input.*, lvl + 2);
+            std.debug.print("Right:\n", .{});
+            printNode(pe.right.*, lvl + 2);
         },
 
         // ── STRUCT TYPE LITERAL (stand-alone) ────────────────────────────
