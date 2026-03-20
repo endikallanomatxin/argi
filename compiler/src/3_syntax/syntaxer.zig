@@ -591,54 +591,11 @@ pub const Syntaxer = struct {
         return node;
     }
 
-    fn parsePipeCall(self: *Syntaxer) SyntaxerError!syn.PipeCall {
-        const callee_loc = self.tokenLocation();
-        const first_name = try self.parseName();
-
-        var module_qualifier: ?[]const u8 = null;
-        var callee_name = first_name.string;
-        var final_callee_loc = callee_loc;
-        if (self.tokenIs(.dot)) {
-            self.advanceOne();
-            const rhs_name = try self.parseName();
-            module_qualifier = first_name.string;
-            callee_name = rhs_name.string;
-            final_callee_loc = rhs_name.location;
-        }
-
-        var type_args: ?[]const syn.Type = null;
-        var type_args_struct: ?syn.StructTypeLiteral = null;
-        if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
-            type_args = try self.parseTypeList();
-        } else if (self.tokenIs(.hash)) {
-            self.advanceOne();
-            type_args_struct = try self.parseStructTypeLiteral();
-        }
-
+    fn parsePipeRhs(self: *Syntaxer) SyntaxerError!*syn.STNode {
         const prev_pipe_rhs = self.parsing_pipe_rhs;
         self.parsing_pipe_rhs = true;
         defer self.parsing_pipe_rhs = prev_pipe_rhs;
-
-        if (!self.tokenIs(.open_parenthesis)) {
-            try self.diags.add(
-                self.tokenLocation(),
-                .syntax,
-                "pipe right-hand side must be a call with parentheses",
-                .{},
-            );
-            return SyntaxerError.ExpectedLeftParen;
-        }
-
-        const input = try self.parseStructValueLiteral();
-
-        return .{
-            .callee = callee_name,
-            .callee_loc = final_callee_loc,
-            .module_qualifier = module_qualifier,
-            .type_arguments = type_args,
-            .type_arguments_struct = type_args_struct,
-            .input = input,
-        };
+        return self.parsePrimary();
     }
 
     // ─────────────────────────────  EXPRESSIONS  ─────────────────────────────
@@ -801,9 +758,9 @@ pub const Syntaxer = struct {
             const pipe_loc = self.tokenLocation();
             self.advanceOne();
             self.skipNewLinesAndComments();
-            const call = try self.parsePipeCall();
+            const right = try self.parsePipeRhs();
             lhs = try self.makeNode(
-                .{ .pipe_expression = .{ .left = lhs, .call = call } },
+                .{ .pipe_expression = .{ .left = lhs, .right = right } },
                 pipe_loc,
             );
         }
@@ -840,6 +797,7 @@ pub const Syntaxer = struct {
 
     // Override parseStatement to support generics on function declarations
     fn parseStatement(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        const start_index = self.index;
         self.skipNewLinesAndComments();
 
         switch (self.current().content) {
@@ -1076,7 +1034,9 @@ pub const Syntaxer = struct {
             return try self.makeNode(.{ .symbol_declaration = sym }, id_loc);
         }
 
-        return SyntaxerError.ExpectedDeclarationOrAssignment;
+        self.index = start_index;
+        const expr = try self.parseExpression();
+        return try self.makeNode(.{ .expression_statement = expr }, expr.location);
     }
 
     // ─────────────────────────────  SENTENCES  ──────────────────────────────

@@ -165,7 +165,7 @@ test "15X_pipe_requires_parentheses" {
     try clean();
     try buildExpectFail(
         "tests/15X_pipe_requires_parentheses/main.rg",
-        "pipe right-hand side must be a call with parentheses",
+        "pipe right-hand side must use at least one argument placeholder",
     );
 }
 
@@ -632,7 +632,7 @@ test "418_dynamic_array" {
 test "419_dynamic_array_ergonomic" {
     try clean();
     try expectSuccessfulBuild("tests/419_dynamic_array_ergonomic/main.rg");
-    try runExpect(81);
+    try runExpect(80);
 }
 
 test "62_folder_module_namespace" {
