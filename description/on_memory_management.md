@@ -150,7 +150,7 @@ The semantic rule should be:
 
 That means:
 
-- if the expression is a fresh value, it can be moved directly,
+- if the expression is a temporary value, it can be moved directly,
 - if the expression names an existing value and the type implements `copy()`,
   the compiler may insert it implicitly,
 - otherwise the operation is a compile error,
@@ -158,16 +158,16 @@ That means:
 
 For now, a useful working split is:
 
-- fresh values move by default,
+- temporary values move by default,
 - existing named values copy by default,
 - explicit move from an existing binding uses `~binding`.
 
 
-### Fresh Values vs Existing Values
+### Temporary Values vs Existing Values
 
 Not every value position should behave the same internally.
 
-These cases should count as fresh values:
+These cases should count as temporary values:
 
 - literals,
 - constructors,
@@ -201,7 +201,7 @@ The intended balance is:
 
 - copy remains the default for named values used by value,
 - move remains explicit for named values,
-- but fresh composed values move naturally without extra syntax.
+- but temporary composed values move naturally without extra syntax.
 
 > [!NOTE]
 > It may be tempting to optimize the last implicit copy of a binding into a
