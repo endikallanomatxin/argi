@@ -2105,31 +2105,25 @@ pub const Semantizer = struct {
             return .{ .node = @constCast(elem_node), .ty = elem_ty };
         }
 
-        const idx = try self.visitNode(ia.index.*, s);
+        var idx = try self.visitNode(ia.index.*, s);
 
         const ro_self = try typ.ensureReadOnlyPointer(ia.value, base, self.allocator, self.diags);
 
-        const input_te = try self.buildCallInput(&[_]CallArg{
+        const name = "operator get[]";
+        const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+        var input_te = try self.buildCallInput(&[_]CallArg{
             .{ .name = "self", .expr = ro_self },
             .{ .name = "index", .expr = idx },
         });
 
-        const name = "operator get[]";
-        const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-        const inferred = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
+        var chosen: ?*sg.FunctionDeclaration = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
             error.SymbolNotFound => null,
             else => return err,
         };
 
-        var chosen: *sg.FunctionDeclaration = undefined;
-        if (inferred) |instantiated| {
-            chosen = instantiated;
-        } else {
+        if (chosen == null) {
             chosen = self.resolveVisibleOverload(name, input_te.ty, s, ia.value.*.location) catch |err| switch (err) {
-                error.SymbolNotFound => {
-                    try self.addMissingFunctionDiagnostic(name, input_te.ty, s, ia.value.*.location);
-                    return error.Reported;
-                },
+                error.SymbolNotFound => null,
                 error.AmbiguousOverload => {
                     try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.value.*.location);
                     return error.Reported;
@@ -2138,12 +2132,41 @@ pub const Semantizer = struct {
             };
         }
 
+        if (chosen == null and !typ.typesExactlyEqual(idx.ty, native_uint_ty)) {
+            idx = try typ.coerceExprToType(native_uint_ty, idx, ia.index, s, self.allocator, self.diags);
+            input_te = try self.buildCallInput(&[_]CallArg{
+                .{ .name = "self", .expr = ro_self },
+                .{ .name = "index", .expr = idx },
+            });
+
+            chosen = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
+                error.SymbolNotFound => null,
+                else => return err,
+            };
+
+            if (chosen == null) {
+                chosen = self.resolveVisibleOverload(name, input_te.ty, s, ia.value.*.location) catch |err| switch (err) {
+                    error.SymbolNotFound => null,
+                    error.AmbiguousOverload => {
+                        try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.value.*.location);
+                        return error.Reported;
+                    },
+                    else => return err,
+                };
+            }
+        }
+
+        const chosen_fn = chosen orelse {
+            try self.addMissingFunctionDiagnostic(name, input_te.ty, s, ia.value.*.location);
+            return error.Reported;
+        };
+
         const call_ptr = try self.allocator.create(sg.FunctionCall);
-        call_ptr.* = .{ .callee = chosen, .input = input_te.node };
+        call_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
 
         const node = try sg.makeSGNode(.{ .function_call = call_ptr }, undefined, self.allocator);
         try s.nodes.append(node);
-        return .{ .node = node, .ty = typ.functionReturnType(chosen) };
+        return .{ .node = node, .ty = typ.functionReturnType(chosen_fn) };
     }
 
     fn handleIndexAssignment(
@@ -2201,33 +2224,27 @@ pub const Semantizer = struct {
             return .{ .node = node, .ty = .{ .builtin = .Any } };
         }
 
-        const index_expr = try self.visitNode(idx.index.*, s);
+        var index_expr = try self.visitNode(idx.index.*, s);
         const value_expr = try self.visitNode(ia.value.*, s);
 
         const ptr_self = try typ.ensureMutablePointer(idx.value, base, s, self.allocator, self.diags);
 
-        const input_te = try self.buildCallInput(&[_]CallArg{
+        const name = "operator set[]";
+        const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+        var input_te = try self.buildCallInput(&[_]CallArg{
             .{ .name = "self", .expr = ptr_self },
             .{ .name = "index", .expr = index_expr },
             .{ .name = "value", .expr = value_expr },
         });
 
-        const name = "operator set[]";
-        const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-        const inferred = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
+        var chosen: ?*sg.FunctionDeclaration = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
             error.SymbolNotFound => null,
             else => return err,
         };
 
-        var chosen: *sg.FunctionDeclaration = undefined;
-        if (inferred) |instantiated| {
-            chosen = instantiated;
-        } else {
+        if (chosen == null) {
             chosen = self.resolveVisibleOverload(name, input_te.ty, s, ia.target.*.location) catch |err| switch (err) {
-                error.SymbolNotFound => {
-                    try self.addMissingFunctionDiagnostic(name, input_te.ty, s, ia.target.*.location);
-                    return error.Reported;
-                },
+                error.SymbolNotFound => null,
                 error.AmbiguousOverload => {
                     try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.target.*.location);
                     return error.Reported;
@@ -2236,8 +2253,38 @@ pub const Semantizer = struct {
             };
         }
 
+        if (chosen == null and !typ.typesExactlyEqual(index_expr.ty, native_uint_ty)) {
+            index_expr = try typ.coerceExprToType(native_uint_ty, index_expr, idx.index, s, self.allocator, self.diags);
+            input_te = try self.buildCallInput(&[_]CallArg{
+                .{ .name = "self", .expr = ptr_self },
+                .{ .name = "index", .expr = index_expr },
+                .{ .name = "value", .expr = value_expr },
+            });
+
+            chosen = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
+                error.SymbolNotFound => null,
+                else => return err,
+            };
+
+            if (chosen == null) {
+                chosen = self.resolveVisibleOverload(name, input_te.ty, s, ia.target.*.location) catch |err| switch (err) {
+                    error.SymbolNotFound => null,
+                    error.AmbiguousOverload => {
+                        try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.target.*.location);
+                        return error.Reported;
+                    },
+                    else => return err,
+                };
+            }
+        }
+
+        const chosen_fn = chosen orelse {
+            try self.addMissingFunctionDiagnostic(name, input_te.ty, s, ia.target.*.location);
+            return error.Reported;
+        };
+
         const call_ptr = try self.allocator.create(sg.FunctionCall);
-        call_ptr.* = .{ .callee = chosen, .input = input_te.node };
+        call_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
 
         const node = try sg.makeSGNode(.{ .function_call = call_ptr }, undefined, self.allocator);
         try s.nodes.append(node);
