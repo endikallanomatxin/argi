@@ -666,7 +666,19 @@ pub const CodeGenerator = struct {
             const zero = c.LLVMConstNull(llvm_decl_ty);
             c.LLVMSetInitializer(storage, zero);
         } else {
-            storage = c.LLVMBuildAlloca(self.builder, llvm_decl_ty, cname.ptr);
+            const cur_bb = c.LLVMGetInsertBlock(self.builder);
+            const fnc = c.LLVMGetBasicBlockParent(cur_bb);
+            const entry_bb = c.LLVMGetEntryBasicBlock(fnc);
+            const tmp_builder = c.LLVMCreateBuilder();
+            defer c.LLVMDisposeBuilder(tmp_builder);
+
+            if (c.LLVMGetFirstInstruction(entry_bb)) |first_inst| {
+                c.LLVMPositionBuilderBefore(tmp_builder, first_inst);
+            } else {
+                c.LLVMPositionBuilderAtEnd(tmp_builder, entry_bb);
+            }
+
+            storage = c.LLVMBuildAlloca(tmp_builder, llvm_decl_ty, cname.ptr);
         }
 
         // 4) registrar en la tabla
@@ -1528,6 +1540,8 @@ pub const CodeGenerator = struct {
     }
     // ────────────────────────────────────────── misc helpers ──
     fn genCodeBlock(self: *CodeGenerator, cb: *const sem.CodeBlock) !void {
+        try self.pushScope();
+        defer self.popScope();
         for (cb.nodes) |n| _ = try self.visitNode(n);
     }
 

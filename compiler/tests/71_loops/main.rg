@@ -7,5 +7,10 @@ main () -> (.status_code: Int32) := {
         i = i - 1
     }
 
-    status_code = sum - 15
+    if sum != 15 {
+        status_code = 1
+        return
+    }
+
+    status_code = 0
 }

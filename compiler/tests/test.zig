@@ -661,6 +661,12 @@ test "421_string_copy" {
     try run();
 }
 
+test "422_array_explicit_type" {
+    try clean();
+    try expectSuccessfulBuild("tests/422_array_explicit_type/main.rg");
+    try run();
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");
@@ -783,4 +789,16 @@ test "77X_root_relative_missing_import" {
         "tests/77X_root_relative_missing_import/project/app/main.rg",
         "cannot resolve import '.../missing_shared'",
     );
+}
+
+test "78_for_array" {
+    try clean();
+    try expectSuccessfulBuild("tests/78_for_array/main.rg");
+    try run();
+}
+
+test "79_for_dynamic_array" {
+    try clean();
+    try expectSuccessfulBuild("tests/79_for_dynamic_array/main.rg");
+    try run();
 }

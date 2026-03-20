@@ -69,6 +69,7 @@ pub const Semantizer = struct {
     defer_unknown_top_level: bool = false,
     current_top_node: ?*const syn.STNode = null,
     max_retry_rounds: u32 = 8,
+    synthetic_name_counter: u32 = 0,
 
     pub fn init(
         alloc: *const std.mem.Allocator,
@@ -210,6 +211,21 @@ pub const Semantizer = struct {
 
     fn makeNoopNode(self: *Semantizer, loc: tok.Location) !*sg.SGNode {
         return sg.makeSGNode(.{ .code_block = try self.makeEmptyCodeBlock() }, loc, self.allocator);
+    }
+
+    fn makeSynNode(self: *Semantizer, content: syn.Content, location: tok.Location) !*syn.STNode {
+        const node = try self.allocator.create(syn.STNode);
+        node.* = .{
+            .location = location,
+            .content = content,
+        };
+        return node;
+    }
+
+    fn makeSyntheticName(self: *Semantizer, prefix: []const u8) ![]u8 {
+        const name = try std.fmt.allocPrint(self.allocator.*, "__for_{s}_{d}", .{ prefix, self.synthetic_name_counter });
+        self.synthetic_name_counter += 1;
+        return name;
     }
 
     fn functionMatchesVisibilityFilter(
@@ -829,6 +845,16 @@ pub const Semantizer = struct {
                     n.location,
                     .semantic,
                     "error in if statement: {s}",
+                    .{@errorName(err)},
+                );
+                break :blk err;
+            },
+
+            .for_statement => |f| self.handleFor(f, s, n.location) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in for statement: {s}",
                     .{@errorName(err)},
                 );
                 break :blk err;
@@ -4072,6 +4098,271 @@ pub const Semantizer = struct {
         const n = try sg.makeSGNode(.{ .while_statement = while_ptr }, undefined, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleFor(
+        self: *Semantizer,
+        f: syn.ForStatement,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        const iterable_te = try self.visitNode(f.iterable.*, s);
+        if (iterable_te.ty == .array_type) {
+            return self.lowerForOverArray(f, s, loc);
+        }
+
+        return self.lowerForOverIterator(f, iterable_te.ty, s, loc);
+    }
+
+    fn lowerForOverArray(
+        self: *Semantizer,
+        f: syn.ForStatement,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        const iterable_te = try self.visitNode(f.iterable.*, s);
+        const iterable_copyable = typ.isTypeCopyable(iterable_te.ty, s);
+        const iterable_name = try self.makeSyntheticName("iterable");
+        const index_name = try self.makeSyntheticName("index");
+
+        const iterable_ref = if (iterable_copyable) blk: {
+            break :blk try self.makeSynNode(.{ .identifier = iterable_name }, loc);
+        } else switch (f.iterable.*.content) {
+            .identifier => f.iterable,
+            else => {
+                try self.diags.add(
+                    f.iterable.location,
+                    .semantic,
+                    "for cannot iterate a non-copyable array expression directly; bind it to a name first",
+                    .{},
+                );
+                return error.Reported;
+            },
+        };
+        const index_ident = try self.makeSynNode(.{ .identifier = index_name }, loc);
+        const zero_lit = try self.makeSynNode(.{ .literal = .{ .decimal_int_literal = "0" } }, loc);
+        const one_lit = try self.makeSynNode(.{ .literal = .{ .decimal_int_literal = "1" } }, loc);
+
+        const index_decl = try self.makeSynNode(.{ .symbol_declaration = .{
+            .name = .{ .string = index_name, .location = loc },
+            .type = .{ .type_name = .{ .string = "UIntNative", .location = loc } },
+            .mutability = .variable,
+            .value = zero_lit,
+        } }, loc);
+
+        const length_fields = try self.allocator.alloc(syn.StructValueLiteralField, 1);
+        length_fields[0] = .{
+            .name = .{ .string = "value", .location = loc },
+            .value = iterable_ref,
+        };
+        const length_arg = try self.makeSynNode(.{ .struct_value_literal = .{
+            .fields = length_fields,
+        } }, loc);
+        const length_call = try self.makeSynNode(.{ .function_call = .{
+            .callee = "length",
+            .callee_loc = loc,
+            .module_qualifier = null,
+            .type_arguments = null,
+            .type_arguments_struct = null,
+            .input = length_arg,
+        } }, loc);
+        const cond = try self.makeSynNode(.{ .comparison = .{
+            .operator = .less_than,
+            .left = index_ident,
+            .right = length_call,
+        } }, loc);
+
+        const item_index = try self.makeSynNode(.{ .index_access = .{
+            .value = iterable_ref,
+            .index = index_ident,
+        } }, loc);
+        const item_decl = try self.makeSynNode(.{ .symbol_declaration = .{
+            .name = f.item_name,
+            .type = null,
+            .mutability = .constant,
+            .value = item_index,
+        } }, loc);
+
+        const increment_expr = try self.makeSynNode(.{ .binary_operation = .{
+            .operator = .addition,
+            .left = index_ident,
+            .right = one_lit,
+        } }, loc);
+        const increment = try self.makeSynNode(.{ .assignment = .{
+            .name = .{ .string = index_name, .location = loc },
+            .value = increment_expr,
+        } }, loc);
+
+        const while_body_items = try self.allocator.alloc(*syn.STNode, 3);
+        while_body_items[0] = item_decl;
+        while_body_items[1] = f.body;
+        while_body_items[2] = increment;
+        const while_body = try self.makeSynNode(.{ .code_block = .{
+            .items = while_body_items,
+        } }, loc);
+        const while_stmt = try self.makeSynNode(.{ .while_statement = .{
+            .condition = cond,
+            .body = while_body,
+        } }, loc);
+
+        const lowered_items = try self.allocator.alloc(*syn.STNode, if (iterable_copyable) 3 else 2);
+        if (iterable_copyable) {
+            const iterable_decl = try self.makeSynNode(.{ .symbol_declaration = .{
+                .name = .{ .string = iterable_name, .location = loc },
+                .type = null,
+                .mutability = .constant,
+                .value = f.iterable,
+            } }, loc);
+            lowered_items[0] = iterable_decl;
+            lowered_items[1] = index_decl;
+            lowered_items[2] = while_stmt;
+        } else {
+            lowered_items[0] = index_decl;
+            lowered_items[1] = while_stmt;
+        }
+
+        const lowered = try self.makeSynNode(.{ .code_block = .{
+            .items = lowered_items,
+        } }, loc);
+        return self.visitNode(lowered.*, s);
+    }
+
+    fn lowerForOverIterator(
+        self: *Semantizer,
+        f: syn.ForStatement,
+        iterable_ty: sg.Type,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        const iterable_copyable = typ.isTypeCopyable(iterable_ty, s);
+        const iterable_name = try self.makeSyntheticName("iterable");
+        const iterator_name = try self.makeSyntheticName("iterator");
+
+        const iterable_ident = if (iterable_copyable and f.iterable.*.content != .identifier)
+            try self.makeSynNode(.{ .identifier = iterable_name }, loc)
+        else
+            f.iterable;
+
+        if (!iterable_copyable and f.iterable.*.content != .identifier) {
+            try self.diags.add(
+                f.iterable.location,
+                .semantic,
+                "for cannot iterate a non-copyable expression directly; bind it to a name first",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const iterable_addr = try self.makeSynNode(.{ .address_of = .{
+            .value = iterable_ident,
+            .mutability = .read_only,
+        } }, loc);
+
+        const to_iterator_fields = try self.allocator.alloc(syn.StructValueLiteralField, 1);
+        to_iterator_fields[0] = .{
+            .name = .{ .string = "value", .location = loc },
+            .value = iterable_addr,
+        };
+        const to_iterator_arg = try self.makeSynNode(.{ .struct_value_literal = .{
+            .fields = to_iterator_fields,
+        } }, loc);
+        const to_iterator_call = try self.makeSynNode(.{ .function_call = .{
+            .callee = "to_iterator",
+            .callee_loc = loc,
+            .module_qualifier = null,
+            .type_arguments = null,
+            .type_arguments_struct = null,
+            .input = to_iterator_arg,
+        } }, loc);
+
+        const iterator_decl = try self.makeSynNode(.{ .symbol_declaration = .{
+            .name = .{ .string = iterator_name, .location = loc },
+            .type = null,
+            .mutability = .variable,
+            .value = to_iterator_call,
+        } }, loc);
+
+        const iterator_ident = try self.makeSynNode(.{ .identifier = iterator_name }, loc);
+        const iterator_ro_addr = try self.makeSynNode(.{ .address_of = .{
+            .value = iterator_ident,
+            .mutability = .read_only,
+        } }, loc);
+        const iterator_rw_addr = try self.makeSynNode(.{ .address_of = .{
+            .value = iterator_ident,
+            .mutability = .read_write,
+        } }, loc);
+
+        const has_next_fields = try self.allocator.alloc(syn.StructValueLiteralField, 1);
+        has_next_fields[0] = .{
+            .name = .{ .string = "self", .location = loc },
+            .value = iterator_ro_addr,
+        };
+        const has_next_arg = try self.makeSynNode(.{ .struct_value_literal = .{
+            .fields = has_next_fields,
+        } }, loc);
+        const has_next_call = try self.makeSynNode(.{ .function_call = .{
+            .callee = "has_next",
+            .callee_loc = loc,
+            .module_qualifier = null,
+            .type_arguments = null,
+            .type_arguments_struct = null,
+            .input = has_next_arg,
+        } }, loc);
+
+        const next_fields = try self.allocator.alloc(syn.StructValueLiteralField, 1);
+        next_fields[0] = .{
+            .name = .{ .string = "self", .location = loc },
+            .value = iterator_rw_addr,
+        };
+        const next_arg = try self.makeSynNode(.{ .struct_value_literal = .{
+            .fields = next_fields,
+        } }, loc);
+        const next_call = try self.makeSynNode(.{ .function_call = .{
+            .callee = "next",
+            .callee_loc = loc,
+            .module_qualifier = null,
+            .type_arguments = null,
+            .type_arguments_struct = null,
+            .input = next_arg,
+        } }, loc);
+
+        const item_decl = try self.makeSynNode(.{ .symbol_declaration = .{
+            .name = f.item_name,
+            .type = null,
+            .mutability = .constant,
+            .value = next_call,
+        } }, loc);
+
+        const while_body_items = try self.allocator.alloc(*syn.STNode, 2);
+        while_body_items[0] = item_decl;
+        while_body_items[1] = f.body;
+        const while_body = try self.makeSynNode(.{ .code_block = .{
+            .items = while_body_items,
+        } }, loc);
+        const while_stmt = try self.makeSynNode(.{ .while_statement = .{
+            .condition = has_next_call,
+            .body = while_body,
+        } }, loc);
+
+        const item_count: usize = if (iterable_copyable and f.iterable.*.content != .identifier) 3 else 2;
+        const lowered_items = try self.allocator.alloc(*syn.STNode, item_count);
+        var idx: usize = 0;
+        if (item_count == 3) {
+            lowered_items[0] = try self.makeSynNode(.{ .symbol_declaration = .{
+                .name = .{ .string = iterable_name, .location = loc },
+                .type = null,
+                .mutability = .constant,
+                .value = f.iterable,
+            } }, loc);
+            idx = 1;
+        }
+        lowered_items[idx] = iterator_decl;
+        lowered_items[idx + 1] = while_stmt;
+
+        const lowered = try self.makeSynNode(.{ .code_block = .{
+            .items = lowered_items,
+        } }, loc);
+        return self.visitNode(lowered.*, s);
     }
 
     fn handleMatch(

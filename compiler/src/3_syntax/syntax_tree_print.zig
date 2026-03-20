@@ -283,6 +283,15 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             std.debug.print("Body:\n", .{});
             printNode(w.body.*, lvl + 2);
         },
+        .for_statement => |f| {
+            std.debug.print("For {s}\n", .{f.item_name.string});
+            indent(lvl + 1);
+            std.debug.print("Iterable:\n", .{});
+            printNode(f.iterable.*, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("Body:\n", .{});
+            printNode(f.body.*, lvl + 2);
+        },
 
         // ── STRUCT FIELD ACCESS ──────────────────────────────────────────
         .struct_field_access => |sfa| {
