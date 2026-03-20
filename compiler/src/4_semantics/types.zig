@@ -979,6 +979,7 @@ pub fn ensureReadOnlyPointer(expr_node: *const syn.STNode, te: TypedExpr, alloca
     const addr_node = try allocator.create(sg.SGNode);
     addr_node.* = .{
         .location = expr_node.location,
+        .sem_type = .{ .pointer_type = ptr_info },
         .content = .{ .address_of = te.node },
     };
     return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
@@ -1037,6 +1038,7 @@ pub fn ensureMutablePointer(
     const addr_node = try allocator.create(sg.SGNode);
     addr_node.* = .{
         .location = expr_node.location,
+        .sem_type = .{ .pointer_type = ptr_info },
         .content = .{ .address_of = te.node },
     };
     return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
