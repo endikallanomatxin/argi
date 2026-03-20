@@ -635,6 +635,12 @@ test "419_dynamic_array_ergonomic" {
     try runExpect(80);
 }
 
+test "420_string_bytes" {
+    try clean();
+    try expectSuccessfulBuild("tests/420_string_bytes/main.rg");
+    try run();
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");

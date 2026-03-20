@@ -73,6 +73,18 @@ StringViewRW : Type = (
 Copying a string view should copy only the descriptor. It should never imply
 ownership of the underlying bytes.
 
+Current implementation direction:
+
+- `String` is now an owning byte buffer over `Allocation`.
+- `init(.p = $&string, .length = n)` allocates exactly `n` bytes.
+- `deinit(.self = $&string)` releases the backing allocation.
+- `string[index]` is currently byte-level and yields `UInt8`.
+- `string[index] = value` mutates a byte in place.
+
+This is intentionally narrower than the long-term text model. UTF-8-aware
+character indexing and higher-level string construction can be layered on top
+later, but the base owner/view split should already be real and usable.
+
 The more advanced concerns, such as UTF-8 indexing helpers, cached rune
 offsets, or specialized dynamic-string growth strategies, can be layered on top
 later.
