@@ -1487,10 +1487,15 @@ pub const CodeGenerator = struct {
 
     //──────────────────────────────────────── pointer store ──
     fn genPointerAssignment(self: *CodeGenerator, pa: sem.PointerAssignment) !void {
-        const ptr_tv = (try self.visitNode(pa.pointer)) orelse return CodegenError.ValueNotFound;
+        const ptr_tv = switch (pa.pointer.content) {
+            .dereference => |d| (try self.visitNode(d.pointer)) orelse return CodegenError.ValueNotFound,
+            else => (try self.visitNode(pa.pointer)) orelse return CodegenError.ValueNotFound,
+        };
         const rhs_tv = (try self.visitNode(pa.value)) orelse return CodegenError.ValueNotFound;
 
-        // Basta con emitir la instrucción: tipos ya verificados antes.
+        if (c.LLVMGetTypeKind(ptr_tv.type_ref) != c.LLVMPointerTypeKind)
+            return CodegenError.InvalidType;
+
         _ = c.LLVMBuildStore(self.builder, rhs_tv.value_ref, ptr_tv.value_ref);
     }
     // ────────────────────────────────────────── misc helpers ──
