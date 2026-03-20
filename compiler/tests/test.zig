@@ -351,6 +351,14 @@ test "334_abstract_instantiation" {
     try run();
 }
 
+test "335X_abstract_instantiation_missing_default" {
+    try clean();
+    try buildExpectFail(
+        "tests/335X_abstract_instantiation_missing_default/main.rg",
+        "cannot use abstract 'ExampleAbstract' as a type for a symbol",
+    );
+}
+
 test "339_abstract_self_output" {
     try clean();
     try expectSuccessfulBuild("tests/339_abstract_self_output/main.rg");
@@ -375,6 +383,12 @@ test "342_abstract_dispatch_prefers_concrete" {
     try clean();
     try expectSuccessfulBuild("tests/342_abstract_dispatch_prefers_concrete/main.rg");
     try runExpect(2);
+}
+
+test "343_abstract_monomorphization_isolation" {
+    try clean();
+    try expectSuccessfulBuild("tests/343_abstract_monomorphization_isolation/main.rg");
+    try runExpect(3);
 }
 
 test "336X_abstract_function_input_requires_implementation" {

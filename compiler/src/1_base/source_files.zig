@@ -130,6 +130,12 @@ fn collectRgFilesRecursively(
         try paths.append(full_path);
     }
 
+    std.mem.sort([]u8, paths.items, {}, struct {
+        fn lessThan(_: void, lhs: []u8, rhs: []u8) bool {
+            return std.mem.lessThan(u8, lhs, rhs);
+        }
+    }.lessThan);
+
     for (paths.items) |full_path| {
         try seen_files.put(try alloc.dupe(u8, full_path), {});
         try list.append(try readFile(alloc, full_path));
@@ -149,19 +155,40 @@ fn collectRgFilesInDir(
     };
     defer dir.close();
 
+    var paths = std.array_list.Managed([]u8).init(alloc.*);
+    defer {
+        for (paths.items) |path| alloc.free(path);
+        paths.deinit();
+    }
+
     var it = dir.iterate();
     while (try it.next()) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.name, ".rg")) continue;
 
         const full_path = try std.fs.path.join(alloc.*, &.{ dir_path, entry.name });
-        defer alloc.free(full_path);
 
         if (skip_path) |skip| {
-            if (std.mem.eql(u8, full_path, skip)) continue;
+            if (std.mem.eql(u8, full_path, skip)) {
+                alloc.free(full_path);
+                continue;
+            }
         }
-        if (seen_files.contains(full_path)) continue;
+        if (seen_files.contains(full_path)) {
+            alloc.free(full_path);
+            continue;
+        }
 
+        try paths.append(full_path);
+    }
+
+    std.mem.sort([]u8, paths.items, {}, struct {
+        fn lessThan(_: void, lhs: []u8, rhs: []u8) bool {
+            return std.mem.lessThan(u8, lhs, rhs);
+        }
+    }.lessThan);
+
+    for (paths.items) |full_path| {
         try seen_files.put(try alloc.dupe(u8, full_path), {});
         try list.append(try readFile(alloc, full_path));
     }
