@@ -22,8 +22,10 @@ In all those cases the semantics should be the same.
 
 ## Copy model
 
-If a type implements `copy()`, the compiler may insert an implicit call to
-`copy()` whenever the value is used in value position.
+If a fresh value is used in value position, it may be moved directly.
+
+If an existing named value is used in value position and the type implements
+`copy()`, the compiler may insert an implicit call to `copy()`.
 
 ```
 m1 : Map = ()
@@ -41,11 +43,33 @@ emit an error with a concrete fix:
 - use `&` if the callee only reads
 - use `$&` if the callee mutates
 - implement `copy()` if true value semantics are desired
+- or use `~value` if ownership transfer is intended
 
 ```
 file2 := file1
 -- Error: File cannot be copied. Pass it by & or $& instead.
 ```
+
+
+## Explicit move
+
+Existing bindings are not moved implicitly by default.
+
+If the programmer wants to transfer ownership out of a binding, that should be
+spelled explicitly:
+
+```
+consume(.resource = ~file1)
+```
+
+After `~file1`, the binding is considered moved and cannot be used again until
+it is reinitialized.
+
+This keeps the surface model simple:
+
+- fresh temporaries can flow efficiently through composed expressions
+- named values keep copy semantics by default
+- ownership transfer from a binding is explicit
 
 
 ## Non-copyable types
@@ -101,5 +125,4 @@ That means the language-level rule stays simple:
 >
 > Maybe some types should have a mandatory postfix indicator in their names.
 > Like `_v` for views, `_p` for pointers, etc. Maybe it is a bit too noisy.
-
 
