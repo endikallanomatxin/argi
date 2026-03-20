@@ -4,20 +4,22 @@ main () -> (.status_code: Int32) := {
     first_offset :: UIntNative = 0
     second_offset :: UIntNative = 1
     third_offset :: UIntNative = 2
+    insert_offset :: UIntNative = 1
 
     dynamic_array_init#(.t: Int32)(.array = $&arr, .capacity = initial_capacity)
     #defer dynamic_array_deinit#(.t: Int32)(.array = $&arr)
 
-    dynamic_array_push#(.t: Int32)(.array = $&arr, .value = 10)
-    dynamic_array_push#(.t: Int32)(.array = $&arr, .value = 20)
-    dynamic_array_push#(.t: Int32)(.array = $&arr, .value = 30)
+    dynamic_array_push(.array = $&arr, .value = 10)
+    dynamic_array_push(.array = $&arr, .value = 20)
+    dynamic_array_insert(.array = $&arr, .i = insert_offset, .value = 15)
+    dynamic_array_push(.array = $&arr, .value = 30)
 
-    if arr.length != 3 {
+    if arr.length != 4 {
         status_code = 1
         return
     }
 
-    if arr.capacity < 3 {
+    if arr.capacity < 4 {
         status_code = 2
         return
     }
@@ -28,17 +30,41 @@ main () -> (.status_code: Int32) := {
         return
     }
 
-    arr[second_offset] = 99
-
-    second :: Int32 = arr[second_offset]
-    if second != 99 {
+    second_before :: Int32 = arr[second_offset]
+    if second_before != 15 {
         status_code = 4
         return
     }
 
-    third :: Int32 = arr[third_offset]
-    if third != 30 {
+    arr[second_offset] = 99
+
+    second :: Int32 = arr[second_offset]
+    if second != 99 {
         status_code = 5
+        return
+    }
+
+    third :: Int32 = arr[third_offset]
+    if third != 20 {
+        status_code = 6
+        return
+    }
+
+    fourth_offset :: UIntNative = 3
+    fourth :: Int32 = arr[fourth_offset]
+    if fourth != 30 {
+        status_code = 7
+        return
+    }
+
+    last :: Int32 = dynamic_array_pop(.array = $&arr).value
+    if last != 30 {
+        status_code = 8
+        return
+    }
+
+    if arr.length != 3 {
+        status_code = 9
         return
     }
 

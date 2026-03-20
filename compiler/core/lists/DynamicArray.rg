@@ -138,6 +138,65 @@ dynamic_array_push #(.t: Type) (
     array& = final_snapshot
 }
 
+dynamic_array_pop #(.t: Type) (
+    .array: $&DynamicArray#(.t: t),
+) -> (.value: t) := {
+    one :: UIntNative = 1
+    snapshot :: DynamicArray#(.t: t) = array&
+    new_length ::= snapshot.length - one
+    snapshot.length = new_length
+    array& = snapshot
+    updated_snapshot :: DynamicArray#(.t: t) = array&
+    value = dynamic_array_get#(.t: t)(.array = &updated_snapshot, .offset = new_length).value
+}
+
+dynamic_array_insert #(.t: Type) (
+    .array: $&DynamicArray#(.t: t),
+    .i: UIntNative,
+    .value: t,
+) -> () := {
+    one :: UIntNative = 1
+    initial_snapshot :: DynamicArray#(.t: t) = array&
+    current_length ::= initial_snapshot.length
+    element_size :: UIntNative = size_of(.type = t)
+
+    if initial_snapshot.length == initial_snapshot.capacity {
+        dynamic_array_grow#(.t: t)(.array = array, .min_capacity = initial_snapshot.length + one)
+        grown_snapshot :: DynamicArray#(.t: t) = array&
+        current_length = grown_snapshot.length
+    }
+
+    if current_length > i {
+        count_to_shift :: UIntNative = current_length - i
+        bytes_to_shift :: UIntNative = count_to_shift * element_size
+        temp_addr :: UIntNative = cast#(.to: UIntNative)(.value = malloc(.size = bytes_to_shift))
+
+        shift_snapshot :: DynamicArray#(.t: t) = array&
+        source_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = &shift_snapshot, .offset = i).address
+        dest_addr ::= source_addr + element_size
+
+        memcpy(
+            .dst = cast#(.to: $&Any)(.value = temp_addr),
+            .src = cast#(.to: &Any)(.value = source_addr),
+            .n = bytes_to_shift,
+        )
+
+        memcpy(
+            .dst = cast#(.to: $&Any)(.value = dest_addr),
+            .src = cast#(.to: &Any)(.value = temp_addr),
+            .n = bytes_to_shift,
+        )
+
+        free(.pointer = cast#(.to: &Any)(.value = temp_addr))
+    }
+
+    dynamic_array_set#(.t: t)(.array = array, .offset = i, .value = value)
+
+    final_snapshot :: DynamicArray#(.t: t) = array&
+    final_snapshot.length = current_length + one
+    array& = final_snapshot
+}
+
 operator get[] #(.t: Type) (
     .self: &DynamicArray#(.t: t),
     .index: UIntNative,
