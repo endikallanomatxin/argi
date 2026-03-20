@@ -623,6 +623,12 @@ test "417_array_index_uint_native" {
     try run();
 }
 
+test "418_dynamic_array" {
+    try clean();
+    try expectSuccessfulBuild("tests/418_dynamic_array/main.rg");
+    try run();
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");
