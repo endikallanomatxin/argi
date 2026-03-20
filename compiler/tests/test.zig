@@ -317,6 +317,12 @@ test "324_generic_structs_multi" {
     try runExpect(20);
 }
 
+test "325_generic_statement_type_arguments" {
+    try clean();
+    try expectSuccessfulBuild("tests/325_generic_statement_type_arguments/main.rg");
+    try run();
+}
+
 test "331_abstract" {
     try clean();
     try expectSuccessfulBuild("tests/331_abstract/main.rg");
