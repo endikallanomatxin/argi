@@ -874,14 +874,19 @@ pub const Syntaxer = struct {
             name = .{ .string = op, .location = id_loc };
         }
 
-        // Optional generic params after name (unchanged)
+        // Optional generic params after name.
+        // In statement position this is ambiguous with generic call type arguments,
+        // so keep the parsed named-args block around and decide once we know
+        // whether this becomes a declaration or a call.
         var generic_params: []const []const u8 = &.{};
+        var generic_params_struct: ?syn.StructTypeLiteral = null;
         if (self.tokenIs(.hash)) {
             self.advanceOne();
             const gen_struct = try self.parseStructTypeLiteral();
             var names = std.array_list.Managed([]const u8).init(self.allocator.*);
             for (gen_struct.fields) |fld| try names.append(fld.name.string);
             generic_params = names.items;
+            generic_params_struct = gen_struct;
         } else if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
             const parsed = try self.parseGenericParamNames();
             generic_params = parsed;
@@ -961,7 +966,7 @@ pub const Syntaxer = struct {
                             .callee_loc = id_loc,
                             .module_qualifier = null,
                             .type_arguments = null,
-                            .type_arguments_struct = null,
+                            .type_arguments_struct = generic_params_struct,
                             .input = input_node,
                     } },
                     id_loc,
