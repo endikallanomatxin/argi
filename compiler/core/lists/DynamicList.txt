@@ -6,12 +6,12 @@ DynamicList<t> : Abstract = [
 
 List<t> canbe DynamicList<t>
 
-DynamicList<t> canbe CopyingDynamicArray<t>
+DynamicList<t> canbe DynamicArray<t>
 DynamicList<t> canbe SegmentedDynamicArray<t>
 DynamicList<t> canbe SinglyLinkedList<t>
 DynamicList<t> canbe DoublyLinkedList<t>
 
-CopyingDynamicArray<t> : Type = [
+DynamicArray<t> : Type = [
     ---
     A heap allocated dynamic array
     that copies data when length exceeds capacity
@@ -28,7 +28,7 @@ SegmentedDynamicArray<t> : Type = [
     ---
     A heap allocated dynamic array
     that grows by getting more segments of memory, without copying data.
-    Slower access than CopyingDynamicArray
+    Slower access than DynamicArray
     ---
     ._allocator : Allocator
     ._data      : &Allocation
