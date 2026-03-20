@@ -57,13 +57,15 @@ Empaqueta, p.ej. u10, u12.
 #### Views / slices
 
 ```
-ListViewRO#(.t: Type) : Type = (
-    .data: &t,
+ListViewRO#(.list_type: Type, .list_value_type: Type) : Type = (
+    .list: &list_type,
+    .start: UIntNative,
     .length: UIntNative,
 )
 
-ListViewRW#(.t: Type) : Type = (
-    .data: $&t,
+ListViewRW#(.list_type: Type, .list_value_type: Type) : Type = (
+    .list: $&list_type,
+    .start: UIntNative,
     .length: UIntNative,
 )
 ```
@@ -77,6 +79,10 @@ Views should stay:
 
 Copying a view copies only the descriptor. It never turns the view into an
 owner of the underlying data.
+
+The view may still be modeled as a borrowed window into a collection, not
+necessarily as a raw pointer to the first element. The important point is the
+same either way: the view stays non-owning.
 
 That should stay true even if later there are explicit retained-view mechanisms
 such as `keep`.
@@ -122,6 +128,7 @@ l | slice (((0, 10), (0, 20)))  -- 2D slice
 - IndexableMutable#(T) → añade set[].
 - Resizable#(T) → añade push, pop, insert, … (solo para los dinámicos).
 
-`[N]T`, `ListViewRO#(T)` y `ListViewRW#(T)` cumplen `Indexable`;
+`[N]T`, `ListViewRO#(.list_type = X, .list_value_type = T)` y
+`ListViewRW#(.list_type = X, .list_value_type = T)` cumplen `Indexable`;
 los que tengan memoria mutable cumplen `IndexableMutable`; y solo `DynamicArray#(T)`
 (dinámico) cumple `Resizable`.

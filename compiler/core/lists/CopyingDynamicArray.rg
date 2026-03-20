@@ -9,6 +9,6 @@ CopyingDynamicArray#(.t: Type) : Type = (
     -- ._length     : UIntNative
     -- ._capacity   : UIntNative
     --
-    -- Views into the array should use `ListViewRO#(.t=t)` or
-    -- `ListViewRW#(.t=t)` and remain non-owning.
+    -- Views into the array should use `ListViewRO#(.list_type=Self, .list_value_type=t)`
+    -- or `ListViewRW#(.list_type=Self, .list_value_type=t)` and remain non-owning.
 )
