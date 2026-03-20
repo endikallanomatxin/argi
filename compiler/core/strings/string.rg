@@ -31,6 +31,21 @@ deinit (.self: $&String) -> () := {
     )
 }
 
+copy (.self: String) -> (.out: String) := {
+    out = String(.length = self.length)
+
+    if self.length > 0 {
+        src_addr :: UIntNative = cast#(.to: UIntNative)(.value = self.allocation.data)
+        dst_addr :: UIntNative = cast#(.to: UIntNative)(.value = out.allocation.data)
+
+        memcpy(
+            .dst = cast#(.to: $&Any)(.value = dst_addr),
+            .src = cast#(.to: &Any)(.value = src_addr),
+            .n = self.length,
+        )
+    }
+}
+
 string_byte_address (
     .string: &String,
     .index: UIntNative,

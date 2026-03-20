@@ -78,6 +78,8 @@ Current implementation direction:
 - `String` is now an owning byte buffer over `Allocation`.
 - `init(.p = $&string, .length = n)` allocates exactly `n` bytes.
 - `deinit(.self = $&string)` releases the backing allocation.
+- `copy(.self = string)` allocates a second backing buffer and copies the
+  bytes, so value semantics stay independent.
 - `String` itself is not directly indexable for now.
 - byte-level access is explicit:
   - `bytes_get(.string = &string, .index = i)`
