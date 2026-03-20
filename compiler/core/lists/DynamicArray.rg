@@ -31,12 +31,7 @@ dynamic_array_init #(.t: Type) (
     }
 
     bytes :: UIntNative = actual_capacity * element_size
-    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = malloc(.size = bytes))
-
-    snapshot.allocation = (
-        .data = cast#(.to: $&UInt8)(.value = raw_addr),
-        .size = bytes,
-    )
+    snapshot.allocation = allocation_init(.size = bytes)
     snapshot.length = zero
     snapshot.capacity = actual_capacity
     array& = snapshot
@@ -45,14 +40,9 @@ dynamic_array_init #(.t: Type) (
 dynamic_array_deinit #(.t: Type) (.array: $&DynamicArray#(.t: t)) -> () := {
     zero :: UIntNative = 0
     snapshot :: DynamicArray#(.t: t) = array&
-    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = snapshot.allocation.data)
-    free(.pointer = cast#(.to: &Any)(.value = raw_addr))
+    allocation_deinit(.allocation = snapshot.allocation)
     snapshot.length = zero
     snapshot.capacity = zero
-    snapshot.allocation = (
-        .data = snapshot.allocation.data,
-        .size = zero,
-    )
     array& = snapshot
 }
 
@@ -146,4 +136,19 @@ dynamic_array_push #(.t: Type) (
     final_snapshot :: DynamicArray#(.t: t) = array&
     final_snapshot.length = offset + one
     array& = final_snapshot
+}
+
+operator get[] #(.t: Type) (
+    .self: &DynamicArray#(.t: t),
+    .index: UIntNative,
+) -> (.value: t) := {
+    value = dynamic_array_get#(.t: t)(.array = self, .offset = index).value
+}
+
+operator set[] #(.t: Type) (
+    .self: $&DynamicArray#(.t: t),
+    .index: UIntNative,
+    .value: t,
+) -> () := {
+    dynamic_array_set#(.t: t)(.array = self, .offset = index, .value = value)
 }
