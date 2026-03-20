@@ -9,10 +9,10 @@ main () -> (.status_code: Int32) := {
     dynamic_array_init#(.t: Int32)(.array = $&arr, .capacity = initial_capacity)
     #defer dynamic_array_deinit#(.t: Int32)(.array = $&arr)
 
-    dynamic_array_push(.array = $&arr, .value = 10)
-    dynamic_array_push(.array = $&arr, .value = 20)
-    dynamic_array_insert(.array = $&arr, .i = insert_offset, .value = 15)
-    dynamic_array_push(.array = $&arr, .value = 30)
+    push(.self = $&arr, .value = 10)
+    push(.self = $&arr, .value = 20)
+    insert(.self = $&arr, .i = insert_offset, .value = 15)
+    push(.self = $&arr, .value = 30)
 
     if arr.length != 4 {
         status_code = 1
@@ -57,7 +57,7 @@ main () -> (.status_code: Int32) := {
         return
     }
 
-    last :: Int32 = dynamic_array_pop(.array = $&arr).value
+    last :: Int32 = pop(.self = $&arr).value
     if last != 30 {
         status_code = 8
         return
