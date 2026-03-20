@@ -57,12 +57,12 @@ Empaqueta, p.ej. u10, u12.
 #### Views / slices
 
 ```
-ListView#(.t: Type) : Type = (
+ListViewRO#(.t: Type) : Type = (
     .data: &t,
     .length: UIntNative,
 )
 
-MutableListView#(.t: Type) : Type = (
+ListViewRW#(.t: Type) : Type = (
     .data: $&t,
     .length: UIntNative,
 )
@@ -122,6 +122,6 @@ l | slice (((0, 10), (0, 20)))  -- 2D slice
 - IndexableMutable#(T) → añade set[].
 - Resizable#(T) → añade push, pop, insert, … (solo para los dinámicos).
 
-`[N]T`, `ListView#(T)` y `MutableListView#(T)` cumplen `Indexable`;
+`[N]T`, `ListViewRO#(T)` y `ListViewRW#(T)` cumplen `Indexable`;
 los que tengan memoria mutable cumplen `IndexableMutable`; y solo `DynamicArray#(T)`
 (dinámico) cumple `Resizable`.

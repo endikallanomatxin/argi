@@ -1,18 +1,18 @@
-ListView#(.t: Type) : Type = (
+ListViewRO#(.t: Type) : Type = (
     --
     -- Lightweight non-owning read-only view over contiguous elements.
     --
-    -- A `ListView` does not own the memory it points to and does not extend
+    -- A `ListViewRO` does not own the memory it points to and does not extend
     -- the lifetime of any backing allocation.
     --
-    -- Copying a `ListView` only copies the descriptor. It never creates
+    -- Copying a `ListViewRO` only copies the descriptor. It never creates
     -- ownership of the underlying data.
     --
     .data   : &t
     .length : UIntNative
 )
 
-MutableListView#(.t: Type) : Type = (
+ListViewRW#(.t: Type) : Type = (
     --
     -- Lightweight non-owning mutable view over contiguous elements.
     --
@@ -25,21 +25,21 @@ MutableListView#(.t: Type) : Type = (
 )
 
 operator get[] #(.t: Type) (
-    .self: &ListView#(.t: t)
+    .self: &ListViewRO#(.t: t)
     .index: UIntNative
 ) -> (.value: t) := {
     value = self.data[index]
 }
 
 operator get[] #(.t: Type) (
-    .self: &MutableListView#(.t: t)
+    .self: &ListViewRW#(.t: t)
     .index: UIntNative
 ) -> (.value: t) := {
     value = self.data[index]
 }
 
 operator set[] #(.t: Type) (
-    .self: $&MutableListView#(.t: t)
+    .self: $&ListViewRW#(.t: t)
     .index: UIntNative
     .value: t
 ) -> () := {
