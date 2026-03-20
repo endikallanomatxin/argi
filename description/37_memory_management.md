@@ -382,7 +382,7 @@ In practice, the layering should look roughly like:
 - `Allocator`
 - `Allocation`
 - owning containers such as `String`, dynamic lists, maps, buffers
-- non-owning views such as `ListView` and string views
+- non-owning views such as `ListViewRO`, `ListViewRW`, and string views
 
 That should help avoid fragmented ad hoc ownership stories across the standard
 library.
