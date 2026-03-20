@@ -1268,8 +1268,12 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         var child = try Scope.init(self.allocator, parent, null);
 
-        for (blk.items) |st|
-            _ = try self.visitNode(st.*, &child);
+        for (blk.items) |st| {
+            const te = try self.visitNode(st.*, &child);
+            if (st.*.content == .function_call) {
+                try child.nodes.append(te.node);
+            }
+        }
 
         var d_idx: usize = child.deferred.items.len;
         while (d_idx > 0) : (d_idx -= 1) {
@@ -2390,7 +2394,6 @@ pub const Semantizer = struct {
         fc_ptr.* = .{ .callee = chosen, .input = tv_in.node };
 
         const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, undefined, self.allocator);
-        try s.nodes.append(n);
 
         const result_ty = typ.functionReturnType(chosen);
 
@@ -2729,7 +2732,6 @@ pub const Semantizer = struct {
         fc_ptr.* = .{ .callee = chosen, .input = input_te.node };
 
         const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
-        try s.nodes.append(n);
         return .{ .node = n, .ty = typ.functionReturnType(chosen) };
     }
 
@@ -3928,6 +3930,8 @@ pub const Semantizer = struct {
             const new_nodes = s.nodes.items[start_len..];
             try self.registerDefer(s, new_nodes);
             s.nodes.items.len = start_len;
+        } else if (te.node.content == .function_call) {
+            try self.registerDefer(s, &[_]*sg.SGNode{te.node});
         }
 
         return .{ .node = te.node, .ty = .{ .builtin = .Any } };

@@ -158,7 +158,7 @@ test "13_pipe_operator" {
 test "14_pipe_pointer" {
     try clean();
     try expectSuccessfulBuild("tests/14_pipe_pointer/main.rg");
-    try runExpect(43);
+    try runExpect(42);
 }
 
 test "15X_pipe_requires_parentheses" {
