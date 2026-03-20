@@ -1,12 +1,11 @@
 main () -> (.status_code: Int32) := {
-    arr :: DynamicArray#(.t: Int32)
     initial_capacity :: UIntNative = 2
     first_offset :: UIntNative = 0
     second_offset :: UIntNative = 1
     third_offset :: UIntNative = 2
     insert_offset :: UIntNative = 1
 
-    dynamic_array_init#(.t: Int32)(.array = $&arr, .capacity = initial_capacity)
+    arr :: DynamicArray#(.t: Int32) = DynamicArray#(.t: Int32)(.capacity = initial_capacity)
     #defer dynamic_array_deinit#(.t: Int32)(.array = $&arr)
 
     push(.self = $&arr, .value = 10)
