@@ -1,49 +1,33 @@
-String : Abstract = [
-	-- For chars (most sensible default)
-	operator get[]
-	operator set[]
-	length(_) : Int
+String should follow the same ownership split as lists:
 
-	-- For bytes if needed
-	byte_get()
-	byte_set()
-	byte_lentgh()
-]
+- `String` is the owning type.
+- it should be backed by `Allocation`.
+- borrowed string views should stay separate and non-owning.
 
-String canbe StaticString
-String canbe DynamicString
-String defaultsto DynamicString
+Proposed minimal direction:
 
+```
+String : Type = (
+    .allocation : Allocation
+    .length     : UIntNative
+)
 
-StaticString : Abstract = []
+StringViewRO : Type = (
+    .string : &String
+    .start  : UIntNative
+    .length : UIntNative
+)
 
-StaticString canbe StackArrayString
-StaticString canbe StaticArrayString
+StringViewRW : Type = (
+    .string : $&String
+    .start  : UIntNative
+    .length : UIntNative
+)
+```
 
-StaticString defaultsto StaticArrayString
+The important design point is the same as for list views:
 
-
-DynamicString : Abstract = [
-    push()
-    push_str()
-    pop()
-    ...
-]
-
-DynamicString canbe CopyingDynamicArrayString
-DynamicString canbe SegmentedDynamicArrayString
-
-DynamicString defaultsto CopyingDynamicArrayString
-
-
-
-StringView : Type = [
-    ---
-    String view is a read only pointer to a section of a string.
-    ---
-    ._original   : String
-    ._from_index :  Index
-    ._to_index   :  Index
-]
-
+- copying a string view copies only the descriptor,
+- not the backing bytes,
+- and not the ownership.
 
