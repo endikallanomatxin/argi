@@ -192,6 +192,17 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "error generating binding use {s}: {s}", .{ b.name, @errorName(e) });
                 return e;
             },
+            .move_value => |inner| self.genMoveValue(inner) catch |e| {
+                try self.diags.add(n.location, .codegen, "error generating move value: {s}", .{@errorName(e)});
+                return e;
+            },
+            .auto_deinit_binding => |adb| {
+                self.genAutoDeinitBinding(adb) catch |e| {
+                    try self.diags.add(n.location, .codegen, "error generating auto deinit for {s}: {s}", .{ adb.binding.name, @errorName(e) });
+                    return e;
+                };
+                return null;
+            },
             .code_block => |cb| {
                 self.genCodeBlock(cb) catch |e| {
                     try self.diags.add(n.location, .codegen, "error generating code block: {s}", .{@errorName(e)});
@@ -684,6 +695,47 @@ pub const CodeGenerator = struct {
             return CodegenError.SymbolNotFound;
         const val = c.LLVMBuildLoad2(self.builder, sym.type_ref, sym.ref, sym.cname.ptr);
         return .{ .value_ref = val, .type_ref = sym.type_ref, .sem_type = sym.sem_type };
+    }
+
+    fn genMoveValue(self: *CodeGenerator, inner: *const sem.SGNode) !TypedValue {
+        if (inner.content != .binding_use) return CodegenError.InvalidType;
+        const binding = inner.content.binding_use;
+        const sym = self.current_scope.lookup(binding.name) orelse
+            return CodegenError.SymbolNotFound;
+
+        const val = c.LLVMBuildLoad2(self.builder, sym.type_ref, sym.ref, sym.cname.ptr);
+        sym.initialized = false;
+        return .{ .value_ref = val, .type_ref = sym.type_ref, .sem_type = sym.sem_type };
+    }
+
+    fn genAutoDeinitBinding(self: *CodeGenerator, adb: *const sem.AutoDeinitBinding) !void {
+        const sym = self.current_scope.lookup(adb.binding.name) orelse
+            return CodegenError.SymbolNotFound;
+        if (!sym.initialized) return;
+
+        const deinit_fn_name = try self.mangledNameFor(adb.deinit_fn);
+        _ = self.current_scope.lookup(deinit_fn_name) orelse
+            self.current_scope.lookup(adb.deinit_fn.name) orelse
+            return CodegenError.SymbolNotFound;
+
+        const binding_use = try sem.makeSGNode(.{ .binding_use = @constCast(adb.binding) }, adb.deinit_fn.location, self.allocator);
+        const addr_node = try sem.makeSGNode(.{ .address_of = binding_use }, adb.deinit_fn.location, self.allocator);
+
+        const arg_fields = try self.allocator.alloc(sem.StructValueLiteralField, 1);
+        arg_fields[0] = .{ .name = adb.deinit_fn.input.fields[0].name, .value = addr_node };
+
+        const args_struct = try self.allocator.create(sem.StructValueLiteral);
+        args_struct.* = .{
+            .fields = arg_fields,
+            .ty = .{ .struct_type = &adb.deinit_fn.input },
+        };
+
+        const args_node = try sem.makeSGNode(.{ .struct_value_literal = args_struct }, adb.deinit_fn.location, self.allocator);
+        const call = try self.allocator.create(sem.FunctionCall);
+        call.* = .{ .callee = adb.deinit_fn, .input = args_node };
+        const call_node = try sem.makeSGNode(.{ .function_call = call }, adb.deinit_fn.location, self.allocator);
+        _ = try self.visitNode(call_node);
+        sym.initialized = false;
     }
 
     // ────────────────────────────────────────── assignment ──

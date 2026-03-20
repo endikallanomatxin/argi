@@ -150,6 +150,9 @@ pub fn printToken(token: tok.Token) void {
         .pipe => {
             std.debug.print("pipe\n", .{});
         },
+        .tilde => {
+            std.debug.print("tilde\n", .{});
+        },
     }
 }
 

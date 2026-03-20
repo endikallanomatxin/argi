@@ -31,6 +31,7 @@ pub const Content = union(enum) {
     assignment: Assignment,
     identifier: []const u8,
     pipe_placeholder: struct {},
+    move_expression: *STNode,
     function_call: FunctionCall,
     pipe_expression: PipeExpression,
     code_block: CodeBlock,

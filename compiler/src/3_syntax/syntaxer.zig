@@ -646,6 +646,13 @@ pub const Syntaxer = struct {
     fn parsePrimary(self: *Syntaxer) !*syn.STNode {
         const t = self.current();
 
+        if (self.tokenIs(.tilde)) {
+            const move_loc = t.location;
+            self.advanceOne();
+            const inner = try self.parsePrimary();
+            return try self.makeNode(.{ .move_expression = inner }, move_loc);
+        }
+
         if (self.tokenIs(.ampersand) or self.tokenIs(.dollar)) {
             var mutability: syn.PointerMutability = .read_only;
             var op_loc = t.location;

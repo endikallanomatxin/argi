@@ -473,6 +473,26 @@ test "362_copy_function_value_positions" {
     try run();
 }
 
+test "363_move_operator" {
+    try clean();
+    try expectSuccessfulBuild("tests/363_move_operator/main.rg");
+    try run();
+}
+
+test "364X_use_after_move" {
+    try clean();
+    try buildExpectFail(
+        "tests/364X_use_after_move/main.rg",
+        "binding 'handle' was moved and cannot be used again before reinitialization",
+    );
+}
+
+test "365_move_then_reinitialize" {
+    try clean();
+    try expectSuccessfulBuild("tests/365_move_then_reinitialize/main.rg");
+    try run();
+}
+
 test "36_get_and_set_index_operators" {
     try clean();
     try expectSuccessfulBuild("tests/36_get_and_set_index_operators/main.rg");

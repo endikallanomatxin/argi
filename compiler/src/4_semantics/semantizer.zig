@@ -595,6 +595,17 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
+            .move_expression => |inner| self.handleMove(inner, s, n.location) catch |err| blk: {
+                if (err == error.Reported) break :blk err;
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in move expression: {s}",
+                    .{@errorName(err)},
+                );
+                break :blk err;
+            },
+
             .pipe_placeholder => blk: {
                 try self.diags.add(
                     n.location,
@@ -1191,6 +1202,25 @@ pub const Semantizer = struct {
         s: *Scope,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
+        if (s.bindingMoveLocation(name)) |move_loc| {
+            if (std.mem.eql(u8, move_loc.file, loc.file) and move_loc.line == loc.line and move_loc.column == loc.column) {
+                const b = s.lookupBinding(name) orelse return error.SymbolNotFound;
+                if (!(try self.bindingIsVisible(b, loc.file))) {
+                    try self.addPrivateMemberDiag(loc, "value", name);
+                    return error.Reported;
+                }
+                const n = try sg.makeSGNode(.{ .binding_use = b }, undefined, self.allocator);
+                return .{ .node = n, .ty = b.ty };
+            }
+            try self.diags.add(
+                loc,
+                .semantic,
+                "binding '{s}' was moved and cannot be used again before reinitialization (moved at {s}:{d}:{d})",
+                .{ name, move_loc.file, move_loc.line, move_loc.column },
+            );
+            return error.Reported;
+        }
+
         const b = s.lookupBinding(name) orelse return error.SymbolNotFound;
         if (!(try self.bindingIsVisible(b, loc.file))) {
             try self.addPrivateMemberDiag(loc, "value", name);
@@ -1198,6 +1228,36 @@ pub const Semantizer = struct {
         }
         const n = try sg.makeSGNode(.{ .binding_use = b }, undefined, self.allocator);
         return .{ .node = n, .ty = b.ty };
+    }
+
+    fn handleMove(
+        self: *Semantizer,
+        inner: *const syn.STNode,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        if (inner.content != .identifier) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "move currently only supports named bindings",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const name = inner.content.identifier;
+        const binding = s.lookupBinding(name) orelse return error.SymbolNotFound;
+        if (!(try self.bindingIsVisible(binding, loc.file))) {
+            try self.addPrivateMemberDiag(loc, "value", name);
+            return error.Reported;
+        }
+        try s.markBindingMoved(binding.name, loc);
+
+        const binding_use = try sg.makeSGNode(.{ .binding_use = binding }, inner.location, self.allocator);
+        const node = try sg.makeSGNode(.{ .move_value = binding_use }, loc, self.allocator);
+        node.sem_type = binding.ty;
+        return .{ .node = node, .ty = binding.ty };
     }
 
     //─────────────────────────────────────────────────────────  CODE BLOCK
@@ -1295,6 +1355,7 @@ pub const Semantizer = struct {
         };
 
         try s.bindings.put(d.name.string, bd);
+        s.clearBindingMoved(d.name.string);
         const n = try sg.makeSGNode(.{ .binding_declaration = bd }, loc, self.allocator);
         try s.nodes.append(n);
         if (s.parent == null) try self.root_list.append(n);
@@ -1681,6 +1742,8 @@ pub const Semantizer = struct {
 
         const asg = try self.allocator.create(sg.Assignment);
         asg.* = .{ .sym_id = b, .value = rhs.node };
+
+        s.clearBindingMoved(b.name);
 
         const n = try sg.makeSGNode(.{ .binding_assignment = asg }, undefined, self.allocator);
         try s.nodes.append(n);
@@ -4678,27 +4741,11 @@ pub const Semantizer = struct {
     ) !void {
         if (s.parent == null) return;
         const deinit_fn = s.findDeinit(binding.ty) orelse return;
-        if (deinit_fn.input.fields.len != 1) return;
+        const auto_ptr = try self.allocator.create(sg.AutoDeinitBinding);
+        auto_ptr.* = .{ .binding = binding, .deinit_fn = deinit_fn };
 
-        const binding_use = try sg.makeSGNode(.{ .binding_use = binding }, loc, self.allocator);
-        const addr_node = try sg.makeSGNode(.{ .address_of = binding_use }, loc, self.allocator);
-
-        const arg_fields = try self.allocator.alloc(sg.StructValueLiteralField, 1);
-        arg_fields[0] = .{ .name = deinit_fn.input.fields[0].name, .value = addr_node };
-
-        const args_struct = try self.allocator.create(sg.StructValueLiteral);
-        args_struct.* = .{
-            .fields = arg_fields,
-            .ty = .{ .struct_type = &deinit_fn.input },
-        };
-
-        const args_node = try sg.makeSGNode(.{ .struct_value_literal = args_struct }, loc, self.allocator);
-
-        const fc_ptr = try self.allocator.create(sg.FunctionCall);
-        fc_ptr.* = .{ .callee = deinit_fn, .input = args_node };
-
-        const call_node = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
-        try self.registerDefer(s, &[_]*sg.SGNode{call_node});
+        const call_node = try sg.makeSGNode(.{ .auto_deinit_binding = auto_ptr }, loc, self.allocator);
+        try self.registerDefer(s, &[_]*sg.SGNode{ call_node });
     }
 
     // ─────────────────────────────────────────────────── Helpers reintento

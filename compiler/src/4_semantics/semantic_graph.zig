@@ -37,7 +37,9 @@ pub const Content = union(enum) {
 
     binding_declaration: *BindingDeclaration,
     binding_use: *BindingDeclaration,
+    move_value: *const SGNode,
     binding_assignment: *Assignment,
+    auto_deinit_binding: *AutoDeinitBinding,
 
     function_call: *FunctionCall,
     code_block: *CodeBlock,
@@ -258,6 +260,11 @@ pub const CodeBlock = struct {
 pub const Assignment = struct {
     sym_id: *const BindingDeclaration,
     value: *const SGNode,
+};
+
+pub const AutoDeinitBinding = struct {
+    binding: *const BindingDeclaration,
+    deinit_fn: *const FunctionDeclaration,
 };
 
 //

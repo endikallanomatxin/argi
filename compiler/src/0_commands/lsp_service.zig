@@ -790,7 +790,7 @@ fn tokenLenBytes(tk: token.Token) usize {
 
         .new_line => 1,
 
-        .equal, .colon, .dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar, .eof => 1,
+        .equal, .colon, .dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar, .tilde, .eof => 1,
         .double_dot => 2,
     };
 }
@@ -804,7 +804,7 @@ inline fn classify_lex_only(c: token.Content) ?u32 {
             .bool_literal => TOKEN_INDEX.keyword,
         },
         .keyword_return, .keyword_if, .keyword_else, .keyword_match => TOKEN_INDEX.keyword,
-        .comparison_operator, .binary_operator, .equal, .arrow, .colon, .double_colon, .dot, .double_dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar => TOKEN_INDEX.operator,
+        .comparison_operator, .binary_operator, .equal, .arrow, .colon, .double_colon, .dot, .double_dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar, .tilde => TOKEN_INDEX.operator,
         .identifier => null,
         .new_line, .eof => null,
     };
