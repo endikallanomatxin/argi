@@ -571,6 +571,15 @@ pub const LanguageService = struct {
                     try stack.append(ifs.then_block);
                     if (ifs.else_block) |e| try stack.append(e);
                 },
+                .for_statement => |f| {
+                    try em.identAt(f.item_name.location, TOKEN_INDEX.variable, DECL);
+                    try stack.append(f.iterable);
+                    try stack.append(f.body);
+                },
+                .while_statement => |w| {
+                    try stack.append(w.condition);
+                    try stack.append(w.body);
+                },
                 .match_statement => |m| {
                     try stack.append(m.value);
                     for (m.cases) |c| {
@@ -712,7 +721,7 @@ inline fn classify(c: token.Content) ?u32 {
             else => TOKEN_INDEX.number,
         },
 
-        .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_while => TOKEN_INDEX.keyword,
+        .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while => TOKEN_INDEX.keyword,
 
         .comparison_operator, .binary_operator, .equal, .arrow, .colon, .double_colon, .dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar => TOKEN_INDEX.operator,
 
@@ -782,6 +791,8 @@ fn tokenLenBytes(tk: token.Token) usize {
         .keyword_if => "if".len,
         .keyword_else => "else".len,
         .keyword_match => "match".len,
+        .keyword_for => "for".len,
+        .keyword_in => "in".len,
         .keyword_while => "while".len,
 
         .double_colon => 2,
@@ -804,7 +815,7 @@ inline fn classify_lex_only(c: token.Content) ?u32 {
             .string_literal, .char_literal => TOKEN_INDEX.string,
             .bool_literal => TOKEN_INDEX.keyword,
         },
-        .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_while => TOKEN_INDEX.keyword,
+        .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while => TOKEN_INDEX.keyword,
         .comparison_operator, .binary_operator, .equal, .arrow, .colon, .double_colon, .dot, .double_dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar, .tilde => TOKEN_INDEX.operator,
         .identifier => null,
         .new_line, .eof => null,

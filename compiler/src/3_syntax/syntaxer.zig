@@ -23,6 +23,8 @@ pub const SyntaxerError = error{
     ExpectedDeclarationOrAssignment,
     ExpectedKeywordReturn,
     ExpectedKeywordIf,
+    ExpectedKeywordFor,
+    ExpectedKeywordIn,
     ExpectedKeywordWhile,
     ExpectedAmpersand,
     ExpectedStringLiteral,
@@ -314,9 +316,75 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.hash)) {
             self.advanceOne();
             const gen_args = try self.parseStructTypeLiteral();
+            if (std.mem.eql(u8, tname.string, "Array")) {
+                return try self.parseArrayTypeFromGenericArgs(tname.location, gen_args);
+            }
             return syn.Type{ .generic_type_instantiation = .{ .base_name = tname, .args = gen_args } };
         }
         return syn.Type{ .type_name = tname };
+    }
+
+    fn parseArrayTypeFromGenericArgs(
+        self: *Syntaxer,
+        loc: tok.Location,
+        gen_args: syn.StructTypeLiteral,
+    ) SyntaxerError!syn.Type {
+        var length: ?usize = null;
+        var element_ty: ?syn.Type = null;
+
+        for (gen_args.fields) |field| {
+            if (std.mem.eql(u8, field.name.string, "n")) {
+                const value_node = field.default_value orelse {
+                    try self.diags.add(loc, .syntax, "Array expects '.n = <decimal integer literal>'", .{});
+                    return SyntaxerError.ExpectedIntLiteral;
+                };
+                switch (value_node.content) {
+                    .literal => |lit| switch (lit) {
+                        .decimal_int_literal => |text| {
+                            length = std.fmt.parseInt(usize, text, 10) catch {
+                                try self.diags.add(loc, .syntax, "invalid Array '.n' literal", .{});
+                                return SyntaxerError.ExpectedIntLiteral;
+                            };
+                        },
+                        else => {
+                            try self.diags.add(loc, .syntax, "Array '.n' must be a decimal integer literal", .{});
+                            return SyntaxerError.ExpectedIntLiteral;
+                        },
+                    },
+                    else => {
+                        try self.diags.add(loc, .syntax, "Array '.n' must be a decimal integer literal", .{});
+                        return SyntaxerError.ExpectedIntLiteral;
+                    },
+                }
+            } else if (std.mem.eql(u8, field.name.string, "t")) {
+                element_ty = field.type orelse {
+                    try self.diags.add(loc, .syntax, "Array expects '.t: <type>'", .{});
+                    return SyntaxerError.ExpectedIdentifier;
+                };
+            } else {
+                try self.diags.add(loc, .syntax, "Array only accepts '.n' and '.t' parameters", .{});
+                return SyntaxerError.ExpectedIdentifier;
+            }
+        }
+
+        if (length == null) {
+            try self.diags.add(loc, .syntax, "Array is missing '.n = <decimal integer literal>'", .{});
+            return SyntaxerError.ExpectedIntLiteral;
+        }
+        if (element_ty == null) {
+            try self.diags.add(loc, .syntax, "Array is missing '.t: <type>'", .{});
+            return SyntaxerError.ExpectedIdentifier;
+        }
+
+        const elem_ptr = try self.allocator.create(syn.Type);
+        elem_ptr.* = element_ty.?;
+
+        const array_ty = try self.allocator.create(syn.ArrayType);
+        array_ty.* = .{
+            .length = length.?,
+            .element = elem_ptr,
+        };
+        return .{ .array_type = array_ty };
     }
 
     // Parse an abstract body: a parenthesized, comma-separated list of items.
@@ -804,6 +872,7 @@ pub const Syntaxer = struct {
         switch (self.current().content) {
             .keyword_return => return self.parseReturn(),
             .keyword_if => return self.parseIf(),
+            .keyword_for => return self.parseFor(),
             .keyword_match => return self.parseMatch(),
             .keyword_while => return self.parseWhile(),
             else => {},
@@ -1122,6 +1191,22 @@ pub const Syntaxer = struct {
         return try self.makeNode(.{ .match_statement = .{
             .value = value,
             .cases = cases.items,
+        } }, start);
+    }
+
+    fn parseFor(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        const start = self.tokenLocation();
+        if (!self.tokenIs(.keyword_for)) return SyntaxerError.ExpectedKeywordFor;
+        self.advanceOne();
+        const item_name = try self.parseName();
+        if (!self.tokenIs(.keyword_in)) return SyntaxerError.ExpectedKeywordIn;
+        self.advanceOne();
+        const iterable = try self.parseExpression();
+        const body = try self.parseCodeBlock();
+        return try self.makeNode(.{ .for_statement = .{
+            .item_name = item_name,
+            .iterable = iterable,
+            .body = body,
         } }, start);
     }
 
