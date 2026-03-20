@@ -6,7 +6,7 @@ main () -> (.status_code: Int32) := {
     insert_offset :: UIntNative = 1
 
     arr :: DynamicArray#(.t: Int32) = DynamicArray#(.t: Int32)(.capacity = initial_capacity)
-    #defer dynamic_array_deinit#(.t: Int32)(.array = $&arr)
+    #defer deinit(.self = $&arr)
 
     push(.self = $&arr, .value = 10)
     push(.self = $&arr, .value = 20)
