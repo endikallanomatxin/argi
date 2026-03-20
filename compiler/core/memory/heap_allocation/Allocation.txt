@@ -1,4 +1,4 @@
-HeapAllocation : Type = struct [
+Allocation : Type = struct [
     ---
     This is useful to encapsulate an alocation with its allocator
     ---
@@ -9,4 +9,3 @@ HeapAllocation : Type = struct [
 
 HeapAllocationError : Error
 HeapDeallocationError : Error
-

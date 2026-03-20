@@ -17,7 +17,7 @@ CopyingDynamicArray<t> : Type = [
     that copies data when length exceeds capacity
     Fast accessing
     ---
-    ._data      : &HeapAllocation
+    ._data      : &Allocation
     ._data_type : Type        = t
     ._alignment : Alignment   = ..Default
     ._length    : Int64
@@ -31,7 +31,7 @@ SegmentedDynamicArray<t> : Type = [
     Slower access than CopyingDynamicArray
     ---
     ._allocator : Allocator
-    ._data      : &HeapAllocation
+    ._data      : &Allocation
     ._data_type : Type        = t
     ._alignment : Alignment   = ..Default
     ._length    : Int64
@@ -54,4 +54,3 @@ Rope<t> : Type = [
 	O un Btree, no se. Decidir como implementamos esto.
 	---
 ]
-

@@ -16,20 +16,22 @@ l : Array#(Int32, 3)((1, 2, 3))
 > Igual `[?]T` para que el compilador lo calcule.
 
 
-#### `Allocation#(.t = [N]T)`
+#### `Allocation`
 
-Similar to basic Array, but using an allocator, still static size.
+`Allocation` should be the low-level owning heap base used by dynamic list-like
+types.
 
-It implements the `List` interface.
-una instanciación concreta `Allocation#(.u = [N]T)` puede cumplir tu interfaz de
-listas, aunque el genérico `Allocation#(.u: Type)` (sin fijar) no lo haga.
+It owns raw bytes, not typed list semantics by itself.
+
+List structures such as dynamic arrays should layer their own length, capacity,
+element type, and indexing rules on top of an `Allocation`.
 
 
 
 #### `DynamicArray#(.t: Type)`
 
-It uses `Allocation#(.u = [N]T)` internally, and grows as needed.
-
+It uses `Allocation` internally, together with metadata such as length,
+capacity, and element type.
 `l := DynamicArray#(Int32)((1, 2, 3), my_allocator)`
 
 
@@ -52,27 +54,35 @@ Empaqueta, p.ej. u10, u12.
 
 ### Reference constructs
 
-#### Slices `R[]T` or `Slice#(.t: Type)`
+#### Views / slices
 
 ```
-RSlice#(.t: Type) : Type = (
+ListView#(.t: Type) : Type = (
     .data: &t,
-    .length: Int32,
+    .length: UIntNative,
 )
 
-RWSlice#(.t: Type) : Type = (
+MutableListView#(.t: Type) : Type = (
     .data: $&t,
-    .length: Int32,
+    .length: UIntNative,
 )
 ```
 
-> [!TODO] Maybe we can define them as only created from an already existing array?
+Views should stay:
 
-> [!IDEA] Igual slice podría ser Slice#(.t: Type, .m: Mutability = ..R)?
-> Donde Mutability puede ser R, RW, o ERW (exclusive)
+- lightweight,
+- non-owning,
+- explicit,
+- and cheap to copy as descriptors.
+
+Copying a view copies only the descriptor. It never turns the view into an
+owner of the underlying data.
+
+That should stay true even if later there are explicit retained-view mechanisms
+such as `keep`.
 
 
-##### Slice indexing
+##### View indexing
 
 `my_array | slice(2, 5)`
 `my_array | slice(2, 5, .stride=2)`
@@ -112,8 +122,6 @@ l | slice (((0, 10), (0, 20)))  -- 2D slice
 - IndexableMutable#(T) → añade set[].
 - Resizable#(T) → añade push, pop, insert, … (solo para los dinámicos).
 
-`[N]T`, `RSlice#(T)`, `RWSlice#(T)` y `Allocation#([N]T)` cumplen `Indexable`;
+`[N]T`, `ListView#(T)` y `MutableListView#(T)` cumplen `Indexable`;
 los que tengan memoria mutable cumplen `IndexableMutable`; y solo `DynamicArray#(T)`
 (dinámico) cumple `Resizable`.
-
-

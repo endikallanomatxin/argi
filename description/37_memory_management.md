@@ -362,6 +362,32 @@ The important semantic point is:
 > A plain view does not keep anything alive.
 
 
+## Allocation as the Owning Base
+
+The current direction should be:
+
+- `Allocation` lives in `core`,
+- `Allocation` owns raw heap memory,
+- higher-level owning containers compose it,
+- views remain separate non-owning descriptors.
+
+This keeps three concerns separate:
+
+- allocation strategy,
+- ownership/copy/deinit behavior,
+- non-owning observation through views.
+
+In practice, the layering should look roughly like:
+
+- `Allocator`
+- `Allocation`
+- owning containers such as `String`, dynamic lists, maps, buffers
+- non-owning views such as `ListView` and string views
+
+That should help avoid fragmented ad hoc ownership stories across the standard
+library.
+
+
 ### Why Not Put RC in All Views?
 
 Making every view implicitly reference-counted would blur the model:

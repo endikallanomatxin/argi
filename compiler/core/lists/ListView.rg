@@ -1,78 +1,47 @@
-ListView#(.list_type: Type, .list_value_type: Type) : Type = (
-    -- A ListView is a lightweight descriptor for a window into an indexable collection.
-    .data   : $&list_type
-    .start  : Int32
-    .length : Int32
+ListView#(.t: Type) : Type = (
+    --
+    -- Lightweight non-owning read-only view over contiguous elements.
+    --
+    -- A `ListView` does not own the memory it points to and does not extend
+    -- the lifetime of any backing allocation.
+    --
+    -- Copying a `ListView` only copies the descriptor. It never creates
+    -- ownership of the underlying data.
+    --
+    .data   : &t
+    .length : UIntNative
 )
 
-view#(.list_type: Type, .list_value_type: Type) (
-    .list: list_type,
-    .from: Int32,
-    .to: Int32,
-) -> (.view: ListView#(.list_type: list_type, .list_value_type: list_value_type)) := {
-    zero :: Int32 = 0
+MutableListView#(.t: Type) : Type = (
+    --
+    -- Lightweight non-owning mutable view over contiguous elements.
+    --
+    -- This should stay a plain borrowed view. Mutable access does not imply
+    -- ownership; it only means the referenced memory may be edited while the
+    -- backing owner remains valid.
+    --
+    .data   : $&t
+    .length : UIntNative
+)
 
-    if to < from {
-        -- Invalid range, return an empty view.
-        view.start = zero
-        view.length = zero
-        return
-    }
-
-    list_length : Int32 = length(.value=list)
-    to_mut :: Int32 = to
-
-    if from >= list_length {
-        -- Start index is out of bounds, return an empty view.
-        view.start = zero
-        view.length = zero
-        return
-    }
-
-    if to_mut >= list_length {
-        -- Adjust 'to' to the last valid index.
-        to_mut = list_length - 1
-    }
-
-    actual_to : Int32 = to_mut
-
-    view.data = $&list
-    view.start = from
-    view.length = actual_to - from + 1
+operator get[] #(.t: Type) (
+    .self: &ListView#(.t: t)
+    .index: UIntNative
+) -> (.value: t) := {
+    value = self.data[index]
 }
 
-operator get[] #(.list_type: Type, .list_value_type: Type) (
-    .self: &ListView#(.list_type: list_type, .list_value_type: list_value_type)
-    .index: Int32
-) -> (.value: list_value_type) := {
-    -- if index >= view.length {
-    --     error("Index out of bounds")
-    -- }
-
-    view_value :: ListView#(.list_type=list_type, .list_value_type=list_value_type) = self&
-
-    offset : Int32 = view_value.start + index
-
-    snapshot :: list_type = view_value.data&
-
-    value = snapshot[offset]
+operator get[] #(.t: Type) (
+    .self: &MutableListView#(.t: t)
+    .index: UIntNative
+) -> (.value: t) := {
+    value = self.data[index]
 }
 
-operator set[] #(.list_type: Type, .list_value_type: Type) (
-    .self: $&ListView#(.list_type: list_type, .list_value_type: list_value_type)
-    .index: Int32
-    .value: list_value_type
+operator set[] #(.t: Type) (
+    .self: $&MutableListView#(.t: t)
+    .index: UIntNative
+    .value: t
 ) -> () := {
-    -- if index >= view.length {
-    --     error("Index out of bounds")
-    -- }
-
-    view_value :: ListView#(.list_type=list_type, .list_value_type=list_value_type) = self&
-
-    offset : Int32 = view_value.start + index
-
-    snapshot :: list_type = view_value.data&
-
-    snapshot[offset] = value
-    view_value.data& = snapshot
+    self.data[index] = value
 }

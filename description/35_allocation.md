@@ -9,8 +9,8 @@ type automatically copyable.
 
 ```
 Allocator : Abstract = (
-	alloc (_, size: Int) -> HeapAllocation
-	dealloc (_, ha: HeapAllocation) -> ()
+	alloc (_, size: Int) -> Allocation
+	dealloc (_, allocation: Allocation) -> ()
 )
 ```
 
@@ -45,7 +45,7 @@ init (.memory: &System.Memory) -> (.allocator: PageAllocator) := { ... }
 ```
 
 
-## HeapAllocation
+## Allocation
 
 Allocators return an `Allocation` struct, instead of a single pointer. This
 allows us to keep track of the size and a pointer to the allocator used for the
@@ -59,14 +59,29 @@ Allocation : Type = (
 )
 ```
 
+`Allocation` should become the basic owning heap primitive in `core`.
+
+That means higher-level owning types such as:
+
+- strings,
+- dynamic lists,
+- maps,
+- buffers,
+
+should ideally compose an `Allocation` internally instead of each inventing a
+different low-level ownership representation.
+
+`Allocation` owns raw bytes only. It should not itself imply list semantics,
+string semantics, or view semantics.
+
 When initializing types, allocators are passed as arguments,
 
 ```
 init (
     size     : Int,
     allocator: Allocator
-) -> (.ha: HeapAllocation) := {
-	ha = HeapAllocation (
+) -> (.ha: Allocation) := {
+	ha = Allocation (
 		.data      = allocator|allocate(size)
 		.size      = size
 		.allocator = allocator
@@ -75,7 +90,7 @@ init (
 ```
 
 ```
-my_buf : HeapAllocation = init(1024, my_allocator)
+my_buf : Allocation = init(1024, my_allocator)
 ```
 
 
@@ -112,6 +127,12 @@ If `HashMap` provides `copy()`, then passing it by value or assigning it means
 creating an independent map. If it does not provide `copy()`, then it must be
 passed by `&` or `$&`.
 
+This separation is useful:
+
+- allocator strategy is one concern,
+- ownership and copying are another,
+- borrowed views should remain a third, separate concern.
+
 > [!FIX] Reflexionar sobre la sintaxis para incializar un mapa.
 > Lo ideal sería:
 > ```
@@ -119,4 +140,3 @@ passed by `&` or `$&`.
 > ```
 > El no tener un default allocator perjudica mucho la ergonomía del lenguaje.
 > Pensar en hacer que no sea una capability
-
