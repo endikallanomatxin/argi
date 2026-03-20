@@ -150,9 +150,68 @@ The semantic rule should be:
 
 That means:
 
-- if the type implements `copy()`, the compiler may insert it implicitly,
+- if the expression is a fresh value, it can be moved directly,
+- if the expression names an existing value and the type implements `copy()`,
+  the compiler may insert it implicitly,
 - otherwise the operation is a compile error,
 - and the diagnostic should suggest `&`, `$&`, or implementing `copy()`.
+
+For now, a useful working split is:
+
+- fresh values move by default,
+- existing named values copy by default,
+- explicit move from an existing binding uses `~binding`.
+
+
+### Fresh Values vs Existing Values
+
+Not every value position should behave the same internally.
+
+These cases should count as fresh values:
+
+- literals,
+- constructors,
+- results of function calls,
+- intermediate values created while composing calls.
+
+Those values are already independent, so they can flow into value position
+without requiring an extra copy.
+
+By contrast, reusing an existing binding in value position means:
+
+- implicit `copy()` if the type is copyable,
+- or a compile error if it is not.
+
+This is the key rule that keeps value semantics safe without making composed
+expressions unnecessarily expensive.
+
+
+### Explicit Move
+
+Argi should also support an explicit move operation for existing bindings:
+
+- `~x` means transfer the value out of `x`,
+- after that, `x` cannot be used again until it is reinitialized,
+- and `deinit()` should not run for that moved-out state.
+
+This is especially useful when ownership transfer is intended and an implicit
+copy would be either expensive or invalid.
+
+The intended balance is:
+
+- copy remains the default for named values used by value,
+- move remains explicit for named values,
+- but fresh composed values move naturally without extra syntax.
+
+> [!NOTE]
+> It may be tempting to optimize the last implicit copy of a binding into a
+> move when the binding is not used again.
+>
+> For now, that should not be part of the model.
+> Once references, views, `keep`, and aliasing are considered, that
+> optimization becomes much more subtle.
+> The language can stay correct and understandable without it, and it can
+> always be reconsidered later as a conservative optimization.
 
 
 ### 2. References Are Explicit
