@@ -274,6 +274,15 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
                 printNode(c.body.*, lvl + 2);
             }
         },
+        .while_statement => |w| {
+            std.debug.print("While\n", .{});
+            indent(lvl + 1);
+            std.debug.print("Condition:\n", .{});
+            printNode(w.condition.*, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("Body:\n", .{});
+            printNode(w.body.*, lvl + 2);
+        },
 
         // ── STRUCT FIELD ACCESS ──────────────────────────────────────────
         .struct_field_access => |sfa| {

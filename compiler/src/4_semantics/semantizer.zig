@@ -834,6 +834,16 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
+            .while_statement => |w| self.handleWhile(w, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in while statement: {s}",
+                    .{@errorName(err)},
+                );
+                break :blk err;
+            },
+
             .match_statement => |m| self.handleMatch(m, s) catch |err| blk: {
                 if (err != error.Reported) {
                     try self.diags.add(
@@ -4037,6 +4047,29 @@ pub const Semantizer = struct {
         };
 
         const n = try sg.makeSGNode(.{ .if_statement = if_ptr }, undefined, self.allocator);
+        try s.nodes.append(n);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleWhile(
+        self: *Semantizer,
+        w: syn.WhileStatement,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const start_len = s.nodes.items.len;
+
+        const cond = try self.visitNode(w.condition.*, s);
+        const body_te = try self.visitNode(w.body.*, s);
+
+        s.nodes.items.len = start_len;
+
+        const while_ptr = try self.allocator.create(sg.WhileStatement);
+        while_ptr.* = .{
+            .condition = cond.node,
+            .body = body_te.node.content.code_block,
+        };
+
+        const n = try sg.makeSGNode(.{ .while_statement = while_ptr }, undefined, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }

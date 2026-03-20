@@ -54,6 +54,7 @@ pub const Content = union(enum) {
     binary_operation: BinaryOperation,
     comparison: Comparison,
     if_statement: IfStatement,
+    while_statement: WhileStatement,
     match_statement: MatchStatement,
     import_statement: ImportStatement,
     defer_statement: *STNode,
@@ -252,6 +253,11 @@ pub const IfStatement = struct {
     condition: *STNode,
     then_block: *STNode,
     else_block: ?*STNode,
+};
+
+pub const WhileStatement = struct {
+    condition: *STNode,
+    body: *STNode,
 };
 
 pub const MatchStatement = struct {

@@ -733,6 +733,12 @@ test "71_import_transitive" {
     try run();
 }
 
+test "71_loops" {
+    try clean();
+    try expectSuccessfulBuild("tests/71_loops/main.rg");
+    try run();
+}
+
 test "72X_import_cycle" {
     try clean();
     try buildExpectFail(
