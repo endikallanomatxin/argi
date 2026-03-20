@@ -209,6 +209,10 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
         // ── IDENTIFIER & LITERAL ─────────────────────────────────────────
         .identifier => |id| std.debug.print("Identifier \"{s}\"\n", .{id}),
         .pipe_placeholder => std.debug.print("PipePlaceholder \"_\"\n", .{}),
+        .move_expression => |inner| {
+            std.debug.print("MoveExpression\n", .{});
+            printNode(inner.*, lvl + 1);
+        },
         .literal => |lit| printLiteral(lit),
         .pipe_expression => |pe| {
             std.debug.print("PipeExpression\n", .{});

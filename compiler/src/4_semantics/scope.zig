@@ -1,5 +1,6 @@
 const std = @import("std");
 const sg = @import("semantic_graph.zig");
+const tok = @import("../2_tokens/token.zig");
 
 const abs = @import("abstracts.zig");
 const gen = @import("generics.zig");
@@ -16,6 +17,7 @@ pub const Scope = struct {
     nodes: std.array_list.Managed(*sg.SGNode),
     module_aliases: std.StringHashMap([]const u8),
     bindings: std.StringHashMap(*sg.BindingDeclaration),
+    moved_bindings: std.StringHashMap(tok.Location),
     functions: std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)),
     types: std.StringHashMap(*sg.TypeDeclaration),
     abstracts: std.StringHashMap(*abs.AbstractInfo),
@@ -38,6 +40,7 @@ pub const Scope = struct {
             .nodes = std.array_list.Managed(*sg.SGNode).init(a.*),
             .module_aliases = std.StringHashMap([]const u8).init(a.*),
             .bindings = std.StringHashMap(*sg.BindingDeclaration).init(a.*),
+            .moved_bindings = std.StringHashMap(tok.Location).init(a.*),
             .functions = std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)).init(a.*),
             .types = std.StringHashMap(*sg.TypeDeclaration).init(a.*),
             .abstracts = std.StringHashMap(*abs.AbstractInfo).init(a.*),
@@ -98,6 +101,28 @@ pub const Scope = struct {
         if (self.bindings.get(n)) |b| return b;
         if (self.parent) |p| return p.lookupBinding(n);
         return null;
+    }
+
+    pub fn bindingMoveLocation(self: *Scope, n: []const u8) ?tok.Location {
+        if (self.moved_bindings.get(n)) |loc| return loc;
+        if (self.parent) |p| return p.bindingMoveLocation(n);
+        return null;
+    }
+
+    pub fn markBindingMoved(self: *Scope, n: []const u8, loc: tok.Location) !void {
+        if (self.bindings.contains(n)) {
+            try self.moved_bindings.put(n, loc);
+            return;
+        }
+        if (self.parent) |p| return p.markBindingMoved(n, loc);
+    }
+
+    pub fn clearBindingMoved(self: *Scope, n: []const u8) void {
+        if (self.bindings.contains(n)) {
+            _ = self.moved_bindings.remove(n);
+            return;
+        }
+        if (self.parent) |p| p.clearBindingMoved(n);
     }
 
     pub fn lookupBindingInModule(self: *Scope, module_dir: []const u8, n: []const u8) ?*sg.BindingDeclaration {

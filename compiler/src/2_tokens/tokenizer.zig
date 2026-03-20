@@ -324,6 +324,9 @@ pub const Tokenizer = struct {
             '|' => {
                 try self.addToken(tok.Content{ .pipe = .{} }, loc);
             },
+            '~' => {
+                try self.addToken(tok.Content{ .tilde = .{} }, loc);
+            },
             '\'' => {
                 // Salta la comilla de apertura
                 try self.advanceOne();

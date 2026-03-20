@@ -52,6 +52,7 @@ pub const Content = union(enum) {
 
     // Function operators
     pipe: struct {}, // |
+    tilde: struct {}, // ~
 
     // Arithmetic operators
     binary_operator: BinaryOperator,

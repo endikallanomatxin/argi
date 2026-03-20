@@ -115,12 +115,22 @@
                 - Mantener por ahora `deinit` al salir de scope, no al último
                   uso. Eso ya encaja con `description/34_automatic_deinitialization.md`
                   y es mucho más abordable.
+                - Ya hay un primer corte de estado moved-from:
+                    - `~binding` mueve desde bindings nombrados,
+                    - el binding queda inválido hasta reinicialización,
+                    - y el auto-`deinit` ya puede saltarse ese binding movido.
+                - Mantener la regla simple:
+                    - temporales/fresh values pueden moverse sin copia extra,
+                    - bindings existentes siguen usando `copy()` o `~`.
                 - No programar `deinit` para bindings sin inicialización real.
                 - Preparar el terreno para distinguir:
                     - valor inicializado,
                     - valor movido,
                     - valor no inicializado.
-                - Más adelante: optimizar al último uso.
+                - No perseguir por ahora optimizaciones de "último copy se
+                  vuelve move":
+                    - con referencias, views y `keep` eso exige bastante más
+                      análisis del que compensa hoy.
 
             - Fase 4: exclusividad mínima de `$&`
                 - Sin llegar a Rust, conviene verificar al menos el caso más
