@@ -22,7 +22,7 @@ In all those cases the semantics should be the same.
 
 ## Copy model
 
-If a fresh value is used in value position, it may be moved directly.
+If a temporary value is used in value position, it may be moved directly.
 
 If an existing named value is used in value position and the type implements
 `copy()`, the compiler may insert an implicit call to `copy()`.
@@ -67,7 +67,7 @@ it is reinitialized.
 
 This keeps the surface model simple:
 
-- fresh temporaries can flow efficiently through composed expressions
+- temporary values can flow efficiently through composed expressions
 - named values keep copy semantics by default
 - ownership transfer from a binding is explicit
 
@@ -125,4 +125,3 @@ That means the language-level rule stays simple:
 >
 > Maybe some types should have a mandatory postfix indicator in their names.
 > Like `_v` for views, `_p` for pointers, etc. Maybe it is a bit too noisy.
-

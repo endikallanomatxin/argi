@@ -405,9 +405,9 @@ test "353_deinit" {
     try run();
 }
 
-test "354_noncopyable_fresh_values" {
+test "354_noncopyable_temporary_values" {
     try clean();
-    try expectSuccessfulBuild("tests/354_noncopyable_fresh_values/main.rg");
+    try expectSuccessfulBuild("tests/354_noncopyable_temporary_values/main.rg");
     try run();
 }
 

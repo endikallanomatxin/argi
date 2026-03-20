@@ -120,7 +120,7 @@
                     - el binding queda inválido hasta reinicialización,
                     - y el auto-`deinit` ya puede saltarse ese binding movido.
                 - Mantener la regla simple:
-                    - temporales/fresh values pueden moverse sin copia extra,
+                    - los temporary values pueden moverse sin copia extra,
                     - bindings existentes siguen usando `copy()` o `~`.
                 - No programar `deinit` para bindings sin inicialización real.
                 - Preparar el terreno para distinguir:
