@@ -197,6 +197,27 @@ dynamic_array_insert #(.t: Type) (
     array& = final_snapshot
 }
 
+push #(.t: Type) (
+    .self: $&DynamicArray#(.t: t),
+    .value: t,
+) -> () := {
+    dynamic_array_push#(.t: t)(.array = self, .value = value)
+}
+
+pop #(.t: Type) (
+    .self: $&DynamicArray#(.t: t),
+) -> (.value: t) := {
+    value = dynamic_array_pop#(.t: t)(.array = self).value
+}
+
+insert #(.t: Type) (
+    .self: $&DynamicArray#(.t: t),
+    .i: UIntNative,
+    .value: t,
+) -> () := {
+    dynamic_array_insert#(.t: t)(.array = self, .i = i, .value = value)
+}
+
 operator get[] #(.t: Type) (
     .self: &DynamicArray#(.t: t),
     .index: UIntNative,
