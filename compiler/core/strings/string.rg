@@ -39,21 +39,21 @@ string_byte_address (
     address = base + index
 }
 
-operator get[] (
-    .self: &String,
+bytes_get (
+    .string: &String,
     .index: UIntNative,
 ) -> (.byte: UInt8) := {
-    addr :: UIntNative = string_byte_address(.string = self, .index = index).address
+    addr :: UIntNative = string_byte_address(.string = string, .index = index).address
     ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
     byte = ptr&
 }
 
-operator set[] (
-    .self: $&String,
+bytes_set (
+    .string: $&String,
     .index: UIntNative,
     .value: UInt8,
 ) -> () := {
-    addr :: UIntNative = string_byte_address(.string = self, .index = index).address
+    addr :: UIntNative = string_byte_address(.string = string, .index = index).address
     ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
     ptr& = value
 }

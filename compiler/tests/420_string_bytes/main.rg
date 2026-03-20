@@ -1,13 +1,13 @@
 main () -> (.status_code: Int32) := {
     text ::= String(.length = 3)
 
-    text[0] = 65
-    text[1] = 114
-    text[2] = 103
+    bytes_set(.string = $&text, .index = 0, .value = 65)
+    bytes_set(.string = $&text, .index = 1, .value = 114)
+    bytes_set(.string = $&text, .index = 2, .value = 103)
 
-    first ::= text[0]
-    second ::= text[1]
-    third ::= text[2]
+    first ::= bytes_get(.string = &text, .index = 0).byte
+    second ::= bytes_get(.string = &text, .index = 1).byte
+    third ::= bytes_get(.string = &text, .index = 2).byte
 
     if first != 65 {
         status_code = 1
