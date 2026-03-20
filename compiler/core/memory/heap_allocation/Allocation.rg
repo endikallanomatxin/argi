@@ -21,3 +21,16 @@ Allocation : Type = (
     -- abstract type cleanly in a runtime field, so `Allocation` keeps only the
     -- raw memory handle and size for now.
 )
+
+allocation_init (.size: UIntNative) -> (.allocation: Allocation) := {
+    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = malloc(.size = size))
+    allocation = (
+        .data = cast#(.to: $&UInt8)(.value = raw_addr),
+        .size = size,
+    )
+}
+
+allocation_deinit (.allocation: Allocation) -> () := {
+    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = allocation.data)
+    free(.pointer = cast#(.to: &Any)(.value = raw_addr))
+}
