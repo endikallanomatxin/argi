@@ -6,6 +6,12 @@ String should follow the same ownership split as lists:
 - direct indexing on `String` itself should stay unavailable.
 - byte-level or text-level indexing should go through explicit views/operations.
 
+Terminology to keep stable:
+
+- `bytes`: raw UTF-8 bytes
+- `codepoints`: decoded Unicode scalar values
+- `graphemes`: user-perceived text units
+
 Proposed minimal direction:
 
 ```
@@ -36,6 +42,8 @@ The important design point is the same as for list views:
 Likely split:
 
 - explicit byte access for the owning `String`,
-- later, an explicit `codepoints(...)` view for text indexing,
-- and any UTF-8 acceleration data should stay an implementation detail of that
-  text view rather than part of `String`'s surface API.
+- later, explicit view constructors:
+  - `view_bytes(...)`
+  - `view_codepoints(...)`
+  - `view_graphemes(...)`
+- and indexing should happen on those views rather than on `String` itself.
