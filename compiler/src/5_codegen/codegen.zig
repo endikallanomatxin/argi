@@ -1448,7 +1448,7 @@ pub const CodeGenerator = struct {
         const pointee_ty = try self.toLLVMType(d.ty);
 
         const deref_val = c.LLVMBuildLoad2(self.builder, pointee_ty, tv.value_ref, "deref");
-        return .{ .value_ref = deref_val, .type_ref = pointee_ty };
+        return .{ .value_ref = deref_val, .type_ref = pointee_ty, .sem_type = d.ty };
     }
 
     fn genExplicitCast(self: *CodeGenerator, ec: sem.ExplicitCast) !TypedValue {
