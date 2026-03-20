@@ -605,6 +605,12 @@ test "413_arrays" {
     try run();
 }
 
+test "414_list_view" {
+    try clean();
+    try expectSuccessfulBuild("tests/414_list_view/main.rg");
+    try run();
+}
+
 test "417_array_index_uint_native" {
     try clean();
     try expectSuccessfulBuild("tests/417_array_index_uint_native/main.rg");
