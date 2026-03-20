@@ -641,6 +641,12 @@ test "420_string_bytes" {
     try run();
 }
 
+test "421_string_copy" {
+    try clean();
+    try expectSuccessfulBuild("tests/421_string_copy/main.rg");
+    try run();
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");
