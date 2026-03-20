@@ -24,6 +24,8 @@ Available literals:
 	(mierda, necesitamos un allocator, así que igual siempre static y si
 	quieres dynamic usas el constructor)
 
+The intended default heap-backed resizable list in `core` is `DynamicArray`.
+
     - Struct literals
 
 
@@ -32,4 +34,3 @@ Available literals:
     ```
     m := ("a"=1, "b"=2)
     ```
-
