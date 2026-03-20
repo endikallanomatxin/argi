@@ -78,8 +78,13 @@ Current implementation direction:
 - `String` is now an owning byte buffer over `Allocation`.
 - `init(.p = $&string, .length = n)` allocates exactly `n` bytes.
 - `deinit(.self = $&string)` releases the backing allocation.
-- `string[index]` is currently byte-level and yields `UInt8`.
-- `string[index] = value` mutates a byte in place.
+- `String` itself is not directly indexable for now.
+- byte-level access is explicit:
+  - `bytes_get(.string = &string, .index = i)`
+  - `bytes_set(.string = $&string, .index = i, .value = b)`
+- borrowed `StringViewRO/RW` types still make sense as the longer-term shape for
+  explicit windows into a string, but byte indexing should not live directly on
+  `String`.
 
 This is intentionally narrower than the long-term text model. UTF-8-aware
 character indexing and higher-level string construction can be layered on top
