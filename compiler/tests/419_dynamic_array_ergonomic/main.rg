@@ -3,15 +3,12 @@ sum_pair (.a: Int32, .b: Int32) -> (.sum: Int32) := {
 }
 
 main () -> (.status_code: Int32) := {
-    capacity :: UIntNative = 1
-    middle :: UIntNative = 1
-
-    arr ::= DynamicArray#(.t: Int32)(.capacity = capacity)
+    arr ::= DynamicArray#(.t: Int32)(.capacity = 1)
     #defer deinit(.self = $&arr)
 
     arr | push(.self = $&_, .value = 40)
     arr | push(.self = $&_, .value = 2)
-    arr | insert(.self = $&_, .i = middle, .value = arr[0])
+    arr | insert(.self = $&_, .i = 1, .value = arr[0])
 
     popped ::= arr | pop(.self = $&_) | _.value
 

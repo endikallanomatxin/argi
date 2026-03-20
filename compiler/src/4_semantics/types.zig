@@ -682,6 +682,33 @@ pub fn coerceLiteralToBuiltin(
     return expr;
 }
 
+pub fn canLiteralCoerceToBuiltin(
+    target: sg.BuiltinType,
+    expr: TypedExpr,
+) bool {
+    if (expr.node.content != .value_literal) return false;
+
+    return switch (expr.node.content.value_literal) {
+        .int_literal => |value| switch (target) {
+            .Int8 => value >= std.math.minInt(i8) and value <= std.math.maxInt(i8),
+            .Int16 => value >= std.math.minInt(i16) and value <= std.math.maxInt(i16),
+            .Int32 => value >= std.math.minInt(i32) and value <= std.math.maxInt(i32),
+            .Int64 => true,
+            .UIntNative => value >= 0 and @as(u64, @intCast(value)) <= std.math.maxInt(usize),
+            .UInt8 => value >= 0 and @as(u64, @intCast(value)) <= std.math.maxInt(u8),
+            .UInt16 => value >= 0 and @as(u64, @intCast(value)) <= std.math.maxInt(u16),
+            .UInt32 => value >= 0 and @as(u64, @intCast(value)) <= std.math.maxInt(u32),
+            .UInt64 => value >= 0,
+            else => false,
+        },
+        .float_literal => switch (target) {
+            .Float16, .Float32, .Float64 => true,
+            else => false,
+        },
+        else => false,
+    };
+}
+
 pub fn coerceExprToType(
     expected: sg.Type,
     expr: TypedExpr,
@@ -923,7 +950,7 @@ pub fn coerceStructLiteral(
     return .{ .node = node, .ty = .{ .struct_type = expected } };
 }
 
-fn findStructValueFieldByName(lit: *const sg.StructValueLiteral, name: []const u8) ?*const sg.StructValueLiteralField {
+pub fn findStructValueFieldByName(lit: *const sg.StructValueLiteral, name: []const u8) ?*const sg.StructValueLiteralField {
     for (lit.fields) |*field| {
         if (std.mem.eql(u8, field.name, name)) return field;
     }

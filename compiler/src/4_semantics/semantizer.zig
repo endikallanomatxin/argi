@@ -2137,7 +2137,7 @@ pub const Semantizer = struct {
         };
 
         if (chosen == null) {
-            chosen = self.resolveVisibleOverload(name, input_te.ty, s, ia.value.*.location) catch |err| switch (err) {
+            chosen = self.resolveVisibleOverload(name, input_te, s, ia.value.*.location) catch |err| switch (err) {
                 error.SymbolNotFound => null,
                 error.AmbiguousOverload => {
                     try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.value.*.location);
@@ -2160,7 +2160,7 @@ pub const Semantizer = struct {
             };
 
             if (chosen == null) {
-                chosen = self.resolveVisibleOverload(name, input_te.ty, s, ia.value.*.location) catch |err| switch (err) {
+                chosen = self.resolveVisibleOverload(name, input_te, s, ia.value.*.location) catch |err| switch (err) {
                     error.SymbolNotFound => null,
                     error.AmbiguousOverload => {
                         try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.value.*.location);
@@ -2175,6 +2175,7 @@ pub const Semantizer = struct {
             try self.addMissingFunctionDiagnostic(name, input_te.ty, s, ia.value.*.location);
             return error.Reported;
         };
+        input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, ia.index, s);
 
         const call_ptr = try self.allocator.create(sg.FunctionCall);
         call_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
@@ -2258,7 +2259,7 @@ pub const Semantizer = struct {
         };
 
         if (chosen == null) {
-            chosen = self.resolveVisibleOverload(name, input_te.ty, s, ia.target.*.location) catch |err| switch (err) {
+            chosen = self.resolveVisibleOverload(name, input_te, s, ia.target.*.location) catch |err| switch (err) {
                 error.SymbolNotFound => null,
                 error.AmbiguousOverload => {
                     try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.target.*.location);
@@ -2282,7 +2283,7 @@ pub const Semantizer = struct {
             };
 
             if (chosen == null) {
-                chosen = self.resolveVisibleOverload(name, input_te.ty, s, ia.target.*.location) catch |err| switch (err) {
+                chosen = self.resolveVisibleOverload(name, input_te, s, ia.target.*.location) catch |err| switch (err) {
                     error.SymbolNotFound => null,
                     error.AmbiguousOverload => {
                         try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.target.*.location);
@@ -2297,6 +2298,7 @@ pub const Semantizer = struct {
             try self.addMissingFunctionDiagnostic(name, input_te.ty, s, ia.target.*.location);
             return error.Reported;
         };
+        input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, ia.target, s);
 
         const call_ptr = try self.allocator.create(sg.FunctionCall);
         call_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
@@ -2472,10 +2474,12 @@ pub const Semantizer = struct {
 
         if (tv_in.ty != .struct_type) return error.InvalidType;
 
-        const chosen = try self.resolveRegularCallCallee(call, tv_in.ty, s, call.input.*.location);
+        const chosen = try self.resolveRegularCallCallee(call, tv_in, s, call.input.*.location);
+        const coerced_input = try self.coerceCallInputToExpected(&chosen.input, tv_in, call.input, s);
+        try self.checkCallBindingExclusivity(call.callee, coerced_input, call.input.*.location);
 
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
-        fc_ptr.* = .{ .callee = chosen, .input = tv_in.node };
+        fc_ptr.* = .{ .callee = chosen, .input = coerced_input.node };
 
         const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, undefined, self.allocator);
 
@@ -2676,20 +2680,17 @@ pub const Semantizer = struct {
     fn resolveRegularCallCallee(
         self: *Semantizer,
         call: syn.FunctionCall,
-        input_ty: sg.Type,
+        input_te: typ.TypedExpr,
         s: *Scope,
         loc: tok.Location,
     ) SemErr!*sg.FunctionDeclaration {
         var chosen: *sg.FunctionDeclaration = undefined;
         if (call.type_arguments_struct) |stargs| {
-            const input_te = typ.TypedExpr{ .node = undefined, .ty = input_ty };
             chosen = try self.instantiateGenericNamed(call.callee, stargs, input_te, s, .regular);
         } else if (call.type_arguments) |targs| {
-            const input_te = typ.TypedExpr{ .node = undefined, .ty = input_ty };
             chosen = try self.instantiateGeneric(call.callee, targs, input_te, s, .regular);
         } else {
             const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-            const input_te = typ.TypedExpr{ .node = undefined, .ty = input_ty };
             const inferred = self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .regular) catch |err| switch (err) {
                 error.SymbolNotFound => null,
                 else => return err,
@@ -2699,19 +2700,19 @@ pub const Semantizer = struct {
                 chosen = instantiated;
             } else {
                 if (call.module_qualifier) |module_name| {
-                    chosen = try self.resolveQualifiedOverload(module_name, call.callee, input_ty, s, loc);
+                    chosen = try self.resolveQualifiedOverload(module_name, call.callee, input_te, s, loc);
                 } else {
-                    chosen = self.resolveVisibleOverload(call.callee, input_ty, s, loc) catch |err| switch (err) {
+                    chosen = self.resolveVisibleOverload(call.callee, input_te, s, loc) catch |err| switch (err) {
                         error.SymbolNotFound => blk: {
                             const abstract_inferred = self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .abstract_contract) catch |inner_err| switch (inner_err) {
                                 error.SymbolNotFound => null,
                                 else => return inner_err,
                             };
                             if (abstract_inferred) |instantiated_abstract| break :blk instantiated_abstract;
-                            if (try self.addMissingAbstractImplementationDiagnostic(call.callee, input_ty, s, loc)) {
+                            if (try self.addMissingAbstractImplementationDiagnostic(call.callee, input_te.ty, s, loc)) {
                                 return error.Reported;
                             }
-                            try self.addMissingFunctionDiagnostic(call.callee, input_ty, s, loc);
+                            try self.addMissingFunctionDiagnostic(call.callee, input_te.ty, s, loc);
                             return error.Reported;
                         },
                         else => return err,
@@ -2736,6 +2737,193 @@ pub const Semantizer = struct {
 
         return self.buildCallInput(call_args.items);
     }
+
+    fn fieldExprMatchesDispatch(
+        self: *Semantizer,
+        expected: sg.Type,
+        actual: typ.TypedExpr,
+        s: *Scope,
+    ) bool {
+        if (abs.typesCompatibleForDispatch(expected, actual.ty, s)) return true;
+
+        return switch (expected) {
+            .builtin => |bt| typ.canLiteralCoerceToBuiltin(bt, actual),
+            .choice_type => |ct| blk: {
+                if (actual.node.content != .choice_literal) break :blk false;
+                const lit = actual.node.content.choice_literal;
+                if (lit.payload != null) break :blk false;
+                for (ct.variants) |variant| {
+                    if (std.mem.eql(u8, variant.name, lit.variant_name)) break :blk true;
+                }
+                break :blk false;
+            },
+            .array_type => |arr_info| blk: {
+                if (actual.node.content != .list_literal) break :blk false;
+                const ll = actual.node.content.list_literal;
+                if (ll.elements.len != arr_info.length) break :blk false;
+                for (ll.elements, 0..) |elem_node, idx| {
+                    const elem_expr = typ.TypedExpr{
+                        .node = @constCast(elem_node),
+                        .ty = ll.element_types[idx],
+                    };
+                    if (!self.fieldExprMatchesDispatch(arr_info.element_type.*, elem_expr, s)) break :blk false;
+                }
+                break :blk true;
+            },
+            .struct_type => |st| blk: {
+                if (actual.node.content != .struct_value_literal or actual.ty != .struct_type) break :blk false;
+                const actual_value = actual.node.content.struct_value_literal;
+                for (st.fields) |exp_field| {
+                    const actual_field_ty = typ.findFieldByName(actual.ty.struct_type, exp_field.name) orelse break :blk false;
+                    const actual_field_value = typ.findStructValueFieldByName(actual_value, exp_field.name) orelse break :blk false;
+                    const actual_field_expr = typ.TypedExpr{
+                        .node = @constCast(actual_field_value.value),
+                        .ty = actual_field_ty.ty,
+                    };
+                    if (!self.fieldExprMatchesDispatch(exp_field.ty, actual_field_expr, s)) break :blk false;
+                }
+                break :blk true;
+            },
+            else => false,
+        };
+    }
+
+    fn coerceCallFieldExpr(
+        self: *Semantizer,
+        expected: sg.Type,
+        actual: typ.TypedExpr,
+        expr_node: *const syn.STNode,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (typ.typesCompatible(expected, actual.ty)) return actual;
+
+        const coerced = try typ.coerceExprToType(expected, actual, expr_node, s, self.allocator, self.diags);
+        if (!typ.typesCompatible(expected, coerced.ty)) {
+            const pair = try self.formatTypePairText(expected, coerced.ty, s);
+            defer pair.deinit();
+            try self.diags.add(
+                expr_node.location,
+                .semantic,
+                "cannot pass '{s}' where '{s}' is expected",
+                .{ pair.actual.bytes, pair.expected.bytes },
+            );
+            return error.Reported;
+        }
+
+        return coerced;
+    }
+
+    fn coerceCallInputToExpected(
+        self: *Semantizer,
+        expected: *const sg.StructType,
+        input_te: typ.TypedExpr,
+        expr_node: *const syn.STNode,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (input_te.ty != .struct_type or input_te.node.content != .struct_value_literal) {
+            return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_node, s, self.allocator, self.diags);
+        }
+
+        const actual_struct = input_te.ty.struct_type;
+        const actual_value = input_te.node.content.struct_value_literal;
+        if (expected.fields.len != actual_struct.fields.len or expected.fields.len != actual_value.fields.len) {
+            return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_node, s, self.allocator, self.diags);
+        }
+
+        const coerced_fields = try self.allocator.alloc(sg.StructValueLiteralField, expected.fields.len);
+        for (expected.fields, 0..) |exp_field, idx| {
+            const actual_field = actual_value.fields[idx];
+            const actual_field_ty = actual_struct.fields[idx].ty;
+            var field_expr = typ.TypedExpr{
+                .node = @constCast(actual_field.value),
+                .ty = actual_field_ty,
+            };
+            field_expr = try self.coerceCallFieldExpr(exp_field.ty, field_expr, expr_node, s);
+            coerced_fields[idx] = .{
+                .name = exp_field.name,
+                .value = field_expr.node,
+            };
+        }
+
+        const value_ptr = try self.allocator.create(sg.StructValueLiteral);
+        value_ptr.* = .{
+            .fields = coerced_fields,
+            .ty = .{ .struct_type = expected },
+        };
+
+        const node = try sg.makeSGNode(.{ .struct_value_literal = value_ptr }, expr_node.location, self.allocator);
+        return .{ .node = node, .ty = .{ .struct_type = expected } };
+    }
+
+    fn callInputMatchesDispatch(
+        self: *Semantizer,
+        expected: *const sg.StructType,
+        input_te: typ.TypedExpr,
+        s: *Scope,
+    ) bool {
+        if (input_te.ty != .struct_type or input_te.node.content != .struct_value_literal) {
+            return abs.typesCompatibleForDispatch(.{ .struct_type = expected }, input_te.ty, s);
+        }
+
+        const actual_struct = input_te.ty.struct_type;
+        const actual_value = input_te.node.content.struct_value_literal;
+
+        if (expected.fields.len != actual_struct.fields.len) return false;
+
+        for (expected.fields, 0..) |exp_field, idx| {
+            const actual_field_ty = actual_struct.fields[idx];
+            const actual_field_value = actual_value.fields[idx];
+            const actual_field_expr = typ.TypedExpr{
+                .node = @constCast(actual_field_value.value),
+                .ty = actual_field_ty.ty,
+            };
+            if (!self.fieldExprMatchesDispatch(exp_field.ty, actual_field_expr, s)) return false;
+        }
+
+        return true;
+    }
+
+    fn buildTypeInitializerDispatchInput(
+        self: *Semantizer,
+        constructed_ty: sg.Type,
+        tv_in: typ.TypedExpr,
+        init_input_ty: sg.Type,
+        loc: tok.Location,
+    ) !typ.TypedExpr {
+        if (tv_in.ty != .struct_type or tv_in.node.content != .struct_value_literal) {
+            return .{ .node = undefined, .ty = init_input_ty };
+        }
+
+        const init_struct = init_input_ty.struct_type;
+        const fields = try self.allocator.alloc(sg.StructValueLiteralField, init_struct.fields.len);
+
+        const fake_binding = try self.allocator.create(sg.BindingDeclaration);
+        fake_binding.* = .{
+            .name = "__init_target",
+            .origin_file = loc.file,
+            .mutability = .variable,
+            .ty = init_struct.fields[0].ty,
+            .initialization = null,
+        };
+        const fake_binding_use = try sg.makeSGNode(.{ .binding_use = fake_binding }, loc, self.allocator);
+        fields[0] = .{ .name = init_struct.fields[0].name, .value = fake_binding_use };
+
+        const user_value = tv_in.node.content.struct_value_literal;
+        for (user_value.fields, 0..) |field, idx| {
+            fields[idx + 1] = .{ .name = field.name, .value = field.value };
+        }
+
+        const struct_value = try self.allocator.create(sg.StructValueLiteral);
+        struct_value.* = .{
+            .fields = fields,
+            .ty = init_input_ty,
+        };
+
+        const node = try sg.makeSGNode(.{ .struct_value_literal = struct_value }, loc, self.allocator);
+        _ = constructed_ty;
+        return .{ .node = node, .ty = init_input_ty };
+    }
+
     fn handlePipe(
         self: *Semantizer,
         pipe: syn.PipeExpression,
@@ -2794,7 +2982,7 @@ pub const Semantizer = struct {
                 try evaluated_args.append(try self.evalPipeArg(field.value, left_te, s));
             }
 
-            const input_te = try self.buildNamedPipeInput(field_names.items, evaluated_args.items);
+            var input_te = try self.buildNamedPipeInput(field_names.items, evaluated_args.items);
 
             if (std.mem.eql(u8, call.callee, "is")) {
                 return self.handleIsBuiltinFromInput(input_te, loc, s);
@@ -2809,10 +2997,12 @@ pub const Semantizer = struct {
                     .type_arguments_struct = call.type_arguments_struct,
                     .input = call.input,
                 },
-                input_te.ty,
+                input_te,
                 s,
                 loc,
             );
+            input_te = try self.coerceCallInputToExpected(&chosen.input, input_te, call.input, s);
+            try self.checkCallBindingExclusivity(call.callee, input_te, loc);
 
             const fc_ptr = try self.allocator.create(sg.FunctionCall);
             fc_ptr.* = .{ .callee = chosen, .input = input_te.node };
@@ -2838,7 +3028,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         module_name: []const u8,
         fn_name: []const u8,
-        in_ty: sg.Type,
+        input_te: typ.TypedExpr,
         s: *Scope,
         loc: tok.Location,
     ) SemErr!*sg.FunctionDeclaration {
@@ -2869,10 +3059,9 @@ pub const Semantizer = struct {
                 for (list_ptr.items) |cand| {
                     if (!std.mem.startsWith(u8, cand.location.file, module_dir)) continue;
                     if (!(try self.functionIsVisible(cand, loc.file))) continue;
-                    const expected: sg.Type = .{ .struct_type = &cand.input };
-                    if (!abs.typesCompatibleForDispatch(expected, in_ty, s)) continue;
+                    if (!self.callInputMatchesDispatch(&cand.input, input_te, s)) continue;
 
-                    const score = abs.specificityScore(expected, in_ty);
+                    const score = abs.specificityScore(.{ .struct_type = &cand.input }, input_te.ty);
                     if (best == null or score < best_score) {
                         best = cand;
                         best_score = score;
@@ -2885,7 +3074,7 @@ pub const Semantizer = struct {
         }
 
         if (best == null) {
-            try self.addMissingModuleFunctionDiagnostic(module_name, module_dir, fn_name, in_ty, s, loc);
+            try self.addMissingModuleFunctionDiagnostic(module_name, module_dir, fn_name, input_te.ty, s, loc);
             return error.Reported;
         }
         if (ambiguous) {
@@ -2903,7 +3092,7 @@ pub const Semantizer = struct {
     fn resolveVisibleOverload(
         self: *Semantizer,
         fn_name: []const u8,
-        in_ty: sg.Type,
+        input_te: typ.TypedExpr,
         s: *Scope,
         loc: tok.Location,
     ) SemErr!*sg.FunctionDeclaration {
@@ -2916,14 +3105,13 @@ pub const Semantizer = struct {
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
-                    const expected: sg.Type = .{ .struct_type = &cand.input };
-                    if (!abs.typesCompatibleForDispatch(expected, in_ty, s)) continue;
+                    if (!self.callInputMatchesDispatch(&cand.input, input_te, s)) continue;
                     if (!(try self.functionMatchesVisibilityFilter(cand, loc.file, null))) {
                         hidden_private_match = true;
                         continue;
                     }
 
-                    const score = abs.specificityScore(expected, in_ty);
+                    const score = abs.specificityScore(.{ .struct_type = &cand.input }, input_te.ty);
                     if (best == null or score < best_score) {
                         best = cand;
                         best_score = score;
@@ -3240,7 +3428,7 @@ pub const Semantizer = struct {
         init_struct.* = .{ .fields = try init_fields.toOwnedSlice() };
 
         const init_input_ty: sg.Type = .{ .struct_type = init_struct };
-        const init_input_te = typ.TypedExpr{ .node = undefined, .ty = init_input_ty };
+        const init_input_te = try self.buildTypeInitializerDispatchInput(type_decl.ty, tv_in, init_input_ty, call.input.*.location);
         const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
 
         const inferred_init = self.instantiateGenericNamed("init", empty_args, init_input_te, s, .regular) catch |err| switch (err) {
@@ -3248,7 +3436,7 @@ pub const Semantizer = struct {
             else => return err,
         };
 
-        const init_fn = inferred_init orelse self.resolveVisibleOverload("init", init_input_ty, s, call.input.*.location) catch |err| switch (err) {
+        const init_fn = inferred_init orelse self.resolveVisibleOverload("init", init_input_te, s, call.input.*.location) catch |err| switch (err) {
             error.SymbolNotFound => {
                 if (!(try self.hasVisibleFunctionNamed("init", s, call.input.*.location))) {
                     try self.diags.add(
@@ -3284,10 +3472,18 @@ pub const Semantizer = struct {
             else => return err,
         };
 
+        const expected_user_fields = try self.allocator.alloc(sg.StructTypeField, tv_in.ty.struct_type.fields.len);
+        for (tv_in.ty.struct_type.fields, 0..) |_, idx| {
+            expected_user_fields[idx] = init_fn.input.fields[idx + 1];
+        }
+        const expected_user_struct = try self.allocator.create(sg.StructType);
+        expected_user_struct.* = .{ .fields = expected_user_fields };
+        const coerced_args = try self.coerceCallInputToExpected(expected_user_struct, tv_in, call.input, s);
+
         const type_init = sg.TypeInitializer{
             .type_decl = type_decl,
             .init_fn = init_fn,
-            .args = tv_in.node,
+            .args = coerced_args.node,
         };
 
         const init_node = try sg.makeSGNode(.{ .type_initializer = type_init }, undefined, self.allocator);
@@ -3589,7 +3785,10 @@ pub const Semantizer = struct {
         var in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, subst);
         const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, subst);
 
-        in_struct_ptr = (try self.refinedStructTypeWithActual(in_struct_ptr, call_input.ty)) orelse return null;
+        if (try self.refinedStructTypeWithActual(in_struct_ptr, call_input.ty)) |refined| {
+            in_struct_ptr = refined;
+        }
+        if (!self.callInputMatchesDispatch(in_struct_ptr, call_input, s)) return null;
 
         if (s.functions.getPtr(name)) |fns| {
             for (fns.items) |cand| {
