@@ -22,21 +22,21 @@ main () -> (.status_code: Int32) := {
         return
     }
 
-    first :: Int32 = dynamic_array_get#(.t: Int32)(.array = &arr, .offset = first_offset).value
+    first :: Int32 = arr[first_offset]
     if first != 10 {
         status_code = 3
         return
     }
 
-    dynamic_array_set#(.t: Int32)(.array = $&arr, .offset = second_offset, .value = 99)
+    arr[second_offset] = 99
 
-    second :: Int32 = dynamic_array_get#(.t: Int32)(.array = &arr, .offset = second_offset).value
+    second :: Int32 = arr[second_offset]
     if second != 99 {
         status_code = 4
         return
     }
 
-    third :: Int32 = dynamic_array_get#(.t: Int32)(.array = &arr, .offset = third_offset).value
+    third :: Int32 = arr[third_offset]
     if third != 30 {
         status_code = 5
         return

@@ -3254,14 +3254,18 @@ pub const Semantizer = struct {
             .generic_type_instantiation => |g| {
                 const tmpl_ptr = s.lookupGenericTypeTemplate(g.base_name.string, g.args.fields.len) orelse null;
                 if (tmpl_ptr != null and actual_ty == .struct_type) {
-                    const tmpl = tmpl_ptr.?;
                     const actual_struct = actual_ty.struct_type;
-                    if (tmpl.body.*.content == .struct_type_literal) {
-                        for (tmpl.body.content.struct_type_literal.fields) |tmpl_field| {
-                            if (tmpl_field.type) |sub_ty| {
-                                if (typ.findFieldByName(actual_struct, tmpl_field.name.string)) |actual_field| {
-                                    if (self.extractTypeArgumentFromActual(sub_ty, actual_field.ty, param_name, s)) |res|
-                                        return res;
+                    if (actual_struct.generic_identity) |identity| {
+                        if (std.mem.eql(u8, identity.base_name, g.base_name.string)) {
+                            for (g.args.fields) |arg_field| {
+                                if (arg_field.type) |arg_ty| {
+                                    if (!self.typeUsesParam(arg_ty, param_name)) continue;
+                                    var idx: usize = 0;
+                                    while (idx < identity.arg_names.len) : (idx += 1) {
+                                        if (std.mem.eql(u8, identity.arg_names[idx], arg_field.name.string)) {
+                                            return identity.arg_types[idx];
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -3573,7 +3577,24 @@ pub const Semantizer = struct {
                     if (!ok) continue;
 
                     return switch (tmpl.body.*.content) {
-                        .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteralWithSubst(st, s, &subst) },
+                        .struct_type_literal => |st| blk_struct: {
+                            const st_ptr = try self.structTypeFromLiteralWithSubst(st, s, &subst);
+                            const arg_names = try self.allocator.dupe([]const u8, tmpl.param_names);
+                            const arg_types = try self.allocator.alloc(sg.Type, tmpl.param_names.len);
+                            var i: usize = 0;
+                            while (i < tmpl.param_names.len) : (i += 1) {
+                                arg_types[i] = subst.get(tmpl.param_names[i]).?;
+                            }
+
+                            const identity = try self.allocator.create(sg.GenericTypeIdentity);
+                            identity.* = .{
+                                .base_name = tmpl.name,
+                                .arg_names = arg_names,
+                                .arg_types = arg_types,
+                            };
+                            st_ptr.generic_identity = identity;
+                            break :blk_struct .{ .struct_type = st_ptr };
+                        },
                         .choice_type_literal => |ct| .{ .choice_type = try self.choiceTypeFromLiteralWithSubst(ct, s, &subst) },
                         else => error.NotYetImplemented,
                     };

@@ -142,6 +142,13 @@ pub const BuiltinType = enum {
 
 pub const StructType = struct {
     fields: []const StructTypeField,
+    generic_identity: ?*const GenericTypeIdentity = null,
+};
+
+pub const GenericTypeIdentity = struct {
+    base_name: []const u8,
+    arg_names: []const []const u8,
+    arg_types: []const Type,
 };
 
 pub const StructTypeField = struct {
