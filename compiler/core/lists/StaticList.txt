@@ -36,7 +36,7 @@ StaticArray#(.t, .n) : Type = [
     ---
     A heap allocated static array
     ---
-    ._data      : HeapAllocation
+    ._data      : Allocation
     ._data_type : Type        = t
     ._length    : Int         = n
     ._alignment : Alignment   = ..Default

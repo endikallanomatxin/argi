@@ -1,5 +1,9 @@
 String : Type = (
-    -- String is an array of characters (Unicode code points).
-    -- ._char_array : Array(Char)
+    --
+    -- Intended long-term representation:
+    -- ._allocation : Allocation
+    -- ._length     : UIntNative
+    --
+    -- `String` owns its bytes. Non-owning string slices/views should be
+    -- modeled separately as plain borrowed descriptors.
 )
-

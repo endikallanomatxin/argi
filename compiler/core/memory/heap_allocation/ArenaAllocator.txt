@@ -42,21 +42,20 @@ deinit(a: $&ArenaAllocator) {
     }
 }
 
-alloc(a: $&ArenaAllocator, size: Int, alignment: Alignment) := &Byte!HeapAllocationError {
+alloc(a: $&ArenaAllocator, size: Int, alignment: Alignment) := Allocation!HeapAllocationError {
     // 1) Si cabe en el último allocation, ajustar index y devolver ptr
     // 2) Si no, pedir un allocation nuevo via a._child|alloc(...)
     // 3) Guardar en a.allocations y resetear a.index
     …
 }
 
-resize(a: $&ArenaAllocator, ptr: &Byte, new_size: Int) := Bool {
-    // Sólo si `ptr` es la última asignación, podemos ajustar `index`
+resize(a: $&ArenaAllocator, allocation: $&Allocation, new_size: Int) := Bool {
+    // Sólo si `allocation` es la última asignación, podemos ajustar `index`
     …
 }
 
-dealloc(a: $&ArenaAllocator, ptr: &Byte) =  !HeapAllocationError {
+dealloc(a: $&ArenaAllocator, allocation: Allocation) =  !HeapAllocationError {
     // No op
 }
 
 Allocator canbe ArenaAllocator
-
