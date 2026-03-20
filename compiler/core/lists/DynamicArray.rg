@@ -16,6 +16,13 @@ DynamicArray #(.t: Type) : Type = (
     -- or `ListViewRW#(.list_type=Self, .list_value_type=t)` and remain non-owning.
 )
 
+init #(.t: Type) (
+    .p: $&DynamicArray#(.t: t),
+    .capacity: UIntNative,
+) -> () := {
+    dynamic_array_init#(.t: t)(.array = p, .capacity = capacity)
+}
+
 dynamic_array_init #(.t: Type) (
     .array: $&DynamicArray#(.t: t),
     .capacity: UIntNative,

@@ -2385,6 +2385,28 @@ pub const Semantizer = struct {
             }
             return self.handleTypeInitializer(call, tv_in, type_decl, s);
         }
+        if (call.type_arguments_struct) |stargs| {
+            const generic_type = syn.Type{ .generic_type_instantiation = .{
+                .base_name = .{
+                    .string = call.callee,
+                    .location = call.callee_loc,
+                },
+                .args = stargs,
+            } };
+            const instantiated_ty = self.resolveType(generic_type, s) catch |err| switch (err) {
+                error.UnknownType, error.AbstractNeedsDefault => null,
+                else => return err,
+            };
+            if (instantiated_ty) |ty| {
+                const type_decl = try self.allocator.create(sg.TypeDeclaration);
+                type_decl.* = .{
+                    .name = call.callee,
+                    .origin_file = call.input.*.location.file,
+                    .ty = ty,
+                };
+                return self.handleTypeInitializer(call, tv_in, type_decl, s);
+            }
+        }
 
         if (tv_in.ty != .struct_type) return error.InvalidType;
 
@@ -3141,8 +3163,15 @@ pub const Semantizer = struct {
         init_struct.* = .{ .fields = try init_fields.toOwnedSlice() };
 
         const init_input_ty: sg.Type = .{ .struct_type = init_struct };
+        const init_input_te = typ.TypedExpr{ .node = undefined, .ty = init_input_ty };
+        const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
 
-        const init_fn = self.resolveVisibleOverload("init", init_input_ty, s, call.input.*.location) catch |err| switch (err) {
+        const inferred_init = self.instantiateGenericNamed("init", empty_args, init_input_te, s, .regular) catch |err| switch (err) {
+            error.SymbolNotFound => null,
+            else => return err,
+        };
+
+        const init_fn = inferred_init orelse self.resolveVisibleOverload("init", init_input_ty, s, call.input.*.location) catch |err| switch (err) {
             error.SymbolNotFound => {
                 if (!(try self.hasVisibleFunctionNamed("init", s, call.input.*.location))) {
                     try self.diags.add(
