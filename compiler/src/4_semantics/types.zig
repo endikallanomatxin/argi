@@ -67,6 +67,9 @@ fn genericIdentitiesEqual(a: *const sg.GenericTypeIdentity, b: *const sg.Generic
 
 pub fn genericIdentityOf(ty: sg.Type) ?*const sg.GenericTypeIdentity {
     return switch (ty) {
+        .choice_type => |ct| switch (ct.identity orelse return null) {
+            .generic => |identity| identity,
+        },
         .struct_type => |st| switch (st.identity orelse return null) {
             .generic => |identity| identity,
         },
@@ -180,7 +183,12 @@ pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
             else => false,
         },
         .choice_type => |act| switch (b) {
-            .choice_type => |bct| act == bct,
+            .choice_type => |bct| blk: {
+                if (act == bct) break :blk true;
+                const a_identity = genericIdentityOf(a) orelse break :blk false;
+                const b_identity = genericIdentityOf(b) orelse break :blk false;
+                break :blk genericIdentitiesEqual(a_identity, b_identity);
+            },
             else => false,
         },
 
