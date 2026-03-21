@@ -709,6 +709,18 @@ test "428X_iterable_abstract_missing_canbe" {
     );
 }
 
+test "429_range_for" {
+    try clean();
+    try expectSuccessfulBuild("tests/429_range_for/main.rg");
+    try run();
+}
+
+test "430_range_step" {
+    try clean();
+    try expectSuccessfulBuild("tests/430_range_step/main.rg");
+    try run();
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");

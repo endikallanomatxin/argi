@@ -1055,6 +1055,7 @@ pub const Semantizer = struct {
             var input_generic = std.array_list.Managed(?u32).init(self.allocator.*);
             var input_abstract = std.array_list.Managed(?[]const u8).init(self.allocator.*);
             var self_idxs = std.array_list.Managed(u32).init(self.allocator.*);
+            var input_pointer_self_idxs = std.array_list.Managed(u32).init(self.allocator.*);
 
             for (rf.input.fields, 0..) |fld, i| {
                 var ty: sg.Type = .{ .builtin = .Any };
@@ -1100,6 +1101,7 @@ pub const Semantizer = struct {
                                     .type_name => |tn| {
                                         if (std.mem.eql(u8, tn.string, "Self")) {
                                             ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
+                                            try input_pointer_self_idxs.append(@intCast(i));
                                         } else if (s.lookupAbstractInfo(tn.string) != null) {
                                             ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
                                             abstract_req = tn.string;
@@ -1142,6 +1144,7 @@ pub const Semantizer = struct {
             var output_generic = std.array_list.Managed(?u32).init(self.allocator.*);
             var output_abstract = std.array_list.Managed(?[]const u8).init(self.allocator.*);
             var output_self_idxs = std.array_list.Managed(u32).init(self.allocator.*);
+            var output_pointer_self_idxs = std.array_list.Managed(u32).init(self.allocator.*);
 
             for (rf.output.fields, 0..) |fld, i| {
                 var ty: sg.Type = .{ .builtin = .Any };
@@ -1187,6 +1190,7 @@ pub const Semantizer = struct {
                                     .type_name => |tn| {
                                         if (std.mem.eql(u8, tn.string, "Self")) {
                                             ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
+                                            try output_pointer_self_idxs.append(@intCast(i));
                                         } else if (s.lookupAbstractInfo(tn.string) != null) {
                                             ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
                                             abstract_req = tn.string;
@@ -1230,6 +1234,8 @@ pub const Semantizer = struct {
                 .output = out_struct,
                 .input_self_indices = try self_idxs.toOwnedSlice(),
                 .output_self_indices = try output_self_idxs.toOwnedSlice(),
+                .input_pointer_self_indices = try input_pointer_self_idxs.toOwnedSlice(),
+                .output_pointer_self_indices = try output_pointer_self_idxs.toOwnedSlice(),
                 .input_generic_param_indices = input_generic_slice,
                 .output_generic_param_indices = output_generic_slice,
                 .input_abstract_requirements = input_abstract_slice,
@@ -1237,6 +1243,8 @@ pub const Semantizer = struct {
             });
             self_idxs.deinit();
             output_self_idxs.deinit();
+            input_pointer_self_idxs.deinit();
+            output_pointer_self_idxs.deinit();
         }
 
         const info = try self.allocator.create(abs.AbstractInfo);
@@ -1595,6 +1603,15 @@ pub const Semantizer = struct {
                     const dst_const = td.ty.struct_type;
                     const dst: *sg.StructType = @constCast(dst_const);
                     dst.fields = st_ptr.fields;
+                    if (dst.generic_identity == null) {
+                        const identity = try self.allocator.create(sg.GenericTypeIdentity);
+                        identity.* = .{
+                            .base_name = d.name.string,
+                            .arg_names = &.{},
+                            .arg_values = &.{},
+                        };
+                        dst.generic_identity = identity;
+                    }
                     const noop = try self.makeNoopNode(d.value.location);
                     break :blk_struct .{ .node = noop, .ty = .{ .builtin = .Any } };
                 },

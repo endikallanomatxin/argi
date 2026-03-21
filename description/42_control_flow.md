@@ -73,7 +73,7 @@ for element, index in list|enumerate {
 	...
 }
 
-for i in Range(.start = 1, .end = 10) {
+for i in Range(.start = 1, .end = 10, .step = 1) {
     ...
 }
 ```
