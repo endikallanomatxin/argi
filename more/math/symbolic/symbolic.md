@@ -1,18 +1,18 @@
 ```
-Expr :: Type = struct [
+Expr : Type = (
     ---
     An expression type for symbolic stuff
     ---
     s: String
     ast: Tree
-]
+)
 
-expr(s: String) ::= Expr {
-    ast = create_ast_from_sym_s(s)
-    return Expr(s, ast)
+expr(.s: String) -> (.out: Expr) := {
+    ast ::= create_ast_from_sym_s(s)
+    out = Expr(s, ast)
 }
 
-my_expr :: Expr = expr("x^2")
+my_expr :: Expr = expr(.s = "x^2")
 ```
 
 Funciones: `simplify(expr)`, `expand(expr)`, `factor(expr)`, `diff(expr, x)`, `integrate(expr, x)`.
