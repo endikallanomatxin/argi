@@ -53,7 +53,7 @@ th := system.process_manager | spawn_thread($&_,  {
 })
 
 -- Lanzar múltiples procesos en bucle
-for i in 1..10 {
+for i in Range(.start = 1, .end = 10) {
 	system.process_manager | spawn_thread($&_, {
 		-- Aquí puedes usar i
 		...
@@ -114,7 +114,7 @@ funcion_enviadora (c:Channel) -> () := {
 
 canal : Channel<Int>
 
-for i in 1..10 {
+for i in Range(.start = 1, .end = 10) {
 	lcr | spawn_thread ($&_, funcion_enviadora, (canal))
 }
 
@@ -195,9 +195,11 @@ incrementar($&estado) := {
 	estado|unlock
 }
 
-for 1..10 spawn_thread({
-	incrementar($&estado)
-})
+for i in Range(.start = 1, .end = 10) {
+	spawn_thread({
+		incrementar($&estado)
+	})
+}
 ```
 
 > [!IDEA] Automutex
@@ -208,9 +210,11 @@ for 1..10 spawn_thread({
 > 	estado++
 > }
 > 
-> for 1..10 spawn_thread({
-> 	incrementar($&estado)
-> })
+> for i in Range(.start = 1, .end = 10) {
+> 	spawn_thread({
+> 		incrementar($&estado)
+> 	})
+> }
 > ```
 
 #### RW Lock

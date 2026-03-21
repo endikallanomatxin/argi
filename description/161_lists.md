@@ -9,8 +9,12 @@ Fixed-size arrays:
 ```
 a : [3]Int32 = (1, 2, 3)
 -- is the same as
-l : Array#(Int32, 3)((1, 2, 3))
+l : Array#(.n = 3, .t: Int32) = (1, 2, 3)
 ```
+
+`Array#(.n = ..., .t: ...)` is the explicit canonical form. `[N]T` is the
+idiomatic sugar. Positional generic arguments may be allowed later, but the
+current documentation uses named arguments.
 
 > [!TODO] Pensar una forma de definir longitud de forma automática.
 > Igual `[?]T` para que el compilador lo calcule.
@@ -32,7 +36,7 @@ element type, and indexing rules on top of an `Allocation`.
 
 It uses `Allocation` internally, together with metadata such as length,
 capacity, and element type.
-`l := DynamicArray#(Int32)((1, 2, 3), my_allocator)`
+`l ::= DynamicArray#(.t: Int32)(.capacity = 3)`
 
 
 #### LengthedArray (capacidad fija en stack, len runtime)
@@ -128,7 +132,7 @@ l | slice (((0, 10), (0, 20)))  -- 2D slice
 - IndexableMutable#(T) → añade set[].
 - Resizable#(T) → añade push, pop, insert, … (solo para los dinámicos).
 
-`[N]T`, `ListViewRO#(.list_type = X, .list_value_type = T)` y
+`[N]T`, `Array#(.n = N, .t: T)`, `ListViewRO#(.list_type = X, .list_value_type = T)` y
 `ListViewRW#(.list_type = X, .list_value_type = T)` cumplen `Indexable`;
-los que tengan memoria mutable cumplen `IndexableMutable`; y solo `DynamicArray#(T)`
+los que tengan memoria mutable cumplen `IndexableMutable`; y solo `DynamicArray#(.t: T)`
 (dinámico) cumple `Resizable`.
