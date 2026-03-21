@@ -77,6 +77,16 @@ pub fn genericIdentityOf(ty: sg.Type) ?*const sg.GenericTypeIdentity {
     };
 }
 
+pub fn genericIdentityArgByName(identity: *const sg.GenericTypeIdentity, name: []const u8) ?sg.GenericIdentityArg {
+    var idx: usize = 0;
+    while (idx < identity.arg_names.len) : (idx += 1) {
+        if (std.mem.eql(u8, identity.arg_names[idx], name)) {
+            return identity.arg_values[idx];
+        }
+    }
+    return null;
+}
+
 pub fn isTypeTriviallyCopyable(ty: sg.Type, s: *Scope) bool {
     if (s.findDeinit(ty) != null) return false;
 

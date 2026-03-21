@@ -185,24 +185,17 @@ fn matchCanonicalGenericInstantiation(
     if (!std.mem.eql(u8, identity.base_name, g.base_name.string)) return false;
 
     for (g.args.fields) |field| {
-        var idx: usize = 0;
-        var found = false;
-        while (idx < identity.arg_names.len) : (idx += 1) {
-            if (!std.mem.eql(u8, identity.arg_names[idx], field.name.string)) continue;
-            found = true;
-            switch (identity.arg_values[idx]) {
-                .type => |arg_ty| {
-                    const field_ty = field.type orelse return false;
-                    if (!matchTemplateType(field_ty, arg_ty, params, bindings)) return false;
-                },
-                .comptime_int => |arg_int| {
-                    const value_node = field.default_value orelse return false;
-                    if (!matchComptimeIntPattern(value_node, arg_int, params, bindings)) return false;
-                },
-            }
-            break;
+        const arg_value = typ.genericIdentityArgByName(identity, field.name.string) orelse return false;
+        switch (arg_value) {
+            .type => |arg_ty| {
+                const field_ty = field.type orelse return false;
+                if (!matchTemplateType(field_ty, arg_ty, params, bindings)) return false;
+            },
+            .comptime_int => |arg_int| {
+                const value_node = field.default_value orelse return false;
+                if (!matchComptimeIntPattern(value_node, arg_int, params, bindings)) return false;
+            },
         }
-        if (!found) return false;
     }
 
     return true;

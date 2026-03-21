@@ -4514,13 +4514,10 @@ pub const Semantizer = struct {
         for (g.args.fields) |arg_field| {
             if (arg_field.type) |arg_ty| {
                 if (!self.typeUsesParam(arg_ty, param_name)) continue;
-                var idx: usize = 0;
-                while (idx < identity.arg_names.len) : (idx += 1) {
-                    if (std.mem.eql(u8, identity.arg_names[idx], arg_field.name.string)) {
-                        switch (identity.arg_values[idx]) {
-                            .type => |arg_ty_value| return arg_ty_value,
-                            else => {},
-                        }
+                if (typ.genericIdentityArgByName(identity, arg_field.name.string)) |arg_value| {
+                    switch (arg_value) {
+                        .type => |arg_ty_value| return arg_ty_value,
+                        else => {},
                     }
                 }
             }
@@ -4542,13 +4539,10 @@ pub const Semantizer = struct {
         for (g.args.fields) |arg_field| {
             if (arg_field.default_value) |value_expr| {
                 if (!valueExprUsesParam(value_expr, param_name)) continue;
-                var idx: usize = 0;
-                while (idx < identity.arg_names.len) : (idx += 1) {
-                    if (std.mem.eql(u8, identity.arg_names[idx], arg_field.name.string)) {
-                        switch (identity.arg_values[idx]) {
-                            .comptime_int => |value| return value,
-                            else => {},
-                        }
+                if (typ.genericIdentityArgByName(identity, arg_field.name.string)) |arg_value| {
+                    switch (arg_value) {
+                        .comptime_int => |value| return value,
+                        else => {},
                     }
                 }
             }
