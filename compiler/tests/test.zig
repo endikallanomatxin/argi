@@ -687,10 +687,10 @@ test "424_iterator_abstract" {
     try run();
 }
 
-test "425X_iterator_abstract_missing_canbe" {
+test "425X_iterator_abstract_missing_implements" {
     try clean();
     try buildExpectFail(
-        "tests/425X_iterator_abstract_missing_canbe/main.rg",
+        "tests/425X_iterator_abstract_missing_implements/main.rg",
         "does not implement abstract 'Iterator'",
     );
 }
@@ -709,10 +709,10 @@ test "427_iterable_abstract" {
     try run();
 }
 
-test "428X_iterable_abstract_missing_canbe" {
+test "428X_iterable_abstract_missing_implements" {
     try clean();
     try buildExpectFail(
-        "tests/428X_iterable_abstract_missing_canbe/main.rg",
+        "tests/428X_iterable_abstract_missing_implements/main.rg",
         "does not implement abstract 'Iterable'",
     );
 }

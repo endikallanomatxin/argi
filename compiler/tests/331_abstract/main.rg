@@ -13,7 +13,7 @@ speak (.self: Dog) -> (.s: &Char) := {
     s = "Woof"
 }
 
-Animal canbe Dog
+Dog implements Animal
 Animal defaultsto Dog
 
 main () -> (.status_code: Int32) := {

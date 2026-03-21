@@ -10,7 +10,7 @@ clone(.who: Dog) -> (.copy: Dog) := {
     copy = who
 }
 
-Animal canbe Dog
+Dog implements Animal
 Animal defaultsto Dog
 
 main () -> (.status_code: Int32) := {

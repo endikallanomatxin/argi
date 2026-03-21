@@ -1,6 +1,6 @@
 ExampleAbstract : Abstract = ()
 
-ExampleAbstract canbe Int32
+Int32 implements ExampleAbstract
 
 pick (.value: ExampleAbstract) -> (.status_code: Int32) := {
     status_code = 1

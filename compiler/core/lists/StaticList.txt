@@ -1,6 +1,6 @@
 StaticList#(.t: Type, .n: Int) : abstract = []
 
-List#(.t) canbe StaticList#(.t, _)
+StaticList#(.t, _) implements List#(.t)
 
 
 StackArray#(.t, .n) : Type = (
@@ -15,9 +15,9 @@ StackArray#(.t, .n) : Type = (
     ._alignment : Alignment = ..Default
 )
 
-StaticList#(t, n) canbe StackArray#(t, n)
-Indexable#(t)     canbe StackArray#(t, n)
-List#(t)          canbe StackArray#(t, n)
+StackArray#(t, n) implements StaticList#(t, n)
+StackArray#(t, n) implements Indexable#(t)
+StackArray#(t, n) implements List#(t)
 
 operator get[] (&a: StackArray#(.t, .n), .i:Int) -> (.v: t) := {
     if i < 1 or i > N {
@@ -42,4 +42,4 @@ StaticArray#(.t, .n) : Type = [
     ._alignment : Alignment   = ..Default
 ]
 
-StaticList#(.t, .n) canbe StaticArray#(.t, .n)
+StaticArray#(.t, .n) implements StaticList#(.t, .n)

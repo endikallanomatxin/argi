@@ -6,7 +6,7 @@ Animal : Abstract = (
     speak(.who: Self) -> (.s: &Char)
 )
 
-Animal canbe Dog
+Dog implements Animal
 Animal defaultsto Dog
 
 -- Wrong function signature: expects a &Char return type, but it's an Int32
@@ -17,4 +17,3 @@ speak (.who: Dog) -> (.s: Int32) := {
 main () -> (.status_code: Int32) := {
     status_code = 0
 }
-

@@ -6,7 +6,11 @@ Quaternion :: Abstract = [
 	...
 ]
 
-Quaternion canbe [Quaternion8, Quaternion16, Quaternion32, Quaternion64, Quaternion128]
+Quaternion8 implements Quaternion
+Quaternion16 implements Quaternion
+Quaternion32 implements Quaternion
+Quaternion64 implements Quaternion
+Quaternion128 implements Quaternion
 Quaternion defaultsto Quaternion32
 
-Number canbe Quaternion
+Quaternion implements Number

@@ -58,4 +58,4 @@ dealloc(a: $&ArenaAllocator, allocation: Allocation) =  !HeapAllocationError {
     // No op
 }
 
-Allocator canbe ArenaAllocator
+ArenaAllocator implements Allocator

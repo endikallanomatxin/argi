@@ -26,11 +26,15 @@ Complex :: Abstract = [
 	...
 ]
 
-Complex canbe [Complex8, Complex16, Complex32, Complex64, Complex128]
+Complex8 implements Complex
+Complex16 implements Complex
+Complex32 implements Complex
+Complex64 implements Complex
+Complex128 implements Complex
 -- El número del nombre corresponde a lo que ocupa cada COMPONENTE del número
 Complex defaultsto Complex32
 
-Number canbe Complex
+Complex implements Number
 
 
 -- TODO: Pensar en como hacerlo.

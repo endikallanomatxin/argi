@@ -18,10 +18,9 @@ NDVector :: Abstract = [
 	...
 ]
 
-NDVector canbe [
-	Vector
-	Matrix
-]
+Implementors of `NDVector`:
+- `Vector`
+- `Matrix`
 ```
 
 ```
@@ -63,19 +62,18 @@ Matrix :: Abstract = [
 	...
 ]
 
-Matrix<#t::Type> canbe [
-	RectangularMatrix  -- Square also, but generally rectangular
-	IdentityMatrix
-	ZeroMatrix
-	UpperTriangularMatrix
-	LowerTriangularMatrix
-	DiagonalMatrix
-	SymmetricMatrix
-	AntiSymmetricMatrix
-	OrthogonalMatrix  -- ?
-	UnitaryMatrix  -- ?
-	HermitianMatrix  -- ?
-])
+Implementors of `Matrix<#t::Type>`:
+- `RectangularMatrix`  -- Square also, but generally rectangular
+- `IdentityMatrix`
+- `ZeroMatrix`
+- `UpperTriangularMatrix`
+- `LowerTriangularMatrix`
+- `DiagonalMatrix`
+- `SymmetricMatrix`
+- `AntiSymmetricMatrix`
+- `OrthogonalMatrix`  -- ?
+- `UnitaryMatrix`  -- ?
+- `HermitianMatrix`  -- ?
 ```
 
 ```
@@ -87,13 +85,12 @@ Vector :: Abstract = [
 	...
 ]
 
-Vector canbe [
-	GeneralVector
-	OnesVector
-	ZerosVector
-	OneHotVector  -- Solo tiene un 1. El resto son 0. Permite mucha optimización.
-	ManyHotVector -- Tiene varios 1s. El resto son 0.
-]
+Implementors of `Vector`:
+- `GeneralVector`
+- `OnesVector`
+- `ZerosVector`
+- `OneHotVector`  -- Solo tiene un 1. El resto son 0. Permite mucha optimización.
+- `ManyHotVector` -- Tiene varios 1s. El resto son 0.
 ```
 
 

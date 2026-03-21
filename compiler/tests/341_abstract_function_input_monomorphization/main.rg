@@ -1,6 +1,6 @@
 ExampleAbstract : Abstract = ()
 
-ExampleAbstract canbe Int32
+Int32 implements ExampleAbstract
 
 use_value (.value: ExampleAbstract) -> (.status_code: Int32) := {
     status_code = value

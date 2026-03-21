@@ -34,7 +34,7 @@
             - múltiples parámetros abstractos,
             - reglas de desempate más finas entre overload concreto y abstracto,
             - interacción con generics explícitos,
-            - mejores diagnósticos cuando varias implementaciones `canbe`
+            - mejores diagnósticos cuando varias implementaciones `implements`
               compiten.
 
         - Decidir y fijar la política de outputs abstractos:
@@ -43,8 +43,8 @@
             - o existenciales reales.
           Ahora solo están cubiertos parcialmente.
 
-        - Soportar `canbe/defaultsto` genéricos:
-          patrones tipo `Indexable#(T) canbe Vector#(T)`.
+        - Soportar `implements/defaultsto` genéricos:
+          patrones tipo `Vector#(T) implements Indexable#(T)`.
 
         - Decidir si `defaultsto` se mantiene como parte estable del lenguaje o
           si es un mecanismo transitorio.

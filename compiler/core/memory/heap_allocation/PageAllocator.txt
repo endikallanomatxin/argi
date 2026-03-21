@@ -15,5 +15,5 @@ dealloc(pa: $&PageAllocator, allocation: Allocation) := !HeapDeallocationError {
     os.munmap(allocation._data)
 }
 
-Allocator canbe PageAllocator
+PageAllocator implements Allocator
 Allocator defaultsto PageAllocator

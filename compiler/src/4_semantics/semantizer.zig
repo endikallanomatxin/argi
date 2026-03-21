@@ -577,12 +577,12 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
-            .abstract_canbe => |rel| self.handleAbstractCanBe(rel, s, n.location) catch |err| blk: {
+            .abstract_implements => |rel| self.handleAbstractImplements(rel, s, n.location) catch |err| blk: {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "error in abstract canbe for '{s}': {s}",
-                    .{ rel.name, @errorName(err) },
+                    "error in abstract implements for '{s}': {s}",
+                    .{ rel.concrete_name.string, @errorName(err) },
                 );
                 break :blk err;
             },
@@ -1269,13 +1269,71 @@ pub const Semantizer = struct {
     }
 
     // For now, relations are recorded as no-ops to accept syntax without enforcing.
-    fn handleAbstractCanBe(
+    fn abstractNameFromImplementsTarget(abstract_ty: syn.Type) ?[]const u8 {
+        return switch (abstract_ty) {
+            .type_name => |name| name.string,
+            .generic_type_instantiation => |g| g.base_name.string,
+            else => null,
+        };
+    }
+
+    fn concreteTypePatternFromImplements(
         self: *Semantizer,
-        rel: syn.AbstractCanBe,
+        rel: syn.AbstractImplements,
+        loc: tok.Location,
+    ) !syn.Type {
+        if (rel.generic_params_struct != null or rel.generic_params.len != 0) {
+            const params_struct = try self.genericParamsStructOrNames(rel.generic_params_struct, rel.generic_params, loc);
+            const pattern_fields = try self.allocator.alloc(syn.StructTypeLiteralField, params_struct.fields.len);
+
+            for (params_struct.fields, 0..) |field, idx| {
+                const field_ty = field.type orelse {
+                    pattern_fields[idx] = .{
+                        .name = field.name,
+                        .type = .{ .type_name = field.name },
+                        .default_value = null,
+                    };
+                    continue;
+                };
+
+                if (field_ty == .type_name and std.mem.eql(u8, field_ty.type_name.string, "Type")) {
+                    pattern_fields[idx] = .{
+                        .name = field.name,
+                        .type = .{ .type_name = field.name },
+                        .default_value = null,
+                    };
+                    continue;
+                }
+
+                const value_node = try self.makeSynNode(.{ .identifier = field.name.string }, loc);
+                pattern_fields[idx] = .{
+                    .name = field.name,
+                    .type = null,
+                    .default_value = value_node,
+                };
+            }
+
+            return .{
+                .generic_type_instantiation = .{
+                    .base_name = rel.concrete_name,
+                    .args = .{ .fields = pattern_fields },
+                },
+            };
+        }
+
+        return .{ .type_name = rel.concrete_name };
+    }
+
+    fn handleAbstractImplements(
+        self: *Semantizer,
+        rel: syn.AbstractImplements,
         s: *Scope,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
-        if (rel.generic_params_struct != null or rel.generic_params.len != 0 or rel.ty == .generic_type_instantiation) {
+        const abstract_name = abstractNameFromImplementsTarget(rel.abstract_ty) orelse return error.UnknownType;
+        const concrete_pattern = try self.concreteTypePatternFromImplements(rel, loc);
+
+        if (rel.generic_params_struct != null or rel.generic_params.len != 0 or concrete_pattern == .generic_type_instantiation) {
             var params_buf = std.array_list.Managed(gen.GenericParam).init(self.allocator.*);
             defer params_buf.deinit();
 
@@ -1285,11 +1343,11 @@ pub const Semantizer = struct {
                 for (explicit_params) |param| try params_buf.append(param);
             }
 
-            try self.collectHiddenCanBeParamsFromType(rel.ty, &params_buf, s);
+            try self.collectHiddenImplementsParamsFromType(concrete_pattern, &params_buf, s);
             const params = try params_buf.toOwnedSlice();
-            try s.appendAbstractImplTemplate(rel.name, .{
+            try s.appendAbstractImplTemplate(abstract_name, .{
                 .params = params,
-                .ty = rel.ty,
+                .ty = concrete_pattern,
                 .location = loc,
             });
 
@@ -1298,11 +1356,11 @@ pub const Semantizer = struct {
             return .{ .node = n, .ty = .{ .builtin = .Any } };
         }
 
-        const concrete_ty = try self.resolveType(rel.ty, s);
+        const concrete_ty = try self.resolveType(concrete_pattern, s);
 
         // Defer conformance checks until call sites or a validation pass.
 
-        try s.appendAbstractImpl(rel.name, .{ .ty = concrete_ty, .location = loc });
+        try s.appendAbstractImpl(abstract_name, .{ .ty = concrete_ty, .location = loc });
 
         const n = try self.makeNoopNode(loc);
         try s.nodes.append(n);
@@ -1879,19 +1937,19 @@ pub const Semantizer = struct {
         }
     }
 
-    fn collectHiddenCanBeParamsFromType(
+    fn collectHiddenImplementsParamsFromType(
         self: *Semantizer,
         ty: syn.Type,
         params: *std.array_list.Managed(gen.GenericParam),
         s: *Scope,
     ) !void {
         switch (ty) {
-            .pointer_type => |ptr_info| try self.collectHiddenCanBeParamsFromType(ptr_info.child.*, params, s),
-            .array_type => |arr_info| try self.collectHiddenCanBeParamsFromType(arr_info.element.*, params, s),
+            .pointer_type => |ptr_info| try self.collectHiddenImplementsParamsFromType(ptr_info.child.*, params, s),
+            .array_type => |arr_info| try self.collectHiddenImplementsParamsFromType(arr_info.element.*, params, s),
             .struct_type_literal => |st| {
                 for (st.fields) |field| {
                     if (field.type) |field_ty| {
-                        try self.collectHiddenCanBeParamsFromType(field_ty, params, s);
+                        try self.collectHiddenImplementsParamsFromType(field_ty, params, s);
                     }
                     if (field.default_value) |value_expr| {
                         try self.collectHiddenComptimeParamsFromValueExpr(value_expr, params, s);
@@ -1901,7 +1959,7 @@ pub const Semantizer = struct {
             .generic_type_instantiation => |g| {
                 for (g.args.fields) |field| {
                     if (field.type) |field_ty| {
-                        try self.collectHiddenCanBeParamsFromType(field_ty, params, s);
+                        try self.collectHiddenImplementsParamsFromType(field_ty, params, s);
                     }
                     if (field.default_value) |value_expr| {
                         try self.collectHiddenComptimeParamsFromValueExpr(value_expr, params, s);

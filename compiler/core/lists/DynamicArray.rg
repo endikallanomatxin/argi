@@ -21,8 +21,8 @@ DynamicArrayIterator#(.t: Type) : Type = (
     .index : UIntNative
 )
 
-Iterator#(.t: Type) canbe DynamicArrayIterator#(.t: t)
-Iterable#(.t: Type) canbe DynamicArray#(.t: t)
+DynamicArrayIterator#(.t: Type) implements Iterator#(.t: t)
+DynamicArray#(.t: Type) implements Iterable#(.t: t)
 
 init #(.t: Type) (
     .p: $&DynamicArray#(.t: t),
