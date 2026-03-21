@@ -103,7 +103,7 @@ As there are different types of concurrency, the primitives have to be created f
 #### Channels
 
 ```
-Channel<#T: Type> : Type
+Channel#(.t: Type) : Type
 ```
 
 ```
@@ -133,9 +133,9 @@ Igual haría que hubiera tres tipos:
 - Stack (LIFO)
 
 ```
-Channel<T> : Abstract = (
-    put(T)
-    get() -> T
+Channel#(.t: Type) : Abstract = (
+    put(.self: $&Self, .value: t) -> ()
+    get(.self: $&Self) -> (.value: t)
 )
 Spot implements Channel
 Queue implements Channel
@@ -143,20 +143,20 @@ Stack implements Channel
 Channel defaults Spot
 
 
-Queue<T> : Abstract = (
-	put T -> ()
-	get [) -> T
+Queue#(.t: Type) : Abstract = (
+	put(.self: $&Self, .value: t) -> ()
+	get(.self: $&Self) -> (.value: t)
 )
-DynamicQueue implements Queue
-StaticQueue<n> implements Queue
+DynamicQueue#(.t: Type) implements Queue#(.t: t)
+StaticQueue#(.n: UIntNative, .t: Type) implements Queue#(.t: t)
 Queue defaults DynamicQueue
 
-Stack<T> : Abstract = (
-	put T -> [)
-	get () -> T
+Stack#(.t: Type) : Abstract = (
+	put(.self: $&Self, .value: t) -> ()
+	get(.self: $&Self) -> (.value: t)
 )
-DynamicStack implements Stack
-StaticStack<n> implements Stack
+DynamicStack#(.t: Type) implements Stack#(.t: t)
+StaticStack#(.n: UIntNative, .t: Type) implements Stack#(.t: t)
 Stack defaults DynamicStack
 
 ```

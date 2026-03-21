@@ -52,16 +52,16 @@ Multiplyier : Type = (
 Like a tagged union.
 
 ```
-Errable#(.t: Type, .e: Error) : Type = (
-	..ok(t)
-	..error(e)
+Errable#(.t: Type, .e: Type) : Type = (
+	..ok(.value: t)
+	..error(.value: e)
 )
 ```
 
 ```
 Nullable#(.t: Type) : Type = (
 	=..none
-	..some(t)
+	..some(.value: t)
 )
 ```
 
@@ -79,10 +79,10 @@ x|is(..north)  -- Check if x is north
 x..ok
 ```
 
-En rust (a parte del match) se puede hacer así:
+En Rust (a parte del match) se puede hacer así:
 
 ```
-// Ejemplo con Option
+// Referencia comparativa con Option, no sintaxis de Argi
 let x: Option#(Int32) = Some(10);
 if let Some(v) = x {
 println!("Valor: {}", v);
@@ -113,6 +113,5 @@ match x {
 > [!NOTE] Eso es muy rust
 > No se si cuada mucho con nuestro lenguaje.
 > Igual hay que darle una vuelta a una sintaxis más general, que aplique más alla de los choice with payload.
-
 
 
