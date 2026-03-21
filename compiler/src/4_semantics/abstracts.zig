@@ -1,8 +1,10 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
+const syn = @import("../3_syntax/syntax_tree.zig");
 const sg = @import("semantic_graph.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
+const gen = @import("generics.zig");
 const typ = @import("types.zig");
 
 const Scope = @import("scope.zig").Scope;
@@ -33,6 +35,11 @@ pub const AbstractImplEntry = struct {
     ty: sg.Type,
     location: tok.Location,
 };
+pub const AbstractImplTemplate = struct {
+    params: []const gen.GenericParam,
+    ty: syn.Type,
+    location: tok.Location,
+};
 pub const AbstractDefaultEntry = struct {
     ty: sg.Type,
     location: tok.Location,
@@ -54,6 +61,159 @@ const MissingRequirementContext = struct {
     location: tok.Location,
 };
 
+const TemplateBindings = struct {
+    allocator: *const std.mem.Allocator,
+    types: std.StringHashMap(sg.Type),
+    ints: std.StringHashMap(i64),
+
+    fn init(allocator: *const std.mem.Allocator) TemplateBindings {
+        return .{
+            .allocator = allocator,
+            .types = std.StringHashMap(sg.Type).init(allocator.*),
+            .ints = std.StringHashMap(i64).init(allocator.*),
+        };
+    }
+
+    fn deinit(self: *TemplateBindings) void {
+        self.types.deinit();
+        self.ints.deinit();
+    }
+};
+
+fn findGenericParam(params: []const gen.GenericParam, name: []const u8) ?gen.GenericParam {
+    for (params) |param| {
+        if (std.mem.eql(u8, param.name, name)) return param;
+    }
+    return null;
+}
+
+fn parseIntLiteral(lit: tok.Literal) ?i64 {
+    return switch (lit) {
+        .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => |txt|
+            std.fmt.parseInt(i64, txt, 0) catch null,
+        else => null,
+    };
+}
+
+fn evalComptimeIntPattern(node: *const syn.STNode, params: []const gen.GenericParam, bindings: *TemplateBindings) ?i64 {
+    return switch (node.content) {
+        .literal => |lit| parseIntLiteral(lit),
+        .identifier => |name| blk: {
+            if (findGenericParam(params, name)) |param| {
+                if (param.kind == .comptime_int) {
+                    break :blk bindings.ints.get(name);
+                }
+            }
+            break :blk null;
+        },
+        .binary_operation => |bo| blk: {
+            const left = evalComptimeIntPattern(bo.left, params, bindings) orelse break :blk null;
+            const right = evalComptimeIntPattern(bo.right, params, bindings) orelse break :blk null;
+            break :blk switch (bo.operator) {
+                .addition => left + right,
+                .subtraction => left - right,
+                .multiplication => left * right,
+                .division => if (right == 0) null else @divTrunc(left, right),
+                .modulo => if (right == 0) null else @mod(left, right),
+            };
+        },
+        else => null,
+    };
+}
+
+fn matchComptimeIntPattern(node: *const syn.STNode, actual: i64, params: []const gen.GenericParam, bindings: *TemplateBindings) bool {
+    if (node.content == .identifier) {
+        const name = node.content.identifier;
+        if (findGenericParam(params, name)) |param| {
+            if (param.kind == .comptime_int) {
+                if (bindings.ints.get(name)) |bound| return bound == actual;
+                bindings.ints.put(name, actual) catch return false;
+                return true;
+            }
+        }
+    }
+
+    const expected = evalComptimeIntPattern(node, params, bindings) orelse return false;
+    return expected == actual;
+}
+
+fn matchTemplateType(pattern: syn.Type, actual: sg.Type, params: []const gen.GenericParam, bindings: *TemplateBindings) bool {
+    return switch (pattern) {
+        .type_name => |tn| blk: {
+            if (findGenericParam(params, tn.string)) |param| {
+                if (param.kind == .type) {
+                    if (bindings.types.get(tn.string)) |bound| break :blk typ.typesExactlyEqual(bound, actual);
+                    bindings.types.put(tn.string, actual) catch return false;
+                    break :blk true;
+                }
+            }
+            if (typ.builtinFromName(tn.string)) |builtin_ty| {
+                break :blk actual == .builtin and actual.builtin == builtin_ty;
+            }
+            break :blk false;
+        },
+        .pointer_type => |ptr_info| blk: {
+            if (actual != .pointer_type) break :blk false;
+            if (ptr_info.mutability != actual.pointer_type.mutability) break :blk false;
+            break :blk matchTemplateType(ptr_info.child.*, actual.pointer_type.child.*, params, bindings);
+        },
+        .array_type => |arr_info| blk: {
+            if (actual != .array_type) break :blk false;
+            if (arr_info.length != actual.array_type.length) break :blk false;
+            break :blk matchTemplateType(arr_info.element.*, actual.array_type.element_type.*, params, bindings);
+        },
+        .struct_type_literal => false,
+        .generic_type_instantiation => |g| blk: {
+            if (std.mem.eql(u8, g.base_name.string, "Array")) {
+                if (actual != .array_type) break :blk false;
+                for (g.args.fields) |field| {
+                    if (std.mem.eql(u8, field.name.string, "t")) {
+                        if (field.type) |field_ty| {
+                            if (!matchTemplateType(field_ty, actual.array_type.element_type.*, params, bindings)) break :blk false;
+                        } else break :blk false;
+                    } else if (std.mem.eql(u8, field.name.string, "n")) {
+                        const value_node = field.default_value orelse break :blk false;
+                        if (!matchComptimeIntPattern(value_node, @intCast(actual.array_type.length), params, bindings)) break :blk false;
+                    } else break :blk false;
+                }
+                break :blk true;
+            }
+
+            if (actual != .struct_type) break :blk false;
+            const identity = actual.struct_type.generic_identity orelse break :blk false;
+            if (!std.mem.eql(u8, identity.base_name, g.base_name.string)) break :blk false;
+
+            for (g.args.fields) |field| {
+                var idx: usize = 0;
+                var found = false;
+                while (idx < identity.arg_names.len) : (idx += 1) {
+                    if (!std.mem.eql(u8, identity.arg_names[idx], field.name.string)) continue;
+                    found = true;
+                    switch (identity.arg_values[idx]) {
+                        .type => |arg_ty| {
+                            const field_ty = field.type orelse break :blk false;
+                            if (!matchTemplateType(field_ty, arg_ty, params, bindings)) break :blk false;
+                        },
+                        .comptime_int => |arg_int| {
+                            const value_node = field.default_value orelse break :blk false;
+                            if (!matchComptimeIntPattern(value_node, arg_int, params, bindings)) break :blk false;
+                        },
+                    }
+                    break;
+                }
+                if (!found) break :blk false;
+            }
+            break :blk true;
+        },
+    };
+}
+
+fn templateImplementsCandidate(tmpl: AbstractImplTemplate, candidate: sg.Type, allocator: *const std.mem.Allocator) bool {
+    var bindings = TemplateBindings.init(allocator);
+    defer bindings.deinit();
+    return matchTemplateType(tmpl.ty, candidate, tmpl.params, &bindings);
+}
+
 pub fn typeImplementsAbstract(
     abs_name: []const u8,
     candidate: sg.Type,
@@ -65,6 +225,12 @@ pub fn typeImplementsAbstract(
             const impls = list_ptr.*;
             for (impls.items) |impl| {
                 if (typ.typesExactlyEqual(impl.ty, candidate)) return true;
+            }
+        }
+        if (sc.abstract_impl_templates.getPtr(abs_name)) |list_ptr| {
+            const templates = list_ptr.*;
+            for (templates.items) |tmpl| {
+                if (templateImplementsCandidate(tmpl, candidate, s.allocator)) return true;
             }
         }
     }
