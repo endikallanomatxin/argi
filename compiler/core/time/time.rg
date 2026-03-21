@@ -11,24 +11,24 @@ Clock : Type = ()
 -------
 
 
--- Clock     : type = struct []
--- TimeUnit  : type = [..ns, ..us, ..ms, ..s, ..min, ..h, ..d, ..w, ..mo, ..y]
--- Duration  : type = NumberWithUnit<Int, TimeUnit> -- Igual mejor ns y ya.
--- TimeStamp : type = NumberWithUnit<Int, TimeUnit> -- Igual mejor ns y ya.
+-- Clock     : Type = ()
+-- TimeUnit  : Type = (..ns, ..us, ..ms, ..s, ..min, ..h, ..d, ..w, ..mo, ..y)
+-- Duration  : Type = NumberWithUnit#(.t: Int, .unit: TimeUnit) -- Igual mejor ns y ya.
+-- TimeStamp : Type = NumberWithUnit#(.t: Int, .unit: TimeUnit) -- Igual mejor ns y ya.
 -- 
--- Date :: Type = struct [
+-- Date : Type = (
 -- 	.year: Int
 -- 	.month: Int
 -- 	.day: Int
--- ]
+-- )
 -- 
--- Time :: Type = struct [
+-- Time : Type = (
 -- 	.hour: Int
 -- 	.minute: Int
 -- 	.second: Int
--- ]
+-- )
 -- 
--- DateTime :: Type = struct [
+-- DateTime : Type = (
 -- 	.date: Date
 -- 	.time: Time
--- ]
+-- )

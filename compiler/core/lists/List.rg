@@ -18,25 +18,23 @@ Resizable#(.t: Type) : Abstract = (
     insert (.self: $&Self, .i: UIntNative, .value: t) -> ()
 )
 
-
-
--- List#(t) : Abstract = [
+-- List#(.t: Type) : Abstract = (
 --     ---
 --     A list is any collection that can be indexable.
 --     ---
---     Indexable#(t)
+--     Indexable#(.t: t)
 -- 
 --     operator get[]
 --     operator set[]
---     length() : Int
+--     length() : UIntNative
 --     ...
--- ]
+-- )
 -- 
--- Index : Type = UInt64  -- 1 based index
+-- Index : Type = UIntNative  -- 1 based index
 -- 
--- ListAlignment : Type = [
+-- ListAlignment : Type = (
 --     ..smallest_power_of_two
 --     ..compact
---     ..custom(n: Int)
--- ]
+--     ..custom(.n: UIntNative)
+-- )
 -- 
