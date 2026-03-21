@@ -23,6 +23,7 @@ pub const Scope = struct {
     types: std.StringHashMap(*sg.TypeDeclaration),
     abstracts: std.StringHashMap(*abs.AbstractInfo),
     abstract_impls: std.StringHashMap(std.array_list.Managed(abs.AbstractImplEntry)),
+    abstract_impl_templates: std.StringHashMap(std.array_list.Managed(abs.AbstractImplTemplate)),
     abstract_defaults: std.StringHashMap(abs.AbstractDefaultEntry),
     generic_functions: std.StringHashMap(std.array_list.Managed(gen.GenericTemplate)),
     generic_types: std.StringHashMap(std.array_list.Managed(gen.GenericTypeTemplate)),
@@ -47,6 +48,7 @@ pub const Scope = struct {
             .types = std.StringHashMap(*sg.TypeDeclaration).init(a.*),
             .abstracts = std.StringHashMap(*abs.AbstractInfo).init(a.*),
             .abstract_impls = std.StringHashMap(std.array_list.Managed(abs.AbstractImplEntry)).init(a.*),
+            .abstract_impl_templates = std.StringHashMap(std.array_list.Managed(abs.AbstractImplTemplate)).init(a.*),
             .abstract_defaults = std.StringHashMap(abs.AbstractDefaultEntry).init(a.*),
             .generic_functions = std.StringHashMap(std.array_list.Managed(gen.GenericTemplate)).init(a.*),
             .generic_types = std.StringHashMap(std.array_list.Managed(gen.GenericTypeTemplate)).init(a.*),
@@ -75,6 +77,17 @@ pub const Scope = struct {
         var list = std.array_list.Managed(gen.GenericTemplate).init(self.allocator.*);
         try list.append(tmpl);
         try self.generic_functions.put(name, list);
+    }
+
+    pub fn appendAbstractImplTemplate(self: *Scope, name: []const u8, tmpl: abs.AbstractImplTemplate) !void {
+        if (self.abstract_impl_templates.getPtr(name)) |list_ptr| {
+            try list_ptr.append(tmpl);
+            return;
+        }
+
+        var list = std.array_list.Managed(abs.AbstractImplTemplate).init(self.allocator.*);
+        try list.append(tmpl);
+        try self.abstract_impl_templates.put(name, list);
     }
 
     pub fn appendGenericTypeTemplate(self: *Scope, name: []const u8, tmpl: gen.GenericTypeTemplate) !void {

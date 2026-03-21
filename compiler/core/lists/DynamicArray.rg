@@ -28,6 +28,8 @@ DynamicArrayIterator#(.t: Type) : Type = (
     .index  : UIntNative
 )
 
+Iterator#(.t: Type) canbe DynamicArrayIterator#(.t: t)
+
 init #(.t: Type) (
     .p: $&DynamicArray#(.t: t),
     .capacity: UIntNative,

@@ -3,6 +3,8 @@ ArrayIterator#(.n: UIntNative, .t: Type) : Type = (
     .index : UIntNative
 )
 
+Iterator#(.t: Type, .n: UIntNative) canbe ArrayIterator#(.n = n, .t: t)
+
 to_iterator#(.n: UIntNative, .t: Type) (
     .value: &Array#(.n = n, .t: t)
 ) -> (.iterator: ArrayIterator#(.n = n, .t: t)) := {

@@ -673,6 +673,20 @@ test "423_array_iterator_manual" {
     try run();
 }
 
+test "424_iterator_abstract" {
+    try clean();
+    try expectSuccessfulBuild("tests/424_iterator_abstract/main.rg");
+    try run();
+}
+
+test "425X_iterator_abstract_missing_canbe" {
+    try clean();
+    try buildExpectFail(
+        "tests/425X_iterator_abstract_missing_canbe/main.rg",
+        "does not implement abstract 'Iterator'",
+    );
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");

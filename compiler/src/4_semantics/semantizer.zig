@@ -1193,6 +1193,20 @@ pub const Semantizer = struct {
         s: *Scope,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
+        if (rel.generic_params_struct != null or rel.generic_params.len != 0) {
+            const params_struct = try self.genericParamsStructOrNames(rel.generic_params_struct, rel.generic_params, loc);
+            const params = try self.genericParamDefsFromSyntax(params_struct, s);
+            try s.appendAbstractImplTemplate(rel.name, .{
+                .params = params,
+                .ty = rel.ty,
+                .location = loc,
+            });
+
+            const n = try self.makeNoopNode(loc);
+            try s.nodes.append(n);
+            return .{ .node = n, .ty = .{ .builtin = .Any } };
+        }
+
         const concrete_ty = try self.resolveType(rel.ty, s);
 
         // Defer conformance checks until call sites or a validation pass.
@@ -2069,6 +2083,12 @@ pub const Semantizer = struct {
                 }
                 return ty;
             },
+            .generic_type_instantiation => |g| {
+                if (std.mem.eql(u8, g.base_name.string, abstract_name)) {
+                    return .{ .type_name = .{ .string = hidden_name, .location = g.base_name.location } };
+                }
+                return ty;
+            },
             .pointer_type => |ptr_info| blk: {
                 const child = try self.allocator.create(syn.Type);
                 child.* = try self.rewriteAbstractTypeForTemplate(ptr_info.child.*, hidden_name, abstract_name);
@@ -2101,7 +2121,6 @@ pub const Semantizer = struct {
                 }
                 break :blk .{ .struct_type_literal = .{ .fields = fields } };
             },
-            .generic_type_instantiation => ty,
         };
     }
 
@@ -2109,6 +2128,10 @@ pub const Semantizer = struct {
         return switch (ty) {
             .type_name => |tn| {
                 if (s.lookupAbstractInfo(tn.string) != null and s.lookupAbstractDefault(tn.string) == null) return true;
+                return false;
+            },
+            .generic_type_instantiation => |g| {
+                if (s.lookupAbstractInfo(g.base_name.string) != null and s.lookupAbstractDefault(g.base_name.string) == null) return true;
                 return false;
             },
             .pointer_type => |ptr_info| self.outputUsesAbstractWithoutDefault(ptr_info.child.*, s),
@@ -2121,7 +2144,6 @@ pub const Semantizer = struct {
                 }
                 break :blk false;
             },
-            .generic_type_instantiation => false,
         };
     }
 
@@ -2153,16 +2175,38 @@ pub const Semantizer = struct {
                             rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, tn.string);
                         }
                     },
+                    .generic_type_instantiation => |g| {
+                        if (p.lookupAbstractInfo(g.base_name.string) != null and p.lookupAbstractDefault(g.base_name.string) == null) {
+                            has_abstract_input = true;
+                            const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
+                            try hidden_param_names.append(hidden_name);
+                            try hidden_constraints.append(g.base_name.string);
+                            rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, g.base_name.string);
+                        }
+                    },
                     .pointer_type => |ptr_info| {
-                        if (ptr_info.child.* == .type_name) {
-                            const child_name = ptr_info.child.*.type_name.string;
-                            if (p.lookupAbstractInfo(child_name) != null and p.lookupAbstractDefault(child_name) == null) {
-                                has_abstract_input = true;
-                                const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
-                                try hidden_param_names.append(hidden_name);
-                                try hidden_constraints.append(child_name);
-                                rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, child_name);
-                            }
+                        switch (ptr_info.child.*) {
+                            .type_name => {
+                                const child_name = ptr_info.child.*.type_name.string;
+                                if (p.lookupAbstractInfo(child_name) != null and p.lookupAbstractDefault(child_name) == null) {
+                                    has_abstract_input = true;
+                                    const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
+                                    try hidden_param_names.append(hidden_name);
+                                    try hidden_constraints.append(child_name);
+                                    rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, child_name);
+                                }
+                            },
+                            .generic_type_instantiation => |g| {
+                                const child_name = g.base_name.string;
+                                if (p.lookupAbstractInfo(child_name) != null and p.lookupAbstractDefault(child_name) == null) {
+                                    has_abstract_input = true;
+                                    const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
+                                    try hidden_param_names.append(hidden_name);
+                                    try hidden_constraints.append(child_name);
+                                    rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, child_name);
+                                }
+                            },
+                            else => {},
                         }
                     },
                     else => {},
