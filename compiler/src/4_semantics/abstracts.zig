@@ -51,7 +51,7 @@ const OwnedText = struct {
     allocator: *const std.mem.Allocator,
     bytes: []u8,
 
-    fn deinit(self: OwnedText) void {
+    pub fn deinit(self: OwnedText) void {
         self.allocator.free(self.bytes);
     }
 };
@@ -616,6 +616,55 @@ fn reportMissingRequirement(
         "{s} does not implement abstract '{s}':\n  missing function: {s}",
         .{ ctx.label, ctx.abstract_name, signature.items },
     );
+}
+
+fn formatMissingRequirementText(
+    rq: *const AbstractFunctionReqSem,
+    concrete: sg.Type,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+) !OwnedText {
+    const exp_in = try buildExpectedInputWithConcrete(rq, concrete, allocator);
+    const in_ty: sg.Type = .{ .struct_type = exp_in };
+    const candidates_result = buildOverloadCandidatesText(rq.name, in_ty, s, allocator) catch null;
+    const candidates = if (candidates_result) |owned| owned.bytes else "";
+    defer if (candidates_result) |owned| owned.deinit();
+
+    var signature = std.array_list.Managed(u8).init(allocator.*);
+    defer signature.deinit();
+    try appendRequirementSignature(&signature, rq.name, exp_in, s);
+
+    var buf = std.array_list.Managed(u8).init(allocator.*);
+    errdefer buf.deinit();
+
+    try buf.appendSlice("missing function: ");
+    try buf.appendSlice(signature.items);
+
+    if (candidates.len > 0) {
+        try buf.appendSlice("\npossible overloads:\n");
+        try buf.appendSlice(candidates);
+    }
+
+    return .{
+        .allocator = allocator,
+        .bytes = try buf.toOwnedSlice(),
+    };
+}
+
+pub fn buildConformanceDetails(
+    abs_name: []const u8,
+    concrete: sg.Type,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+) !?OwnedText {
+    const info = s.lookupAbstractInfo(abs_name) orelse return null;
+
+    for (info.requirements) |rq| {
+        if (try existsFunctionForRequirement(info, rq, concrete, s, allocator)) continue;
+        return try formatMissingRequirementText(&rq, concrete, s, allocator);
+    }
+
+    return null;
 }
 
 pub fn verifyAbstracts(s: *Scope, allocator: *const std.mem.Allocator, diags: *diagnostic.Diagnostics) !void {
