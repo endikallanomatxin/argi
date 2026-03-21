@@ -176,37 +176,13 @@ fn matchTemplateType(pattern: syn.Type, actual: sg.Type, params: []const gen.Gen
     };
 }
 
-fn matchArrayInstantiation(
+fn matchCanonicalGenericInstantiation(
     g: @FieldType(syn.Type, "generic_type_instantiation"),
     actual: sg.Type,
     params: []const gen.GenericParam,
     bindings: *TemplateBindings,
 ) bool {
-    if (actual != .array_type) return false;
-
-    for (g.args.fields) |field| {
-        if (std.mem.eql(u8, field.name.string, "t")) {
-            const field_ty = field.type orelse return false;
-            if (!matchTemplateType(field_ty, actual.array_type.element_type.*, params, bindings)) return false;
-        } else if (std.mem.eql(u8, field.name.string, "n")) {
-            const value_node = field.default_value orelse return false;
-            if (!matchComptimeIntPattern(value_node, @intCast(actual.array_type.length), params, bindings)) return false;
-        } else {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-fn matchNominalGenericInstantiation(
-    g: @FieldType(syn.Type, "generic_type_instantiation"),
-    actual: sg.Type,
-    params: []const gen.GenericParam,
-    bindings: *TemplateBindings,
-) bool {
-    if (actual != .struct_type) return false;
-    const identity = actual.struct_type.generic_identity orelse return false;
+    const identity = typ.genericIdentityOf(actual) orelse return false;
     if (!std.mem.eql(u8, identity.base_name, g.base_name.string)) return false;
 
     for (g.args.fields) |field| {
@@ -239,11 +215,7 @@ fn matchGenericInstantiationType(
     params: []const gen.GenericParam,
     bindings: *TemplateBindings,
 ) bool {
-    if (std.mem.eql(u8, g.base_name.string, "Array")) {
-        return matchArrayInstantiation(g, actual, params, bindings);
-    }
-
-    return matchNominalGenericInstantiation(g, actual, params, bindings);
+    return matchCanonicalGenericInstantiation(g, actual, params, bindings);
 }
 
 fn templateImplementsCandidate(tmpl: AbstractImplTemplate, candidate: sg.Type, allocator: *const std.mem.Allocator) bool {
