@@ -408,6 +408,44 @@ pub fn typeNameFor(s: *Scope, t: sg.Type) ?[]const u8 {
     return null;
 }
 
+fn appendGenericIdentityArgPretty(
+    buf: *std.array_list.Managed(u8),
+    name: []const u8,
+    arg: sg.GenericIdentityArg,
+    s: *Scope,
+) std.mem.Allocator.Error!void {
+    try buf.appendSlice(".");
+    try buf.appendSlice(name);
+
+    switch (arg) {
+        .type => |ty| {
+            try buf.appendSlice(": ");
+            try appendTypePretty(buf, ty, s);
+        },
+        .comptime_int => |value| {
+            try buf.appendSlice(" = ");
+            try buf.writer().print("{d}", .{value});
+        },
+    }
+}
+
+fn appendGenericIdentityPretty(
+    buf: *std.array_list.Managed(u8),
+    identity: *const sg.GenericTypeIdentity,
+    s: *Scope,
+) std.mem.Allocator.Error!void {
+    try buf.appendSlice(identity.base_name);
+    if (identity.arg_names.len == 0) return;
+
+    try buf.appendSlice("#(");
+    var i: usize = 0;
+    while (i < identity.arg_names.len) : (i += 1) {
+        if (i != 0) try buf.appendSlice(", ");
+        try appendGenericIdentityArgPretty(buf, identity.arg_names[i], identity.arg_values[i], s);
+    }
+    try buf.appendSlice(")");
+}
+
 pub fn builtinFromName(name: []const u8) ?sg.BuiltinType {
     return std.meta.stringToEnum(sg.BuiltinType, name);
 }
@@ -471,10 +509,16 @@ fn formatTypePairText(expected: sg.Type, actual: sg.Type, s: *Scope, allocator: 
     };
 }
 
-pub fn appendTypePretty(buf: *std.array_list.Managed(u8), t: sg.Type, s: *Scope) !void {
+pub fn appendTypePretty(buf: *std.array_list.Managed(u8), t: sg.Type, s: *Scope) std.mem.Allocator.Error!void {
     if (typeNameFor(s, t)) |nm| {
         try buf.appendSlice(nm);
         return;
+    }
+    if (genericIdentityOf(t)) |identity| {
+        if (!std.mem.eql(u8, identity.base_name, "Array")) {
+            try appendGenericIdentityPretty(buf, identity, s);
+            return;
+        }
     }
     switch (t) {
         .builtin => |bt| {
@@ -857,11 +901,13 @@ fn coerceChoiceLiteral(
         }
     }
 
+    const expected_text = try formatTypeText(.{ .choice_type = expected }, s, allocator);
+    defer expected_text.deinit();
     try diags.add(
         loc,
         .semantic,
-        "choice has no variant '..{s}'",
-        .{variant_name},
+        "choice type '{s}' has no variant '..{s}'",
+        .{ expected_text.bytes, variant_name },
     );
     return error.Reported;
 }

@@ -587,7 +587,7 @@ test "50X_choice_unknown_variant" {
     try clean();
     try buildExpectFail(
         "tests/50X_choice_unknown_variant/main.rg",
-        "choice has no variant '..east'",
+        "choice type 'Direction' has no variant '..east'",
     );
 }
 
@@ -763,6 +763,22 @@ test "436_range_default_start_with_step" {
     try clean();
     try expectSuccessfulBuild("tests/436_range_default_start_with_step/main.rg");
     try run();
+}
+
+test "437X_for_nullable_not_iterable" {
+    try clean();
+    try buildExpectFail(
+        "tests/437X_for_nullable_not_iterable/main.rg",
+        "for expects a type implementing abstract 'Iterable', got 'Nullable#(.t: Int32)'",
+    );
+}
+
+test "438X_errable_match_unknown_variant" {
+    try clean();
+    try buildExpectFail(
+        "tests/438X_errable_match_unknown_variant/main.rg",
+        "choice type 'Errable#(.t: Int32, .e: Char)' has no variant '..none'",
+    );
 }
 
 test "62_folder_module_namespace" {
