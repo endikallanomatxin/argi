@@ -1,6 +1,5 @@
-RGBColor :: Type = struct [
+RGBColor : Type = (
 	.r: Float
 	.g: Float
 	.b: Float
-]
-
+)

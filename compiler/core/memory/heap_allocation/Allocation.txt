@@ -1,11 +1,17 @@
-Allocation : Type = struct [
+--
+-- Scratch notes. Keep syntax aligned with the current language even if the
+-- runtime representation is still provisional.
+--
+
+Allocation : Type = (
     ---
-    This is useful to encapsulate an alocation with its allocator
+    This is useful to encapsulate a heap allocation.
     ---
-    ._data : &Byte
-    ._size : Int  -- In bytes
-    ._allocator : Allocator
-]
+    .data : $&UInt8
+    .size : UIntNative  -- In bytes
+    -- Intended later:
+    -- .allocator : &Allocator
+)
 
 HeapAllocationError : Error
 HeapDeallocationError : Error

@@ -3,10 +3,10 @@
 Tener un tipo figura centralizado viene bien para unificar todo el tema del renderizado.
 
 ```
-Figure :: Type = struct [
+Figure : Type = (
 	.background_color: RGBAColor
 	.layout: Layout
-]
+)
 
 Layout :: Tree<LayoutElement>
 ```
@@ -103,5 +103,4 @@ plot :: Plot = [
     .background_color = "white",
 ]
 ```
-
 
