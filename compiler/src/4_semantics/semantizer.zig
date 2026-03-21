@@ -1275,9 +1275,18 @@ pub const Semantizer = struct {
         s: *Scope,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
-        if (rel.generic_params_struct != null or rel.generic_params.len != 0) {
-            const params_struct = try self.genericParamsStructOrNames(rel.generic_params_struct, rel.generic_params, loc);
-            const params = try self.genericParamDefsFromSyntax(params_struct, s);
+        if (rel.generic_params_struct != null or rel.generic_params.len != 0 or rel.ty == .generic_type_instantiation) {
+            var params_buf = std.array_list.Managed(gen.GenericParam).init(self.allocator.*);
+            defer params_buf.deinit();
+
+            if (rel.generic_params_struct != null or rel.generic_params.len != 0) {
+                const params_struct = try self.genericParamsStructOrNames(rel.generic_params_struct, rel.generic_params, loc);
+                const explicit_params = try self.genericParamDefsFromSyntax(params_struct, s);
+                for (explicit_params) |param| try params_buf.append(param);
+            }
+
+            try self.collectHiddenCanBeParamsFromType(rel.ty, &params_buf, s);
+            const params = try params_buf.toOwnedSlice();
             try s.appendAbstractImplTemplate(rel.name, .{
                 .params = params,
                 .ty = rel.ty,
@@ -1835,6 +1844,72 @@ pub const Semantizer = struct {
             };
         }
         return params;
+    }
+
+    fn hasGenericParamNamed(params: []const gen.GenericParam, name: []const u8) bool {
+        for (params) |param| {
+            if (std.mem.eql(u8, param.name, name)) return true;
+        }
+        return false;
+    }
+
+    fn collectHiddenComptimeParamsFromValueExpr(
+        self: *Semantizer,
+        node: *const syn.STNode,
+        params: *std.array_list.Managed(gen.GenericParam),
+        s: *Scope,
+    ) !void {
+        switch (node.content) {
+            .identifier => |name| {
+                if (hasGenericParamNamed(params.items, name)) return;
+                if (typ.builtinFromName(name) != null) return;
+                if (s.lookupType(name) != null) return;
+                if (s.lookupBinding(name) != null) return;
+                try params.append(.{
+                    .name = name,
+                    .kind = .comptime_int,
+                    .value_type = .{ .builtin = .UIntNative },
+                });
+            },
+            .binary_operation => |bo| {
+                try self.collectHiddenComptimeParamsFromValueExpr(bo.left, params, s);
+                try self.collectHiddenComptimeParamsFromValueExpr(bo.right, params, s);
+            },
+            else => {},
+        }
+    }
+
+    fn collectHiddenCanBeParamsFromType(
+        self: *Semantizer,
+        ty: syn.Type,
+        params: *std.array_list.Managed(gen.GenericParam),
+        s: *Scope,
+    ) !void {
+        switch (ty) {
+            .pointer_type => |ptr_info| try self.collectHiddenCanBeParamsFromType(ptr_info.child.*, params, s),
+            .array_type => |arr_info| try self.collectHiddenCanBeParamsFromType(arr_info.element.*, params, s),
+            .struct_type_literal => |st| {
+                for (st.fields) |field| {
+                    if (field.type) |field_ty| {
+                        try self.collectHiddenCanBeParamsFromType(field_ty, params, s);
+                    }
+                    if (field.default_value) |value_expr| {
+                        try self.collectHiddenComptimeParamsFromValueExpr(value_expr, params, s);
+                    }
+                }
+            },
+            .generic_type_instantiation => |g| {
+                for (g.args.fields) |field| {
+                    if (field.type) |field_ty| {
+                        try self.collectHiddenCanBeParamsFromType(field_ty, params, s);
+                    }
+                    if (field.default_value) |value_expr| {
+                        try self.collectHiddenComptimeParamsFromValueExpr(value_expr, params, s);
+                    }
+                }
+            },
+            .type_name => {},
+        }
     }
 
     fn intValueFitsType(self: *Semantizer, value: i64, ty: sg.Type) bool {
