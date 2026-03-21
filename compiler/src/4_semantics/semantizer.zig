@@ -4101,12 +4101,22 @@ pub const Semantizer = struct {
                         const actual_str = try self.formatTypeText(actual, s);
                         defer actual_str.deinit();
                         const field_name = self.findTemplateFieldUsingParam(tmpl, param.name) orelse param.name;
-                        try self.diags.add(
-                            loc,
-                            .semantic,
-                            "type '{s}' does not implement abstract '{s}' required by parameter '.{s}' of '{s}'",
-                            .{ actual_str.bytes, constraint, field_name, fn_name },
-                        );
+                        if (try abs.buildConformanceDetails(constraint, actual, s, self.allocator)) |details| {
+                            defer details.deinit();
+                            try self.diags.add(
+                                loc,
+                                .semantic,
+                                "type '{s}' does not implement abstract '{s}' required by parameter '.{s}' of '{s}':\n{s}",
+                                .{ actual_str.bytes, constraint, field_name, fn_name, details.bytes },
+                            );
+                        } else {
+                            try self.diags.add(
+                                loc,
+                                .semantic,
+                                "type '{s}' does not implement abstract '{s}' required by parameter '.{s}' of '{s}'",
+                                .{ actual_str.bytes, constraint, field_name, fn_name },
+                            );
+                        }
                         return true;
                     }
                 }
