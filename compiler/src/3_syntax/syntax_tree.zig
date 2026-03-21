@@ -106,6 +106,7 @@ pub const SymbolDeclaration = struct {
 pub const TypeDeclaration = struct {
     name: Name,
     generic_params: []const []const u8,
+    generic_params_struct: ?StructTypeLiteral,
     value: *STNode,
 };
 
@@ -113,6 +114,7 @@ pub const TypeDeclaration = struct {
 pub const AbstractDeclaration = struct {
     name: Name,
     generic_params: []const []const u8,
+    generic_params_struct: ?StructTypeLiteral,
     // Composed abstracts (by name)
     requires_abstracts: []const []const u8,
     // Function requirements
@@ -123,6 +125,7 @@ pub const AbstractDeclaration = struct {
 pub const AbstractCanBe = struct {
     name: []const u8,
     generic_params: []const []const u8,
+    generic_params_struct: ?StructTypeLiteral,
     ty: Type,
 };
 
@@ -130,6 +133,7 @@ pub const AbstractCanBe = struct {
 pub const AbstractDefault = struct {
     name: Name,
     generic_params: []const []const u8,
+    generic_params_struct: ?StructTypeLiteral,
     ty: Type,
 };
 
@@ -142,6 +146,7 @@ pub const AbstractFunctionRequirement = struct {
 pub const FunctionDeclaration = struct {
     name: Name,
     generic_params: []const []const u8,
+    generic_params_struct: ?StructTypeLiteral,
     input: StructTypeLiteral, // Arguments
     output: StructTypeLiteral, // Named return params
     body: ?*STNode, // CodeBlock
