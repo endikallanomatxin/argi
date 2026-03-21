@@ -97,30 +97,41 @@ my_buf : Allocation = init(1024, my_allocator)
 In a type:
 
 ```
-Hashmap#(.from: Type, .to: Type) : Type = (
+HashMap#(.key: Type, .value: Type) : Type = (
 	.data      : Allocation
 )
 
 
-init (.allocator: Allocator, content: MapLiteral) -> (.hm: HashMap#(f, t)) :=  {
-	hm : Hashmap#(f, t)
-	hm.data = allocator|alloc(1024)
+init#(.key: Type, .value: Type) (
+    hm: $&HashMap#(.key: key, .value: value),
+    allocator: &Allocator,
+    content: MapLiteral,
+) -> () :=  {
+	hm& = (
+        .data = allocation_init(.size = 1024)
+    )
 	...
 }
 
 -- When adding stuff check capacity and reallocate if necessary.
 
-deinit (.hm:$&Hashmap&) -> () := {
-	hm.data|dealloc(_)
+deinit#(.key: Type, .value: Type) (hm: $&HashMap#(.key: key, .value: value)) -> () := {
+	allocation_deinit(.allocation = hm&.data)
 }
 
-copy (.hm: HashMap#(f, t), .allocator: &Allocator) -> (.out: HashMap#(f, t)) := {
+copy#(.key: Type, .value: Type) (
+    hm: HashMap#(.key: key, .value: value),
+    allocator: &Allocator,
+) -> (.out: HashMap#(.key: key, .value: value)) := {
 	-- allocate new storage and duplicate the contents
 }
 ```
 
 ```
-my_map : HashMap#(String,Int32) = init (my_allocator, ("a"=1, "b"=2))
+my_map : HashMap#(.key: String, .value: Int32) = HashMap#(.key: String, .value: Int32)(
+    my_allocator,
+    ("a" = 1, "b" = 2),
+)
 ```
 
 If `HashMap` provides `copy()`, then passing it by value or assigning it means

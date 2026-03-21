@@ -290,7 +290,7 @@ independent value, obtained through `copy()` when the type is copyable.
 > Por ejemplo, si quisiéramos hacer Array como parte de la librería estándar,
 > tendría que tener esta firma:
 > ```
-> init#(.t: Type, .n: Int)(.a: &Array#(.t), .source: ListLiteral#(.t)) -> () #inline { ... }
+> init#(.t: Type, .n: UIntNative)(.a: &Array#(.t), .source: ListLiteral#(.t)) -> () #inline { ... }
 > ```
 
 > [!IDEA]

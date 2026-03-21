@@ -76,8 +76,12 @@ It is checked at compiletime.
 
 ```
 #type(some_variable) == Int32
-#implements(some_variable, Int)
 ```
+
+> [!TODO]
+> Si queremos introspección compile-time sobre abstracts o contracts, definir una
+> sintaxis específica para ello en vez de reutilizar `implements`, que hoy es
+> una declaración.
 
 > [!TODO]
 > Sub-typing de List<User> vs List<Person> (variancia).
