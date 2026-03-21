@@ -1,16 +1,16 @@
 -- Así con generics
 
-Complex<T: Float> : Type = struct [
-  .re : T
-  .im : T
-]
+Complex#(.t: Type: Float) : Type = (
+  .re : t
+  .im : t
+)
 
-add (.a: Complex, .b: Complex) -> (out: Complex) := {
+add#(.t: Type: Float) (.a: Complex#(.t: t), .b: Complex#(.t: t)) -> (.out: Complex#(.t: t)) := {
   out.re = a.re + b.re
   out.im = a.im + b.im
 }
 
-mul (.a: Complex, .b: Complex) -> (out: Complex) := {
+mul#(.t: Type: Float) (.a: Complex#(.t: t), .b: Complex#(.t: t)) -> (.out: Complex#(.t: t)) := {
   out.re = a.re*b.re - a.im*b.im
   out.im = a.re*b.im + a.im*b.re
 }
@@ -18,13 +18,13 @@ mul (.a: Complex, .b: Complex) -> (out: Complex) := {
 
 -- Así con abstracts
 
-Complex :: Abstract = [
-	operator +(_, _) :: _
-	operator -(_, _) :: _
-	operator *(_, _) :: _
-	operator /(_, _) :: _
+Complex : Abstract = (
+	operator + (.left: Self, .right: Self) -> (.result: Self)
+	operator - (.left: Self, .right: Self) -> (.result: Self)
+	operator * (.left: Self, .right: Self) -> (.result: Self)
+	operator / (.left: Self, .right: Self) -> (.result: Self)
 	...
-]
+)
 
 Complex8 implements Complex
 Complex16 implements Complex

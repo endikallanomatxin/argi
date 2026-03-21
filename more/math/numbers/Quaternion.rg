@@ -1,10 +1,10 @@
-Quaternion :: Abstract = [
-	operator +(_, _) :: _
-	operator -(_, _) :: _
-	operator *(_, _) :: _
-	operator /(_, _) :: _
+Quaternion : Abstract = (
+	operator + (.left: Self, .right: Self) -> (.result: Self)
+	operator - (.left: Self, .right: Self) -> (.result: Self)
+	operator * (.left: Self, .right: Self) -> (.result: Self)
+	operator / (.left: Self, .right: Self) -> (.result: Self)
 	...
-]
+)
 
 Quaternion8 implements Quaternion
 Quaternion16 implements Quaternion
