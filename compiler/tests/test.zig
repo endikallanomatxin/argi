@@ -695,6 +695,20 @@ test "426X_for_requires_iterator_contract" {
     );
 }
 
+test "427_iterable_abstract" {
+    try clean();
+    try expectSuccessfulBuild("tests/427_iterable_abstract/main.rg");
+    try run();
+}
+
+test "428X_iterable_abstract_missing_canbe" {
+    try clean();
+    try buildExpectFail(
+        "tests/428X_iterable_abstract_missing_canbe/main.rg",
+        "does not implement abstract 'Iterable'",
+    );
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");
