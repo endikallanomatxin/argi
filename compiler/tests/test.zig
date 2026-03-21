@@ -759,6 +759,12 @@ test "435_dynamic_array_iterator_manual" {
     try run();
 }
 
+test "436_range_default_start_with_step" {
+    try clean();
+    try expectSuccessfulBuild("tests/436_range_default_start_with_step/main.rg");
+    try run();
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");

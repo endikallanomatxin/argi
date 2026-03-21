@@ -124,6 +124,7 @@ pub fn ensureValuePositionAllowed(
         args_struct.* = .{
             .fields = arg_fields,
             .ty = .{ .struct_type = &copy_fn.input },
+            .dispatch_prefix_positional_count = 1,
         };
 
         const args_node = try sg.makeSGNode(.{ .struct_value_literal = args_struct }, loc, allocator);
@@ -971,7 +972,11 @@ pub fn coerceStructLiteral(
     }
 
     const lit_ptr = try allocator.create(sg.StructValueLiteral);
-    lit_ptr.* = .{ .fields = coerced_fields, .ty = .{ .struct_type = expected } };
+    lit_ptr.* = .{
+        .fields = coerced_fields,
+        .ty = .{ .struct_type = expected },
+        .dispatch_prefix_positional_count = lit.dispatch_prefix_positional_count,
+    };
 
     const node = try allocator.create(sg.SGNode);
     node.* = .{
