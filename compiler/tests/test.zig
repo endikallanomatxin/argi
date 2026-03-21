@@ -735,6 +735,18 @@ test "431_negative_integer_literals" {
     try run();
 }
 
+test "432_range_int64" {
+    try clean();
+    try expectSuccessfulBuild("tests/432_range_int64/main.rg");
+    try run();
+}
+
+test "433_range_default_start" {
+    try clean();
+    try expectSuccessfulBuild("tests/433_range_default_start/main.rg");
+    try run();
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");

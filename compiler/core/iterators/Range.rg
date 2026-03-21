@@ -1,23 +1,41 @@
-Range : Type = (
-    .start: Int32
-    .end: Int32
-    .step: Int32
+Range#(.t: Type) : Type = (
+    .start: t
+    .end: t
+    .step: t
 )
 
-RangeIterator : Type = (
-    .current: Int32
-    .end: Int32
-    .step: Int32
+RangeIterator#(.t: Type) : Type = (
+    .current: t
+    .end: t
+    .step: t
 )
 
-Iterable canbe Range
-Iterator canbe RangeIterator
+Iterable#(.t: Type) canbe Range#(.t: t)
+Iterator#(.t: Type) canbe RangeIterator#(.t: t)
 
-init(
-    .p: $&Range,
-    .start: Int32,
-    .end: Int32,
-    .step: Int32,
+init#(.t: Type)(
+    .p: $&Range#(.t: t),
+    .end: t,
+) -> () := {
+    zero : t = 0
+    one : t = 1
+    init#(.t: t)(.p = p, .start = zero, .end = end, .step = one)
+}
+
+init#(.t: Type)(
+    .p: $&Range#(.t: t),
+    .start: t,
+    .end: t,
+) -> () := {
+    one : t = 1
+    init#(.t: t)(.p = p, .start = start, .end = end, .step = one)
+}
+
+init#(.t: Type)(
+    .p: $&Range#(.t: t),
+    .start: t,
+    .end: t,
+    .step: t,
 ) -> () := {
     p& = (
         .start = start,
@@ -26,7 +44,7 @@ init(
     )
 }
 
-to_iterator(.value: &Range) -> (.iterator: RangeIterator) := {
+to_iterator#(.t: Type)(.value: &Range#(.t: t)) -> (.iterator: RangeIterator#(.t: t)) := {
     iterator = (
         .current = value&.start,
         .end = value&.end,
@@ -34,9 +52,9 @@ to_iterator(.value: &Range) -> (.iterator: RangeIterator) := {
     )
 }
 
-has_next(.self: &RangeIterator) -> (.ok: Bool) := {
-    iterator :: RangeIterator = self&
-    zero :: Int32 = 0
+has_next#(.t: Type)(.self: &RangeIterator#(.t: t)) -> (.ok: Bool) := {
+    iterator :: RangeIterator#(.t: t) = self&
+    zero : t = 0
 
     if iterator.step > zero {
         ok = iterator.current < iterator.end
@@ -51,8 +69,8 @@ has_next(.self: &RangeIterator) -> (.ok: Bool) := {
     ok = 0 == 1
 }
 
-next(.self: $&RangeIterator) -> (.value: Int32) := {
-    iterator :: RangeIterator = self&
+next#(.t: Type)(.self: $&RangeIterator#(.t: t)) -> (.value: t) := {
+    iterator :: RangeIterator#(.t: t) = self&
     value = iterator.current
     self& = (
         .current = iterator.current + iterator.step,
