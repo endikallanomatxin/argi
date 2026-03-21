@@ -2209,13 +2209,33 @@ pub const Semantizer = struct {
             return error.Reported;
         };
 
+        return try self.makeArrayType(@intCast(length), element_ty);
+    }
+
+    fn makeArrayType(self: *Semantizer, length: usize, element_ty: sg.Type) !sg.Type {
         const elem_ptr = try self.allocator.create(sg.Type);
         elem_ptr.* = element_ty;
 
+        const arg_names = try self.allocator.alloc([]const u8, 2);
+        arg_names[0] = "n";
+        arg_names[1] = "t";
+
+        const arg_values = try self.allocator.alloc(sg.GenericIdentityArg, 2);
+        arg_values[0] = .{ .comptime_int = @intCast(length) };
+        arg_values[1] = .{ .type = element_ty };
+
+        const identity = try self.allocator.create(sg.GenericTypeIdentity);
+        identity.* = .{
+            .base_name = "Array",
+            .arg_names = arg_names,
+            .arg_values = arg_values,
+        };
+
         const sem_arr = try self.allocator.create(sg.ArrayType);
         sem_arr.* = .{
-            .length = @intCast(length),
+            .length = length,
             .element_type = elem_ptr,
+            .generic_identity = identity,
         };
         return .{ .array_type = sem_arr };
     }
@@ -6011,15 +6031,8 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const elem_ty_ptr = try self.allocator.create(sg.Type);
-        elem_ty_ptr.* = first_ty;
-
-        const arr_info = try self.allocator.create(sg.ArrayType);
-        arr_info.* = .{
-            .length = ll.elements.len,
-            .element_type = elem_ty_ptr,
-        };
-        return arr_info;
+        const arr_ty = try self.makeArrayType(ll.elements.len, first_ty);
+        return @constCast(arr_ty.array_type);
     }
 
     fn resolveType(self: *Semantizer, t: syn.Type, s: *Scope) SemErr!sg.Type {
@@ -6096,16 +6109,7 @@ pub const Semantizer = struct {
             },
             .array_type => |arr_info| blk_arr: {
                 const elem_ty = try self.resolveType(arr_info.element.*, s);
-                const elem_ptr = try self.allocator.create(sg.Type);
-                elem_ptr.* = elem_ty;
-
-                const sem_arr = try self.allocator.create(sg.ArrayType);
-                sem_arr.* = .{
-                    .length = arr_info.length,
-                    .element_type = elem_ptr,
-                };
-
-                break :blk_arr .{ .array_type = sem_arr };
+                break :blk_arr try self.makeArrayType(arr_info.length, elem_ty);
             },
         };
     }
@@ -6164,16 +6168,7 @@ pub const Semantizer = struct {
             },
             .array_type => |arr_info| blk_arr: {
                 const elem_ty = try self.resolveTypeWithSubst(arr_info.element.*, s, subst);
-                const elem_ptr = try self.allocator.create(sg.Type);
-                elem_ptr.* = elem_ty;
-
-                const sem_arr = try self.allocator.create(sg.ArrayType);
-                sem_arr.* = .{
-                    .length = arr_info.length,
-                    .element_type = elem_ptr,
-                };
-
-                break :blk_arr .{ .array_type = sem_arr };
+                break :blk_arr try self.makeArrayType(arr_info.length, elem_ty);
             },
         };
     }
