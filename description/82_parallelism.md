@@ -29,124 +29,124 @@ Podríamos definir una Spec de una gráfica de la siguiente manera:
 Tipos parte 
 
 ```
-ParallelProcessingUnit : Type = struct [
-    .parallel_groups: list[ParallelGroup]
-    .memory_domains: list[ParallelMemory]
-    .operations: list[ParallelOperation]
-]
+ParallelProcessingUnit : Type = (
+    .parallel_groups
+    .memory_domains
+    .operations
+)
 
-ParallelGroup : Type = struct [
-    .name: string
-    .groups: ?ParallelGroup
-    .number: int
-]
+ParallelGroup : Type = (
+    .name: String
+    .groups: Nullable#(.t: &ParallelGroup)
+    .number: UIntNative
+)
 
-ParallelMemory : Type = struct [
-    .name: string
-    .shared_across: ?ParallelGroup
-    .size: int
-    .latency: int
-    .access_mode: string
-]
+ParallelMemory : Type = (
+    .name: String
+    .shared_across: Nullable#(.t: &ParallelGroup)
+    .size: UIntNative
+    .latency: UIntNative
+    .access_mode: String
+)
 
-ParallelOperation : Type = struct [
-    .name: string
-    .supported_by: ?ParallelGroup
-    .supported_data_types: list[string]
-    .latency: int
-    .throughput: int
-    .invocation_name: string
-    .native_implementation: string
-]
+ParallelOperation : Type = (
+    .name: String
+    .supported_by: Nullable#(.t: &ParallelGroup)
+    .supported_data_types
+    .latency: UIntNative
+    .throughput: UIntNative
+    .invocation_name: String
+    .native_implementation: String
+)
 
-thread : ParallelGroup = [
-    .name="Thread",
-    .groups=nil,        // No tiene agrupación abstractior
-    .number=1           // Cada thread es independiente
-]
+thread : ParallelGroup = (
+    .name = "Thread",
+    .groups = ..none,   // No tiene agrupación superior
+    .number = 1         // Cada thread es independiente
+)
 
 
 // Cuda Example
 
 // Parallel Groups
 
-block : ParallelGroup = [
-    .name="Block",
-    .groups=&THREAD,       // Bloques contienen threads
-    .number=16             // 16 threads por bloque
-]
+block : ParallelGroup = (
+    .name = "Block",
+    .groups = ..some(.value = &thread),  // Bloques contienen threads
+    .number = 16
+)
 
-grid : ParallelGroup = [
-    .name="Grid",
-    .groups=&block,  // Grid contiene bloques
-    .number=4              // 4 bloques por grid
-]
+grid : ParallelGroup = (
+    .name = "Grid",
+    .groups = ..some(.value = &block),   // Grid contiene bloques
+    .number = 4
+)
 
 // Memory Domains
 
-registers : ParallelMemory = [
-    .name="Registers",
-    .sharedAcross=&THREAD,
-    .size=32 * 1024,       // 32 KB por thread
-    .latency=1,
-    .accessMode="Read-Write"
-]
-
-shared_memory : ParallelMemory = [
-    .name="Shared Memory",
-    .sharedAcross=&block,
-    .size=48 * 1024,       // 48 KB por bloque
-    .latency=10,
-    .accessMode="Read-Write"
+registers : ParallelMemory = (
+    .name = "Registers",
+    .shared_across = ..some(.value = &thread),
+    .size = 32 * 1024,       // 32 KB por thread
+    .latency = 1,
+    .access_mode = "Read-Write",
 )
 
-global_memory : ParallelMemory = [
-    .name="Global Memory",
-    .sharedAcross=&grid,
-    .size=8 * 1024 * 1024 * 1024, // 8 GB globales
-    .latency=400,
-    .accessMode="Read-Write"
-]
+shared_memory : ParallelMemory = (
+    .name = "Shared Memory",
+    .shared_across = ..some(.value = &block),
+    .size = 48 * 1024,       // 48 KB por bloque
+    .latency = 10,
+    .access_mode = "Read-Write",
+)
+
+global_memory : ParallelMemory = (
+    .name = "Global Memory",
+    .shared_across = ..some(.value = &grid),
+    .size = 8 * 1024 * 1024 * 1024, // 8 GB globales
+    .latency = 400,
+    .access_mode = "Read-Write",
+)
 
 // Operations
 
-matrix_multiply : ParallelOperation = [
-    .name="Matrix Multiply",
-    .supportedBy=&block,      // Operación a nivel de bloque
-    .supportedDataTypes=["Float32", "Float64"],
-    .latency=20,
-    .throughput=1000000,
-    .invocationName="matrix_mult",
-    .nativeImplementation="mma.sync"
-]
+matrix_multiply : ParallelOperation = (
+    .name = "Matrix Multiply",
+    .supported_by = ..some(.value = &block),    // Operación a nivel de bloque
+    .supported_data_types = ("Float32", "Float64"),
+    .latency = 20,
+    .throughput = 1000000,
+    .invocation_name = "matrix_mult",
+    .native_implementation = "mma.sync",
+)
 
-vector_add : ParallelOperation = [
-    .name="Vector Add",
-    .supportedBy=&THREAD,     // Operación a nivel de thread
-    .supportedDataTypes=["Int32", "Float32"],
-    .latency=5,
-    .throughput=10000000,
-    .invocationName="vector_add",
-    .nativeImplementation="add.f32"
-]
+vector_add : ParallelOperation = (
+    .name = "Vector Add",
+    .supported_by = ..some(.value = &thread),   // Operación a nivel de thread
+    .supported_data_types = ("Int32", "Float32"),
+    .latency = 5,
+    .throughput = 10000000,
+    .invocation_name = "vector_add",
+    .native_implementation = "add.f32",
+)
 
 // Spec
 
-cuda_spec : ParallelProcessingUnit = [
-    .parallel_groups=[
+cuda_spec : ParallelProcessingUnit = (
+    .parallel_groups = (
         &block,
         &grid
-    ],
-    .memory_domains=[
+    ),
+    .memory_domains = (
         &registers,
         &shared_memory,
         &global_memory
-    ],
-    .operations=[
+    ),
+    .operations = (
         &matrix_multiply,
         &vector_add
-    ]
-]
+    ),
+)
 ```
 
 Y en base a eso el lenguaje optimiza ejecución.
@@ -165,9 +165,9 @@ kernel vector_add_kernel(
         result[i] = vector_a[i] + vector_b[i]
 
 config = ExecutionConfig(
-    processing_unit=cuda_spec,
-    grid_dim=[4, 4],     // Configuración de grids
-    block_dim=[16, 16]   // Configuración de bloques
+    processing_unit = cuda_spec,
+    grid_dim = (4, 4),     // Configuración de grids
+    block_dim = (16, 16)   // Configuración de bloques
 )
 
 executor = KernelExecutor(config)
@@ -201,4 +201,3 @@ my_kernel<<<grid_size, block_size>>>(args) -- grid_size in blocks, block_size in
 ```
 
 Igual también se puede modelizar así la CPU para tener en cuenta los distintos niveles de cache o interacción entre hilos. Aunque no se yo si es necesario o aporta mucho. Al final la gracia es que como es simple se hace solo.
-
