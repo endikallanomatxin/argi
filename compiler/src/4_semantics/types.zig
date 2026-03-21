@@ -39,6 +39,32 @@ const TypePairText = struct {
 pub const pointer_size_bytes: u64 = @sizeOf(*usize);
 pub const pointer_alignment_bytes: u64 = pointer_size_bytes;
 
+fn genericIdentityArgEqual(a: sg.GenericIdentityArg, b: sg.GenericIdentityArg) bool {
+    return switch (a) {
+        .type => |aty| switch (b) {
+            .type => |bty| typesExactlyEqual(aty, bty),
+            else => false,
+        },
+        .comptime_int => |aint| switch (b) {
+            .comptime_int => |bint| aint == bint,
+            else => false,
+        },
+    };
+}
+
+fn genericIdentitiesEqual(a: *const sg.GenericTypeIdentity, b: *const sg.GenericTypeIdentity) bool {
+    if (!std.mem.eql(u8, a.base_name, b.base_name)) return false;
+    if (a.arg_names.len != b.arg_names.len) return false;
+
+    var i: usize = 0;
+    while (i < a.arg_names.len) : (i += 1) {
+        if (!std.mem.eql(u8, a.arg_names[i], b.arg_names[i])) return false;
+        if (!genericIdentityArgEqual(a.arg_values[i], b.arg_values[i])) return false;
+    }
+
+    return true;
+}
+
 pub fn isTypeTriviallyCopyable(ty: sg.Type, s: *Scope) bool {
     if (s.findDeinit(ty) != null) return false;
 
@@ -203,7 +229,12 @@ pub fn typesExactlyEqual(a: sg.Type, b: sg.Type) bool {
             else => false,
         },
         .struct_type => |ast| switch (b) {
-            .struct_type => |bst| ast == bst, // nominal: same named type instance
+            .struct_type => |bst| blk: {
+                if (ast == bst) break :blk true;
+                const a_identity = ast.generic_identity orelse break :blk false;
+                const b_identity = bst.generic_identity orelse break :blk false;
+                break :blk genericIdentitiesEqual(a_identity, b_identity);
+            },
             else => false,
         },
         .pointer_type => |apt_ptr| switch (b) {

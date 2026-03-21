@@ -2153,37 +2153,6 @@ pub const Semantizer = struct {
         };
     }
 
-    fn genericIdentityArgEqual(a: sg.GenericIdentityArg, b: sg.GenericIdentityArg) bool {
-        return switch (a) {
-            .type => |aty| switch (b) {
-                .type => |bty| typ.typesExactlyEqual(aty, bty),
-                else => false,
-            },
-            .comptime_int => |aint| switch (b) {
-                .comptime_int => |bint| aint == bint,
-                else => false,
-            },
-        };
-    }
-
-    fn genericTypeInstancesEqual(a: sg.Type, b: sg.Type) bool {
-        if (typ.typesExactlyEqual(a, b)) return true;
-        if (a != .struct_type or b != .struct_type) return false;
-
-        const a_identity = a.struct_type.generic_identity orelse return false;
-        const b_identity = b.struct_type.generic_identity orelse return false;
-        if (!std.mem.eql(u8, a_identity.base_name, b_identity.base_name)) return false;
-        if (a_identity.arg_names.len != b_identity.arg_names.len) return false;
-
-        var i: usize = 0;
-        while (i < a_identity.arg_names.len) : (i += 1) {
-            if (!std.mem.eql(u8, a_identity.arg_names[i], b_identity.arg_names[i])) return false;
-            if (!genericIdentityArgEqual(a_identity.arg_values[i], b_identity.arg_values[i])) return false;
-        }
-
-        return true;
-    }
-
     fn valueExprUsesParam(node: *const syn.STNode, param: []const u8) bool {
         return switch (node.content) {
             .identifier => |name| std.mem.eql(u8, name, param),
@@ -4498,7 +4467,7 @@ pub const Semantizer = struct {
 
                     const candidate = try self.resolveTypeWithSubst(first_ptr.child.*, s, &subst);
                     if (chosen) |existing| {
-                        if (!genericTypeInstancesEqual(existing, candidate)) return error.AmbiguousOverload;
+                        if (!typ.typesExactlyEqual(existing, candidate)) return error.AmbiguousOverload;
                     } else {
                         chosen = candidate;
                     }
