@@ -5,47 +5,50 @@ Tiene que poder trackear el grafo de operaciones y diferenciar.
 Inspirarse en JAX, pytorch
 
 ```
-Layer :: Abstract = [
-	forward(_, Tracked<NDVector>) -> Tracked<NDVector>
-]
+Layer : Abstract = (
+	forward(.layer: Self, .input: Tracked<NDVector>) -> (.output: Tracked<NDVector>)
+)
 
-DenseLayer :: Type = struct [
+DenseLayer : Type = (
 	._weights: Parameter<NDVector>
 	._biases: Parameter<NDVector>
-]
+)
 
 DenseLayer implements Layer
 
-init(#t::==DenseLayer, input_size: Int, output_size: Int) ::= DenseLayer {
+init(.p: $&DenseLayer, .input_size: Int, .output_size: Int) -> () := {
 	weights = NDVector|init([input_size, output_size])
 	biases  = NDVector|init([output_size])
-	return DenseLayer(weights, bias)
+	p& = (
+		._weights = weights,
+		._biases = biases,
+	)
 }
 
-forward(layer : DenseLayer, input :: Tracked<NDVector>) ::= Tracked<NDVector> {
-	return input|dot(layer._weights)|add(layer._biases)
+forward(.layer: DenseLayer, .input: Tracked<NDVector>) -> (.output: Tracked<NDVector>) := {
+	output = input|dot(layer._weights)|add(layer._biases)
 }
 ```
 
 Use:
 ```
-MyModel :: Type = struct [
+MyModel : Type = (
 	._layers: List<Layer> = [
 		DenseLayer|init(3, 4)
 		DenseLayer|init(4, 2)
 	]
-]
+)
 
-forward(#t::==MyModel, input :: Tracked<NDVector>) ::= Tracked<NDVector> {
+forward(.model: MyModel, .input: Tracked<NDVector>) -> (.output: Tracked<NDVector>) := {
 	for layer in model._layers {
 		input = layer|forward(input)
 	}
-	return input
+	output = input
 }
 
-loss(#t::==MyModel, input :: Tracked<NDVector>, target :: Tracked<NDVector>) ::= Tracked<Float> {
+loss(.model: MyModel, .input: Tracked<NDVector>, .target: Tracked<NDVector>) -> (.value: Tracked<Float>) := {
 	prediction = model|forward(input)
-	return mse(prediction, target)
+	value = mse(prediction, target)
 }
 
 model :: MyModel = MyModel()
