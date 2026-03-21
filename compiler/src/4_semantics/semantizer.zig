@@ -4739,6 +4739,37 @@ pub const Semantizer = struct {
             .input = to_iterator_arg,
         } }, loc);
 
+        var iterator_check_scope_storage: ?Scope = null;
+        var iterator_check_scope: *Scope = s;
+        defer if (iterator_check_scope_storage) |*tmp_scope| self.clearDeferred(tmp_scope);
+
+        if (iterable_copyable and f.iterable.*.content != .identifier) {
+            iterator_check_scope_storage = try Scope.init(self.allocator, s, null);
+            const tmp_binding = try self.allocator.create(sg.BindingDeclaration);
+            tmp_binding.* = .{
+                .name = iterable_name,
+                .origin_file = loc.file,
+                .mutability = .constant,
+                .ty = iterable_ty,
+                .initialization = null,
+            };
+            try iterator_check_scope_storage.?.bindings.put(iterable_name, tmp_binding);
+            iterator_check_scope = &iterator_check_scope_storage.?;
+        }
+
+        const iterator_te = try self.visitNode(to_iterator_call.*, iterator_check_scope);
+        if (!abs.typeImplementsAbstract("Iterator", iterator_te.ty, iterator_check_scope)) {
+            const iterator_ty = try self.formatTypeText(iterator_te.ty, iterator_check_scope);
+            defer iterator_ty.deinit();
+            try self.diags.add(
+                loc,
+                .semantic,
+                "for expects 'to_iterator(.value = &...)' to return a type implementing abstract 'Iterator', got '{s}'",
+                .{iterator_ty.bytes},
+            );
+            return error.Reported;
+        }
+
         const iterator_decl = try self.makeSynNode(.{ .symbol_declaration = .{
             .name = .{ .string = iterator_name, .location = loc },
             .type = null,
