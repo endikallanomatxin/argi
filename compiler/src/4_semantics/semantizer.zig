@@ -2220,6 +2220,19 @@ pub const Semantizer = struct {
         return .{ .array_type = sem_arr };
     }
 
+    fn resolveSpecialGenericType(
+        self: *Semantizer,
+        g: @FieldType(syn.Type, "generic_type_instantiation"),
+        s: *Scope,
+        subst: ?*const GenericSubst,
+    ) SemErr!?sg.Type {
+        if (std.mem.eql(u8, g.base_name.string, "Array")) {
+            return try self.resolveArrayTypeFromGenericArgs(g.base_name.location, g.args, s, subst);
+        }
+
+        return null;
+    }
+
     fn resolveExplicitGenericArg(
         self: *Semantizer,
         field: syn.StructTypeLiteralField,
@@ -4427,41 +4440,7 @@ pub const Semantizer = struct {
                     }
                 }
             },
-            .generic_type_instantiation => |g| {
-                if (std.mem.eql(u8, g.base_name.string, "Array")) {
-                    if (actual_ty != .array_type) return null;
-                    for (g.args.fields) |arg_field| {
-                        if (!std.mem.eql(u8, arg_field.name.string, "t")) continue;
-                        if (arg_field.type) |arg_ty| {
-                            if (!self.typeUsesParam(arg_ty, param_name)) continue;
-                            return self.extractTypeArgumentFromActual(arg_ty, actual_ty.array_type.element_type.*, param_name, s);
-                        }
-                    }
-                    return null;
-                }
-                const tmpl_ptr = s.lookupGenericTypeTemplate(g.base_name.string, g.args.fields.len) orelse null;
-                if (tmpl_ptr != null and actual_ty == .struct_type) {
-                    const actual_struct = actual_ty.struct_type;
-                    if (actual_struct.generic_identity) |identity| {
-                        if (std.mem.eql(u8, identity.base_name, g.base_name.string)) {
-                            for (g.args.fields) |arg_field| {
-                                if (arg_field.type) |arg_ty| {
-                                    if (!self.typeUsesParam(arg_ty, param_name)) continue;
-                                    var idx: usize = 0;
-                                    while (idx < identity.arg_names.len) : (idx += 1) {
-                                        if (std.mem.eql(u8, identity.arg_names[idx], arg_field.name.string)) {
-                                            switch (identity.arg_values[idx]) {
-                                                .type => |arg_ty_value| return arg_ty_value,
-                                                else => {},
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
+            .generic_type_instantiation => |g| return self.extractTypeArgumentFromGenericInstantiation(g, actual_ty, param_name, s),
         }
         return null;
     }
@@ -4495,43 +4474,91 @@ pub const Semantizer = struct {
                     }
                 }
             },
-            .generic_type_instantiation => |g| {
-                if (std.mem.eql(u8, g.base_name.string, "Array")) {
-                    if (actual_ty != .array_type) return null;
-                    for (g.args.fields) |arg_field| {
-                        if (!std.mem.eql(u8, arg_field.name.string, "n")) continue;
-                        if (arg_field.default_value) |value_expr| {
-                            if (valueExprUsesParam(value_expr, param_name)) return @intCast(actual_ty.array_type.length);
-                        }
-                    }
-                    return null;
-                }
-
-                const tmpl_ptr = s.lookupGenericTypeTemplate(g.base_name.string, g.args.fields.len) orelse null;
-                if (tmpl_ptr != null and actual_ty == .struct_type) {
-                    const actual_struct = actual_ty.struct_type;
-                    if (actual_struct.generic_identity) |identity| {
-                        if (std.mem.eql(u8, identity.base_name, g.base_name.string)) {
-                            for (g.args.fields) |arg_field| {
-                                if (arg_field.default_value) |value_expr| {
-                                    if (!valueExprUsesParam(value_expr, param_name)) continue;
-                                    var idx: usize = 0;
-                                    while (idx < identity.arg_names.len) : (idx += 1) {
-                                        if (std.mem.eql(u8, identity.arg_names[idx], arg_field.name.string)) {
-                                            switch (identity.arg_values[idx]) {
-                                                .comptime_int => |value| return value,
-                                                else => {},
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
+            .generic_type_instantiation => |g| return extractComptimeIntArgumentFromGenericInstantiation(g, actual_ty, param_name, s),
             else => {},
         }
+        return null;
+    }
+
+    fn extractTypeArgumentFromGenericInstantiation(
+        self: *Semantizer,
+        g: @FieldType(syn.Type, "generic_type_instantiation"),
+        actual_ty: sg.Type,
+        param_name: []const u8,
+        s: *Scope,
+    ) ?sg.Type {
+        if (std.mem.eql(u8, g.base_name.string, "Array")) {
+            if (actual_ty != .array_type) return null;
+            for (g.args.fields) |arg_field| {
+                if (!std.mem.eql(u8, arg_field.name.string, "t")) continue;
+                if (arg_field.type) |arg_ty| {
+                    if (!self.typeUsesParam(arg_ty, param_name)) continue;
+                    return self.extractTypeArgumentFromActual(arg_ty, actual_ty.array_type.element_type.*, param_name, s);
+                }
+            }
+            return null;
+        }
+
+        _ = s.lookupGenericTypeTemplate(g.base_name.string, g.args.fields.len) orelse return null;
+        if (actual_ty != .struct_type) return null;
+        const identity = actual_ty.struct_type.generic_identity orelse return null;
+        if (!std.mem.eql(u8, identity.base_name, g.base_name.string)) return null;
+
+        for (g.args.fields) |arg_field| {
+            if (arg_field.type) |arg_ty| {
+                if (!self.typeUsesParam(arg_ty, param_name)) continue;
+                var idx: usize = 0;
+                while (idx < identity.arg_names.len) : (idx += 1) {
+                    if (std.mem.eql(u8, identity.arg_names[idx], arg_field.name.string)) {
+                        switch (identity.arg_values[idx]) {
+                            .type => |arg_ty_value| return arg_ty_value,
+                            else => {},
+                        }
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    fn extractComptimeIntArgumentFromGenericInstantiation(
+        g: @FieldType(syn.Type, "generic_type_instantiation"),
+        actual_ty: sg.Type,
+        param_name: []const u8,
+        s: *Scope,
+    ) ?i64 {
+        if (std.mem.eql(u8, g.base_name.string, "Array")) {
+            if (actual_ty != .array_type) return null;
+            for (g.args.fields) |arg_field| {
+                if (!std.mem.eql(u8, arg_field.name.string, "n")) continue;
+                if (arg_field.default_value) |value_expr| {
+                    if (valueExprUsesParam(value_expr, param_name)) return @intCast(actual_ty.array_type.length);
+                }
+            }
+            return null;
+        }
+
+        _ = s.lookupGenericTypeTemplate(g.base_name.string, g.args.fields.len) orelse return null;
+        if (actual_ty != .struct_type) return null;
+        const identity = actual_ty.struct_type.generic_identity orelse return null;
+        if (!std.mem.eql(u8, identity.base_name, g.base_name.string)) return null;
+
+        for (g.args.fields) |arg_field| {
+            if (arg_field.default_value) |value_expr| {
+                if (!valueExprUsesParam(value_expr, param_name)) continue;
+                var idx: usize = 0;
+                while (idx < identity.arg_names.len) : (idx += 1) {
+                    if (std.mem.eql(u8, identity.arg_names[idx], arg_field.name.string)) {
+                        switch (identity.arg_values[idx]) {
+                            .comptime_int => |value| return value,
+                            else => {},
+                        }
+                    }
+                }
+            }
+        }
+
         return null;
     }
 
@@ -6030,9 +6057,7 @@ pub const Semantizer = struct {
             },
             .generic_type_instantiation => |g| blk_g: {
                 const base_name = g.base_name.string;
-                if (std.mem.eql(u8, base_name, "Array")) {
-                    break :blk_g try self.resolveArrayTypeFromGenericArgs(g.base_name.location, g.args, s, null);
-                }
+                if (try self.resolveSpecialGenericType(g, s, null)) |special_ty| break :blk_g special_ty;
                 if (s.lookupAbstractInfo(base_name)) |info| {
                     for (info.param_names) |pname| {
                         var found = false;
@@ -6100,9 +6125,7 @@ pub const Semantizer = struct {
             },
             .generic_type_instantiation => |g| blk_g: {
                 const base_name = g.base_name.string;
-                if (std.mem.eql(u8, base_name, "Array")) {
-                    break :blk_g try self.resolveArrayTypeFromGenericArgs(g.base_name.location, g.args, s, subst);
-                }
+                if (try self.resolveSpecialGenericType(g, s, subst)) |special_ty| break :blk_g special_ty;
                 if (s.lookupAbstractInfo(base_name)) |info| {
                     for (info.param_names) |pname| {
                         var found = false;
