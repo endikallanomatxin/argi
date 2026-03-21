@@ -67,8 +67,12 @@ fn genericIdentitiesEqual(a: *const sg.GenericTypeIdentity, b: *const sg.Generic
 
 pub fn genericIdentityOf(ty: sg.Type) ?*const sg.GenericTypeIdentity {
     return switch (ty) {
-        .struct_type => |st| st.generic_identity,
-        .array_type => |arr| arr.generic_identity,
+        .struct_type => |st| switch (st.identity orelse return null) {
+            .generic => |identity| identity,
+        },
+        .array_type => |arr| switch (arr.identity orelse return null) {
+            .generic => |identity| identity,
+        },
         else => null,
     };
 }
@@ -240,8 +244,8 @@ pub fn typesExactlyEqual(a: sg.Type, b: sg.Type) bool {
         .struct_type => |ast| switch (b) {
             .struct_type => |bst| blk: {
                 if (ast == bst) break :blk true;
-                const a_identity = ast.generic_identity orelse break :blk false;
-                const b_identity = bst.generic_identity orelse break :blk false;
+                const a_identity = genericIdentityOf(a) orelse break :blk false;
+                const b_identity = genericIdentityOf(b) orelse break :blk false;
                 break :blk genericIdentitiesEqual(a_identity, b_identity);
             },
             else => false,
@@ -260,8 +264,8 @@ pub fn typesExactlyEqual(a: sg.Type, b: sg.Type) bool {
                 const aat = aat_ptr.*;
                 const bat = bat_ptr.*;
                 if (aat_ptr == bat_ptr) break :blk_arr true;
-                if (aat.generic_identity) |a_identity| {
-                    const b_identity = bat.generic_identity orelse break :blk_arr false;
+                if (genericIdentityOf(a)) |a_identity| {
+                    const b_identity = genericIdentityOf(b) orelse break :blk_arr false;
                     break :blk_arr genericIdentitiesEqual(a_identity, b_identity);
                 }
                 if (aat.length != bat.length) break :blk_arr false;

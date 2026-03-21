@@ -152,8 +152,7 @@ fn matchTemplateType(pattern: syn.Type, actual: sg.Type, params: []const gen.Gen
             if (typ.builtinFromName(tn.string)) |builtin_ty| {
                 break :blk actual == .builtin and actual.builtin == builtin_ty;
             }
-            if (actual == .struct_type) {
-                const identity = actual.struct_type.generic_identity orelse break :blk false;
+            if (typ.genericIdentityOf(actual)) |identity| {
                 break :blk std.mem.eql(u8, identity.base_name, tn.string) and identity.arg_names.len == 0;
             }
             if (actual == .abstract_type) {
