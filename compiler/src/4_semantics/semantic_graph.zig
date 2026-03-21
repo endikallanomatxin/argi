@@ -119,6 +119,7 @@ pub const PointerType = struct {
 pub const ArrayType = struct {
     length: usize,
     element_type: *const Type,
+    generic_identity: ?*const GenericTypeIdentity = null,
 };
 
 pub const BuiltinType = enum {

@@ -251,6 +251,11 @@ pub fn typesExactlyEqual(a: sg.Type, b: sg.Type) bool {
             .array_type => |bat_ptr| blk_arr: {
                 const aat = aat_ptr.*;
                 const bat = bat_ptr.*;
+                if (aat_ptr == bat_ptr) break :blk_arr true;
+                if (aat.generic_identity) |a_identity| {
+                    const b_identity = bat.generic_identity orelse break :blk_arr false;
+                    break :blk_arr genericIdentitiesEqual(a_identity, b_identity);
+                }
                 if (aat.length != bat.length) break :blk_arr false;
                 break :blk_arr typesExactlyEqual(aat.element_type.*, bat.element_type.*);
             },
