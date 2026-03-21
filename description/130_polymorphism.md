@@ -64,9 +64,9 @@ Virtual types: Es para usar Vtable
 
 ```
 Virtual#(Foo) : Type = (
-.data_ptr: *anyopaque      // o inline storage si SBO
-.vtable:   *const Foo.Vtbl // tabla de fn ptrs derivada del Abstract
-.meta:     Meta            // type_id, flags de ownership, storage, etc.
+    .data_ptr : &Any       -- o inline storage si SBO
+    .vtable   : &Foo.Vtbl  -- tabla de fn ptrs derivada del Abstract
+    .meta     : Meta       -- type_id, flags de ownership, storage, etc.
 )
 ```
 
@@ -86,8 +86,7 @@ Para que un abstract sea Virtual-safe:
 Uso:
 
 ```
-process_foo (f: &Virtual#(Foo)&) -> () := {
+process_foo (f: Virtual#(Foo)) -> () := {
     f.vtable.do_something(f.data_ptr, ...)
 }
 ```
-

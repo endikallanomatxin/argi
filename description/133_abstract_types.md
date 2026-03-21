@@ -16,8 +16,8 @@ language. They are primarily for expressing static contracts.
 
 - Se pueden extender fuera de sus módulos de origen.
 
-- Si se usan en la firma de una función, se monomorfiza por defecto, para usar
-despacho dinámico en runtime, hay que usar `Virtual#(.a: AbstractType)`.
+- Si se usan en la firma de una función, se monomorfiza por defecto; para usar
+despacho dinámico en runtime, hay que usar `Virtual#(AbstractType)`.
 
 - Los tipos concretos que implementan un abstract pueden tener parámetros de
   comptime extra, pero tienen que poder mapear explícitamente los parámetros del
