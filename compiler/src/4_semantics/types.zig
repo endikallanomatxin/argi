@@ -65,6 +65,14 @@ fn genericIdentitiesEqual(a: *const sg.GenericTypeIdentity, b: *const sg.Generic
     return true;
 }
 
+pub fn genericIdentityOf(ty: sg.Type) ?*const sg.GenericTypeIdentity {
+    return switch (ty) {
+        .struct_type => |st| st.generic_identity,
+        .array_type => |arr| arr.generic_identity,
+        else => null,
+    };
+}
+
 pub fn isTypeTriviallyCopyable(ty: sg.Type, s: *Scope) bool {
     if (s.findDeinit(ty) != null) return false;
 

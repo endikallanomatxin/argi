@@ -4507,21 +4507,8 @@ pub const Semantizer = struct {
         param_name: []const u8,
         s: *Scope,
     ) ?sg.Type {
-        if (std.mem.eql(u8, g.base_name.string, "Array")) {
-            if (actual_ty != .array_type) return null;
-            for (g.args.fields) |arg_field| {
-                if (!std.mem.eql(u8, arg_field.name.string, "t")) continue;
-                if (arg_field.type) |arg_ty| {
-                    if (!self.typeUsesParam(arg_ty, param_name)) continue;
-                    return self.extractTypeArgumentFromActual(arg_ty, actual_ty.array_type.element_type.*, param_name, s);
-                }
-            }
-            return null;
-        }
-
-        _ = s.lookupGenericTypeTemplate(g.base_name.string, g.args.fields.len) orelse return null;
-        if (actual_ty != .struct_type) return null;
-        const identity = actual_ty.struct_type.generic_identity orelse return null;
+        _ = s.lookupGenericTypeTemplate(g.base_name.string, g.args.fields.len) orelse if (!std.mem.eql(u8, g.base_name.string, "Array")) return null;
+        const identity = typ.genericIdentityOf(actual_ty) orelse return null;
         if (!std.mem.eql(u8, identity.base_name, g.base_name.string)) return null;
 
         for (g.args.fields) |arg_field| {
@@ -4548,20 +4535,8 @@ pub const Semantizer = struct {
         param_name: []const u8,
         s: *Scope,
     ) ?i64 {
-        if (std.mem.eql(u8, g.base_name.string, "Array")) {
-            if (actual_ty != .array_type) return null;
-            for (g.args.fields) |arg_field| {
-                if (!std.mem.eql(u8, arg_field.name.string, "n")) continue;
-                if (arg_field.default_value) |value_expr| {
-                    if (valueExprUsesParam(value_expr, param_name)) return @intCast(actual_ty.array_type.length);
-                }
-            }
-            return null;
-        }
-
-        _ = s.lookupGenericTypeTemplate(g.base_name.string, g.args.fields.len) orelse return null;
-        if (actual_ty != .struct_type) return null;
-        const identity = actual_ty.struct_type.generic_identity orelse return null;
+        _ = s.lookupGenericTypeTemplate(g.base_name.string, g.args.fields.len) orelse if (!std.mem.eql(u8, g.base_name.string, "Array")) return null;
+        const identity = typ.genericIdentityOf(actual_ty) orelse return null;
         if (!std.mem.eql(u8, identity.base_name, g.base_name.string)) return null;
 
         for (g.args.fields) |arg_field| {
