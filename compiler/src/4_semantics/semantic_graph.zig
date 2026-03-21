@@ -90,6 +90,7 @@ pub const AbstractType = struct {
 
 pub const ChoiceType = struct {
     variants: []const ChoiceVariant,
+    identity: ?TypeIdentity = null,
 };
 
 pub const ChoiceVariant = struct {

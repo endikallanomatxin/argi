@@ -1698,6 +1698,13 @@ pub const Semantizer = struct {
 
                     const choice_ptr = try self.allocator.create(sg.ChoiceType);
                     choice_ptr.* = .{ .variants = try variants.toOwnedSlice() };
+                    const identity = try self.allocator.create(sg.GenericTypeIdentity);
+                    identity.* = .{
+                        .base_name = d.name.string,
+                        .arg_names = &.{},
+                        .arg_values = &.{},
+                    };
+                    choice_ptr.identity = .{ .generic = identity };
                     variants.deinit();
 
                     const td = try self.allocator.create(sg.TypeDeclaration);
@@ -5002,7 +5009,28 @@ pub const Semantizer = struct {
                             st_ptr.identity = .{ .generic = identity };
                             break :blk_struct .{ .struct_type = st_ptr };
                         },
-                        .choice_type_literal => |ct| .{ .choice_type = try self.choiceTypeFromLiteralWithSubst(ct, s, &subst) },
+                        .choice_type_literal => |ct| blk_choice: {
+                            const choice_ptr = try self.choiceTypeFromLiteralWithSubst(ct, s, &subst);
+                            const arg_names = try self.allocator.alloc([]const u8, tmpl.params.len);
+                            const arg_values = try self.allocator.alloc(sg.GenericIdentityArg, tmpl.params.len);
+                            var i: usize = 0;
+                            while (i < tmpl.params.len) : (i += 1) {
+                                arg_names[i] = tmpl.params[i].name;
+                                arg_values[i] = switch (tmpl.params[i].kind) {
+                                    .type => .{ .type = subst.types.get(tmpl.params[i].name).? },
+                                    .comptime_int => .{ .comptime_int = subst.ints.get(tmpl.params[i].name).? },
+                                };
+                            }
+
+                            const identity = try self.allocator.create(sg.GenericTypeIdentity);
+                            identity.* = .{
+                                .base_name = tmpl.name,
+                                .arg_names = arg_names,
+                                .arg_values = arg_values,
+                            };
+                            choice_ptr.identity = .{ .generic = identity };
+                            break :blk_choice .{ .choice_type = choice_ptr };
+                        },
                         else => error.NotYetImplemented,
                     };
                 }
