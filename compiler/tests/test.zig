@@ -137,6 +137,14 @@ test "054X_signed_integer_literal_overflow" {
     );
 }
 
+test "055X_negative_integer_literal_overflow" {
+    try clean();
+    try buildExpectFail(
+        "tests/055X_negative_integer_literal_overflow/main.rg",
+        "integer literal -129 does not fit in 'Int8' (min -128, max 127)",
+    );
+}
+
 test "11_function_calling" {
     try clean();
     try expectSuccessfulBuild("tests/11_function_calling/main.rg");
@@ -718,6 +726,12 @@ test "429_range_for" {
 test "430_range_step" {
     try clean();
     try expectSuccessfulBuild("tests/430_range_step/main.rg");
+    try run();
+}
+
+test "431_negative_integer_literals" {
+    try clean();
+    try expectSuccessfulBuild("tests/431_negative_integer_literals/main.rg");
     try run();
 }
 
