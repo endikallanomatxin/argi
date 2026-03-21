@@ -24,6 +24,15 @@ init#(.t: Type)(
 
 init#(.t: Type)(
     .p: $&Range#(.t: t),
+    .end: t,
+    .step: t,
+) -> () := {
+    zero : t = 0
+    init#(.t: t)(.p = p, .start = zero, .end = end, .step = step)
+}
+
+init#(.t: Type)(
+    .p: $&Range#(.t: t),
     .start: t,
     .end: t,
 ) -> () := {

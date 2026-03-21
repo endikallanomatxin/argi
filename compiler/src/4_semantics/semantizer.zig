@@ -2399,7 +2399,11 @@ pub const Semantizer = struct {
         const st_ptr = try self.structTypeFromVal(sl, s);
 
         const lit = try self.allocator.create(sg.StructValueLiteral);
-        lit.* = .{ .fields = fields, .ty = .{ .struct_type = st_ptr } };
+        lit.* = .{
+            .fields = fields,
+            .ty = .{ .struct_type = st_ptr },
+            .dispatch_prefix_positional_count = 0,
+        };
 
         const n = try sg.makeSGNode(.{ .struct_value_literal = lit }, undefined, self.allocator);
         return .{ .node = n, .ty = .{ .struct_type = st_ptr } };
@@ -2432,7 +2436,11 @@ pub const Semantizer = struct {
         st_ptr.* = .{ .fields = tys };
 
         const lit_ptr = try self.allocator.create(sg.StructValueLiteral);
-        lit_ptr.* = .{ .fields = vals, .ty = .{ .struct_type = st_ptr } };
+        lit_ptr.* = .{
+            .fields = vals,
+            .ty = .{ .struct_type = st_ptr },
+            .dispatch_prefix_positional_count = 0,
+        };
 
         const node_ptr = try sg.makeSGNode(.{ .struct_value_literal = lit_ptr }, undefined, self.allocator);
         return .{ .node = node_ptr, .ty = .{ .struct_type = st_ptr } };
@@ -3375,7 +3383,7 @@ pub const Semantizer = struct {
             try call_args.append(.{ .name = field_name, .expr = args[idx] });
         }
 
-        return self.buildCallInput(call_args.items);
+        return self.buildNamedCallInput(call_args.items);
     }
 
     fn fieldExprMatchesDispatch(
@@ -3428,6 +3436,20 @@ pub const Semantizer = struct {
         };
     }
 
+    fn findStructTypeFieldByNameFrom(fields: []const sg.StructTypeField, start: usize, name: []const u8) ?*const sg.StructTypeField {
+        for (fields[start..]) |*field| {
+            if (std.mem.eql(u8, field.name, name)) return field;
+        }
+        return null;
+    }
+
+    fn findStructValueFieldByNameFrom(fields: []const sg.StructValueLiteralField, start: usize, name: []const u8) ?*const sg.StructValueLiteralField {
+        for (fields[start..]) |*field| {
+            if (std.mem.eql(u8, field.name, name)) return field;
+        }
+        return null;
+    }
+
     fn coerceCallFieldExpr(
         self: *Semantizer,
         expected: sg.Type,
@@ -3466,12 +3488,20 @@ pub const Semantizer = struct {
 
         const actual_struct = input_te.ty.struct_type;
         const actual_value = input_te.node.content.struct_value_literal;
-        if (expected.fields.len != actual_struct.fields.len or expected.fields.len != actual_value.fields.len) {
+        const positional_prefix: usize = @min(actual_value.dispatch_prefix_positional_count, actual_value.fields.len);
+
+        if (positional_prefix > expected.fields.len) {
             return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_node, s, self.allocator, self.diags);
         }
 
+        for (actual_value.fields[positional_prefix..]) |actual_field| {
+            if (typ.findFieldByName(expected, actual_field.name) == null) {
+                return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_node, s, self.allocator, self.diags);
+            }
+        }
+
         const coerced_fields = try self.allocator.alloc(sg.StructValueLiteralField, expected.fields.len);
-        for (expected.fields, 0..) |exp_field, idx| {
+        for (expected.fields[0..positional_prefix], 0..) |exp_field, idx| {
             const actual_field = actual_value.fields[idx];
             const actual_field_ty = actual_struct.fields[idx].ty;
             var field_expr = typ.TypedExpr{
@@ -3485,10 +3515,39 @@ pub const Semantizer = struct {
             };
         }
 
+        for (expected.fields[positional_prefix..], positional_prefix..) |exp_field, idx| {
+            const actual_field = findStructValueFieldByNameFrom(actual_value.fields, positional_prefix, exp_field.name);
+            const actual_field_ty = findStructTypeFieldByNameFrom(actual_struct.fields, positional_prefix, exp_field.name);
+
+            if (actual_field != null and actual_field_ty != null) {
+                var field_expr = typ.TypedExpr{
+                    .node = @constCast(actual_field.?.value),
+                    .ty = actual_field_ty.?.ty,
+                };
+                field_expr = try self.coerceCallFieldExpr(exp_field.ty, field_expr, expr_node, s);
+                coerced_fields[idx] = .{
+                    .name = exp_field.name,
+                    .value = field_expr.node,
+                };
+                continue;
+            }
+
+            if (exp_field.default_value) |default_node| {
+                coerced_fields[idx] = .{
+                    .name = exp_field.name,
+                    .value = default_node,
+                };
+                continue;
+            }
+
+            return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_node, s, self.allocator, self.diags);
+        }
+
         const value_ptr = try self.allocator.create(sg.StructValueLiteral);
         value_ptr.* = .{
             .fields = coerced_fields,
             .ty = .{ .struct_type = expected },
+            .dispatch_prefix_positional_count = @intCast(positional_prefix),
         };
 
         const node = try sg.makeSGNode(.{ .struct_value_literal = value_ptr }, expr_node.location, self.allocator);
@@ -3507,17 +3566,38 @@ pub const Semantizer = struct {
 
         const actual_struct = input_te.ty.struct_type;
         const actual_value = input_te.node.content.struct_value_literal;
+        const positional_prefix: usize = @min(actual_value.dispatch_prefix_positional_count, actual_value.fields.len);
 
-        if (expected.fields.len != actual_struct.fields.len) return false;
+        if (positional_prefix > expected.fields.len) return false;
 
-        for (expected.fields, 0..) |exp_field, idx| {
-            const actual_field_ty = actual_struct.fields[idx];
-            const actual_field_value = actual_value.fields[idx];
+        for (actual_value.fields[positional_prefix..]) |actual_field| {
+            if (typ.findFieldByName(expected, actual_field.name) == null) return false;
+        }
+
+        for (expected.fields[0..positional_prefix], 0..) |exp_field, idx| {
+            if (idx >= actual_struct.fields.len or idx >= actual_value.fields.len) return false;
             const actual_field_expr = typ.TypedExpr{
-                .node = @constCast(actual_field_value.value),
-                .ty = actual_field_ty.ty,
+                .node = @constCast(actual_value.fields[idx].value),
+                .ty = actual_struct.fields[idx].ty,
             };
             if (!self.fieldExprMatchesDispatch(exp_field.ty, actual_field_expr, s)) return false;
+        }
+
+        for (expected.fields[positional_prefix..]) |exp_field| {
+            const actual_field_ty = findStructTypeFieldByNameFrom(actual_struct.fields, positional_prefix, exp_field.name);
+            const actual_field_value = findStructValueFieldByNameFrom(actual_value.fields, positional_prefix, exp_field.name);
+
+            if (actual_field_ty != null and actual_field_value != null) {
+                const actual_field_expr = typ.TypedExpr{
+                    .node = @constCast(actual_field_value.?.value),
+                    .ty = actual_field_ty.?.ty,
+                };
+                if (!self.fieldExprMatchesDispatch(exp_field.ty, actual_field_expr, s)) return false;
+                continue;
+            }
+
+            if (exp_field.default_value != null) continue;
+            return false;
         }
 
         return true;
@@ -3557,6 +3637,7 @@ pub const Semantizer = struct {
         struct_value.* = .{
             .fields = fields,
             .ty = init_input_ty,
+            .dispatch_prefix_positional_count = 1,
         };
 
         const node = try sg.makeSGNode(.{ .struct_value_literal = struct_value }, loc, self.allocator);
@@ -5354,7 +5435,11 @@ pub const Semantizer = struct {
         expr: typ.TypedExpr,
     };
 
-    fn buildCallInput(self: *Semantizer, args: []const CallArg) !typ.TypedExpr {
+    fn buildCallInputWithPositionalPrefix(
+        self: *Semantizer,
+        args: []const CallArg,
+        positional_prefix_count: u32,
+    ) !typ.TypedExpr {
         var ty_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         var val_fields = std.array_list.Managed(sg.StructValueLiteralField).init(self.allocator.*);
 
@@ -5373,11 +5458,23 @@ pub const Semantizer = struct {
         val_fields.deinit();
 
         const lit_ptr = try self.allocator.create(sg.StructValueLiteral);
-        lit_ptr.* = .{ .fields = val_slice, .ty = .{ .struct_type = struct_ptr } };
+        lit_ptr.* = .{
+            .fields = val_slice,
+            .ty = .{ .struct_type = struct_ptr },
+            .dispatch_prefix_positional_count = positional_prefix_count,
+        };
 
         const node = try sg.makeSGNode(.{ .struct_value_literal = lit_ptr }, undefined, self.allocator);
 
         return .{ .node = node, .ty = .{ .struct_type = struct_ptr } };
+    }
+
+    fn buildCallInput(self: *Semantizer, args: []const CallArg) !typ.TypedExpr {
+        return self.buildCallInputWithPositionalPrefix(args, @intCast(args.len));
+    }
+
+    fn buildNamedCallInput(self: *Semantizer, args: []const CallArg) !typ.TypedExpr {
+        return self.buildCallInputWithPositionalPrefix(args, 0);
     }
 
     fn handlePointerAssignment(

@@ -211,6 +211,7 @@ pub const ExplicitCast = struct {
 pub const StructValueLiteral = struct {
     fields: []const StructValueLiteralField,
     ty: Type,
+    dispatch_prefix_positional_count: u32 = 0,
 };
 
 pub const StructValueLiteralField = struct {
