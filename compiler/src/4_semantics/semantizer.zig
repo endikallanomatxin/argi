@@ -497,8 +497,20 @@ pub const Semantizer = struct {
             .symbol_declaration => |d| self.handleSymbolDecl(d, s, n.location) catch |err| blk: {
                 switch (err) {
                     error.Reported => break :blk err,
+                    error.SymbolNotFound => {
+                        if (self.defer_unknown_top_level and self.current_top_node != null) {
+                            try self.pushTopLevelForRetry();
+                            break :blk error.Reported;
+                        }
+                        try self.diags.add(
+                            n.location,
+                            .semantic,
+                            "unknown symbol in declaration of '{s}'",
+                            .{d.name.string},
+                        );
+                    },
                     error.UnknownType => {
-                        if (s.parent == null and self.defer_unknown_top_level) {
+                        if (self.defer_unknown_top_level and self.current_top_node != null) {
                             try self.pushTopLevelForRetry();
                             break :blk error.Reported; // sin diagnóstico por ahora
                         }
@@ -552,6 +564,10 @@ pub const Semantizer = struct {
             },
 
             .abstract_declaration => |ad| self.handleAbstractDecl(ad, s) catch |err| blk: {
+                if (err == error.UnknownType and s.parent == null and self.defer_unknown_top_level) {
+                    try self.pushTopLevelForRetry();
+                    break :blk error.Reported;
+                }
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -607,7 +623,7 @@ pub const Semantizer = struct {
                     );
                     break :blk error.Reported;
                 }
-                if (err == error.UnknownType and s.parent == null and self.defer_unknown_top_level) {
+                if ((err == error.UnknownType or err == error.SymbolNotFound) and s.parent == null and self.defer_unknown_top_level) {
                     try self.pushTopLevelForRetry();
                     break :blk error.Reported;
                 }
@@ -622,6 +638,9 @@ pub const Semantizer = struct {
 
             .assignment => |a| self.handleAssignment(a, s) catch |err| blk: {
                 if (err == error.Reported) break :blk err;
+                if (err == error.SymbolNotFound and self.defer_unknown_top_level and self.current_top_node != null) {
+                    break :blk err;
+                }
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -731,6 +750,9 @@ pub const Semantizer = struct {
 
             .struct_field_access => |sfa| self.handleStructFieldAccess(sfa, s) catch |err| blk: {
                 if (err == error.Reported) break :blk err;
+                if (err == error.SymbolNotFound and self.defer_unknown_top_level and self.current_top_node != null) {
+                    break :blk err;
+                }
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -787,6 +809,9 @@ pub const Semantizer = struct {
 
             .function_call => |fc| self.handleCall(fc, s) catch |err| blk: {
                 if (err == error.Reported) break :blk err;
+                if (err == error.SymbolNotFound and self.defer_unknown_top_level and self.current_top_node != null) {
+                    break :blk err;
+                }
                 if (err == error.AmbiguousOverload) {
                     const tv_in = self.visitNode(fc.input.*, s) catch null;
                     try self.addAmbiguousFunctionDiagnostic(
@@ -820,6 +845,9 @@ pub const Semantizer = struct {
 
             .code_block => |blk| self.handleCodeBlock(blk, s) catch |err| blk_ret: {
                 if (err == error.Reported) break :blk_ret err;
+                if (err == error.SymbolNotFound and self.defer_unknown_top_level and self.current_top_node != null) {
+                    break :blk_ret err;
+                }
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -1018,12 +1046,6 @@ pub const Semantizer = struct {
         // Register abstract as a nominal semantic type.
         if (s.types.contains(ad.name.string)) return error.SymbolAlreadyDefined;
 
-        const abs_ty = try self.allocator.create(sg.AbstractType);
-        abs_ty.* = .{ .name = ad.name.string };
-        const td = try self.allocator.create(sg.TypeDeclaration);
-        td.* = .{ .name = ad.name.string, .origin_file = ad.name.location.file, .ty = .{ .abstract_type = abs_ty } };
-        try s.types.put(ad.name.string, td);
-
         // Store abstract info (resolved requirements) in scope
         var reqs = std.array_list.Managed(abs.AbstractFunctionReqSem).init(self.allocator.*);
         const generic_params = ad.generic_params;
@@ -1063,17 +1085,40 @@ pub const Semantizer = struct {
                                 }
                             }
                         },
+                        .generic_type_instantiation => |g| {
+                            if (s.lookupAbstractInfo(g.base_name.string) != null) {
+                                abstract_req = g.base_name.string;
+                            } else {
+                                ty = try self.resolveType(t, s);
+                            }
+                        },
                         else => {
                             if (t == .pointer_type) {
                                 const ptr_info = t.pointer_type;
                                 const child_node = ptr_info.child.*;
-                                if (child_node == .type_name and std.mem.eql(u8, child_node.type_name.string, "Self")) {
-                                    ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
-                                } else {
-                                    ty = try self.resolveType(t, s);
+                                switch (child_node) {
+                                    .type_name => |tn| {
+                                        if (std.mem.eql(u8, tn.string, "Self")) {
+                                            ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
+                                        } else if (s.lookupAbstractInfo(tn.string) != null) {
+                                            ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
+                                            abstract_req = tn.string;
+                                        } else {
+                                            ty = try self.resolveType(t, s);
+                                        }
+                                    },
+                                    .generic_type_instantiation => |g| {
+                                        if (s.lookupAbstractInfo(g.base_name.string) != null) {
+                                            ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
+                                            abstract_req = g.base_name.string;
+                                        } else {
+                                            ty = try self.resolveType(t, s);
+                                        }
+                                    },
+                                    else => {
+                                        ty = try self.resolveType(t, s);
+                                    },
                                 }
-                            } else {
-                                ty = try self.resolveType(t, s);
                             }
                         },
                     }
@@ -1127,17 +1172,40 @@ pub const Semantizer = struct {
                                 }
                             }
                         },
+                        .generic_type_instantiation => |g| {
+                            if (s.lookupAbstractInfo(g.base_name.string) != null) {
+                                abstract_req = g.base_name.string;
+                            } else {
+                                ty = try self.resolveType(t, s);
+                            }
+                        },
                         else => {
                             if (t == .pointer_type) {
                                 const ptr_info = t.pointer_type;
                                 const child_node = ptr_info.child.*;
-                                if (child_node == .type_name and std.mem.eql(u8, child_node.type_name.string, "Self")) {
-                                    ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
-                                } else {
-                                    ty = try self.resolveType(t, s);
+                                switch (child_node) {
+                                    .type_name => |tn| {
+                                        if (std.mem.eql(u8, tn.string, "Self")) {
+                                            ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
+                                        } else if (s.lookupAbstractInfo(tn.string) != null) {
+                                            ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
+                                            abstract_req = tn.string;
+                                        } else {
+                                            ty = try self.resolveType(t, s);
+                                        }
+                                    },
+                                    .generic_type_instantiation => |g| {
+                                        if (s.lookupAbstractInfo(g.base_name.string) != null) {
+                                            ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
+                                            abstract_req = g.base_name.string;
+                                        } else {
+                                            ty = try self.resolveType(t, s);
+                                        }
+                                    },
+                                    else => {
+                                        ty = try self.resolveType(t, s);
+                                    },
                                 }
-                            } else {
-                                ty = try self.resolveType(t, s);
                             }
                         },
                     }
@@ -1178,6 +1246,12 @@ pub const Semantizer = struct {
             .param_names = generic_params,
         };
         reqs.deinit();
+
+        const abs_ty = try self.allocator.create(sg.AbstractType);
+        abs_ty.* = .{ .name = ad.name.string };
+        const td = try self.allocator.create(sg.TypeDeclaration);
+        td.* = .{ .name = ad.name.string, .origin_file = ad.name.location.file, .ty = .{ .abstract_type = abs_ty } };
+        try s.types.put(ad.name.string, td);
         try s.abstracts.put(ad.name.string, info);
 
         const n = try sg.makeSGNode(.{ .type_declaration = td }, undefined, self.allocator);
@@ -3228,6 +3302,11 @@ pub const Semantizer = struct {
                                 else => return inner_err,
                             };
                             if (abstract_inferred) |instantiated_abstract| break :blk instantiated_abstract;
+                            if (self.defer_unknown_top_level and self.current_top_node != null) {
+                                if (!(try self.hasVisibleFunctionNamed(call.callee, s, loc))) {
+                                    return error.SymbolNotFound;
+                                }
+                            }
                             if (try self.addMissingAbstractImplementationDiagnostic(call.callee, input_te.ty, s, loc)) {
                                 return error.Reported;
                             }
@@ -4713,6 +4792,18 @@ pub const Semantizer = struct {
                 .semantic,
                 "for cannot iterate a non-copyable expression directly; bind it to a name first",
                 .{},
+            );
+            return error.Reported;
+        }
+
+        if (!abs.typeImplementsAbstract("Iterable", iterable_ty, s)) {
+            const iterable_ty_text = try self.formatTypeText(iterable_ty, s);
+            defer iterable_ty_text.deinit();
+            try self.diags.add(
+                loc,
+                .semantic,
+                "for expects a type implementing abstract 'Iterable', got '{s}'",
+                .{iterable_ty_text.bytes},
             );
             return error.Reported;
         }

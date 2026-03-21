@@ -29,6 +29,7 @@ DynamicArrayIterator#(.t: Type) : Type = (
 )
 
 Iterator#(.t: Type) canbe DynamicArrayIterator#(.t: t)
+Iterable#(.t: Type) canbe DynamicArray#(.t: t)
 
 init #(.t: Type) (
     .p: $&DynamicArray#(.t: t),
