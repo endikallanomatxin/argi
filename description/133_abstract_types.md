@@ -17,10 +17,11 @@ language. They are primarily for expressing static contracts.
 - Se pueden extender fuera de sus módulos de origen.
 
 - Si se usan en la firma de una función, se monomorfiza por defecto, para usar
-despacho dinámico en runtime, hay que usar Virtual#(AbstractType).
+despacho dinámico en runtime, hay que usar `Virtual#(.a: AbstractType)`.
 
-- Los subtipes de un abstract tienen que tener al menos los mismo compiletime
-parameters que el abstract.
+- Los tipos concretos que implementan un abstract pueden tener parámetros de
+  comptime extra, pero tienen que poder mapear explícitamente los parámetros del
+  contrato abstracto.
 
 
 ## Declaración
@@ -33,7 +34,7 @@ Así se declara un abstract:
 ```
 Animal : Abstract = (
 	-- Las funciones se definen con la sintaxis de currying.
-	speak (Self) -> String
+	speak(.who: Self) -> (.text: String)
 )
 
 speak (.d: Dog) -> (.s: String) := {
@@ -53,20 +54,25 @@ Animal defaultsto Dog
 
 ```
 Addable : Abstract = (
-	operator + (Self, Self) -> (Self)
+	operator + (.left: Self, .right: Self) -> (.result: Self)
 )
 ```
 
 To use with generics:
 
 ```
-List#(t: Type) : Abstract = (
-	operator get[](&Self, Int) -> (t)
-	operator set[](!&Self, Int, t) -> ()
+Indexable#(.t: Type) : Abstract = (
+	operator get[] (.self: &Self, .i: UIntNative) -> (.value: t)
 )
 
-DynamicArray#(t) implements List#(t)
-StaticArray#(t, Any) implements List#(t)
+Resizable#(.t: Type) : Abstract = (
+	operator get[] (.self: &Self, .i: UIntNative) -> (.value: t)
+	operator set[] (.self: $&Self, .i: UIntNative, .value: t) -> ()
+	push (.self: $&Self, .value: t) -> ()
+)
+
+DynamicArray#(.t: Type) implements Resizable#(.t: t)
+Array#(.n: UIntNative, .t: Type) implements Indexable#(.t: t)
 ```
 
 To compose them:
@@ -86,7 +92,7 @@ Cases:
 be the same, to express that, use compile-time-parameters.
 
     ```
-    foo#(.t: Type:ExampleAbstract) (.a: t, .b: t) -> (.r: t) := { ... }
+    foo#(.t: Type: ExampleAbstract) (.a: t, .b: t) -> (.r: t) := { ... }
     ```
 
     Todas las llamadas a funciones que usan abstracts se podrían expresar
@@ -119,7 +125,7 @@ need to have a way to express the possible interoperability between abstract typ
 Challlenge for expresssiveness 1: "Abstract Matrices that interoperate".
 
 ```
-AbstractMatrix#(t: Type) : Abstract = (
+AbstractMatrix#(.t: Type) : Abstract = (
 
     -- Closed under addition
     operator + (.left: Self, .right: Self) -> (.result: Self)
@@ -128,7 +134,7 @@ AbstractMatrix#(t: Type) : Abstract = (
     operator * (.left: Self, .right: Self) -> (.result: Self)
 
     -- Multiplicable with other AbstractMatrix types:
-    operator * (.left: Self, .right: AnyOther(t)) -> (.result: SomeOther(t))
+    operator * (.left: Self, .right: AnyOther#(.t: t)) -> (.result: SomeOther#(.t: t))
     -- If you don't want to implement it with all other AbstractMatrix types,
     -- you can provide a default implementation that uses conversion to DenseMatrix.
 )
@@ -152,28 +158,28 @@ AbstractMatrix#(
 
 
     -- Get item
-    operator get[] (.m: Self, .i: IndexingSpec) -> (.r: t)
+    operator get[] (.m: &Self, .i: IndexingSpec) -> (.r: t)
 
     -- Set item
-    operator set[] (.m: Self, .i: IndexingSpec, .v: t) -> ()
+    operator set[] (.m: $&Self, .i: IndexingSpec, .v: t) -> ()
 
 
     -- Addable with other matrix types of the same shape
     operator + (
-        .left  : Self     #(t, rows, cols)
-	.right : AnyOther #(t, rows, cols)
+        .left  : Self
+	.right : AnyOther#(.t: t, .rows = rows, .cols = cols)
     ) -> (
-	.result: SomeOther#(t, rows, cols)
+	.result: SomeOther#(.t: t, .rows = rows, .cols = cols)
     )
 
     -- Multiplicable with other compatible AbstractMatrix types:
     operator * #(
         .right_matrix_cols: indexing_type
     ) (
-        .left  : Self     #(t, rows, cols)
-        .right : AnyOther #(t, cols, right_matrix_cols)
+        .left  : Self
+        .right : AnyOther#(.t: t, .rows = cols, .cols = right_matrix_cols)
     ) -> (
-        .result: SomeOther#(t, rows, right_matrix_cols)
+        .result: SomeOther#(.t: t, .rows = rows, .cols = right_matrix_cols)
     )
 )
 ```

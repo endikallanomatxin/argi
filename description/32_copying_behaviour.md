@@ -28,7 +28,7 @@ If an existing named value is used in value position and the type implements
 `copy()`, the compiler may insert an implicit call to `copy()`.
 
 ```
-m1 : Map = ()
+m1 : HashMap#(.key: String, .value: Int32) = ()
 m2 := m1  -- Implicitly calls copy(m1)
 ```
 
@@ -96,7 +96,10 @@ When they do, assigning them or passing them by value means creating an
 independent value.
 
 ```
-arr1 := DynamicArray#(Int32)((1, 2, 3), allocator)
+arr1 :: DynamicArray#(.t: Int32) = DynamicArray#(.t: Int32)(.capacity = 3)
+arr1 | push($&_, 1)
+arr1 | push($&_, 2)
+arr1 | push($&_, 3)
 arr2 := arr1
 
 arr2 | push($&_, 4)
