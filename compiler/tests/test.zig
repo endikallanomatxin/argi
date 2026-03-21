@@ -753,6 +753,12 @@ test "434_generic_type_initializer_from_init" {
     try run();
 }
 
+test "435_dynamic_array_iterator_manual" {
+    try clean();
+    try expectSuccessfulBuild("tests/435_dynamic_array_iterator_manual/main.rg");
+    try run();
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");
