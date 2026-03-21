@@ -747,6 +747,12 @@ test "433_range_default_start" {
     try run();
 }
 
+test "434_generic_type_initializer_from_init" {
+    try clean();
+    try expectSuccessfulBuild("tests/434_generic_type_initializer_from_init/main.rg");
+    try run();
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");

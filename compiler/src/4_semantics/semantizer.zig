@@ -2153,6 +2153,37 @@ pub const Semantizer = struct {
         };
     }
 
+    fn genericIdentityArgEqual(a: sg.GenericIdentityArg, b: sg.GenericIdentityArg) bool {
+        return switch (a) {
+            .type => |aty| switch (b) {
+                .type => |bty| typ.typesExactlyEqual(aty, bty),
+                else => false,
+            },
+            .comptime_int => |aint| switch (b) {
+                .comptime_int => |bint| aint == bint,
+                else => false,
+            },
+        };
+    }
+
+    fn genericTypeInstancesEqual(a: sg.Type, b: sg.Type) bool {
+        if (typ.typesExactlyEqual(a, b)) return true;
+        if (a != .struct_type or b != .struct_type) return false;
+
+        const a_identity = a.struct_type.generic_identity orelse return false;
+        const b_identity = b.struct_type.generic_identity orelse return false;
+        if (!std.mem.eql(u8, a_identity.base_name, b_identity.base_name)) return false;
+        if (a_identity.arg_names.len != b_identity.arg_names.len) return false;
+
+        var i: usize = 0;
+        while (i < a_identity.arg_names.len) : (i += 1) {
+            if (!std.mem.eql(u8, a_identity.arg_names[i], b_identity.arg_names[i])) return false;
+            if (!genericIdentityArgEqual(a_identity.arg_values[i], b_identity.arg_values[i])) return false;
+        }
+
+        return true;
+    }
+
     fn valueExprUsesParam(node: *const syn.STNode, param: []const u8) bool {
         return switch (node.content) {
             .identifier => |name| std.mem.eql(u8, name, param),
@@ -4356,19 +4387,18 @@ pub const Semantizer = struct {
         return null;
     }
 
-    fn inferGenericTypeArgFromInitializer(
+    fn inferGenericArgFromInitTemplate(
         self: *Semantizer,
-        tmpl: gen.GenericTypeTemplate,
+        tmpl: gen.GenericTemplate,
         param: gen.GenericParam,
         init_input_ty: sg.Type,
         s: *Scope,
     ) ?gen.GenericArgValue {
         if (init_input_ty != .struct_type) return null;
-        if (tmpl.body.*.content != .struct_type_literal) return null;
-
         const actual = init_input_ty.struct_type;
-        const st = tmpl.body.*.content.struct_type_literal;
-        for (st.fields) |fld| {
+        if (tmpl.input.fields.len == 0) return null;
+
+        for (tmpl.input.fields[1..]) |fld| {
             if (fld.type) |ty_node| {
                 if (!self.typeUsesParam(ty_node, param.name)) continue;
                 if (typ.findFieldByName(actual, fld.name.string)) |actual_field| {
@@ -4389,22 +4419,37 @@ pub const Semantizer = struct {
         return null;
     }
 
-    fn initializerMatchesTypeBody(
+    fn initializerMatchesInitTemplate(
         self: *Semantizer,
-        body_ty: *const sg.StructType,
+        tmpl: gen.GenericTemplate,
         init_input_ty: sg.Type,
+        subst: *const GenericSubst,
         s: *Scope,
-    ) bool {
-        _ = self;
-        _ = s;
+    ) SemErr!bool {
         if (init_input_ty != .struct_type) return false;
+        if (tmpl.input.fields.len == 0) return false;
         const actual = init_input_ty.struct_type;
 
         for (actual.fields) |actual_field| {
-            const body_field = typ.findFieldByName(body_ty, actual_field.name) orelse return false;
-            if (typ.typesExactlyEqual(body_field.ty, actual_field.ty)) continue;
-            if (typ.typesStructurallyEqual(body_field.ty, actual_field.ty)) continue;
-            if (typ.typesCompatible(body_field.ty, actual_field.ty)) continue;
+            var idx: ?usize = null;
+            for (tmpl.input.fields, 0..) |field, field_idx| {
+                if (std.mem.eql(u8, field.name.string, actual_field.name)) {
+                    idx = field_idx;
+                    break;
+                }
+            }
+            if (idx == null or idx.? == 0) return false;
+            const expected_field = tmpl.input.fields[idx.?];
+            const expected_field_ty = if (expected_field.type) |ty_node|
+                try self.resolveTypeWithSubst(ty_node, s, subst)
+            else
+                return false;
+            if (fld_matches: {
+                if (typ.typesExactlyEqual(expected_field_ty, actual_field.ty)) break :fld_matches true;
+                if (typ.typesStructurallyEqual(expected_field_ty, actual_field.ty)) break :fld_matches true;
+                if (typ.typesCompatible(expected_field_ty, actual_field.ty)) break :fld_matches true;
+                break :fld_matches false;
+            }) continue;
             return false;
         }
 
@@ -4421,49 +4466,39 @@ pub const Semantizer = struct {
 
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
-            if (sc.generic_types.getPtr(name)) |list_ptr| {
+            if (sc.generic_functions.getPtr("init")) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
-                    if (tmpl.body.*.content != .struct_type_literal) continue;
+                    if (tmpl.dispatch_kind != .regular) continue;
+                    if (tmpl.input.fields.len == 0) continue;
+
+                    const first_field = tmpl.input.fields[0];
+                    const first_ptr = switch (first_field.type orelse continue) {
+                        .pointer_type => |ptr| ptr,
+                        else => continue,
+                    };
+                    const target_ty = switch (first_ptr.child.*) {
+                        .generic_type_instantiation => |g| g,
+                        else => continue,
+                    };
+                    if (!std.mem.eql(u8, target_ty.base_name.string, name)) continue;
 
                     var subst = GenericSubst.init(self.allocator);
                     defer subst.deinit();
 
                     var ok = true;
                     for (tmpl.params) |param| {
-                        const inferred = self.inferGenericTypeArgFromInitializer(tmpl, param, init_input_ty, s) orelse {
+                        const inferred = self.inferGenericArgFromInitTemplate(tmpl, param, init_input_ty, s) orelse {
                             ok = false;
                             break;
                         };
                         try self.putGenericArg(&subst, param, inferred);
                     }
                     if (!ok) continue;
+                    if (!(try self.initializerMatchesInitTemplate(tmpl, init_input_ty, &subst, s))) continue;
 
-                    const st_lit = tmpl.body.*.content.struct_type_literal;
-                    const st_ptr = try self.structTypeFromLiteralWithSubst(st_lit, s, &subst);
-                    if (!self.initializerMatchesTypeBody(st_ptr, init_input_ty, s)) continue;
-
-                    const arg_names = try self.allocator.alloc([]const u8, tmpl.params.len);
-                    const arg_values = try self.allocator.alloc(sg.GenericIdentityArg, tmpl.params.len);
-                    var i: usize = 0;
-                    while (i < tmpl.params.len) : (i += 1) {
-                        arg_names[i] = tmpl.params[i].name;
-                        arg_values[i] = switch (tmpl.params[i].kind) {
-                            .type => .{ .type = subst.types.get(tmpl.params[i].name).? },
-                            .comptime_int => .{ .comptime_int = subst.ints.get(tmpl.params[i].name).? },
-                        };
-                    }
-
-                    const identity = try self.allocator.create(sg.GenericTypeIdentity);
-                    identity.* = .{
-                        .base_name = tmpl.name,
-                        .arg_names = arg_names,
-                        .arg_values = arg_values,
-                    };
-                    st_ptr.generic_identity = identity;
-
-                    const candidate: sg.Type = .{ .struct_type = st_ptr };
+                    const candidate = try self.resolveTypeWithSubst(first_ptr.child.*, s, &subst);
                     if (chosen) |existing| {
-                        if (!typ.typesExactlyEqual(existing, candidate)) return error.AmbiguousOverload;
+                        if (!genericTypeInstancesEqual(existing, candidate)) return error.AmbiguousOverload;
                     } else {
                         chosen = candidate;
                     }
