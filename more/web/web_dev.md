@@ -28,11 +28,11 @@ Yo creo que es la mejor forma de hacer templating.
 #### Web UI Component
 
 ```
-WebComponent :: Type = [
-	.html : List<HTML>
-	.css  : List<CSS>
-	.js   : List<JS>
-]
+WebComponent : Type = (
+	.html : List#(.t: HTML)
+	.css  : List#(.t: CSS)
+	.js   : List#(.t: JS)
+)
 
 HTML :: Type = String
 CSS  :: Type = String
@@ -46,7 +46,7 @@ Igual podríamos hacer algo rollo GenerateAndCollectStatic. O algo así. Pero pa
 
 
 ```
-my_component : WebComponent = [
+my_component : WebComponent = (
 
 	.my_var : Int
 
@@ -73,7 +73,7 @@ my_component : WebComponent = [
 			}, 1000);
 		</script>
 	"""
-]
+)
 ```
 
 
@@ -228,5 +228,4 @@ my_image : Asset = [...]
 ```
 
 Cuando se hace el frontend, se referencian.
-
 
