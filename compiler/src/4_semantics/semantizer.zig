@@ -404,11 +404,13 @@ pub const Semantizer = struct {
             return .{ .node = node, .ty = payload_ty };
         }
 
+        const choice_text = try self.formatTypeText(.{ .choice_type = choice_ty }, s);
+        defer choice_text.deinit();
         try self.diags.add(
             loc,
             .semantic,
-            "choice has no variant '..{s}'",
-            .{variant_name.string},
+            "choice type '{s}' has no variant '..{s}'",
+            .{ choice_text.bytes, variant_name.string },
         );
         return error.Reported;
     }
@@ -2732,11 +2734,13 @@ pub const Semantizer = struct {
             return .{ .node = node, .ty = payload_ty };
         }
 
+        const choice_text = try self.formatTypeText(.{ .choice_type = choice_ty }, s);
+        defer choice_text.deinit();
         try self.diags.add(
             acc.variant_name.location,
             .semantic,
-            "choice has no variant '..{s}'",
-            .{acc.variant_name.string},
+            "choice type '{s}' has no variant '..{s}'",
+            .{ choice_text.bytes, acc.variant_name.string },
         );
         return error.Reported;
     }
@@ -3455,11 +3459,13 @@ pub const Semantizer = struct {
                         break :blk_variant typ.TypedExpr{ .node = typed_node, .ty = value_ty };
                     }
 
+                    const choice_text = try self.formatTypeText(value_ty, s);
+                    defer choice_text.deinit();
                     try self.diags.add(
                         loc,
                         .semantic,
-                        "choice has no variant '..{s}'",
-                        .{raw_variant.variant_name},
+                        "choice type '{s}' has no variant '..{s}'",
+                        .{ choice_text.bytes, raw_variant.variant_name },
                     );
                     return error.Reported;
                 }
@@ -5417,11 +5423,13 @@ pub const Semantizer = struct {
             }
 
             if (found_idx == null) {
+                const choice_text = try self.formatTypeText(value_te.ty, s);
+                defer choice_text.deinit();
                 try self.diags.add(
                     case_syn.variant_name.location,
                     .semantic,
-                    "choice has no variant '..{s}'",
-                    .{case_syn.variant_name.string},
+                    "choice type '{s}' has no variant '..{s}'",
+                    .{ choice_text.bytes, case_syn.variant_name.string },
                 );
                 return error.Reported;
             }
@@ -6374,11 +6382,13 @@ pub const Semantizer = struct {
                         break :blk_variant typ.TypedExpr{ .node = typed_node, .ty = value_te.ty };
                     }
 
+                    const choice_text = try self.formatTypeText(value_te.ty, s);
+                    defer choice_text.deinit();
                     try self.diags.add(
                         variant_node.location,
                         .semantic,
-                        "choice has no variant '..{s}'",
-                        .{raw_variant.name.string},
+                        "choice type '{s}' has no variant '..{s}'",
+                        .{ choice_text.bytes, raw_variant.name.string },
                     );
                     return error.Reported;
                 }
