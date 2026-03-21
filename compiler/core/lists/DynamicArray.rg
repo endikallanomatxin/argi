@@ -17,15 +17,8 @@ DynamicArray #(.t: Type) : Type = (
 )
 
 DynamicArrayIterator#(.t: Type) : Type = (
-    --
-    -- TODO: Revisit whether this iterator should store `&DynamicArray#(.t: t)`
-    -- directly once generic pointer handling in the checker is strong enough.
-    -- For now it keeps the flattened runtime state because the direct pointer
-    -- representation currently trips generic type checking.
-    --
-    .data   : $&UInt8
-    .length : UIntNative
-    .index  : UIntNative
+    .array : &DynamicArray#(.t: t)
+    .index : UIntNative
 )
 
 Iterator#(.t: Type) canbe DynamicArrayIterator#(.t: t)
@@ -220,8 +213,7 @@ to_iterator#(.t: Type) (
     .value: &DynamicArray#(.t: t)
 ) -> (.iterator: DynamicArrayIterator#(.t: t)) := {
     iterator = (
-        .data = value&.allocation.data,
-        .length = value&.length,
+        .array = value,
         .index = 0,
     )
 }
@@ -230,7 +222,7 @@ has_next#(.t: Type) (
     .self: &DynamicArrayIterator#(.t: t)
 ) -> (.ok: Bool) := {
     iterator :: DynamicArrayIterator#(.t: t) = self&
-    ok = iterator.index < iterator.length
+    ok = iterator.index < iterator.array&.length
 }
 
 next#(.t: Type) (
@@ -238,14 +230,11 @@ next#(.t: Type) (
 ) -> (.value: t) := {
     iterator :: DynamicArrayIterator#(.t: t) = self&
     current_index :: UIntNative = iterator.index
-    element_size :: UIntNative = size_of(.type = t)
-    base :: UIntNative = cast#(.to: UIntNative)(.value = iterator.data)
-    addr :: UIntNative = base + current_index * element_size
+    addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = iterator.array, .offset = current_index).address
     ptr : &t = cast#(.to: &t)(.value = addr)
     value = ptr&
     self& = (
-        .data = iterator.data,
-        .length = iterator.length,
+        .array = iterator.array,
         .index = current_index + 1,
     )
 }
