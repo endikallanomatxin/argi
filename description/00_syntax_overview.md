@@ -345,6 +345,6 @@ This is a very confortable way of manual memory management. Almost automatic.
 
 ```
 MyGenericType#(.t: Type) : Type = (
-	.datos : List<t>
+	.datos : List#(.t: t)
 )
 ```
