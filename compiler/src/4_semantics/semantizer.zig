@@ -1670,14 +1670,14 @@ pub const Semantizer = struct {
                     const dst_const = td.ty.struct_type;
                     const dst: *sg.StructType = @constCast(dst_const);
                     dst.fields = st_ptr.fields;
-                    if (dst.generic_identity == null) {
+                    if (dst.identity == null) {
                         const identity = try self.allocator.create(sg.GenericTypeIdentity);
                         identity.* = .{
                             .base_name = d.name.string,
                             .arg_names = &.{},
                             .arg_values = &.{},
                         };
-                        dst.generic_identity = identity;
+                        dst.identity = .{ .generic = identity };
                     }
                     const noop = try self.makeNoopNode(d.value.location);
                     break :blk_struct .{ .node = noop, .ty = .{ .builtin = .Any } };
@@ -2235,7 +2235,7 @@ pub const Semantizer = struct {
         sem_arr.* = .{
             .length = length,
             .element_type = elem_ptr,
-            .generic_identity = identity,
+            .identity = .{ .generic = identity },
         };
         return .{ .array_type = sem_arr };
     }
@@ -5005,7 +5005,7 @@ pub const Semantizer = struct {
                                 .arg_names = arg_names,
                                 .arg_values = arg_values,
                             };
-                            st_ptr.generic_identity = identity;
+                            st_ptr.identity = .{ .generic = identity };
                             break :blk_struct .{ .struct_type = st_ptr };
                         },
                         .choice_type_literal => |ct| .{ .choice_type = try self.choiceTypeFromLiteralWithSubst(ct, s, &subst) },

@@ -119,7 +119,7 @@ pub const PointerType = struct {
 pub const ArrayType = struct {
     length: usize,
     element_type: *const Type,
-    generic_identity: ?*const GenericTypeIdentity = null,
+    identity: ?TypeIdentity = null,
 };
 
 pub const BuiltinType = enum {
@@ -143,7 +143,11 @@ pub const BuiltinType = enum {
 
 pub const StructType = struct {
     fields: []const StructTypeField,
-    generic_identity: ?*const GenericTypeIdentity = null,
+    identity: ?TypeIdentity = null,
+};
+
+pub const TypeIdentity = union(enum) {
+    generic: *const GenericTypeIdentity,
 };
 
 pub const GenericTypeIdentity = struct {
