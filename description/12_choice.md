@@ -81,11 +81,10 @@ x..ok
 
 En Rust (a parte del match) se puede hacer así:
 
-```
-// Referencia comparativa con Option, no sintaxis de Argi
-let x: Option#(Int32) = Some(10);
+```rust
+let x: Option<i32> = Some(10);
 if let Some(v) = x {
-println!("Valor: {}", v);
+    println!("Valor: {}", v);
 }
 ```
 
@@ -113,5 +112,3 @@ match x {
 > [!NOTE] Eso es muy rust
 > No se si cuada mucho con nuestro lenguaje.
 > Igual hay que darle una vuelta a una sintaxis más general, que aplique más alla de los choice with payload.
-
-

@@ -266,7 +266,7 @@ init ($&my_thing, "something", 12, true)
 If wanted you can return an empty errable:
 
 ```
-init(out: $&MyType, ...) -> Errable#((), InitError)
+init(out: $&MyType, ...) -> Errable#(.t: (), .e: InitError)
 ```
 
 ### Deinit
