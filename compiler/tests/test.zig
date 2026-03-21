@@ -687,6 +687,14 @@ test "425X_iterator_abstract_missing_canbe" {
     );
 }
 
+test "426X_for_requires_iterator_contract" {
+    try clean();
+    try buildExpectFail(
+        "tests/426X_for_requires_iterator_contract/main.rg",
+        "for expects 'to_iterator(.value = &...)' to return a type implementing abstract 'Iterator'",
+    );
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");
