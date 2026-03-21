@@ -18,6 +18,8 @@ pub const AbstractFunctionReqSem = struct {
     // indices of input fields whose type was 'Self'
     input_self_indices: []const u32,
     output_self_indices: []const u32,
+    input_pointer_self_indices: []const u32,
+    output_pointer_self_indices: []const u32,
     // parallel slices to track generic parameter usage per field
     input_generic_param_indices: []const ?u32,
     output_generic_param_indices: []const ?u32,
@@ -149,6 +151,13 @@ fn matchTemplateType(pattern: syn.Type, actual: sg.Type, params: []const gen.Gen
             }
             if (typ.builtinFromName(tn.string)) |builtin_ty| {
                 break :blk actual == .builtin and actual.builtin == builtin_ty;
+            }
+            if (actual == .struct_type) {
+                const identity = actual.struct_type.generic_identity orelse break :blk false;
+                break :blk std.mem.eql(u8, identity.base_name, tn.string) and identity.arg_names.len == 0;
+            }
+            if (actual == .abstract_type) {
+                break :blk std.mem.eql(u8, actual.abstract_type.name, tn.string);
             }
             break :blk false;
         },
@@ -369,6 +378,14 @@ pub fn funcInputMatchesRequirement(
             continue;
         }
 
+        if (containsIndex(rq.input_pointer_self_indices, @intCast(i))) {
+            if (cf.ty != .pointer_type) return false;
+            if (rq.input.fields[i].ty != .pointer_type) return false;
+            if (cf.ty.pointer_type.mutability != rq.input.fields[i].ty.pointer_type.mutability) return false;
+            if (!typ.typesExactlyEqual(concrete, cf.ty.pointer_type.child.*)) return false;
+            continue;
+        }
+
         if (rq.input_abstract_requirements.len > i) {
             if (rq.input_abstract_requirements[i]) |abs_name| {
                 if (!typeImplementsAbstract(abs_name, cf.ty, s)) return false;
@@ -409,6 +426,14 @@ pub fn funcOutputMatchesRequirement(
 
         if (containsIndex(rq.output_self_indices, @intCast(i))) {
             if (!typ.typesExactlyEqual(concrete, co.ty)) return false;
+            continue;
+        }
+
+        if (containsIndex(rq.output_pointer_self_indices, @intCast(i))) {
+            if (co.ty != .pointer_type) return false;
+            if (rq.output.fields[i].ty != .pointer_type) return false;
+            if (co.ty.pointer_type.mutability != rq.output.fields[i].ty.pointer_type.mutability) return false;
+            if (!typ.typesExactlyEqual(concrete, co.ty.pointer_type.child.*)) return false;
             continue;
         }
 
@@ -476,7 +501,22 @@ fn buildExpectedInputWithConcrete(rq: *const AbstractFunctionReqSem, concrete: s
     var fields = try allocator.alloc(sg.StructTypeField, rq.input.fields.len);
     for (rq.input.fields, 0..) |f, i| {
         const is_self = containsIndex(rq.input_self_indices, @intCast(i));
-        fields[i] = .{ .name = f.name, .ty = if (is_self) concrete else f.ty, .default_value = null };
+        const is_pointer_self = containsIndex(rq.input_pointer_self_indices, @intCast(i));
+        const field_ty = if (is_self) blk: {
+            break :blk concrete;
+        } else if (is_pointer_self and f.ty == .pointer_type) blk: {
+            const child = try allocator.create(sg.Type);
+            child.* = concrete;
+            const sem_ptr = try allocator.create(sg.PointerType);
+            sem_ptr.* = .{
+                .mutability = f.ty.pointer_type.mutability,
+                .child = child,
+            };
+            break :blk sg.Type{ .pointer_type = sem_ptr };
+        } else blk: {
+            break :blk f.ty;
+        };
+        fields[i] = .{ .name = f.name, .ty = field_ty, .default_value = null };
     }
     const st_ptr = try allocator.create(sg.StructType);
     st_ptr.* = .{ .fields = fields };
