@@ -172,49 +172,78 @@ fn matchTemplateType(pattern: syn.Type, actual: sg.Type, params: []const gen.Gen
             break :blk matchTemplateType(arr_info.element.*, actual.array_type.element_type.*, params, bindings);
         },
         .struct_type_literal => false,
-        .generic_type_instantiation => |g| blk: {
-            if (std.mem.eql(u8, g.base_name.string, "Array")) {
-                if (actual != .array_type) break :blk false;
-                for (g.args.fields) |field| {
-                    if (std.mem.eql(u8, field.name.string, "t")) {
-                        if (field.type) |field_ty| {
-                            if (!matchTemplateType(field_ty, actual.array_type.element_type.*, params, bindings)) break :blk false;
-                        } else break :blk false;
-                    } else if (std.mem.eql(u8, field.name.string, "n")) {
-                        const value_node = field.default_value orelse break :blk false;
-                        if (!matchComptimeIntPattern(value_node, @intCast(actual.array_type.length), params, bindings)) break :blk false;
-                    } else break :blk false;
-                }
-                break :blk true;
-            }
-
-            if (actual != .struct_type) break :blk false;
-            const identity = actual.struct_type.generic_identity orelse break :blk false;
-            if (!std.mem.eql(u8, identity.base_name, g.base_name.string)) break :blk false;
-
-            for (g.args.fields) |field| {
-                var idx: usize = 0;
-                var found = false;
-                while (idx < identity.arg_names.len) : (idx += 1) {
-                    if (!std.mem.eql(u8, identity.arg_names[idx], field.name.string)) continue;
-                    found = true;
-                    switch (identity.arg_values[idx]) {
-                        .type => |arg_ty| {
-                            const field_ty = field.type orelse break :blk false;
-                            if (!matchTemplateType(field_ty, arg_ty, params, bindings)) break :blk false;
-                        },
-                        .comptime_int => |arg_int| {
-                            const value_node = field.default_value orelse break :blk false;
-                            if (!matchComptimeIntPattern(value_node, arg_int, params, bindings)) break :blk false;
-                        },
-                    }
-                    break;
-                }
-                if (!found) break :blk false;
-            }
-            break :blk true;
-        },
+        .generic_type_instantiation => |g| matchGenericInstantiationType(g, actual, params, bindings),
     };
+}
+
+fn matchArrayInstantiation(
+    g: @FieldType(syn.Type, "generic_type_instantiation"),
+    actual: sg.Type,
+    params: []const gen.GenericParam,
+    bindings: *TemplateBindings,
+) bool {
+    if (actual != .array_type) return false;
+
+    for (g.args.fields) |field| {
+        if (std.mem.eql(u8, field.name.string, "t")) {
+            const field_ty = field.type orelse return false;
+            if (!matchTemplateType(field_ty, actual.array_type.element_type.*, params, bindings)) return false;
+        } else if (std.mem.eql(u8, field.name.string, "n")) {
+            const value_node = field.default_value orelse return false;
+            if (!matchComptimeIntPattern(value_node, @intCast(actual.array_type.length), params, bindings)) return false;
+        } else {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+fn matchNominalGenericInstantiation(
+    g: @FieldType(syn.Type, "generic_type_instantiation"),
+    actual: sg.Type,
+    params: []const gen.GenericParam,
+    bindings: *TemplateBindings,
+) bool {
+    if (actual != .struct_type) return false;
+    const identity = actual.struct_type.generic_identity orelse return false;
+    if (!std.mem.eql(u8, identity.base_name, g.base_name.string)) return false;
+
+    for (g.args.fields) |field| {
+        var idx: usize = 0;
+        var found = false;
+        while (idx < identity.arg_names.len) : (idx += 1) {
+            if (!std.mem.eql(u8, identity.arg_names[idx], field.name.string)) continue;
+            found = true;
+            switch (identity.arg_values[idx]) {
+                .type => |arg_ty| {
+                    const field_ty = field.type orelse return false;
+                    if (!matchTemplateType(field_ty, arg_ty, params, bindings)) return false;
+                },
+                .comptime_int => |arg_int| {
+                    const value_node = field.default_value orelse return false;
+                    if (!matchComptimeIntPattern(value_node, arg_int, params, bindings)) return false;
+                },
+            }
+            break;
+        }
+        if (!found) return false;
+    }
+
+    return true;
+}
+
+fn matchGenericInstantiationType(
+    g: @FieldType(syn.Type, "generic_type_instantiation"),
+    actual: sg.Type,
+    params: []const gen.GenericParam,
+    bindings: *TemplateBindings,
+) bool {
+    if (std.mem.eql(u8, g.base_name.string, "Array")) {
+        return matchArrayInstantiation(g, actual, params, bindings);
+    }
+
+    return matchNominalGenericInstantiation(g, actual, params, bindings);
 }
 
 fn templateImplementsCandidate(tmpl: AbstractImplTemplate, candidate: sg.Type, allocator: *const std.mem.Allocator) bool {
