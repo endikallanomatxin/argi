@@ -53,6 +53,37 @@ const CallBindingAccess = struct {
     mode: CallAccessMode,
 };
 
+const GenericSubst = struct {
+    allocator: *const std.mem.Allocator,
+    types: std.StringHashMap(sg.Type),
+    ints: std.StringHashMap(i64),
+
+    fn init(allocator: *const std.mem.Allocator) GenericSubst {
+        return .{
+            .allocator = allocator,
+            .types = std.StringHashMap(sg.Type).init(allocator.*),
+            .ints = std.StringHashMap(i64).init(allocator.*),
+        };
+    }
+
+    fn deinit(self: *GenericSubst) void {
+        self.types.deinit();
+        self.ints.deinit();
+    }
+
+    fn cloneFrom(self: *GenericSubst, other: *const GenericSubst) !void {
+        var it_types = other.types.iterator();
+        while (it_types.next()) |entry| {
+            try self.types.put(entry.key_ptr.*, entry.value_ptr.*);
+        }
+
+        var it_ints = other.ints.iterator();
+        while (it_ints.next()) |entry| {
+            try self.ints.put(entry.key_ptr.*, entry.value_ptr.*);
+        }
+    }
+};
+
 //──────────────────────────────────────────────────────────────────────────────
 //  SEMANTIZER
 //──────────────────────────────────────────────────────────────────────────────
@@ -1272,6 +1303,16 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
+        if (s.lookupGenericValue(name)) |generic_value| {
+            const literal: sg.ValueLiteral = switch (generic_value.value) {
+                .comptime_int => |value| .{ .int_literal = value },
+                .type => return error.SymbolNotFound,
+            };
+            const n = try sg.makeSGNode(.{ .value_literal = literal }, undefined, self.allocator);
+            n.sem_type = generic_value.ty;
+            return .{ .node = n, .ty = generic_value.ty };
+        }
+
         const b = s.lookupBinding(name) orelse return error.SymbolNotFound;
         if (!(try self.bindingIsVisible(b, loc.file))) {
             try self.addPrivateMemberDiag(loc, "value", name);
@@ -1429,11 +1470,16 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         if (d.generic_params.len > 0) {
+            const params_struct = try self.genericParamsStructOrNames(
+                d.generic_params_struct,
+                d.generic_params,
+                d.name.location,
+            );
             // Register as generic type template
             try s.appendGenericTypeTemplate(d.name.string, .{
                 .name = d.name.string,
                 .location = d.value.location,
-                .param_names = d.generic_params,
+                .params = try self.genericParamDefsFromSyntax(params_struct, s),
                 .body = d.value,
             });
             // No concrete type emitted now
@@ -1511,10 +1557,15 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         // Register generic template and skip direct emission
         if (f.generic_params.len > 0) {
+            const params_struct = try self.genericParamsStructOrNames(
+                f.generic_params_struct,
+                f.generic_params,
+                f.name.location,
+            );
             try p.appendGenericFunctionTemplate(f.name.string, .{
                 .name = f.name.string,
                 .location = loc,
-                .param_names = f.generic_params,
+                .params = try self.genericParamDefsFromSyntax(params_struct, p),
                 .param_abstract_constraints = try self.allocEmptyAbstractConstraintSlice(f.generic_params.len),
                 .dispatch_kind = .regular,
                 .input = f.input,
@@ -1626,6 +1677,383 @@ pub const Semantizer = struct {
         const slice = try self.allocator.alloc(?[]const u8, len);
         for (slice, 0..) |_, i| slice[i] = null;
         return slice;
+    }
+
+    fn genericParamsStructOrNames(
+        self: *Semantizer,
+        params_struct: ?syn.StructTypeLiteral,
+        names: []const []const u8,
+        loc: tok.Location,
+    ) !syn.StructTypeLiteral {
+        if (params_struct) |st| return st;
+
+        var fields = try self.allocator.alloc(syn.StructTypeLiteralField, names.len);
+        for (names, 0..) |name, idx| {
+            fields[idx] = .{
+                .name = .{ .string = name, .location = loc },
+                .type = .{ .type_name = .{ .string = "Type", .location = loc } },
+                .default_value = null,
+            };
+        }
+        return .{ .fields = fields };
+    }
+
+    fn genericParamDefsFromSyntax(
+        self: *Semantizer,
+        params_struct: syn.StructTypeLiteral,
+        s: *Scope,
+    ) SemErr![]const gen.GenericParam {
+        var params = try self.allocator.alloc(gen.GenericParam, params_struct.fields.len);
+        for (params_struct.fields, 0..) |field, idx| {
+            const field_ty = field.type orelse {
+                params[idx] = .{
+                    .name = field.name.string,
+                    .kind = .type,
+                    .value_type = null,
+                };
+                continue;
+            };
+
+            if (field_ty == .type_name and std.mem.eql(u8, field_ty.type_name.string, "Type")) {
+                params[idx] = .{
+                    .name = field.name.string,
+                    .kind = .type,
+                    .value_type = null,
+                };
+                continue;
+            }
+
+            params[idx] = .{
+                .name = field.name.string,
+                .kind = .comptime_int,
+                .value_type = try self.resolveType(field_ty, s),
+            };
+        }
+        return params;
+    }
+
+    fn intValueFitsType(self: *Semantizer, value: i64, ty: sg.Type) bool {
+        _ = self;
+        return switch (ty) {
+            .builtin => |bt| switch (bt) {
+                .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64 => value >= 0,
+                .Int8, .Int16, .Int32, .Int64 => true,
+                else => false,
+            },
+            else => false,
+        };
+    }
+
+    fn parseComptimeIntLiteral(self: *Semantizer, lit: tok.Literal, loc: tok.Location) ?i64 {
+        _ = self;
+        _ = loc;
+        return switch (lit) {
+            .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => |txt|
+                std.fmt.parseInt(i64, txt, 0) catch null,
+            else => null,
+        };
+    }
+
+    fn resolveComptimeIntExpr(
+        self: *Semantizer,
+        node: *const syn.STNode,
+        s: *Scope,
+        subst: ?*const GenericSubst,
+    ) SemErr!i64 {
+        return switch (node.content) {
+            .literal => |lit| self.parseComptimeIntLiteral(lit, node.location) orelse {
+                try self.diags.add(
+                    node.location,
+                    .semantic,
+                    "expected comptime integer literal",
+                    .{},
+                );
+                return error.Reported;
+            },
+            .identifier => |name| blk: {
+                if (subst) |subst_ptr| {
+                    if (subst_ptr.ints.get(name)) |value| break :blk value;
+                }
+                if (s.lookupGenericValue(name)) |binding| {
+                    break :blk switch (binding.value) {
+                        .comptime_int => |value| value,
+                        else => {
+                            try self.diags.add(
+                                node.location,
+                                .semantic,
+                                "generic value '{s}' is not a comptime integer",
+                                .{name},
+                            );
+                            return error.Reported;
+                        },
+                    };
+                }
+                try self.diags.add(
+                    node.location,
+                    .semantic,
+                    "unknown comptime integer '{s}'",
+                    .{name},
+                );
+                return error.Reported;
+            },
+            .binary_operation => |bo| blk: {
+                const left = try self.resolveComptimeIntExpr(bo.left, s, subst);
+                const right = try self.resolveComptimeIntExpr(bo.right, s, subst);
+                break :blk switch (bo.operator) {
+                    .addition => left + right,
+                    .subtraction => left - right,
+                    .multiplication => left * right,
+                    .division => blk_div: {
+                        if (right == 0) {
+                            try self.diags.add(
+                                node.location,
+                                .semantic,
+                                "division by zero in comptime integer expression",
+                                .{},
+                            );
+                            return error.Reported;
+                        }
+                        break :blk_div @divTrunc(left, right);
+                    },
+                    .modulo => blk_mod: {
+                        if (right == 0) {
+                            try self.diags.add(
+                                node.location,
+                                .semantic,
+                                "modulo by zero in comptime integer expression",
+                                .{},
+                            );
+                            return error.Reported;
+                        }
+                        break :blk_mod @mod(left, right);
+                    },
+                };
+            },
+            else => {
+                try self.diags.add(
+                    node.location,
+                    .semantic,
+                    "expected comptime integer expression",
+                    .{},
+                );
+                return error.Reported;
+            },
+        };
+    }
+
+    fn resolveTypeExpressionWithSubst(
+        self: *Semantizer,
+        node: *const syn.STNode,
+        s: *Scope,
+        subst: *const GenericSubst,
+    ) SemErr!sg.Type {
+        return switch (node.content) {
+            .identifier => |name| blk: {
+                if (subst.types.get(name)) |mapped| break :blk mapped;
+                const ty_ast = syn.Type{ .type_name = syn.Name{ .string = name, .location = node.location } };
+                break :blk self.resolveType(ty_ast, s) catch {
+                    try self.diags.add(
+                        node.location,
+                        .semantic,
+                        "unknown type '{s}'",
+                        .{name},
+                    );
+                    return error.Reported;
+                };
+            },
+            .struct_type_literal => |lit| blk: {
+                const struct_ty = try self.structTypeFromLiteralWithSubst(lit, s, subst);
+                break :blk .{ .struct_type = struct_ty };
+            },
+            .function_call => |fc| blk: {
+                if (std.mem.eql(u8, fc.callee, "type_of")) {
+                    break :blk try self.typeOfCallResultType(fc, s);
+                }
+                try self.diags.add(
+                    node.location,
+                    .semantic,
+                    "unsupported expression in type generic argument",
+                    .{},
+                );
+                return error.Reported;
+            },
+            else => {
+                try self.diags.add(
+                    node.location,
+                    .semantic,
+                    "expected type expression",
+                    .{},
+                );
+                return error.Reported;
+            },
+        };
+    }
+
+    fn resolveArrayTypeFromGenericArgs(
+        self: *Semantizer,
+        loc: tok.Location,
+        gen_args: syn.StructTypeLiteral,
+        s: *Scope,
+        subst: ?*const GenericSubst,
+    ) SemErr!sg.Type {
+        var length_opt: ?i64 = null;
+        var element_ty_opt: ?sg.Type = null;
+
+        for (gen_args.fields) |field| {
+            if (std.mem.eql(u8, field.name.string, "n")) {
+                const value_node = field.default_value orelse {
+                    try self.diags.add(
+                        loc,
+                        .semantic,
+                        "Array expects '.n = <comptime integer expression>'",
+                        .{},
+                    );
+                    return error.Reported;
+                };
+                length_opt = try self.resolveComptimeIntExpr(value_node, s, subst);
+            } else if (std.mem.eql(u8, field.name.string, "t")) {
+                if (field.type) |field_ty| {
+                    element_ty_opt = if (subst) |subst_ptr|
+                        try self.resolveTypeWithSubst(field_ty, s, subst_ptr)
+                    else
+                        try self.resolveType(field_ty, s);
+                } else if (field.default_value) |type_expr| {
+                    element_ty_opt = if (subst) |subst_ptr|
+                        try self.resolveTypeExpressionWithSubst(type_expr, s, subst_ptr)
+                    else
+                        try self.resolveTypeExpression(type_expr, s);
+                } else {
+                    try self.diags.add(
+                        loc,
+                        .semantic,
+                        "Array expects '.t: <type>'",
+                        .{},
+                    );
+                    return error.Reported;
+                }
+            } else {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "Array only accepts '.n' and '.t' parameters",
+                    .{},
+                );
+                return error.Reported;
+            }
+        }
+
+        const length = length_opt orelse {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "Array is missing '.n = <comptime integer expression>'",
+                .{},
+            );
+            return error.Reported;
+        };
+        if (length < 0) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "Array length cannot be negative",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const element_ty = element_ty_opt orelse {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "Array is missing '.t: <type>'",
+                .{},
+            );
+            return error.Reported;
+        };
+
+        const elem_ptr = try self.allocator.create(sg.Type);
+        elem_ptr.* = element_ty;
+
+        const sem_arr = try self.allocator.create(sg.ArrayType);
+        sem_arr.* = .{
+            .length = @intCast(length),
+            .element_type = elem_ptr,
+        };
+        return .{ .array_type = sem_arr };
+    }
+
+    fn resolveExplicitGenericArg(
+        self: *Semantizer,
+        field: syn.StructTypeLiteralField,
+        param: gen.GenericParam,
+        s: *Scope,
+        subst: *const GenericSubst,
+    ) SemErr!gen.GenericArgValue {
+        return switch (param.kind) {
+            .type => blk: {
+                if (field.type) |ty_node| {
+                    break :blk .{ .type = try self.resolveTypeWithSubst(ty_node, s, subst) };
+                }
+                if (field.default_value) |type_expr| {
+                    break :blk .{ .type = try self.resolveTypeExpressionWithSubst(type_expr, s, subst) };
+                }
+                try self.diags.add(
+                    field.name.location,
+                    .semantic,
+                    "generic parameter '.{s}' expects a type argument",
+                    .{param.name},
+                );
+                return error.Reported;
+            },
+            .comptime_int => blk: {
+                const value_node = field.default_value orelse {
+                    try self.diags.add(
+                        field.name.location,
+                        .semantic,
+                        "generic parameter '.{s}' expects a comptime integer expression",
+                        .{param.name},
+                    );
+                    return error.Reported;
+                };
+                const value = try self.resolveComptimeIntExpr(value_node, s, subst);
+                if (param.value_type) |value_ty| {
+                    if (!self.intValueFitsType(value, value_ty)) {
+                        try self.diags.add(
+                            value_node.location,
+                            .semantic,
+                            "generic integer argument '.{s}' does not fit expected type",
+                            .{param.name},
+                        );
+                        return error.Reported;
+                    }
+                }
+                break :blk .{ .comptime_int = value };
+            },
+        };
+    }
+
+    fn putGenericArg(self: *Semantizer, subst: *GenericSubst, param: gen.GenericParam, value: gen.GenericArgValue) !void {
+        _ = self;
+        switch (param.kind) {
+            .type => try subst.types.put(param.name, value.type),
+            .comptime_int => try subst.ints.put(param.name, value.comptime_int),
+        }
+    }
+
+    fn makeGenericIdentityArg(self: *Semantizer, value: gen.GenericArgValue) sg.GenericIdentityArg {
+        _ = self;
+        return switch (value) {
+            .type => |ty| .{ .type = ty },
+            .comptime_int => |int_value| .{ .comptime_int = int_value },
+        };
+    }
+
+    fn valueExprUsesParam(node: *const syn.STNode, param: []const u8) bool {
+        return switch (node.content) {
+            .identifier => |name| std.mem.eql(u8, name, param),
+            .binary_operation => |bo| valueExprUsesParam(bo.left, param) or valueExprUsesParam(bo.right, param),
+            else => false,
+        };
     }
 
     fn rewriteAbstractTypeForTemplate(
@@ -1753,7 +2181,18 @@ pub const Semantizer = struct {
         const template = gen.GenericTemplate{
             .name = f.name.string,
             .location = loc,
-            .param_names = try hidden_param_names.toOwnedSlice(),
+            .params = blk: {
+                const hidden_names = try hidden_param_names.toOwnedSlice();
+                const params = try self.allocator.alloc(gen.GenericParam, hidden_names.len);
+                for (hidden_names, 0..) |hidden_name, idx| {
+                    params[idx] = .{
+                        .name = hidden_name,
+                        .kind = .type,
+                        .value_type = null,
+                    };
+                }
+                break :blk params;
+            },
             .param_abstract_constraints = try hidden_constraints.toOwnedSlice(),
             .dispatch_kind = .abstract_contract,
             .input = .{ .fields = rewritten_input_fields },
@@ -2373,7 +2812,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         st: syn.StructTypeLiteral,
         s: *Scope,
-        subst: *std.StringHashMap(sg.Type),
+        subst: *const GenericSubst,
     ) SemErr!*sg.StructType {
         var buf = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         for (st.fields) |f| {
@@ -2395,7 +2834,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         ct: syn.ChoiceTypeLiteral,
         s: *Scope,
-        subst: *std.StringHashMap(sg.Type),
+        subst: *const GenericSubst,
     ) SemErr!*sg.ChoiceType {
         var variants = std.array_list.Managed(sg.ChoiceVariant).init(self.allocator.*);
         for (ct.variants, 0..) |variant, idx| {
@@ -2467,30 +2906,6 @@ pub const Semantizer = struct {
                 error.Reported => return err,
                 else => err,
             };
-        if (std.mem.eql(u8, call.callee, "to_iterator")) to_iterator_blk: {
-            const res = self.handleToIteratorBuiltin(call, s) catch |err| switch (err) {
-                error.Reported => return err,
-                error.SymbolNotFound => break :to_iterator_blk,
-                else => return err,
-            };
-            return res;
-        }
-        if (std.mem.eql(u8, call.callee, "has_next")) has_next_blk: {
-            const res = self.handleHasNextBuiltin(call, s) catch |err| switch (err) {
-                error.Reported => return err,
-                error.SymbolNotFound => break :has_next_blk,
-                else => return err,
-            };
-            return res;
-        }
-        if (std.mem.eql(u8, call.callee, "next")) next_blk: {
-            const res = self.handleNextBuiltin(call, s) catch |err| switch (err) {
-                error.Reported => return err,
-                error.SymbolNotFound => break :next_blk,
-                else => return err,
-            };
-            return res;
-        }
         if (std.mem.eql(u8, call.callee, "length")) len_blk: {
             const len_res = self.handleLengthBuiltin(call, s) catch |err| switch (err) {
                 error.Reported => return err,
@@ -3347,19 +3762,24 @@ pub const Semantizer = struct {
                 for (list_ptr.items) |tmpl| {
                     if (tmpl.dispatch_kind != .abstract_contract) continue;
 
-                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
+                    var subst = GenericSubst.init(self.allocator);
                     defer subst.deinit();
 
                     var i: usize = 0;
-                    while (i < tmpl.param_names.len) : (i += 1) {
+                    while (i < tmpl.params.len) : (i += 1) {
                         const constraint = tmpl.param_abstract_constraints[i] orelse continue;
-                        const param_name = tmpl.param_names[i];
-                        const actual = self.inferGenericParamFromCall(tmpl, param_name, input_ty, s, &subst) orelse continue;
+                        const param = tmpl.params[i];
+                        if (param.kind != .type) continue;
+                        const actual_arg = self.inferGenericArgFromCall(tmpl, param, input_ty, s, &subst) orelse continue;
+                        const actual = switch (actual_arg) {
+                            .type => |ty| ty,
+                            else => continue,
+                        };
                         if (abs.typeImplementsAbstract(constraint, actual, s)) continue;
 
                         const actual_str = try self.formatTypeText(actual, s);
                         defer actual_str.deinit();
-                        const field_name = self.findTemplateFieldUsingParam(tmpl, param_name) orelse param_name;
+                        const field_name = self.findTemplateFieldUsingParam(tmpl, param.name) orelse param.name;
                         try self.diags.add(
                             loc,
                             .semantic,
@@ -3560,6 +3980,9 @@ pub const Semantizer = struct {
                     if (fld.type) |sub_ty| {
                         if (self.typeUsesParam(sub_ty, param)) break :blk true;
                     }
+                    if (fld.default_value) |value_expr| {
+                        if (valueExprUsesParam(value_expr, param)) break :blk true;
+                    }
                 }
                 break :blk false;
             },
@@ -3616,6 +4039,17 @@ pub const Semantizer = struct {
                 }
             },
             .generic_type_instantiation => |g| {
+                if (std.mem.eql(u8, g.base_name.string, "Array")) {
+                    if (actual_ty != .array_type) return null;
+                    for (g.args.fields) |arg_field| {
+                        if (!std.mem.eql(u8, arg_field.name.string, "t")) continue;
+                        if (arg_field.type) |arg_ty| {
+                            if (!self.typeUsesParam(arg_ty, param_name)) continue;
+                            return self.extractTypeArgumentFromActual(arg_ty, actual_ty.array_type.element_type.*, param_name, s);
+                        }
+                    }
+                    return null;
+                }
                 const tmpl_ptr = s.lookupGenericTypeTemplate(g.base_name.string, g.args.fields.len) orelse null;
                 if (tmpl_ptr != null and actual_ty == .struct_type) {
                     const actual_struct = actual_ty.struct_type;
@@ -3627,7 +4061,10 @@ pub const Semantizer = struct {
                                     var idx: usize = 0;
                                     while (idx < identity.arg_names.len) : (idx += 1) {
                                         if (std.mem.eql(u8, identity.arg_names[idx], arg_field.name.string)) {
-                                            return identity.arg_types[idx];
+                                            switch (identity.arg_values[idx]) {
+                                                .type => |arg_ty_value| return arg_ty_value,
+                                                else => {},
+                                            }
                                         }
                                     }
                                 }
@@ -3640,6 +4077,75 @@ pub const Semantizer = struct {
         return null;
     }
 
+    fn extractComptimeIntArgumentFromActual(
+        self: *Semantizer,
+        template_ty: syn.Type,
+        actual_ty: sg.Type,
+        param_name: []const u8,
+        s: *Scope,
+    ) ?i64 {
+        switch (template_ty) {
+            .pointer_type => |ptr_info| {
+                if (actual_ty != .pointer_type) return null;
+                return self.extractComptimeIntArgumentFromActual(
+                    ptr_info.child.*,
+                    actual_ty.pointer_type.child.*,
+                    param_name,
+                    s,
+                );
+            },
+            .struct_type_literal => |st| {
+                if (actual_ty != .struct_type) return null;
+                const actual_struct = actual_ty.struct_type;
+                for (st.fields) |fld| {
+                    if (fld.type) |sub_ty| {
+                        if (typ.findFieldByName(actual_struct, fld.name.string)) |actual_field| {
+                            if (self.extractComptimeIntArgumentFromActual(sub_ty, actual_field.ty, param_name, s)) |res|
+                                return res;
+                        }
+                    }
+                }
+            },
+            .generic_type_instantiation => |g| {
+                if (std.mem.eql(u8, g.base_name.string, "Array")) {
+                    if (actual_ty != .array_type) return null;
+                    for (g.args.fields) |arg_field| {
+                        if (!std.mem.eql(u8, arg_field.name.string, "n")) continue;
+                        if (arg_field.default_value) |value_expr| {
+                            if (valueExprUsesParam(value_expr, param_name)) return @intCast(actual_ty.array_type.length);
+                        }
+                    }
+                    return null;
+                }
+
+                const tmpl_ptr = s.lookupGenericTypeTemplate(g.base_name.string, g.args.fields.len) orelse null;
+                if (tmpl_ptr != null and actual_ty == .struct_type) {
+                    const actual_struct = actual_ty.struct_type;
+                    if (actual_struct.generic_identity) |identity| {
+                        if (std.mem.eql(u8, identity.base_name, g.base_name.string)) {
+                            for (g.args.fields) |arg_field| {
+                                if (arg_field.default_value) |value_expr| {
+                                    if (!valueExprUsesParam(value_expr, param_name)) continue;
+                                    var idx: usize = 0;
+                                    while (idx < identity.arg_names.len) : (idx += 1) {
+                                        if (std.mem.eql(u8, identity.arg_names[idx], arg_field.name.string)) {
+                                            switch (identity.arg_values[idx]) {
+                                                .comptime_int => |value| return value,
+                                                else => {},
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            else => {},
+        }
+        return null;
+    }
+
     fn deriveElementTypeFromList(list_type: sg.Type) ?sg.Type {
         return switch (list_type) {
             .array_type => list_type.array_type.element_type.*,
@@ -3647,30 +4153,38 @@ pub const Semantizer = struct {
         };
     }
 
-    fn inferGenericParamFromCall(
+    fn inferGenericArgFromCall(
         self: *Semantizer,
         tmpl: gen.GenericTemplate,
-        param_name: []const u8,
+        param: gen.GenericParam,
         call_input_ty: sg.Type,
         s: *Scope,
-        subst: *std.StringHashMap(sg.Type),
-    ) ?sg.Type {
+        subst: *GenericSubst,
+    ) ?gen.GenericArgValue {
         if (call_input_ty != .struct_type) return null;
         const actual = call_input_ty.struct_type;
         for (tmpl.input.fields) |fld| {
             if (fld.type) |ty_node| {
-                if (!self.typeUsesParam(ty_node, param_name)) continue;
+                if (!self.typeUsesParam(ty_node, param.name)) continue;
                 if (typ.findFieldByName(actual, fld.name.string)) |actual_field| {
-                    if (self.extractTypeArgumentFromActual(ty_node, actual_field.ty, param_name, s)) |res|
-                        return res;
+                    switch (param.kind) {
+                        .type => {
+                            if (self.extractTypeArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
+                                return .{ .type = res };
+                        },
+                        .comptime_int => {
+                            if (self.extractComptimeIntArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
+                                return .{ .comptime_int = res };
+                        },
+                    }
                 }
             }
         }
 
         // Heuristic: derive element type when list_type already inferred.
-        if (std.mem.eql(u8, param_name, "list_value_type")) {
-            if (subst.get("list_type")) |list_ty| {
-                if (deriveElementTypeFromList(list_ty)) |elem_ty| return elem_ty;
+        if (param.kind == .type and std.mem.eql(u8, param.name, "list_value_type")) {
+            if (subst.types.get("list_type")) |list_ty| {
+                if (deriveElementTypeFromList(list_ty)) |elem_ty| return .{ .type = elem_ty };
             }
         }
 
@@ -3745,28 +4259,23 @@ pub const Semantizer = struct {
             if (sc.generic_functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
                     if (tmpl.dispatch_kind != allowed_kind) continue;
-                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
+                    var subst = GenericSubst.init(self.allocator);
                     defer subst.deinit();
 
                     var ok: bool = true;
-                    for (tmpl.param_names) |pname| {
+                    for (tmpl.params) |param| {
                         var found: bool = false;
                         for (stargs.fields) |fld| {
-                            if (std.mem.eql(u8, fld.name.string, pname)) {
-                                if (fld.type) |ty_node| {
-                                    const resolved = try self.resolveTypeWithSubst(ty_node, s, &subst);
-                                    try subst.put(pname, resolved);
-                                } else if (fld.default_value) |def_node| {
-                                    const resolved = try self.resolveTypeExpression(def_node, s);
-                                    try subst.put(pname, resolved);
-                                }
+                            if (std.mem.eql(u8, fld.name.string, param.name)) {
+                                const resolved = try self.resolveExplicitGenericArg(fld, param, s, &subst);
+                                try self.putGenericArg(&subst, param, resolved);
                                 found = true;
                                 break;
                             }
                         }
                         if (!found) {
-                            if (self.inferGenericParamFromCall(tmpl, pname, call_input.ty, s, &subst)) |inferred| {
-                                try subst.put(pname, inferred);
+                            if (self.inferGenericArgFromCall(tmpl, param, call_input.ty, s, &subst)) |inferred| {
+                                try self.putGenericArg(&subst, param, inferred);
                                 found = true;
                             }
                         }
@@ -3799,14 +4308,15 @@ pub const Semantizer = struct {
             if (sc.generic_functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
                     if (tmpl.dispatch_kind != allowed_kind) continue;
-                    if (tmpl.param_names.len != type_args_syn.len) continue;
+                    if (tmpl.params.len != type_args_syn.len) continue;
 
-                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
+                    var subst = GenericSubst.init(self.allocator);
                     defer subst.deinit();
                     var i: usize = 0;
-                    while (i < tmpl.param_names.len) : (i += 1) {
+                    while (i < tmpl.params.len) : (i += 1) {
+                        if (tmpl.params[i].kind != .type) continue;
                         const resolved = try self.resolveTypeWithSubst(type_args_syn[i], s, &subst);
-                        try subst.put(tmpl.param_names[i], resolved);
+                        try subst.types.put(tmpl.params[i].name, resolved);
                     }
                     if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) continue;
                     if (try self.instantiateGenericTemplate(name, tmpl, call_input, s, &subst)) |instantiated| {
@@ -3821,14 +4331,14 @@ pub const Semantizer = struct {
     fn substSatisfiesAbstractConstraints(
         self: *Semantizer,
         tmpl: gen.GenericTemplate,
-        subst: *std.StringHashMap(sg.Type),
+        subst: *GenericSubst,
         s: *Scope,
     ) bool {
         _ = self;
         var i: usize = 0;
-        while (i < tmpl.param_names.len) : (i += 1) {
+        while (i < tmpl.params.len) : (i += 1) {
             const constraint = tmpl.param_abstract_constraints[i] orelse continue;
-            const actual = subst.get(tmpl.param_names[i]) orelse return false;
+            const actual = subst.types.get(tmpl.params[i].name) orelse return false;
             if (!abs.typeImplementsAbstract(constraint, actual, s)) return false;
         }
         return true;
@@ -3840,7 +4350,7 @@ pub const Semantizer = struct {
         tmpl: gen.GenericTemplate,
         call_input: typ.TypedExpr,
         s: *Scope,
-        subst: *std.StringHashMap(sg.Type),
+        subst: *GenericSubst,
     ) SemErr!?*sg.FunctionDeclaration {
         var in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, subst);
         const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, subst);
@@ -3859,11 +4369,18 @@ pub const Semantizer = struct {
         }
 
         var child = try Scope.init(self.allocator, s, null);
-        var it = subst.iterator();
+        var it = subst.types.iterator();
         while (it.next()) |entry| {
             const td = try self.allocator.create(sg.TypeDeclaration);
             td.* = .{ .name = entry.key_ptr.*, .origin_file = tmpl.location.file, .ty = entry.value_ptr.* };
             try child.types.put(entry.key_ptr.*, td);
+        }
+        var it_int = subst.ints.iterator();
+        while (it_int.next()) |entry| {
+            try child.generic_values.put(entry.key_ptr.*, .{
+                .ty = .{ .builtin = .UIntNative },
+                .value = .{ .comptime_int = entry.value_ptr.* },
+            });
         }
 
         for (in_struct_ptr.fields) |fld| {
@@ -3904,34 +4421,26 @@ pub const Semantizer = struct {
         name: []const u8,
         stargs: syn.StructTypeLiteral,
         s: *Scope,
-        outer_subst: ?*std.StringHashMap(sg.Type),
+        outer_subst: ?*const GenericSubst,
     ) SemErr!sg.Type {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.generic_types.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
-                    var subst = std.StringHashMap(sg.Type).init(self.allocator.*);
+                    var subst = GenericSubst.init(self.allocator);
                     defer subst.deinit();
 
                     if (outer_subst) |outer| {
-                        var it_outer = outer.iterator();
-                        while (it_outer.next()) |entry| {
-                            try subst.put(entry.key_ptr.*, entry.value_ptr.*);
-                        }
+                        try subst.cloneFrom(outer);
                     }
 
                     var ok: bool = true;
-                    for (tmpl.param_names) |pname| {
+                    for (tmpl.params) |param| {
                         var found: bool = false;
                         for (stargs.fields) |fld| {
-                            if (std.mem.eql(u8, fld.name.string, pname)) {
-                                if (fld.type) |ty_node| {
-                                    const resolved = try self.resolveTypeWithSubst(ty_node, s, &subst);
-                                    try subst.put(pname, resolved);
-                                } else if (fld.default_value) |def_node| {
-                                    const resolved = try self.resolveTypeExpression(def_node, s);
-                                    try subst.put(pname, resolved);
-                                }
+                            if (std.mem.eql(u8, fld.name.string, param.name)) {
+                                const resolved = try self.resolveExplicitGenericArg(fld, param, s, &subst);
+                                try self.putGenericArg(&subst, param, resolved);
                                 found = true;
                                 break;
                             }
@@ -3946,18 +4455,22 @@ pub const Semantizer = struct {
                     return switch (tmpl.body.*.content) {
                         .struct_type_literal => |st| blk_struct: {
                             const st_ptr = try self.structTypeFromLiteralWithSubst(st, s, &subst);
-                            const arg_names = try self.allocator.dupe([]const u8, tmpl.param_names);
-                            const arg_types = try self.allocator.alloc(sg.Type, tmpl.param_names.len);
+                            const arg_names = try self.allocator.alloc([]const u8, tmpl.params.len);
+                            const arg_values = try self.allocator.alloc(sg.GenericIdentityArg, tmpl.params.len);
                             var i: usize = 0;
-                            while (i < tmpl.param_names.len) : (i += 1) {
-                                arg_types[i] = subst.get(tmpl.param_names[i]).?;
+                            while (i < tmpl.params.len) : (i += 1) {
+                                arg_names[i] = tmpl.params[i].name;
+                                arg_values[i] = switch (tmpl.params[i].kind) {
+                                    .type => .{ .type = subst.types.get(tmpl.params[i].name).? },
+                                    .comptime_int => .{ .comptime_int = subst.ints.get(tmpl.params[i].name).? },
+                                };
                             }
 
                             const identity = try self.allocator.create(sg.GenericTypeIdentity);
                             identity.* = .{
                                 .base_name = tmpl.name,
                                 .arg_names = arg_names,
-                                .arg_types = arg_types,
+                                .arg_values = arg_values,
                             };
                             st_ptr.generic_identity = identity;
                             break :blk_struct .{ .struct_type = st_ptr };
@@ -4768,276 +5281,6 @@ pub const Semantizer = struct {
         return svl.fields[0].value;
     }
 
-    fn makeArrayIteratorType(self: *Semantizer, elem_ty: sg.Type) !sg.Type {
-        // TODO: Replace this synthetic iterator type with a real core type such
-        // as `ArrayIterator#(.n = ..., .t: ...)` once non-type generic
-        // parameters are supported throughout generic identity and instantiation.
-        const data_field_ty = try self.allocator.create(sg.Type);
-        data_field_ty.* = .{ .builtin = .UIntNative };
-        const length_field_ty = try self.allocator.create(sg.Type);
-        length_field_ty.* = .{ .builtin = .UIntNative };
-        const index_field_ty = try self.allocator.create(sg.Type);
-        index_field_ty.* = .{ .builtin = .UIntNative };
-
-        const fields = try self.allocator.alloc(sg.StructTypeField, 3);
-        fields[0] = .{ .name = "data", .ty = data_field_ty.*, .default_value = null };
-        fields[1] = .{ .name = "length", .ty = length_field_ty.*, .default_value = null };
-        fields[2] = .{ .name = "index", .ty = index_field_ty.*, .default_value = null };
-
-        const st_ptr = try self.allocator.create(sg.StructType);
-        st_ptr.* = .{ .fields = fields };
-
-        const arg_names = try self.allocator.alloc([]const u8, 1);
-        arg_names[0] = "t";
-        const arg_types = try self.allocator.alloc(sg.Type, 1);
-        arg_types[0] = elem_ty;
-
-        const identity = try self.allocator.create(sg.GenericTypeIdentity);
-        identity.* = .{
-            .base_name = "ArrayIterator",
-            .arg_names = arg_names,
-            .arg_types = arg_types,
-        };
-        st_ptr.generic_identity = identity;
-        return .{ .struct_type = st_ptr };
-    }
-
-    fn getArrayIteratorElementType(self: *Semantizer, ty: sg.Type) ?sg.Type {
-        _ = self;
-        if (ty != .struct_type) return null;
-        const identity = ty.struct_type.generic_identity orelse return null;
-        if (!std.mem.eql(u8, identity.base_name, "ArrayIterator")) return null;
-        if (identity.arg_types.len != 1) return null;
-        return identity.arg_types[0];
-    }
-
-    fn makeStructFieldAccessExpr(
-        self: *Semantizer,
-        base: *const sg.SGNode,
-        base_ty: *const sg.StructType,
-        field_name: []const u8,
-        loc: tok.Location,
-    ) !typ.TypedExpr {
-        for (base_ty.fields, 0..) |field, idx| {
-            if (!std.mem.eql(u8, field.name, field_name)) continue;
-            const access = try self.allocator.create(sg.StructFieldAccess);
-            access.* = .{
-                .struct_value = base,
-                .field_name = field.name,
-                .field_index = @intCast(idx),
-            };
-            const node = try sg.makeSGNode(.{ .struct_field_access = access }, loc, self.allocator);
-            return .{ .node = node, .ty = field.ty };
-        }
-        return error.FieldsNotFound;
-    }
-
-    fn makeArrayIteratorDerefExpr(
-        self: *Semantizer,
-        ptr_expr: typ.TypedExpr,
-        loc: tok.Location,
-    ) !typ.TypedExpr {
-        const ptr_info = ptr_expr.ty.pointer_type;
-        const deref = try sg.makeSGNode(.{ .dereference = .{
-            .pointer = ptr_expr.node,
-            .ty = ptr_info.child.*,
-            .pointer_type = ptr_info,
-        } }, loc, self.allocator);
-        return .{ .node = deref, .ty = ptr_info.child.* };
-    }
-
-    fn handleToIteratorBuiltin(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!typ.TypedExpr {
-        // TODO: This array-specific builtin path should disappear once arrays
-        // can use the same generic/core iterator machinery as other iterable
-        // types instead of relying on semantizer-built synthetic iterators.
-        const value_node = try self.extractValueArgumentNode(call, "value");
-        var value_te = try self.visitNode(value_node.*, s);
-
-        var array_ty_ptr: *const sg.ArrayType = undefined;
-        if (value_te.ty == .pointer_type and value_te.ty.pointer_type.child.* == .array_type) {
-            array_ty_ptr = value_te.ty.pointer_type.child.*.array_type;
-        } else if (value_te.ty == .array_type) {
-            value_te = try typ.ensureReadOnlyPointer(value_node, value_te, self.allocator, self.diags);
-            array_ty_ptr = value_te.ty.pointer_type.child.*.array_type;
-        } else {
-            return error.SymbolNotFound;
-        }
-
-        const data_cast = try sg.makeSGNode(.{ .explicit_cast = .{
-            .value = value_te.node,
-            .target_type = .{ .builtin = .UIntNative },
-        } }, call.input.*.location, self.allocator);
-        const length_lit = try typ.makeIntLiteral(
-            self.allocator,
-            call.input.*.location,
-            @intCast(array_ty_ptr.length),
-            .{ .builtin = .UIntNative },
-        );
-        const zero_lit = try typ.makeIntLiteral(
-            self.allocator,
-            call.input.*.location,
-            0,
-            .{ .builtin = .UIntNative },
-        );
-
-        const iterator_ty = try self.makeArrayIteratorType(array_ty_ptr.element_type.*);
-        const fields = try self.allocator.alloc(sg.StructValueLiteralField, 3);
-        fields[0] = .{ .name = "data", .value = data_cast };
-        fields[1] = .{ .name = "length", .value = length_lit.node };
-        fields[2] = .{ .name = "index", .value = zero_lit.node };
-
-        const value_ptr = try self.allocator.create(sg.StructValueLiteral);
-        value_ptr.* = .{
-            .fields = fields,
-            .ty = iterator_ty,
-        };
-
-        const node = try sg.makeSGNode(.{ .struct_value_literal = value_ptr }, call.input.*.location, self.allocator);
-        return .{ .node = node, .ty = iterator_ty };
-    }
-
-    fn handleHasNextBuiltin(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!typ.TypedExpr {
-        // TODO: Fold this array builtin into normal overload resolution once
-        // `ArrayIterator` exists as a real generic type in core.
-        const self_te = try self.extractValueArgument(call, "self", s);
-        if (self_te.ty != .pointer_type) return error.SymbolNotFound;
-        const iterator_ty = self_te.ty.pointer_type.child.*;
-        if (self.getArrayIteratorElementType(iterator_ty) == null) return error.SymbolNotFound;
-
-        const deref_te = try self.makeArrayIteratorDerefExpr(self_te, call.input.*.location);
-        const index_te = try self.makeStructFieldAccessExpr(deref_te.node, deref_te.ty.struct_type, "index", call.input.*.location);
-        const length_te = try self.makeStructFieldAccessExpr(deref_te.node, deref_te.ty.struct_type, "length", call.input.*.location);
-
-        const cmp_ptr = try self.allocator.create(sg.Comparison);
-        cmp_ptr.* = .{
-            .operator = .less_than,
-            .left = index_te.node,
-            .right = length_te.node,
-        };
-        const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, call.input.*.location, self.allocator);
-        return .{ .node = node, .ty = .{ .builtin = .Bool } };
-    }
-
-    fn handleNextBuiltin(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!typ.TypedExpr {
-        // TODO: Replace this synthetic block-based array `next` lowering with a
-        // regular core implementation when array iterators become first-class
-        // generic types with non-type parameters.
-        const self_te = try self.extractValueArgument(call, "self", s);
-        if (self_te.ty != .pointer_type) return error.SymbolNotFound;
-        if (self_te.ty.pointer_type.mutability != .read_write) {
-            try self.diags.add(
-                call.input.*.location,
-                .semantic,
-                "next expects '.self' to be a '$&' iterator",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        const iterator_ty = self_te.ty.pointer_type.child.*;
-        const elem_ty = self.getArrayIteratorElementType(iterator_ty) orelse return error.SymbolNotFound;
-        const deref_te = try self.makeArrayIteratorDerefExpr(self_te, call.input.*.location);
-        const iterator_struct = deref_te.ty.struct_type;
-
-        const data_te = try self.makeStructFieldAccessExpr(deref_te.node, iterator_struct, "data", call.input.*.location);
-        const length_te = try self.makeStructFieldAccessExpr(deref_te.node, iterator_struct, "length", call.input.*.location);
-        const index_te = try self.makeStructFieldAccessExpr(deref_te.node, iterator_struct, "index", call.input.*.location);
-
-        const elem_size_lit = try typ.makeIntLiteral(
-            self.allocator,
-            call.input.*.location,
-            @intCast(typ.computeTypeSize(elem_ty)),
-            .{ .builtin = .UIntNative },
-        );
-        const mul_ptr = try self.allocator.create(sg.BinaryOperation);
-        mul_ptr.* = .{
-            .operator = .multiplication,
-            .left = index_te.node,
-            .right = elem_size_lit.node,
-        };
-        const mul_node = try sg.makeSGNode(.{ .binary_operation = mul_ptr.* }, call.input.*.location, self.allocator);
-
-        const add_ptr = try self.allocator.create(sg.BinaryOperation);
-        add_ptr.* = .{
-            .operator = .addition,
-            .left = data_te.node,
-            .right = mul_node,
-        };
-        const addr_node = try sg.makeSGNode(.{ .binary_operation = add_ptr.* }, call.input.*.location, self.allocator);
-
-        const elem_ptr_ty = try self.allocator.create(sg.Type);
-        elem_ptr_ty.* = elem_ty;
-        const elem_ptr_info = try self.allocator.create(sg.PointerType);
-        elem_ptr_info.* = .{
-            .mutability = .read_only,
-            .child = elem_ptr_ty,
-        };
-        const cast_node = try sg.makeSGNode(.{ .explicit_cast = .{
-            .value = addr_node,
-            .target_type = .{ .pointer_type = elem_ptr_info },
-        } }, call.input.*.location, self.allocator);
-        const value_node = try sg.makeSGNode(.{ .dereference = .{
-            .pointer = cast_node,
-            .ty = elem_ty,
-            .pointer_type = elem_ptr_info,
-        } }, call.input.*.location, self.allocator);
-
-        const temp_name = try self.makeSyntheticName("array_next_value");
-        const temp_binding = try self.allocator.create(sg.BindingDeclaration);
-        temp_binding.* = .{
-            .name = temp_name,
-            .origin_file = call.input.*.location.file,
-            .mutability = .constant,
-            .ty = elem_ty,
-            .initialization = value_node,
-        };
-        const temp_decl = try sg.makeSGNode(.{ .binding_declaration = temp_binding }, call.input.*.location, self.allocator);
-        const temp_use = try sg.makeSGNode(.{ .binding_use = temp_binding }, call.input.*.location, self.allocator);
-
-        const one_lit = try typ.makeIntLiteral(
-            self.allocator,
-            call.input.*.location,
-            1,
-            .{ .builtin = .UIntNative },
-        );
-        const next_index_ptr = try self.allocator.create(sg.BinaryOperation);
-        next_index_ptr.* = .{
-            .operator = .addition,
-            .left = index_te.node,
-            .right = one_lit.node,
-        };
-        const next_index_node = try sg.makeSGNode(.{ .binary_operation = next_index_ptr.* }, call.input.*.location, self.allocator);
-
-        const updated_fields = try self.allocator.alloc(sg.StructValueLiteralField, 3);
-        updated_fields[0] = .{ .name = "data", .value = data_te.node };
-        updated_fields[1] = .{ .name = "length", .value = length_te.node };
-        updated_fields[2] = .{ .name = "index", .value = next_index_node };
-        const updated_value_ptr = try self.allocator.create(sg.StructValueLiteral);
-        updated_value_ptr.* = .{
-            .fields = updated_fields,
-            .ty = iterator_ty,
-        };
-        const updated_node = try sg.makeSGNode(.{ .struct_value_literal = updated_value_ptr }, call.input.*.location, self.allocator);
-
-        const assign_ptr = try self.allocator.create(sg.PointerAssignment);
-        assign_ptr.* = .{
-            .pointer = self_te.node,
-            .value = updated_node,
-        };
-        const assign_node = try sg.makeSGNode(.{ .pointer_assignment = assign_ptr.* }, call.input.*.location, self.allocator);
-
-        const body_nodes = try self.allocator.alloc(*sg.SGNode, 2);
-        body_nodes[0] = temp_decl;
-        body_nodes[1] = assign_node;
-        const block = try self.allocator.create(sg.CodeBlock);
-        block.* = .{
-            .nodes = body_nodes,
-            .ret_val = temp_use,
-        };
-        const node = try sg.makeSGNode(.{ .code_block = block }, call.input.*.location, self.allocator);
-        return .{ .node = node, .ty = elem_ty };
-    }
-
     fn handleCastBuiltin(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!typ.TypedExpr {
         const value_te = try self.extractValueArgument(call, "value", s);
         const target_ty = try self.extractNamedTypeArgument(call, "to", s);
@@ -5217,6 +5460,9 @@ pub const Semantizer = struct {
             },
             .generic_type_instantiation => |g| blk_g: {
                 const base_name = g.base_name.string;
+                if (std.mem.eql(u8, base_name, "Array")) {
+                    break :blk_g try self.resolveArrayTypeFromGenericArgs(g.base_name.location, g.args, s, null);
+                }
                 if (s.lookupAbstractInfo(base_name)) |info| {
                     for (info.param_names) |pname| {
                         var found = false;
@@ -5274,16 +5520,19 @@ pub const Semantizer = struct {
         self: *Semantizer,
         t: syn.Type,
         s: *Scope,
-        subst: *std.StringHashMap(sg.Type),
+        subst: *const GenericSubst,
     ) SemErr!sg.Type {
         return switch (t) {
             .type_name => |tn| blk: {
                 const id = tn.string;
-                if (subst.get(id)) |mapped| break :blk mapped;
+                if (subst.types.get(id)) |mapped| break :blk mapped;
                 break :blk try self.resolveType(t, s);
             },
             .generic_type_instantiation => |g| blk_g: {
                 const base_name = g.base_name.string;
+                if (std.mem.eql(u8, base_name, "Array")) {
+                    break :blk_g try self.resolveArrayTypeFromGenericArgs(g.base_name.location, g.args, s, subst);
+                }
                 if (s.lookupAbstractInfo(base_name)) |info| {
                     for (info.param_names) |pname| {
                         var found = false;

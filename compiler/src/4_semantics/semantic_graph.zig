@@ -148,7 +148,12 @@ pub const StructType = struct {
 pub const GenericTypeIdentity = struct {
     base_name: []const u8,
     arg_names: []const []const u8,
-    arg_types: []const Type,
+    arg_values: []const GenericIdentityArg,
+};
+
+pub const GenericIdentityArg = union(enum) {
+    type: Type,
+    comptime_int: i64,
 };
 
 pub const StructTypeField = struct {
