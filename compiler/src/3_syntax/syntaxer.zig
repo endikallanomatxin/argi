@@ -130,6 +130,36 @@ pub const Syntaxer = struct {
         return n;
     }
 
+    fn parseSignedNumericLiteral(self: *Syntaxer) !*syn.STNode {
+        const minus_loc = self.tokenLocation();
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        const literal = switch (self.current().content) {
+            .literal => |lit| lit,
+            else => {
+                try self.diags.add(minus_loc, .syntax, "expected numeric literal after unary '-'", .{});
+                return SyntaxerError.ExpectedIntLiteral;
+            },
+        };
+
+        const signed_literal = switch (literal) {
+            .decimal_int_literal => |text| tok.Literal{ .decimal_int_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
+            .hexadecimal_int_literal => |text| tok.Literal{ .hexadecimal_int_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
+            .octal_int_literal => |text| tok.Literal{ .octal_int_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
+            .binary_int_literal => |text| tok.Literal{ .binary_int_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
+            .regular_float_literal => |text| tok.Literal{ .regular_float_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
+            .scientific_float_literal => |text| tok.Literal{ .scientific_float_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
+            else => {
+                try self.diags.add(minus_loc, .syntax, "expected numeric literal after unary '-'", .{});
+                return SyntaxerError.ExpectedIntLiteral;
+            },
+        };
+
+        self.advanceOne();
+        return try self.makeNode(.{ .literal = signed_literal }, minus_loc);
+    }
+
     // ───────────────────────────────  atoms ──────────────────────────────────
     fn parseIdentifier(self: *Syntaxer) SyntaxerError![]const u8 {
         const t = self.current();
@@ -605,6 +635,10 @@ pub const Syntaxer = struct {
     /// [primary] {'.' fld}  (bin-op rhs)?
     fn parsePrimary(self: *Syntaxer) !*syn.STNode {
         const t = self.current();
+
+        if (t.content == .binary_operator and t.content.binary_operator == .subtraction) {
+            return try self.parseSignedNumericLiteral();
+        }
 
         if (self.tokenIs(.tilde)) {
             const move_loc = t.location;
