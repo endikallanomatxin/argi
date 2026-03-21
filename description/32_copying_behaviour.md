@@ -34,7 +34,9 @@ m2 := m1  -- Implicitly calls copy(m1)
 
 The semantic promise of `copy()` is that the result is logically independent
 from the original value. For owning heap-based types this normally means a deep
-copy of the owned data.
+copy of the owned data. The language does not expose a general
+`shallow_copy()` operation, because that would make it too easy to break the
+intended ownership semantics of a type.
 
 If a type does not implement `copy()`, it cannot be used in value position.
 When the user places a non-copyable type in value position, the compiler should

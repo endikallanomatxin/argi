@@ -1,4 +1,9 @@
-ArenaAllocator : Type = struct [
+--
+-- Scratch notes. Keep syntax aligned with the current language even if the
+-- API is still provisional.
+--
+
+ArenaAllocator : Type = (
     ---
     Se usa igual que un alocator normal, se hace keep cuando quieres poder usar la variable en el futuro.
     Se puede hacer:
@@ -12,49 +17,53 @@ ArenaAllocator : Type = struct [
     ---
 
     ._child       : Allocator  -- de dónde obtiene páginas grandes
-    ._allocations : StaticArray<&Byte>
-    ._index       : Int
+    ._allocations
+    ._index       : UIntNative
 
     ---
     EXAMPLE
 
     """rg
-    arena := ArenaAllocator|init()
+    arena := ArenaAllocator()
 
-    data := ExampleType|init(allocator=arena)
+    data := ExampleType(.allocator = arena)
     keep data with arena
 
-    more_data := AnotherType|init(allocator=arena)
+    more_data := AnotherType(.allocator = arena)
     keep more_data with arena
     """
 
     ---
-]
+)
 
-init(#t:==ArenaAllocator, child: Allocator = default) := ArenaAllocator {
-    return ArenaAllocator{ ._child=child, .allocations=[], .index=0 }
+init(.p: $&ArenaAllocator, .child: Allocator = default) -> () := {
+    p& = (
+        ._child = child,
+        ._allocations = ...,
+        ._index = 0,
+    )
 }
 
-deinit(a: $&ArenaAllocator) {
+deinit(.self: $&ArenaAllocator) -> () := {
     // Al salir del scope: liberar todos los allocations pendientes
-    for allocation in a.allocations {
-        a._child|dealloc(allocation.ptr)
+    for allocation in self&._allocations {
+        self&._child | dealloc($&_, allocation.ptr)
     }
 }
 
-alloc(a: $&ArenaAllocator, size: Int, alignment: Alignment) := Allocation!HeapAllocationError {
+alloc(.self: $&ArenaAllocator, .size: UIntNative, .alignment: Alignment) -> (.allocation: Allocation) !HeapAllocationError := {
     // 1) Si cabe en el último allocation, ajustar index y devolver ptr
-    // 2) Si no, pedir un allocation nuevo via a._child|alloc(...)
-    // 3) Guardar en a.allocations y resetear a.index
+    // 2) Si no, pedir un allocation nuevo via self&._child|alloc(...)
+    // 3) Guardar en self&._allocations y resetear self&._index
     …
 }
 
-resize(a: $&ArenaAllocator, allocation: $&Allocation, new_size: Int) := Bool {
-    // Sólo si `allocation` es la última asignación, podemos ajustar `index`
+resize(.self: $&ArenaAllocator, .allocation: $&Allocation, .new_size: UIntNative) -> (.ok: Bool) := {
+    // Sólo si `allocation` es la última asignación, podemos ajustar `_index`
     …
 }
 
-dealloc(a: $&ArenaAllocator, allocation: Allocation) =  !HeapAllocationError {
+dealloc(.self: $&ArenaAllocator, .allocation: Allocation) -> () !HeapAllocationError := {
     // No op
 }
 

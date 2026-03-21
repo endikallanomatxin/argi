@@ -128,9 +128,9 @@ l | slice (((0, 10), (0, 20)))  -- 2D slice
 
 ### List Abstracts
 
-- Indexable#(T) → lectura indexada: len() y get[].
-- IndexableMutable#(T) → añade set[].
-- Resizable#(T) → añade push, pop, insert, … (solo para los dinámicos).
+- Indexable#(.t: T) → lectura indexada: `length()` y `get[]`.
+- IndexableMutable#(.t: T) → añade `set[]`.
+- Resizable#(.t: T) → añade `push`, `pop`, `insert`, … (solo para los dinámicos).
 
 `[N]T`, `Array#(.n = N, .t: T)`, `ListViewRO#(.list_type = X, .list_value_type = T)` y
 `ListViewRW#(.list_type = X, .list_value_type = T)` cumplen `Indexable`;
