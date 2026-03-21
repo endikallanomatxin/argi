@@ -137,7 +137,9 @@ Channel<T> : Abstract = (
     put(T)
     get() -> T
 )
-Channel canbe (Spot, Queue, Stack)
+Spot implements Channel
+Queue implements Channel
+Stack implements Channel
 Channel defaults Spot
 
 
@@ -145,14 +147,16 @@ Queue<T> : Abstract = (
 	put T -> ()
 	get [) -> T
 )
-Queue canbe (DynamicQueue, StaticQueue<n>)
+DynamicQueue implements Queue
+StaticQueue<n> implements Queue
 Queue defaults DynamicQueue
 
 Stack<T> : Abstract = (
 	put T -> [)
 	get () -> T
 )
-Stack canbe (DynamicStack, StaticStack<n>)
+DynamicStack implements Stack
+StaticStack<n> implements Stack
 Stack defaults DynamicStack
 
 ```
@@ -233,4 +237,3 @@ wg | branch({
 
 wg | wait()
 ```
-

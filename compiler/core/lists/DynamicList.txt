@@ -4,12 +4,12 @@ DynamicList<t> : Abstract = [
     remove(_, Index)
 ]
 
-List<t> canbe DynamicList<t>
+DynamicList<t> implements List<t>
 
-DynamicList<t> canbe DynamicArray<t>
-DynamicList<t> canbe SegmentedDynamicArray<t>
-DynamicList<t> canbe SinglyLinkedList<t>
-DynamicList<t> canbe DoublyLinkedList<t>
+DynamicArray<t> implements DynamicList<t>
+SegmentedDynamicArray<t> implements DynamicList<t>
+SinglyLinkedList<t> implements DynamicList<t>
+DoublyLinkedList<t> implements DynamicList<t>
 
 DynamicArray<t> : Type = [
     ---

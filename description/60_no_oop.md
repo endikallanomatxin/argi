@@ -109,7 +109,7 @@ operator set[] (.my_list: Milista, .index: Int, .value: Int) -> () := {
     my_list.elementos(index) = value
 }
 
-Indexable canbe Milista
+Milista implements Indexable
 ```
 
 ```
@@ -119,4 +119,3 @@ lista[1] = 25    -- Llama a `set`
 ```
 
 O igual se puede hacer con operator overloading.
-

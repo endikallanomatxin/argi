@@ -4,7 +4,7 @@ FakeIterator : Type = (
 
 FakeIterable : Type = ()
 
-Iterable canbe FakeIterable
+FakeIterable implements Iterable
 
 to_iterator(.value: &FakeIterable) -> (.iterator: FakeIterator) := {
     iterator = (.index = 0)

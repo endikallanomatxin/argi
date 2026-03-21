@@ -142,9 +142,9 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
                 }
             }
         },
-        .abstract_canbe => |rel| {
-            std.debug.print("AbstractCanBe \"{s}\" ", .{rel.name});
-            printType(rel.ty, lvl);
+        .abstract_implements => |rel| {
+            std.debug.print("AbstractImplements \"{s}\" ", .{rel.concrete_name.string});
+            printType(rel.abstract_ty, lvl);
             std.debug.print("\n", .{});
         },
         .abstract_defaultsto => |rel| {

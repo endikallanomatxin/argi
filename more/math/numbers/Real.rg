@@ -8,5 +8,5 @@ Real : Abstract = [
 	...
 ]
 
-Real canbe [Int, Float]
-
+Int implements Real
+Float implements Real

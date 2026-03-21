@@ -10,23 +10,23 @@ Int : Abstract = (
 )
 
 -- Signed integers
-Int canbe Int8
-Int canbe Int16
-Int canbe Int32
-Int canbe Int64
+Int8 implements Int
+Int16 implements Int
+Int32 implements Int
+Int64 implements Int
 
 -- Unsigned integers
-Int canbe UInt8
-Int canbe UInt16
-Int canbe UInt32
-Int canbe UInt64
+UInt8 implements Int
+UInt16 implements Int
+UInt32 implements Int
+UInt64 implements Int
 
 
 UInt : Abstract = ()
-UInt canbe UInt8
-UInt canbe UInt16
-UInt canbe UInt32
-UInt canbe UInt64
+UInt8 implements UInt
+UInt16 implements UInt
+UInt32 implements UInt
+UInt64 implements UInt
 
 
 
@@ -43,4 +43,3 @@ UInt canbe UInt64
 --    - Int128, UInt128
 --
 --    - CustomLengthedInt#(n), CustomLengthedUInt#(n)
-

@@ -6,10 +6,9 @@ Animal : Abstract = (
     speak(.who: Self) -> (.s: &Char)
 )
 
-Animal canbe Dog
+Dog implements Animal
 Animal defaultsto Dog
 
 main () -> (.status_code: Int32) := {
     status_code = 0
 }
-

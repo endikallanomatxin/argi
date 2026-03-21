@@ -973,14 +973,19 @@ pub const Syntaxer = struct {
             }
         }
 
-        // Abstract relations (canbe/defaultsto)
+        // Abstract relations (implements/defaultsto)
         switch (self.current().content) {
             .identifier => |kw| {
-                if (std.mem.eql(u8, kw, "canbe")) {
+                if (std.mem.eql(u8, kw, "implements")) {
                     self.advanceOne();
-                    const ty = (try self.parseType()).?; // required
-                    const rel = syn.AbstractCanBe{ .name = name.string, .generic_params = generic_params, .generic_params_struct = generic_params_struct, .ty = ty };
-                    return try self.makeNode(.{ .abstract_canbe = rel }, id_loc);
+                    const abstract_ty = (try self.parseType()).?; // required
+                    const rel = syn.AbstractImplements{
+                        .concrete_name = name,
+                        .generic_params = generic_params,
+                        .generic_params_struct = generic_params_struct,
+                        .abstract_ty = abstract_ty,
+                    };
+                    return try self.makeNode(.{ .abstract_implements = rel }, id_loc);
                 } else if (std.mem.eql(u8, kw, "defaultsto")) {
                     self.advanceOne();
                     const ty = (try self.parseType()).?; // required

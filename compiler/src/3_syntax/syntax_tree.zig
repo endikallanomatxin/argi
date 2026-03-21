@@ -25,7 +25,7 @@ pub const Content = union(enum) {
 
     // Abstract type features
     abstract_declaration: AbstractDeclaration,
-    abstract_canbe: AbstractCanBe,
+    abstract_implements: AbstractImplements,
     abstract_defaultsto: AbstractDefault,
     function_declaration: FunctionDeclaration,
     assignment: Assignment,
@@ -121,12 +121,12 @@ pub const AbstractDeclaration = struct {
     requires_functions: []const AbstractFunctionRequirement,
 };
 
-// "Name canbe Type" implementation relation
-pub const AbstractCanBe = struct {
-    name: []const u8,
+// "ConcreteType implements AbstractType" implementation relation
+pub const AbstractImplements = struct {
+    concrete_name: Name,
     generic_params: []const []const u8,
     generic_params_struct: ?StructTypeLiteral,
-    ty: Type,
+    abstract_ty: Type,
 };
 
 // "Name defaultsto Type" default concrete backing type

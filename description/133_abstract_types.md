@@ -41,7 +41,7 @@ speak (.d: Dog) -> (.s: String) := {
 }
 
 -- Requiere manifestación explícita de la implementación.
-Animal canbe Dog
+Dog implements Animal
 
 -- Permite definir un valor por defecto.
 Animal defaultsto Dog
@@ -65,8 +65,8 @@ List#(t: Type) : Abstract = (
 	operator set[](!&Self, Int, t) -> ()
 )
 
-List#(t) canbe DynamicArray#(t)
-List#(t) canbe StaticArray#(t, Any)
+DynamicArray#(t) implements List#(t)
+StaticArray#(t, Any) implements List#(t)
 ```
 
 To compose them:
@@ -194,4 +194,3 @@ AbstractMatrix#(
 
 > [!TODO]
 > Se permite que el abstract aporte tipos asociados?
-

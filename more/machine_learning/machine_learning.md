@@ -14,7 +14,7 @@ DenseLayer :: Type = struct [
 	._biases: Parameter<NDVector>
 ]
 
-Layer canbe DenseLayer
+DenseLayer implements Layer
 
 init(#t::==DenseLayer, input_size: Int, output_size: Int) ::= DenseLayer {
 	weights = NDVector|init([input_size, output_size])
@@ -60,4 +60,3 @@ deltas.apply_gradients(0.01)
 ```
 
 O algo así.
-
