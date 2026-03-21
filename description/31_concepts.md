@@ -16,6 +16,10 @@ La dirección que mejor encaja con el resto del lenguaje es esta:
 - Si no implementa `copy()`, ese uso es error del compilador.
 - La promesa semántica de `copy()` es siempre la misma: producir un valor
   independiente según el significado de ese tipo.
+- Para tipos owners, eso significa una copia profunda de sus datos; no
+  consideramos `shallow_copy()` como operación general del lenguaje, porque
+  tendería a desmembrar la semántica de los tipos y a introducir aliasing
+  accidental.
 
 Esto encaja mejor que exponer varias operaciones como `deep_copy()` o
 `shallow_copy()` en la superficie del lenguaje.

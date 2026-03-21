@@ -1,4 +1,9 @@
-StructOfArrays<t> : Type = [
+--
+-- Scratch notes. Keep syntax aligned with the current language even if the
+-- API is still provisional.
+--
+
+StructOfArrays#(.t: Type) : Type = (
     ---
     It behaves as an array-of-structs for the user but is implemented as a struct-of-arrays
     It allows for:
@@ -8,13 +13,13 @@ StructOfArrays<t> : Type = [
     ._base_struct_type : Type = t
     ._arrays
     ...
-]
+)
 
-init(#t :== List<t>, &l : List) {
+init#(.t: Type)(.p: $&StructOfArrays#(.t: t), .source) -> () := {
     ...
 }
 
-operator get[] (&soa: StructOfArrays<t>, i: Index) {
+get[]#(.t: Type)(.self: &StructOfArrays#(.t: t), .i: UIntNative) -> (.value: t) := {
     ---
     Return the struct that would be at position i
     ---
@@ -23,8 +28,8 @@ operator get[] (&soa: StructOfArrays<t>, i: Index) {
 
 ...
 
-to_soa($&l: List<Struct>) {
-    -- pensar en como referirnos a un tipo cualquiera que sea struct.
-    -- It converts a list to a StructOfArrays
+to_soa#(.t: Type)(.list) -> (.soa: StructOfArrays#(.t: t)) := {
+    -- pensar en cómo referirnos a una colección de structs sin cerrar todavía
+    -- qué abstract exacto debe pedir esta conversión.
     ...
 }
