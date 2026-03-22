@@ -1775,7 +1775,14 @@ fn appendLexicalSemanticTokens(
                 }
                 break :blk classify_lex_only(tk.content);
             },
-            .identifier => if (prev_non_trivia_was_hash) TOKEN_INDEX.keyword else classify_lex_only(tk.content),
+            .identifier => if (
+                prev_non_trivia_was_hash or
+                identifierTokenEquals(text, tk, "implements") or
+                identifierTokenEquals(text, tk, "canbe")
+            )
+                TOKEN_INDEX.keyword
+            else
+                classify_lex_only(tk.content),
             else => classify_lex_only(tk.content),
         };
 
@@ -1833,6 +1840,14 @@ fn appendLexicalSemanticTokens(
             else => prev_non_trivia_was_hash = false,
         }
     }
+}
+
+fn identifierTokenEquals(text: []const u8, tk: token.Token, expected: []const u8) bool {
+    if (tk.content != .identifier) return false;
+    const start = tk.location.offset;
+    const end = start + tokenLenBytes(tk);
+    if (end > text.len) return false;
+    return std.mem.eql(u8, text[start..end], expected);
 }
 
 fn tokenLenBytes(tk: token.Token) usize {
