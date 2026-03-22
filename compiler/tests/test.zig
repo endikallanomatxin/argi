@@ -819,6 +819,12 @@ test "444_reached_stdin_helper" {
     try runExpect(15);
 }
 
+test "445_reached_terminal_stdin" {
+    try clean();
+    try expectSuccessfulBuild("tests/445_reached_terminal_stdin/main.rg");
+    try runExpect(16);
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");
