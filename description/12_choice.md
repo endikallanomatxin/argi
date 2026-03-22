@@ -8,7 +8,7 @@ Direction : Type = (
 	..west
 )
 
-int(Directions..north) == 1
+cast#(.to: Int)(.value = Direction..north) == 1
 ```
 
 ```
