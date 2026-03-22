@@ -3,23 +3,23 @@ Allocator : Abstract = (
     deallocate(.self: $&Self, .data: $&UInt8, .size: UIntNative) -> ()
 )
 
-DirectAllocator : Type = ()
+CAllocator : Type = ()
 
-init(.p: $&DirectAllocator) -> () := {
+init(.p: $&CAllocator) -> () := {
 }
 
-allocate(.self: $&DirectAllocator, .size: UIntNative) -> (.data: $&UInt8) := {
+allocate(.self: $&CAllocator, .size: UIntNative) -> (.data: $&UInt8) := {
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = malloc(.size = size))
     data = cast#(.to: $&UInt8)(.value = raw_addr)
 }
 
-deallocate(.self: $&DirectAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
+deallocate(.self: $&CAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = data)
     free(.pointer = cast#(.to: &Any)(.value = raw_addr))
 }
 
-DirectAllocator implements Allocator
-Allocator defaultsto DirectAllocator
+CAllocator implements Allocator
+Allocator defaultsto CAllocator
 
 Allocation : Type = (
     --

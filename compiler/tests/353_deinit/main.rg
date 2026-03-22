@@ -27,7 +27,7 @@ verify(.counter: $&Int32, .status: $&Int32) -> () := {
 }
 
 main () -> (.status_code: Int32) := {
-    allocator :: DirectAllocator = DirectAllocator()
+    allocator :: CAllocator = CAllocator()
     counter :: Int32 = 0
     status_code = 9
     #defer verify(.counter=$&counter, .status=$&status_code)

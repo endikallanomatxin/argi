@@ -134,7 +134,7 @@ copies of the value.
 Some named arguments may be declared as *reached arguments*:
 
 ```argi
-allocate(.allocator: $&Allocator = #reach allocator, .size: UIntNative) -> (.out: Allocation) := {
+allocate(.allocator: $&Allocator = #reach allocator, system.allocator, .size: UIntNative) -> (.out: Allocation) := {
     ...
 }
 ```

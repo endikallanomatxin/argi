@@ -26,7 +26,7 @@ DynamicArray#(.t: Type) implements Iterable#(.t: t)
 
 init #(.t: Type) (
     .p: $&DynamicArray#(.t: t),
-    .allocator: $&Allocator = #reach allocator,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
     .capacity: UIntNative,
 ) -> () := {
     element_size :: UIntNative = size_of(.type = t)
@@ -50,7 +50,7 @@ init #(.t: Type) (
 }
 
 deinit #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&DynamicArray#(.t: t)
 ) -> () := {
     zero :: UIntNative = 0
@@ -72,7 +72,7 @@ dynamic_array_element_address #(.t: Type) (
 }
 
 dynamic_array_grow #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
     .array: $&DynamicArray#(.t: t),
     .min_capacity: UIntNative,
 ) -> () := {
@@ -116,7 +116,7 @@ dynamic_array_grow #(.t: Type) (
 }
 
 push #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&DynamicArray#(.t: t),
     .value: t,
 ) -> () := {
@@ -154,7 +154,7 @@ pop #(.t: Type) (
 }
 
 insert #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&DynamicArray#(.t: t),
     .i: UIntNative,
     .value: t,

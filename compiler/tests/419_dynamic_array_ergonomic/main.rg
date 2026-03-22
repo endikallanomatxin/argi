@@ -3,7 +3,7 @@ sum_pair (.a: Int32, .b: Int32) -> (.sum: Int32) := {
 }
 
 main () -> (.status_code: Int32) := {
-    allocator :: DirectAllocator = DirectAllocator()
+    allocator :: CAllocator = CAllocator()
     arr ::= DynamicArray#(.t: Int32)(.capacity = 1)
     #defer deinit(.self = $&arr)
 

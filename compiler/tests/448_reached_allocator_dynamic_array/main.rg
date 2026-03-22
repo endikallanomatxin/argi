@@ -24,7 +24,7 @@ deallocate(.self: $&CountingAllocator, .data: $&UInt8, .size: UIntNative) -> () 
 CountingAllocator implements Allocator
 
 exercise(
-    .allocator: $&Allocator = #reach allocator,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> () := {
     arr ::= DynamicArray#(.t: Int32)(.capacity = 1)
     push(.self = $&arr, .value = 10)

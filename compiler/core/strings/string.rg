@@ -14,7 +14,7 @@ String : Type = (
 
 init (
     .p: $&String,
-    .allocator: $&Allocator = #reach allocator,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
     .length: UIntNative,
 ) -> () := {
     data ::= allocate(.self = allocator, .size = length)
@@ -28,7 +28,7 @@ init (
 }
 
 deinit (
-    .allocator: $&Allocator = #reach allocator,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&String,
 ) -> () := {
     zero :: UIntNative = 0
@@ -40,7 +40,7 @@ deinit (
 }
 
 copy (
-    .allocator: $&Allocator = #reach allocator,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: String,
 ) -> (.out: String) := {
     new_data ::= allocate(.self = allocator, .size = self.length)

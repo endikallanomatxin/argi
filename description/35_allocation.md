@@ -32,7 +32,7 @@ Allocators más típicos en zig:
 - **ThreadLocalAllocator**
   - A bump-pointer allocator per thread with a fallback mechanism.
   - Used in multi-threaded applications to avoid contention.
-- **DirectAllocator**
+- **CAllocator**
   - Uses `malloc` and `free` from the C standard library.
   - Useful for integrating with C libraries.
 

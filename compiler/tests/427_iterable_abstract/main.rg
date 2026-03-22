@@ -9,7 +9,7 @@ sum_iterable(.items: &Iterable#(.t: Int32)) -> (.sum: Int32) := {
 }
 
 main () -> (.status_code: Int32) := {
-    allocator :: DirectAllocator = DirectAllocator()
+    allocator :: CAllocator = CAllocator()
     values : Array#(.n = 3, .t: Int32) = (3, 4, 5)
     array_sum :: Int32 = sum_iterable(.items = &values).sum
 

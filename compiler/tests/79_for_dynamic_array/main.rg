@@ -1,5 +1,5 @@
 main () -> (.status_code: Int32) := {
-    allocator :: DirectAllocator = DirectAllocator()
+    allocator :: CAllocator = CAllocator()
     dyn :: DynamicArray#(.t: Int32) = DynamicArray#(.t: Int32)(.capacity = 2)
     #defer deinit(.self = $&dyn)
     push(.self = $&dyn, .value = 7)
