@@ -78,7 +78,7 @@ p: &Int
 ```
 
 - No puede ser nulo.
-(Si se quiere hacer nulo, usar un nullable: `?&int`. Más adelante hay más sobre
+(Si se quiere hacer nulo, usar un nullable: `?&Int`. Más adelante hay más sobre
 esto.)
 
 - No se puede hacer aritmética con punteros.
