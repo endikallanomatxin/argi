@@ -551,6 +551,7 @@ const LanguageServer = struct {
 
         if (self.service) |*svc| {
             const definition_opt = try svc.definition(uri_value.string, position);
+            defer if (definition_opt) |definition| definition.deinit(self.allocator);
 
             var payload = std.Io.Writer.Allocating.init(self.allocator);
             defer payload.deinit();

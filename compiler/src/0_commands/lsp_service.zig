@@ -125,6 +125,11 @@ const SemanticFunctionCallRef = struct {
     call: *const sg.FunctionCall,
 };
 
+const SemanticTypeInitializerRef = struct {
+    node: *const sg.SGNode,
+    init: sg.TypeInitializer,
+};
+
 const SemanticTypeDeclRef = struct {
     decl: *const sg.TypeDeclaration,
 };
@@ -742,9 +747,11 @@ pub const LanguageService = struct {
         defer semantic_functions.deinit();
         var semantic_calls = std.array_list.Managed(SemanticFunctionCallRef).init(analysis_allocator);
         defer semantic_calls.deinit();
+        var semantic_type_inits = std.array_list.Managed(SemanticTypeInitializerRef).init(analysis_allocator);
+        defer semantic_type_inits.deinit();
         var semantic_types = std.array_list.Managed(SemanticTypeDeclRef).init(analysis_allocator);
         defer semantic_types.deinit();
-        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_types);
+        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types);
 
         for (syntax_functions.items) |syntax_fn| {
             if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc.path)) continue;
@@ -856,9 +863,11 @@ pub const LanguageService = struct {
         defer semantic_functions.deinit();
         var semantic_calls = std.array_list.Managed(SemanticFunctionCallRef).init(analysis_allocator);
         defer semantic_calls.deinit();
+        var semantic_type_inits = std.array_list.Managed(SemanticTypeInitializerRef).init(analysis_allocator);
+        defer semantic_type_inits.deinit();
         var semantic_types = std.array_list.Managed(SemanticTypeDeclRef).init(analysis_allocator);
         defer semantic_types.deinit();
-        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_types);
+        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types);
 
         for (syntax_functions.items) |syntax_fn| {
             if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc.path)) continue;
@@ -872,7 +881,13 @@ pub const LanguageService = struct {
         for (syntax_calls.items) |syntax_call| {
             if (!std.mem.eql(u8, syntax_call.call.callee_loc.file, doc.path)) continue;
             if (!positionWithinName(position, syntax_call.call.callee_loc, syntax_call.call.callee.len)) continue;
-            const semantic_call = findSemanticFunctionCall(semantic_calls.items, syntax_call.call.callee_loc, syntax_call.call.callee) orelse continue;
+            if (findSemanticTypeInitializerAtLocation(semantic_type_inits.items, syntax_call.call.callee_loc)) |type_init| {
+                return .{
+                    .path = try self.ownedDefinitionPath(type_init.init.init_fn.location.file),
+                    .range = nameRange(type_init.init.init_fn.location, type_init.init.init_fn.name.len),
+                };
+            }
+            const semantic_call = findSemanticFunctionCallAtLocation(semantic_calls.items, syntax_call.call.callee_loc) orelse continue;
             return .{
                 .path = try self.ownedDefinitionPath(semantic_call.call.callee.location.file),
                 .range = nameRange(semantic_call.call.callee.location, semantic_call.call.callee.name.len),
@@ -1165,6 +1180,7 @@ fn collectSemanticRefs(
     sg_nodes: []const *sg.SGNode,
     function_refs: *std.array_list.Managed(SemanticFunctionDeclRef),
     call_refs: *std.array_list.Managed(SemanticFunctionCallRef),
+    type_init_refs: *std.array_list.Managed(SemanticTypeInitializerRef),
     type_refs: *std.array_list.Managed(SemanticTypeDeclRef),
 ) !void {
     var stack = std.array_list.Managed(*const sg.SGNode).init(function_refs.allocator);
@@ -1179,6 +1195,10 @@ fn collectSemanticRefs(
             },
             .function_call => |call| {
                 try call_refs.append(.{ .node = node, .call = call });
+                try appendSgChildren(&stack, node);
+            },
+            .type_initializer => |init| {
+                try type_init_refs.append(.{ .node = node, .init = init });
                 try appendSgChildren(&stack, node);
             },
             .type_declaration => |decl| try type_refs.append(.{ .decl = decl }),
@@ -1698,6 +1718,26 @@ fn findSemanticFunctionCall(
         if (!sameLocation(ref.node.location, loc)) continue;
         if (!std.mem.eql(u8, ref.call.callee.name, callee)) continue;
         return ref;
+    }
+    return null;
+}
+
+fn findSemanticFunctionCallAtLocation(
+    refs: []const SemanticFunctionCallRef,
+    loc: token.Location,
+) ?SemanticFunctionCallRef {
+    for (refs) |ref| {
+        if (sameLocation(ref.node.location, loc)) return ref;
+    }
+    return null;
+}
+
+fn findSemanticTypeInitializerAtLocation(
+    refs: []const SemanticTypeInitializerRef,
+    loc: token.Location,
+) ?SemanticTypeInitializerRef {
+    for (refs) |ref| {
+        if (sameLocation(ref.node.location, loc)) return ref;
     }
     return null;
 }

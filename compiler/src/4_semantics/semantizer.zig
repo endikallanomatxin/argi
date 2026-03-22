@@ -4799,7 +4799,7 @@ pub const Semantizer = struct {
             .args = coerced_args.node,
         };
 
-        const init_node = try sg.makeSGNode(.{ .type_initializer = type_init }, undefined, self.allocator);
+        const init_node = try sg.makeSGNode(.{ .type_initializer = type_init }, call.callee_loc, self.allocator);
         return .{ .node = init_node, .ty = type_decl.ty };
     }
 
