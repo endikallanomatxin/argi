@@ -221,6 +221,10 @@ pub fn typeImplementsAbstract(
     candidate: sg.Type,
     s: *Scope,
 ) bool {
+    if (candidate == .abstract_type and std.mem.eql(u8, candidate.abstract_type.name, abs_name)) {
+        return true;
+    }
+
     var cur: ?*Scope = s;
     while (cur) |sc| : (cur = sc.parent) {
         if (sc.abstract_impls.getPtr(abs_name)) |list_ptr| {

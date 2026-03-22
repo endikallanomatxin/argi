@@ -795,6 +795,12 @@ test "440X_reached_argument_missing" {
     );
 }
 
+test "441_output_stream_capability" {
+    try clean();
+    try expectSuccessfulBuild("tests/441_output_stream_capability/main.rg");
+    try runExpect(15);
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");

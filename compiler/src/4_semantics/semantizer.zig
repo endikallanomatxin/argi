@@ -1603,6 +1603,10 @@ pub const Semantizer = struct {
             };
         }
 
+        if (abs.typesCompatibleForDispatch(expected_ty, current.ty, s)) return current;
+        if (self.tryImplicitPointerLiftForDispatch(expected_ty, current)) |lifted| {
+            if (abs.typesCompatibleForDispatch(expected_ty, lifted.ty, s)) return lifted;
+        }
         if (self.fieldExprMatchesDispatch(expected_ty, current, s)) return current;
 
         _ = field_name;
@@ -3781,6 +3785,9 @@ pub const Semantizer = struct {
         s: *Scope,
     ) bool {
         if (abs.typesCompatibleForDispatch(expected, actual.ty, s)) return true;
+        if (self.tryImplicitPointerLiftForDispatch(expected, actual)) |lifted| {
+            if (abs.typesCompatibleForDispatch(expected, lifted.ty, s)) return true;
+        }
 
         return switch (expected) {
             .builtin => |bt| typ.canLiteralCoerceToBuiltin(bt, actual),
@@ -3824,6 +3831,41 @@ pub const Semantizer = struct {
         };
     }
 
+    fn tryImplicitPointerLiftForDispatch(
+        self: *Semantizer,
+        expected: sg.Type,
+        actual: typ.TypedExpr,
+    ) ?typ.TypedExpr {
+        if (expected != .pointer_type) return null;
+        if (actual.ty == .pointer_type) return null;
+        const binding_use_node: *const sg.SGNode = switch (actual.node.content) {
+            .binding_use => actual.node,
+            .move_value => |inner| if (inner.content == .binding_use) inner else return null,
+            else => return null,
+        };
+        const binding = binding_use_node.content.binding_use;
+        if (expected.pointer_type.mutability == .read_write and binding.mutability != .variable) {
+            return null;
+        }
+
+        const child_ty = self.allocator.create(sg.Type) catch return null;
+        child_ty.* = actual.ty;
+
+        const ptr_info = self.allocator.create(sg.PointerType) catch return null;
+        ptr_info.* = .{
+            .mutability = expected.pointer_type.mutability,
+            .child = child_ty,
+        };
+
+        const addr_node = self.allocator.create(sg.SGNode) catch return null;
+        addr_node.* = .{
+            .location = actual.node.location,
+            .sem_type = .{ .pointer_type = ptr_info },
+            .content = .{ .address_of = binding_use_node },
+        };
+        return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
+    }
+
     fn findStructTypeFieldByNameFrom(fields: []const sg.StructTypeField, start: usize, name: []const u8) ?*const sg.StructTypeField {
         for (fields[start..]) |*field| {
             if (std.mem.eql(u8, field.name, name)) return field;
@@ -3846,6 +3888,14 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         if (typ.typesCompatible(expected, actual.ty)) return actual;
+
+        if (expected == .pointer_type and actual.ty != .pointer_type) {
+            const ptr_expr = switch (expected.pointer_type.mutability) {
+                .read_only => try typ.ensureReadOnlyPointer(expr_node, actual, self.allocator, self.diags),
+                .read_write => try typ.ensureMutablePointer(expr_node, actual, s, self.allocator, self.diags),
+            };
+            if (typ.typesCompatible(expected, ptr_expr.ty)) return ptr_expr;
+        }
 
         const coerced = try typ.coerceExprToType(expected, actual, expr_node, s, self.allocator, self.diags);
         if (!typ.typesCompatible(expected, coerced.ty)) {
@@ -5057,6 +5107,10 @@ pub const Semantizer = struct {
                     if (tmpl.dispatch_kind != allowed_kind) continue;
                     var subst = GenericSubst.init(self.allocator);
                     defer subst.deinit();
+                    var dispatch_input = call_input;
+                    if (allowed_kind == .abstract_contract) {
+                        dispatch_input = try self.materializeTemplateReachDefaultsForDispatch(tmpl, call_input, s);
+                    }
 
                     var ok: bool = true;
                     for (tmpl.params) |param| {
@@ -5070,7 +5124,7 @@ pub const Semantizer = struct {
                             }
                         }
                         if (!found) {
-                            if (self.inferGenericArgFromCall(tmpl, param, call_input.ty, s, &subst)) |inferred| {
+                            if (self.inferGenericArgFromCall(tmpl, param, dispatch_input.ty, s, &subst)) |inferred| {
                                 try self.putGenericArg(&subst, param, inferred);
                                 found = true;
                             }
@@ -5082,13 +5136,85 @@ pub const Semantizer = struct {
                     }
                     if (!ok) continue;
                     if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) continue;
-                    if (try self.instantiateGenericTemplate(name, tmpl, call_input, s, &subst)) |instantiated| {
+                    if (try self.instantiateGenericTemplate(name, tmpl, dispatch_input, s, &subst)) |instantiated| {
                         return instantiated;
                     }
                 }
             }
         }
         return error.SymbolNotFound;
+    }
+
+    fn resolveTemplateReachDispatchType(
+        self: *Semantizer,
+        tmpl: gen.GenericTemplate,
+        ty_node: syn.Type,
+        s: *Scope,
+    ) SemErr!sg.Type {
+        var subst = GenericSubst.init(self.allocator);
+        defer subst.deinit();
+
+        for (tmpl.params, 0..) |param, idx| {
+            const constraint_name = tmpl.param_abstract_constraints[idx] orelse continue;
+            const constraint_type_decl = s.lookupType(constraint_name) orelse return error.SymbolNotFound;
+            try subst.types.put(param.name, constraint_type_decl.ty);
+        }
+
+        return self.resolveTypeWithSubst(ty_node, s, &subst);
+    }
+
+    fn materializeTemplateReachDefaultsForDispatch(
+        self: *Semantizer,
+        tmpl: gen.GenericTemplate,
+        call_input: typ.TypedExpr,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (call_input.ty != .struct_type or call_input.node.content != .struct_value_literal) return call_input;
+
+        const actual_struct = call_input.ty.struct_type;
+        const actual_value = call_input.node.content.struct_value_literal;
+        const positional_prefix: usize = @min(actual_value.dispatch_prefix_positional_count, actual_value.fields.len);
+
+        var changed = false;
+        var args = std.array_list.Managed(CallArg).init(self.allocator.*);
+        defer args.deinit();
+
+        for (actual_value.fields, 0..) |field, idx| {
+            try args.append(.{
+                .name = field.name,
+                .expr = .{
+                    .node = @constCast(field.value),
+                    .ty = actual_struct.fields[idx].ty,
+                },
+            });
+        }
+
+        for (tmpl.input.fields) |field| {
+            if (findStructValueFieldByNameFrom(actual_value.fields, positional_prefix, field.name.string) != null) continue;
+            if (field.default_value == null) continue;
+            if (field.default_value.?.content != .reach_directive) continue;
+            if (field.type == null) continue;
+
+            const dispatch_ty = try self.resolveTemplateReachDispatchType(tmpl, field.type.?, s);
+            const reach_te = try self.visitNode(field.default_value.?.*, s);
+            if (reach_te.node.content != .reach_directive) continue;
+
+            const resolved = try self.resolveReachedArgument(
+                field.name.string,
+                dispatch_ty,
+                reach_te.node.content.reach_directive,
+                s,
+                field.default_value.?.location,
+            );
+            try args.append(.{
+                .name = field.name.string,
+                .expr = resolved,
+            });
+            changed = true;
+        }
+
+        if (!changed) return call_input;
+        return self.buildCallInputWithPositionalPrefix(args.items, @intCast(positional_prefix));
     }
 
     fn instantiateGeneric(
