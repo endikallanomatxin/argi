@@ -1,0 +1,33 @@
+DummyOutput : Type = (
+    .write_count: Int32 = 0
+    .flush_count: Int32 = 0
+)
+
+write(.self: $&DummyOutput, .text: String) -> () := {
+    self& = (
+        .write_count = self&.write_count + 1,
+        .flush_count = self&.flush_count,
+    )
+}
+
+flush(.self: $&DummyOutput) -> () := {
+    self& = (
+        .write_count = self&.write_count,
+        .flush_count = self&.flush_count + 1,
+    )
+}
+
+DummyOutput implements OutputStream#(.text: String)
+
+main() -> (.status_code: Int32) := {
+    stderr :: DummyOutput = (
+        .write_count = 0,
+        .flush_count = 0,
+    )
+    text ::= String(.length = 0)
+
+    write_stderr(.stderr = $&stderr, .text = text)
+    flush_stderr(.stderr = $&stderr)
+
+    status_code = stderr.write_count * 10 + stderr.flush_count
+}
