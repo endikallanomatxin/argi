@@ -764,6 +764,8 @@ pub const LanguageService = struct {
                 semantic_fn.decl,
                 syntax_fn.decl,
                 semantic_types.items,
+                doc.text,
+                tokens.items,
             );
             return .{
                 .range = nameRange(syntax_fn.decl.name.location, syntax_fn.decl.name.string.len),
@@ -781,6 +783,8 @@ pub const LanguageService = struct {
                 semantic_call.call.callee,
                 if (syntax_decl) |decl_ref| decl_ref.decl else null,
                 semantic_types.items,
+                doc.text,
+                tokens.items,
             );
             return .{
                 .range = nameRange(syntax_call.call.callee_loc, syntax_call.call.callee.len),
@@ -1018,26 +1022,42 @@ fn buildFunctionHoverMarkdown(
     decl: *const sg.FunctionDeclaration,
     syntax_decl_opt: ?st.FunctionDeclaration,
     type_refs: []const SemanticTypeDeclRef,
+    source_text: []const u8,
+    toks: []const token.Token,
 ) ![]const u8 {
     var out = std.array_list.Managed(u8).init(allocator);
     errdefer out.deinit();
 
-    try appendSignatureText(&out, decl, syntax_decl_opt, type_refs);
+    if (syntax_decl_opt) |syntax_decl| {
+        if (try collectLeadingCommentBlock(source_text, syntax_decl.name.location)) |comments| {
+            try out.appendSlice(comments);
+            try out.appendSlice("\n");
+        }
+        if (!functionHasInferredReachedFields(decl, syntax_decl)) {
+            if (try extractFunctionHeaderSource(source_text, toks, syntax_decl)) |header| {
+                try out.appendSlice(header);
+                return try out.toOwnedSlice();
+            }
+        }
+    }
+
+    try appendGeneratedSignatureText(&out, decl, syntax_decl_opt, type_refs);
 
     return try out.toOwnedSlice();
 }
 
-fn appendSignatureText(
+fn appendGeneratedSignatureText(
     out: *std.array_list.Managed(u8),
     decl: *const sg.FunctionDeclaration,
     syntax_decl_opt: ?st.FunctionDeclaration,
     type_refs: []const SemanticTypeDeclRef,
 ) !void {
     try out.appendSlice(decl.name);
-    try out.appendSlice("(");
+    try out.appendSlice("(\n");
 
     for (decl.input.fields, 0..) |field, idx| {
-        if (idx != 0) try out.appendSlice(", ");
+        if (idx != 0) try out.appendSlice(",\n");
+        try out.appendSlice("    ");
 
         const syntax_field = if (syntax_decl_opt) |syntax_decl|
             findSyntaxStructField(syntax_decl.input, field.name)
@@ -1049,6 +1069,7 @@ fn appendSignatureText(
         if (is_inferred_reach) try out.appendSlice("*");
     }
 
+    if (decl.input.fields.len > 0) try out.appendSlice("\n");
     try out.appendSlice(") -> (");
     for (decl.output.fields, 0..) |field, idx| {
         if (idx != 0) try out.appendSlice(", ");
@@ -1134,6 +1155,97 @@ fn hoverTypeNameFor(ty: sg.Type, type_refs: []const SemanticTypeDeclRef) ?[]cons
         if (typ.typesExactlyEqual(ref.decl.ty, ty)) return ref.decl.name;
     }
     return null;
+}
+
+fn functionHasInferredReachedFields(decl: *const sg.FunctionDeclaration, syntax_decl: st.FunctionDeclaration) bool {
+    for (decl.input.fields) |field| {
+        if (findSyntaxStructField(syntax_decl.input, field.name) != null) continue;
+        if (field.default_value) |default_value| {
+            if (default_value.content == .reach_directive) return true;
+        }
+    }
+    return false;
+}
+
+fn extractFunctionHeaderSource(
+    source_text: []const u8,
+    toks: []const token.Token,
+    syntax_decl: st.FunctionDeclaration,
+) !?[]const u8 {
+    const start_idx = findTokenIndexAtOffset(toks, syntax_decl.name.location) orelse return null;
+    var paren_depth: usize = 0;
+    var idx = start_idx;
+    while (idx < toks.len) : (idx += 1) {
+        const tk = toks[idx];
+        if (!std.mem.eql(u8, tk.location.file, syntax_decl.name.location.file)) continue;
+        switch (tk.content) {
+            .open_parenthesis => paren_depth += 1,
+            .close_parenthesis => {
+                if (paren_depth > 0) paren_depth -= 1;
+            },
+            .equal => if (paren_depth == 0) {
+                const raw = source_text[syntax_decl.name.location.offset .. tk.location.offset + 1];
+                return std.mem.trimRight(u8, raw, " \t\r\n");
+            },
+            .new_line => if (paren_depth == 0 and syntax_decl.body == null) {
+                const raw = source_text[syntax_decl.name.location.offset..tk.location.offset];
+                return std.mem.trimRight(u8, raw, " \t\r\n");
+            },
+            else => {},
+        }
+    }
+    return null;
+}
+
+fn findTokenIndexAtOffset(toks: []const token.Token, loc: token.Location) ?usize {
+    for (toks, 0..) |tk, idx| {
+        if (!std.mem.eql(u8, tk.location.file, loc.file)) continue;
+        if (tk.location.offset == loc.offset) return idx;
+    }
+    return null;
+}
+
+fn collectLeadingCommentBlock(source_text: []const u8, name_loc: token.Location) !?[]const u8 {
+    if (name_loc.line <= 1) return null;
+    const line_starts = try computeLineStarts(std.heap.page_allocator, source_text);
+    defer std.heap.page_allocator.free(line_starts);
+
+    const name_line_idx: usize = @intCast(name_loc.line - 1);
+    var current = name_line_idx;
+    var first_comment_line: ?usize = null;
+
+    while (current > 0) {
+        const prev_line_idx = current - 1;
+        const line = lineSlice(source_text, line_starts, prev_line_idx);
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len == 0) break;
+        if (!std.mem.startsWith(u8, trimmed, "//")) break;
+        first_comment_line = prev_line_idx;
+        current = prev_line_idx;
+    }
+
+    const first = first_comment_line orelse return null;
+    const start = line_starts[first];
+    const end = line_starts[name_line_idx];
+    return std.mem.trimRight(u8, source_text[start..end], "\r\n");
+}
+
+fn computeLineStarts(allocator: std.mem.Allocator, text: []const u8) ![]usize {
+    var starts = std.array_list.Managed(usize).init(allocator);
+    errdefer starts.deinit();
+    try starts.append(0);
+    for (text, 0..) |ch, idx| {
+        if (ch == '\n' and idx + 1 <= text.len) {
+            try starts.append(idx + 1);
+        }
+    }
+    return try starts.toOwnedSlice();
+}
+
+fn lineSlice(text: []const u8, starts: []const usize, line_idx: usize) []const u8 {
+    const start = starts[line_idx];
+    const end = if (line_idx + 1 < starts.len) starts[line_idx + 1] else text.len;
+    return std.mem.trimRight(u8, text[start..end], "\n");
 }
 
 fn collectFunctionInlayHints(
