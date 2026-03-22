@@ -243,6 +243,9 @@
         - resolución de módulo,
         - diagnóstico incremental.
 
+    - Hacer que el harness también cubra LSP de forma explícita, no solo
+      `build`, para detectar regresiones de protocolo y tooling.
+
     - Mantener el LSP usando exactamente el mismo pipeline que `build`.
       Eso ya está bastante mejor alineado; toca evitar regresiones y seguir
       cerrando diferencias de diagnóstico o errores degradados.
@@ -274,6 +277,7 @@
         - syntaxer,
         - semantizer,
         - codegen,
+        - LSP,
         - end-to-end.
 
 
