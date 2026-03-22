@@ -85,6 +85,22 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             std.debug.print("Use \"{s}\" ({s})\n", .{ b.name, typeToString(b.ty) });
         },
 
+        .reach_directive => |reach| {
+            std.debug.print("ReachDirective\n", .{});
+            for (reach.alternatives) |alt| {
+                indent(lvl + 1);
+                std.debug.print("alternative:", .{});
+                for (alt.segments, 0..) |segment, idx| {
+                    if (idx == 0) {
+                        std.debug.print(" {s}", .{segment});
+                    } else {
+                        std.debug.print(".{s}", .{segment});
+                    }
+                }
+                std.debug.print("\n", .{});
+            }
+        },
+
         .move_value => |inner| {
             std.debug.print("MoveValue\n", .{});
             printNode(inner, lvl + 1);

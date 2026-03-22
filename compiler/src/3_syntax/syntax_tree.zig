@@ -32,6 +32,7 @@ pub const Content = union(enum) {
     expression_statement: *STNode,
     identifier: []const u8,
     pipe_placeholder: struct {},
+    reach_directive: ReachDirective,
     move_expression: *STNode,
     function_call: FunctionCall,
     pipe_expression: PipeExpression,
@@ -226,6 +227,14 @@ pub const StructValueLiteralField = struct {
 pub const StructFieldAccess = struct {
     struct_value: *STNode,
     field_name: Name,
+};
+
+pub const ReachDirective = struct {
+    alternatives: []const ReachAlternative,
+};
+
+pub const ReachAlternative = struct {
+    segments: []const Name,
 };
 
 pub const ChoicePayloadAccess = struct {

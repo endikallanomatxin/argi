@@ -603,6 +603,17 @@ pub const LanguageService = struct {
                     try stack.append(pa.target);
                     try stack.append(pa.value);
                 },
+                .reach_directive => |reach| {
+                    for (reach.alternatives) |alt| {
+                        for (alt.segments, 0..) |segment, idx| {
+                            try em.identAt(
+                                segment.location,
+                                if (idx == 0) TOKEN_INDEX.variable else TOKEN_INDEX.property,
+                                0,
+                            );
+                        }
+                    }
+                },
                 else => {},
             }
         }

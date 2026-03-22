@@ -510,6 +510,47 @@ pub const Syntaxer = struct {
         return .{ .variants = variants.items };
     }
 
+    fn commaStartsReachAlternative(self: *Syntaxer) bool {
+        if (!self.tokenIs(.comma)) return false;
+
+        var idx: usize = self.index + 1;
+        while (idx < self.tokens.len) : (idx += 1) {
+            switch (self.tokens[idx].content) {
+                .new_line, .comment => continue,
+                .identifier => return true,
+                else => return false,
+            }
+        }
+
+        return false;
+    }
+
+    fn parseReachDirective(self: *Syntaxer, hash_loc: tok.Location) SyntaxerError!*syn.STNode {
+        var alternatives = std.array_list.Managed(syn.ReachAlternative).init(self.allocator.*);
+
+        while (true) {
+            var segments = std.array_list.Managed(syn.Name).init(self.allocator.*);
+            const first = try self.parseName();
+            try segments.append(first);
+
+            while (self.tokenIs(.dot)) {
+                self.advanceOne();
+                const segment = try self.parseName();
+                try segments.append(segment);
+            }
+
+            try alternatives.append(.{ .segments = try segments.toOwnedSlice() });
+            segments.deinit();
+
+            self.skipNewLinesAndComments();
+            if (!self.commaStartsReachAlternative()) break;
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+        }
+
+        return try self.makeNode(.{ .reach_directive = .{ .alternatives = try alternatives.toOwnedSlice() } }, hash_loc);
+    }
+
     // ─────── struct VALUE literal  (p.e.  (.x=1, .y=2) ) ─────────────────────
     fn parseStructValueLiteral(self: *Syntaxer) SyntaxerError!*syn.STNode {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
@@ -676,6 +717,10 @@ pub const Syntaxer = struct {
             const hash_loc = self.tokenLocation();
             self.advanceOne();
             const ident = try self.parseIdentifier();
+            if (std.mem.eql(u8, ident, "reach")) {
+                const node = try self.parseReachDirective(hash_loc);
+                return try self.parsePostfix(node);
+            }
             if (!std.mem.eql(u8, ident, "import")) {
                 try self.diags.add(hash_loc, .syntax, "unknown directive '#{s}' in expression position", .{ident});
                 return SyntaxerError.ExpectedDeclarationOrAssignment;

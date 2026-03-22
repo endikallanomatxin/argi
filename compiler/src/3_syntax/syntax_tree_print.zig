@@ -213,6 +213,21 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
         // ── IDENTIFIER & LITERAL ─────────────────────────────────────────
         .identifier => |id| std.debug.print("Identifier \"{s}\"\n", .{id}),
         .pipe_placeholder => std.debug.print("PipePlaceholder \"_\"\n", .{}),
+        .reach_directive => |reach| {
+            std.debug.print("ReachDirective\n", .{});
+            for (reach.alternatives) |alt| {
+                indent(lvl + 1);
+                std.debug.print("alternative:", .{});
+                for (alt.segments, 0..) |segment, idx| {
+                    if (idx == 0) {
+                        std.debug.print(" {s}", .{segment.string});
+                    } else {
+                        std.debug.print(".{s}", .{segment.string});
+                    }
+                }
+                std.debug.print("\n", .{});
+            }
+        },
         .move_expression => |inner| {
             std.debug.print("MoveExpression\n", .{});
             printNode(inner.*, lvl + 1);

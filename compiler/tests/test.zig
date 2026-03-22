@@ -781,6 +781,20 @@ test "438X_errable_match_unknown_variant" {
     );
 }
 
+test "439_reached_arguments" {
+    try clean();
+    try expectSuccessfulBuild("tests/439_reached_arguments/main.rg");
+    try runExpect(9);
+}
+
+test "440X_reached_argument_missing" {
+    try clean();
+    try buildExpectFail(
+        "tests/440X_reached_argument_missing/main.rg",
+        "cannot resolve reached argument '.stdout'",
+    );
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");
