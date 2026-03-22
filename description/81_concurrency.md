@@ -112,7 +112,7 @@ funcion_enviadora (c:Channel) -> () := {
 	c | send (_, 42)
 }
 
-canal : Channel<Int>
+canal : Channel#(.t: Int)
 
 for i in Range(.start = 1, .end = 10) {
 	lcr | spawn_thread ($&_, funcion_enviadora, (canal))

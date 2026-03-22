@@ -285,8 +285,8 @@ Clock : Abstract = (
 
 ```rg
 Rng : Abstract = (
-    next_bytes ($&_, Int)                -> (Array<Byte>)
-    next_int   ($&_, min: Int, max: Int) -> (Int)
+    next_bytes(.self: $&Self, .count: Int) -> (.bytes: Array#(.t: Byte))
+    next_int(.self: $&Self, .min: Int, .max: Int) -> (.value: Int)
 )
 ```
 
