@@ -1762,8 +1762,19 @@ fn appendLexicalSemanticTokens(
 ) !void {
     var prev_non_trivia_was_hash = false;
 
-    for (toks) |tk| {
+    for (toks, 0..) |tk, idx| {
         const ty_maybe = switch (tk.content) {
+            .hash => blk: {
+                var j = idx + 1;
+                while (j < toks.len) : (j += 1) {
+                    switch (toks[j].content) {
+                        .comment, .new_line => continue,
+                        .identifier => break :blk TOKEN_INDEX.keyword,
+                        else => break :blk classify_lex_only(tk.content),
+                    }
+                }
+                break :blk classify_lex_only(tk.content);
+            },
             .identifier => if (prev_non_trivia_was_hash) TOKEN_INDEX.keyword else classify_lex_only(tk.content),
             else => classify_lex_only(tk.content),
         };
