@@ -53,6 +53,13 @@ const CallBindingAccess = struct {
     mode: CallAccessMode,
 };
 
+const ReachFunctionContext = struct {
+    function_name: []const u8,
+    location: tok.Location,
+    input_struct: *sg.StructType,
+    body_scope: *Scope,
+};
+
 const GenericSubst = struct {
     allocator: *const std.mem.Allocator,
     types: std.StringHashMap(sg.Type),
@@ -101,6 +108,7 @@ pub const Semantizer = struct {
     current_top_node: ?*const syn.STNode = null,
     max_retry_rounds: u32 = 8,
     synthetic_name_counter: u32 = 0,
+    function_reach_stack: std.array_list.Managed(ReachFunctionContext),
 
     pub fn init(
         alloc: *const std.mem.Allocator,
@@ -114,6 +122,7 @@ pub const Semantizer = struct {
             .diags = diags,
             .pending_now = std.array_list.Managed(*const syn.STNode).init(alloc.*),
             .pending_next = std.array_list.Managed(*const syn.STNode).init(alloc.*),
+            .function_reach_stack = std.array_list.Managed(ReachFunctionContext).init(alloc.*),
         };
     }
 
@@ -748,6 +757,16 @@ pub const Semantizer = struct {
                     .{},
                 );
                 break :blk error.Reported;
+            },
+
+            .reach_directive => |reach| self.handleReachDirective(reach, n.location) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in #reach directive: {s}",
+                    .{@errorName(err)},
+                );
+                break :blk err;
             },
 
             .struct_field_access => |sfa| self.handleStructFieldAccess(sfa, s) catch |err| blk: {
@@ -1487,6 +1506,220 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = b.ty };
     }
 
+    fn handleReachDirective(
+        self: *Semantizer,
+        reach: syn.ReachDirective,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        var alternatives = try self.allocator.alloc(sg.ReachAlternative, reach.alternatives.len);
+        for (reach.alternatives, 0..) |alt, idx| {
+            var segments = try self.allocator.alloc([]const u8, alt.segments.len);
+            for (alt.segments, 0..) |segment, seg_idx| {
+                segments[seg_idx] = segment.string;
+            }
+            alternatives[idx] = .{ .segments = segments };
+        }
+
+        const reach_ptr = try self.allocator.create(sg.ReachDirective);
+        reach_ptr.* = .{ .alternatives = alternatives };
+        const node = try sg.makeSGNode(.{ .reach_directive = reach_ptr }, loc, self.allocator);
+        node.sem_type = .{ .builtin = .Any };
+        return .{ .node = node, .ty = .{ .builtin = .Any } };
+    }
+
+    fn buildStructFieldAccessFromTypedExpr(
+        self: *Semantizer,
+        base: typ.TypedExpr,
+        field_name: []const u8,
+        field_loc: tok.Location,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (base.ty == .array_type) {
+            const desc = try self.formatTypeText(base.ty, s);
+            defer desc.deinit();
+            try self.diags.add(
+                field_loc,
+                .semantic,
+                "type '{s}' has no field '.{s}'",
+                .{ desc.bytes, field_name },
+            );
+            return error.Reported;
+        }
+
+        if (base.ty != .struct_type) {
+            const desc = try self.formatTypeText(base.ty, s);
+            defer desc.deinit();
+            try self.diags.add(
+                field_loc,
+                .semantic,
+                "cannot access field '.{s}' on value of type '{s}'",
+                .{ field_name, desc.bytes },
+            );
+            return error.Reported;
+        }
+
+        const st = base.ty.struct_type;
+        var idx: ?u32 = null;
+        var fty: sg.Type = undefined;
+        for (st.fields, 0..) |f, i| {
+            if (std.mem.eql(u8, f.name, field_name)) {
+                idx = @intCast(i);
+                fty = f.ty;
+                break;
+            }
+        }
+        if (idx == null) return error.FieldsNotFound;
+
+        const fa = try self.allocator.create(sg.StructFieldAccess);
+        fa.* = .{
+            .struct_value = base.node,
+            .field_name = field_name,
+            .field_index = idx.?,
+        };
+
+        const n = try sg.makeSGNode(.{ .struct_field_access = fa }, field_loc, self.allocator);
+        return .{ .node = n, .ty = fty };
+    }
+
+    fn resolveReachAlternativeInScope(
+        self: *Semantizer,
+        alt: sg.ReachAlternative,
+        expected_ty: sg.Type,
+        field_name: []const u8,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!?typ.TypedExpr {
+        if (alt.segments.len == 0) return null;
+
+        var current = self.handleIdentifier(alt.segments[0], s, loc) catch |err| switch (err) {
+            error.SymbolNotFound => return null,
+            else => return err,
+        };
+
+        for (alt.segments[1..]) |segment| {
+            current = self.buildStructFieldAccessFromTypedExpr(current, segment, loc, s) catch |err| switch (err) {
+                error.FieldsNotFound => return null,
+                else => return err,
+            };
+        }
+
+        if (self.fieldExprMatchesDispatch(expected_ty, current, s)) return current;
+
+        _ = field_name;
+        return null;
+    }
+
+    fn currentReachFunctionContext(self: *Semantizer) ?*ReachFunctionContext {
+        if (self.function_reach_stack.items.len == 0) return null;
+        return &self.function_reach_stack.items[self.function_reach_stack.items.len - 1];
+    }
+
+    fn ensurePropagatedReachedField(
+        self: *Semantizer,
+        field_name: []const u8,
+        expected_ty: sg.Type,
+        reach: *const sg.ReachDirective,
+        loc: tok.Location,
+        ctx: *ReachFunctionContext,
+    ) SemErr!typ.TypedExpr {
+        for (ctx.input_struct.fields) |existing| {
+            if (!std.mem.eql(u8, existing.name, field_name)) continue;
+            if (!abs.typesCompatibleForDispatch(existing.ty, expected_ty, ctx.body_scope) and
+                !abs.typesCompatibleForDispatch(expected_ty, existing.ty, ctx.body_scope))
+            {
+                const pair = try self.formatTypePairText(expected_ty, existing.ty, ctx.body_scope);
+                defer pair.deinit();
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "cannot propagate reached argument '.{s}': function already has incompatible argument type '{s}' (expected '{s}')",
+                    .{ field_name, pair.actual.bytes, pair.expected.bytes },
+                );
+                return error.Reported;
+            }
+
+            const binding = ctx.body_scope.bindings.get(field_name) orelse {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "internal error: missing propagated binding for reached argument '.{s}'",
+                    .{field_name},
+                );
+                return error.Reported;
+            };
+            const use_node = try sg.makeSGNode(.{ .binding_use = binding }, loc, self.allocator);
+            return .{ .node = use_node, .ty = binding.ty };
+        }
+
+        const new_len = ctx.input_struct.fields.len + 1;
+        const new_fields = try self.allocator.alloc(sg.StructTypeField, new_len);
+        std.mem.copyForwards(sg.StructTypeField, new_fields[0..ctx.input_struct.fields.len], ctx.input_struct.fields);
+        new_fields[new_len - 1] = .{
+            .name = field_name,
+            .ty = expected_ty,
+            .default_value = try sg.makeSGNode(.{ .reach_directive = reach }, loc, self.allocator),
+        };
+        ctx.input_struct.fields = new_fields;
+
+        const binding = try self.allocator.create(sg.BindingDeclaration);
+        binding.* = .{
+            .name = field_name,
+            .origin_file = ctx.location.file,
+            .mutability = .constant,
+            .ty = expected_ty,
+            .initialization = new_fields[new_len - 1].default_value,
+        };
+        try ctx.body_scope.bindings.put(field_name, binding);
+
+        const use_node = try sg.makeSGNode(.{ .binding_use = binding }, loc, self.allocator);
+        return .{ .node = use_node, .ty = expected_ty };
+    }
+
+    fn formatReachDirective(self: *Semantizer, reach: *const sg.ReachDirective) ![]u8 {
+        var buf = std.array_list.Managed(u8).init(self.allocator.*);
+        for (reach.alternatives, 0..) |alt, alt_idx| {
+            if (alt_idx != 0) try buf.appendSlice(", ");
+            for (alt.segments, 0..) |segment, seg_idx| {
+                if (seg_idx != 0) try buf.append('.');
+                try buf.appendSlice(segment);
+            }
+        }
+        return buf.toOwnedSlice();
+    }
+
+    fn resolveReachedArgument(
+        self: *Semantizer,
+        field_name: []const u8,
+        expected_ty: sg.Type,
+        reach: *const sg.ReachDirective,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        for (reach.alternatives) |alt| {
+            if (try self.resolveReachAlternativeInScope(alt, expected_ty, field_name, s, loc)) |resolved| {
+                return resolved;
+            }
+        }
+
+        if (self.currentReachFunctionContext()) |ctx| {
+            if (!std.mem.eql(u8, ctx.function_name, "main")) {
+                return self.ensurePropagatedReachedField(field_name, expected_ty, reach, loc, ctx);
+            }
+        }
+
+        const reach_text = try self.formatReachDirective(reach);
+        defer self.allocator.free(reach_text);
+        const expected_text = try self.formatTypeText(expected_ty, s);
+        defer expected_text.deinit();
+        try self.diags.add(
+            loc,
+            .semantic,
+            "cannot resolve reached argument '.{s}' with alternatives [{s}] expected as '{s}'",
+            .{ field_name, reach_text, expected_text.bytes },
+        );
+        return error.Reported;
+    }
+
     fn handleMove(
         self: *Semantizer,
         inner: *const syn.STNode,
@@ -1791,7 +2024,8 @@ pub const Semantizer = struct {
             };
             try child.bindings.put(fld.name.string, bd);
         }
-        const in_struct = sg.StructType{ .fields = try in_fields.toOwnedSlice() };
+        const in_struct_ptr = try self.allocator.create(sg.StructType);
+        in_struct_ptr.* = .{ .fields = try in_fields.toOwnedSlice() };
         in_fields.deinit();
 
         // ── salida
@@ -1825,6 +2059,13 @@ pub const Semantizer = struct {
         // ── cuerpo
         var body_cb: ?*sg.CodeBlock = null;
         if (f.body) |body_node| {
+            try self.function_reach_stack.append(.{
+                .function_name = f.name.string,
+                .location = loc,
+                .input_struct = in_struct_ptr,
+                .body_scope = &child,
+            });
+            defer _ = self.function_reach_stack.pop();
             const body_te = try self.visitNode(body_node.*, &child);
             body_cb = body_te.node.content.code_block;
         }
@@ -1833,7 +2074,7 @@ pub const Semantizer = struct {
         fn_ptr.* = .{
             .name = f.name.string,
             .location = loc,
-            .input = in_struct,
+            .input = in_struct_ptr.*,
             .output = out_struct,
             .body = body_cb,
         };
@@ -2636,18 +2877,6 @@ pub const Semantizer = struct {
 
         const base = try self.visitNode(ma.struct_value.*, s);
 
-        if (base.ty == .array_type) {
-            const desc = try self.formatTypeText(base.ty, s);
-            defer desc.deinit();
-            try self.diags.add(
-                ma.struct_value.*.location,
-                .semantic,
-                "type '{s}' has no field '.{s}'",
-                .{ desc.bytes, ma.field_name.string },
-            );
-            return error.Reported;
-        }
-
         if (base.ty != .struct_type) {
             if (base.node.content == .function_call) {
                 const fc = base.node.content.function_call;
@@ -2669,28 +2898,8 @@ pub const Semantizer = struct {
             );
             return error.Reported;
         }
-        const st = base.ty.struct_type;
 
-        var idx: ?u32 = null;
-        var fty: sg.Type = undefined;
-        for (st.fields, 0..) |f, i| {
-            if (std.mem.eql(u8, f.name, ma.field_name.string)) {
-                idx = @intCast(i);
-                fty = f.ty;
-                break;
-            }
-        }
-        if (idx == null) return error.FieldsNotFound;
-
-        const fa = try self.allocator.create(sg.StructFieldAccess);
-        fa.* = .{
-            .struct_value = base.node,
-            .field_name = ma.field_name.string,
-            .field_index = idx.?,
-        };
-
-        const n = try sg.makeSGNode(.{ .struct_field_access = fa }, undefined, self.allocator);
-        return .{ .node = n, .ty = fty };
+        return self.buildStructFieldAccessFromTypedExpr(base, ma.field_name.string, ma.field_name.location, s);
     }
 
     fn handleChoicePayloadAccess(
@@ -2975,7 +3184,7 @@ pub const Semantizer = struct {
         const call_ptr = try self.allocator.create(sg.FunctionCall);
         call_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
 
-        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, undefined, self.allocator);
+        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, ia.value.*.location, self.allocator);
         try s.nodes.append(node);
         return .{ .node = node, .ty = typ.functionReturnType(chosen_fn) };
     }
@@ -3098,7 +3307,7 @@ pub const Semantizer = struct {
         const call_ptr = try self.allocator.create(sg.FunctionCall);
         call_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
 
-        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, undefined, self.allocator);
+        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, ia.target.*.location, self.allocator);
         try s.nodes.append(node);
         return .{ .node = node, .ty = .{ .builtin = .Any } };
     }
@@ -3301,7 +3510,7 @@ pub const Semantizer = struct {
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
         fc_ptr.* = .{ .callee = chosen, .input = coerced_input.node };
 
-        const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, undefined, self.allocator);
+        const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, call.callee_loc, self.allocator);
 
         const result_ty = typ.functionReturnType(chosen);
 
@@ -3712,6 +3921,20 @@ pub const Semantizer = struct {
             }
 
             if (exp_field.default_value) |default_node| {
+                if (default_node.content == .reach_directive) {
+                    const resolved = try self.resolveReachedArgument(
+                        exp_field.name,
+                        exp_field.ty,
+                        default_node.content.reach_directive,
+                        s,
+                        expr_node.location,
+                    );
+                    coerced_fields[idx] = .{
+                        .name = exp_field.name,
+                        .value = resolved.node,
+                    };
+                    continue;
+                }
                 coerced_fields[idx] = .{
                     .name = exp_field.name,
                     .value = default_node,
@@ -3780,6 +4003,39 @@ pub const Semantizer = struct {
         }
 
         return true;
+    }
+
+    fn callInputSpecificityScore(
+        self: *Semantizer,
+        expected: *const sg.StructType,
+        input_te: typ.TypedExpr,
+        s: *Scope,
+    ) u32 {
+        _ = self;
+        _ = s;
+
+        if (input_te.ty != .struct_type or input_te.node.content != .struct_value_literal) {
+            return abs.specificityScore(.{ .struct_type = expected }, input_te.ty);
+        }
+
+        const actual_struct = input_te.ty.struct_type;
+        const actual_value = input_te.node.content.struct_value_literal;
+        const positional_prefix: usize = @min(actual_value.dispatch_prefix_positional_count, actual_value.fields.len);
+
+        var score: u32 = 0;
+
+        for (expected.fields[0..positional_prefix], 0..) |exp_field, idx| {
+            if (idx >= actual_struct.fields.len) break;
+            score += abs.specificityScore(exp_field.ty, actual_struct.fields[idx].ty);
+        }
+
+        for (actual_value.fields[positional_prefix..]) |actual_field| {
+            const actual_field_ty = findStructTypeFieldByNameFrom(actual_struct.fields, positional_prefix, actual_field.name) orelse continue;
+            const exp_field = typ.findFieldByName(expected, actual_field.name) orelse continue;
+            score += abs.specificityScore(exp_field.ty, actual_field_ty.ty);
+        }
+
+        return score;
     }
 
     fn buildTypeInitializerDispatchInput(
@@ -3961,7 +4217,7 @@ pub const Semantizer = struct {
                     if (!(try self.functionIsVisible(cand, loc.file))) continue;
                     if (!self.callInputMatchesDispatch(&cand.input, input_te, s)) continue;
 
-                    const score = abs.specificityScore(.{ .struct_type = &cand.input }, input_te.ty);
+                    const score = self.callInputSpecificityScore(&cand.input, input_te, s);
                     if (best == null or score < best_score) {
                         best = cand;
                         best_score = score;
@@ -4011,7 +4267,7 @@ pub const Semantizer = struct {
                         continue;
                     }
 
-                    const score = abs.specificityScore(.{ .struct_type = &cand.input }, input_te.ty);
+                    const score = self.callInputSpecificityScore(&cand.input, input_te, s);
                     if (best == null or score < best_score) {
                         best = cand;
                         best_score = score;
@@ -4936,6 +5192,13 @@ pub const Semantizer = struct {
 
         var body_cb: ?*sg.CodeBlock = null;
         if (tmpl.body) |body_node| {
+            try self.function_reach_stack.append(.{
+                .function_name = tmpl.name,
+                .location = tmpl.location,
+                .input_struct = in_struct_ptr,
+                .body_scope = &child,
+            });
+            defer _ = self.function_reach_stack.pop();
             const body_te = try self.visitNode(body_node.*, &child);
             body_cb = body_te.node.content.code_block;
         }

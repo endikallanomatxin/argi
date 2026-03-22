@@ -128,3 +128,115 @@ copies of the value.
 - `$&Type` means exclusive mutable access
 - non-copyable types cannot be passed as `Type`
 
+
+## Reached Arguments
+
+Some named arguments may be declared as *reached arguments*:
+
+```argi
+allocate(.allocator: $&Allocator = #reach allocator, .size: UIntNative) -> (.out: Allocation) := {
+    ...
+}
+```
+
+`#reach name` means:
+
+- the argument is still part of the function interface
+- the caller may pass it explicitly
+- if the caller does not pass it explicitly, the compiler tries to satisfy it
+  by reaching a variable with that exact name in the caller context
+
+This is intended for ambient capabilities such as:
+
+- `allocator`
+- `system`
+- `stdout`
+- `logger`
+- `clock`
+
+### Resolution rules
+
+Reached arguments are resolved by propagation through the call chain.
+
+1. If the call site provides the argument explicitly, that value is used.
+2. Otherwise, the compiler inspects the direct caller scope.
+3. A reached declaration may contain one or more alternatives separated by
+   commas.
+4. Alternatives are tried left-to-right within the current caller scope.
+5. Each alternative may be a dotted path. For example,
+   `system.console.stdout` means:
+   - find `system` in the caller scope
+   - then access `.console`
+   - then access `.stdout`
+6. The first alternative that resolves in the current caller scope and matches
+   the declared type is used.
+7. If the declared type is an abstract, any value whose concrete type
+   implements that abstract is valid.
+8. If no alternative resolves in the current caller scope, the dependency is
+   propagated upwards as if the caller itself had an extra argument declared as
+   `.name = #reach ...`.
+9. The same process is repeated in the next caller: inspect that caller first,
+   then try the alternatives left-to-right there.
+10. If the search reaches `main` and still cannot be satisfied, compilation
+    fails.
+
+The search is lexical and deterministic. It is resolved only through the
+explicit alternatives declared by the function, not by “any value with a
+compatible type”.
+
+### Dotted paths and alternatives
+
+Reached arguments may refer to nested capability paths:
+
+```argi
+print_line(
+    .stdout: $&OutputStream = #reach stdout, console.stdout, system.console.stdout,
+    .text: String,
+) -> () := {
+    ...
+}
+```
+
+Here:
+
+- `.` means field access inside a structured value
+- `,` means ordered fallback alternatives
+
+The example above means:
+
+1. in the direct caller, try `stdout`
+2. if that is not available, try `console.stdout`
+3. if that is not available, try `system.console.stdout`
+4. if none resolve there, move to the next caller and repeat the same order
+
+This prefers nearby bindings over distant ones. That is intentional:
+
+- local aliases should be able to override wider ambient capabilities
+- functions can introduce a closer capability without forcing every nested call
+  to rewrite its reach declaration
+- tests and small scopes can inject local capabilities naturally
+
+This makes reached arguments ergonomic while keeping resolution predictable.
+
+### Explicit beats reached
+
+An explicit argument at the call site always takes precedence:
+
+```argi
+foo(.allocator = temp_allocator)
+```
+
+This overrides any reached `allocator`.
+
+### Tooling requirements
+
+Reached arguments are meant to reduce boilerplate without hiding dependencies.
+Because of that, tooling must make them visible:
+
+- signature help should show which arguments are reached
+- hover should show the effective reached dependencies of a function
+- call hints should show when a call is supplying arguments implicitly via
+  `#reach`
+
+This keeps capability threading ergonomic without turning dependencies into
+hidden globals.

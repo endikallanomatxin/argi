@@ -87,6 +87,8 @@ const LanguageServer = struct {
                 if (id_value) |id| self.handleSemanticTokensFull(&writer, id, params_value) catch {};
             } else if (std.mem.eql(u8, method, "textDocument/semanticTokens/range")) {
                 if (id_value) |id| self.handleSemanticTokensRange(&writer, id, params_value) catch {};
+            } else if (std.mem.eql(u8, method, "textDocument/hover")) {
+                if (id_value) |id| self.handleHover(&writer, id, params_value) catch {};
             } else {
                 // Método desconocido -> ignorar
             }
@@ -286,6 +288,8 @@ const LanguageServer = struct {
         try stream.objectField("range");
         try stream.write(true); // si quieres implementar /range más tarde
         try stream.endObject();
+        try stream.objectField("hoverProvider");
+        try stream.write(true);
         try stream.endObject();
 
         try stream.objectField("serverInfo");
@@ -455,6 +459,74 @@ const LanguageServer = struct {
         }
     }
 
+    fn handleHover(
+        self: *LanguageServer,
+        writer: anytype,
+        id_value: json.Value,
+        params_value: ?json.Value,
+    ) !void {
+        if (self.service == null) return;
+        const params = params_value orelse return;
+        if (params != .object) return;
+
+        const text_document_value = getField(&params.object, "textDocument") orelse return;
+        if (text_document_value != .object) return;
+        const uri_value = getField(&text_document_value.object, "uri") orelse return;
+        if (uri_value != .string) return;
+
+        const position_value = getField(&params.object, "position") orelse return;
+        const position = parsePosition(position_value) orelse return;
+
+        if (self.service) |*svc| {
+            const hover_opt = try svc.hover(uri_value.string, position);
+            defer if (hover_opt) |hover| self.allocator.free(hover.contents);
+
+            var payload = std.Io.Writer.Allocating.init(self.allocator);
+            defer payload.deinit();
+            var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
+
+            try stream.beginObject();
+            try stream.objectField("jsonrpc");
+            try stream.write("2.0");
+            try stream.objectField("id");
+            try stream.write(id_value);
+            try stream.objectField("result");
+            if (hover_opt) |hover| {
+                try stream.beginObject();
+                try stream.objectField("contents");
+                try stream.beginObject();
+                try stream.objectField("kind");
+                try stream.write("markdown");
+                try stream.objectField("value");
+                try stream.write(hover.contents);
+                try stream.endObject();
+                try stream.objectField("range");
+                try stream.beginObject();
+                try stream.objectField("start");
+                try stream.beginObject();
+                try stream.objectField("line");
+                try stream.write(hover.range.start.line);
+                try stream.objectField("character");
+                try stream.write(hover.range.start.character);
+                try stream.endObject();
+                try stream.objectField("end");
+                try stream.beginObject();
+                try stream.objectField("line");
+                try stream.write(hover.range.end.line);
+                try stream.objectField("character");
+                try stream.write(hover.range.end.character);
+                try stream.endObject();
+                try stream.endObject();
+                try stream.endObject();
+            } else {
+                try stream.write(null);
+            }
+            try stream.endObject();
+
+            try self.sendMessage(writer, payload.writer.buffered());
+        }
+    }
+
     fn sendMessage(self: *LanguageServer, writer: anytype, payload: []const u8) !void {
         _ = self;
         try writer.print("Content-Length: {d}\r\n\r\n", .{payload.len});
@@ -476,4 +548,24 @@ const LanguageServer = struct {
 
 fn getField(map: *const json.ObjectMap, key: []const u8) ?json.Value {
     return map.*.get(key);
+}
+
+fn parseRange(value: json.Value) ?service.Range {
+    if (value != .object) return null;
+    const start_value = getField(&value.object, "start") orelse return null;
+    const end_value = getField(&value.object, "end") orelse return null;
+    const start_pos = parsePosition(start_value) orelse return null;
+    const end_pos = parsePosition(end_value) orelse return null;
+    return .{ .start = start_pos, .end = end_pos };
+}
+
+fn parsePosition(value: json.Value) ?service.Position {
+    if (value != .object) return null;
+    const line_value = getField(&value.object, "line") orelse return null;
+    const char_value = getField(&value.object, "character") orelse return null;
+    if (line_value != .integer or char_value != .integer) return null;
+    return .{
+        .line = @intCast(line_value.integer),
+        .character = @intCast(char_value.integer),
+    };
 }
