@@ -8,6 +8,7 @@ const st = @import("../3_syntax/syntax_tree.zig");
 const syntaxer = @import("../3_syntax/syntaxer.zig");
 const sg = @import("../4_semantics/semantic_graph.zig");
 const semantizer = @import("../4_semantics/semantizer.zig");
+const typ = @import("../4_semantics/types.zig");
 
 // Token types legend indices
 const TOKEN_INDEX = struct {
@@ -58,6 +59,11 @@ pub const InlayHint = struct {
     label: []const u8,
 };
 
+pub const Hover = struct {
+    range: Range,
+    contents: []const u8,
+};
+
 pub const DiagnosticsResult = struct {
     allocator: std.mem.Allocator,
     items: []Diagnostic,
@@ -98,6 +104,20 @@ const SyntaxFunctionDeclRef = struct {
 const SyntaxFunctionCallRef = struct {
     node: *const st.STNode,
     call: st.FunctionCall,
+};
+
+const SemanticFunctionDeclRef = struct {
+    node: *const sg.SGNode,
+    decl: *const sg.FunctionDeclaration,
+};
+
+const SemanticFunctionCallRef = struct {
+    node: *const sg.SGNode,
+    call: *const sg.FunctionCall,
+};
+
+const SemanticTypeDeclRef = struct {
+    decl: *const sg.TypeDeclaration,
 };
 
 const Document = struct {
@@ -665,6 +685,112 @@ pub const LanguageService = struct {
         return out;
     }
 
+    pub fn hover(self: *LanguageService, uri: []const u8, position: Position) !?Hover {
+        const doc = try self.getDoc(uri);
+
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        var analysis_allocator = arena.allocator();
+
+        const files_list = sf.collectWithEntrySource(&analysis_allocator, "core", doc.path, doc.text) catch {
+            return null;
+        };
+        const files = files_list.items;
+
+        for (files_list.items) |*source_file| {
+            for (self.documents.items) |open_doc| {
+                if (std.mem.eql(u8, source_file.path, open_doc.path)) {
+                    source_file.code = open_doc.text;
+                    break;
+                }
+            }
+        }
+
+        const one_primary = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
+        var diagnostics = diag.Diagnostics.init(&analysis_allocator, &one_primary);
+        defer diagnostics.deinit();
+
+        var tokens = std.array_list.Managed(token.Token).init(analysis_allocator);
+        defer tokens.deinit();
+
+        for (files, 0..) |source_file, idx| {
+            var tokenizer_ctx = tokenizer.Tokenizer.init(
+                &analysis_allocator,
+                &diagnostics,
+                source_file.code,
+                source_file.path,
+            );
+            const token_slice = tokenizer_ctx.tokenize() catch {
+                return null;
+            };
+
+            const slice = if (idx == files.len - 1)
+                token_slice
+            else
+                token_slice[0 .. token_slice.len - 1];
+            try tokens.appendSlice(slice);
+        }
+
+        var syntax_ctx = syntaxer.Syntaxer.init(&analysis_allocator, tokens.items, &diagnostics);
+        const st_nodes = syntax_ctx.parse() catch {
+            return null;
+        };
+
+        var sem_ctx = semantizer.Semantizer.init(&analysis_allocator, st_nodes, &diagnostics);
+        const sg_nodes = sem_ctx.analyze() catch {
+            return null;
+        };
+
+        var syntax_functions = std.array_list.Managed(SyntaxFunctionDeclRef).init(analysis_allocator);
+        defer syntax_functions.deinit();
+        var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
+        defer syntax_calls.deinit();
+        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls);
+
+        var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator);
+        defer semantic_functions.deinit();
+        var semantic_calls = std.array_list.Managed(SemanticFunctionCallRef).init(analysis_allocator);
+        defer semantic_calls.deinit();
+        var semantic_types = std.array_list.Managed(SemanticTypeDeclRef).init(analysis_allocator);
+        defer semantic_types.deinit();
+        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_types);
+
+        for (syntax_functions.items) |syntax_fn| {
+            if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc.path)) continue;
+            if (!positionWithinName(position, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len)) continue;
+            const semantic_fn = findSemanticFunctionDecl(semantic_functions.items, syntax_fn.decl.name.location, syntax_fn.decl.name.string) orelse continue;
+            const contents = try buildFunctionHoverMarkdown(
+                self.allocator,
+                semantic_fn.decl,
+                syntax_fn.decl,
+                semantic_types.items,
+            );
+            return .{
+                .range = nameRange(syntax_fn.decl.name.location, syntax_fn.decl.name.string.len),
+                .contents = contents,
+            };
+        }
+
+        for (syntax_calls.items) |syntax_call| {
+            if (!std.mem.eql(u8, syntax_call.call.callee_loc.file, doc.path)) continue;
+            if (!positionWithinName(position, syntax_call.call.callee_loc, syntax_call.call.callee.len)) continue;
+            const semantic_call = findSemanticFunctionCall(semantic_calls.items, syntax_call.call.callee_loc, syntax_call.call.callee) orelse continue;
+            const syntax_decl = findSyntaxFunctionDecl(syntax_functions.items, semantic_call.call.callee.location, semantic_call.call.callee.name);
+            const contents = try buildFunctionHoverMarkdown(
+                self.allocator,
+                semantic_call.call.callee,
+                if (syntax_decl) |decl_ref| decl_ref.decl else null,
+                semantic_types.items,
+            );
+            return .{
+                .range = nameRange(syntax_call.call.callee_loc, syntax_call.call.callee.len),
+                .contents = contents,
+            };
+        }
+
+        return null;
+    }
+
     pub fn inlayHints(self: *LanguageService, uri: []const u8, range: ?Range) !InlayHintsResult {
         const doc = try self.getDoc(uri);
 
@@ -748,6 +874,7 @@ pub const LanguageService = struct {
             range,
             sg_nodes,
             syntax_calls.items,
+            tokens.items,
             &hints,
         );
 
@@ -860,6 +987,158 @@ fn collectSyntaxRefs(
     }
 }
 
+fn collectSemanticRefs(
+    sg_nodes: []const *sg.SGNode,
+    function_refs: *std.array_list.Managed(SemanticFunctionDeclRef),
+    call_refs: *std.array_list.Managed(SemanticFunctionCallRef),
+    type_refs: *std.array_list.Managed(SemanticTypeDeclRef),
+) !void {
+    var stack = std.array_list.Managed(*const sg.SGNode).init(function_refs.allocator);
+    defer stack.deinit();
+    for (sg_nodes) |node| try stack.append(node);
+
+    while (popOrNull(*const sg.SGNode, &stack)) |node| {
+        switch (node.content) {
+            .function_declaration => |decl| {
+                try function_refs.append(.{ .node = node, .decl = decl });
+                try appendSgChildren(&stack, node);
+            },
+            .function_call => |call| {
+                try call_refs.append(.{ .node = node, .call = call });
+                try appendSgChildren(&stack, node);
+            },
+            .type_declaration => |decl| try type_refs.append(.{ .decl = decl }),
+            else => try appendSgChildren(&stack, node),
+        }
+    }
+}
+
+fn buildFunctionHoverMarkdown(
+    allocator: std.mem.Allocator,
+    decl: *const sg.FunctionDeclaration,
+    syntax_decl_opt: ?st.FunctionDeclaration,
+    type_refs: []const SemanticTypeDeclRef,
+) ![]const u8 {
+    var out = std.array_list.Managed(u8).init(allocator);
+    errdefer out.deinit();
+
+    try out.appendSlice("**");
+    try out.appendSlice(decl.name);
+    try out.appendSlice("**\n\n");
+    try appendSignatureText(&out, decl, syntax_decl_opt, type_refs);
+
+    return try out.toOwnedSlice();
+}
+
+fn appendSignatureText(
+    out: *std.array_list.Managed(u8),
+    decl: *const sg.FunctionDeclaration,
+    syntax_decl_opt: ?st.FunctionDeclaration,
+    type_refs: []const SemanticTypeDeclRef,
+) !void {
+    try out.appendSlice(decl.name);
+    try out.appendSlice("(");
+
+    for (decl.input.fields, 0..) |field, idx| {
+        if (idx != 0) try out.appendSlice(", ");
+
+        const syntax_field = if (syntax_decl_opt) |syntax_decl|
+            findSyntaxStructField(syntax_decl.input, field.name)
+        else
+            null;
+        const is_inferred_reach = syntax_field == null and field.default_value != null and field.default_value.?.content == .reach_directive;
+        if (is_inferred_reach) try out.appendSlice("*");
+        try appendSignatureFieldText(out, field, syntax_field, type_refs);
+        if (is_inferred_reach) try out.appendSlice("*");
+    }
+
+    try out.appendSlice(") -> (");
+    for (decl.output.fields, 0..) |field, idx| {
+        if (idx != 0) try out.appendSlice(", ");
+        try appendSignatureFieldText(out, field, null, type_refs);
+    }
+    try out.appendSlice(")");
+}
+
+fn appendSignatureFieldText(
+    out: *std.array_list.Managed(u8),
+    field: sg.StructTypeField,
+    syntax_field_opt: ?st.StructTypeLiteralField,
+    type_refs: []const SemanticTypeDeclRef,
+) !void {
+    try out.appendSlice(".");
+    try out.appendSlice(field.name);
+    try out.appendSlice(": ");
+    try appendHoverType(out, field.ty, type_refs);
+
+    if (syntax_field_opt) |syntax_field| {
+        if (syntax_field.default_value) |dv| {
+            if (dv.content == .reach_directive) {
+                try out.appendSlice(" = #reach ");
+                try appendSyntaxReachDirective(out, dv.content.reach_directive);
+                return;
+            }
+        }
+    }
+
+    if (field.default_value) |default_value| {
+        if (default_value.content == .reach_directive) {
+            try out.appendSlice(" = #reach ");
+            try appendReachDirective(out, default_value.content.reach_directive);
+        }
+    }
+}
+
+fn appendHoverType(
+    out: *std.array_list.Managed(u8),
+    ty: sg.Type,
+    type_refs: []const SemanticTypeDeclRef,
+) !void {
+    if (hoverTypeNameFor(ty, type_refs)) |name| {
+        try out.appendSlice(name);
+        return;
+    }
+
+    if (typ.genericIdentityOf(ty)) |identity| {
+        try out.appendSlice(identity.base_name);
+        try out.appendSlice("#(");
+        for (identity.arg_names, identity.arg_values, 0..) |arg_name, arg_value, idx| {
+            if (idx != 0) try out.appendSlice(", ");
+            try out.appendSlice(".");
+            try out.appendSlice(arg_name);
+            try out.appendSlice(": ");
+            switch (arg_value) {
+                .type => |arg_ty| try appendHoverType(out, arg_ty, type_refs),
+                .comptime_int => |value| try out.writer().print("{d}", .{value}),
+            }
+        }
+        try out.appendSlice(")");
+        return;
+    }
+
+    switch (ty) {
+        .builtin => |builtin| try out.appendSlice(@tagName(builtin)),
+        .abstract_type => |abstract_ty| try out.appendSlice(abstract_ty.name),
+        .pointer_type => |ptr| {
+            try out.appendSlice(if (ptr.mutability == .read_write) "$&" else "&");
+            try appendHoverType(out, ptr.child.*, type_refs);
+        },
+        .array_type => |arr| {
+            try out.writer().print("[{d}]", .{arr.length});
+            try appendHoverType(out, arr.element_type.*, type_refs);
+        },
+        .struct_type => |_| try out.appendSlice("{...}"),
+        .choice_type => |_| try out.appendSlice("choice"),
+    }
+}
+
+fn hoverTypeNameFor(ty: sg.Type, type_refs: []const SemanticTypeDeclRef) ?[]const u8 {
+    for (type_refs) |ref| {
+        if (typ.typesExactlyEqual(ref.decl.ty, ty)) return ref.decl.name;
+    }
+    return null;
+}
+
 fn collectFunctionInlayHints(
     svc: *LanguageService,
     primary_path: []const u8,
@@ -950,6 +1229,7 @@ fn collectCallInlayHints(
     range: ?Range,
     sg_nodes: []const *sg.SGNode,
     syntax_calls: []const SyntaxFunctionCallRef,
+    toks: []const token.Token,
     out: *std.array_list.Managed(InlayHint),
 ) !void {
     var stack = std.array_list.Managed(*const sg.SGNode).init(svc.allocator);
@@ -961,7 +1241,8 @@ fn collectCallInlayHints(
             .function_call => |call| {
                 if (!std.mem.eql(u8, node.location.file, primary_path)) continue;
                 const syntax_call = findSyntaxFunctionCall(syntax_calls, node.location, call.callee.name) orelse continue;
-                const hint_pos = positionAfterName(syntax_call.call.callee_loc, syntax_call.call.callee.len);
+                const hint_pos = positionAfterCallInput(toks, syntax_call.call.input.location) orelse
+                    positionAfterName(syntax_call.call.callee_loc, syntax_call.call.callee.len);
                 if (range) |hint_range| {
                     if (!rangeContainsPosition(hint_range, hint_pos)) continue;
                 }
@@ -1097,8 +1378,55 @@ fn findSyntaxFunctionCall(
     return null;
 }
 
+fn findSemanticFunctionDecl(
+    refs: []const SemanticFunctionDeclRef,
+    loc: token.Location,
+    name: []const u8,
+) ?SemanticFunctionDeclRef {
+    for (refs) |ref| {
+        if (!sameLocation(ref.decl.location, loc)) continue;
+        if (!std.mem.eql(u8, ref.decl.name, name)) continue;
+        return ref;
+    }
+    return null;
+}
+
+fn findSemanticFunctionCall(
+    refs: []const SemanticFunctionCallRef,
+    loc: token.Location,
+    callee: []const u8,
+) ?SemanticFunctionCallRef {
+    for (refs) |ref| {
+        if (!sameLocation(ref.node.location, loc)) continue;
+        if (!std.mem.eql(u8, ref.call.callee.name, callee)) continue;
+        return ref;
+    }
+    return null;
+}
+
 fn sameLocation(a: token.Location, b: token.Location) bool {
     return std.mem.eql(u8, a.file, b.file) and a.offset == b.offset;
+}
+
+fn nameRange(loc: token.Location, byte_len: usize) Range {
+    const line = if (loc.line == 0) 0 else loc.line - 1;
+    const start_char = if (loc.column == 0) 0 else loc.column - 1;
+    return .{
+        .start = .{ .line = line, .character = start_char },
+        .end = .{ .line = line, .character = start_char + @as(u32, @intCast(byte_len)) },
+    };
+}
+
+fn positionWithinName(pos: Position, loc: token.Location, byte_len: usize) bool {
+    const range = nameRange(loc, byte_len);
+    return positionLessOrEqual(range.start, pos) and positionLessOrEqual(pos, range.end);
+}
+
+fn findSyntaxStructField(stl: st.StructTypeLiteral, field_name: []const u8) ?st.StructTypeLiteralField {
+    for (stl.fields) |field| {
+        if (std.mem.eql(u8, field.name.string, field_name)) return field;
+    }
+    return null;
 }
 
 fn syntaxStructTypeHasField(stl: st.StructTypeLiteral, field_name: []const u8) bool {
@@ -1156,6 +1484,26 @@ fn formatReachedFieldLabel(
     return try text.toOwnedSlice();
 }
 
+fn appendSyntaxReachDirective(out: *std.array_list.Managed(u8), reach: st.ReachDirective) !void {
+    for (reach.alternatives, 0..) |alt, alt_idx| {
+        if (alt_idx != 0) try out.appendSlice(", ");
+        for (alt.segments, 0..) |segment, seg_idx| {
+            if (seg_idx != 0) try out.appendSlice(".");
+            try out.appendSlice(segment.string);
+        }
+    }
+}
+
+fn appendReachDirective(out: *std.array_list.Managed(u8), reach: *const sg.ReachDirective) !void {
+    for (reach.alternatives, 0..) |alt, alt_idx| {
+        if (alt_idx != 0) try out.appendSlice(", ");
+        for (alt.segments, 0..) |segment, seg_idx| {
+            if (seg_idx != 0) try out.appendSlice(".");
+            try out.appendSlice(segment);
+        }
+    }
+}
+
 fn positionAfterName(loc: token.Location, byte_len: usize) Position {
     const line = if (loc.line == 0) 0 else loc.line - 1;
     const start_char = if (loc.column == 0) 0 else loc.column - 1;
@@ -1163,6 +1511,43 @@ fn positionAfterName(loc: token.Location, byte_len: usize) Position {
         .line = line,
         .character = start_char + @as(u32, @intCast(byte_len)),
     };
+}
+
+fn positionAfterCallInput(toks: []const token.Token, input_loc: token.Location) ?Position {
+    var start_idx: ?usize = null;
+    for (toks, 0..) |tk, idx| {
+        if (!std.mem.eql(u8, tk.location.file, input_loc.file)) continue;
+        if (tk.location.offset != input_loc.offset) continue;
+        if (tk.content != .open_parenthesis) continue;
+        start_idx = idx;
+        break;
+    }
+
+    const idx0 = start_idx orelse return null;
+    var depth: usize = 0;
+    var idx = idx0;
+    while (idx < toks.len) : (idx += 1) {
+        const tk = toks[idx];
+        if (!std.mem.eql(u8, tk.location.file, input_loc.file)) continue;
+        switch (tk.content) {
+            .open_parenthesis => depth += 1,
+            .close_parenthesis => {
+                if (depth == 0) return null;
+                depth -= 1;
+                if (depth == 0) {
+                    const line = if (tk.location.line == 0) 0 else tk.location.line - 1;
+                    const start_char = if (tk.location.column == 0) 0 else tk.location.column - 1;
+                    return .{
+                        .line = line,
+                        .character = start_char + 1,
+                    };
+                }
+            },
+            else => {},
+        }
+    }
+
+    return null;
 }
 
 fn rangeContainsPosition(range: Range, pos: Position) bool {

@@ -87,8 +87,8 @@ const LanguageServer = struct {
                 if (id_value) |id| self.handleSemanticTokensFull(&writer, id, params_value) catch {};
             } else if (std.mem.eql(u8, method, "textDocument/semanticTokens/range")) {
                 if (id_value) |id| self.handleSemanticTokensRange(&writer, id, params_value) catch {};
-            } else if (std.mem.eql(u8, method, "textDocument/inlayHint")) {
-                if (id_value) |id| self.handleInlayHints(&writer, id, params_value) catch {};
+            } else if (std.mem.eql(u8, method, "textDocument/hover")) {
+                if (id_value) |id| self.handleHover(&writer, id, params_value) catch {};
             } else {
                 // Método desconocido -> ignorar
             }
@@ -288,7 +288,7 @@ const LanguageServer = struct {
         try stream.objectField("range");
         try stream.write(true); // si quieres implementar /range más tarde
         try stream.endObject();
-        try stream.objectField("inlayHintProvider");
+        try stream.objectField("hoverProvider");
         try stream.write(true);
         try stream.endObject();
 
@@ -459,7 +459,7 @@ const LanguageServer = struct {
         }
     }
 
-    fn handleInlayHints(
+    fn handleHover(
         self: *LanguageServer,
         writer: anytype,
         id_value: json.Value,
@@ -474,14 +474,12 @@ const LanguageServer = struct {
         const uri_value = getField(&text_document_value.object, "uri") orelse return;
         if (uri_value != .string) return;
 
-        const range = if (getField(&params.object, "range")) |range_value|
-            parseRange(range_value)
-        else
-            null;
+        const position_value = getField(&params.object, "position") orelse return;
+        const position = parsePosition(position_value) orelse return;
 
         if (self.service) |*svc| {
-            const hints = try svc.inlayHints(uri_value.string, range);
-            defer hints.deinit();
+            const hover_opt = try svc.hover(uri_value.string, position);
+            defer if (hover_opt) |hover| self.allocator.free(hover.contents);
 
             var payload = std.Io.Writer.Allocating.init(self.allocator);
             defer payload.deinit();
@@ -493,25 +491,36 @@ const LanguageServer = struct {
             try stream.objectField("id");
             try stream.write(id_value);
             try stream.objectField("result");
-            try stream.beginArray();
-            for (hints.items) |hint| {
+            if (hover_opt) |hover| {
                 try stream.beginObject();
-                try stream.objectField("position");
+                try stream.objectField("contents");
+                try stream.beginObject();
+                try stream.objectField("kind");
+                try stream.write("markdown");
+                try stream.objectField("value");
+                try stream.write(hover.contents);
+                try stream.endObject();
+                try stream.objectField("range");
+                try stream.beginObject();
+                try stream.objectField("start");
                 try stream.beginObject();
                 try stream.objectField("line");
-                try stream.write(hint.position.line);
+                try stream.write(hover.range.start.line);
                 try stream.objectField("character");
-                try stream.write(hint.position.character);
+                try stream.write(hover.range.start.character);
                 try stream.endObject();
-                try stream.objectField("label");
-                try stream.write(hint.label);
-                try stream.objectField("kind");
-                try stream.write(@as(i32, 2));
-                try stream.objectField("paddingLeft");
-                try stream.write(true);
+                try stream.objectField("end");
+                try stream.beginObject();
+                try stream.objectField("line");
+                try stream.write(hover.range.end.line);
+                try stream.objectField("character");
+                try stream.write(hover.range.end.character);
                 try stream.endObject();
+                try stream.endObject();
+                try stream.endObject();
+            } else {
+                try stream.write(null);
             }
-            try stream.endArray();
             try stream.endObject();
 
             try self.sendMessage(writer, payload.writer.buffered());
