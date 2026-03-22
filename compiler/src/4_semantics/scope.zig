@@ -1,5 +1,6 @@
 const std = @import("std");
 const sg = @import("semantic_graph.zig");
+const tok = @import("../2_tokens/token.zig");
 
 const abs = @import("abstracts.zig");
 const gen = @import("generics.zig");
@@ -16,10 +17,13 @@ pub const Scope = struct {
     nodes: std.array_list.Managed(*sg.SGNode),
     module_aliases: std.StringHashMap([]const u8),
     bindings: std.StringHashMap(*sg.BindingDeclaration),
+    generic_values: std.StringHashMap(gen.GenericValueBinding),
+    moved_bindings: std.StringHashMap(tok.Location),
     functions: std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)),
     types: std.StringHashMap(*sg.TypeDeclaration),
     abstracts: std.StringHashMap(*abs.AbstractInfo),
     abstract_impls: std.StringHashMap(std.array_list.Managed(abs.AbstractImplEntry)),
+    abstract_impl_templates: std.StringHashMap(std.array_list.Managed(abs.AbstractImplTemplate)),
     abstract_defaults: std.StringHashMap(abs.AbstractDefaultEntry),
     generic_functions: std.StringHashMap(std.array_list.Managed(gen.GenericTemplate)),
     generic_types: std.StringHashMap(std.array_list.Managed(gen.GenericTypeTemplate)),
@@ -38,10 +42,13 @@ pub const Scope = struct {
             .nodes = std.array_list.Managed(*sg.SGNode).init(a.*),
             .module_aliases = std.StringHashMap([]const u8).init(a.*),
             .bindings = std.StringHashMap(*sg.BindingDeclaration).init(a.*),
+            .generic_values = std.StringHashMap(gen.GenericValueBinding).init(a.*),
+            .moved_bindings = std.StringHashMap(tok.Location).init(a.*),
             .functions = std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)).init(a.*),
             .types = std.StringHashMap(*sg.TypeDeclaration).init(a.*),
             .abstracts = std.StringHashMap(*abs.AbstractInfo).init(a.*),
             .abstract_impls = std.StringHashMap(std.array_list.Managed(abs.AbstractImplEntry)).init(a.*),
+            .abstract_impl_templates = std.StringHashMap(std.array_list.Managed(abs.AbstractImplTemplate)).init(a.*),
             .abstract_defaults = std.StringHashMap(abs.AbstractDefaultEntry).init(a.*),
             .generic_functions = std.StringHashMap(std.array_list.Managed(gen.GenericTemplate)).init(a.*),
             .generic_types = std.StringHashMap(std.array_list.Managed(gen.GenericTypeTemplate)).init(a.*),
@@ -72,6 +79,17 @@ pub const Scope = struct {
         try self.generic_functions.put(name, list);
     }
 
+    pub fn appendAbstractImplTemplate(self: *Scope, name: []const u8, tmpl: abs.AbstractImplTemplate) !void {
+        if (self.abstract_impl_templates.getPtr(name)) |list_ptr| {
+            try list_ptr.append(tmpl);
+            return;
+        }
+
+        var list = std.array_list.Managed(abs.AbstractImplTemplate).init(self.allocator.*);
+        try list.append(tmpl);
+        try self.abstract_impl_templates.put(name, list);
+    }
+
     pub fn appendGenericTypeTemplate(self: *Scope, name: []const u8, tmpl: gen.GenericTypeTemplate) !void {
         if (self.generic_types.getPtr(name)) |list_ptr| {
             try list_ptr.append(tmpl);
@@ -98,6 +116,34 @@ pub const Scope = struct {
         if (self.bindings.get(n)) |b| return b;
         if (self.parent) |p| return p.lookupBinding(n);
         return null;
+    }
+
+    pub fn lookupGenericValue(self: *Scope, n: []const u8) ?gen.GenericValueBinding {
+        if (self.generic_values.get(n)) |v| return v;
+        if (self.parent) |p| return p.lookupGenericValue(n);
+        return null;
+    }
+
+    pub fn bindingMoveLocation(self: *Scope, n: []const u8) ?tok.Location {
+        if (self.moved_bindings.get(n)) |loc| return loc;
+        if (self.parent) |p| return p.bindingMoveLocation(n);
+        return null;
+    }
+
+    pub fn markBindingMoved(self: *Scope, n: []const u8, loc: tok.Location) !void {
+        if (self.bindings.contains(n)) {
+            try self.moved_bindings.put(n, loc);
+            return;
+        }
+        if (self.parent) |p| return p.markBindingMoved(n, loc);
+    }
+
+    pub fn clearBindingMoved(self: *Scope, n: []const u8) void {
+        if (self.bindings.contains(n)) {
+            _ = self.moved_bindings.remove(n);
+            return;
+        }
+        if (self.parent) |p| p.clearBindingMoved(n);
     }
 
     pub fn lookupBindingInModule(self: *Scope, module_dir: []const u8, n: []const u8) ?*sg.BindingDeclaration {
@@ -141,7 +187,7 @@ pub const Scope = struct {
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.generic_types.get(name)) |list_ptr| {
                 for (list_ptr.items, 0..) |tmpl, idx| {
-                    if (tmpl.param_names.len == param_count) return &list_ptr.items[idx];
+                    if (tmpl.params.len == param_count) return &list_ptr.items[idx];
                 }
             }
         }
@@ -176,6 +222,24 @@ pub const Scope = struct {
                     if (ptr_info.mutability != .read_write) continue;
                     const pointee = ptr_info.child.*;
                     if (typ.typesExactlyEqual(pointee, ty)) return cand;
+                }
+            }
+        }
+        return null;
+    }
+
+    pub fn findCopy(s: *Scope, ty: sg.Type) ?*sg.FunctionDeclaration {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr("copy")) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (cand.input.fields.len != 1) continue;
+                    if (cand.output.fields.len != 1) continue;
+                    const in_ty = cand.input.fields[0].ty;
+                    const out_ty = cand.output.fields[0].ty;
+                    if (!typ.typesExactlyEqual(in_ty, ty)) continue;
+                    if (!typ.typesExactlyEqual(out_ty, ty)) continue;
+                    return cand;
                 }
             }
         }

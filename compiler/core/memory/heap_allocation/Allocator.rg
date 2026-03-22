@@ -3,11 +3,10 @@ Allocator : Abstract = (
 
     -- memory.initialization.Initializable
 
-    -- alloc  (.self: Self, .size: Int, .alignment: Alignment = ..Default) : HeapAllocationError!&Byte
-    -- dealloc  (_, ptr: &Byte) HeapDeallocationError!
+    -- alloc  (.self: Self, .size: UIntNative) -> (.allocation: Allocation)
+    -- dealloc (.self: Self, .allocation: Allocation) -> ()
 
-    -- resize (_, ptr: &Byte, new_size: Int) : Bool
+    -- resize (.self: Self, .allocation: $&Allocation, .new_size: UIntNative) -> (.did_resize: Bool)
     -- Igual resize no lo cumplen muchos métodos y mejor dejarlo fuera
     -- y que se haga manualmente cuando se quiera.
 )
-

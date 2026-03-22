@@ -90,26 +90,26 @@ En python es \_\_getitem\_\_ y \_\_setitem\_\_. Para numpy por ejemplo.
 Go no tiene de estos, igual se puede prescindir.
 
 ```
-Indexable<T: Type> : abstract = (
-    operator get[] (T, Int)      -> T
-    operator set[] (T, Int, Any) -> ()  -- Ese Any igual se puede parametrizar
+Indexable#(.t: Type) : Abstract = (
+    get[](.self: Self, .index: Int) -> (.value: t)
+    set[](.self: $&Self, .index: Int, .value: t) -> ()
 )
 ```
 
 ```
-Milista : Type = struct (
-    .elementos: List<Int>
+MiLista : Type = (
+    .elementos: List#(.t: Int)
 )
 
-operator get[] (.my_list: Milista, .index: Int) -> Int := {
-    return my_list.elementos(index)
+get[](.self: MiLista, .index: Int) -> (.value: Int) := {
+    return self.elementos[index]
 }
 
-operator set[] (.my_list: Milista, .index: Int, .value: Int) -> () := {
-    my_list.elementos(index) = value
+set[](.self: $&MiLista, .index: Int, .value: Int) -> () := {
+    self.elementos[index] = value
 }
 
-Indexable canbe Milista
+MiLista implements Indexable#(.t: Int)
 ```
 
 ```
@@ -119,4 +119,3 @@ lista[1] = 25    -- Llama a `set`
 ```
 
 O igual se puede hacer con operator overloading.
-

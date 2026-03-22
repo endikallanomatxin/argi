@@ -23,6 +23,9 @@ pub const SyntaxerError = error{
     ExpectedDeclarationOrAssignment,
     ExpectedKeywordReturn,
     ExpectedKeywordIf,
+    ExpectedKeywordFor,
+    ExpectedKeywordIn,
+    ExpectedKeywordWhile,
     ExpectedAmpersand,
     ExpectedStringLiteral,
     OutOfMemory,
@@ -125,6 +128,36 @@ pub const Syntaxer = struct {
         n.*.content = c;
         n.*.location = l;
         return n;
+    }
+
+    fn parseSignedNumericLiteral(self: *Syntaxer) !*syn.STNode {
+        const minus_loc = self.tokenLocation();
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        const literal = switch (self.current().content) {
+            .literal => |lit| lit,
+            else => {
+                try self.diags.add(minus_loc, .syntax, "expected numeric literal after unary '-'", .{});
+                return SyntaxerError.ExpectedIntLiteral;
+            },
+        };
+
+        const signed_literal = switch (literal) {
+            .decimal_int_literal => |text| tok.Literal{ .decimal_int_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
+            .hexadecimal_int_literal => |text| tok.Literal{ .hexadecimal_int_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
+            .octal_int_literal => |text| tok.Literal{ .octal_int_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
+            .binary_int_literal => |text| tok.Literal{ .binary_int_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
+            .regular_float_literal => |text| tok.Literal{ .regular_float_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
+            .scientific_float_literal => |text| tok.Literal{ .scientific_float_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
+            else => {
+                try self.diags.add(minus_loc, .syntax, "expected numeric literal after unary '-'", .{});
+                return SyntaxerError.ExpectedIntLiteral;
+            },
+        };
+
+        self.advanceOne();
+        return try self.makeNode(.{ .literal = signed_literal }, minus_loc);
     }
 
     // ───────────────────────────────  atoms ──────────────────────────────────
@@ -591,60 +624,28 @@ pub const Syntaxer = struct {
         return node;
     }
 
-    fn parsePipeCall(self: *Syntaxer) SyntaxerError!syn.PipeCall {
-        const callee_loc = self.tokenLocation();
-        const first_name = try self.parseName();
-
-        var module_qualifier: ?[]const u8 = null;
-        var callee_name = first_name.string;
-        var final_callee_loc = callee_loc;
-        if (self.tokenIs(.dot)) {
-            self.advanceOne();
-            const rhs_name = try self.parseName();
-            module_qualifier = first_name.string;
-            callee_name = rhs_name.string;
-            final_callee_loc = rhs_name.location;
-        }
-
-        var type_args: ?[]const syn.Type = null;
-        var type_args_struct: ?syn.StructTypeLiteral = null;
-        if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
-            type_args = try self.parseTypeList();
-        } else if (self.tokenIs(.hash)) {
-            self.advanceOne();
-            type_args_struct = try self.parseStructTypeLiteral();
-        }
-
+    fn parsePipeRhs(self: *Syntaxer) SyntaxerError!*syn.STNode {
         const prev_pipe_rhs = self.parsing_pipe_rhs;
         self.parsing_pipe_rhs = true;
         defer self.parsing_pipe_rhs = prev_pipe_rhs;
-
-        if (!self.tokenIs(.open_parenthesis)) {
-            try self.diags.add(
-                self.tokenLocation(),
-                .syntax,
-                "pipe right-hand side must be a call with parentheses",
-                .{},
-            );
-            return SyntaxerError.ExpectedLeftParen;
-        }
-
-        const input = try self.parseStructValueLiteral();
-
-        return .{
-            .callee = callee_name,
-            .callee_loc = final_callee_loc,
-            .module_qualifier = module_qualifier,
-            .type_arguments = type_args,
-            .type_arguments_struct = type_args_struct,
-            .input = input,
-        };
+        return self.parsePrimary();
     }
 
     // ─────────────────────────────  EXPRESSIONS  ─────────────────────────────
     /// [primary] {'.' fld}  (bin-op rhs)?
     fn parsePrimary(self: *Syntaxer) !*syn.STNode {
         const t = self.current();
+
+        if (t.content == .binary_operator and t.content.binary_operator == .subtraction) {
+            return try self.parseSignedNumericLiteral();
+        }
+
+        if (self.tokenIs(.tilde)) {
+            const move_loc = t.location;
+            self.advanceOne();
+            const inner = try self.parsePrimary();
+            return try self.makeNode(.{ .move_expression = inner }, move_loc);
+        }
 
         if (self.tokenIs(.ampersand) or self.tokenIs(.dollar)) {
             var mutability: syn.PointerMutability = .read_only;
@@ -794,9 +795,9 @@ pub const Syntaxer = struct {
             const pipe_loc = self.tokenLocation();
             self.advanceOne();
             self.skipNewLinesAndComments();
-            const call = try self.parsePipeCall();
+            const right = try self.parsePipeRhs();
             lhs = try self.makeNode(
-                .{ .pipe_expression = .{ .left = lhs, .call = call } },
+                .{ .pipe_expression = .{ .left = lhs, .right = right } },
                 pipe_loc,
             );
         }
@@ -833,12 +834,15 @@ pub const Syntaxer = struct {
 
     // Override parseStatement to support generics on function declarations
     fn parseStatement(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        const start_index = self.index;
         self.skipNewLinesAndComments();
 
         switch (self.current().content) {
             .keyword_return => return self.parseReturn(),
             .keyword_if => return self.parseIf(),
+            .keyword_for => return self.parseFor(),
             .keyword_match => return self.parseMatch(),
+            .keyword_while => return self.parseWhile(),
             else => {},
         }
 
@@ -867,14 +871,19 @@ pub const Syntaxer = struct {
             name = .{ .string = op, .location = id_loc };
         }
 
-        // Optional generic params after name (unchanged)
+        // Optional generic params after name.
+        // In statement position this is ambiguous with generic call type arguments,
+        // so keep the parsed named-args block around and decide once we know
+        // whether this becomes a declaration or a call.
         var generic_params: []const []const u8 = &.{};
+        var generic_params_struct: ?syn.StructTypeLiteral = null;
         if (self.tokenIs(.hash)) {
             self.advanceOne();
             const gen_struct = try self.parseStructTypeLiteral();
             var names = std.array_list.Managed([]const u8).init(self.allocator.*);
             for (gen_struct.fields) |fld| try names.append(fld.name.string);
             generic_params = names.items;
+            generic_params_struct = gen_struct;
         } else if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
             const parsed = try self.parseGenericParamNames();
             generic_params = parsed;
@@ -923,6 +932,7 @@ pub const Syntaxer = struct {
                             const ef = syn.FunctionDeclaration{
                                 .name = name,
                                 .generic_params = generic_params,
+                                .generic_params_struct = generic_params_struct,
                                 .input = input,
                                 .output = output,
                                 .body = null,
@@ -940,6 +950,7 @@ pub const Syntaxer = struct {
                 const fn_decl = syn.FunctionDeclaration{
                     .name = name,
                     .generic_params = generic_params,
+                    .generic_params_struct = generic_params_struct,
                     .input = input,
                     .output = output,
                     .body = body,
@@ -954,7 +965,7 @@ pub const Syntaxer = struct {
                             .callee_loc = id_loc,
                             .module_qualifier = null,
                             .type_arguments = null,
-                            .type_arguments_struct = null,
+                            .type_arguments_struct = generic_params_struct,
                             .input = input_node,
                     } },
                     id_loc,
@@ -962,18 +973,23 @@ pub const Syntaxer = struct {
             }
         }
 
-        // Abstract relations (canbe/defaultsto)
+        // Abstract relations (implements/defaultsto)
         switch (self.current().content) {
             .identifier => |kw| {
-                if (std.mem.eql(u8, kw, "canbe")) {
+                if (std.mem.eql(u8, kw, "implements")) {
                     self.advanceOne();
-                    const ty = (try self.parseType()).?; // required
-                    const rel = syn.AbstractCanBe{ .name = name.string, .generic_params = generic_params, .ty = ty };
-                    return try self.makeNode(.{ .abstract_canbe = rel }, id_loc);
+                    const abstract_ty = (try self.parseType()).?; // required
+                    const rel = syn.AbstractImplements{
+                        .concrete_name = name,
+                        .generic_params = generic_params,
+                        .generic_params_struct = generic_params_struct,
+                        .abstract_ty = abstract_ty,
+                    };
+                    return try self.makeNode(.{ .abstract_implements = rel }, id_loc);
                 } else if (std.mem.eql(u8, kw, "defaultsto")) {
                     self.advanceOne();
                     const ty = (try self.parseType()).?; // required
-                    const rel = syn.AbstractDefault{ .name = name, .generic_params = generic_params, .ty = ty };
+                    const rel = syn.AbstractDefault{ .name = name, .generic_params = generic_params, .generic_params_struct = generic_params_struct, .ty = ty };
                     return try self.makeNode(.{ .abstract_defaultsto = rel }, id_loc);
                 }
             },
@@ -1027,6 +1043,7 @@ pub const Syntaxer = struct {
                     const tdecl = syn.TypeDeclaration{
                         .name = name,
                         .generic_params = generic_params,
+                        .generic_params_struct = generic_params_struct,
                         .value = lit_node,
                     };
                     return try self.makeNode(.{ .type_declaration = tdecl }, id_loc);
@@ -1042,6 +1059,7 @@ pub const Syntaxer = struct {
                     const adecl = syn.AbstractDeclaration{
                         .name = name,
                         .generic_params = generic_params,
+                        .generic_params_struct = generic_params_struct,
                         .requires_abstracts = req_names,
                         .requires_functions = req_funcs,
                     };
@@ -1064,7 +1082,9 @@ pub const Syntaxer = struct {
             return try self.makeNode(.{ .symbol_declaration = sym }, id_loc);
         }
 
-        return SyntaxerError.ExpectedDeclarationOrAssignment;
+        self.index = start_index;
+        const expr = try self.parseExpression();
+        return try self.makeNode(.{ .expression_statement = expr }, expr.location);
     }
 
     // ─────────────────────────────  SENTENCES  ──────────────────────────────
@@ -1150,6 +1170,35 @@ pub const Syntaxer = struct {
             .cases = cases.items,
         } }, start);
     }
+
+    fn parseFor(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        const start = self.tokenLocation();
+        if (!self.tokenIs(.keyword_for)) return SyntaxerError.ExpectedKeywordFor;
+        self.advanceOne();
+        const item_name = try self.parseName();
+        if (!self.tokenIs(.keyword_in)) return SyntaxerError.ExpectedKeywordIn;
+        self.advanceOne();
+        const iterable = try self.parseExpression();
+        const body = try self.parseCodeBlock();
+        return try self.makeNode(.{ .for_statement = .{
+            .item_name = item_name,
+            .iterable = iterable,
+            .body = body,
+        } }, start);
+    }
+
+    fn parseWhile(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        const start = self.tokenLocation();
+        if (!self.tokenIs(.keyword_while)) return SyntaxerError.ExpectedKeywordWhile;
+        self.advanceOne();
+        const cond = try self.parseExpression();
+        const body = try self.parseCodeBlock();
+        return try self.makeNode(.{ .while_statement = .{
+            .condition = cond,
+            .body = body,
+        } }, start);
+    }
+
     fn parseReturn(self: *Syntaxer) SyntaxerError!*syn.STNode {
         const start = self.tokenLocation();
         if (!self.tokenIs(.keyword_return))

@@ -9,8 +9,8 @@ type automatically copyable.
 
 ```
 Allocator : Abstract = (
-	alloc (_, size: Int) -> HeapAllocation
-	dealloc (_, ha: HeapAllocation) -> ()
+	alloc (_, size: Int) -> Allocation
+	dealloc (_, allocation: Allocation) -> ()
 )
 ```
 
@@ -45,7 +45,7 @@ init (.memory: &System.Memory) -> (.allocator: PageAllocator) := { ... }
 ```
 
 
-## HeapAllocation
+## Allocation
 
 Allocators return an `Allocation` struct, instead of a single pointer. This
 allows us to keep track of the size and a pointer to the allocator used for the
@@ -59,14 +59,29 @@ Allocation : Type = (
 )
 ```
 
+`Allocation` should become the basic owning heap primitive in `core`.
+
+That means higher-level owning types such as:
+
+- strings,
+- dynamic lists,
+- maps,
+- buffers,
+
+should ideally compose an `Allocation` internally instead of each inventing a
+different low-level ownership representation.
+
+`Allocation` owns raw bytes only. It should not itself imply list semantics,
+string semantics, or view semantics.
+
 When initializing types, allocators are passed as arguments,
 
 ```
 init (
     size     : Int,
     allocator: Allocator
-) -> (.ha: HeapAllocation) := {
-	ha = HeapAllocation (
+) -> (.ha: Allocation) := {
+	ha = Allocation (
 		.data      = allocator|allocate(size)
 		.size      = size
 		.allocator = allocator
@@ -75,42 +90,59 @@ init (
 ```
 
 ```
-my_buf : HeapAllocation = init(1024, my_allocator)
+my_buf : Allocation = init(1024, my_allocator)
 ```
 
 
 In a type:
 
 ```
-Hashmap#(.from: Type, .to: Type) : Type = (
+HashMap#(.key: Type, .value: Type) : Type = (
 	.data      : Allocation
 )
 
 
-init (.allocator: Allocator, content: MapLiteral) -> (.hm: HashMap#(f, t)) :=  {
-	hm : Hashmap#(f, t)
-	hm.data = allocator|alloc(1024)
+init#(.key: Type, .value: Type) (
+    hm: $&HashMap#(.key: key, .value: value),
+    allocator: &Allocator,
+    content: MapLiteral,
+) -> () :=  {
+	hm& = (
+        .data = allocation_init(.size = 1024)
+    )
 	...
 }
 
 -- When adding stuff check capacity and reallocate if necessary.
 
-deinit (.hm:$&Hashmap&) -> () := {
-	hm.data|dealloc(_)
+deinit#(.key: Type, .value: Type) (hm: $&HashMap#(.key: key, .value: value)) -> () := {
+	allocation_deinit(.allocation = hm&.data)
 }
 
-copy (.hm: HashMap#(f, t), .allocator: &Allocator) -> (.out: HashMap#(f, t)) := {
+copy#(.key: Type, .value: Type) (
+    hm: HashMap#(.key: key, .value: value),
+    allocator: &Allocator,
+) -> (.out: HashMap#(.key: key, .value: value)) := {
 	-- allocate new storage and duplicate the contents
 }
 ```
 
 ```
-my_map : HashMap#(String,Int32) = init (my_allocator, ("a"=1, "b"=2))
+my_map : HashMap#(.key: String, .value: Int32) = HashMap#(.key: String, .value: Int32)(
+    my_allocator,
+    ("a" = 1, "b" = 2),
+)
 ```
 
 If `HashMap` provides `copy()`, then passing it by value or assigning it means
 creating an independent map. If it does not provide `copy()`, then it must be
 passed by `&` or `$&`.
+
+This separation is useful:
+
+- allocator strategy is one concern,
+- ownership and copying are another,
+- borrowed views should remain a third, separate concern.
 
 > [!FIX] Reflexionar sobre la sintaxis para incializar un mapa.
 > Lo ideal sería:
@@ -119,4 +151,3 @@ passed by `&` or `$&`.
 > ```
 > El no tener un default allocator perjudica mucho la ergonomía del lenguaje.
 > Pensar en hacer que no sea una capability
-

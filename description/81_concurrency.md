@@ -53,7 +53,7 @@ th := system.process_manager | spawn_thread($&_,  {
 })
 
 -- Lanzar múltiples procesos en bucle
-for i in 1..10 {
+for i in Range(.start = 1, .end = 10) {
 	system.process_manager | spawn_thread($&_, {
 		-- Aquí puedes usar i
 		...
@@ -103,7 +103,7 @@ As there are different types of concurrency, the primitives have to be created f
 #### Channels
 
 ```
-Channel<#T: Type> : Type
+Channel#(.t: Type) : Type
 ```
 
 ```
@@ -112,9 +112,9 @@ funcion_enviadora (c:Channel) -> () := {
 	c | send (_, 42)
 }
 
-canal : Channel<Int>
+canal : Channel#(.t: Int)
 
-for i in 1..10 {
+for i in Range(.start = 1, .end = 10) {
 	lcr | spawn_thread ($&_, funcion_enviadora, (canal))
 }
 
@@ -133,26 +133,30 @@ Igual haría que hubiera tres tipos:
 - Stack (LIFO)
 
 ```
-Channel<T> : Abstract = (
-    put(T)
-    get() -> T
+Channel#(.t: Type) : Abstract = (
+    put(.self: $&Self, .value: t) -> ()
+    get(.self: $&Self) -> (.value: t)
 )
-Channel canbe (Spot, Queue, Stack)
+Spot implements Channel
+Queue implements Channel
+Stack implements Channel
 Channel defaults Spot
 
 
-Queue<T> : Abstract = (
-	put T -> ()
-	get [) -> T
+Queue#(.t: Type) : Abstract = (
+	put(.self: $&Self, .value: t) -> ()
+	get(.self: $&Self) -> (.value: t)
 )
-Queue canbe (DynamicQueue, StaticQueue<n>)
+DynamicQueue#(.t: Type) implements Queue#(.t: t)
+StaticQueue#(.n: UIntNative, .t: Type) implements Queue#(.t: t)
 Queue defaults DynamicQueue
 
-Stack<T> : Abstract = (
-	put T -> [)
-	get () -> T
+Stack#(.t: Type) : Abstract = (
+	put(.self: $&Self, .value: t) -> ()
+	get(.self: $&Self) -> (.value: t)
 )
-Stack canbe (DynamicStack, StaticStack<n>)
+DynamicStack#(.t: Type) implements Stack#(.t: t)
+StaticStack#(.n: UIntNative, .t: Type) implements Stack#(.t: t)
 Stack defaults DynamicStack
 
 ```
@@ -191,9 +195,11 @@ incrementar($&estado) := {
 	estado|unlock
 }
 
-for 1..10 spawn_thread({
-	incrementar($&estado)
-})
+for i in Range(.start = 1, .end = 10) {
+	spawn_thread({
+		incrementar($&estado)
+	})
+}
 ```
 
 > [!IDEA] Automutex
@@ -204,9 +210,11 @@ for 1..10 spawn_thread({
 > 	estado++
 > }
 > 
-> for 1..10 spawn_thread({
-> 	incrementar($&estado)
-> })
+> for i in Range(.start = 1, .end = 10) {
+> 	spawn_thread({
+> 		incrementar($&estado)
+> 	})
+> }
 > ```
 
 #### RW Lock
@@ -233,4 +241,3 @@ wg | branch({
 
 wg | wait()
 ```
-

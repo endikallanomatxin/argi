@@ -1,57 +1,61 @@
-DynamicList<t> : Abstract = [
-    append(_, _.type)
-    insert(_, _.type, Index)
-    remove(_, Index)
-]
+--
+-- Scratch notes. Keep syntax aligned with the current language even if the
+-- APIs themselves are still provisional.
+--
 
-List<t> canbe DynamicList<t>
+DynamicList#(.t: Type) : Abstract = (
+    append(.self: $&Self, .value: t) -> ()
+    insert(.self: $&Self, .index: UIntNative, .value: t) -> ()
+    remove(.self: $&Self, .index: UIntNative) -> ()
+)
 
-DynamicList<t> canbe CopyingDynamicArray<t>
-DynamicList<t> canbe SegmentedDynamicArray<t>
-DynamicList<t> canbe SinglyLinkedList<t>
-DynamicList<t> canbe DoublyLinkedList<t>
+DynamicList#(.t: Type) implements List#(.t: t)
 
-CopyingDynamicArray<t> : Type = [
+DynamicArray#(.t: Type) implements DynamicList#(.t: t)
+SegmentedDynamicArray#(.t: Type) implements DynamicList#(.t: t)
+SinglyLinkedList#(.t: Type) implements DynamicList#(.t: t)
+DoublyLinkedList#(.t: Type) implements DynamicList#(.t: t)
+
+DynamicArray#(.t: Type) : Type = (
     ---
     A heap allocated dynamic array
     that copies data when length exceeds capacity
     Fast accessing
     ---
-    ._data      : &HeapAllocation
+    ._data      : &Allocation
     ._data_type : Type        = t
     ._alignment : Alignment   = ..Default
-    ._length    : Int64
-    ._capacity  : Int64
-]
+    ._length    : UIntNative
+    ._capacity  : UIntNative
+)
 
-SegmentedDynamicArray<t> : Type = [
+SegmentedDynamicArray#(.t: Type) : Type = (
     ---
     A heap allocated dynamic array
     that grows by getting more segments of memory, without copying data.
-    Slower access than CopyingDynamicArray
+    Slower access than DynamicArray
     ---
     ._allocator : Allocator
-    ._data      : &HeapAllocation
+    ._data      : &Allocation
     ._data_type : Type        = t
     ._alignment : Alignment   = ..Default
-    ._length    : Int64
-    ._capacity  : Int64
-]
+    ._length    : UIntNative
+    ._capacity  : UIntNative
+)
 
-SinglyLinkedList<t> : Type = [
+SinglyLinkedList#(.t: Type) : Type = (
 	---
 	---
-]
+)
 
-DoublyLinkedList<t> : Type = [
+DoublyLinkedList#(.t: Type) : Type = (
 	---
 	---
-]
+)
 
-Rope<t> : Type = [
+Rope#(.t: Type) : Type = (
 	---
 	Linked list of StaticArray
 	O un Btree, no se. Decidir como implementamos esto.
 	---
-]
-
+)

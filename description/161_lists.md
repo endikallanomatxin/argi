@@ -9,28 +9,34 @@ Fixed-size arrays:
 ```
 a : [3]Int32 = (1, 2, 3)
 -- is the same as
-l : Array#(Int32, 3)((1, 2, 3))
+l : Array#(.n = 3, .t: Int32) = (1, 2, 3)
 ```
+
+`Array#(.n = ..., .t: ...)` is the explicit canonical form. `[N]T` is the
+idiomatic sugar. Positional generic arguments may be allowed later, but the
+current documentation uses named arguments.
 
 > [!TODO] Pensar una forma de definir longitud de forma automática.
 > Igual `[?]T` para que el compilador lo calcule.
 
 
-#### `Allocation#(.t = [N]T)`
+#### `Allocation`
 
-Similar to basic Array, but using an allocator, still static size.
+`Allocation` should be the low-level owning heap base used by dynamic list-like
+types.
 
-It implements the `List` interface.
-una instanciación concreta `Allocation#(.u = [N]T)` puede cumplir tu interfaz de
-listas, aunque el genérico `Allocation#(.u: Type)` (sin fijar) no lo haga.
+It owns raw bytes, not typed list semantics by itself.
+
+List structures such as dynamic arrays should layer their own length, capacity,
+element type, and indexing rules on top of an `Allocation`.
 
 
 
 #### `DynamicArray#(.t: Type)`
 
-It uses `Allocation#(.u = [N]T)` internally, and grows as needed.
-
-`l := DynamicArray#(Int32)((1, 2, 3), my_allocator)`
+It uses `Allocation` internally, together with metadata such as length,
+capacity, and element type.
+`l ::= DynamicArray#(.t: Int32)(.capacity = 3)`
 
 
 #### LengthedArray (capacidad fija en stack, len runtime)
@@ -52,27 +58,41 @@ Empaqueta, p.ej. u10, u12.
 
 ### Reference constructs
 
-#### Slices `R[]T` or `Slice#(.t: Type)`
+#### Views / slices
 
 ```
-RSlice#(.t: Type) : Type = (
-    .data: &t,
-    .length: Int32,
+ListViewRO#(.list_type: Type, .list_value_type: Type) : Type = (
+    .list: &list_type,
+    .start: UIntNative,
+    .length: UIntNative,
 )
 
-RWSlice#(.t: Type) : Type = (
-    .data: $&t,
-    .length: Int32,
+ListViewRW#(.list_type: Type, .list_value_type: Type) : Type = (
+    .list: $&list_type,
+    .start: UIntNative,
+    .length: UIntNative,
 )
 ```
 
-> [!TODO] Maybe we can define them as only created from an already existing array?
+Views should stay:
 
-> [!IDEA] Igual slice podría ser Slice#(.t: Type, .m: Mutability = ..R)?
-> Donde Mutability puede ser R, RW, o ERW (exclusive)
+- lightweight,
+- non-owning,
+- explicit,
+- and cheap to copy as descriptors.
+
+Copying a view copies only the descriptor. It never turns the view into an
+owner of the underlying data.
+
+The view may still be modeled as a borrowed window into a collection, not
+necessarily as a raw pointer to the first element. The important point is the
+same either way: the view stays non-owning.
+
+That should stay true even if later there are explicit retained-view mechanisms
+such as `keep`.
 
 
-##### Slice indexing
+##### View indexing
 
 `my_array | slice(2, 5)`
 `my_array | slice(2, 5, .stride=2)`
@@ -108,12 +128,11 @@ l | slice (((0, 10), (0, 20)))  -- 2D slice
 
 ### List Abstracts
 
-- Indexable#(T) → lectura indexada: len() y get[].
-- IndexableMutable#(T) → añade set[].
-- Resizable#(T) → añade push, pop, insert, … (solo para los dinámicos).
+- Indexable#(.t: T) → lectura indexada: `length()` y `get[]`.
+- IndexableMutable#(.t: T) → añade `set[]`.
+- Resizable#(.t: T) → añade `push`, `pop`, `insert`, … (solo para los dinámicos).
 
-`[N]T`, `RSlice#(T)`, `RWSlice#(T)` y `Allocation#([N]T)` cumplen `Indexable`;
-los que tengan memoria mutable cumplen `IndexableMutable`; y solo `DynamicArray#(T)`
+`[N]T`, `Array#(.n = N, .t: T)`, `ListViewRO#(.list_type = X, .list_value_type = T)` y
+`ListViewRW#(.list_type = X, .list_value_type = T)` cumplen `Indexable`;
+los que tengan memoria mutable cumplen `IndexableMutable`; y solo `DynamicArray#(.t: T)`
 (dinámico) cumple `Resizable`.
-
-

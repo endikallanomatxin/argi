@@ -41,6 +41,9 @@ pub const Content = union(enum) {
     keyword_if: struct {},
     keyword_else: struct {},
     keyword_match: struct {},
+    keyword_for: struct {},
+    keyword_in: struct {},
+    keyword_while: struct {},
 
     // Variables and constants
     colon: struct {},
@@ -52,6 +55,7 @@ pub const Content = union(enum) {
 
     // Function operators
     pipe: struct {}, // |
+    tilde: struct {}, // ~
 
     // Arithmetic operators
     binary_operator: BinaryOperator,

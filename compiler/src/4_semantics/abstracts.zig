@@ -1,8 +1,10 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
+const syn = @import("../3_syntax/syntax_tree.zig");
 const sg = @import("semantic_graph.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
+const gen = @import("generics.zig");
 const typ = @import("types.zig");
 
 const Scope = @import("scope.zig").Scope;
@@ -16,6 +18,8 @@ pub const AbstractFunctionReqSem = struct {
     // indices of input fields whose type was 'Self'
     input_self_indices: []const u32,
     output_self_indices: []const u32,
+    input_pointer_self_indices: []const u32,
+    output_pointer_self_indices: []const u32,
     // parallel slices to track generic parameter usage per field
     input_generic_param_indices: []const ?u32,
     output_generic_param_indices: []const ?u32,
@@ -33,6 +37,11 @@ pub const AbstractImplEntry = struct {
     ty: sg.Type,
     location: tok.Location,
 };
+pub const AbstractImplTemplate = struct {
+    params: []const gen.GenericParam,
+    ty: syn.Type,
+    location: tok.Location,
+};
 pub const AbstractDefaultEntry = struct {
     ty: sg.Type,
     location: tok.Location,
@@ -42,7 +51,7 @@ const OwnedText = struct {
     allocator: *const std.mem.Allocator,
     bytes: []u8,
 
-    fn deinit(self: OwnedText) void {
+    pub fn deinit(self: OwnedText) void {
         self.allocator.free(self.bytes);
     }
 };
@@ -53,6 +62,159 @@ const MissingRequirementContext = struct {
     concrete: sg.Type,
     location: tok.Location,
 };
+
+const TemplateBindings = struct {
+    allocator: *const std.mem.Allocator,
+    types: std.StringHashMap(sg.Type),
+    ints: std.StringHashMap(i64),
+
+    fn init(allocator: *const std.mem.Allocator) TemplateBindings {
+        return .{
+            .allocator = allocator,
+            .types = std.StringHashMap(sg.Type).init(allocator.*),
+            .ints = std.StringHashMap(i64).init(allocator.*),
+        };
+    }
+
+    fn deinit(self: *TemplateBindings) void {
+        self.types.deinit();
+        self.ints.deinit();
+    }
+};
+
+fn findGenericParam(params: []const gen.GenericParam, name: []const u8) ?gen.GenericParam {
+    for (params) |param| {
+        if (std.mem.eql(u8, param.name, name)) return param;
+    }
+    return null;
+}
+
+fn parseIntLiteral(lit: tok.Literal) ?i64 {
+    return switch (lit) {
+        .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => |txt|
+            std.fmt.parseInt(i64, txt, 0) catch null,
+        else => null,
+    };
+}
+
+fn evalComptimeIntPattern(node: *const syn.STNode, params: []const gen.GenericParam, bindings: *TemplateBindings) ?i64 {
+    return switch (node.content) {
+        .literal => |lit| parseIntLiteral(lit),
+        .identifier => |name| blk: {
+            if (findGenericParam(params, name)) |param| {
+                if (param.kind == .comptime_int) {
+                    break :blk bindings.ints.get(name);
+                }
+            }
+            break :blk null;
+        },
+        .binary_operation => |bo| blk: {
+            const left = evalComptimeIntPattern(bo.left, params, bindings) orelse break :blk null;
+            const right = evalComptimeIntPattern(bo.right, params, bindings) orelse break :blk null;
+            break :blk switch (bo.operator) {
+                .addition => left + right,
+                .subtraction => left - right,
+                .multiplication => left * right,
+                .division => if (right == 0) null else @divTrunc(left, right),
+                .modulo => if (right == 0) null else @mod(left, right),
+            };
+        },
+        else => null,
+    };
+}
+
+fn matchComptimeIntPattern(node: *const syn.STNode, actual: i64, params: []const gen.GenericParam, bindings: *TemplateBindings) bool {
+    if (node.content == .identifier) {
+        const name = node.content.identifier;
+        if (findGenericParam(params, name)) |param| {
+            if (param.kind == .comptime_int) {
+                if (bindings.ints.get(name)) |bound| return bound == actual;
+                bindings.ints.put(name, actual) catch return false;
+                return true;
+            }
+        }
+    }
+
+    const expected = evalComptimeIntPattern(node, params, bindings) orelse return false;
+    return expected == actual;
+}
+
+fn matchTemplateType(pattern: syn.Type, actual: sg.Type, params: []const gen.GenericParam, bindings: *TemplateBindings) bool {
+    return switch (pattern) {
+        .type_name => |tn| blk: {
+            if (findGenericParam(params, tn.string)) |param| {
+                if (param.kind == .type) {
+                    if (bindings.types.get(tn.string)) |bound| break :blk typ.typesExactlyEqual(bound, actual);
+                    bindings.types.put(tn.string, actual) catch return false;
+                    break :blk true;
+                }
+            }
+            if (typ.builtinFromName(tn.string)) |builtin_ty| {
+                break :blk actual == .builtin and actual.builtin == builtin_ty;
+            }
+            if (typ.genericIdentityOf(actual)) |identity| {
+                break :blk std.mem.eql(u8, identity.base_name, tn.string) and identity.arg_names.len == 0;
+            }
+            if (actual == .abstract_type) {
+                break :blk std.mem.eql(u8, actual.abstract_type.name, tn.string);
+            }
+            break :blk false;
+        },
+        .pointer_type => |ptr_info| blk: {
+            if (actual != .pointer_type) break :blk false;
+            if (ptr_info.mutability != actual.pointer_type.mutability) break :blk false;
+            break :blk matchTemplateType(ptr_info.child.*, actual.pointer_type.child.*, params, bindings);
+        },
+        .array_type => |arr_info| blk: {
+            if (actual != .array_type) break :blk false;
+            if (arr_info.length != actual.array_type.length) break :blk false;
+            break :blk matchTemplateType(arr_info.element.*, actual.array_type.element_type.*, params, bindings);
+        },
+        .struct_type_literal => false,
+        .generic_type_instantiation => |g| matchGenericInstantiationType(g, actual, params, bindings),
+    };
+}
+
+fn matchCanonicalGenericInstantiation(
+    g: @FieldType(syn.Type, "generic_type_instantiation"),
+    actual: sg.Type,
+    params: []const gen.GenericParam,
+    bindings: *TemplateBindings,
+) bool {
+    const identity = typ.genericIdentityOf(actual) orelse return false;
+    if (!std.mem.eql(u8, identity.base_name, g.base_name.string)) return false;
+
+    for (g.args.fields) |field| {
+        const arg_value = typ.genericIdentityArgByName(identity, field.name.string) orelse return false;
+        switch (arg_value) {
+            .type => |arg_ty| {
+                const field_ty = field.type orelse return false;
+                if (!matchTemplateType(field_ty, arg_ty, params, bindings)) return false;
+            },
+            .comptime_int => |arg_int| {
+                const value_node = field.default_value orelse return false;
+                if (!matchComptimeIntPattern(value_node, arg_int, params, bindings)) return false;
+            },
+        }
+    }
+
+    return true;
+}
+
+fn matchGenericInstantiationType(
+    g: @FieldType(syn.Type, "generic_type_instantiation"),
+    actual: sg.Type,
+    params: []const gen.GenericParam,
+    bindings: *TemplateBindings,
+) bool {
+    return matchCanonicalGenericInstantiation(g, actual, params, bindings);
+}
+
+fn templateImplementsCandidate(tmpl: AbstractImplTemplate, candidate: sg.Type, allocator: *const std.mem.Allocator) bool {
+    var bindings = TemplateBindings.init(allocator);
+    defer bindings.deinit();
+    return matchTemplateType(tmpl.ty, candidate, tmpl.params, &bindings);
+}
 
 pub fn typeImplementsAbstract(
     abs_name: []const u8,
@@ -65,6 +227,12 @@ pub fn typeImplementsAbstract(
             const impls = list_ptr.*;
             for (impls.items) |impl| {
                 if (typ.typesExactlyEqual(impl.ty, candidate)) return true;
+            }
+        }
+        if (sc.abstract_impl_templates.getPtr(abs_name)) |list_ptr| {
+            const templates = list_ptr.*;
+            for (templates.items) |tmpl| {
+                if (templateImplementsCandidate(tmpl, candidate, s.allocator)) return true;
             }
         }
     }
@@ -203,6 +371,14 @@ pub fn funcInputMatchesRequirement(
             continue;
         }
 
+        if (containsIndex(rq.input_pointer_self_indices, @intCast(i))) {
+            if (cf.ty != .pointer_type) return false;
+            if (rq.input.fields[i].ty != .pointer_type) return false;
+            if (cf.ty.pointer_type.mutability != rq.input.fields[i].ty.pointer_type.mutability) return false;
+            if (!typ.typesExactlyEqual(concrete, cf.ty.pointer_type.child.*)) return false;
+            continue;
+        }
+
         if (rq.input_abstract_requirements.len > i) {
             if (rq.input_abstract_requirements[i]) |abs_name| {
                 if (!typeImplementsAbstract(abs_name, cf.ty, s)) return false;
@@ -243,6 +419,14 @@ pub fn funcOutputMatchesRequirement(
 
         if (containsIndex(rq.output_self_indices, @intCast(i))) {
             if (!typ.typesExactlyEqual(concrete, co.ty)) return false;
+            continue;
+        }
+
+        if (containsIndex(rq.output_pointer_self_indices, @intCast(i))) {
+            if (co.ty != .pointer_type) return false;
+            if (rq.output.fields[i].ty != .pointer_type) return false;
+            if (co.ty.pointer_type.mutability != rq.output.fields[i].ty.pointer_type.mutability) return false;
+            if (!typ.typesExactlyEqual(concrete, co.ty.pointer_type.child.*)) return false;
             continue;
         }
 
@@ -310,7 +494,22 @@ fn buildExpectedInputWithConcrete(rq: *const AbstractFunctionReqSem, concrete: s
     var fields = try allocator.alloc(sg.StructTypeField, rq.input.fields.len);
     for (rq.input.fields, 0..) |f, i| {
         const is_self = containsIndex(rq.input_self_indices, @intCast(i));
-        fields[i] = .{ .name = f.name, .ty = if (is_self) concrete else f.ty, .default_value = null };
+        const is_pointer_self = containsIndex(rq.input_pointer_self_indices, @intCast(i));
+        const field_ty = if (is_self) blk: {
+            break :blk concrete;
+        } else if (is_pointer_self and f.ty == .pointer_type) blk: {
+            const child = try allocator.create(sg.Type);
+            child.* = concrete;
+            const sem_ptr = try allocator.create(sg.PointerType);
+            sem_ptr.* = .{
+                .mutability = f.ty.pointer_type.mutability,
+                .child = child,
+            };
+            break :blk sg.Type{ .pointer_type = sem_ptr };
+        } else blk: {
+            break :blk f.ty;
+        };
+        fields[i] = .{ .name = f.name, .ty = field_ty, .default_value = null };
     }
     const st_ptr = try allocator.create(sg.StructType);
     st_ptr.* = .{ .fields = fields };
@@ -410,6 +609,55 @@ fn reportMissingRequirement(
         "{s} does not implement abstract '{s}':\n  missing function: {s}",
         .{ ctx.label, ctx.abstract_name, signature.items },
     );
+}
+
+fn formatMissingRequirementText(
+    rq: *const AbstractFunctionReqSem,
+    concrete: sg.Type,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+) !OwnedText {
+    const exp_in = try buildExpectedInputWithConcrete(rq, concrete, allocator);
+    const in_ty: sg.Type = .{ .struct_type = exp_in };
+    const candidates_result = buildOverloadCandidatesText(rq.name, in_ty, s, allocator) catch null;
+    const candidates = if (candidates_result) |owned| owned.bytes else "";
+    defer if (candidates_result) |owned| owned.deinit();
+
+    var signature = std.array_list.Managed(u8).init(allocator.*);
+    defer signature.deinit();
+    try appendRequirementSignature(&signature, rq.name, exp_in, s);
+
+    var buf = std.array_list.Managed(u8).init(allocator.*);
+    errdefer buf.deinit();
+
+    try buf.appendSlice("missing function: ");
+    try buf.appendSlice(signature.items);
+
+    if (candidates.len > 0) {
+        try buf.appendSlice("\npossible overloads:\n");
+        try buf.appendSlice(candidates);
+    }
+
+    return .{
+        .allocator = allocator,
+        .bytes = try buf.toOwnedSlice(),
+    };
+}
+
+pub fn buildConformanceDetails(
+    abs_name: []const u8,
+    concrete: sg.Type,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+) !?OwnedText {
+    const info = s.lookupAbstractInfo(abs_name) orelse return null;
+
+    for (info.requirements) |rq| {
+        if (try existsFunctionForRequirement(info, rq, concrete, s, allocator)) continue;
+        return try formatMissingRequirementText(&rq, concrete, s, allocator);
+    }
+
+    return null;
 }
 
 pub fn verifyAbstracts(s: *Scope, allocator: *const std.mem.Allocator, diags: *diagnostic.Diagnostics) !void {

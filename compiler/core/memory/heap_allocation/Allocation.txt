@@ -1,0 +1,17 @@
+--
+-- Scratch notes. Keep syntax aligned with the current language even if the
+-- runtime representation is still provisional.
+--
+
+Allocation : Type = (
+    ---
+    This is useful to encapsulate a heap allocation.
+    ---
+    .data : $&UInt8
+    .size : UIntNative  -- In bytes
+    -- Intended later:
+    -- .allocator : &Allocator
+)
+
+HeapAllocationError : Error
+HeapDeallocationError : Error

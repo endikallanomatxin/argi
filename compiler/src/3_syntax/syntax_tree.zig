@@ -25,12 +25,14 @@ pub const Content = union(enum) {
 
     // Abstract type features
     abstract_declaration: AbstractDeclaration,
-    abstract_canbe: AbstractCanBe,
+    abstract_implements: AbstractImplements,
     abstract_defaultsto: AbstractDefault,
     function_declaration: FunctionDeclaration,
     assignment: Assignment,
+    expression_statement: *STNode,
     identifier: []const u8,
     pipe_placeholder: struct {},
+    move_expression: *STNode,
     function_call: FunctionCall,
     pipe_expression: PipeExpression,
     code_block: CodeBlock,
@@ -52,6 +54,8 @@ pub const Content = union(enum) {
     binary_operation: BinaryOperation,
     comparison: Comparison,
     if_statement: IfStatement,
+    for_statement: ForStatement,
+    while_statement: WhileStatement,
     match_statement: MatchStatement,
     import_statement: ImportStatement,
     defer_statement: *STNode,
@@ -102,6 +106,7 @@ pub const SymbolDeclaration = struct {
 pub const TypeDeclaration = struct {
     name: Name,
     generic_params: []const []const u8,
+    generic_params_struct: ?StructTypeLiteral,
     value: *STNode,
 };
 
@@ -109,23 +114,26 @@ pub const TypeDeclaration = struct {
 pub const AbstractDeclaration = struct {
     name: Name,
     generic_params: []const []const u8,
+    generic_params_struct: ?StructTypeLiteral,
     // Composed abstracts (by name)
     requires_abstracts: []const []const u8,
     // Function requirements
     requires_functions: []const AbstractFunctionRequirement,
 };
 
-// "Name canbe Type" implementation relation
-pub const AbstractCanBe = struct {
-    name: []const u8,
+// "ConcreteType implements AbstractType" implementation relation
+pub const AbstractImplements = struct {
+    concrete_name: Name,
     generic_params: []const []const u8,
-    ty: Type,
+    generic_params_struct: ?StructTypeLiteral,
+    abstract_ty: Type,
 };
 
 // "Name defaultsto Type" default concrete backing type
 pub const AbstractDefault = struct {
     name: Name,
     generic_params: []const []const u8,
+    generic_params_struct: ?StructTypeLiteral,
     ty: Type,
 };
 
@@ -138,6 +146,7 @@ pub const AbstractFunctionRequirement = struct {
 pub const FunctionDeclaration = struct {
     name: Name,
     generic_params: []const []const u8,
+    generic_params_struct: ?StructTypeLiteral,
     input: StructTypeLiteral, // Arguments
     output: StructTypeLiteral, // Named return params
     body: ?*STNode, // CodeBlock
@@ -162,16 +171,7 @@ pub const FunctionCall = struct {
 
 pub const PipeExpression = struct {
     left: *STNode,
-    call: PipeCall,
-};
-
-pub const PipeCall = struct {
-    callee: []const u8,
-    callee_loc: tok.Location,
-    module_qualifier: ?[]const u8,
-    type_arguments: ?[]const Type,
-    type_arguments_struct: ?StructTypeLiteral,
-    input: *const STNode,
+    right: *STNode,
 };
 
 pub const Mutability = enum {
@@ -259,6 +259,17 @@ pub const IfStatement = struct {
     condition: *STNode,
     then_block: *STNode,
     else_block: ?*STNode,
+};
+
+pub const WhileStatement = struct {
+    condition: *STNode,
+    body: *STNode,
+};
+
+pub const ForStatement = struct {
+    item_name: Name,
+    iterable: *STNode,
+    body: *STNode,
 };
 
 pub const MatchStatement = struct {

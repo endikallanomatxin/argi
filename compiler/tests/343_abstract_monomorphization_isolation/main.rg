@@ -1,7 +1,7 @@
 ExampleAbstract : Abstract = ()
 
-ExampleAbstract canbe Int32
-ExampleAbstract canbe Char
+Int32 implements ExampleAbstract
+Char implements ExampleAbstract
 
 value_code (.value: Int32) -> (.r: Int32) := {
     r = 1

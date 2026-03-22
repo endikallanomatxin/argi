@@ -73,7 +73,7 @@ for element, index in list|enumerate {
 	...
 }
 
-for i in 1..10 {
+for i in Range(.start = 1, .end = 10) {
     ...
 }
 ```
@@ -99,7 +99,7 @@ loop
 No me gustan, pero son muy cómodos para cosas pequeñas y no creo que tengan mucho riesgo de usarse mal en exceso. No pasa nada por implementarlos.
 
 ```
-(i*2 for i in 1.10)
+(i*2 for i in Range(.start = 1, .end = 10))
 ```
 
 O igual del revés:
@@ -107,45 +107,59 @@ O igual del revés:
 - Queda más limpio para multiples líneas,
 
 ```
-evens = (for i in 1..10 {yield i*2})
+evens = (for i in Range(.start = 1, .end = 10) {yield i*2})
 
-evens = (for i in 1..10; i*2)
+evens = (for i in Range(.start = 1, .end = 10); i*2)
 ```
 
 >[!TODO] Darle una vuelta a la sintaxis.
 
 ### Iterators
 
-Los `Iterator` gestionan como se recorren o procesan las colecciones, pero definiendose en un tipo nuevo para mantener independencia con los propios datos.
+Los `Iterator` gestionan cómo se recorren o procesan las colecciones, pero se
+definen en un tipo nuevo para mantener independencia respecto a los propios
+datos.
 
-Se puede hacer a través de abstrascts:
+`for` debe consumir un `Iterable`, no un `Iterator` directamente. El iterable
+expone `to_iterator`, y el iterador mantiene el estado mutable del recorrido.
+
+Se puede hacer a través de `Abstract`:
 
 ```
-Iterable : Abstract = (
-    cast _ -> Iterator#(_)
+Iterable#(.t: Type) : Abstract = (
+    to_iterator(.value: &Self) -> (.iterator: Iterator#(.t: t))
 )
 
-Iterator#(t: Type) : Abstract = (
-    next _ -> t
-    has_next _ -> Bool
+Iterator#(.t: Type) : Abstract = (
+    has_next(.self: &Self) -> (.ok: Bool)
+    next(.self: $&Self) -> (.value: t)
 )
 ```
-
-> [!CHECK]
-> Aquí como deberíamos gestionar abstract con generics?
-
 
 En rust hay tres tipos: iter (inmutable), iter_mut (mutable), into_iter(pasando ownership)
 
-Igual puede hacerse con multiple dispatch:
+Eso puede modelarse más adelante con multiple dispatch y tipos distintos de
+iterador, pero la base actual es solo `Iterable` + `Iterator`.
+
+Nota conceptual útil: en Rust el `for` sigue siendo uno solo, pero el modo de
+iteración lo decide el tipo de la expresión que se le pasa.
 
 ```
-| to(Iterator)
-| to(MutableIterator)
+for x in v      -- consume la colección
+for x in &v     -- itera por referencia inmutable
+for x in &mut v -- itera por referencia mutable
 ```
 
-Y así se consigue el comportamiento deseado para distintos casos.
+Eso sale de distintas implementaciones de conversión a iterador para:
 
+- `Vec<T>`
+- `&Vec<T>`
+- `&mut Vec<T>`
+
+La idea interesante para Argi es conservar el mismo principio: `for` consume un
+`Iterable`, y el tipo exacto del valor que se le pase debería poder determinar
+si la iteración es por valor, por referencia inmutable o por referencia
+mutable.
 
 Se puede hacer igual también que las funciones map(), filter() y demás tengan versiones que consumen iteradores (para lazy evaluation) o listas.
 _(Pensar en una forma de que esto sirva para vectorizar funciones. Que si la función llamada tiene una versión vector la tome, si no elemento a elemento)_
@@ -155,28 +169,35 @@ Y para hacer que tu tipo pueda ser iterable:
 
 ```
 MyType : Type = struct (
-    .data: List#(Int)
+    .data: List#(.t: Int)
 )
 
-cast MyType -> MyTypeIterator := {
-    return MyTypeIterator (.data = in.data, .index = 0)
-}
-
-MyTypeIterator : Type = struct (
+MyTypeIterator : Type = (
     .data: &MyType
-    .index: Int
+    .index: UIntNative
 )
 
-next MyTypeIterator -> Int := {
-    if in.index >= in.data|len {
-        throw "No more elements"
-    }
-    in.index += 1
-    out = in.data(in.index-1)
+MyType implements Iterable#(.t: Int)
+MyTypeIterator implements Iterator#(.t: Int)
+
+to_iterator(.value: &MyType) -> (.iterator: MyTypeIterator) := {
+    iterator = (
+        .data = value,
+        .index = 0,
+    )
 }
 
-has_next MyTypeIterator -> Bool := {
-    return in.index < in.data|len
+has_next(.self: &MyTypeIterator) -> (.ok: Bool) := {
+    ok = self&.index < length(.value = self&.data&.data)
+}
+
+next(.self: $&MyTypeIterator) -> (.value: Int) := {
+    current_index :: UIntNative = self&.index
+    value = self&.data&.data[current_index]
+    self& = (
+        .data = self&.data,
+        .index = current_index + 1,
+    )
 }
 ```
 
@@ -188,17 +209,15 @@ for element in my_collection {
 
 -- Se podría escribir como:
 
-iter : Iterator = my_collection | cast  -- Se puede castear a un abstract?
-while iter|has_next {
-    element = iter|next
+it ::= to_iterator(.value = &my_collection)
+while has_next(.self = &it) {
+    element := next(.self = $&it)
     print(element)
 }
 ```
 
-DUDA: EL bucle for traga un iterable o un iterador?
+El `for` debe tragar un `Iterable`.
 
 Ideas:
-- Concatenar iteradores con comas: `1..5, 80..92`
+- Concatenar iteradores con comas: `Range(.start = 1, .end = 5), Range(.start = 80, .end = 92)`
 - En julia: The dot after sin causes the trigonometric function to be “broadcast” to each element of x.
-
-

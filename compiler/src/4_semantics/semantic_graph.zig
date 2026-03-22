@@ -37,7 +37,9 @@ pub const Content = union(enum) {
 
     binding_declaration: *BindingDeclaration,
     binding_use: *BindingDeclaration,
+    move_value: *const SGNode,
     binding_assignment: *Assignment,
+    auto_deinit_binding: *AutoDeinitBinding,
 
     function_call: *FunctionCall,
     code_block: *CodeBlock,
@@ -88,6 +90,7 @@ pub const AbstractType = struct {
 
 pub const ChoiceType = struct {
     variants: []const ChoiceVariant,
+    identity: ?TypeIdentity = null,
 };
 
 pub const ChoiceVariant = struct {
@@ -117,6 +120,7 @@ pub const PointerType = struct {
 pub const ArrayType = struct {
     length: usize,
     element_type: *const Type,
+    identity: ?TypeIdentity = null,
 };
 
 pub const BuiltinType = enum {
@@ -140,6 +144,22 @@ pub const BuiltinType = enum {
 
 pub const StructType = struct {
     fields: []const StructTypeField,
+    identity: ?TypeIdentity = null,
+};
+
+pub const TypeIdentity = union(enum) {
+    generic: *const GenericTypeIdentity,
+};
+
+pub const GenericTypeIdentity = struct {
+    base_name: []const u8,
+    arg_names: []const []const u8,
+    arg_values: []const GenericIdentityArg,
+};
+
+pub const GenericIdentityArg = union(enum) {
+    type: Type,
+    comptime_int: i64,
 };
 
 pub const StructTypeField = struct {
@@ -197,6 +217,7 @@ pub const ExplicitCast = struct {
 pub const StructValueLiteral = struct {
     fields: []const StructValueLiteralField,
     ty: Type,
+    dispatch_prefix_positional_count: u32 = 0,
 };
 
 pub const StructValueLiteralField = struct {
@@ -258,6 +279,11 @@ pub const CodeBlock = struct {
 pub const Assignment = struct {
     sym_id: *const BindingDeclaration,
     value: *const SGNode,
+};
+
+pub const AutoDeinitBinding = struct {
+    binding: *const BindingDeclaration,
+    deinit_fn: *const FunctionDeclaration,
 };
 
 //

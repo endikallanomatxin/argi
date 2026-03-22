@@ -30,10 +30,10 @@ Un método del `Abstract` es **virtual-safe** si, tras el borrado de tipo:
 ## Definición
 
 ```argi
-Virtual#(A: Abstract) : Type = (
+Virtual#(.abstract: Abstract) : Type = (
   .allocator: &Allocator
   .data_ptr : &Any        -- fat pointer al dato
-  .vtable   : &VTable#(A)
+  .vtable   : &VTable#(abstract)
   .meta     : Meta        -- type_id, drop_fn, flags, storage, etc.
 )
 ```
@@ -86,4 +86,3 @@ Pensar en como customizar el funcionamiento de Virtual para que encaje bien con 
 > Podría hacerse como un grafo de decisiones de dispatch y que se aplique
 > curriando funciones.
 > Explorar la idea.
-

@@ -34,7 +34,7 @@
             - múltiples parámetros abstractos,
             - reglas de desempate más finas entre overload concreto y abstracto,
             - interacción con generics explícitos,
-            - mejores diagnósticos cuando varias implementaciones `canbe`
+            - mejores diagnósticos cuando varias implementaciones `implements`
               compiten.
 
         - Decidir y fijar la política de outputs abstractos:
@@ -43,8 +43,8 @@
             - o existenciales reales.
           Ahora solo están cubiertos parcialmente.
 
-        - Soportar `canbe/defaultsto` genéricos:
-          patrones tipo `Indexable#(T) canbe Vector#(T)`.
+        - Soportar `implements/defaultsto` genéricos:
+          patrones tipo `Vector#(T) implements Indexable#(T)`.
 
         - Decidir si `defaultsto` se mantiene como parte estable del lenguaje o
           si es un mecanismo transitorio.
@@ -59,10 +59,11 @@
 
         - Hoy el compilador:
             - no modela `copy()` como parte de la semántica,
-            - no distingue tipos copyables vs no-copyables,
+            - ya ha empezado a distinguir tipos copyables vs no-copyables, pero
+              solo con una política mínima y sin `copy()` implícito todavía,
             - agenda `deinit` de forma superficial al salir de scope si existe
               una función `deinit`,
-            - y no lleva una historia real de ownership/move/aliasing.
+            - y no lleva una historia completa de ownership/move/aliasing.
 
         - La `description` ya apunta a una política bastante clara:
             - value position significa pedir un valor independiente,
@@ -78,6 +79,11 @@
             - Fase 1: copyability explícita
                 - Introducir una consulta semántica clara:
                   “¿este tipo es copyable?”.
+                - Ya hay un primer corte:
+                    - builtins y punteros: copyables,
+                    - arrays/structs/choices: copyables solo si sus
+                      componentes también lo son,
+                    - tipos con `deinit()` pero sin `copy()`: no-copyables.
                 - Empezar por una política dura y fácil de explicar:
                     - builtins triviales: copyables,
                     - arrays de copyables: copyables,
@@ -91,6 +97,13 @@
             - Fase 2: `copy()` implícito en value position
                 - Resolver la función `copy()` igual que hoy se resuelve
                   `deinit()`.
+                - Ya existe un primer corte:
+                    - si un tipo no es trivially copyable pero sí tiene
+                      `copy(.x: T) -> (.out: T)`, el compilador inserta esa
+                      llamada en algunos value positions.
+                    - La firma asumida por ahora es deliberadamente mínima y
+                      puede revisarse más adelante si la story de allocators
+                      para `copy()` cambia.
                 - Insertar la llamada implícita en:
                     - asignación a otro binding,
                     - paso a parámetro `Type`,
@@ -102,17 +115,29 @@
                 - Mantener por ahora `deinit` al salir de scope, no al último
                   uso. Eso ya encaja con `description/34_automatic_deinitialization.md`
                   y es mucho más abordable.
+                - Ya hay un primer corte de estado moved-from:
+                    - `~binding` mueve desde bindings nombrados,
+                    - el binding queda inválido hasta reinicialización,
+                    - y el auto-`deinit` ya puede saltarse ese binding movido.
+                - Mantener la regla simple:
+                    - los temporary values pueden moverse sin copia extra,
+                    - bindings existentes siguen usando `copy()` o `~`.
                 - No programar `deinit` para bindings sin inicialización real.
                 - Preparar el terreno para distinguir:
                     - valor inicializado,
                     - valor movido,
                     - valor no inicializado.
-                - Más adelante: optimizar al último uso.
+                - No perseguir por ahora optimizaciones de "último copy se
+                  vuelve move":
+                    - con referencias, views y `keep` eso exige bastante más
+                      análisis del que compensa hoy.
 
             - Fase 4: exclusividad mínima de `$&`
                 - Sin llegar a Rust, conviene verificar al menos el caso más
                   grosero: no permitir pasar el mismo binding como `$&` y `&`
                   o dos veces como `$&` en la misma llamada.
+                - Ya existe un primer check local para llamadas normales con
+                  ese caso básico de aliasing evidente.
                 - Esto cerraría una parte importante de la promesa de
                   `description/33_function_args.md` sin introducir lifetimes
                   complejos todavía.

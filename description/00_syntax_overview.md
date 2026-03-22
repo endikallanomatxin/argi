@@ -78,7 +78,7 @@ p: &Int
 ```
 
 - No puede ser nulo.
-(Si se quiere hacer nulo, usar un nullable: `?&int`. Más adelante hay más sobre
+(Si se quiere hacer nulo, usar un nullable: `?&Int`. Más adelante hay más sobre
 esto.)
 
 - No se puede hacer aritmética con punteros.
@@ -266,7 +266,7 @@ init ($&my_thing, "something", 12, true)
 If wanted you can return an empty errable:
 
 ```
-init(out: $&MyType, ...) -> Errable#((), InitError)
+init(out: $&MyType, ...) -> Errable#(.t: (), .e: InitError)
 ```
 
 ### Deinit
@@ -290,7 +290,7 @@ independent value, obtained through `copy()` when the type is copyable.
 > Por ejemplo, si quisiéramos hacer Array como parte de la librería estándar,
 > tendría que tener esta firma:
 > ```
-> init#(.t: Type, .n: Int)(.a: &Array#(.t), .source: ListLiteral#(.t)) -> () #inline { ... }
+> init#(.t: Type, .n: UIntNative)(.a: &Array#(.t), .source: ListLiteral#(.t)) -> () #inline { ... }
 > ```
 
 > [!IDEA]
@@ -345,6 +345,6 @@ This is a very confortable way of manual memory management. Almost automatic.
 
 ```
 MyGenericType#(.t: Type) : Type = (
-	.datos : List<t>
+	.datos : List#(.t: t)
 )
 ```

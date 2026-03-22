@@ -85,6 +85,15 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             std.debug.print("Use \"{s}\" ({s})\n", .{ b.name, typeToString(b.ty) });
         },
 
+        .move_value => |inner| {
+            std.debug.print("MoveValue\n", .{});
+            printNode(inner, lvl + 1);
+        },
+
+        .auto_deinit_binding => |adb| {
+            std.debug.print("AutoDeinit \"{s}\" via \"{s}\"\n", .{ adb.binding.name, adb.deinit_fn.name });
+        },
+
         .function_call => |fc| {
             std.debug.print("Call \"{s}\"\n", .{fc.callee.name});
             printNode(fc.input, lvl + 1);

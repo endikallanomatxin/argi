@@ -137,6 +137,14 @@ test "054X_signed_integer_literal_overflow" {
     );
 }
 
+test "055X_negative_integer_literal_overflow" {
+    try clean();
+    try buildExpectFail(
+        "tests/055X_negative_integer_literal_overflow/main.rg",
+        "integer literal -129 does not fit in 'Int8' (min -128, max 127)",
+    );
+}
+
 test "11_function_calling" {
     try clean();
     try expectSuccessfulBuild("tests/11_function_calling/main.rg");
@@ -158,14 +166,14 @@ test "13_pipe_operator" {
 test "14_pipe_pointer" {
     try clean();
     try expectSuccessfulBuild("tests/14_pipe_pointer/main.rg");
-    try runExpect(43);
+    try runExpect(42);
 }
 
 test "15X_pipe_requires_parentheses" {
     try clean();
     try buildExpectFail(
         "tests/15X_pipe_requires_parentheses/main.rg",
-        "pipe right-hand side must be a call with parentheses",
+        "pipe right-hand side must use at least one argument placeholder",
     );
 }
 
@@ -317,6 +325,12 @@ test "324_generic_structs_multi" {
     try runExpect(20);
 }
 
+test "325_generic_statement_type_arguments" {
+    try clean();
+    try expectSuccessfulBuild("tests/325_generic_statement_type_arguments/main.rg");
+    try run();
+}
+
 test "331_abstract" {
     try clean();
     try expectSuccessfulBuild("tests/331_abstract/main.rg");
@@ -345,6 +359,14 @@ test "334_abstract_instantiation" {
     try run();
 }
 
+test "335X_abstract_instantiation_missing_default" {
+    try clean();
+    try buildExpectFail(
+        "tests/335X_abstract_instantiation_missing_default/main.rg",
+        "cannot use abstract 'ExampleAbstract' as a type for a symbol",
+    );
+}
+
 test "339_abstract_self_output" {
     try clean();
     try expectSuccessfulBuild("tests/339_abstract_self_output/main.rg");
@@ -369,6 +391,12 @@ test "342_abstract_dispatch_prefers_concrete" {
     try clean();
     try expectSuccessfulBuild("tests/342_abstract_dispatch_prefers_concrete/main.rg");
     try runExpect(2);
+}
+
+test "343_abstract_monomorphization_isolation" {
+    try clean();
+    try expectSuccessfulBuild("tests/343_abstract_monomorphization_isolation/main.rg");
+    try runExpect(3);
 }
 
 test "336X_abstract_function_input_requires_implementation" {
@@ -402,6 +430,94 @@ test "352_defer" {
 test "353_deinit" {
     try clean();
     try expectSuccessfulBuild("tests/353_deinit/main.rg");
+    try run();
+}
+
+test "354_noncopyable_temporary_values" {
+    try clean();
+    try expectSuccessfulBuild("tests/354_noncopyable_temporary_values/main.rg");
+    try run();
+}
+
+test "355X_noncopyable_assignment" {
+    try clean();
+    try buildExpectFail(
+        "tests/355X_noncopyable_assignment/main.rg",
+        "type 'Resource' is not copyable, so it cannot be used by value here",
+    );
+}
+
+test "356X_noncopyable_argument_by_value" {
+    try clean();
+    try buildExpectFail(
+        "tests/356X_noncopyable_argument_by_value/main.rg",
+        "type 'Resource' is not copyable, so it cannot be used by value here",
+    );
+}
+
+test "357X_noncopyable_struct_field" {
+    try clean();
+    try buildExpectFail(
+        "tests/357X_noncopyable_struct_field/main.rg",
+        "type 'Resource' is not copyable, so it cannot be used by value here",
+    );
+}
+
+test "358X_noncopyable_output_binding" {
+    try clean();
+    try buildExpectFail(
+        "tests/358X_noncopyable_output_binding/main.rg",
+        "type 'Resource' is not copyable, so it cannot be used by value here",
+    );
+}
+
+test "359X_mutable_and_read_alias_same_call" {
+    try clean();
+    try buildExpectFail(
+        "tests/359X_mutable_and_read_alias_same_call/main.rg",
+        "binding 'value' cannot be passed as '$&' and '&' in the same call to 'mix'",
+    );
+}
+
+test "360X_mutable_and_value_alias_same_call" {
+    try clean();
+    try buildExpectFail(
+        "tests/360X_mutable_and_value_alias_same_call/main.rg",
+        "binding 'value' cannot be passed as '$&' and 'value' in the same call to 'mix'",
+    );
+}
+
+test "361X_double_mutable_alias_same_call" {
+    try clean();
+    try buildExpectFail(
+        "tests/361X_double_mutable_alias_same_call/main.rg",
+        "binding 'value' cannot be passed as '$&' and '$&' in the same call to 'mix'",
+    );
+}
+
+test "362_copy_function_value_positions" {
+    try clean();
+    try expectSuccessfulBuild("tests/362_copy_function_value_positions/main.rg");
+    try run();
+}
+
+test "363_move_operator" {
+    try clean();
+    try expectSuccessfulBuild("tests/363_move_operator/main.rg");
+    try run();
+}
+
+test "364X_use_after_move" {
+    try clean();
+    try buildExpectFail(
+        "tests/364X_use_after_move/main.rg",
+        "binding 'handle' was moved and cannot be used again before reinitialization",
+    );
+}
+
+test "365_move_then_reinitialize" {
+    try clean();
+    try expectSuccessfulBuild("tests/365_move_then_reinitialize/main.rg");
     try run();
 }
 
@@ -471,7 +587,7 @@ test "50X_choice_unknown_variant" {
     try clean();
     try buildExpectFail(
         "tests/50X_choice_unknown_variant/main.rg",
-        "choice has no variant '..east'",
+        "choice type 'Direction' has no variant '..east'",
     );
 }
 
@@ -517,10 +633,152 @@ test "413_arrays" {
     try run();
 }
 
+test "414_list_view" {
+    try clean();
+    try expectSuccessfulBuild("tests/414_list_view/main.rg");
+    try run();
+}
+
 test "417_array_index_uint_native" {
     try clean();
     try expectSuccessfulBuild("tests/417_array_index_uint_native/main.rg");
     try run();
+}
+
+test "418_dynamic_array" {
+    try clean();
+    try expectSuccessfulBuild("tests/418_dynamic_array/main.rg");
+    try run();
+}
+
+test "419_dynamic_array_ergonomic" {
+    try clean();
+    try expectSuccessfulBuild("tests/419_dynamic_array_ergonomic/main.rg");
+    try runExpect(80);
+}
+
+test "420_string_bytes" {
+    try clean();
+    try expectSuccessfulBuild("tests/420_string_bytes/main.rg");
+    try run();
+}
+
+test "421_string_copy" {
+    try clean();
+    try expectSuccessfulBuild("tests/421_string_copy/main.rg");
+    try run();
+}
+
+test "422_array_explicit_type" {
+    try clean();
+    try expectSuccessfulBuild("tests/422_array_explicit_type/main.rg");
+    try run();
+}
+
+test "423_array_iterator_manual" {
+    try clean();
+    try expectSuccessfulBuild("tests/423_array_iterator_manual/main.rg");
+    try run();
+}
+
+test "424_iterator_abstract" {
+    try clean();
+    try expectSuccessfulBuild("tests/424_iterator_abstract/main.rg");
+    try run();
+}
+
+test "425X_iterator_abstract_missing_implements" {
+    try clean();
+    try buildExpectFail(
+        "tests/425X_iterator_abstract_missing_implements/main.rg",
+        "does not implement abstract 'Iterator'",
+    );
+}
+
+test "426X_for_requires_iterator_contract" {
+    try clean();
+    try buildExpectFail(
+        "tests/426X_for_requires_iterator_contract/main.rg",
+        "for expects 'to_iterator(.value = &...)' to return a type implementing abstract 'Iterator'",
+    );
+}
+
+test "427_iterable_abstract" {
+    try clean();
+    try expectSuccessfulBuild("tests/427_iterable_abstract/main.rg");
+    try run();
+}
+
+test "428X_iterable_abstract_missing_implements" {
+    try clean();
+    try buildExpectFail(
+        "tests/428X_iterable_abstract_missing_implements/main.rg",
+        "does not implement abstract 'Iterable'",
+    );
+}
+
+test "429_range_for" {
+    try clean();
+    try expectSuccessfulBuild("tests/429_range_for/main.rg");
+    try run();
+}
+
+test "430_range_step" {
+    try clean();
+    try expectSuccessfulBuild("tests/430_range_step/main.rg");
+    try run();
+}
+
+test "431_negative_integer_literals" {
+    try clean();
+    try expectSuccessfulBuild("tests/431_negative_integer_literals/main.rg");
+    try run();
+}
+
+test "432_range_int64" {
+    try clean();
+    try expectSuccessfulBuild("tests/432_range_int64/main.rg");
+    try run();
+}
+
+test "433_range_default_start" {
+    try clean();
+    try expectSuccessfulBuild("tests/433_range_default_start/main.rg");
+    try run();
+}
+
+test "434_generic_type_initializer_from_init" {
+    try clean();
+    try expectSuccessfulBuild("tests/434_generic_type_initializer_from_init/main.rg");
+    try run();
+}
+
+test "435_dynamic_array_iterator_manual" {
+    try clean();
+    try expectSuccessfulBuild("tests/435_dynamic_array_iterator_manual/main.rg");
+    try run();
+}
+
+test "436_range_default_start_with_step" {
+    try clean();
+    try expectSuccessfulBuild("tests/436_range_default_start_with_step/main.rg");
+    try run();
+}
+
+test "437X_for_nullable_not_iterable" {
+    try clean();
+    try buildExpectFail(
+        "tests/437X_for_nullable_not_iterable/main.rg",
+        "for expects a type implementing abstract 'Iterable', got 'Nullable#(.t: Int32)'",
+    );
+}
+
+test "438X_errable_match_unknown_variant" {
+    try clean();
+    try buildExpectFail(
+        "tests/438X_errable_match_unknown_variant/main.rg",
+        "choice type 'Errable#(.t: Int32, .e: Char)' has no variant '..none'",
+    );
 }
 
 test "62_folder_module_namespace" {
@@ -595,6 +853,12 @@ test "71_import_transitive" {
     try run();
 }
 
+test "71_loops" {
+    try clean();
+    try expectSuccessfulBuild("tests/71_loops/main.rg");
+    try run();
+}
+
 test "72X_import_cycle" {
     try clean();
     try buildExpectFail(
@@ -639,4 +903,16 @@ test "77X_root_relative_missing_import" {
         "tests/77X_root_relative_missing_import/project/app/main.rg",
         "cannot resolve import '.../missing_shared'",
     );
+}
+
+test "78_for_array" {
+    try clean();
+    try expectSuccessfulBuild("tests/78_for_array/main.rg");
+    try run();
+}
+
+test "79_for_dynamic_array" {
+    try clean();
+    try expectSuccessfulBuild("tests/79_for_dynamic_array/main.rg");
+    try run();
 }

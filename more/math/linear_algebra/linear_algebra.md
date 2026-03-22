@@ -11,23 +11,22 @@ Creo que Julia es muy bueno para trabajar con arrays y vectores y demas
 > [!TODO] Pensar nombre del tipo más general.
 
 ```
-NDVector :: Abstract = [
+NDVector : Abstract = (
 	.type : Type
 	.data : Ptr
-	.n_dim : Int
+	.n_dim : UIntNative
 	...
-]
+)
 
-NDVector canbe [
-	Vector
-	Matrix
-]
+Implementors of `NDVector`:
+- `Vector`
+- `Matrix`
 ```
 
 ```
 v :: Vector = [1, 2, 3]
 -- Se convierte en
-v ::= Vector|init([1, 2, 3])
+v ::= Vector((1, 2, 3))
 ```
 
 ```
@@ -40,8 +39,8 @@ They are coherent with that when doing operations.
 
 Producto escalar:
 ```
-v1 ::= Vector([1, 2, 3])
-v2 ::= Vector([4, 5, 6])
+v1 ::= Vector((1, 2, 3))
+v2 ::= Vector((4, 5, 6))
 
 -- Opciones
 v1|dot(v2) == 32
@@ -50,8 +49,8 @@ v1 * v2|transpose == 32
 
 Producto vectorial:
 ```
-v1 ::= Vector([1, 2, 3])
-v2 ::= Vector([4, 5, 6])
+v1 ::= Vector((1, 2, 3))
+v2 ::= Vector((4, 5, 6))
 
 v1|cross(v2) == Vector([-3, 6, -3])
 ```
@@ -59,41 +58,39 @@ v1|cross(v2) == Vector([-3, 6, -3])
 Tipos de matrices:
 
 ```
-Matrix :: Abstract = [
+Matrix : Abstract = (
 	...
-]
+)
 
-Matrix<#t::Type> canbe [
-	RectangularMatrix  -- Square also, but generally rectangular
-	IdentityMatrix
-	ZeroMatrix
-	UpperTriangularMatrix
-	LowerTriangularMatrix
-	DiagonalMatrix
-	SymmetricMatrix
-	AntiSymmetricMatrix
-	OrthogonalMatrix  -- ?
-	UnitaryMatrix  -- ?
-	HermitianMatrix  -- ?
-])
-```
-
-```
-i := IdentityMatrix|init(3)
+Implementors of `Matrix#(.t: Type)`:
+- `RectangularMatrix`  -- Square also, but generally rectangular
+- `IdentityMatrix`
+- `ZeroMatrix`
+- `UpperTriangularMatrix`
+- `LowerTriangularMatrix`
+- `DiagonalMatrix`
+- `SymmetricMatrix`
+- `AntiSymmetricMatrix`
+- `OrthogonalMatrix`  -- ?
+- `UnitaryMatrix`  -- ?
+- `HermitianMatrix`  -- ?
 ```
 
 ```
-Vector :: Abstract = [
+i := IdentityMatrix(3)
+```
+
+```
+Vector : Abstract = (
 	...
-]
+)
 
-Vector canbe [
-	GeneralVector
-	OnesVector
-	ZerosVector
-	OneHotVector  -- Solo tiene un 1. El resto son 0. Permite mucha optimización.
-	ManyHotVector -- Tiene varios 1s. El resto son 0.
-]
+Implementors of `Vector`:
+- `GeneralVector`
+- `OnesVector`
+- `ZerosVector`
+- `OneHotVector`  -- Solo tiene un 1. El resto son 0. Permite mucha optimización.
+- `ManyHotVector` -- Tiene varios 1s. El resto son 0.
 ```
 
 
@@ -112,8 +109,8 @@ m|to_column_major
 
 Se tiene que poder definir al inicializar.
 ```
-m := Matrix|init([[1, 2, 3],
-		  [4, 5, 6]],
+m := Matrix(((1, 2, 3),
+	     (4, 5, 6)),
 		 storage_implementation = ..ColumnMajor)
 ```
 

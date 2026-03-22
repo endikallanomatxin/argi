@@ -39,6 +39,139 @@ const TypePairText = struct {
 pub const pointer_size_bytes: u64 = @sizeOf(*usize);
 pub const pointer_alignment_bytes: u64 = pointer_size_bytes;
 
+fn genericIdentityArgEqual(a: sg.GenericIdentityArg, b: sg.GenericIdentityArg) bool {
+    return switch (a) {
+        .type => |aty| switch (b) {
+            .type => |bty| typesExactlyEqual(aty, bty),
+            else => false,
+        },
+        .comptime_int => |aint| switch (b) {
+            .comptime_int => |bint| aint == bint,
+            else => false,
+        },
+    };
+}
+
+fn genericIdentitiesEqual(a: *const sg.GenericTypeIdentity, b: *const sg.GenericTypeIdentity) bool {
+    if (!std.mem.eql(u8, a.base_name, b.base_name)) return false;
+    if (a.arg_names.len != b.arg_names.len) return false;
+
+    var i: usize = 0;
+    while (i < a.arg_names.len) : (i += 1) {
+        if (!std.mem.eql(u8, a.arg_names[i], b.arg_names[i])) return false;
+        if (!genericIdentityArgEqual(a.arg_values[i], b.arg_values[i])) return false;
+    }
+
+    return true;
+}
+
+pub fn genericIdentityOf(ty: sg.Type) ?*const sg.GenericTypeIdentity {
+    return switch (ty) {
+        .choice_type => |ct| switch (ct.identity orelse return null) {
+            .generic => |identity| identity,
+        },
+        .struct_type => |st| switch (st.identity orelse return null) {
+            .generic => |identity| identity,
+        },
+        .array_type => |arr| switch (arr.identity orelse return null) {
+            .generic => |identity| identity,
+        },
+        else => null,
+    };
+}
+
+pub fn genericIdentityArgByName(identity: *const sg.GenericTypeIdentity, name: []const u8) ?sg.GenericIdentityArg {
+    var idx: usize = 0;
+    while (idx < identity.arg_names.len) : (idx += 1) {
+        if (std.mem.eql(u8, identity.arg_names[idx], name)) {
+            return identity.arg_values[idx];
+        }
+    }
+    return null;
+}
+
+pub fn isTypeTriviallyCopyable(ty: sg.Type, s: *Scope) bool {
+    if (s.findDeinit(ty) != null) return false;
+
+    return switch (ty) {
+        .builtin => true,
+        .pointer_type => true,
+        .abstract_type => false,
+        .array_type => |arr_info| isTypeTriviallyCopyable(arr_info.element_type.*, s),
+        .struct_type => |st| blk: {
+            for (st.fields) |field| {
+                if (!isTypeTriviallyCopyable(field.ty, s)) break :blk false;
+            }
+            break :blk true;
+        },
+        .choice_type => |ct| blk: {
+            for (ct.variants) |variant| {
+                if (variant.payload_type) |payload_ty| {
+                    if (!isTypeTriviallyCopyable(payload_ty, s)) break :blk false;
+                }
+            }
+            break :blk true;
+        },
+    };
+}
+
+pub fn isTypeCopyable(ty: sg.Type, s: *Scope) bool {
+    return isTypeTriviallyCopyable(ty, s) or s.findCopy(ty) != null;
+}
+
+pub fn expressionNeedsCopyForValuePosition(node: *const sg.SGNode) bool {
+    return switch (node.content) {
+        .binding_use,
+        .struct_field_access,
+        .choice_payload_access,
+        .array_index,
+        .dereference,
+        => true,
+        else => false,
+    };
+}
+
+pub fn ensureValuePositionAllowed(
+    expr: TypedExpr,
+    loc: tok.Location,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    if (!expressionNeedsCopyForValuePosition(expr.node)) return expr;
+    if (isTypeTriviallyCopyable(expr.ty, s)) return expr;
+
+    if (s.findCopy(expr.ty)) |copy_fn| {
+        const arg_fields = try allocator.alloc(sg.StructValueLiteralField, 1);
+        arg_fields[0] = .{ .name = copy_fn.input.fields[0].name, .value = expr.node };
+
+        const args_struct = try allocator.create(sg.StructValueLiteral);
+        args_struct.* = .{
+            .fields = arg_fields,
+            .ty = .{ .struct_type = &copy_fn.input },
+            .dispatch_prefix_positional_count = 1,
+        };
+
+        const args_node = try sg.makeSGNode(.{ .struct_value_literal = args_struct }, loc, allocator);
+
+        const fc_ptr = try allocator.create(sg.FunctionCall);
+        fc_ptr.* = .{ .callee = copy_fn, .input = args_node };
+
+        const call_node = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, allocator);
+        return .{ .node = call_node, .ty = functionReturnType(copy_fn) };
+    }
+
+    const ty_text = try formatTypeText(expr.ty, s, allocator);
+    defer ty_text.deinit();
+    try diags.add(
+        loc,
+        .semantic,
+        "type '{s}' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'",
+        .{ty_text.bytes},
+    );
+    return error.Reported;
+}
+
 pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
     return switch (a) {
         .builtin => |ab| switch (b) {
@@ -50,7 +183,12 @@ pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
             else => false,
         },
         .choice_type => |act| switch (b) {
-            .choice_type => |bct| act == bct,
+            .choice_type => |bct| blk: {
+                if (act == bct) break :blk true;
+                const a_identity = genericIdentityOf(a) orelse break :blk false;
+                const b_identity = genericIdentityOf(b) orelse break :blk false;
+                break :blk genericIdentitiesEqual(a_identity, b_identity);
+            },
             else => false,
         },
 
@@ -122,7 +260,12 @@ pub fn typesExactlyEqual(a: sg.Type, b: sg.Type) bool {
             else => false,
         },
         .struct_type => |ast| switch (b) {
-            .struct_type => |bst| ast == bst, // nominal: same named type instance
+            .struct_type => |bst| blk: {
+                if (ast == bst) break :blk true;
+                const a_identity = genericIdentityOf(a) orelse break :blk false;
+                const b_identity = genericIdentityOf(b) orelse break :blk false;
+                break :blk genericIdentitiesEqual(a_identity, b_identity);
+            },
             else => false,
         },
         .pointer_type => |apt_ptr| switch (b) {
@@ -138,6 +281,11 @@ pub fn typesExactlyEqual(a: sg.Type, b: sg.Type) bool {
             .array_type => |bat_ptr| blk_arr: {
                 const aat = aat_ptr.*;
                 const bat = bat_ptr.*;
+                if (aat_ptr == bat_ptr) break :blk_arr true;
+                if (genericIdentityOf(a)) |a_identity| {
+                    const b_identity = genericIdentityOf(b) orelse break :blk_arr false;
+                    break :blk_arr genericIdentitiesEqual(a_identity, b_identity);
+                }
                 if (aat.length != bat.length) break :blk_arr false;
                 break :blk_arr typesExactlyEqual(aat.element_type.*, bat.element_type.*);
             },
@@ -260,6 +408,44 @@ pub fn typeNameFor(s: *Scope, t: sg.Type) ?[]const u8 {
     return null;
 }
 
+fn appendGenericIdentityArgPretty(
+    buf: *std.array_list.Managed(u8),
+    name: []const u8,
+    arg: sg.GenericIdentityArg,
+    s: *Scope,
+) std.mem.Allocator.Error!void {
+    try buf.appendSlice(".");
+    try buf.appendSlice(name);
+
+    switch (arg) {
+        .type => |ty| {
+            try buf.appendSlice(": ");
+            try appendTypePretty(buf, ty, s);
+        },
+        .comptime_int => |value| {
+            try buf.appendSlice(" = ");
+            try buf.writer().print("{d}", .{value});
+        },
+    }
+}
+
+fn appendGenericIdentityPretty(
+    buf: *std.array_list.Managed(u8),
+    identity: *const sg.GenericTypeIdentity,
+    s: *Scope,
+) std.mem.Allocator.Error!void {
+    try buf.appendSlice(identity.base_name);
+    if (identity.arg_names.len == 0) return;
+
+    try buf.appendSlice("#(");
+    var i: usize = 0;
+    while (i < identity.arg_names.len) : (i += 1) {
+        if (i != 0) try buf.appendSlice(", ");
+        try appendGenericIdentityArgPretty(buf, identity.arg_names[i], identity.arg_values[i], s);
+    }
+    try buf.appendSlice(")");
+}
+
 pub fn builtinFromName(name: []const u8) ?sg.BuiltinType {
     return std.meta.stringToEnum(sg.BuiltinType, name);
 }
@@ -323,10 +509,16 @@ fn formatTypePairText(expected: sg.Type, actual: sg.Type, s: *Scope, allocator: 
     };
 }
 
-pub fn appendTypePretty(buf: *std.array_list.Managed(u8), t: sg.Type, s: *Scope) !void {
+pub fn appendTypePretty(buf: *std.array_list.Managed(u8), t: sg.Type, s: *Scope) std.mem.Allocator.Error!void {
     if (typeNameFor(s, t)) |nm| {
         try buf.appendSlice(nm);
         return;
+    }
+    if (genericIdentityOf(t)) |identity| {
+        if (!std.mem.eql(u8, identity.base_name, "Array")) {
+            try appendGenericIdentityPretty(buf, identity, s);
+            return;
+        }
     }
     switch (t) {
         .builtin => |bt| {
@@ -601,6 +793,33 @@ pub fn coerceLiteralToBuiltin(
     return expr;
 }
 
+pub fn canLiteralCoerceToBuiltin(
+    target: sg.BuiltinType,
+    expr: TypedExpr,
+) bool {
+    if (expr.node.content != .value_literal) return false;
+
+    return switch (expr.node.content.value_literal) {
+        .int_literal => |value| switch (target) {
+            .Int8 => value >= std.math.minInt(i8) and value <= std.math.maxInt(i8),
+            .Int16 => value >= std.math.minInt(i16) and value <= std.math.maxInt(i16),
+            .Int32 => value >= std.math.minInt(i32) and value <= std.math.maxInt(i32),
+            .Int64 => true,
+            .UIntNative => value >= 0 and @as(u64, @intCast(value)) <= std.math.maxInt(usize),
+            .UInt8 => value >= 0 and @as(u64, @intCast(value)) <= std.math.maxInt(u8),
+            .UInt16 => value >= 0 and @as(u64, @intCast(value)) <= std.math.maxInt(u16),
+            .UInt32 => value >= 0 and @as(u64, @intCast(value)) <= std.math.maxInt(u32),
+            .UInt64 => value >= 0,
+            else => false,
+        },
+        .float_literal => switch (target) {
+            .Float16, .Float32, .Float64 => true,
+            else => false,
+        },
+        else => false,
+    };
+}
+
 pub fn coerceExprToType(
     expected: sg.Type,
     expr: TypedExpr,
@@ -682,11 +901,13 @@ fn coerceChoiceLiteral(
         }
     }
 
+    const expected_text = try formatTypeText(.{ .choice_type = expected }, s, allocator);
+    defer expected_text.deinit();
     try diags.add(
         loc,
         .semantic,
-        "choice has no variant '..{s}'",
-        .{variant_name},
+        "choice type '{s}' has no variant '..{s}'",
+        .{ expected_text.bytes, variant_name },
     );
     return error.Reported;
 }
@@ -725,9 +946,20 @@ pub fn convertListLiteralToArray(
                 return error.Reported;
             }
 
+            var adjusted_elements = try allocator.alloc(*const sg.SGNode, ll.elements.len);
+            errdefer allocator.free(adjusted_elements);
+            for (ll.elements, 0..) |elem_node, idx| {
+                var elem_expr = TypedExpr{
+                    .node = @constCast(elem_node),
+                    .ty = ll.element_types[idx],
+                };
+                elem_expr = try ensureValuePositionAllowed(elem_expr, loc, s, allocator, diags);
+                adjusted_elements[idx] = elem_expr.node;
+            }
+
             const arr_lit = try allocator.create(sg.ArrayLiteral);
             arr_lit.* = .{
-                .elements = ll.elements,
+                .elements = adjusted_elements,
                 .element_type = expected_elem_ty,
                 .length = arr_info.length,
             };
@@ -821,7 +1053,11 @@ pub fn coerceStructLiteral(
     }
 
     const lit_ptr = try allocator.create(sg.StructValueLiteral);
-    lit_ptr.* = .{ .fields = coerced_fields, .ty = .{ .struct_type = expected } };
+    lit_ptr.* = .{
+        .fields = coerced_fields,
+        .ty = .{ .struct_type = expected },
+        .dispatch_prefix_positional_count = lit.dispatch_prefix_positional_count,
+    };
 
     const node = try allocator.create(sg.SGNode);
     node.* = .{
@@ -831,7 +1067,7 @@ pub fn coerceStructLiteral(
     return .{ .node = node, .ty = .{ .struct_type = expected } };
 }
 
-fn findStructValueFieldByName(lit: *const sg.StructValueLiteral, name: []const u8) ?*const sg.StructValueLiteralField {
+pub fn findStructValueFieldByName(lit: *const sg.StructValueLiteral, name: []const u8) ?*const sg.StructValueLiteralField {
     for (lit.fields) |*field| {
         if (std.mem.eql(u8, field.name, name)) return field;
     }
@@ -860,6 +1096,7 @@ pub fn ensureReadOnlyPointer(expr_node: *const syn.STNode, te: TypedExpr, alloca
     const addr_node = try allocator.create(sg.SGNode);
     addr_node.* = .{
         .location = expr_node.location,
+        .sem_type = .{ .pointer_type = ptr_info },
         .content = .{ .address_of = te.node },
     };
     return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
@@ -918,6 +1155,7 @@ pub fn ensureMutablePointer(
     const addr_node = try allocator.create(sg.SGNode);
     addr_node.* = .{
         .location = expr_node.location,
+        .sem_type = .{ .pointer_type = ptr_info },
         .content = .{ .address_of = te.node },
     };
     return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };

@@ -1,20 +1,24 @@
-PageAllocator : Type = struct [
-    ._page_size : Int = os.page_size()
-]
+--
+-- Scratch notes. Keep syntax aligned with the current language even if the
+-- implementation is still provisional.
+--
 
-alloc(pa: $&PageAllocator, size: Int, alignment: Alignment) := &Byte!HeapAllocationError {
-    let aligned_size = align_forward(size, max(pa.page_size, alignment.bytes))
-    return os.mmap(aligned_size)
+PageAllocator : Type = (
+    ._page_size : UIntNative = os.page_size()
+)
+
+alloc(.self: $&PageAllocator, .size: UIntNative, .alignment: Alignment) -> (.allocation: Allocation) !HeapAllocationError := {
+    aligned_size ::= align_forward(size, max(self&._page_size, alignment.bytes))
+    allocation = os.mmap(aligned_size)
 }
 
-resize(pa: $&PageAllocator, ptr: &Byte, new_size: Int) := Bool {
-    return false  // no soportado
+resize(.self: $&PageAllocator, .allocation: $&Allocation, .new_size: UIntNative) -> (.ok: Bool) := {
+    ok = false  -- no soportado
 }
 
-dealloc(pa: $&PageAllocator, ptr: &Byte) := !HeapDeallocationError {
-    os.munmap(ptr)
+dealloc(.self: $&PageAllocator, .allocation: Allocation) -> () !HeapDeallocationError := {
+    os.munmap(allocation.data)
 }
 
-Allocator canbe PageAllocator
+PageAllocator implements Allocator
 Allocator defaultsto PageAllocator
-

@@ -1,9 +1,14 @@
-StaticList#(.t: Type, .n: Int) : abstract = []
+--
+-- Scratch notes. Keep syntax aligned with the current language even if the
+-- APIs themselves are still provisional.
+--
 
-List#(.t) canbe StaticList#(.t, _)
+StaticList#(.t: Type, .n: UIntNative) : Abstract = ()
+
+StaticList#(.t, _) implements List#(.t)
 
 
-StackArray#(.t, .n) : Type = (
+StackArray#(.t: Type, .n: UIntNative) : Type = (
     ---
     This is a stack allocated array.
     Similar to the default array in C or zig, when not using malloc.
@@ -11,35 +16,35 @@ StackArray#(.t, .n) : Type = (
     ---
     ._data      : &Byte
     ._data_type : t
-    ._length    : UInt64    = n  -- Igual 64 es demasiado?
+    ._length    : UIntNative = n
     ._alignment : Alignment = ..Default
 )
 
-StaticList#(t, n) canbe StackArray#(t, n)
-Indexable#(t)     canbe StackArray#(t, n)
-List#(t)          canbe StackArray#(t, n)
+StackArray#(.t: Type, .n: UIntNative) implements StaticList#(.t: t, .n: n)
+StackArray#(.t: Type, .n: UIntNative) implements Indexable#(.t: t)
+StackArray#(.t: Type, .n: UIntNative) implements List#(.t: t)
 
-operator get[] (&a: StackArray#(.t, .n), .i:Int) -> (.v: t) := {
-    if i < 1 or i > N {
+get[]#(.t: Type, .n: UIntNative)(.self: &StackArray#(.t: t, .n: n), .index: UIntNative) -> (.value: t) := {
+    if index >= n {
         panic("Index out of bounds")
     }
 
-    -- Read from i to i + sizeof(T)
-    offset := (i - 1) * @sizeOf(T)
-    ptr : &t = &a._data + offset
+    -- Read from index to index + sizeof(t)
+    offset := index * @sizeOf(t)
+    ptr : &t = self&._data + offset
 
-    return ptr&
+    value = ptr&
 }
 
 
-StaticArray#(.t, .n) : Type = [
+StaticArray#(.t: Type, .n: UIntNative) : Type = (
     ---
     A heap allocated static array
     ---
-    ._data      : HeapAllocation
+    ._data      : Allocation
     ._data_type : Type        = t
-    ._length    : Int         = n
+    ._length    : UIntNative  = n
     ._alignment : Alignment   = ..Default
-]
+)
 
-StaticList#(.t, .n) canbe StaticArray#(.t, .n)
+StaticArray#(.t: Type, .n: UIntNative) implements StaticList#(.t: t, .n: n)

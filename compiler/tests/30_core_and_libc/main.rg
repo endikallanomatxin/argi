@@ -1,7 +1,8 @@
 main () -> (.status_code: Int32) := {
     puts(.string="Hello world!")
 
-    p : $&Char = malloc(.size=14)
+    size :: UIntNative = 14
+    p : $&Char = malloc(.size=size)
     p& = '0'
     puts(.string=p)
     free(.pointer=p)

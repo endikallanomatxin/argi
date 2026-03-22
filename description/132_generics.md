@@ -17,28 +17,31 @@ Usa `#( … )` para **declarar** parámetros genéricos. El binder puede aparece
 
 ```argi
 -- Tipo genérico
-Vec#(.t: Type, .n: UInt64) : Type = ( ... )
+Vec#(.t: Type, .n: UIntNative) : Type = ( ... )
 
 -- Función genérica
-max#(.t: Type) (a: t, b: t) -> t := {
-    if a > b { a } else { b }
+max#(.t: Type) (.a: t, .b: t) -> (.result: t) := {
+    if a > b { result = a } else { result = b }
 }
 ```
 
 ### Uso
 
 ```argi
-let v : Vec#(Float32, 3) = (1.0, 2.0, 3.0)
+let v : Vec#(.t: Float32, .n = 3) = (1.0, 2.0, 3.0)
 
-let r := max#(Int)(x, y)
+let r := max#(.t: Int)(.a = x, .b = y)
 ```
+
+For now the canonical documented form uses named generic arguments. Positional
+generic arguments may still be considered later for ergonomics.
 
 
 ### Bounds
 
 ```argi
-sum#(T: Type: Number) (xs: []T) -> T
--- T debe implementar el abstract Number
+sum#(.t: Type: Number) (.xs: []t) -> (.result: t)
+-- t debe implementar el abstract Number
 ```
 
 
@@ -55,5 +58,4 @@ sum#(T: Type: Number) (xs: []T) -> T
 ## Interacción con Virtual types
 
 * **Generics no van en la vtable.** Los métodos de vtable deben ser **monomórficos** tras borrar tipos.
-
 

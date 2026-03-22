@@ -7,9 +7,9 @@ Float : Abstract = (
 	-- ...
 )
 
-Float canbe Float16
-Float canbe Float32
-Float canbe Float64
+Float16 implements Float
+Float32 implements Float
+Float64 implements Float
 
 -- TODO: support Float128 and Float8
 
@@ -18,4 +18,3 @@ Float canbe Float64
 
 
 Float defaultsto Float32
-
