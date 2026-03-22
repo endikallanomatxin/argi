@@ -14,25 +14,43 @@ String : Type = (
 
 init (
     .p: $&String,
+    .allocator: $&Allocator = #reach allocator,
     .length: UIntNative,
 ) -> () := {
+    data ::= allocate(.self = allocator, .size = length)
     p& = (
-        .allocation = allocation_init(.size = length),
+        .allocation = (
+            .data = data,
+            .size = length,
+        ),
         .length = length,
     )
 }
 
-deinit (.self: $&String) -> () := {
+deinit (
+    .allocator: $&Allocator = #reach allocator,
+    .self: $&String,
+) -> () := {
     zero :: UIntNative = 0
-    allocation_deinit(.allocation = self&.allocation)
+    deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
     self& = (
         .allocation = self&.allocation,
         .length = zero,
     )
 }
 
-copy (.self: String) -> (.out: String) := {
-    out = String(.length = self.length)
+copy (
+    .allocator: $&Allocator = #reach allocator,
+    .self: String,
+) -> (.out: String) := {
+    new_data ::= allocate(.self = allocator, .size = self.length)
+    out = (
+        .allocation = (
+            .data = new_data,
+            .size = self.length,
+        ),
+        .length = self.length,
+    )
 
     if self.length > 0 {
         src_addr :: UIntNative = cast#(.to: UIntNative)(.value = self.allocation.data)

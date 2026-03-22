@@ -38,8 +38,12 @@ init #(.t: Type) (
     }
 
     bytes :: UIntNative = actual_capacity * element_size
+    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = malloc(.size = bytes))
     p& = (
-        .allocation = allocation_init(.size = bytes),
+        .allocation = (
+            .data = cast#(.to: $&UInt8)(.value = raw_addr),
+            .size = bytes,
+        ),
         .length = zero,
         .capacity = actual_capacity,
     )
@@ -47,7 +51,7 @@ init #(.t: Type) (
 
 deinit #(.t: Type) (.self: $&DynamicArray#(.t: t)) -> () := {
     zero :: UIntNative = 0
-    allocation_deinit(.allocation = self&.allocation)
+    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = self&.allocation.data)))
     self& = (
         .allocation = self&.allocation,
         .length = zero,

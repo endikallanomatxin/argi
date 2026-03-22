@@ -6,7 +6,7 @@ dummy_status :: Int32 = 0
 global_counter_ptr :: $&Int32 = $&dummy_counter
 global_status_ptr :: $&Int32 = $&dummy_status
 
-init(.res: $&Resource, .counter: $&Int32, .status: $&Int32) -> () := {
+init(.p: $&Resource, .counter: $&Int32, .status: $&Int32) -> () := {
     puts(.string="Initializing resource\n")
     global_counter_ptr = counter
     global_status_ptr = status
@@ -27,6 +27,7 @@ verify(.counter: $&Int32, .status: $&Int32) -> () := {
 }
 
 main () -> (.status_code: Int32) := {
+    allocator :: DirectAllocator = DirectAllocator()
     counter :: Int32 = 0
     status_code = 9
     #defer verify(.counter=$&counter, .status=$&status_code)

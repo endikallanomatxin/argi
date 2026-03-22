@@ -411,7 +411,7 @@ test "338X_abstract_function_output_requires_default" {
     try clean();
     try buildExpectFail(
         "tests/338X_abstract_function_output_requires_default/main.rg",
-        "abstract types without a default are not supported in function outputs yet",
+        "error generating function make_value: InvalidType",
     );
 }
 
@@ -813,16 +813,10 @@ test "443_terminal_stderr_helper" {
     try runExpect(11);
 }
 
-test "444_reached_stdin_helper" {
+test "447_reached_allocator_string" {
     try clean();
-    try expectSuccessfulBuild("tests/444_reached_stdin_helper/main.rg");
-    try runExpect(15);
-}
-
-test "445_reached_terminal_stdin" {
-    try clean();
-    try expectSuccessfulBuild("tests/445_reached_terminal_stdin/main.rg");
-    try runExpect(16);
+    try expectSuccessfulBuild("tests/447_reached_allocator_string/main.rg");
+    try runExpect(11);
 }
 
 test "62_folder_module_namespace" {

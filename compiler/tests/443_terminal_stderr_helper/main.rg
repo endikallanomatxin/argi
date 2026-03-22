@@ -20,14 +20,15 @@ flush(.self: $&DummyOutput) -> () := {
 DummyOutput implements OutputStream#(.text: String)
 
 main() -> (.status_code: Int32) := {
+    allocator :: DirectAllocator = DirectAllocator()
     stderr :: DummyOutput = (
         .write_count = 0,
         .flush_count = 0,
     )
     text ::= String(.length = 0)
 
-    write_stderr(.stderr = $&stderr, .text = text)
-    flush_stderr(.stderr = $&stderr)
+    print_error(.stderr = $&stderr, .text = text)
+    flush_error(.stderr = $&stderr)
 
     status_code = stderr.write_count * 10 + stderr.flush_count
 }
