@@ -43,8 +43,11 @@
             - o existenciales reales.
           Ahora solo están cubiertos parcialmente.
 
-        - Soportar `implements/defaultsto` genéricos:
-          patrones tipo `Vector#(T) implements Indexable#(T)`.
+        - Seguir endureciendo `implements/defaultsto` genéricos:
+          - mejor matching y desempate,
+          - mejor wording de diagnósticos,
+          - y comprobar hasta dónde queremos empujar `defaultsto` genérico
+            frente a dejarlo como caso más restringido que `implements`.
 
         - Decidir si `defaultsto` se mantiene como parte estable del lenguaje o
           si es un mecanismo transitorio.
@@ -58,9 +61,10 @@
           compilador real.
 
         - Hoy el compilador:
-            - no modela `copy()` como parte de la semántica,
-            - ya ha empezado a distinguir tipos copyables vs no-copyables, pero
-              solo con una política mínima y sin `copy()` implícito todavía,
+            - ya modela una primera historia de copyability,
+            - ya inserta `copy()` implícito en varios value positions,
+              pero todavía no cubre toda la semántica descrita en
+              `description/`,
             - agenda `deinit` de forma superficial al salir de scope si existe
               una función `deinit`,
             - y no lleva una historia completa de ownership/move/aliasing.
@@ -100,7 +104,7 @@
                 - Ya existe un primer corte:
                     - si un tipo no es trivially copyable pero sí tiene
                       `copy(.x: T) -> (.out: T)`, el compilador inserta esa
-                      llamada en algunos value positions.
+                      llamada en varios value positions ya soportados.
                     - La firma asumida por ahora es deliberadamente mínima y
                       puede revisarse más adelante si la story de allocators
                       para `copy()` cambia.
@@ -180,7 +184,7 @@
 
         - Ya existe un corte usable:
           `lhs | f(...)`, `lhs | module.f(...)`, cadenas básicas de `pipe`,
-          y genéricos básicos en el RHS,
+          genéricos básicos en el RHS,
           usando argumentos nombrados normales en el RHS con `_`, `&_`, `$&_`
           y `_.field` como valores.
 
@@ -204,6 +208,11 @@
     - Core library usable para un compilador
 
         - Strings
+            - Cuando `StringView` esté realmente maduro como vista borrowed
+              usable, hacer que las string literals se materialicen en el
+              segmento de datos/constants de solo lectura y que el usuario las
+              vea semánticamente como `StringView`, no como `String` owner ni
+              como C-string ad hoc del backend.
         - Lists / arrays / slices
         - Hash maps / sets
         - Allocators
@@ -345,9 +354,17 @@
         - mejores respuestas de error,
         - logs o diagnósticos cuando falla el pipeline.
 
+    - El LSP ya tiene una base bastante útil:
+        - `semanticTokens`,
+        - `hover`,
+        - `go to definition`.
+      Lo pendiente ya no es “tener LSP”, sino endurecerlo y cubrirlo mejor.
+
     - Añadir tests visibles para:
         - `LanguageService`,
         - `semanticTokens`,
+        - `hover`,
+        - `definition`,
         - resolución de módulo,
         - diagnóstico incremental.
 
