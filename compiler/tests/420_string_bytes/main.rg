@@ -1,4 +1,5 @@
 main () -> (.status_code: Int32) := {
+    allocator :: DirectAllocator = DirectAllocator()
     text ::= String(.length = 3)
 
     bytes_set(.string = $&text, .index = 0, .value = 65)

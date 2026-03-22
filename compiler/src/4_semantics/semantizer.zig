@@ -1613,6 +1613,29 @@ pub const Semantizer = struct {
         return null;
     }
 
+    fn resolveReachAlternativeInScopeLoose(
+        self: *Semantizer,
+        alt: sg.ReachAlternative,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!?typ.TypedExpr {
+        if (alt.segments.len == 0) return null;
+
+        var current = self.handleIdentifier(alt.segments[0], s, loc) catch |err| switch (err) {
+            error.SymbolNotFound => return null,
+            else => return err,
+        };
+
+        for (alt.segments[1..]) |segment| {
+            current = self.buildStructFieldAccessFromTypedExpr(current, segment, loc, s) catch |err| switch (err) {
+                error.FieldsNotFound => return null,
+                else => return err,
+            };
+        }
+
+        return current;
+    }
+
     fn currentReachFunctionContext(self: *Semantizer) ?*ReachFunctionContext {
         if (self.function_reach_stack.items.len == 0) return null;
         return &self.function_reach_stack.items[self.function_reach_stack.items.len - 1];
@@ -1722,6 +1745,31 @@ pub const Semantizer = struct {
             .{ field_name, reach_text, expected_text.bytes },
         );
         return error.Reported;
+    }
+
+    fn resolveReachedArgumentForInference(
+        self: *Semantizer,
+        field_name: []const u8,
+        reach: *const sg.ReachDirective,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!?typ.TypedExpr {
+        for (reach.alternatives) |alt| {
+            if (try self.resolveReachAlternativeInScopeLoose(alt, s, loc)) |resolved| {
+                return resolved;
+            }
+        }
+
+        if (self.currentReachFunctionContext()) |ctx| {
+            for (ctx.input_struct.fields) |existing| {
+                if (!std.mem.eql(u8, existing.name, field_name)) continue;
+                const binding = ctx.body_scope.bindings.get(field_name) orelse return null;
+                const use_node = try sg.makeSGNode(.{ .binding_use = binding }, loc, self.allocator);
+                return .{ .node = use_node, .ty = binding.ty };
+            }
+        }
+
+        return null;
     }
 
     fn handleMove(
@@ -1877,11 +1925,12 @@ pub const Semantizer = struct {
                 d.generic_params,
                 d.name.location,
             );
+            const generic_info = try self.genericParamDefsAndConstraintsFromSyntax(params_struct, s);
             // Register as generic type template
             try s.appendGenericTypeTemplate(d.name.string, .{
                 .name = d.name.string,
                 .location = d.value.location,
-                .params = try self.genericParamDefsFromSyntax(params_struct, s),
+                .params = generic_info.params,
                 .body = d.value,
             });
             // No concrete type emitted now
@@ -1974,17 +2023,18 @@ pub const Semantizer = struct {
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
         // Register generic template and skip direct emission
-        if (f.generic_params.len > 0) {
+        if (f.generic_params.len > 0 or f.generic_params_struct != null) {
             const params_struct = try self.genericParamsStructOrNames(
                 f.generic_params_struct,
                 f.generic_params,
                 f.name.location,
             );
+            const generic_info = try self.genericParamDefsAndConstraintsFromSyntax(params_struct, p);
             try p.appendGenericFunctionTemplate(f.name.string, .{
                 .name = f.name.string,
                 .location = loc,
-                .params = try self.genericParamDefsFromSyntax(params_struct, p),
-                .param_abstract_constraints = try self.allocEmptyAbstractConstraintSlice(f.generic_params.len),
+                .params = generic_info.params,
+                .param_abstract_constraints = generic_info.abstract_constraints,
                 .dispatch_kind = .regular,
                 .input = f.input,
                 .output = f.output,
@@ -2006,7 +2056,7 @@ pub const Semantizer = struct {
         // ── entrada
         var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         for (f.input.fields) |fld| {
-            const ty = try self.resolveType(fld.type.?, &child);
+            const ty = try self.resolveTypePreservingAbstracts(fld.type.?, &child);
             const dvp = if (fld.default_value) |n|
                 (try self.visitNode(n.*, &child)).node
             else
@@ -2035,7 +2085,7 @@ pub const Semantizer = struct {
         // ── salida
         var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         for (f.output.fields) |fld| {
-            const ty = try self.resolveType(fld.type.?, &child);
+            const ty = try self.resolveTypePreservingAbstracts(fld.type.?, &child);
             const dvp = if (fld.default_value) |n|
                 (try self.visitNode(n.*, &child)).node
             else
@@ -2099,12 +2149,6 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
-    fn allocEmptyAbstractConstraintSlice(self: *Semantizer, len: usize) ![]const ?[]const u8 {
-        const slice = try self.allocator.alloc(?[]const u8, len);
-        for (slice, 0..) |_, i| slice[i] = null;
-        return slice;
-    }
-
     fn genericParamsStructOrNames(
         self: *Semantizer,
         params_struct: ?syn.StructTypeLiteral,
@@ -2129,8 +2173,18 @@ pub const Semantizer = struct {
         params_struct: syn.StructTypeLiteral,
         s: *Scope,
     ) SemErr![]const gen.GenericParam {
+        return (try self.genericParamDefsAndConstraintsFromSyntax(params_struct, s)).params;
+    }
+
+    fn genericParamDefsAndConstraintsFromSyntax(
+        self: *Semantizer,
+        params_struct: syn.StructTypeLiteral,
+        s: *Scope,
+    ) SemErr!GenericParamSyntaxInfo {
         var params = try self.allocator.alloc(gen.GenericParam, params_struct.fields.len);
+        var constraints = try self.allocator.alloc(?[]const u8, params_struct.fields.len);
         for (params_struct.fields, 0..) |field, idx| {
+            constraints[idx] = null;
             const field_ty = field.type orelse {
                 params[idx] = .{
                     .name = field.name.string,
@@ -2149,13 +2203,36 @@ pub const Semantizer = struct {
                 continue;
             }
 
+            if (field_ty == .type_name and s.lookupAbstractInfo(field_ty.type_name.string) != null) {
+                params[idx] = .{
+                    .name = field.name.string,
+                    .kind = .type,
+                    .value_type = null,
+                };
+                constraints[idx] = field_ty.type_name.string;
+                continue;
+            }
+
+            if (field_ty == .generic_type_instantiation and s.lookupAbstractInfo(field_ty.generic_type_instantiation.base_name.string) != null) {
+                params[idx] = .{
+                    .name = field.name.string,
+                    .kind = .type,
+                    .value_type = null,
+                };
+                constraints[idx] = field_ty.generic_type_instantiation.base_name.string;
+                continue;
+            }
+
             params[idx] = .{
                 .name = field.name.string,
                 .kind = .comptime_int,
                 .value_type = try self.resolveType(field_ty, s),
             };
         }
-        return params;
+        return .{
+            .params = params,
+            .abstract_constraints = constraints,
+        };
     }
 
     fn hasGenericParamNamed(params: []const gen.GenericParam, name: []const u8) bool {
@@ -2678,7 +2755,7 @@ pub const Semantizer = struct {
             if (field.type) |field_ty| {
                 switch (field_ty) {
                     .type_name => |tn| {
-                        if (p.lookupAbstractInfo(tn.string) != null and p.lookupAbstractDefault(tn.string) == null) {
+                        if (p.lookupAbstractInfo(tn.string) != null) {
                             has_abstract_input = true;
                             const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
                             try hidden_param_names.append(hidden_name);
@@ -2687,7 +2764,7 @@ pub const Semantizer = struct {
                         }
                     },
                     .generic_type_instantiation => |g| {
-                        if (p.lookupAbstractInfo(g.base_name.string) != null and p.lookupAbstractDefault(g.base_name.string) == null) {
+                        if (p.lookupAbstractInfo(g.base_name.string) != null) {
                             has_abstract_input = true;
                             const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
                             try hidden_param_names.append(hidden_name);
@@ -2699,7 +2776,7 @@ pub const Semantizer = struct {
                         switch (ptr_info.child.*) {
                             .type_name => {
                                 const child_name = ptr_info.child.*.type_name.string;
-                                if (p.lookupAbstractInfo(child_name) != null and p.lookupAbstractDefault(child_name) == null) {
+                                if (p.lookupAbstractInfo(child_name) != null) {
                                     has_abstract_input = true;
                                     const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
                                     try hidden_param_names.append(hidden_name);
@@ -2709,7 +2786,7 @@ pub const Semantizer = struct {
                             },
                             .generic_type_instantiation => |g| {
                                 const child_name = g.base_name.string;
-                                if (p.lookupAbstractInfo(child_name) != null and p.lookupAbstractDefault(child_name) == null) {
+                                if (p.lookupAbstractInfo(child_name) != null) {
                                     has_abstract_input = true;
                                     const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
                                     try hidden_param_names.append(hidden_name);
@@ -3324,7 +3401,7 @@ pub const Semantizer = struct {
     ) SemErr!*sg.StructType {
         var buf = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         for (st.fields) |f| {
-            const ty = try self.resolveType(f.type.?, s);
+            const ty = try self.resolveTypePreservingAbstracts(f.type.?, s);
             const dvp = if (f.default_value) |n|
                 (try self.visitNode(n.*, s)).node
             else
@@ -3349,7 +3426,7 @@ pub const Semantizer = struct {
     ) SemErr!*sg.StructType {
         var buf = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         for (st.fields) |f| {
-            const ty = try self.resolveTypeWithSubst(f.type.?, s, subst);
+            const ty = try self.resolveTypeWithSubstPreservingAbstracts(f.type.?, s, subst);
             const dvp = if (f.default_value) |n|
                 (try self.visitNode(n.*, s)).node
             else
@@ -4100,7 +4177,8 @@ pub const Semantizer = struct {
         }
 
         const init_struct = init_input_ty.struct_type;
-        const fields = try self.allocator.alloc(sg.StructValueLiteralField, init_struct.fields.len);
+        const user_value = tv_in.node.content.struct_value_literal;
+        const args = try self.allocator.alloc(CallArg, user_value.fields.len + 1);
 
         const fake_binding = try self.allocator.create(sg.BindingDeclaration);
         fake_binding.* = .{
@@ -4111,23 +4189,29 @@ pub const Semantizer = struct {
             .initialization = null,
         };
         const fake_binding_use = try sg.makeSGNode(.{ .binding_use = fake_binding }, loc, self.allocator);
-        fields[0] = .{ .name = init_struct.fields[0].name, .value = fake_binding_use };
-
-        const user_value = tv_in.node.content.struct_value_literal;
+        _ = constructed_ty;
+        args[0] = .{
+            .name = init_struct.fields[0].name,
+            .expr = .{
+                .node = fake_binding_use,
+                .ty = init_struct.fields[0].ty,
+            },
+        };
         for (user_value.fields, 0..) |field, idx| {
-            fields[idx + 1] = .{ .name = field.name, .value = field.value };
+            args[idx + 1] = .{
+                .name = field.name,
+                .expr = .{
+                    .node = @constCast(field.value),
+                    .ty = tv_in.ty.struct_type.fields[idx].ty,
+                },
+            };
         }
 
-        const struct_value = try self.allocator.create(sg.StructValueLiteral);
-        struct_value.* = .{
-            .fields = fields,
-            .ty = init_input_ty,
-            .dispatch_prefix_positional_count = 1,
-        };
-
-        const node = try sg.makeSGNode(.{ .struct_value_literal = struct_value }, loc, self.allocator);
-        _ = constructed_ty;
-        return .{ .node = node, .ty = init_input_ty };
+        const positional_prefix: u32 = if (user_value.dispatch_prefix_positional_count == 0)
+            0
+        else
+            @intCast(user_value.dispatch_prefix_positional_count + 1);
+        return self.buildCallInputWithPositionalPrefix(args, positional_prefix);
     }
 
     fn handlePipe(
@@ -4650,53 +4734,61 @@ pub const Semantizer = struct {
 
         const init_input_ty: sg.Type = .{ .struct_type = init_struct };
         const init_input_te = try self.buildTypeInitializerDispatchInput(type_decl.ty, tv_in, init_input_ty, call.input.*.location);
-        const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+        const init_fn = blk: {
+            if (call.type_arguments_struct) |stargs| {
+                const instantiated = self.instantiateGenericNamed("init", stargs, init_input_te, s, .regular) catch |err| switch (err) {
+                    error.SymbolNotFound => null,
+                    else => return err,
+                };
+                if (instantiated) |fn_decl| break :blk fn_decl;
+            } else if (call.type_arguments) |targs| {
+                const instantiated = self.instantiateGeneric("init", targs, init_input_te, s, .regular) catch |err| switch (err) {
+                    error.SymbolNotFound => null,
+                    else => return err,
+                };
+                if (instantiated) |fn_decl| break :blk fn_decl;
+            }
 
-        const inferred_init = self.instantiateGenericNamed("init", empty_args, init_input_te, s, .regular) catch |err| switch (err) {
-            error.SymbolNotFound => null,
-            else => return err,
-        };
+            const synthetic_init_call = syn.FunctionCall{
+                .callee = "init",
+                .callee_loc = call.callee_loc,
+                .module_qualifier = null,
+                .type_arguments = call.type_arguments,
+                .type_arguments_struct = call.type_arguments_struct,
+                .input = call.input,
+            };
 
-        const init_fn = inferred_init orelse self.resolveVisibleOverload("init", init_input_te, s, call.input.*.location) catch |err| switch (err) {
-            error.SymbolNotFound => {
-                if (!(try self.hasVisibleFunctionNamed("init", s, call.input.*.location))) {
-                    try self.diags.add(
-                        call.input.*.location,
-                        .semantic,
-                        "failed to initialize type '{s}': no function named 'init' exists",
-                        .{call.callee},
-                    );
-                    return error.Reported;
-                }
+            break :blk self.resolveRegularCallCallee(synthetic_init_call, init_input_te, s, call.input.*.location) catch |err| switch (err) {
+                error.Reported => return err,
+                error.SymbolNotFound => {
                 const sigs = try self.collectVisibleSignatureText("init", user_struct, s, call.input.*.location);
                 defer sigs.deinit();
                 try self.diags.add(
                     call.input.*.location,
                     .semantic,
-                    "failed to initialize type '{s}': no 'init' overload accepts arguments {s}. Available overloads:\n{s}",
+                    "failed to initialize type '{s}': no visible 'init' overload accepts arguments {s}. Available overloads:\n{s}",
                     .{ call.callee, sigs.actual.bytes, sigs.available.bytes },
                 );
-                return error.Reported;
-            },
-            error.AmbiguousOverload => {
-                const candidates_result = self.buildOverloadCandidatesText("init", init_input_ty, s) catch null;
-                const candidates = if (candidates_result) |owned| owned.bytes else "";
-                defer if (candidates_result) |owned| owned.deinit();
-                try self.diags.add(
-                    call.input.*.location,
-                    .semantic,
-                    "failed to initialize type '{s}': matching 'init' overloads are ambiguous. Candidates:\n{s}",
-                    .{ call.callee, candidates },
-                );
-                return error.Reported;
-            },
-            else => return err,
+                    return error.Reported;
+                },
+                error.AmbiguousOverload => {
+                    const candidates_result = self.buildOverloadCandidatesText("init", init_input_ty, s) catch null;
+                    const candidates = if (candidates_result) |owned| owned.bytes else "";
+                    defer if (candidates_result) |owned| owned.deinit();
+                    try self.diags.add(
+                        call.input.*.location,
+                        .semantic,
+                        "failed to initialize type '{s}': matching 'init' overloads are ambiguous. Candidates:\n{s}",
+                        .{ call.callee, candidates },
+                    );
+                    return error.Reported;
+                },
+                else => return err,
+            };
         };
 
-        const expected_user_fields = try self.allocator.alloc(sg.StructTypeField, tv_in.ty.struct_type.fields.len);
-        for (tv_in.ty.struct_type.fields, 0..) |_, idx| {
-            expected_user_fields[idx] = init_fn.input.fields[idx + 1];
-        }
+        const expected_user_fields = try self.allocator.alloc(sg.StructTypeField, init_fn.input.fields.len - 1);
+        std.mem.copyForwards(sg.StructTypeField, expected_user_fields, init_fn.input.fields[1..]);
         const expected_user_struct = try self.allocator.create(sg.StructType);
         expected_user_struct.* = .{ .fields = expected_user_fields };
         const coerced_args = try self.coerceCallInputToExpected(expected_user_struct, tv_in, call.input, s);
@@ -5107,10 +5199,7 @@ pub const Semantizer = struct {
                     if (tmpl.dispatch_kind != allowed_kind) continue;
                     var subst = GenericSubst.init(self.allocator);
                     defer subst.deinit();
-                    var dispatch_input = call_input;
-                    if (allowed_kind == .abstract_contract) {
-                        dispatch_input = try self.materializeTemplateReachDefaultsForDispatch(tmpl, call_input, s);
-                    }
+                    const dispatch_input = try self.materializeTemplateReachDefaultsForDispatch(tmpl, call_input, s);
 
                     var ok: bool = true;
                     for (tmpl.params) |param| {
@@ -5160,7 +5249,7 @@ pub const Semantizer = struct {
             try subst.types.put(param.name, constraint_type_decl.ty);
         }
 
-        return self.resolveTypeWithSubst(ty_node, s, &subst);
+        return self.resolveTypeWithSubstPreservingAbstracts(ty_node, s, &subst);
     }
 
     fn materializeTemplateReachDefaultsForDispatch(
@@ -5195,9 +5284,27 @@ pub const Semantizer = struct {
             if (field.default_value.?.content != .reach_directive) continue;
             if (field.type == null) continue;
 
-            const dispatch_ty = try self.resolveTemplateReachDispatchType(tmpl, field.type.?, s);
             const reach_te = try self.visitNode(field.default_value.?.*, s);
             if (reach_te.node.content != .reach_directive) continue;
+
+            const dispatch_ty = self.resolveTemplateReachDispatchType(tmpl, field.type.?, s) catch |err| switch (err) {
+                error.UnknownType => {
+                    if (try self.resolveReachedArgumentForInference(
+                        field.name.string,
+                        reach_te.node.content.reach_directive,
+                        s,
+                        field.default_value.?.location,
+                    )) |resolved_for_inference| {
+                        try args.append(.{
+                            .name = field.name.string,
+                            .expr = resolved_for_inference,
+                        });
+                        changed = true;
+                    }
+                    continue;
+                },
+                else => return err,
+            };
 
             const resolved = try self.resolveReachedArgument(
                 field.name.string,
@@ -6014,10 +6121,15 @@ pub const Semantizer = struct {
     }
 
     //────────────────────────────────────────────────── POINTER ASSIGNMENT
-    const CallArg = struct {
-        name: []const u8,
-        expr: typ.TypedExpr,
-    };
+const CallArg = struct {
+    name: []const u8,
+    expr: typ.TypedExpr,
+};
+
+const GenericParamSyntaxInfo = struct {
+    params: []const gen.GenericParam,
+    abstract_constraints: []const ?[]const u8,
+};
 
     fn buildCallInputWithPositionalPrefix(
         self: *Semantizer,
@@ -6508,6 +6620,72 @@ pub const Semantizer = struct {
         };
     }
 
+    fn resolveTypePreservingAbstracts(self: *Semantizer, t: syn.Type, s: *Scope) SemErr!sg.Type {
+        return switch (t) {
+            .type_name => |tn| blk: {
+                const id = tn.string;
+                if (std.mem.indexOfScalar(u8, id, '.')) |dot_idx| {
+                    const module_name = id[0..dot_idx];
+                    const type_name = id[dot_idx + 1 ..];
+                    const module_dir = s.lookupModuleAlias(module_name) orelse break :blk error.UnknownType;
+                    if (s.lookupTypeInModule(module_dir, type_name)) |td| {
+                        if (!(try self.typeIsVisible(td, tn.location.file))) {
+                            try self.addPrivateMemberDiag(tn.location, "type", type_name);
+                            return error.Reported;
+                        }
+                        break :blk td.ty;
+                    }
+                    break :blk error.UnknownType;
+                }
+                if (typ.builtinFromName(id)) |bt|
+                    break :blk .{ .builtin = bt };
+                if (s.lookupAbstractInfo(id)) |_| {
+                    if (s.lookupType(id)) |td| break :blk td.ty;
+                    break :blk error.UnknownType;
+                }
+                if (s.lookupType(id)) |td| {
+                    if (!(try self.typeIsVisible(td, tn.location.file))) {
+                        try self.addPrivateMemberDiag(tn.location, "type", id);
+                        return error.Reported;
+                    }
+                    break :blk td.ty;
+                }
+                break :blk error.UnknownType;
+            },
+            .generic_type_instantiation => |g| blk_g: {
+                const base_name = g.base_name.string;
+                if (try self.resolveSpecialGenericType(g, s, null)) |special_ty| break :blk_g special_ty;
+                if (s.lookupAbstractInfo(base_name)) |_| {
+                    if (s.lookupType(base_name)) |td| break :blk_g td.ty;
+                    break :blk_g error.UnknownType;
+                }
+
+                const ty = self.instantiateGenericTypeNamed(base_name, g.args, s, null) catch |err| switch (err) {
+                    error.SymbolNotFound => break :blk_g error.UnknownType,
+                    else => return err,
+                };
+                break :blk_g ty;
+            },
+            .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
+            .pointer_type => |ptr_info| blk: {
+                const inner_ty = try self.resolveTypePreservingAbstracts(ptr_info.child.*, s);
+                const child = try self.allocator.create(sg.Type);
+                child.* = inner_ty;
+
+                const sem_ptr = try self.allocator.create(sg.PointerType);
+                sem_ptr.* = .{
+                    .mutability = ptr_info.mutability,
+                    .child = child,
+                };
+
+                break :blk .{ .pointer_type = sem_ptr };
+            },
+            .array_type => |arr_info| blk_arr: {
+                const elem_ty = try self.resolveTypePreservingAbstracts(arr_info.element.*, s);
+                break :blk_arr try self.makeArrayType(arr_info.length, elem_ty);
+            },
+        };
+    }
 
     fn resolveTypeWithSubst(
         self: *Semantizer,
@@ -6562,6 +6740,53 @@ pub const Semantizer = struct {
             },
             .array_type => |arr_info| blk_arr: {
                 const elem_ty = try self.resolveTypeWithSubst(arr_info.element.*, s, subst);
+                break :blk_arr try self.makeArrayType(arr_info.length, elem_ty);
+            },
+        };
+    }
+
+    fn resolveTypeWithSubstPreservingAbstracts(
+        self: *Semantizer,
+        t: syn.Type,
+        s: *Scope,
+        subst: *const GenericSubst,
+    ) SemErr!sg.Type {
+        return switch (t) {
+            .type_name => |tn| blk: {
+                const id = tn.string;
+                if (subst.types.get(id)) |mapped| break :blk mapped;
+                break :blk try self.resolveTypePreservingAbstracts(t, s);
+            },
+            .generic_type_instantiation => |g| blk_g: {
+                const base_name = g.base_name.string;
+                if (try self.resolveSpecialGenericType(g, s, subst)) |special_ty| break :blk_g special_ty;
+                if (s.lookupAbstractInfo(base_name)) |_| {
+                    if (s.lookupType(base_name)) |td| break :blk_g td.ty;
+                    break :blk_g error.UnknownType;
+                }
+
+                const ty = self.instantiateGenericTypeNamed(base_name, g.args, s, subst) catch |err| switch (err) {
+                    error.SymbolNotFound => break :blk_g error.UnknownType,
+                    else => return err,
+                };
+                break :blk_g ty;
+            },
+            .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteralWithSubst(st, s, subst) },
+            .pointer_type => |ptr_info| blk: {
+                const inner_ty = try self.resolveTypeWithSubstPreservingAbstracts(ptr_info.child.*, s, subst);
+                const child = try self.allocator.create(sg.Type);
+                child.* = inner_ty;
+
+                const sem_ptr = try self.allocator.create(sg.PointerType);
+                sem_ptr.* = .{
+                    .mutability = ptr_info.mutability,
+                    .child = child,
+                };
+
+                break :blk .{ .pointer_type = sem_ptr };
+            },
+            .array_type => |arr_info| blk_arr: {
+                const elem_ty = try self.resolveTypeWithSubstPreservingAbstracts(arr_info.element.*, s, subst);
                 break :blk_arr try self.makeArrayType(arr_info.length, elem_ty);
             },
         };
