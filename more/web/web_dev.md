@@ -120,7 +120,7 @@ Element : Interface = [
 ]
 
 MyElement : Type = [
-	.some_state : int
+	.some_state : Int
 ]
 
 view(e: &MyElement) := Div(
@@ -135,7 +135,7 @@ view(e: &MyElement) := Div(
 	]
 )
 
-update(e: &MyElement, new_state: int) := {
+update(e: &MyElement, new_state: Int) := {
 	e.some_state = new_state
 }
 ```
@@ -228,4 +228,3 @@ my_image : Asset = [...]
 ```
 
 Cuando se hace el frontend, se referencian.
-
