@@ -1022,9 +1022,6 @@ fn buildFunctionHoverMarkdown(
     var out = std.array_list.Managed(u8).init(allocator);
     errdefer out.deinit();
 
-    try out.appendSlice("**");
-    try out.appendSlice(decl.name);
-    try out.appendSlice("**\n\n");
     try appendSignatureText(&out, decl, syntax_decl_opt, type_refs);
 
     return try out.toOwnedSlice();
