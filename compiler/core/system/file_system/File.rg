@@ -1,8 +1,7 @@
--- FileHandle : Abstract = [
---     read_all(&_)        -> Array<Byte>
---     write($&_, data: []Byte) -> Void
---     seek($&_, pos: Int) -> Void
---     flush($&_)          -> Void
---     close($&_)          -> Void
--- ]
-
+-- FileHandle : Abstract = (
+--     read_all(.self: &Self) -> (.bytes: Array#(.t: Byte))
+--     write(.self: $&Self, .data: ByteSlice) -> ()
+--     seek(.self: $&Self, .position: Int) -> ()
+--     flush(.self: $&Self) -> ()
+--     close(.self: $&Self) -> ()
+-- )
