@@ -17,8 +17,8 @@ DenseLayer : Type = (
 DenseLayer implements Layer
 
 init(.p: $&DenseLayer, .input_size: Int, .output_size: Int) -> () := {
-	weights = NDVector|init((input_size, output_size))
-	biases  = NDVector|init((output_size))
+	weights = NDVector((input_size, output_size))
+	biases  = NDVector((output_size))
 	p& = (
 		._weights = weights,
 		._biases = biases,
@@ -34,8 +34,8 @@ Use:
 ```
 MyModel : Type = (
 	._layers: List#(.t: Layer) = (
-		DenseLayer|init(3, 4)
-		DenseLayer|init(4, 2)
+		DenseLayer(3, 4)
+		DenseLayer(4, 2)
 	)
 )
 
@@ -53,8 +53,8 @@ loss(.model: MyModel, .input: Tracked#(.t: NDVector), .target: Tracked#(.t: NDVe
 
 model :: MyModel = MyModel()
 
-input :: Tracked#(.t: NDVector) = NDVector|init((3))
-target :: Tracked#(.t: NDVector) = NDVector|init((2))
+input :: Tracked#(.t: NDVector) = NDVector((3))
+target :: Tracked#(.t: NDVector) = NDVector((2))
 
 loss = model|loss(input, target)
 
