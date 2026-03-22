@@ -64,6 +64,11 @@ pub const Hover = struct {
     contents: []const u8,
 };
 
+pub const Definition = struct {
+    path: []const u8,
+    range: Range,
+};
+
 pub const DiagnosticsResult = struct {
     allocator: std.mem.Allocator,
     items: []Diagnostic,
@@ -118,6 +123,16 @@ const SemanticFunctionCallRef = struct {
 
 const SemanticTypeDeclRef = struct {
     decl: *const sg.TypeDeclaration,
+};
+
+const SyntaxTypeDeclRef = struct {
+    node: *const st.STNode,
+    name: st.Name,
+};
+
+const SyntaxTypeRef = struct {
+    location: token.Location,
+    name: []const u8,
 };
 
 const Document = struct {
@@ -703,7 +718,11 @@ pub const LanguageService = struct {
         defer syntax_functions.deinit();
         var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
         defer syntax_calls.deinit();
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls);
+        var syntax_type_decls = std.array_list.Managed(SyntaxTypeDeclRef).init(analysis_allocator);
+        defer syntax_type_decls.deinit();
+        var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
+        defer syntax_type_refs.deinit();
+        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_type_decls, &syntax_type_refs);
 
         var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator);
         defer semantic_functions.deinit();
@@ -747,6 +766,121 @@ pub const LanguageService = struct {
             return .{
                 .range = nameRange(syntax_call.call.callee_loc, syntax_call.call.callee.len),
                 .contents = contents,
+            };
+        }
+
+        return null;
+    }
+
+    pub fn definition(self: *LanguageService, uri: []const u8, position: Position) !?Definition {
+        const doc = try self.getDoc(uri);
+
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        var analysis_allocator = arena.allocator();
+
+        const files_list = sf.collectWithEntrySource(&analysis_allocator, "core", doc.path, doc.text) catch {
+            return null;
+        };
+        const files = files_list.items;
+
+        for (files_list.items) |*source_file| {
+            for (self.documents.items) |open_doc| {
+                if (std.mem.eql(u8, source_file.path, open_doc.path)) {
+                    source_file.code = open_doc.text;
+                    break;
+                }
+            }
+        }
+
+        const one_primary = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
+        var diagnostics = diag.Diagnostics.init(&analysis_allocator, &one_primary);
+        defer diagnostics.deinit();
+
+        var tokens = std.array_list.Managed(token.Token).init(analysis_allocator);
+        defer tokens.deinit();
+
+        for (files, 0..) |source_file, idx| {
+            var tokenizer_ctx = tokenizer.Tokenizer.init(
+                &analysis_allocator,
+                &diagnostics,
+                source_file.code,
+                source_file.path,
+            );
+            const token_slice = tokenizer_ctx.tokenize() catch {
+                return null;
+            };
+
+            const slice = if (idx == files.len - 1)
+                token_slice
+            else
+                token_slice[0 .. token_slice.len - 1];
+            try tokens.appendSlice(slice);
+        }
+
+        var syntax_ctx = syntaxer.Syntaxer.init(&analysis_allocator, tokens.items, &diagnostics);
+        const st_nodes = syntax_ctx.parse() catch {
+            return null;
+        };
+
+        var sem_ctx = semantizer.Semantizer.init(&analysis_allocator, st_nodes, &diagnostics);
+        const sg_nodes = sem_ctx.analyze() catch {
+            return null;
+        };
+
+        var syntax_functions = std.array_list.Managed(SyntaxFunctionDeclRef).init(analysis_allocator);
+        defer syntax_functions.deinit();
+        var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
+        defer syntax_calls.deinit();
+        var syntax_type_decls = std.array_list.Managed(SyntaxTypeDeclRef).init(analysis_allocator);
+        defer syntax_type_decls.deinit();
+        var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
+        defer syntax_type_refs.deinit();
+        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_type_decls, &syntax_type_refs);
+
+        var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator);
+        defer semantic_functions.deinit();
+        var semantic_calls = std.array_list.Managed(SemanticFunctionCallRef).init(analysis_allocator);
+        defer semantic_calls.deinit();
+        var semantic_types = std.array_list.Managed(SemanticTypeDeclRef).init(analysis_allocator);
+        defer semantic_types.deinit();
+        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_types);
+
+        for (syntax_functions.items) |syntax_fn| {
+            if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc.path)) continue;
+            if (!positionWithinName(position, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len)) continue;
+            return .{
+                .path = syntax_fn.decl.name.location.file,
+                .range = nameRange(syntax_fn.decl.name.location, syntax_fn.decl.name.string.len),
+            };
+        }
+
+        for (syntax_calls.items) |syntax_call| {
+            if (!std.mem.eql(u8, syntax_call.call.callee_loc.file, doc.path)) continue;
+            if (!positionWithinName(position, syntax_call.call.callee_loc, syntax_call.call.callee.len)) continue;
+            const semantic_call = findSemanticFunctionCall(semantic_calls.items, syntax_call.call.callee_loc, syntax_call.call.callee) orelse continue;
+            return .{
+                .path = semantic_call.call.callee.location.file,
+                .range = nameRange(semantic_call.call.callee.location, semantic_call.call.callee.name.len),
+            };
+        }
+
+        for (syntax_type_decls.items) |syntax_decl| {
+            if (!std.mem.eql(u8, syntax_decl.name.location.file, doc.path)) continue;
+            if (!positionWithinName(position, syntax_decl.name.location, syntax_decl.name.string.len)) continue;
+            return .{
+                .path = syntax_decl.name.location.file,
+                .range = nameRange(syntax_decl.name.location, syntax_decl.name.string.len),
+            };
+        }
+
+        for (syntax_type_refs.items) |type_ref| {
+            if (!std.mem.eql(u8, type_ref.location.file, doc.path)) continue;
+            if (!positionWithinName(position, type_ref.location, type_ref.name.len)) continue;
+            const target = findSyntaxTypeDeclByName(syntax_type_decls.items, type_ref.name) orelse continue;
+            return .{
+                .path = target.name.location.file,
+                .range = nameRange(target.name.location, target.name.string.len),
             };
         }
 
@@ -813,8 +947,12 @@ pub const LanguageService = struct {
         defer syntax_functions.deinit();
         var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
         defer syntax_calls.deinit();
+        var syntax_type_decls = std.array_list.Managed(SyntaxTypeDeclRef).init(analysis_allocator);
+        defer syntax_type_decls.deinit();
+        var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
+        defer syntax_type_refs.deinit();
 
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls);
+        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_type_decls, &syntax_type_refs);
 
         var hints = std.array_list.Managed(InlayHint).init(self.allocator);
         errdefer {
@@ -863,6 +1001,8 @@ fn collectSyntaxRefs(
     st_nodes: []const *st.STNode,
     function_refs: *std.array_list.Managed(SyntaxFunctionDeclRef),
     call_refs: *std.array_list.Managed(SyntaxFunctionCallRef),
+    type_decl_refs: *std.array_list.Managed(SyntaxTypeDeclRef),
+    type_refs: *std.array_list.Managed(SyntaxTypeRef),
 ) !void {
     var stack = std.array_list.Managed(*const st.STNode).init(function_refs.allocator);
     defer stack.deinit();
@@ -872,16 +1012,44 @@ fn collectSyntaxRefs(
         switch (node.content) {
             .function_declaration => |decl| {
                 try function_refs.append(.{ .node = node, .decl = decl });
+                try collectTypeRefsFromStructTypeLiteral(decl.input, type_refs, &stack);
+                try collectTypeRefsFromStructTypeLiteral(decl.output, type_refs, &stack);
                 if (decl.body) |body| try stack.append(body);
-                for (decl.input.fields) |field| if (field.default_value) |dv| try stack.append(dv);
-                for (decl.output.fields) |field| if (field.default_value) |dv| try stack.append(dv);
             },
             .function_call => |call| {
                 try call_refs.append(.{ .node = node, .call = call });
+                if (call.type_arguments) |args| {
+                    for (args) |ty| try collectTypeRefsFromType(ty, type_refs);
+                }
+                if (call.type_arguments_struct) |args_struct| {
+                    try collectTypeRefsFromStructTypeLiteral(args_struct, type_refs, &stack);
+                }
                 try stack.append(call.input);
             },
             .symbol_declaration => |sd| {
+                if (sd.type) |ty| try collectTypeRefsFromType(ty, type_refs);
                 if (sd.value) |value| try stack.append(value);
+            },
+            .type_declaration => |decl| {
+                try type_decl_refs.append(.{ .node = node, .name = decl.name });
+                if (decl.generic_params_struct) |params| try collectTypeRefsFromStructTypeLiteral(params, type_refs, &stack);
+                try stack.append(decl.value);
+            },
+            .abstract_declaration => |decl| {
+                try type_decl_refs.append(.{ .node = node, .name = decl.name });
+                if (decl.generic_params_struct) |params| try collectTypeRefsFromStructTypeLiteral(params, type_refs, &stack);
+                for (decl.requires_functions) |req| {
+                    try collectTypeRefsFromStructTypeLiteral(req.input, type_refs, &stack);
+                    try collectTypeRefsFromStructTypeLiteral(req.output, type_refs, &stack);
+                }
+            },
+            .abstract_implements => |impl| {
+                if (impl.generic_params_struct) |params| try collectTypeRefsFromStructTypeLiteral(params, type_refs, &stack);
+                try collectTypeRefsFromType(impl.abstract_ty, type_refs);
+            },
+            .abstract_defaultsto => |default| {
+                if (default.generic_params_struct) |params| try collectTypeRefsFromStructTypeLiteral(params, type_refs, &stack);
+                try collectTypeRefsFromType(default.ty, type_refs);
             },
             .assignment => |assign| try stack.append(assign.value),
             .expression_statement => |expr| try stack.append(expr),
@@ -946,6 +1114,36 @@ fn collectSyntaxRefs(
             },
             else => {},
         }
+    }
+}
+
+fn collectTypeRefsFromStructTypeLiteral(
+    stl: st.StructTypeLiteral,
+    type_refs: *std.array_list.Managed(SyntaxTypeRef),
+    stack: *std.array_list.Managed(*const st.STNode),
+) !void {
+    for (stl.fields) |field| {
+        if (field.type) |ty| try collectTypeRefsFromType(ty, type_refs);
+        if (field.default_value) |dv| try stack.append(dv);
+    }
+}
+
+fn collectTypeRefsFromType(ty: st.Type, type_refs: *std.array_list.Managed(SyntaxTypeRef)) !void {
+    switch (ty) {
+        .type_name => |name| try type_refs.append(.{ .location = name.location, .name = name.string }),
+        .generic_type_instantiation => |inst| {
+            try type_refs.append(.{ .location = inst.base_name.location, .name = inst.base_name.string });
+            for (inst.args.fields) |field| {
+                if (field.type) |child_ty| try collectTypeRefsFromType(child_ty, type_refs);
+            }
+        },
+        .struct_type_literal => |stl| {
+            for (stl.fields) |field| {
+                if (field.type) |child_ty| try collectTypeRefsFromType(child_ty, type_refs);
+            }
+        },
+        .pointer_type => |ptr| try collectTypeRefsFromType(ptr.child.*, type_refs),
+        .array_type => |arr| try collectTypeRefsFromType(arr.element.*, type_refs),
     }
 }
 
@@ -1130,12 +1328,14 @@ fn extractFunctionHeaderSource(
     toks: []const token.Token,
     syntax_decl: st.FunctionDeclaration,
 ) !?[]const u8 {
+    if (syntax_decl.name.location.offset >= source_text.len) return null;
     const start_idx = findTokenIndexAtOffset(toks, syntax_decl.name.location) orelse return null;
     var paren_depth: usize = 0;
     var idx = start_idx;
     while (idx < toks.len) : (idx += 1) {
         const tk = toks[idx];
         if (!std.mem.eql(u8, tk.location.file, syntax_decl.name.location.file)) continue;
+        if (tk.location.offset > source_text.len) return null;
         switch (tk.content) {
             .open_parenthesis => paren_depth += 1,
             .close_parenthesis => {
@@ -1164,11 +1364,11 @@ fn findTokenIndexAtOffset(toks: []const token.Token, loc: token.Location) ?usize
 }
 
 fn collectLeadingCommentBlock(source_text: []const u8, name_loc: token.Location) !?[]const u8 {
-    if (name_loc.line <= 1) return null;
+    if (name_loc.offset > source_text.len) return null;
     const line_starts = try computeLineStarts(std.heap.page_allocator, source_text);
     defer std.heap.page_allocator.free(line_starts);
 
-    const name_line_idx: usize = @intCast(name_loc.line - 1);
+    const name_line_idx = lineIndexForOffset(line_starts, name_loc.offset) orelse return null;
     var current = name_line_idx;
     var first_comment_line: ?usize = null;
 
@@ -1204,6 +1404,13 @@ fn lineSlice(text: []const u8, starts: []const usize, line_idx: usize) []const u
     const start = starts[line_idx];
     const end = if (line_idx + 1 < starts.len) starts[line_idx + 1] else text.len;
     return std.mem.trimRight(u8, text[start..end], "\n");
+}
+
+fn lineIndexForOffset(starts: []const usize, offset: usize) ?usize {
+    if (starts.len == 0) return null;
+    var idx: usize = 0;
+    while (idx + 1 < starts.len and starts[idx + 1] <= offset) : (idx += 1) {}
+    return idx;
 }
 
 fn collectFunctionInlayHints(
@@ -1428,6 +1635,16 @@ fn findSyntaxFunctionDecl(
         if (!sameLocation(ref.node.location, loc)) continue;
         if (!std.mem.eql(u8, ref.decl.name.string, name)) continue;
         return ref;
+    }
+    return null;
+}
+
+fn findSyntaxTypeDeclByName(
+    refs: []const SyntaxTypeDeclRef,
+    name: []const u8,
+) ?SyntaxTypeDeclRef {
+    for (refs) |ref| {
+        if (std.mem.eql(u8, ref.name.string, name)) return ref;
     }
     return null;
 }
