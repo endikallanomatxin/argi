@@ -37,6 +37,7 @@ pub const Content = union(enum) {
 
     binding_declaration: *BindingDeclaration,
     binding_use: *BindingDeclaration,
+    reach_directive: *const ReachDirective,
     move_value: *const SGNode,
     binding_assignment: *Assignment,
     auto_deinit_binding: *AutoDeinitBinding,
@@ -292,6 +293,14 @@ pub const AutoDeinitBinding = struct {
 pub const FunctionCall = struct {
     callee: *const FunctionDeclaration,
     input: *const SGNode, // Arguments
+};
+
+pub const ReachDirective = struct {
+    alternatives: []const ReachAlternative,
+};
+
+pub const ReachAlternative = struct {
+    segments: []const []const u8,
 };
 
 //
