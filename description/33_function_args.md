@@ -164,9 +164,9 @@ Reached arguments are resolved by propagation through the call chain.
    commas.
 4. Alternatives are tried left-to-right within the current caller scope.
 5. Each alternative may be a dotted path. For example,
-   `system.console.stdout` means:
+   `system.terminal.stdout` means:
    - find `system` in the caller scope
-   - then access `.console`
+   - then access `.terminal`
    - then access `.stdout`
 6. The first alternative that resolves in the current caller scope and matches
    the declared type is used.
@@ -190,7 +190,7 @@ Reached arguments may refer to nested capability paths:
 
 ```argi
 print_line(
-    .stdout: $&OutputStream = #reach stdout, console.stdout, system.console.stdout,
+    .stdout: $&OutputStream#(.text: String) = #reach stdout, terminal.stdout, system.terminal.stdout,
     .text: String,
 ) -> () := {
     ...
@@ -205,8 +205,8 @@ Here:
 The example above means:
 
 1. in the direct caller, try `stdout`
-2. if that is not available, try `console.stdout`
-3. if that is not available, try `system.console.stdout`
+2. if that is not available, try `terminal.stdout`
+3. if that is not available, try `system.terminal.stdout`
 4. if none resolve there, move to the next caller and repeat the same order
 
 This prefers nearby bindings over distant ones. That is intentional:

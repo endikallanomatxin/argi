@@ -1,5 +1,5 @@
-System : Type = (
-  .terminal : $&Terminal
+System#(.terminal_type: Type) : Type = (
+  .terminal : $&terminal_type
   .args     :  &Arguments
   .env_vars : $&EnvironmentVariables
   .file_sys : $&FileSystem
@@ -9,4 +9,3 @@ System : Type = (
   .rand_gen : $&RandomNumberGenerator
   .ffi      : $&ForeignFunctionInterface
 )
-
