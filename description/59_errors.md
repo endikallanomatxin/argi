@@ -33,8 +33,8 @@ error from a superset to a subset.
 
 ```
 Errable#(.t: Type, .e: Type) : Type = (
-	..Ok    (t)  -- Success
-	..Error (e)  -- Fail
+	..ok(.value: t)    -- Success
+	..error(.reason: e) -- Fail
 )
 ```
 
@@ -54,7 +54,7 @@ builtin operators for unwrapping:
 foo = errable_foo unwrap_or 0
 
 foo = errable_foo unwrap_or_do {
-    system.terminal | print ($&, errable_foo..Error | cast)
+    system.terminal | print ($&, errable_foo..error | cast)
 }
 ```
 
@@ -90,4 +90,3 @@ and then: “|>”
 or else: “|<“ o “|!”
 
 Darle una vuelta.
-
