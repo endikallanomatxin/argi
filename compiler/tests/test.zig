@@ -798,6 +798,24 @@ test "440X_reached_argument_missing" {
 test "441_output_stream_capability" {
     try clean();
     try expectSuccessfulBuild("tests/441_output_stream_capability/main.rg");
+    try runExpect(1);
+}
+
+test "442_reached_output_stream" {
+    try clean();
+    try expectSuccessfulBuild("tests/442_reached_output_stream/main.rg");
+    try runExpect(15);
+}
+
+test "443_terminal_stderr_helper" {
+    try clean();
+    try expectSuccessfulBuild("tests/443_terminal_stderr_helper/main.rg");
+    try runExpect(11);
+}
+
+test "444_reached_stdin_helper" {
+    try clean();
+    try expectSuccessfulBuild("tests/444_reached_stdin_helper/main.rg");
     try runExpect(15);
 }
 
