@@ -22,7 +22,7 @@ square (i:Int) -> (o:Int) := {o = i^2}
 return variables are initialized (to zero) if named.
 
 ```
-calculate_stats (.l: List) -> (.mean: Float, .standard_deviation: Float) := {
+calculate_stats (.l: List#(.t: Float)) -> (.mean: Float, .standard_deviation: Float) := {
 	for element in in{
 		...
 	}
@@ -45,15 +45,15 @@ my_function
 	Explanation of what the function does
 	---
 (
-	.a: int  -- Short description of a
-	.b: bool
+	.a: Int  -- Short description of a
+	.b: Bool
 	---
 	Longer description of b
 	---
-	.verbose: bool = False  -- Default value
+	.verbose: Bool = False  -- Default value
 ) -> (
-	.result_one: bool
-	.result_two: int
+	.result_one: Bool
+	.result_two: Int
 ) {
 	...
 }
@@ -349,9 +349,9 @@ Se puede usar para hacer implementaciones por defecto para cualquier struct por
 ejemplo (consiguiendo funcionalidades como los derive macros de rust)
 
 ```rg
-to(&s: Struct, t: type == String) -> (string: String) := {
-	string = s.symbol_name + "("
-	for field in s.fields
+to(.self: &Struct, .to: Type = String) -> (.string: String) := {
+	string = self.symbol_name + "("
+	for field in self.fields
 		string += field.name + ": " + field.value + ", "
 	string += ")"
 }
@@ -415,4 +415,3 @@ As in zig, you cannot silently ignore return values. You have to use `_` to igno
 ```zig
 _ = my_function()
 ```
-
