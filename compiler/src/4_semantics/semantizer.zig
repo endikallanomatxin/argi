@@ -1747,6 +1747,45 @@ pub const Semantizer = struct {
         return error.Reported;
     }
 
+    fn tryResolveReachedArgument(
+        self: *Semantizer,
+        field_name: []const u8,
+        expected_ty: sg.Type,
+        reach: *const sg.ReachDirective,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!?typ.TypedExpr {
+        for (reach.alternatives) |alt| {
+            if (try self.resolveReachAlternativeInScope(alt, expected_ty, field_name, s, loc)) |resolved| {
+                return resolved;
+            }
+        }
+
+        if (self.currentReachFunctionContext()) |ctx| {
+            if (!std.mem.eql(u8, ctx.function_name, "main")) {
+                return try self.ensurePropagatedReachedField(field_name, expected_ty, reach, loc, ctx);
+            }
+        }
+
+        return null;
+    }
+
+    fn tryResolveReachedArgumentInLocalScope(
+        self: *Semantizer,
+        field_name: []const u8,
+        expected_ty: sg.Type,
+        reach: *const sg.ReachDirective,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!?typ.TypedExpr {
+        for (reach.alternatives) |alt| {
+            if (try self.resolveReachAlternativeInScope(alt, expected_ty, field_name, s, loc)) |resolved| {
+                return resolved;
+            }
+        }
+        return null;
+    }
+
     fn resolveReachedArgumentForInference(
         self: *Semantizer,
         field_name: []const u8,
@@ -5133,6 +5172,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         expected_ptr: *const sg.StructType,
         actual_ty: sg.Type,
+        s: *Scope,
     ) !?*sg.StructType {
         if (actual_ty != .struct_type) return null;
         const actual = actual_ty.struct_type;
@@ -5158,11 +5198,9 @@ pub const Semantizer = struct {
                 } else if (typ.isAny(exp_field.ty)) {
                     final_ty = actual_ty_field;
                     changed = true;
-                } else if (typ.typesCompatible(exp_field.ty, actual_ty_field)) {
+                } else if (abs.typesCompatibleForDispatch(exp_field.ty, actual_ty_field, s)) {
                     final_ty = actual_ty_field;
                     changed = true;
-                } else {
-                    return null;
                 }
             } else {
                 if (exp_field.default_value == null) {
@@ -5306,13 +5344,13 @@ pub const Semantizer = struct {
                 else => return err,
             };
 
-            const resolved = try self.resolveReachedArgument(
+            const resolved = try self.tryResolveReachedArgumentInLocalScope(
                 field.name.string,
                 dispatch_ty,
                 reach_te.node.content.reach_directive,
                 s,
                 field.default_value.?.location,
-            );
+            ) orelse continue;
             try args.append(.{
                 .name = field.name.string,
                 .expr = resolved,
@@ -5384,7 +5422,7 @@ pub const Semantizer = struct {
         var in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, subst);
         const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, subst);
 
-        if (try self.refinedStructTypeWithActual(in_struct_ptr, call_input.ty)) |refined| {
+        if (try self.refinedStructTypeWithActual(in_struct_ptr, call_input.ty, s)) |refined| {
             in_struct_ptr = refined;
         }
         if (!self.callInputMatchesDispatch(in_struct_ptr, call_input, s)) return null;

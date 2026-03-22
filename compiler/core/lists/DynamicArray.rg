@@ -26,6 +26,7 @@ DynamicArray#(.t: Type) implements Iterable#(.t: t)
 
 init #(.t: Type) (
     .p: $&DynamicArray#(.t: t),
+    .allocator: $&Allocator = #reach allocator,
     .capacity: UIntNative,
 ) -> () := {
     element_size :: UIntNative = size_of(.type = t)
@@ -38,10 +39,9 @@ init #(.t: Type) (
     }
 
     bytes :: UIntNative = actual_capacity * element_size
-    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = malloc(.size = bytes))
     p& = (
         .allocation = (
-            .data = cast#(.to: $&UInt8)(.value = raw_addr),
+            .data = allocate(.self = allocator, .size = bytes),
             .size = bytes,
         ),
         .length = zero,
@@ -49,9 +49,12 @@ init #(.t: Type) (
     )
 }
 
-deinit #(.t: Type) (.self: $&DynamicArray#(.t: t)) -> () := {
+deinit #(.t: Type) (
+    .allocator: $&Allocator = #reach allocator,
+    .self: $&DynamicArray#(.t: t)
+) -> () := {
     zero :: UIntNative = 0
-    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = self&.allocation.data)))
+    deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
     self& = (
         .allocation = self&.allocation,
         .length = zero,
@@ -69,6 +72,7 @@ dynamic_array_element_address #(.t: Type) (
 }
 
 dynamic_array_grow #(.t: Type) (
+    .allocator: $&Allocator = #reach allocator,
     .array: $&DynamicArray#(.t: t),
     .min_capacity: UIntNative,
 ) -> () := {
@@ -86,7 +90,8 @@ dynamic_array_grow #(.t: Type) (
     }
 
     new_bytes :: UIntNative = new_capacity * element_size
-    new_addr :: UIntNative = cast#(.to: UIntNative)(.value = malloc(.size = new_bytes))
+    new_data ::= allocate(.self = allocator, .size = new_bytes)
+    new_addr :: UIntNative = cast#(.to: UIntNative)(.value = new_data)
     old_addr :: UIntNative = cast#(.to: UIntNative)(.value = array&.allocation.data)
 
     if array&.length > zero {
@@ -98,11 +103,11 @@ dynamic_array_grow #(.t: Type) (
         )
     }
 
-    free(.pointer = cast#(.to: &Any)(.value = old_addr))
+    deallocate(.self = allocator, .data = array&.allocation.data, .size = array&.allocation.size)
 
     array& = (
         .allocation = (
-            .data = cast#(.to: $&UInt8)(.value = new_addr),
+            .data = new_data,
             .size = new_bytes,
         ),
         .length = array&.length,
@@ -111,6 +116,7 @@ dynamic_array_grow #(.t: Type) (
 }
 
 push #(.t: Type) (
+    .allocator: $&Allocator = #reach allocator,
     .self: $&DynamicArray#(.t: t),
     .value: t,
 ) -> () := {
@@ -118,7 +124,7 @@ push #(.t: Type) (
     offset ::= self&.length
 
     if self&.length == self&.capacity {
-        dynamic_array_grow#(.t: t)(.array = self, .min_capacity = self&.length + one)
+        dynamic_array_grow#(.t: t)(.allocator = allocator, .array = self, .min_capacity = self&.length + one)
         offset = self&.length
     }
 
@@ -148,6 +154,7 @@ pop #(.t: Type) (
 }
 
 insert #(.t: Type) (
+    .allocator: $&Allocator = #reach allocator,
     .self: $&DynamicArray#(.t: t),
     .i: UIntNative,
     .value: t,
@@ -157,14 +164,15 @@ insert #(.t: Type) (
     element_size :: UIntNative = size_of(.type = t)
 
     if self&.length == self&.capacity {
-        dynamic_array_grow#(.t: t)(.array = self, .min_capacity = self&.length + one)
+        dynamic_array_grow#(.t: t)(.allocator = allocator, .array = self, .min_capacity = self&.length + one)
         current_length = self&.length
     }
 
     if current_length > i {
         count_to_shift :: UIntNative = current_length - i
         bytes_to_shift :: UIntNative = count_to_shift * element_size
-        temp_addr :: UIntNative = cast#(.to: UIntNative)(.value = malloc(.size = bytes_to_shift))
+        temp_data ::= allocate(.self = allocator, .size = bytes_to_shift)
+        temp_addr :: UIntNative = cast#(.to: UIntNative)(.value = temp_data)
 
         source_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = i).address
         dest_addr ::= source_addr + element_size
@@ -181,7 +189,7 @@ insert #(.t: Type) (
             .n = bytes_to_shift,
         )
 
-        free(.pointer = cast#(.to: &Any)(.value = temp_addr))
+        deallocate(.self = allocator, .data = temp_data, .size = bytes_to_shift)
     }
 
     ptr_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = i).address
