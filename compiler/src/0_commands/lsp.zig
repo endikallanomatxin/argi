@@ -89,6 +89,8 @@ const LanguageServer = struct {
                 if (id_value) |id| self.handleSemanticTokensRange(&writer, id, params_value) catch {};
             } else if (std.mem.eql(u8, method, "textDocument/hover")) {
                 if (id_value) |id| self.handleHover(&writer, id, params_value) catch {};
+            } else if (std.mem.eql(u8, method, "textDocument/definition")) {
+                if (id_value) |id| self.handleDefinition(&writer, id, params_value) catch {};
             } else {
                 // Método desconocido -> ignorar
             }
@@ -289,6 +291,8 @@ const LanguageServer = struct {
         try stream.write(true); // si quieres implementar /range más tarde
         try stream.endObject();
         try stream.objectField("hoverProvider");
+        try stream.write(true);
+        try stream.objectField("definitionProvider");
         try stream.write(true);
         try stream.endObject();
 
@@ -527,6 +531,55 @@ const LanguageServer = struct {
         }
     }
 
+    fn handleDefinition(
+        self: *LanguageServer,
+        writer: anytype,
+        id_value: json.Value,
+        params_value: ?json.Value,
+    ) !void {
+        if (self.service == null) return;
+        const params = params_value orelse return;
+        if (params != .object) return;
+
+        const text_document_value = getField(&params.object, "textDocument") orelse return;
+        if (text_document_value != .object) return;
+        const uri_value = getField(&text_document_value.object, "uri") orelse return;
+        if (uri_value != .string) return;
+
+        const position_value = getField(&params.object, "position") orelse return;
+        const position = parsePosition(position_value) orelse return;
+
+        if (self.service) |*svc| {
+            const definition_opt = try svc.definition(uri_value.string, position);
+
+            var payload = std.Io.Writer.Allocating.init(self.allocator);
+            defer payload.deinit();
+            var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
+
+            try stream.beginObject();
+            try stream.objectField("jsonrpc");
+            try stream.write("2.0");
+            try stream.objectField("id");
+            try stream.write(id_value);
+            try stream.objectField("result");
+            if (definition_opt) |definition| {
+                try stream.beginObject();
+                try stream.objectField("uri");
+                const target_uri = try pathToFileUri(self.allocator, definition.path);
+                defer self.allocator.free(target_uri);
+                try stream.write(target_uri);
+                try stream.objectField("range");
+                try writeRange(&stream, definition.range);
+                try stream.endObject();
+            } else {
+                try stream.write(null);
+            }
+            try stream.endObject();
+
+            try self.sendMessage(writer, payload.writer.buffered());
+        }
+    }
+
     fn sendMessage(self: *LanguageServer, writer: anytype, payload: []const u8) !void {
         _ = self;
         try writer.print("Content-Length: {d}\r\n\r\n", .{payload.len});
@@ -557,6 +610,29 @@ fn parseRange(value: json.Value) ?service.Range {
     const start_pos = parsePosition(start_value) orelse return null;
     const end_pos = parsePosition(end_value) orelse return null;
     return .{ .start = start_pos, .end = end_pos };
+}
+
+fn writeRange(stream: *json.Stringify, range: service.Range) !void {
+    try stream.beginObject();
+    try stream.objectField("start");
+    try stream.beginObject();
+    try stream.objectField("line");
+    try stream.write(range.start.line);
+    try stream.objectField("character");
+    try stream.write(range.start.character);
+    try stream.endObject();
+    try stream.objectField("end");
+    try stream.beginObject();
+    try stream.objectField("line");
+    try stream.write(range.end.line);
+    try stream.objectField("character");
+    try stream.write(range.end.character);
+    try stream.endObject();
+    try stream.endObject();
+}
+
+fn pathToFileUri(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    return std.fmt.allocPrint(allocator, "file://{s}", .{path});
 }
 
 fn parsePosition(value: json.Value) ?service.Position {
