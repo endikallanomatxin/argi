@@ -819,6 +819,12 @@ test "447_reached_allocator_string" {
     try runExpect(11);
 }
 
+test "448_reached_allocator_dynamic_array" {
+    try clean();
+    try expectSuccessfulBuild("tests/448_reached_allocator_dynamic_array/main.rg");
+    try runExpect(22);
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");
