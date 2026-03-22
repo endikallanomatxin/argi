@@ -1,11 +1,12 @@
 System#(.terminal_type: Type) : Type = (
-  .terminal : $&terminal_type
-  .args     :  &Arguments
-  .env_vars : $&EnvironmentVariables
-  .file_sys : $&FileSystem
-  .network  : $&Network
-  .proc_man : $&ProcessManager
-  .clock    : $&Clock
-  .rand_gen : $&RandomNumberGenerator
-  .ffi      : $&ForeignFunctionInterface
+  .allocator : $&Allocator
+  .terminal  : $&terminal_type
+  .args      :  &Arguments
+  .env_vars  : $&EnvironmentVariables
+  .file_sys  : $&FileSystem
+  .network   : $&Network
+  .proc_man  : $&ProcessManager
+  .clock     : $&Clock
+  .rand_gen  : $&RandomNumberGenerator
+  .ffi       : $&ForeignFunctionInterface
 )
