@@ -65,8 +65,12 @@ pub const Hover = struct {
 };
 
 pub const Definition = struct {
-    path: []const u8,
+    path: []u8,
     range: Range,
+
+    pub fn deinit(self: Definition, allocator: std.mem.Allocator) void {
+        allocator.free(self.path);
+    }
 };
 
 pub const DiagnosticsResult = struct {
@@ -200,6 +204,16 @@ pub const LanguageService = struct {
                 self.root_path = path;
             }
         }
+    }
+
+    fn ownedDefinitionPath(self: *LanguageService, raw_path: []const u8) ![]u8 {
+        if (std.fs.path.isAbsolute(raw_path)) {
+            return try self.allocator.dupe(u8, raw_path);
+        }
+        if (self.root_path) |root_path| {
+            return try std.fs.path.join(self.allocator, &.{ root_path, raw_path });
+        }
+        return try self.allocator.dupe(u8, raw_path);
     }
 
     pub fn openDocument(
@@ -850,7 +864,7 @@ pub const LanguageService = struct {
             if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc.path)) continue;
             if (!positionWithinName(position, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len)) continue;
             return .{
-                .path = syntax_fn.decl.name.location.file,
+                .path = try self.ownedDefinitionPath(syntax_fn.decl.name.location.file),
                 .range = nameRange(syntax_fn.decl.name.location, syntax_fn.decl.name.string.len),
             };
         }
@@ -860,7 +874,7 @@ pub const LanguageService = struct {
             if (!positionWithinName(position, syntax_call.call.callee_loc, syntax_call.call.callee.len)) continue;
             const semantic_call = findSemanticFunctionCall(semantic_calls.items, syntax_call.call.callee_loc, syntax_call.call.callee) orelse continue;
             return .{
-                .path = semantic_call.call.callee.location.file,
+                .path = try self.ownedDefinitionPath(semantic_call.call.callee.location.file),
                 .range = nameRange(semantic_call.call.callee.location, semantic_call.call.callee.name.len),
             };
         }
@@ -869,7 +883,7 @@ pub const LanguageService = struct {
             if (!std.mem.eql(u8, syntax_decl.name.location.file, doc.path)) continue;
             if (!positionWithinName(position, syntax_decl.name.location, syntax_decl.name.string.len)) continue;
             return .{
-                .path = syntax_decl.name.location.file,
+                .path = try self.ownedDefinitionPath(syntax_decl.name.location.file),
                 .range = nameRange(syntax_decl.name.location, syntax_decl.name.string.len),
             };
         }
@@ -879,7 +893,7 @@ pub const LanguageService = struct {
             if (!positionWithinName(position, type_ref.location, type_ref.name.len)) continue;
             const target = findSyntaxTypeDeclByName(syntax_type_decls.items, type_ref.name) orelse continue;
             return .{
-                .path = target.name.location.file,
+                .path = try self.ownedDefinitionPath(target.name.location.file),
                 .range = nameRange(target.name.location, target.name.string.len),
             };
         }
