@@ -418,49 +418,7 @@ pub const LanguageService = struct {
         var collected = std.array_list.Managed(SemanticToken).init(work);
         defer collected.deinit();
 
-        // Lexical layer (no identifiers)
-        for (toks) |tk| {
-            const ty_opt = classify_lex_only(tk.content) orelse continue;
-
-            const start_off: usize = tk.location.offset;
-            const len_u: usize = tokenLenBytes(tk);
-            const end_off: usize = start_off + len_u;
-
-            var line0: u32 = if (tk.location.line == 0) 0 else tk.location.line - 1;
-            var col0: u32 = if (tk.location.column == 0) 0 else tk.location.column - 1;
-
-            var off: usize = start_off;
-            while (off < end_off) {
-                const rest = text[off..end_off];
-                if (std.mem.indexOfScalar(u8, rest, '\n')) |r| {
-                    if (r > 0) {
-                        try collected.append(.{
-                            .line = line0,
-                            .start = col0,
-                            .len = @intCast(@min(r, @as(usize, std.math.maxInt(u32)))),
-                            .type_index = ty_opt,
-                            .mods = 0,
-                        });
-                        col0 += @intCast(r);
-                    }
-                    off += r + 1;
-                    line0 += 1;
-                    col0 = 0;
-                } else {
-                    const seg = rest.len;
-                    if (seg > 0) {
-                        try collected.append(.{
-                            .line = line0,
-                            .start = col0,
-                            .len = @intCast(@min(seg, @as(usize, std.math.maxInt(u32)))),
-                            .type_index = ty_opt,
-                            .mods = 0,
-                        });
-                    }
-                    break;
-                }
-            }
-        }
+        try appendLexicalSemanticTokens(&collected, text, toks);
 
         // AST overlay
         const DECL: u32 = (1 << MOD_INDEX.declaration);
@@ -1784,27 +1742,60 @@ fn emitLexical(
 ) !void {
     _ = gpa;
 
+    var collected = std.array_list.Managed(SemanticToken).init(std.heap.page_allocator);
+    defer collected.deinit();
+    try appendLexicalSemanticTokens(&collected, text, toks);
+
     var prev_line: u32 = 0;
     var prev_char: u32 = 0;
+    for (collected.items) |t| {
+        try pushEncoded(out, &prev_line, &prev_char, t.line, t.start, t.len, t.type_index, t.mods);
+    }
+}
+
+const SemanticToken = struct { line: u32, start: u32, len: u32, type_index: u32, mods: u32 };
+
+fn appendLexicalSemanticTokens(
+    sink: *std.array_list.Managed(SemanticToken),
+    text: []const u8,
+    toks: []const token.Token,
+) !void {
+    var prev_non_trivia_was_hash = false;
 
     for (toks) |tk| {
-        const ty_opt = classify_lex_only(tk.content) orelse continue;
+        const ty_maybe = switch (tk.content) {
+            .identifier => if (prev_non_trivia_was_hash) TOKEN_INDEX.keyword else classify_lex_only(tk.content),
+            else => classify_lex_only(tk.content),
+        };
+
+        const ty_opt = ty_maybe orelse {
+            switch (tk.content) {
+                .new_line, .comment => {},
+                .hash => prev_non_trivia_was_hash = true,
+                else => prev_non_trivia_was_hash = false,
+            }
+            continue;
+        };
 
         const start_off: usize = tk.location.offset;
-        const len_bytes: usize = tokenLenBytes(tk);
-        const end_off: usize = start_off + len_bytes;
+        const len_u: usize = tokenLenBytes(tk);
+        const end_off: usize = start_off + len_u;
 
         var line0: u32 = if (tk.location.line == 0) 0 else tk.location.line - 1;
         var col0: u32 = if (tk.location.column == 0) 0 else tk.location.column - 1;
 
-        var off = start_off;
+        var off: usize = start_off;
         while (off < end_off) {
             const rest = text[off..end_off];
-            const nl_rel = std.mem.indexOfScalar(u8, rest, '\n');
-
-            if (nl_rel) |r| {
+            if (std.mem.indexOfScalar(u8, rest, '\n')) |r| {
                 if (r > 0) {
-                    try pushEncoded(out, &prev_line, &prev_char, line0, col0, @intCast(r), ty_opt, 0);
+                    try sink.append(.{
+                        .line = line0,
+                        .start = col0,
+                        .len = @intCast(@min(r, @as(usize, std.math.maxInt(u32)))),
+                        .type_index = ty_opt,
+                        .mods = 0,
+                    });
                     col0 += @intCast(r);
                 }
                 off += r + 1;
@@ -1813,15 +1804,25 @@ fn emitLexical(
             } else {
                 const seg = rest.len;
                 if (seg > 0) {
-                    try pushEncoded(out, &prev_line, &prev_char, line0, col0, @intCast(seg), ty_opt, 0);
+                    try sink.append(.{
+                        .line = line0,
+                        .start = col0,
+                        .len = @intCast(@min(seg, @as(usize, std.math.maxInt(u32)))),
+                        .type_index = ty_opt,
+                        .mods = 0,
+                    });
                 }
                 break;
             }
         }
+
+        switch (tk.content) {
+            .new_line, .comment => {},
+            .hash => prev_non_trivia_was_hash = true,
+            else => prev_non_trivia_was_hash = false,
+        }
     }
 }
-
-const SemanticToken = struct { line: u32, start: u32, len: u32, type_index: u32, mods: u32 };
 
 fn tokenLenBytes(tk: token.Token) usize {
     return switch (tk.content) {
