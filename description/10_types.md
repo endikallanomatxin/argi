@@ -84,7 +84,7 @@ It is checked at compiletime.
 > una declaración.
 
 > [!TODO]
-> Sub-typing de List<User> vs List<Person> (variancia).
+> Sub-typing de List#(.t: User) vs List#(.t: Person) (variancia).
 
 Inline declaration requires commas, but they can be ommited when using new lines.
 
