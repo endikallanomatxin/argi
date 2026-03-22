@@ -3184,7 +3184,7 @@ pub const Semantizer = struct {
         const call_ptr = try self.allocator.create(sg.FunctionCall);
         call_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
 
-        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, undefined, self.allocator);
+        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, ia.value.*.location, self.allocator);
         try s.nodes.append(node);
         return .{ .node = node, .ty = typ.functionReturnType(chosen_fn) };
     }
@@ -3307,7 +3307,7 @@ pub const Semantizer = struct {
         const call_ptr = try self.allocator.create(sg.FunctionCall);
         call_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
 
-        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, undefined, self.allocator);
+        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, ia.target.*.location, self.allocator);
         try s.nodes.append(node);
         return .{ .node = node, .ty = .{ .builtin = .Any } };
     }
@@ -3510,7 +3510,7 @@ pub const Semantizer = struct {
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
         fc_ptr.* = .{ .callee = chosen, .input = coerced_input.node };
 
-        const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, undefined, self.allocator);
+        const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, call.callee_loc, self.allocator);
 
         const result_ty = typ.functionReturnType(chosen);
 

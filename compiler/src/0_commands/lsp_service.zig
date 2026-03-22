@@ -6,6 +6,7 @@ const token = @import("../2_tokens/token.zig");
 const tokenizer = @import("../2_tokens/tokenizer.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
 const syntaxer = @import("../3_syntax/syntaxer.zig");
+const sg = @import("../4_semantics/semantic_graph.zig");
 const semantizer = @import("../4_semantics/semantizer.zig");
 
 // Token types legend indices
@@ -52,6 +53,11 @@ pub const Diagnostic = struct {
     message: []const u8,
 };
 
+pub const InlayHint = struct {
+    position: Position,
+    label: []const u8,
+};
+
 pub const DiagnosticsResult = struct {
     allocator: std.mem.Allocator,
     items: []Diagnostic,
@@ -66,6 +72,32 @@ pub const DiagnosticsResult = struct {
         for (self.items) |d| self.allocator.free(d.message);
         self.allocator.free(self.items);
     }
+};
+
+pub const InlayHintsResult = struct {
+    allocator: std.mem.Allocator,
+    items: []InlayHint,
+    owned: bool,
+
+    pub fn empty(allocator: std.mem.Allocator) InlayHintsResult {
+        return .{ .allocator = allocator, .items = &[_]InlayHint{}, .owned = false };
+    }
+
+    pub fn deinit(self: InlayHintsResult) void {
+        if (!self.owned) return;
+        for (self.items) |hint| self.allocator.free(hint.label);
+        self.allocator.free(self.items);
+    }
+};
+
+const SyntaxFunctionDeclRef = struct {
+    node: *const st.STNode,
+    decl: st.FunctionDeclaration,
+};
+
+const SyntaxFunctionCallRef = struct {
+    node: *const st.STNode,
+    call: st.FunctionCall,
 };
 
 const Document = struct {
@@ -632,7 +664,517 @@ pub const LanguageService = struct {
 
         return out;
     }
+
+    pub fn inlayHints(self: *LanguageService, uri: []const u8, range: ?Range) !InlayHintsResult {
+        const doc = try self.getDoc(uri);
+
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        var analysis_allocator = arena.allocator();
+
+        const files_list = sf.collectWithEntrySource(&analysis_allocator, "core", doc.path, doc.text) catch {
+            return InlayHintsResult.empty(self.allocator);
+        };
+        const files = files_list.items;
+
+        for (files_list.items) |*source_file| {
+            for (self.documents.items) |open_doc| {
+                if (std.mem.eql(u8, source_file.path, open_doc.path)) {
+                    source_file.code = open_doc.text;
+                    break;
+                }
+            }
+        }
+
+        const one_primary = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
+        var diagnostics = diag.Diagnostics.init(&analysis_allocator, &one_primary);
+        defer diagnostics.deinit();
+
+        var tokens = std.array_list.Managed(token.Token).init(analysis_allocator);
+        defer tokens.deinit();
+
+        for (files, 0..) |source_file, idx| {
+            var tokenizer_ctx = tokenizer.Tokenizer.init(
+                &analysis_allocator,
+                &diagnostics,
+                source_file.code,
+                source_file.path,
+            );
+            const token_slice = tokenizer_ctx.tokenize() catch {
+                return InlayHintsResult.empty(self.allocator);
+            };
+
+            const slice = if (idx == files.len - 1)
+                token_slice
+            else
+                token_slice[0 .. token_slice.len - 1];
+            try tokens.appendSlice(slice);
+        }
+
+        var syntax_ctx = syntaxer.Syntaxer.init(&analysis_allocator, tokens.items, &diagnostics);
+        const st_nodes = syntax_ctx.parse() catch {
+            return InlayHintsResult.empty(self.allocator);
+        };
+
+        var sem_ctx = semantizer.Semantizer.init(&analysis_allocator, st_nodes, &diagnostics);
+        const sg_nodes = sem_ctx.analyze() catch {
+            return InlayHintsResult.empty(self.allocator);
+        };
+
+        var syntax_functions = std.array_list.Managed(SyntaxFunctionDeclRef).init(analysis_allocator);
+        defer syntax_functions.deinit();
+        var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
+        defer syntax_calls.deinit();
+
+        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls);
+
+        var hints = std.array_list.Managed(InlayHint).init(self.allocator);
+        errdefer {
+            for (hints.items) |hint| self.allocator.free(hint.label);
+            hints.deinit();
+        }
+
+        try collectFunctionInlayHints(
+            self,
+            doc.path,
+            range,
+            sg_nodes,
+            syntax_functions.items,
+            &hints,
+        );
+        try collectCallInlayHints(
+            self,
+            doc.path,
+            range,
+            sg_nodes,
+            syntax_calls.items,
+            &hints,
+        );
+
+        std.sort.block(InlayHint, hints.items, {}, struct {
+            fn lessThan(_: void, a: InlayHint, b: InlayHint) bool {
+                return if (a.position.line == b.position.line)
+                    a.position.character < b.position.character
+                else
+                    a.position.line < b.position.line;
+            }
+        }.lessThan);
+
+        const slice = try hints.toOwnedSlice();
+        hints.deinit();
+        return .{
+            .allocator = self.allocator,
+            .items = slice,
+            .owned = true,
+        };
+    }
 };
+
+fn collectSyntaxRefs(
+    st_nodes: []const *st.STNode,
+    function_refs: *std.array_list.Managed(SyntaxFunctionDeclRef),
+    call_refs: *std.array_list.Managed(SyntaxFunctionCallRef),
+) !void {
+    var stack = std.array_list.Managed(*const st.STNode).init(function_refs.allocator);
+    defer stack.deinit();
+    for (st_nodes) |node| try stack.append(node);
+
+    while (popOrNull(*const st.STNode, &stack)) |node| {
+        switch (node.content) {
+            .function_declaration => |decl| {
+                try function_refs.append(.{ .node = node, .decl = decl });
+                if (decl.body) |body| try stack.append(body);
+                for (decl.input.fields) |field| if (field.default_value) |dv| try stack.append(dv);
+                for (decl.output.fields) |field| if (field.default_value) |dv| try stack.append(dv);
+            },
+            .function_call => |call| {
+                try call_refs.append(.{ .node = node, .call = call });
+                try stack.append(call.input);
+            },
+            .symbol_declaration => |sd| {
+                if (sd.value) |value| try stack.append(value);
+            },
+            .assignment => |assign| try stack.append(assign.value),
+            .expression_statement => |expr| try stack.append(expr),
+            .pipe_expression => |pipe_expr| {
+                try stack.append(pipe_expr.left);
+                try stack.append(pipe_expr.right);
+            },
+            .code_block => |block| for (block.items) |item| try stack.append(item),
+            .struct_value_literal => |sv| for (sv.fields) |field| try stack.append(field.value),
+            .struct_type_literal => |stl| for (stl.fields) |field| if (field.default_value) |dv| try stack.append(dv),
+            .choice_type_literal => |ctl| {
+                for (ctl.variants) |variant| {
+                    if (variant.payload_type) |payload| {
+                        for (payload.fields) |field| if (field.default_value) |dv| try stack.append(dv);
+                    }
+                }
+            },
+            .choice_literal => |lit| if (lit.payload) |payload| try stack.append(payload),
+            .struct_field_access => |sfa| try stack.append(sfa.struct_value),
+            .choice_payload_access => |acc| try stack.append(acc.choice_value),
+            .index_access => |ia| {
+                try stack.append(ia.value);
+                try stack.append(ia.index);
+            },
+            .index_assignment => |ia| {
+                try stack.append(ia.target);
+                try stack.append(ia.value);
+            },
+            .binary_operation => |bo| {
+                try stack.append(bo.left);
+                try stack.append(bo.right);
+            },
+            .comparison => |cmp| {
+                try stack.append(cmp.left);
+                try stack.append(cmp.right);
+            },
+            .return_statement => |ret| if (ret.expression) |expr| try stack.append(expr),
+            .if_statement => |ifs| {
+                try stack.append(ifs.condition);
+                try stack.append(ifs.then_block);
+                if (ifs.else_block) |else_block| try stack.append(else_block);
+            },
+            .for_statement => |for_stmt| {
+                try stack.append(for_stmt.iterable);
+                try stack.append(for_stmt.body);
+            },
+            .while_statement => |while_stmt| {
+                try stack.append(while_stmt.condition);
+                try stack.append(while_stmt.body);
+            },
+            .match_statement => |match_stmt| {
+                try stack.append(match_stmt.value);
+                for (match_stmt.cases) |case| try stack.append(case.body);
+            },
+            .list_literal => |list| for (list.elements) |elem| try stack.append(elem),
+            .defer_statement => |expr| try stack.append(expr),
+            .address_of => |addr| try stack.append(addr.value),
+            .dereference => |expr| try stack.append(expr),
+            .pointer_assignment => |pa| {
+                try stack.append(pa.target);
+                try stack.append(pa.value);
+            },
+            else => {},
+        }
+    }
+}
+
+fn collectFunctionInlayHints(
+    svc: *LanguageService,
+    primary_path: []const u8,
+    range: ?Range,
+    sg_nodes: []const *sg.SGNode,
+    syntax_functions: []const SyntaxFunctionDeclRef,
+    out: *std.array_list.Managed(InlayHint),
+) !void {
+    var stack = std.array_list.Managed(*const sg.SGNode).init(svc.allocator);
+    defer stack.deinit();
+    for (sg_nodes) |node| try stack.append(node);
+
+    while (popOrNull(*const sg.SGNode, &stack)) |node| {
+        switch (node.content) {
+            .function_declaration => |fd| {
+                if (!std.mem.eql(u8, fd.location.file, primary_path)) {
+                    if (fd.body) |body| for (body.nodes) |sub| try stack.append(sub);
+                    continue;
+                }
+
+                const syntax_fn = findSyntaxFunctionDecl(syntax_functions, fd.location, fd.name) orelse {
+                    if (fd.body) |body| for (body.nodes) |sub| try stack.append(sub);
+                    continue;
+                };
+                const hint_pos = positionAfterName(syntax_fn.decl.name.location, syntax_fn.decl.name.string.len);
+                if (range) |hint_range| {
+                    if (!rangeContainsPosition(hint_range, hint_pos)) {
+                        if (fd.body) |body| for (body.nodes) |sub| try stack.append(sub);
+                        continue;
+                    }
+                }
+
+                for (fd.input.fields) |field| {
+                    if (syntaxStructTypeHasField(syntax_fn.decl.input, field.name)) continue;
+                    const default_node = field.default_value orelse continue;
+                    if (default_node.content != .reach_directive) continue;
+                    const label = try formatReachedFieldLabel(svc.allocator, field.name, default_node.content.reach_directive);
+                    try out.append(.{ .position = hint_pos, .label = label });
+                }
+
+                if (fd.body) |body| for (body.nodes) |sub| try stack.append(sub);
+            },
+            .code_block => |block| {
+                for (block.nodes) |sub| try stack.append(sub);
+                if (block.ret_val) |ret_val| try stack.append(ret_val);
+            },
+            .if_statement => |ifs| {
+                try stack.append(ifs.condition);
+                for (ifs.then_block.nodes) |sub| try stack.append(sub);
+                if (ifs.then_block.ret_val) |ret_val| try stack.append(ret_val);
+                if (ifs.else_block) |else_block| {
+                    for (else_block.nodes) |sub| try stack.append(sub);
+                    if (else_block.ret_val) |ret_val| try stack.append(ret_val);
+                }
+            },
+            .while_statement => |while_stmt| {
+                try stack.append(while_stmt.condition);
+                for (while_stmt.body.nodes) |sub| try stack.append(sub);
+                if (while_stmt.body.ret_val) |ret_val| try stack.append(ret_val);
+            },
+            .for_statement => |for_stmt| {
+                if (for_stmt.init) |init| try stack.append(init);
+                try stack.append(for_stmt.condition);
+                if (for_stmt.increment) |inc| try stack.append(inc);
+                for (for_stmt.body.nodes) |sub| try stack.append(sub);
+                if (for_stmt.body.ret_val) |ret_val| try stack.append(ret_val);
+            },
+            .switch_statement => |switch_stmt| {
+                try stack.append(switch_stmt.expression);
+                for (switch_stmt.cases) |case| {
+                    try stack.append(case.value);
+                    for (case.body.nodes) |sub| try stack.append(sub);
+                    if (case.body.ret_val) |ret_val| try stack.append(ret_val);
+                }
+                if (switch_stmt.default_case) |default_case| {
+                    for (default_case.nodes) |sub| try stack.append(sub);
+                    if (default_case.ret_val) |ret_val| try stack.append(ret_val);
+                }
+            },
+            else => appendSgChildren(&stack, node) catch {},
+        }
+    }
+}
+
+fn collectCallInlayHints(
+    svc: *LanguageService,
+    primary_path: []const u8,
+    range: ?Range,
+    sg_nodes: []const *sg.SGNode,
+    syntax_calls: []const SyntaxFunctionCallRef,
+    out: *std.array_list.Managed(InlayHint),
+) !void {
+    var stack = std.array_list.Managed(*const sg.SGNode).init(svc.allocator);
+    defer stack.deinit();
+    for (sg_nodes) |node| try stack.append(node);
+
+    while (popOrNull(*const sg.SGNode, &stack)) |node| {
+        switch (node.content) {
+            .function_call => |call| {
+                if (!std.mem.eql(u8, node.location.file, primary_path)) continue;
+                const syntax_call = findSyntaxFunctionCall(syntax_calls, node.location, call.callee.name) orelse continue;
+                const hint_pos = positionAfterName(syntax_call.call.callee_loc, syntax_call.call.callee.len);
+                if (range) |hint_range| {
+                    if (!rangeContainsPosition(hint_range, hint_pos)) continue;
+                }
+                if (call.input.content != .struct_value_literal) continue;
+                const actual_input = call.input.content.struct_value_literal;
+                for (call.callee.input.fields) |field| {
+                    const default_node = field.default_value orelse continue;
+                    if (default_node.content != .reach_directive) continue;
+                    if (syntaxCallHasExplicitField(syntax_call.call, field.name)) continue;
+                    if (findStructValueField(actual_input.fields, field.name) == null) continue;
+                    const label = try formatReachedFieldLabel(svc.allocator, field.name, default_node.content.reach_directive);
+                    try out.append(.{ .position = hint_pos, .label = label });
+                }
+            },
+            else => try appendSgChildren(&stack, node),
+        }
+    }
+}
+
+fn appendSgChildren(stack: *std.array_list.Managed(*const sg.SGNode), node: *const sg.SGNode) !void {
+    switch (node.content) {
+        .function_declaration => |fd| {
+            if (fd.body) |body| {
+                for (body.nodes) |sub| try stack.append(sub);
+                if (body.ret_val) |ret_val| try stack.append(ret_val);
+            }
+        },
+        .binding_declaration => |binding| if (binding.initialization) |init| try stack.append(init),
+        .binding_assignment => |assign| try stack.append(assign.value),
+        .auto_deinit_binding => {},
+        .function_call => |call| try stack.append(call.input),
+        .code_block => |block| {
+            for (block.nodes) |sub| try stack.append(sub);
+            if (block.ret_val) |ret_val| try stack.append(ret_val);
+        },
+        .choice_literal => |lit| if (lit.payload) |payload| try stack.append(payload),
+        .list_literal => |list| for (list.elements) |elem| try stack.append(elem),
+        .struct_value_literal => |sv| for (sv.fields) |field| try stack.append(field.value),
+        .struct_field_access => |sfa| try stack.append(sfa.struct_value),
+        .choice_payload_access => |acc| try stack.append(acc.choice_value),
+        .array_literal => |arr| for (arr.elements) |elem| try stack.append(elem),
+        .array_index => |idx| {
+            try stack.append(idx.array_ptr);
+            try stack.append(idx.index);
+        },
+        .array_store => |store| {
+            try stack.append(store.array_ptr);
+            try stack.append(store.index);
+            try stack.append(store.value);
+        },
+        .struct_field_store => |store| {
+            try stack.append(store.struct_ptr);
+            try stack.append(store.value);
+        },
+        .binary_operation => |bo| {
+            try stack.append(bo.left);
+            try stack.append(bo.right);
+        },
+        .comparison => |cmp| {
+            try stack.append(cmp.left);
+            try stack.append(cmp.right);
+        },
+        .return_statement => |ret| if (ret.expression) |expr| try stack.append(expr),
+        .if_statement => |ifs| {
+            try stack.append(ifs.condition);
+            for (ifs.then_block.nodes) |sub| try stack.append(sub);
+            if (ifs.then_block.ret_val) |ret_val| try stack.append(ret_val);
+            if (ifs.else_block) |else_block| {
+                for (else_block.nodes) |sub| try stack.append(sub);
+                if (else_block.ret_val) |ret_val| try stack.append(ret_val);
+            }
+        },
+        .while_statement => |while_stmt| {
+            try stack.append(while_stmt.condition);
+            for (while_stmt.body.nodes) |sub| try stack.append(sub);
+            if (while_stmt.body.ret_val) |ret_val| try stack.append(ret_val);
+        },
+        .for_statement => |for_stmt| {
+            if (for_stmt.init) |init| try stack.append(init);
+            try stack.append(for_stmt.condition);
+            if (for_stmt.increment) |inc| try stack.append(inc);
+            for (for_stmt.body.nodes) |sub| try stack.append(sub);
+            if (for_stmt.body.ret_val) |ret_val| try stack.append(ret_val);
+        },
+        .switch_statement => |switch_stmt| {
+            try stack.append(switch_stmt.expression);
+            for (switch_stmt.cases) |case| {
+                try stack.append(case.value);
+                for (case.body.nodes) |sub| try stack.append(sub);
+                if (case.body.ret_val) |ret_val| try stack.append(ret_val);
+            }
+            if (switch_stmt.default_case) |default_case| {
+                for (default_case.nodes) |sub| try stack.append(sub);
+                if (default_case.ret_val) |ret_val| try stack.append(ret_val);
+            }
+        },
+        .address_of => |inner| try stack.append(inner),
+        .dereference => |deref| try stack.append(deref.pointer),
+        .pointer_assignment => |pa| {
+            try stack.append(pa.pointer);
+            try stack.append(pa.value);
+        },
+        .type_initializer => |init| try stack.append(init.args),
+        .explicit_cast => |cast| try stack.append(cast.value),
+        .move_value => |inner| try stack.append(inner),
+        else => {},
+    }
+}
+
+fn findSyntaxFunctionDecl(
+    refs: []const SyntaxFunctionDeclRef,
+    loc: token.Location,
+    name: []const u8,
+) ?SyntaxFunctionDeclRef {
+    for (refs) |ref| {
+        if (!sameLocation(ref.node.location, loc)) continue;
+        if (!std.mem.eql(u8, ref.decl.name.string, name)) continue;
+        return ref;
+    }
+    return null;
+}
+
+fn findSyntaxFunctionCall(
+    refs: []const SyntaxFunctionCallRef,
+    loc: token.Location,
+    callee: []const u8,
+) ?SyntaxFunctionCallRef {
+    for (refs) |ref| {
+        if (!sameLocation(ref.node.location, loc)) continue;
+        if (!std.mem.eql(u8, ref.call.callee, callee)) continue;
+        return ref;
+    }
+    return null;
+}
+
+fn sameLocation(a: token.Location, b: token.Location) bool {
+    return std.mem.eql(u8, a.file, b.file) and a.offset == b.offset;
+}
+
+fn syntaxStructTypeHasField(stl: st.StructTypeLiteral, field_name: []const u8) bool {
+    for (stl.fields) |field| {
+        if (std.mem.eql(u8, field.name.string, field_name)) return true;
+    }
+    return false;
+}
+
+fn syntaxCallHasExplicitField(call: st.FunctionCall, field_name: []const u8) bool {
+    return switch (call.input.content) {
+        .struct_value_literal => |sv| blk: {
+            for (sv.fields) |field| {
+                if (std.mem.eql(u8, field.name.string, field_name)) break :blk true;
+            }
+            break :blk false;
+        },
+        .struct_type_literal => |stl| blk: {
+            for (stl.fields) |field| {
+                if (std.mem.eql(u8, field.name.string, field_name)) break :blk true;
+            }
+            break :blk false;
+        },
+        else => false,
+    };
+}
+
+fn findStructValueField(fields: []const sg.StructValueLiteralField, field_name: []const u8) ?*const sg.StructValueLiteralField {
+    for (fields) |*field| {
+        if (std.mem.eql(u8, field.name, field_name)) return field;
+    }
+    return null;
+}
+
+fn formatReachedFieldLabel(
+    allocator: std.mem.Allocator,
+    field_name: []const u8,
+    reach: *const sg.ReachDirective,
+) ![]u8 {
+    var text = std.array_list.Managed(u8).init(allocator);
+    errdefer text.deinit();
+
+    try text.appendSlice(".");
+    try text.appendSlice(field_name);
+    try text.appendSlice(" = #reach ");
+
+    for (reach.alternatives, 0..) |alt, alt_idx| {
+        if (alt_idx != 0) try text.appendSlice(", ");
+        for (alt.segments, 0..) |segment, seg_idx| {
+            if (seg_idx != 0) try text.appendSlice(".");
+            try text.appendSlice(segment);
+        }
+    }
+
+    return try text.toOwnedSlice();
+}
+
+fn positionAfterName(loc: token.Location, byte_len: usize) Position {
+    const line = if (loc.line == 0) 0 else loc.line - 1;
+    const start_char = if (loc.column == 0) 0 else loc.column - 1;
+    return .{
+        .line = line,
+        .character = start_char + @as(u32, @intCast(byte_len)),
+    };
+}
+
+fn rangeContainsPosition(range: Range, pos: Position) bool {
+    return positionLessOrEqual(range.start, pos) and positionLessOrEqual(pos, range.end);
+}
+
+fn positionLessOrEqual(lhs: Position, rhs: Position) bool {
+    return if (lhs.line == rhs.line)
+        lhs.character <= rhs.character
+    else
+        lhs.line < rhs.line;
+}
 
 fn locationToRange(loc: token.Location) Range {
     const start_line = if (loc.line == 0) 0 else loc.line - 1;

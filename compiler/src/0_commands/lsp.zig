@@ -87,6 +87,8 @@ const LanguageServer = struct {
                 if (id_value) |id| self.handleSemanticTokensFull(&writer, id, params_value) catch {};
             } else if (std.mem.eql(u8, method, "textDocument/semanticTokens/range")) {
                 if (id_value) |id| self.handleSemanticTokensRange(&writer, id, params_value) catch {};
+            } else if (std.mem.eql(u8, method, "textDocument/inlayHint")) {
+                if (id_value) |id| self.handleInlayHints(&writer, id, params_value) catch {};
             } else {
                 // Método desconocido -> ignorar
             }
@@ -286,6 +288,8 @@ const LanguageServer = struct {
         try stream.objectField("range");
         try stream.write(true); // si quieres implementar /range más tarde
         try stream.endObject();
+        try stream.objectField("inlayHintProvider");
+        try stream.write(true);
         try stream.endObject();
 
         try stream.objectField("serverInfo");
@@ -455,6 +459,65 @@ const LanguageServer = struct {
         }
     }
 
+    fn handleInlayHints(
+        self: *LanguageServer,
+        writer: anytype,
+        id_value: json.Value,
+        params_value: ?json.Value,
+    ) !void {
+        if (self.service == null) return;
+        const params = params_value orelse return;
+        if (params != .object) return;
+
+        const text_document_value = getField(&params.object, "textDocument") orelse return;
+        if (text_document_value != .object) return;
+        const uri_value = getField(&text_document_value.object, "uri") orelse return;
+        if (uri_value != .string) return;
+
+        const range = if (getField(&params.object, "range")) |range_value|
+            parseRange(range_value)
+        else
+            null;
+
+        if (self.service) |*svc| {
+            const hints = try svc.inlayHints(uri_value.string, range);
+            defer hints.deinit();
+
+            var payload = std.Io.Writer.Allocating.init(self.allocator);
+            defer payload.deinit();
+            var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
+
+            try stream.beginObject();
+            try stream.objectField("jsonrpc");
+            try stream.write("2.0");
+            try stream.objectField("id");
+            try stream.write(id_value);
+            try stream.objectField("result");
+            try stream.beginArray();
+            for (hints.items) |hint| {
+                try stream.beginObject();
+                try stream.objectField("position");
+                try stream.beginObject();
+                try stream.objectField("line");
+                try stream.write(hint.position.line);
+                try stream.objectField("character");
+                try stream.write(hint.position.character);
+                try stream.endObject();
+                try stream.objectField("label");
+                try stream.write(hint.label);
+                try stream.objectField("kind");
+                try stream.write(@as(i32, 2));
+                try stream.objectField("paddingLeft");
+                try stream.write(true);
+                try stream.endObject();
+            }
+            try stream.endArray();
+            try stream.endObject();
+
+            try self.sendMessage(writer, payload.writer.buffered());
+        }
+    }
+
     fn sendMessage(self: *LanguageServer, writer: anytype, payload: []const u8) !void {
         _ = self;
         try writer.print("Content-Length: {d}\r\n\r\n", .{payload.len});
@@ -476,4 +539,24 @@ const LanguageServer = struct {
 
 fn getField(map: *const json.ObjectMap, key: []const u8) ?json.Value {
     return map.*.get(key);
+}
+
+fn parseRange(value: json.Value) ?service.Range {
+    if (value != .object) return null;
+    const start_value = getField(&value.object, "start") orelse return null;
+    const end_value = getField(&value.object, "end") orelse return null;
+    const start_pos = parsePosition(start_value) orelse return null;
+    const end_pos = parsePosition(end_value) orelse return null;
+    return .{ .start = start_pos, .end = end_pos };
+}
+
+fn parsePosition(value: json.Value) ?service.Position {
+    if (value != .object) return null;
+    const line_value = getField(&value.object, "line") orelse return null;
+    const char_value = getField(&value.object, "character") orelse return null;
+    if (line_value != .integer or char_value != .integer) return null;
+    return .{
+        .line = @intCast(line_value.integer),
+        .character = @intCast(char_value.integer),
+    };
 }
