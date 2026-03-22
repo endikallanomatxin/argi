@@ -762,6 +762,7 @@ pub const LanguageService = struct {
                 semantic_fn.decl,
                 syntax_fn.decl,
                 semantic_types.items,
+                doc.path,
                 doc.text,
                 tokens.items,
             );
@@ -774,6 +775,26 @@ pub const LanguageService = struct {
         for (syntax_calls.items) |syntax_call| {
             if (!std.mem.eql(u8, syntax_call.call.callee_loc.file, doc.path)) continue;
             if (!positionWithinName(position, syntax_call.call.callee_loc, syntax_call.call.callee.len)) continue;
+            if (findSemanticTypeInitializerAtLocation(semantic_type_inits.items, syntax_call.call.callee_loc)) |type_init| {
+                const syntax_decl = findSyntaxFunctionDecl(
+                    syntax_functions.items,
+                    type_init.init.init_fn.location,
+                    type_init.init.init_fn.name,
+                );
+                const contents = try buildFunctionHoverMarkdown(
+                    self.allocator,
+                    type_init.init.init_fn,
+                    if (syntax_decl) |decl_ref| decl_ref.decl else null,
+                    semantic_types.items,
+                    doc.path,
+                    doc.text,
+                    tokens.items,
+                );
+                return .{
+                    .range = nameRange(syntax_call.call.callee_loc, syntax_call.call.callee.len),
+                    .contents = contents,
+                };
+            }
             const semantic_call = findSemanticFunctionCall(semantic_calls.items, syntax_call.call.callee_loc, syntax_call.call.callee) orelse continue;
             const syntax_decl = findSyntaxFunctionDecl(syntax_functions.items, semantic_call.call.callee.location, semantic_call.call.callee.name);
             const contents = try buildFunctionHoverMarkdown(
@@ -781,11 +802,31 @@ pub const LanguageService = struct {
                 semantic_call.call.callee,
                 if (syntax_decl) |decl_ref| decl_ref.decl else null,
                 semantic_types.items,
+                doc.path,
                 doc.text,
                 tokens.items,
             );
             return .{
                 .range = nameRange(syntax_call.call.callee_loc, syntax_call.call.callee.len),
+                .contents = contents,
+            };
+        }
+
+        for (syntax_type_refs.items) |type_ref| {
+            if (!std.mem.eql(u8, type_ref.location.file, doc.path)) continue;
+            if (!positionWithinName(position, type_ref.location, type_ref.name.len)) continue;
+            const semantic_type_decl = findSemanticTypeDeclByName(semantic_types.items, type_ref.name) orelse continue;
+            const syntax_type_decl = findSyntaxTypeDeclByName(syntax_type_decls.items, type_ref.name);
+            const contents = try buildTypeHoverMarkdown(
+                self.allocator,
+                semantic_type_decl.decl,
+                syntax_type_decl,
+                semantic_types.items,
+                doc.path,
+                doc.text,
+            );
+            return .{
+                .range = nameRange(type_ref.location, type_ref.name.len),
                 .contents = contents,
             };
         }
@@ -1212,6 +1253,7 @@ fn buildFunctionHoverMarkdown(
     decl: *const sg.FunctionDeclaration,
     syntax_decl_opt: ?st.FunctionDeclaration,
     type_refs: []const SemanticTypeDeclRef,
+    source_path: []const u8,
     source_text: []const u8,
     toks: []const token.Token,
 ) ![]const u8 {
@@ -1219,19 +1261,78 @@ fn buildFunctionHoverMarkdown(
     errdefer out.deinit();
 
     if (syntax_decl_opt) |syntax_decl| {
-        if (try collectLeadingCommentBlock(source_text, syntax_decl.name.location)) |comments| {
-            try out.appendSlice(comments);
-            try out.appendSlice("\n");
-        }
-        if (!functionHasInferredReachedFields(decl, syntax_decl)) {
-            if (try extractFunctionHeaderSource(source_text, toks, syntax_decl)) |header| {
-                try out.appendSlice(header);
-                return try out.toOwnedSlice();
+        if (std.mem.eql(u8, syntax_decl.name.location.file, source_path)) {
+            if (try collectLeadingCommentBlock(source_text, syntax_decl.name.location)) |comments| {
+                try out.appendSlice(comments);
+                try out.appendSlice("\n");
+            }
+            if (!functionHasInferredReachedFields(decl, syntax_decl)) {
+                if (try extractFunctionHeaderSource(source_text, toks, syntax_decl)) |header| {
+                    try out.appendSlice(header);
+                    return try out.toOwnedSlice();
+                }
             }
         }
     }
 
     try appendGeneratedSignatureText(&out, decl, syntax_decl_opt, type_refs);
+
+    return try out.toOwnedSlice();
+}
+
+fn buildTypeHoverMarkdown(
+    allocator: std.mem.Allocator,
+    decl: *const sg.TypeDeclaration,
+    syntax_decl_opt: ?SyntaxTypeDeclRef,
+    type_refs: []const SemanticTypeDeclRef,
+    source_path: []const u8,
+    source_text: []const u8,
+) ![]const u8 {
+    var out = std.array_list.Managed(u8).init(allocator);
+    errdefer out.deinit();
+
+    if (syntax_decl_opt) |syntax_decl| {
+        if (std.mem.eql(u8, syntax_decl.name.location.file, source_path)) {
+            if (try collectLeadingCommentBlock(source_text, syntax_decl.name.location)) |comments| {
+                try out.appendSlice(comments);
+                try out.appendSlice("\n");
+            }
+        }
+    }
+
+    try out.appendSlice(decl.name);
+    switch (decl.ty) {
+        .struct_type => |st_ty| {
+            try out.appendSlice(" : Type = (\n");
+            for (st_ty.fields, 0..) |field, idx| {
+                if (idx != 0) try out.appendSlice("\n");
+                try out.appendSlice("    .");
+                try out.appendSlice(field.name);
+                try out.appendSlice(": ");
+                try appendHoverType(&out, field.ty, type_refs);
+            }
+            if (st_ty.fields.len > 0) try out.appendSlice("\n");
+            try out.appendSlice(")");
+        },
+        .choice_type => |choice_ty| {
+            try out.appendSlice(" : Type = (\n");
+            for (choice_ty.variants, 0..) |variant, idx| {
+                if (idx != 0) try out.appendSlice("\n");
+                try out.appendSlice("    ..");
+                try out.appendSlice(variant.name);
+                if (variant.payload_type) |payload_ty| {
+                    try out.appendSlice("(.value: ");
+                    try appendHoverType(&out, payload_ty, type_refs);
+                    try out.appendSlice(")");
+                }
+            }
+            if (choice_ty.variants.len > 0) try out.appendSlice("\n");
+            try out.appendSlice(")");
+        },
+        else => {
+            try out.appendSlice(" : Type");
+        },
+    }
 
     return try out.toOwnedSlice();
 }
@@ -1738,6 +1839,16 @@ fn findSemanticTypeInitializerAtLocation(
 ) ?SemanticTypeInitializerRef {
     for (refs) |ref| {
         if (sameLocation(ref.node.location, loc)) return ref;
+    }
+    return null;
+}
+
+fn findSemanticTypeDeclByName(
+    refs: []const SemanticTypeDeclRef,
+    name: []const u8,
+) ?SemanticTypeDeclRef {
+    for (refs) |ref| {
+        if (std.mem.eql(u8, ref.decl.name, name)) return ref;
     }
     return null;
 }
