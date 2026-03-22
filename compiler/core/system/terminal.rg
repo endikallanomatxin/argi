@@ -1,37 +1,7 @@
-Terminal : Type = ()
-Arguments : Type = ()
+Terminal#(.stdin_stream: Type, .stdout_stream: Type, .stderr_stream: Type) : Type = (
+    .stdin  : &stdin_stream
+    .stdout : $&stdout_stream
+    .stderr : $&stderr_stream
+)
 
--- Terminal : Type = [
---     .stdin  :  & io.InputStream,
---     .stdout : $& io.OutputStream,
---     .stderr : $& io.OutputStream,
--- ]
--- 
--- print($&Terminal, message: String) : Void {
---     ...
--- }
--- 
--- println($&Terminal, message: String) : Void {
---     ...
--- }
--- 
--- read_line($&Terminal) : String? {
---     ...
--- }
--- 
--- read_char($&Terminal) : Char? {
---     ...
--- }
--- 
--- set_buffering($&Terminal, mode: BufferMode) : Void {
---     ...
--- }
--- 
--- set_echo($&Terminal, mode: BufferMode) : Void {
---     ...
--- }
--- 
--- flush($&Terminal) : Void {
---     ...
--- }
--- 
+Arguments : Type = ()
