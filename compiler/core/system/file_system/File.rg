@@ -191,8 +191,43 @@ buffered_reader_byte_address(
 }
 
 read_byte(.self: $&FileReader) -> (.result: ReadByte) := {
-    _ ::= buffered_reader_byte_address(.self = self, .index = 0)
-    result = read_byte(.self = self&.file)
+    if self&.start < self&.end {
+        addr :: UIntNative = buffered_reader_byte_address(.self = self, .index = self&.start).address
+        ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
+        result = ..ok(.byte = ptr&)
+        self& = (
+            .file = self&.file,
+            .buffer = self&.buffer,
+            .capacity = self&.capacity,
+            .start = self&.start + 1,
+            .end = self&.end,
+        )
+        return
+    }
+
+    if self&.capacity == 0 {
+        result = read_byte(.self = self&.file)
+        return
+    }
+
+    first ::= read_byte(.self = self&.file)
+    if is(.value = first, .variant = ..end) {
+        result = ..end
+        return
+    }
+
+    payload ::= first..ok
+    addr :: UIntNative = buffered_reader_byte_address(.self = self, .index = 0).address
+    ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
+    ptr& = payload.byte
+    self& = (
+        .file = self&.file,
+        .buffer = self&.buffer,
+        .capacity = self&.capacity,
+        .start = 1,
+        .end = 1,
+    )
+    result = ..ok(.byte = payload.byte)
 }
 
 FileReader implements Reader

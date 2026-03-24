@@ -66,6 +66,10 @@ push_byte(.self: $&TextBuffer, .byte: UInt8) -> () := {
     )
 }
 
+has_space(.self: &TextBuffer) -> (.ok: Bool) := {
+    ok = self&.length < self&.capacity
+}
+
 byte_at(
     .self: &TextBuffer,
     .index: UIntNative,
@@ -101,6 +105,11 @@ push_c_string(
         addr :: UIntNative = cast#(.to: UIntNative)(.value = text) + i
         ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
         if ptr& == 0 {
+            break
+        }
+
+        if has_space(.self = self).ok {
+        } else {
             break
         }
 
