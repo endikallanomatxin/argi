@@ -1,5 +1,5 @@
 emit_ok(
-    .stdout: $&OutputStream#(.text: String) = #reach stdout, terminal.stdout, system.terminal.stdout,
+    .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout,
 ) -> (.ok: Int32) := {
     _ ::= stdout
     ok = 0

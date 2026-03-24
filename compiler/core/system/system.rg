@@ -30,9 +30,9 @@ System : Type = (
 
 init(.p: $&System) -> () := {
     p&._storage.allocator = CAllocator()
-    p&._storage.stdin = StdIn()
-    p&._storage.stdout = StdOut()
-    p&._storage.stderr = StdErr()
+    p&._storage.stdin = StdIn(.allocator = $&p&._storage.allocator)
+    p&._storage.stdout = StdOut(.allocator = $&p&._storage.allocator)
+    p&._storage.stderr = StdErr(.allocator = $&p&._storage.allocator)
     p&._storage.terminal = Terminal(
         .stdin = $&p&._storage.stdin,
         .stdout = $&p&._storage.stdout,

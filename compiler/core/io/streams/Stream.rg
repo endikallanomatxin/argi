@@ -1,11 +1,24 @@
-InputStream#(.line: Type) : Abstract = (
-    read_line(
-        .self: $&Self,
-        .allocator: $&Allocator = #reach allocator, system.allocator,
-    ) -> (.line: line)
+ReadByte : Type = (
+    ..ok(.byte: UInt8)
+    ..end
 )
 
-OutputStream#(.text: Type) : Abstract = (
-    write(.self: $&Self, .text: text) -> ()
+Reader : Abstract = (
+    read_byte(.self: $&Self) -> (.result: ReadByte)
+)
+
+Writer : Abstract = (
+    write_byte(.self: $&Self, .byte: UInt8) -> ()
     flush(.self: $&Self) -> ()
 )
+
+write(
+    .self: $&Writer,
+    .text: String,
+) -> () := {
+    i :: UIntNative = 0
+    while i < text.length {
+        write_byte(.self = self, .byte = bytes_get(.string = &text, .index = i).byte)
+        i = i + 1
+    }
+}

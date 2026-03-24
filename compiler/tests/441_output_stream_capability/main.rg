@@ -8,13 +8,13 @@ flush(.self: $&DummyOutput) -> () := {
     )
 }
 
-write(.self: $&DummyOutput, .text: String) -> () := {
+write_byte(.self: $&DummyOutput, .byte: UInt8) -> () := {
 }
 
-DummyOutput implements OutputStream#(.text: String)
+DummyOutput implements Writer
 
 flush_stdout(
-    .stdout: $&OutputStream#(.text: String),
+    .stdout: $&Writer,
 ) -> (.value: Int32) := {
     flush(.self = stdout)
     value = 0

@@ -1,14 +1,46 @@
-StdIn : Type = ()
-StdOut : Type = ()
-StdErr : Type = ()
+StdIn : Type = (
+    .file            : File
+    .reader          : FileReader
+    .buffered_reader : BufferedReader
+)
 
-init(.p: $&StdIn) -> () := {
+StdOut : Type = (
+    .file            : File
+    .writer          : FileWriter
+    .buffered_writer : BufferedWriter
+)
+
+StdErr : Type = (
+    .file            : File
+    .writer          : FileWriter
+    .buffered_writer : BufferedWriter
+)
+
+init(
+    .p: $&StdIn,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> () := {
+    p&.file = File(.descriptor = 0, .kind = ..stdin)
+    p&.reader = FileReader(.file = $&p&.file)
+    p&.buffered_reader = BufferedReader(.allocator = allocator, .reader = $&p&.reader, .capacity = 256)
 }
 
-init(.p: $&StdOut) -> () := {
+init(
+    .p: $&StdOut,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> () := {
+    p&.file = File(.descriptor = 1, .kind = ..stdout)
+    p&.writer = FileWriter(.file = $&p&.file)
+    p&.buffered_writer = BufferedWriter(.allocator = allocator, .writer = $&p&.writer, .capacity = 256)
 }
 
-init(.p: $&StdErr) -> () := {
+init(
+    .p: $&StdErr,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> () := {
+    p&.file = File(.descriptor = 2, .kind = ..stderr)
+    p&.writer = FileWriter(.file = $&p&.file)
+    p&.buffered_writer = BufferedWriter(.allocator = allocator, .writer = $&p&.writer, .capacity = 256)
 }
 
 Terminal : Type = (
@@ -30,57 +62,58 @@ read_line(
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.line: String) := {
     -- TODO: implement real terminal line reading once Char/byte/int casts and
-    -- EOF handling are properly modeled in core IO.
+    -- text ownership are settled on top of the lower-level Reader/File layers.
+    _ ::= allocator
     line = String(.allocator = allocator, .length = 0)
 }
 
-write(.self: $&StdOut, .text: String) -> () := {
-    i :: UIntNative = 0
-    while i < text.length {
-        putchar(.character = bytes_get(.string = &text, .index = i).byte)
-        i = i + 1
-    }
+read_byte(.self: $&StdIn) -> (.result: ReadByte) := {
+    next ::= read_byte(.self = $&self&.buffered_reader)
+    result = next
+}
+
+write_byte(.self: $&StdOut, .byte: UInt8) -> () := {
+    write_byte(.self = self&.buffered_writer.writer, .byte = byte)
 }
 
 flush(.self: $&StdOut) -> () := {
+    flush(.self = $&self&.buffered_writer)
 }
 
-write(.self: $&StdErr, .text: String) -> () := {
-    i :: UIntNative = 0
-    while i < text.length {
-        putchar(.character = bytes_get(.string = &text, .index = i).byte)
-        i = i + 1
-    }
+write_byte(.self: $&StdErr, .byte: UInt8) -> () := {
+    write_byte(.self = self&.buffered_writer.writer, .byte = byte)
 }
 
 flush(.self: $&StdErr) -> () := {
+    flush(.self = $&self&.buffered_writer)
 }
 
-StdOut implements OutputStream#(.text: String)
-StdErr implements OutputStream#(.text: String)
+StdIn implements Reader
+StdOut implements Writer
+StdErr implements Writer
 
 print(
-    .stdout: $&OutputStream#(.text: String) = #reach stdout, terminal.stdout, system.terminal.stdout,
+    .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout,
     .text: String,
 ) -> () := {
     write(.self = stdout, .text = text)
 }
 
 flush(
-    .stdout: $&OutputStream#(.text: String) = #reach stdout, terminal.stdout, system.terminal.stdout,
+    .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout,
 ) -> () := {
     flush(.self = stdout)
 }
 
 print_error(
-    .stderr: $&OutputStream#(.text: String) = #reach stderr, terminal.stderr, system.terminal.stderr,
+    .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
     .text: String,
 ) -> () := {
     write(.self = stderr, .text = text)
 }
 
 flush_error(
-    .stderr: $&OutputStream#(.text: String) = #reach stderr, terminal.stderr, system.terminal.stderr,
+    .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
 ) -> () := {
     flush(.self = stderr)
 }
