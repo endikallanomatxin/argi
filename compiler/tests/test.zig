@@ -857,6 +857,18 @@ test "452X_keep_without_auto_deinit" {
     );
 }
 
+test "453_main_system_reached_allocator" {
+    try clean();
+    try expectSuccessfulBuild("tests/453_main_system_reached_allocator/main.rg");
+    try runExpect(0);
+}
+
+test "454_main_system_reached_stdout" {
+    try clean();
+    try expectSuccessfulBuild("tests/454_main_system_reached_stdout/main.rg");
+    try runExpect(0);
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");

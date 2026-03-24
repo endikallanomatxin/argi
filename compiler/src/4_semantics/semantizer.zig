@@ -1616,6 +1616,7 @@ pub const Semantizer = struct {
         };
 
         for (alt.segments[1..]) |segment| {
+            current = try self.dereferenceReachPathValue(current);
             current = self.buildStructFieldAccessFromTypedExpr(current, segment, loc, s) catch |err| switch (err) {
                 error.FieldsNotFound => return null,
                 else => return err,
@@ -1646,6 +1647,7 @@ pub const Semantizer = struct {
         };
 
         for (alt.segments[1..]) |segment| {
+            current = try self.dereferenceReachPathValue(current);
             current = self.buildStructFieldAccessFromTypedExpr(current, segment, loc, s) catch |err| switch (err) {
                 error.FieldsNotFound => return null,
                 else => return err,
@@ -6192,6 +6194,24 @@ pub const Semantizer = struct {
         const use_node = try sg.makeSGNode(.{ .binding_use = binding }, name.location, self.allocator);
         use_node.sem_type = binding.ty;
         return .{ .node = use_node, .ty = .{ .builtin = .Any } };
+    }
+
+    fn dereferenceReachPathValue(
+        self: *Semantizer,
+        te: typ.TypedExpr,
+    ) SemErr!typ.TypedExpr {
+        if (te.ty != .pointer_type) return te;
+
+        const ptr_info_ptr = te.ty.pointer_type;
+        const ptr_info = ptr_info_ptr.*;
+        const base_ty = ptr_info.child.*;
+
+        const der_ptr = try self.allocator.create(sg.Dereference);
+        der_ptr.* = .{ .pointer = te.node, .ty = base_ty, .pointer_type = ptr_info_ptr };
+
+        const node = try sg.makeSGNode(.{ .dereference = der_ptr.* }, te.node.location, self.allocator);
+        node.sem_type = base_ty;
+        return .{ .node = node, .ty = base_ty };
     }
 
     //──────────────────────────────────────────────────── DEREFERENCE
