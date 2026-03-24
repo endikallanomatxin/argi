@@ -1,23 +1,21 @@
-StringViewRO : Type = (
-    --
-    -- Lightweight non-owning read-only view into a string.
-    --
-    -- Copying the view copies only the descriptor. It never copies the string
-    -- contents and does not extend the lifetime of the backing owner.
-    --
-    .string : &String
-    .start  : UIntNative
+StringView : Type = (
+    .data   : UIntNative
     .length : UIntNative
 )
 
-StringViewRW : Type = (
-    --
-    -- Lightweight non-owning mutable view into a string.
-    --
-    -- This should stay an explicit borrowed window. Mutable access does not
-    -- imply ownership of the underlying storage.
-    --
-    .string : $&String
-    .start  : UIntNative
-    .length : UIntNative
-)
+string_view_byte_address(
+    .self: &StringView,
+    .index: UIntNative,
+) -> (.address: UIntNative) := {
+    base :: UIntNative = self&.data
+    address = base + index
+}
+
+bytes_get(
+    .view: &StringView,
+    .index: UIntNative,
+) -> (.byte: UInt8) := {
+    addr :: UIntNative = string_view_byte_address(.self = view, .index = index).address
+    ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
+    byte = ptr&
+}

@@ -948,6 +948,30 @@ test "464_text_buffer_helpers" {
     try runExpect(0);
 }
 
+test "465_string_views" {
+    try clean();
+    try expectSuccessfulBuild("tests/465_string_views/main.rg");
+    try runExpect(0);
+}
+
+test "466_empty_string_cstring" {
+    try clean();
+    try expectSuccessfulBuild("tests/466_empty_string_cstring/main.rg");
+    try runExpect(0);
+}
+
+test "467_string_view_length" {
+    try clean();
+    try expectSuccessfulBuild("tests/467_string_view_length/main.rg");
+    try runExpect(0);
+}
+
+test "468_string_allocator_size" {
+    try clean();
+    try expectSuccessfulBuild("tests/468_string_allocator_size/main.rg");
+    try runExpect(0);
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");
