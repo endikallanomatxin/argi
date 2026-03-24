@@ -31,25 +31,67 @@ Highlights:
 - Big core library.
 - Great tooling (official formatter, lsp...).
 
+## Prerequisites
 
-## Compiler usage
+The build script needs to know where LLVM is installed. Normally it attempts to
+invoke `llvm-config` but this may fail in restricted environments. As an
+alternative you can provide the paths manually via the following environment
+variables before running `zig build`:
+
+```
+export LLVM_INCLUDE_DIR=/path/to/llvm/include
+export LLVM_LIB_DIR=/path/to/llvm/lib
+export LLVM_LIBS="$(llvm-config --libs)"
+```
+
+If these variables are set `llvm-config` will not be executed.
+
+## Usage
+
+### Build
 
 Build the compiler:
 
 ```sh
-cd compiler
 zig build
 ```
 
-Compile a program:
+That will create a binary called `argi` in the `zig-out/bin/` directory.
 
-```sh
-./zig-out/bin/argi build tests/00_minimal_main/main.rg
+Then you can build a folder module by running:
+
+```bash
+./zig-out/bin/argi build tests/00_minimal_main
 ```
+
+You can also run the compiler directly with:
+
+```bash
+zig build run -- build tests/00_minimal_main
+```
+
+
+### LSP
 
 Start the language server:
 
 ```sh
 ./zig-out/bin/argi lsp
+```
+
+### Tests
+
+You can run the tests in `test/` by doing:
+
+```bash
+zig build test --summary all
+```
+
+If testing doesn't work, the same can be checked by compiling the files
+independently:
+
+```bash
+zig build
+./zig-out/bin/argi build tests/00_minimal_main
 ```
 
