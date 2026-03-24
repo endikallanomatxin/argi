@@ -1,26 +1,15 @@
-FileKind : Type = (
-    ..stdin
-    ..stdout
-    ..stderr
-    ..file
-    ..other
-)
-
 File : Type = (
     .handle       : UIntNative = 0
-    .kind         : FileKind = ..other
     .should_close : Bool = 0 == 1
 )
 
 init(
     .p: $&File,
     .handle: UIntNative,
-    .kind: FileKind = ..other,
     .should_close: Bool,
 ) -> () := {
     p& = (
         .handle = handle,
-        .kind = kind,
         .should_close = should_close,
     )
 }
@@ -41,7 +30,6 @@ file_open(
     opened : $&Any = fopen(.path = path, .mode = mode)
     p& = (
         .handle = cast#(.to: UIntNative)(.value = opened),
-        .kind = ..file,
         .should_close = 1 == 1,
     )
 }
@@ -71,7 +59,6 @@ init_stdin(.p: $&File) -> () := {
     stream : $&Any = fdopen(.fd = 0, .mode = "rb")
     p& = (
         .handle = cast#(.to: UIntNative)(.value = stream),
-        .kind = ..stdin,
         .should_close = 0 == 1,
     )
 }
@@ -80,7 +67,6 @@ init_stdout(.p: $&File) -> () := {
     stream : $&Any = fdopen(.fd = 1, .mode = "wb")
     p& = (
         .handle = cast#(.to: UIntNative)(.value = stream),
-        .kind = ..stdout,
         .should_close = 0 == 1,
     )
 }
@@ -89,7 +75,6 @@ init_stderr(.p: $&File) -> () := {
     stream : $&Any = fdopen(.fd = 2, .mode = "wb")
     p& = (
         .handle = cast#(.to: UIntNative)(.value = stream),
-        .kind = ..stderr,
         .should_close = 0 == 1,
     )
 }
@@ -105,7 +90,6 @@ close(.self: $&File) -> () := {
 
     self& = (
         .handle = 0,
-        .kind = self&.kind,
         .should_close = 0 == 1,
     )
 }

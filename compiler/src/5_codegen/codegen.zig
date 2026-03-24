@@ -863,10 +863,12 @@ pub const CodeGenerator = struct {
                 // TODO: For now, we will use c-like strings.
                 // Later on, this should be a proper string type.
 
+                const str_z = try self.dupZ(str);
+
                 // Crea un global interno y recibe el i8* a su inicio
                 const gptr = c.LLVMBuildGlobalStringPtr(
                     self.builder,
-                    str.ptr, // bytes tal cual (ya con escapes resueltos)
+                    str_z.ptr,
                     "strlit",
                 );
                 break :blk .{
