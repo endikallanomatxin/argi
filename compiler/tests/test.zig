@@ -881,6 +881,12 @@ test "456_addressable_struct_subfields" {
     try runExpect(0);
 }
 
+test "457_main_arguments_count" {
+    try clean();
+    try expectSuccessfulBuild("tests/457_main_arguments_count/main.rg");
+    try runExpect(0);
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");
