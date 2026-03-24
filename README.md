@@ -9,8 +9,11 @@ performance and control of low-level languages (C, Zig...).
 It’s an early work-in-progress.
 
 - 💭 Language design notes are in [`description/`](description/).
-- ⚙️ The compiler is in [`compiler/`](compiler/) and is written in **Zig**,
+- ⚙️ The compiler source code is in [`src/`](src/) and is written in **Zig**,
 targeting **LLVM**.
+- 📚 The core library is in [`core/`](core/), and additional official libraries are in
+[`more/`](more/).
+- 🧪 Example programs and tests are in [`tests/`](tests/).
 
 
 Highlights:
