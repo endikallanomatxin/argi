@@ -16,7 +16,11 @@ targeting **LLVM**.
 Highlights:
 
 - Manual but very ergonomic memory management.
-- Side-effects are always explicit.
+- Explicitness without annoyance:
+    - Side-effects are always explicit.
+    - Capability-based design for resource management.
+    - `reach` feature for reducing function signature clutter while maintaining
+    explicitness.
 - No objects or inheritance.
 - Polymorphism through:
     - Multiple dispatch
@@ -28,11 +32,6 @@ Highlights:
 - Great tooling (official formatter, lsp...).
 
 
-Biggest, most important TODO: Define memory management further.
-(all description files starting with 3)
-There are some ideas, but it is still on the air.
-
-
 ## Compiler usage
 
 Build the compiler:
@@ -40,13 +39,6 @@ Build the compiler:
 ```sh
 cd compiler
 zig build
-```
-
-If Zig needs writable caches, run commands with:
-
-```sh
-ZIG_LOCAL_CACHE_DIR="$PWD/.zig-cache" \
-ZIG_GLOBAL_CACHE_DIR="$PWD/.zig-global-cache"
 ```
 
 Compile a program:
@@ -61,11 +53,3 @@ Start the language server:
 ./zig-out/bin/argi lsp
 ```
 
-Available build diagnostics flags:
-
-```text
---on-build-error-show-cascade
---on-build-error-show-syntax-tree
---on-build-error-show-semantic-graph
---on-build-error-show-token-list
-```
