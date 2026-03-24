@@ -888,6 +888,16 @@ pub const Syntaxer = struct {
             .keyword_for => return self.parseFor(),
             .keyword_match => return self.parseMatch(),
             .keyword_while => return self.parseWhile(),
+            .keyword_break => {
+                const loc = self.tokenLocation();
+                self.advanceOne();
+                return try self.makeNode(.{ .break_statement = .{} }, loc);
+            },
+            .keyword_continue => {
+                const loc = self.tokenLocation();
+                self.advanceOne();
+                return try self.makeNode(.{ .continue_statement = .{} }, loc);
+            },
             else => {},
         }
 
@@ -1010,13 +1020,13 @@ pub const Syntaxer = struct {
                 // call: Name(...)
                 const input_node = try self.makeNode(.{ .struct_type_literal = input }, id_loc);
                 return try self.makeNode(
-                        .{ .function_call = .{
-                            .callee = name.string,
-                            .callee_loc = id_loc,
-                            .module_qualifier = null,
-                            .type_arguments = null,
-                            .type_arguments_struct = generic_params_struct,
-                            .input = input_node,
+                    .{ .function_call = .{
+                        .callee = name.string,
+                        .callee_loc = id_loc,
+                        .module_qualifier = null,
+                        .type_arguments = null,
+                        .type_arguments_struct = generic_params_struct,
+                        .input = input_node,
                     } },
                     id_loc,
                 );

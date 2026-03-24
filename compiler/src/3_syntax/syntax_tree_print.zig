@@ -347,6 +347,12 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             std.debug.print("Return\n", .{});
             if (ret.expression) |e| printNode(e.*, lvl + 1);
         },
+        .break_statement => {
+            std.debug.print("Break\n", .{});
+        },
+        .continue_statement => {
+            std.debug.print("Continue\n", .{});
+        },
 
         .import_statement => |imp| {
             std.debug.print("Import \"{s}\"\n", .{imp.path});
