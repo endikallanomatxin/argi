@@ -2,8 +2,9 @@ const std = @import("std");
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 
-const argi_bin = "./zig-out/bin/argi";
-const output_bin = "./output";
+const compiler_root = "/home/endika/Documents/argi/compiler";
+const argi_bin = compiler_root ++ "/zig-out/bin/argi";
+const output_bin = compiler_root ++ "/output";
 
 fn modulePathFor(path: []const u8) []const u8 {
     if (std.mem.endsWith(u8, path, "/main.rg")) {
@@ -13,9 +14,10 @@ fn modulePathFor(path: []const u8) []const u8 {
 }
 
 fn waitForOutputRelease() !void {
+    const cwd = std.fs.cwd();
     var i: u8 = 0;
     while (i < 20) : (i += 1) {
-        const rename_result = std.fs.cwd().rename(output_bin, output_bin);
+        const rename_result = cwd.rename("output", "output");
         if (rename_result) |_| {
             return;
         } else |err| switch (err) {
@@ -27,7 +29,8 @@ fn waitForOutputRelease() !void {
 }
 
 fn clean() !void {
-    const cwd = std.fs.cwd();
+    var cwd = try std.fs.openDirAbsolute(compiler_root, .{});
+    defer cwd.close();
     try waitForOutputRelease();
     cwd.deleteFile("output.ll") catch |err| {
         if (err != error.FileNotFound) return err;
@@ -44,6 +47,7 @@ fn runChild(argv: []const []const u8) !std.process.Child.RunResult {
     return std.process.Child.run(.{
         .allocator = std.testing.allocator,
         .argv = argv,
+        .cwd = compiler_root,
     });
 }
 

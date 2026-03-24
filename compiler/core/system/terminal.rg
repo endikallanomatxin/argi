@@ -70,7 +70,8 @@ read_line(
     clear(.self = buffer)
 
     while 1 == 1 {
-        if buffer&.length == buffer&.capacity {
+        if has_space(.self = buffer).ok {
+        } else {
             break
         }
 

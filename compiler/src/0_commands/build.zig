@@ -134,10 +134,25 @@ pub fn compile(args: []const []const u8) !void {
         return error.CompilationFailed;
     };
 
+    const temp_stem = try std.fmt.allocPrint(allocator, "output.tmp.{d}", .{std.time.nanoTimestamp()});
+    const temp_ir_path = try std.fmt.allocPrint(allocator, "{s}.ll", .{temp_stem});
+    const final_ir_path = "output.ll";
+    const final_output_path = "output";
+
+    std.fs.cwd().deleteFile(temp_ir_path) catch |err| {
+        if (err != error.FileNotFound) return err;
+    };
+    std.fs.cwd().deleteFile(temp_stem) catch |err| {
+        if (err != error.FileNotFound) return err;
+    };
+    std.fs.cwd().deleteFile("output.o") catch |err| {
+        if (err != error.FileNotFound) return err;
+    };
+
     // 8. Escribir el módulo LLVM a un fichero .ll ──────────────────────
-    const ir_path = "output.ll";
     var err_msg: [*c]u8 = null;
-    if (c.LLVMPrintModuleToFile(module, ir_path, &err_msg) != 0) {
+    const temp_ir_path_c = try allocator.dupeZ(u8, temp_ir_path);
+    if (c.LLVMPrintModuleToFile(module, temp_ir_path_c.ptr, &err_msg) != 0) {
         std.debug.print("Failed to write LLVM module: {s}\n", .{err_msg});
         return error.WriteFailed;
     }
@@ -147,6 +162,61 @@ pub fn compile(args: []const []const u8) !void {
     defer c.LLVMDisposeMessage(triple_cstr);
     const triple = std.mem.span(triple_cstr);
 
-    try link.linkWithLibc(module, triple, "output", &allocator);
+    try link.linkWithLibc(module, triple, temp_stem, &allocator);
+
+    std.fs.cwd().deleteFile(final_ir_path) catch |err| {
+        if (err != error.FileNotFound) return err;
+    };
+    if (std.fs.cwd().statFile(temp_ir_path)) |_| {} else |err| switch (err) {
+        error.FileNotFound => {
+            std.debug.print("missing temp ir before rename: {s}\n", .{temp_ir_path});
+            return err;
+        },
+        else => return err,
+    }
+    std.fs.cwd().rename(temp_ir_path, final_ir_path) catch |err| switch (err) {
+        error.PathAlreadyExists => {
+            try std.fs.cwd().deleteFile(final_ir_path);
+            try std.fs.cwd().rename(temp_ir_path, final_ir_path);
+        },
+        else => return err,
+    };
+
+    std.fs.cwd().deleteFile(final_output_path) catch |err| {
+        if (err != error.FileNotFound) return err;
+    };
+    if (std.fs.cwd().statFile(temp_stem)) |_| {} else |err| switch (err) {
+        error.FileNotFound => {
+            std.debug.print("missing temp output before rename: {s}\n", .{temp_stem});
+            return err;
+        },
+        else => return err,
+    }
+    std.fs.cwd().rename(temp_stem, final_output_path) catch |err| switch (err) {
+        error.PathAlreadyExists => {
+            try std.fs.cwd().deleteFile(final_output_path);
+            try std.fs.cwd().rename(temp_stem, final_output_path);
+        },
+        else => return err,
+    };
+
+    var temp_obj_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const temp_obj_path = try std.fmt.bufPrint(&temp_obj_path_buf, "{s}.o", .{temp_stem});
+    if (std.fs.cwd().statFile(temp_obj_path)) |_| {} else |err| switch (err) {
+        error.FileNotFound => {
+            std.debug.print("missing temp obj before rename: {s}\n", .{temp_obj_path});
+            return err;
+        },
+        else => return err,
+    }
+
+    std.fs.cwd().rename(temp_obj_path, "output.o") catch |err| switch (err) {
+        error.PathAlreadyExists => {
+            try std.fs.cwd().deleteFile("output.o");
+            try std.fs.cwd().rename(temp_obj_path, "output.o");
+        },
+        else => return err,
+    };
+
     std.debug.print("✔ Build completed\n", .{});
 }
