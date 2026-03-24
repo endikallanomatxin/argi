@@ -76,7 +76,7 @@ fn resolveToolCoreDir(alloc: *const std.mem.Allocator, preferred: []const u8) ![
 
     return try firstExistingDir(alloc, &.{
         preferred,
-        "compiler/core",
+        "core",
         bundled_core,
     });
 }

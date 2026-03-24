@@ -7,7 +7,7 @@ Debemos:
 
 - Tomar las decisiones de diseño que estén abiertas todavía.
 - Ir reduciendo discrepancias entre `description/` y la implementación en
-`compiler/`.
+`src/`, `core/` y `more/`.
 - Trabajar en `core` para que tenga las piezas mínimas necesarias para escribir
 un compilador serio.
 - Mejorar las herramientas de desarrollo del lenguaje.

@@ -1,2 +1,6 @@
 .DS_Store
 references/
+.zig-cache
+.zig-global-cache
+zig-out
+output*
