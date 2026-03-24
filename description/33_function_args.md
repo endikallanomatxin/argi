@@ -184,6 +184,10 @@ The search is lexical and deterministic. It is resolved only through the
 explicit alternatives declared by the function, not by “any value with a
 compatible type”.
 
+> TODO: Reusing commas here is probably a syntax mistake.
+> Having reach alternatives separated with `,`, just like regular input fields
+> in the same function signature, is too easy to confuse.
+
 ### Dotted paths and alternatives
 
 Reached arguments may refer to nested capability paths:
