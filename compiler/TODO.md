@@ -106,6 +106,20 @@
         - Diagnostics helpers
         - Testing helpers
 
+        - CLI
+            - Implementar `audit` para detectar red flags y antipatterns de uso
+              del lenguaje en el código compilado, por ejemplo `#reach` más
+              allá de lo que la core lib suele esperar o patrones similares
+              que merezcan aviso.
+
+            - Añadir `init project` y `init module` sin `main` como punto de
+              entrada, dejando claro qué esqueleto generan y cómo encajan con
+              el flujo normal de compilación.
+
+            - Preparar `argi test` para ejecutar la suite completa; dejar su
+              funcionamiento final pendiente de la historia de testing aún no
+              cerrada.
+
     - Asignadores
 
         - Implementar el story mínimo de allocators descrito en
