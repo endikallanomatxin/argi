@@ -2,6 +2,7 @@
 putchar ( .character : UInt8 ) -> () : ExternFunction
 getchar ( ) -> ( .character : Int32 ) : ExternFunction
 puts ( .string : &Char ) -> () : ExternFunction
+strlen ( .string : &Char ) -> ( .length : UIntNative ) : ExternFunction
 
 -- Memory management
 alloca ( .size : UIntNative ) -> ( .pointer: $&Any ) : ExternFunction

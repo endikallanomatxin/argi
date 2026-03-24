@@ -84,7 +84,9 @@ pub const CodeGenerator = struct {
     builder: llvm.c.LLVMBuilderRef,
     current_return_type: ?llvm.c.LLVMTypeRef = null,
     current_fn_decl: ?*sem.FunctionDeclaration = null,
-    defaulted_main_candidate: ?*sem.FunctionDeclaration = null,
+    main_candidate: ?*sem.FunctionDeclaration = null,
+    runtime_argc_global: ?llvm.c.LLVMValueRef = null,
+    runtime_argv_global: ?llvm.c.LLVMValueRef = null,
 
     global_scope: *Scope, // nunca se destruye hasta el final
     current_scope: *Scope, // apunta al scope donde estamos ahora
@@ -141,8 +143,8 @@ pub const CodeGenerator = struct {
             };
         }
 
-        if (self.defaulted_main_candidate) |f| {
-            try self.genDefaultedMainWrapper(f);
+        if (self.main_candidate) |f| {
+            try self.genCMainWrapper(f);
         }
 
         var msg: [*c]u8 = null;
@@ -479,8 +481,8 @@ pub const CodeGenerator = struct {
         return try buf.toOwnedSlice();
     }
 
-    fn isMainCandidate(f: *const sem.FunctionDeclaration) bool {
-        if (f.input.fields.len != 0) return false;
+    fn isWrappableMainCandidate(f: *const sem.FunctionDeclaration) bool {
+        if (!isMainName(f.name)) return false;
         if (f.output.fields.len != 1) return false;
         const fld = f.output.fields[0];
         if (!std.mem.eql(u8, fld.name, "status_code")) return false;
@@ -490,21 +492,9 @@ pub const CodeGenerator = struct {
         };
     }
 
-    fn isDefaultedMainCandidate(f: *const sem.FunctionDeclaration) bool {
-        if (!isMainName(f.name)) return false;
-        if (f.input.fields.len == 0) return false;
-        if (f.output.fields.len != 1) return false;
-        const fld = f.output.fields[0];
-        if (!std.mem.eql(u8, fld.name, "status_code")) return false;
-        const output_ok = switch (fld.ty) {
-            .builtin => |bt| bt == .Int32,
-            else => false,
-        };
-        if (!output_ok) return false;
-        for (f.input.fields) |field| {
-            if (field.default_value == null) return false;
-        }
-        return true;
+    fn functionSymbolKey(self: *CodeGenerator, f: *const sem.FunctionDeclaration) ![]const u8 {
+        if (f.isExtern()) return f.name;
+        return try self.mangledNameFor(f);
     }
 
     fn genFunction(self: *CodeGenerator, f: *sem.FunctionDeclaration) !void {
@@ -512,8 +502,8 @@ pub const CodeGenerator = struct {
         self.current_fn_decl = f;
         defer self.current_fn_decl = prev_fn;
 
-        if (isDefaultedMainCandidate(f)) {
-            self.defaulted_main_candidate = f;
+        if (isWrappableMainCandidate(f)) {
+            self.main_candidate = f;
         }
 
         const is_extern = (f.body == null);
@@ -544,10 +534,7 @@ pub const CodeGenerator = struct {
         }
 
         // ─── creación / tabla de símbolos ────────────────────────────────
-        const key_name = if (is_extern or isMainCandidate(f) or (isMainName(f.name) and !isDefaultedMainCandidate(f))) f.name else blk: {
-            const m = try self.mangledNameFor(f);
-            break :blk m;
-        };
+        const key_name = try self.functionSymbolKey(f);
         const cname = try self.dupZ(key_name);
         const fn_ref = c.LLVMAddFunction(self.module, cname.ptr, fn_ty);
 
@@ -561,6 +548,28 @@ pub const CodeGenerator = struct {
             key_name,
             .{ .cname = cname, .mutability = .constant, .type_ref = fn_ty, .ref = fn_ref, .sem_type = null },
         );
+
+        if (is_extern and std.mem.eql(u8, f.name, "__argi_runtime_argc")) {
+            try self.ensureRuntimeArgGlobals();
+            const entry = c.LLVMAppendBasicBlock(fn_ref, "entry");
+            c.LLVMPositionBuilderAtEnd(self.builder, entry);
+            const argc_ptr = self.runtime_argc_global orelse return CodegenError.InvalidType;
+            const native_uint_ty = try self.toLLVMType(.{ .builtin = .UIntNative });
+            const value = c.LLVMBuildLoad2(self.builder, native_uint_ty, argc_ptr, "runtime.argc");
+            _ = c.LLVMBuildRet(self.builder, value);
+            return;
+        }
+
+        if (is_extern and std.mem.eql(u8, f.name, "__argi_runtime_argv")) {
+            try self.ensureRuntimeArgGlobals();
+            const entry = c.LLVMAppendBasicBlock(fn_ref, "entry");
+            c.LLVMPositionBuilderAtEnd(self.builder, entry);
+            const argv_ptr = self.runtime_argv_global orelse return CodegenError.InvalidType;
+            const native_uint_ty = try self.toLLVMType(.{ .builtin = .UIntNative });
+            const value = c.LLVMBuildLoad2(self.builder, native_uint_ty, argv_ptr, "runtime.argv");
+            _ = c.LLVMBuildRet(self.builder, value);
+            return;
+        }
 
         // ─── funciones externas: ¡nada más que hacer! ────────────────────
         if (is_extern) return;
@@ -1224,10 +1233,7 @@ pub const CodeGenerator = struct {
 
     // ────────────────────────────────────────── call ──
     fn genFunctionCall(self: *CodeGenerator, fc: *const sem.FunctionCall) CodegenError!?TypedValue {
-        const key_name = if (fc.callee.isExtern() or isMainName(fc.callee.name) or isMainCandidate(fc.callee))
-            fc.callee.name
-        else
-            try self.mangledNameFor(fc.callee);
+        const key_name = try self.functionSymbolKey(fc.callee);
         const sym = self.current_scope.lookup(key_name) orelse
             return CodegenError.SymbolNotFound;
         const callee_decl = fc.callee;
@@ -1380,10 +1386,7 @@ pub const CodeGenerator = struct {
             }
         }
 
-        const key_name = if (ti.init_fn.isExtern() or isMainName(ti.init_fn.name) or isMainCandidate(ti.init_fn))
-            ti.init_fn.name
-        else
-            try self.mangledNameFor(ti.init_fn);
+        const key_name = try self.functionSymbolKey(ti.init_fn);
         var sym_opt = self.current_scope.lookup(key_name);
         if (sym_opt == null) {
             const in_ty_ref = init_input_ty_ref;
@@ -1673,36 +1676,127 @@ pub const CodeGenerator = struct {
         };
     }
 
-    fn genDefaultedMainWrapper(self: *CodeGenerator, user_main: *const sem.FunctionDeclaration) !void {
-        const user_key = try self.mangledNameFor(user_main);
+    fn ensureRuntimeArgGlobals(self: *CodeGenerator) !void {
+        if (self.runtime_argc_global != null and self.runtime_argv_global != null) return;
+
+        const native_uint_ty = try self.toLLVMType(.{ .builtin = .UIntNative });
+        const argc_name = try self.dupZ("__argi_runtime_argc_global");
+        const argv_name = try self.dupZ("__argi_runtime_argv_global");
+
+        const argc_global = c.LLVMAddGlobal(self.module, native_uint_ty, argc_name.ptr);
+        c.LLVMSetInitializer(argc_global, c.LLVMConstNull(native_uint_ty));
+
+        const argv_global = c.LLVMAddGlobal(self.module, native_uint_ty, argv_name.ptr);
+        c.LLVMSetInitializer(argv_global, c.LLVMConstNull(native_uint_ty));
+
+        self.runtime_argc_global = argc_global;
+        self.runtime_argv_global = argv_global;
+    }
+
+    fn ensureRuntimeArgFunctions(self: *CodeGenerator) !void {
+        try self.ensureRuntimeArgGlobals();
+
+        const native_uint_ty = try self.toLLVMType(.{ .builtin = .UIntNative });
+        const fn_ty = c.LLVMFunctionType(native_uint_ty, null, 0, 0);
+
+        const argc_name = try self.dupZ("__argi_runtime_argc");
+        const argc_fn = c.LLVMAddFunction(self.module, argc_name.ptr, fn_ty);
+        if (c.LLVMGetFirstBasicBlock(argc_fn) == null) {
+            const entry = c.LLVMAppendBasicBlock(argc_fn, "entry");
+            c.LLVMPositionBuilderAtEnd(self.builder, entry);
+            const value = c.LLVMBuildLoad2(self.builder, native_uint_ty, self.runtime_argc_global.?, "runtime.argc");
+            _ = c.LLVMBuildRet(self.builder, value);
+        }
+
+        const argv_name = try self.dupZ("__argi_runtime_argv");
+        const argv_fn = c.LLVMAddFunction(self.module, argv_name.ptr, fn_ty);
+        if (c.LLVMGetFirstBasicBlock(argv_fn) == null) {
+            const entry = c.LLVMAppendBasicBlock(argv_fn, "entry");
+            c.LLVMPositionBuilderAtEnd(self.builder, entry);
+            const value = c.LLVMBuildLoad2(self.builder, native_uint_ty, self.runtime_argv_global.?, "runtime.argv");
+            _ = c.LLVMBuildRet(self.builder, value);
+        }
+    }
+
+    fn findZeroArgInitForType(self: *CodeGenerator, ty: sem.Type) ?*const sem.FunctionDeclaration {
+        for (self.ast) |node| {
+            if (node.content != .function_declaration) continue;
+            const f = node.content.function_declaration;
+            if (!std.mem.eql(u8, f.name, "init")) continue;
+            if (f.input.fields.len != 1) continue;
+            const first = f.input.fields[0];
+            if (!std.mem.eql(u8, first.name, "p")) continue;
+            if (first.ty != .pointer_type) continue;
+            if (!sem_types.typesExactlyEqual(first.ty.pointer_type.child.*, ty)) continue;
+            return f;
+        }
+        return null;
+    }
+
+    fn genConstructedTypeValue(self: *CodeGenerator, ty: sem.Type) !TypedValue {
+        const init_fn = self.findZeroArgInitForType(ty) orelse return CodegenError.ValueNotFound;
+        const result_ty_ref = try self.toLLVMType(ty);
+        const storage = c.LLVMBuildAlloca(self.builder, result_ty_ref, "main.ctor.tmp");
+        const init_input_ty_ref = try self.toLLVMType(.{ .struct_type = &init_fn.input });
+        var agg = c.LLVMGetUndef(init_input_ty_ref);
+        agg = c.LLVMBuildInsertValue(self.builder, agg, storage, 0, "main.ctor.arg.p");
+
+        const key_name = try self.functionSymbolKey(init_fn);
+        const fn_sym = self.current_scope.lookup(key_name) orelse return CodegenError.SymbolNotFound;
+
+        var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, 1);
+        defer self.allocator.free(argv);
+        argv[0] = agg;
+        _ = c.LLVMBuildCall2(self.builder, fn_sym.type_ref, fn_sym.ref, argv.ptr, 1, "");
+
+        const value = c.LLVMBuildLoad2(self.builder, result_ty_ref, storage, "main.ctor.load");
+        return .{ .value_ref = value, .type_ref = result_ty_ref, .sem_type = ty };
+    }
+
+    fn genMainInputFieldValue(self: *CodeGenerator, field: sem.StructTypeField) !TypedValue {
+        if (field.default_value) |default_node| {
+            const field_tv_opt = try self.visitNode(default_node);
+            return field_tv_opt orelse return CodegenError.ValueNotFound;
+        }
+
+        if (std.mem.eql(u8, field.name, "system")) {
+            return try self.genConstructedTypeValue(field.ty);
+        }
+
+        return CodegenError.ValueNotFound;
+    }
+
+    fn genCMainWrapper(self: *CodeGenerator, user_main: *const sem.FunctionDeclaration) !void {
+        try self.ensureRuntimeArgGlobals();
+        try self.ensureRuntimeArgFunctions();
+
+        const user_key = try self.functionSymbolKey(user_main);
         const user_sym = self.global_scope.lookup(user_key) orelse return CodegenError.SymbolNotFound;
 
-        const empty_input = try self.allocator.create(sem.StructType);
-        empty_input.* = .{ .fields = &.{} };
-
-        const wrapper_input_ty = try self.toLLVMType(.{ .struct_type = empty_input });
-        const wrapper_output_ty = try self.toLLVMType(.{ .struct_type = &user_main.output });
-        const wrapper_fn_ty = c.LLVMFunctionType(
-            wrapper_output_ty,
-            blk: {
-                var a = try self.allocator.alloc(llvm.c.LLVMTypeRef, 1);
-                a[0] = wrapper_input_ty;
-                break :blk a.ptr;
-            },
-            1,
-            0,
-        );
+        const int32_ty = c.LLVMInt32Type();
+        const i8_ptr_ty = c.LLVMPointerType(c.LLVMInt8Type(), 0);
+        const argv_ptr_ty = c.LLVMPointerType(i8_ptr_ty, 0);
+        var param_tys = [_]llvm.c.LLVMTypeRef{ int32_ty, argv_ptr_ty };
+        const wrapper_fn_ty = c.LLVMFunctionType(int32_ty, &param_tys, 2, 0);
 
         const cname = try self.dupZ("main");
         const fn_ref = c.LLVMAddFunction(self.module, cname.ptr, wrapper_fn_ty);
         const entry = c.LLVMAppendBasicBlock(fn_ref, "entry");
         c.LLVMPositionBuilderAtEnd(self.builder, entry);
 
+        const argc_param = c.LLVMGetParam(fn_ref, 0);
+        const argv_param = c.LLVMGetParam(fn_ref, 1);
+        const native_uint_ty = try self.toLLVMType(.{ .builtin = .UIntNative });
+
+        const argc_native = c.LLVMBuildZExt(self.builder, argc_param, native_uint_ty, "argc.native");
+        _ = c.LLVMBuildStore(self.builder, argc_native, self.runtime_argc_global.?);
+
+        const argv_native = c.LLVMBuildPtrToInt(self.builder, argv_param, native_uint_ty, "argv.native");
+        _ = c.LLVMBuildStore(self.builder, argv_native, self.runtime_argv_global.?);
+
         var input_agg = c.LLVMGetUndef(try self.toLLVMType(.{ .struct_type = &user_main.input }));
         for (user_main.input.fields, 0..) |field, idx| {
-            const default_node = field.default_value orelse return CodegenError.ValueNotFound;
-            const field_tv_opt = try self.visitNode(default_node);
-            const field_tv = field_tv_opt orelse return CodegenError.ValueNotFound;
+            const field_tv = try self.genMainInputFieldValue(field);
             input_agg = c.LLVMBuildInsertValue(
                 self.builder,
                 input_agg,
@@ -1717,6 +1811,10 @@ pub const CodeGenerator = struct {
         argv[0] = input_agg;
 
         const result = c.LLVMBuildCall2(self.builder, user_sym.type_ref, user_sym.ref, argv.ptr, 1, "main.call");
-        _ = c.LLVMBuildRet(self.builder, result);
+        const status = if (c.LLVMGetTypeKind(c.LLVMTypeOf(result)) == c.LLVMStructTypeKind)
+            c.LLVMBuildExtractValue(self.builder, result, 0, "main.status")
+        else
+            result;
+        _ = c.LLVMBuildRet(self.builder, status);
     }
 };
