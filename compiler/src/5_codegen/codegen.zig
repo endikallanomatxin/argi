@@ -1497,12 +1497,56 @@ pub const CodeGenerator = struct {
     // ────────────────────────────────────────── address-of ──
     fn genAddressOf(self: *CodeGenerator, node: *const sem.SGNode) !TypedValue {
         const target = node.content.address_of;
-        const bu = target.content.binding_use;
-        const sym = self.current_scope.lookup(bu.name) orelse
-            return CodegenError.SymbolNotFound;
+        const ptr_tv = try self.genAddressablePointer(target);
+        return .{ .value_ref = ptr_tv.value_ref, .type_ref = ptr_tv.type_ref, .sem_type = node.sem_type };
+    }
 
-        const ptr_ty = c.LLVMPointerType(sym.type_ref, 0);
-        return .{ .value_ref = sym.ref, .type_ref = ptr_ty, .sem_type = node.sem_type };
+    fn addressableValueType(self: *CodeGenerator, target: *const sem.SGNode) !sem.Type {
+        return switch (target.content) {
+            .binding_use => |bu| blk: {
+                const sym = self.current_scope.lookup(bu.name) orelse return CodegenError.SymbolNotFound;
+                break :blk sym.sem_type orelse return CodegenError.InvalidType;
+            },
+            .struct_field_access => |sfa| blk: {
+                const base_ty = try self.addressableValueType(sfa.struct_value);
+                if (base_ty != .struct_type) return CodegenError.InvalidType;
+                if (sfa.field_index >= base_ty.struct_type.fields.len) return CodegenError.InvalidType;
+                break :blk base_ty.struct_type.fields[sfa.field_index].ty;
+            },
+            .dereference => |d| d.ty,
+            else => CodegenError.InvalidType,
+        };
+    }
+
+    fn genAddressablePointer(self: *CodeGenerator, target: *const sem.SGNode) !TypedValue {
+        return switch (target.content) {
+            .binding_use => |bu| blk: {
+                const sym = self.current_scope.lookup(bu.name) orelse
+                    return CodegenError.SymbolNotFound;
+                const ptr_ty = c.LLVMPointerType(sym.type_ref, 0);
+                break :blk .{ .value_ref = sym.ref, .type_ref = ptr_ty, .sem_type = null };
+            },
+            .struct_field_access => |sfa| blk: {
+                const base_ptr = try self.genAddressablePointer(sfa.struct_value);
+                const base_sem_ty = try self.addressableValueType(sfa.struct_value);
+                if (base_sem_ty != .struct_type) return CodegenError.InvalidType;
+                const struct_ty_ref = try self.toLLVMType(.{ .struct_type = base_sem_ty.struct_type });
+                const field_ptr = c.LLVMBuildStructGEP2(
+                    self.builder,
+                    struct_ty_ref,
+                    base_ptr.value_ref,
+                    sfa.field_index,
+                    "field.addr",
+                );
+                const field_ty_ref = c.LLVMStructGetTypeAtIndex(struct_ty_ref, sfa.field_index);
+                break :blk .{ .value_ref = field_ptr, .type_ref = c.LLVMPointerType(field_ty_ref, 0), .sem_type = null };
+            },
+            .dereference => |d| blk: {
+                const ptr_tv = (try self.visitNode(d.pointer)) orelse return CodegenError.ValueNotFound;
+                break :blk ptr_tv;
+            },
+            else => CodegenError.InvalidType,
+        };
     }
 
     fn genDereference(self: *CodeGenerator, d: *const sem.Dereference) !TypedValue {
