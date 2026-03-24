@@ -922,6 +922,26 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
+            .break_statement => self.handleBreak(n.location, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in break statement: {s}",
+                    .{@errorName(err)},
+                );
+                break :blk err;
+            },
+
+            .continue_statement => self.handleContinue(n.location, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in continue statement: {s}",
+                    .{@errorName(err)},
+                );
+                break :blk err;
+            },
+
             .defer_statement => |expr| self.handleDefer(expr, s) catch |err| blk: {
                 if (err != error.Reported) {
                     try self.diags.add(
@@ -2394,8 +2414,7 @@ pub const Semantizer = struct {
         _ = self;
         _ = loc;
         return switch (lit) {
-            .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => |txt|
-                std.fmt.parseInt(i64, txt, 0) catch null,
+            .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => |txt| std.fmt.parseInt(i64, txt, 0) catch null,
             else => null,
         };
     }
@@ -3909,25 +3928,25 @@ pub const Semantizer = struct {
                 else => return err,
             };
 
-                if (inferred) |instantiated| {
-                    chosen = instantiated;
+            if (inferred) |instantiated| {
+                chosen = instantiated;
+            } else {
+                if (call.module_qualifier) |module_name| {
+                    chosen = try self.resolveQualifiedOverload(module_name, call.callee, input_te, s, loc);
                 } else {
-                    if (call.module_qualifier) |module_name| {
-                        chosen = try self.resolveQualifiedOverload(module_name, call.callee, input_te, s, loc);
-                    } else {
-                        chosen = self.resolveVisibleOverload(call.callee, input_te, s, loc) catch |err| switch (err) {
-                            error.SymbolNotFound => {
-                                const abstract_inferred = self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .abstract_contract) catch |inner_err| switch (inner_err) {
-                                    error.SymbolNotFound => null,
-                                    else => return inner_err,
-                                };
-                                if (abstract_inferred) |instantiated_abstract| return instantiated_abstract;
-                                return error.SymbolNotFound;
-                            },
-                            else => return err,
-                        };
-                    }
+                    chosen = self.resolveVisibleOverload(call.callee, input_te, s, loc) catch |err| switch (err) {
+                        error.SymbolNotFound => {
+                            const abstract_inferred = self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .abstract_contract) catch |inner_err| switch (inner_err) {
+                                error.SymbolNotFound => null,
+                                else => return inner_err,
+                            };
+                            if (abstract_inferred) |instantiated_abstract| return instantiated_abstract;
+                            return error.SymbolNotFound;
+                        },
+                        else => return err,
+                    };
                 }
+            }
         }
         return chosen;
     }
@@ -5785,6 +5804,28 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
+    fn handleBreak(
+        self: *Semantizer,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        _ = loc;
+        const n = try sg.makeSGNode(.{ .break_statement = .{} }, undefined, self.allocator);
+        try s.nodes.append(n);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleContinue(
+        self: *Semantizer,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        _ = loc;
+        const n = try sg.makeSGNode(.{ .continue_statement = .{} }, undefined, self.allocator);
+        try s.nodes.append(n);
+        return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
     fn handleFor(
         self: *Semantizer,
         f: syn.ForStatement,
@@ -6250,15 +6291,15 @@ pub const Semantizer = struct {
     }
 
     //────────────────────────────────────────────────── POINTER ASSIGNMENT
-const CallArg = struct {
-    name: []const u8,
-    expr: typ.TypedExpr,
-};
+    const CallArg = struct {
+        name: []const u8,
+        expr: typ.TypedExpr,
+    };
 
-const GenericParamSyntaxInfo = struct {
-    params: []const gen.GenericParam,
-    abstract_constraints: []const ?[]const u8,
-};
+    const GenericParamSyntaxInfo = struct {
+        params: []const gen.GenericParam,
+        abstract_constraints: []const ?[]const u8,
+    };
 
     fn buildCallInputWithPositionalPrefix(
         self: *Semantizer,
@@ -7190,7 +7231,7 @@ const GenericParamSyntaxInfo = struct {
         auto_ptr.* = .{ .binding = binding, .deinit_fn = deinit_fn };
 
         const call_node = try sg.makeSGNode(.{ .auto_deinit_binding = auto_ptr }, loc, self.allocator);
-        try self.registerDefer(s, &[_]*sg.SGNode{ call_node });
+        try self.registerDefer(s, &[_]*sg.SGNode{call_node});
     }
 
     // ─────────────────────────────────────────────────── Helpers reintento

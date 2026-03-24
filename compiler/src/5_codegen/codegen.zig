@@ -4,6 +4,7 @@ const c = llvm.c;
 const sem = @import("../4_semantics/semantic_graph.zig");
 const sem_types = @import("../4_semantics/types.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
+const tok = @import("../2_tokens/token.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
 pub const CodegenError = error{
@@ -34,6 +35,11 @@ const TypedValue = struct {
     value_ref: llvm.c.LLVMValueRef,
     type_ref: llvm.c.LLVMTypeRef,
     sem_type: ?sem.Type = null,
+};
+
+const LoopContext = struct {
+    break_block: llvm.c.LLVMBasicBlockRef,
+    continue_block: llvm.c.LLVMBasicBlockRef,
 };
 
 fn isUnsignedBuiltin(sem_ty: ?sem.Type) bool {
@@ -88,6 +94,8 @@ pub const CodeGenerator = struct {
     runtime_argc_global: ?llvm.c.LLVMValueRef = null,
     runtime_argv_global: ?llvm.c.LLVMValueRef = null,
 
+    loop_stack: std.array_list.Managed(LoopContext),
+
     global_scope: *Scope, // nunca se destruye hasta el final
     current_scope: *Scope, // apunta al scope donde estamos ahora
 
@@ -106,11 +114,14 @@ pub const CodeGenerator = struct {
             .builder = b,
             .global_scope = gscope,
             .current_scope = gscope,
+            .loop_stack = std.array_list.Managed(LoopContext).init(a.*),
         };
     }
 
     pub fn deinit(self: *CodeGenerator) void {
         if (self.builder) |b| c.LLVMDisposeBuilder(b);
+
+        self.loop_stack.deinit();
 
         // Recorremos la cadena y liberamos cada scope
         var s: ?*Scope = self.current_scope;
@@ -219,6 +230,20 @@ pub const CodeGenerator = struct {
             .return_statement => |r| {
                 self.genReturn(r) catch |e| {
                     try self.diags.add(n.location, .codegen, "error generating return statement: {s}", .{@errorName(e)});
+                    return e;
+                };
+                return null;
+            },
+            .break_statement => {
+                self.genBreak(n.location) catch |e| {
+                    try self.diags.add(n.location, .codegen, "error generating break statement: {s}", .{@errorName(e)});
+                    return e;
+                };
+                return null;
+            },
+            .continue_statement => {
+                self.genContinue(n.location) catch |e| {
+                    try self.diags.add(n.location, .codegen, "error generating continue statement: {s}", .{@errorName(e)});
                     return e;
                 };
                 return null;
@@ -1142,11 +1167,31 @@ pub const CodeGenerator = struct {
         _ = c.LLVMBuildCondBr(self.builder, cond_tv.value_ref, bodyB, endB);
 
         c.LLVMPositionBuilderAtEnd(self.builder, bodyB);
+        try self.loop_stack.append(.{ .break_block = endB, .continue_block = condB });
+        defer _ = self.loop_stack.pop();
         _ = try self.genCodeBlock(w.body);
         if (c.LLVMGetBasicBlockTerminator(bodyB) == null)
             _ = c.LLVMBuildBr(self.builder, condB);
 
         c.LLVMPositionBuilderAtEnd(self.builder, endB);
+    }
+
+    fn genBreak(self: *CodeGenerator, loc: tok.Location) !void {
+        if (self.loop_stack.items.len == 0) {
+            try self.diags.add(loc, .codegen, "break used outside of a loop", .{});
+            return CodegenError.CompilationFailed;
+        }
+        const loop_ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
+        _ = c.LLVMBuildBr(self.builder, loop_ctx.break_block);
+    }
+
+    fn genContinue(self: *CodeGenerator, loc: tok.Location) !void {
+        if (self.loop_stack.items.len == 0) {
+            try self.diags.add(loc, .codegen, "continue used outside of a loop", .{});
+            return CodegenError.CompilationFailed;
+        }
+        const loop_ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
+        _ = c.LLVMBuildBr(self.builder, loop_ctx.continue_block);
     }
 
     fn genSwitchStatement(self: *CodeGenerator, sw: *const sem.SwitchStatement) !void {

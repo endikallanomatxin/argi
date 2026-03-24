@@ -52,6 +52,8 @@ pub const Content = union(enum) {
     index_access: IndexAccess,
 
     return_statement: ReturnStatement,
+    break_statement: struct {},
+    continue_statement: struct {},
     binary_operation: BinaryOperation,
     comparison: Comparison,
     if_statement: IfStatement,
