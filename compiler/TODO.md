@@ -289,10 +289,6 @@
     - Decidir qué primitivas mínimas de runtime/FFI hacen falta para inicializar
       cada capability real sin hardcodear la estructura completa en codegen.
 
-    - Añadir tests específicos para:
-        - reached arguments que consumen `system.allocator`,
-        - reached arguments con rutas anidadas como `system.terminal.stdout`.
-
 
 - Roadmap de bootstrap
 
