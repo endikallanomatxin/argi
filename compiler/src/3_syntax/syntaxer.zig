@@ -894,10 +894,15 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.hash)) {
             const hash_loc = self.tokenLocation();
             self.advanceOne();
+            const ident_loc = self.tokenLocation();
             const ident = try self.parseIdentifier();
             if (std.mem.eql(u8, ident, "defer")) {
                 const expr = try self.parseExpression();
                 return try self.makeNode(.{ .defer_statement = expr }, hash_loc);
+            }
+            if (std.mem.eql(u8, ident, "keep")) {
+                const kept_name = try self.parseName();
+                return try self.makeNode(.{ .keep_statement = kept_name }, ident_loc);
             }
             if (std.mem.eql(u8, ident, "import")) {
                 try self.diags.add(hash_loc, .syntax, "#import must be assigned to a name", .{});

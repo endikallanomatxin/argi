@@ -837,6 +837,26 @@ test "449_main_system_input" {
     try runExpect(0);
 }
 
+test "450_default_type_initializer_argument" {
+    try clean();
+    try expectSuccessfulBuild("tests/450_default_type_initializer_argument/main.rg");
+    try runExpect(7);
+}
+
+test "451_keep_cancels_auto_deinit" {
+    try clean();
+    try expectSuccessfulBuild("tests/451_keep_cancels_auto_deinit/main.rg");
+    try runExpect(0);
+}
+
+test "452X_keep_without_auto_deinit" {
+    try clean();
+    try buildExpectFail(
+        "tests/452X_keep_without_auto_deinit/main.rg",
+        "cannot keep binding 'value': no automatic deinit is scheduled",
+    );
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");

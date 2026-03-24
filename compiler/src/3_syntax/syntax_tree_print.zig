@@ -358,6 +358,9 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             std.debug.print("expr:\n", .{});
             printNode(df.*, lvl + 2);
         },
+        .keep_statement => |name| {
+            std.debug.print("Keep {s}\n", .{name.string});
+        },
         .index_assignment => |ia| {
             std.debug.print("IndexAssignment\n", .{});
             indent(lvl + 1);
