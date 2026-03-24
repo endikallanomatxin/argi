@@ -1,29 +1,23 @@
-- North star
+# PLAN
 
-    - Llevar Argi a un punto en el que el compilador pueda empezar a migrarse
-    gradualmente desde Zig hacia Argi.
+Objetivo: Llevar Argi a un punto en el que el compilador pueda empezar a
+migrarse gradualmente desde Zig hacia Argi.
 
-    - Eso implica tres cosas a la vez:
-        1. que la semántica central del lenguaje esté suficientemente cerrada,
-        2. que `core` y `more` tengan las piezas mínimas para escribir un
-           compilador serio,
-        3. que el backend/tooling del compilador deje de estar tan acoplado a
-           decisiones ad hoc del prototipo actual.
+Debemos:
+
+- Tomar las decisiones de diseño que estén abiertas todavía.
+- Ir reduciendo discrepancias entre `description/` y la implementación en
+`compiler/`.
+- Trabajar en `core` para que tenga las piezas mínimas necesarias para escribir
+un compilador serio.
+- Mejorar las herramientas de desarrollo del lenguaje.
+- Intentar evitar inconsistencias y quirks del compilador. Queremos
+minimizar los "special cases" que tiene que considerar el usuario. Si nos
+tomamos alguna licencia durante el desarrollo, anotar el TODO correspondiente
+de limpiarla.
 
 
-- Prioridades reales ahora
-
-    - 1. Seguir cerrando las discrepancias grandes entre `description/` y
-      `compiler/`, especialmente en `Abstract`, ownership/copying y tipos
-      compuestos.
-
-    - 2. Construir las piezas mínimas para self-hosting parcial:
-      colecciones, asignadores, errores, testing, módulos/build y C/LLVM
-      interop suficientemente usables.
-
-    - 3. Desacoplar el compilador de detalles del prototipo Zig actual para que
-      el backend y el front puedan sustituirse por fases.
-
+## TODOs específicos
 
 - Coherencia lenguaje <-> compilador
 
@@ -377,14 +371,3 @@
         - mantiene una parte del backend en Zig/C,
         - o da el salto a otra arquitectura.
 
-
-- No perder de vista
-
-    - No abrir demasiadas features nuevas “bonitas” si no acercan el lenguaje a
-      ser implementable por sí mismo.
-
-    - Cada cambio importante debería responder al menos a una de estas
-      preguntas:
-        - ¿reduce una discrepancia fuerte con `description/`?
-        - ¿acerca `core` a poder alojar un compilador?
-        - ¿reduce el acoplamiento estructural del compilador actual?
