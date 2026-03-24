@@ -72,6 +72,7 @@ pub fn linkWithLibc(
         std.mem.span(obj_path),
         "-o",
         output_path,
+        "-Wl,--no-eh-frame-hdr",
         "-lc",
     };
 

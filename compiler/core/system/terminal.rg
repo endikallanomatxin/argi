@@ -65,12 +65,27 @@ init(.p: $&Terminal, .stdin: $&StdIn, .stdout: $&StdOut, .stderr: $&StdErr) -> (
 
 read_line(
     .self: $&StdIn,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.line: String) := {
-    -- TODO: implement real terminal line reading once Char/byte/int casts and
-    -- text ownership are settled on top of the lower-level Reader/File layers.
-    _ ::= allocator
-    line = String(.allocator = allocator, .length = 0)
+    .buffer: $&TextBuffer,
+) -> () := {
+    clear(.self = buffer)
+
+    while 1 == 1 {
+        if buffer&.length == buffer&.capacity {
+            break
+        }
+
+        next ::= read_byte(.self = $&self&.reader)
+        if is(.value = next, .variant = ..end) {
+            break
+        }
+
+        payload ::= next..ok
+        if payload.byte == 10 {
+            break
+        }
+
+        push_byte(.self = buffer, .byte = payload.byte)
+    }
 }
 
 read_byte(.self: $&StdIn) -> (.result: ReadByte) := {
@@ -105,6 +120,20 @@ print(
     write(.self = stdout, .text = text)
 }
 
+print_text_buffer(
+    .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout,
+    .buffer: &TextBuffer,
+) -> () := {
+    write_text_buffer(.writer = stdout, .buffer = buffer)
+}
+
+print_line_text_buffer(
+    .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout,
+    .buffer: &TextBuffer,
+) -> () := {
+    write_line_text_buffer(.writer = stdout, .buffer = buffer)
+}
+
 flush(
     .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout,
 ) -> () := {
@@ -116,6 +145,20 @@ print_error(
     .text: String,
 ) -> () := {
     write(.self = stderr, .text = text)
+}
+
+print_error_text_buffer(
+    .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
+    .buffer: &TextBuffer,
+) -> () := {
+    write_text_buffer(.writer = stderr, .buffer = buffer)
+}
+
+print_error_line_text_buffer(
+    .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
+    .buffer: &TextBuffer,
+) -> () := {
+    write_line_text_buffer(.writer = stderr, .buffer = buffer)
 }
 
 flush_error(

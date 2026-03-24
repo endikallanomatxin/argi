@@ -12,8 +12,23 @@ fn modulePathFor(path: []const u8) []const u8 {
     return path;
 }
 
+fn waitForOutputRelease() !void {
+    var i: u8 = 0;
+    while (i < 20) : (i += 1) {
+        const rename_result = std.fs.cwd().rename(output_bin, output_bin);
+        if (rename_result) |_| {
+            return;
+        } else |err| switch (err) {
+            error.FileBusy => std.Thread.sleep(10 * std.time.ns_per_ms),
+            error.FileNotFound => return,
+            else => return err,
+        }
+    }
+}
+
 fn clean() !void {
     const cwd = std.fs.cwd();
+    try waitForOutputRelease();
     cwd.deleteFile("output.ll") catch |err| {
         if (err != error.FileNotFound) return err;
     };
@@ -902,6 +917,30 @@ test "459_file_preopened_stdio" {
 test "460_file_open_close" {
     try clean();
     try expectSuccessfulBuild("tests/460_file_open_close/main.rg");
+    try runExpect(0);
+}
+
+test "461_text_buffer_io" {
+    try clean();
+    try expectSuccessfulBuild("tests/461_text_buffer_io/main.rg");
+    try runExpect(0);
+}
+
+test "462_while_if_break_codegen" {
+    try clean();
+    try expectSuccessfulBuild("tests/462_while_if_break_codegen/main.rg");
+    try runExpect(0);
+}
+
+test "463_if_break_only_codegen" {
+    try clean();
+    try expectSuccessfulBuild("tests/463_if_break_only_codegen/main.rg");
+    try runExpect(0);
+}
+
+test "464_text_buffer_helpers" {
+    try clean();
+    try expectSuccessfulBuild("tests/464_text_buffer_helpers/main.rg");
     try runExpect(0);
 }
 
