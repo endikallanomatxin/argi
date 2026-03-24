@@ -281,6 +281,20 @@
         - end-to-end.
 
 
+- Refactor de `System` y bootstrap de runtime
+
+    - Mantener `System` como agregador de capabilities por puntero/handle donde
+      eso exprese mejor la semántica del runtime.
+
+    - Decidir qué primitivas mínimas de runtime/FFI hacen falta para inicializar
+      cada capability real sin hardcodear la estructura completa en codegen.
+
+    - Añadir tests específicos para:
+        - defaults con `Type()` en argumentos,
+        - reached arguments que consumen `system.allocator`,
+        - reached arguments con rutas anidadas como `system.terminal.stdout`.
+
+
 - Roadmap de bootstrap
 
     - Etapa 1: escribir utilidades de `core` en Argi
