@@ -8,6 +8,14 @@ Terminal : Type = (
     .stderr : $&StdErr
 )
 
+init(.p: $&Terminal, .stdin: $&StdIn, .stdout: $&StdOut, .stderr: $&StdErr) -> () := {
+    p& = (
+        .stdin = stdin,
+        .stdout = stdout,
+        .stderr = stderr
+    )
+}
+
 read_line(
     .self: $&StdIn,
     .allocator: $&Allocator = #reach allocator, system.allocator,

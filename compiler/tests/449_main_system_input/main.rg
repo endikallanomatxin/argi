@@ -1,4 +1,4 @@
-main(.system: System) -> (.status_code: Int32) := {
+main(.system: System = System()) -> (.status_code: Int32) := {
     allocator ::= system.allocator
     text ::= String(.length = 1)
     bytes_set(.string = $&text, .index = 0, .value = 65)

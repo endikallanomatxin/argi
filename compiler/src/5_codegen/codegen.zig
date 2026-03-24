@@ -84,7 +84,7 @@ pub const CodeGenerator = struct {
     builder: llvm.c.LLVMBuilderRef,
     current_return_type: ?llvm.c.LLVMTypeRef = null,
     current_fn_decl: ?*sem.FunctionDeclaration = null,
-    system_main_candidate: ?*sem.FunctionDeclaration = null,
+    defaulted_main_candidate: ?*sem.FunctionDeclaration = null,
 
     global_scope: *Scope, // nunca se destruye hasta el final
     current_scope: *Scope, // apunta al scope donde estamos ahora
@@ -141,8 +141,8 @@ pub const CodeGenerator = struct {
             };
         }
 
-        if (self.system_main_candidate) |f| {
-            try self.genSystemMainWrapper(f);
+        if (self.defaulted_main_candidate) |f| {
+            try self.genDefaultedMainWrapper(f);
         }
 
         var msg: [*c]u8 = null;
@@ -490,16 +490,21 @@ pub const CodeGenerator = struct {
         };
     }
 
-    fn isSystemMainCandidate(f: *const sem.FunctionDeclaration) bool {
-        if (f.input.fields.len != 1) return false;
-        if (!std.mem.eql(u8, f.input.fields[0].name, "system")) return false;
+    fn isDefaultedMainCandidate(f: *const sem.FunctionDeclaration) bool {
+        if (!isMainName(f.name)) return false;
+        if (f.input.fields.len == 0) return false;
         if (f.output.fields.len != 1) return false;
         const fld = f.output.fields[0];
         if (!std.mem.eql(u8, fld.name, "status_code")) return false;
-        return switch (fld.ty) {
+        const output_ok = switch (fld.ty) {
             .builtin => |bt| bt == .Int32,
             else => false,
         };
+        if (!output_ok) return false;
+        for (f.input.fields) |field| {
+            if (field.default_value == null) return false;
+        }
+        return true;
     }
 
     fn genFunction(self: *CodeGenerator, f: *sem.FunctionDeclaration) !void {
@@ -507,8 +512,8 @@ pub const CodeGenerator = struct {
         self.current_fn_decl = f;
         defer self.current_fn_decl = prev_fn;
 
-        if (isSystemMainCandidate(f)) {
-            self.system_main_candidate = f;
+        if (isDefaultedMainCandidate(f)) {
+            self.defaulted_main_candidate = f;
         }
 
         const is_extern = (f.body == null);
@@ -539,7 +544,7 @@ pub const CodeGenerator = struct {
         }
 
         // ─── creación / tabla de símbolos ────────────────────────────────
-        const key_name = if (is_extern or isMainCandidate(f) or (isMainName(f.name) and !isSystemMainCandidate(f))) f.name else blk: {
+        const key_name = if (is_extern or isMainCandidate(f) or (isMainName(f.name) and !isDefaultedMainCandidate(f))) f.name else blk: {
             const m = try self.mangledNameFor(f);
             break :blk m;
         };
@@ -1624,11 +1629,7 @@ pub const CodeGenerator = struct {
         };
     }
 
-    fn genSystemMainWrapper(self: *CodeGenerator, user_main: *const sem.FunctionDeclaration) !void {
-        // TODO: If system setup grows, move this bootstrapping logic into a core
-        // prelude module instead of hard-coding the runtime shape in codegen.
-        // TODO: Decide whether plain `main()` should remain a supported way to
-        // skip that prelude and opt out of system injection entirely.
+    fn genDefaultedMainWrapper(self: *CodeGenerator, user_main: *const sem.FunctionDeclaration) !void {
         const user_key = try self.mangledNameFor(user_main);
         const user_sym = self.global_scope.lookup(user_key) orelse return CodegenError.SymbolNotFound;
 
@@ -1654,9 +1655,18 @@ pub const CodeGenerator = struct {
         c.LLVMPositionBuilderAtEnd(self.builder, entry);
 
         var input_agg = c.LLVMGetUndef(try self.toLLVMType(.{ .struct_type = &user_main.input }));
-        const system_field = user_main.input.fields[0];
-        const system_tv = try self.genAutoMaterializedValue(system_field.ty);
-        input_agg = c.LLVMBuildInsertValue(self.builder, input_agg, system_tv.value_ref, 0, "main.system");
+        for (user_main.input.fields, 0..) |field, idx| {
+            const default_node = field.default_value orelse return CodegenError.ValueNotFound;
+            const field_tv_opt = try self.visitNode(default_node);
+            const field_tv = field_tv_opt orelse return CodegenError.ValueNotFound;
+            input_agg = c.LLVMBuildInsertValue(
+                self.builder,
+                input_agg,
+                field_tv.value_ref,
+                @intCast(idx),
+                "main.default",
+            );
+        }
 
         var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, 1);
         defer self.allocator.free(argv);
