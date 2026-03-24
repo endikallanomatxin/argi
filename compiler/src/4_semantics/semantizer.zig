@@ -430,25 +430,39 @@ pub const Semantizer = struct {
         mutability: syn.PointerMutability,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
-        if (inner.node.content != .binding_use) {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "cannot take the address of this expression; only named variables are addressable",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        const binding = inner.node.content.binding_use;
-        if (mutability == .read_write and binding.mutability != .variable) {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "binding '{s}' is immutable; declare it with '::' or take '&{s}' instead of '$&{s}'",
-                .{ binding.name, binding.name, binding.name },
-            );
-            return error.Reported;
+        switch (inner.node.content) {
+            .binding_use => |binding| {
+                if (mutability == .read_write and binding.mutability != .variable) {
+                    try self.diags.add(
+                        loc,
+                        .semantic,
+                        "binding '{s}' is immutable; declare it with '::' or take '&{s}' instead of '$&{s}'",
+                        .{ binding.name, binding.name, binding.name },
+                    );
+                    return error.Reported;
+                }
+            },
+            .struct_field_access => {},
+            .dereference => |deref| {
+                if (mutability == .read_write and deref.pointer_type.mutability != .read_write) {
+                    try self.diags.add(
+                        loc,
+                        .semantic,
+                        "cannot assign through this pointer because it is read-only; use '$&' when acquiring it",
+                        .{},
+                    );
+                    return error.Reported;
+                }
+            },
+            else => {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "cannot take the address of this expression; only addressable values support '&'",
+                    .{},
+                );
+                return error.Reported;
+            },
         }
 
         const child = try self.allocator.create(sg.Type);
@@ -1495,6 +1509,7 @@ pub const Semantizer = struct {
                     return error.Reported;
                 }
                 const n = try sg.makeSGNode(.{ .binding_use = b }, undefined, self.allocator);
+                n.sem_type = b.ty;
                 return .{ .node = n, .ty = b.ty };
             }
             try self.diags.add(
@@ -1522,6 +1537,7 @@ pub const Semantizer = struct {
             return error.Reported;
         }
         const n = try sg.makeSGNode(.{ .binding_use = b }, undefined, self.allocator);
+        n.sem_type = b.ty;
         return .{ .node = n, .ty = b.ty };
     }
 
@@ -1597,6 +1613,7 @@ pub const Semantizer = struct {
         };
 
         const n = try sg.makeSGNode(.{ .struct_field_access = fa }, field_loc, self.allocator);
+        n.sem_type = fty;
         return .{ .node = n, .ty = fty };
     }
 
@@ -6109,39 +6126,10 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         const te = try self.visitNode(addr.value.*, s);
-
-        if (te.node.content != .binding_use) {
-            try self.diags.add(
-                addr.value.*.location,
-                .semantic,
-                "cannot take the address of this expression; only named variables are addressable",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        const binding = te.node.content.binding_use;
-        if (addr.mutability == .read_write and binding.mutability != .variable) {
-            try self.diags.add(
-                addr.value.*.location,
-                .semantic,
-                "binding '{s}' is immutable; declare it with '::' or take '&{s}' instead of '$&{s}'",
-                .{ binding.name, binding.name, binding.name },
-            );
-            return error.Reported;
-        }
-
-        const child = try self.allocator.create(sg.Type);
-        child.* = te.ty;
-
-        const ptr_ty = try self.allocator.create(sg.PointerType);
-        ptr_ty.* = .{ .mutability = addr.mutability, .child = child };
-
-        const out_ty: sg.Type = .{ .pointer_type = ptr_ty };
-
-        const addr_node = try sg.makeSGNode(.{ .address_of = te.node }, undefined, self.allocator);
-        addr_node.sem_type = out_ty;
-        return .{ .node = addr_node, .ty = out_ty };
+        return switch (addr.mutability) {
+            .read_only => try typ.ensureReadOnlyPointer(addr.value, te, self.allocator, self.diags),
+            .read_write => try typ.ensureMutablePointer(addr.value, te, s, self.allocator, self.diags),
+        };
     }
 
     fn handleDefer(
@@ -6256,6 +6244,7 @@ pub const Semantizer = struct {
         der_ptr.* = .{ .pointer = te.node, .ty = base_ty, .pointer_type = ptr_info_ptr };
 
         const n = try sg.makeSGNode(.{ .dereference = der_ptr.* }, undefined, self.allocator);
+        n.sem_type = base_ty;
 
         return .{ .node = n, .ty = base_ty };
     }

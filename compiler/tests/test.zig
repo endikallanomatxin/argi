@@ -875,6 +875,12 @@ test "455_empty_type_initializer_resolution" {
     try runExpect(0);
 }
 
+test "456_addressable_struct_subfields" {
+    try clean();
+    try expectSuccessfulBuild("tests/456_addressable_struct_subfields/main.rg");
+    try runExpect(0);
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");

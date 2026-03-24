@@ -1077,15 +1077,7 @@ pub fn findStructValueFieldByName(lit: *const sg.StructValueLiteral, name: []con
 pub fn ensureReadOnlyPointer(expr_node: *const syn.STNode, te: TypedExpr, allocator: *const std.mem.Allocator, diags: *diagnostics.Diagnostics) err.SemErr!TypedExpr {
     if (te.ty == .pointer_type) return te;
 
-    if (te.node.content != .binding_use) {
-        try diags.add(
-            expr_node.location,
-            .semantic,
-            "cannot take the address of this expression; only named variables are addressable",
-            .{},
-        );
-        return error.Reported;
-    }
+    try ensureAddressableNode(te.node, .read_only, expr_node.location, diags);
 
     const child_ty = try allocator.create(sg.Type);
     child_ty.* = te.ty;
@@ -1125,26 +1117,7 @@ pub fn ensureMutablePointer(
         return te;
     }
 
-    if (te.node.content != .binding_use) {
-        try diags.add(
-            expr_node.location,
-            .semantic,
-            "cannot assign through indexed expression; take '$&' explicitly",
-            .{},
-        );
-        return error.Reported;
-    }
-
-    const binding = te.node.content.binding_use;
-    if (binding.mutability != .variable) {
-        try diags.add(
-            expr_node.location,
-            .semantic,
-            "binding '{s}' is immutable; declare it with '::' or use '&{s}'",
-            .{ binding.name, binding.name },
-        );
-        return error.Reported;
-    }
+    try ensureAddressableNode(te.node, .read_write, expr_node.location, diags);
 
     const child_ty = try allocator.create(sg.Type);
     child_ty.* = te.ty;
@@ -1159,4 +1132,50 @@ pub fn ensureMutablePointer(
         .content = .{ .address_of = te.node },
     };
     return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
+}
+
+fn ensureAddressableNode(
+    node: *const sg.SGNode,
+    mutability: syn.PointerMutability,
+    loc: tok.Location,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!void {
+    switch (node.content) {
+        .binding_use => |binding| {
+            if (mutability == .read_write and binding.mutability != .variable) {
+                try diags.add(
+                    loc,
+                    .semantic,
+                    "binding '{s}' is immutable; declare it with '::' or use '&{s}'",
+                    .{ binding.name, binding.name },
+                );
+                return error.Reported;
+            }
+            return;
+        },
+        .struct_field_access => |sfa| {
+            return ensureAddressableNode(sfa.struct_value, mutability, loc, diags);
+        },
+        .dereference => |deref| {
+            if (mutability == .read_write and deref.pointer_type.mutability != .read_write) {
+                try diags.add(
+                    loc,
+                    .semantic,
+                    "cannot assign through this pointer because it is read-only; use '$&' when acquiring it",
+                    .{},
+                );
+                return error.Reported;
+            }
+            return;
+        },
+        else => {
+            try diags.add(
+                loc,
+                .semantic,
+                "cannot take the address of this expression; only addressable values support '&'",
+                .{},
+            );
+            return error.Reported;
+        },
+    }
 }
