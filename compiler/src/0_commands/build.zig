@@ -1,5 +1,4 @@
 const std = @import("std");
-const fs = std.fs;
 
 const llvm = @import("../5_codegen/llvm.zig");
 const c = llvm.c;
@@ -24,13 +23,15 @@ const BuildFlags = struct {
 fn parseFlags(args: []const []const u8) BuildFlags {
     var flags: BuildFlags = .{};
     for (args) |a| {
-        if (std.mem.eql(u8, a, "--on-build-error-show-cascade")) flags.show_cascade = true
-            //
-        else if (std.mem.eql(u8, a, "--on-build-error-show-syntax-tree")) flags.show_syntax_tree = true
-            //
-        else if (std.mem.eql(u8, a, "--on-build-error-show-semantic-graph")) flags.show_semantic_graph = true
-            //
-        else if (std.mem.eql(u8, a, "--on-build-error-show-token-list")) flags.show_token_list = true;
+        if (std.mem.eql(u8, a, "--on-build-error-show-cascade")) {
+            flags.show_cascade = true;
+        } else if (std.mem.eql(u8, a, "--on-build-error-show-syntax-tree")) {
+            flags.show_syntax_tree = true;
+        } else if (std.mem.eql(u8, a, "--on-build-error-show-semantic-graph")) {
+            flags.show_semantic_graph = true;
+        } else if (std.mem.eql(u8, a, "--on-build-error-show-token-list")) {
+            flags.show_token_list = true;
+        }
     }
     return flags;
 }
@@ -58,7 +59,25 @@ fn resolveBuildModuleDir(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     return std.fs.path.resolve(allocator, &.{dir});
 }
 
+fn ensureParentDir(path: []const u8) !void {
+    const parent = std.fs.path.dirname(path) orelse return;
+    if (parent.len == 0 or std.mem.eql(u8, parent, ".")) return;
+    try std.fs.cwd().makePath(parent);
+}
+
+fn replaceFile(src: []const u8, dst: []const u8) !void {
+    std.fs.cwd().rename(src, dst) catch |err| switch (err) {
+        error.PathAlreadyExists => {
+            try std.fs.cwd().deleteFile(dst);
+            try std.fs.cwd().rename(src, dst);
+        },
+        else => return err,
+    };
+}
+
 pub fn compile(args: []const []const u8) !void {
+    if (args.len == 0) return error.MissingBuildTarget;
+
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -66,6 +85,28 @@ pub fn compile(args: []const []const u8) !void {
     const target_path = args[0];
     const flags = parseFlags(args[1..]);
     const module_dir = try resolveBuildModuleDir(allocator, target_path);
+
+    // Salidas finales por defecto dentro del módulo compilado.
+    const final_output_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}/build/output",
+        .{module_dir},
+    );
+    const final_ir_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}.ll",
+        .{final_output_path},
+    );
+    const final_obj_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}.o",
+        .{final_output_path},
+    );
+
+    try ensureParentDir(final_output_path);
+    try ensureParentDir(final_ir_path);
+    try ensureParentDir(final_obj_path);
+
     // 1. Reunir ficheros ──────────────────────────────────────────────────
     const files = try sf.collectModule(&allocator, "core", module_dir);
 
@@ -88,7 +129,6 @@ pub fn compile(args: []const []const u8) !void {
             return error.CompilationFailed;
         };
 
-        // Elimina el EOF salvo en el último fichero
         const slice = if (idx == files.items.len - 1)
             toks
         else
@@ -134,10 +174,26 @@ pub fn compile(args: []const []const u8) !void {
         return error.CompilationFailed;
     };
 
-    const temp_stem = try std.fmt.allocPrint(allocator, "output.tmp.{d}", .{std.time.nanoTimestamp()});
-    const temp_ir_path = try std.fmt.allocPrint(allocator, "{s}.ll", .{temp_stem});
-    const final_ir_path = "output.ll";
-    const final_output_path = "output";
+    // Temporales en el mismo directorio final.
+    const temp_stem = try std.fmt.allocPrint(
+        allocator,
+        "{s}.tmp.{d}",
+        .{ final_output_path, std.time.nanoTimestamp() },
+    );
+    const temp_ir_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}.ll",
+        .{temp_stem},
+    );
+    const temp_obj_path = try std.fmt.allocPrint(
+        allocator,
+        "{s}.o",
+        .{temp_stem},
+    );
+
+    try ensureParentDir(temp_stem);
+    try ensureParentDir(temp_ir_path);
+    try ensureParentDir(temp_obj_path);
 
     std.fs.cwd().deleteFile(temp_ir_path) catch |err| {
         if (err != error.FileNotFound) return err;
@@ -145,11 +201,11 @@ pub fn compile(args: []const []const u8) !void {
     std.fs.cwd().deleteFile(temp_stem) catch |err| {
         if (err != error.FileNotFound) return err;
     };
-    std.fs.cwd().deleteFile("output.o") catch |err| {
+    std.fs.cwd().deleteFile(temp_obj_path) catch |err| {
         if (err != error.FileNotFound) return err;
     };
 
-    // 8. Escribir el módulo LLVM a un fichero .ll ──────────────────────
+    // 8. Escribir el módulo LLVM a un fichero .ll ─────────────────────────
     var err_msg: [*c]u8 = null;
     const temp_ir_path_c = try allocator.dupeZ(u8, temp_ir_path);
     if (c.LLVMPrintModuleToFile(module, temp_ir_path_c.ptr, &err_msg) != 0) {
@@ -157,16 +213,14 @@ pub fn compile(args: []const []const u8) !void {
         return error.WriteFailed;
     }
 
-    // 9. Enlazar con libc y generar el binario final ──────────────────────
+    // 9. Enlazar con libc y generar el binario temporal ───────────────────
     const triple_cstr = c.LLVMGetDefaultTargetTriple();
     defer c.LLVMDisposeMessage(triple_cstr);
     const triple = std.mem.span(triple_cstr);
 
     try link.linkWithLibc(module, triple, temp_stem, &allocator);
 
-    std.fs.cwd().deleteFile(final_ir_path) catch |err| {
-        if (err != error.FileNotFound) return err;
-    };
+    // 10. Mover a nombres finales ─────────────────────────────────────────
     if (std.fs.cwd().statFile(temp_ir_path)) |_| {} else |err| switch (err) {
         error.FileNotFound => {
             std.debug.print("missing temp ir before rename: {s}\n", .{temp_ir_path});
@@ -174,17 +228,8 @@ pub fn compile(args: []const []const u8) !void {
         },
         else => return err,
     }
-    std.fs.cwd().rename(temp_ir_path, final_ir_path) catch |err| switch (err) {
-        error.PathAlreadyExists => {
-            try std.fs.cwd().deleteFile(final_ir_path);
-            try std.fs.cwd().rename(temp_ir_path, final_ir_path);
-        },
-        else => return err,
-    };
+    try replaceFile(temp_ir_path, final_ir_path);
 
-    std.fs.cwd().deleteFile(final_output_path) catch |err| {
-        if (err != error.FileNotFound) return err;
-    };
     if (std.fs.cwd().statFile(temp_stem)) |_| {} else |err| switch (err) {
         error.FileNotFound => {
             std.debug.print("missing temp output before rename: {s}\n", .{temp_stem});
@@ -192,16 +237,8 @@ pub fn compile(args: []const []const u8) !void {
         },
         else => return err,
     }
-    std.fs.cwd().rename(temp_stem, final_output_path) catch |err| switch (err) {
-        error.PathAlreadyExists => {
-            try std.fs.cwd().deleteFile(final_output_path);
-            try std.fs.cwd().rename(temp_stem, final_output_path);
-        },
-        else => return err,
-    };
+    try replaceFile(temp_stem, final_output_path);
 
-    var temp_obj_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const temp_obj_path = try std.fmt.bufPrint(&temp_obj_path_buf, "{s}.o", .{temp_stem});
     if (std.fs.cwd().statFile(temp_obj_path)) |_| {} else |err| switch (err) {
         error.FileNotFound => {
             std.debug.print("missing temp obj before rename: {s}\n", .{temp_obj_path});
@@ -209,14 +246,7 @@ pub fn compile(args: []const []const u8) !void {
         },
         else => return err,
     }
-
-    std.fs.cwd().rename(temp_obj_path, "output.o") catch |err| switch (err) {
-        error.PathAlreadyExists => {
-            try std.fs.cwd().deleteFile("output.o");
-            try std.fs.cwd().rename(temp_obj_path, "output.o");
-        },
-        else => return err,
-    };
+    try replaceFile(temp_obj_path, final_obj_path);
 
     std.debug.print("✔ Build completed\n", .{});
 }
