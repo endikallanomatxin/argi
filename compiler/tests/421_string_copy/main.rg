@@ -1,5 +1,5 @@
-main () -> (.status_code: Int32) := {
-    allocator :: CAllocator = CAllocator()
+main(.system: System) -> (.status_code: Int32) := {
+    allocator ::= system.allocator
     original ::= String(.length = 3)
     bytes_set(.string = $&original, .index = 0, .value = 65)
     bytes_set(.string = $&original, .index = 1, .value = 114)

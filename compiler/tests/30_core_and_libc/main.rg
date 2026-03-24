@@ -7,6 +7,6 @@ main () -> (.status_code: Int32) := {
     puts(.string=p)
     free(.pointer=p)
 
-    putchar(.character='\n')
+    putchar(.character=10)
     status_code = 0
 }

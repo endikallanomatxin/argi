@@ -84,6 +84,7 @@ pub const CodeGenerator = struct {
     builder: llvm.c.LLVMBuilderRef,
     current_return_type: ?llvm.c.LLVMTypeRef = null,
     current_fn_decl: ?*sem.FunctionDeclaration = null,
+    system_main_candidate: ?*sem.FunctionDeclaration = null,
 
     global_scope: *Scope, // nunca se destruye hasta el final
     current_scope: *Scope, // apunta al scope donde estamos ahora
@@ -138,6 +139,10 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "code generation error: {s}", .{@errorName(err)});
                 return CodegenError.CompilationFailed;
             };
+        }
+
+        if (self.system_main_candidate) |f| {
+            try self.genSystemMainWrapper(f);
         }
 
         var msg: [*c]u8 = null;
@@ -475,8 +480,19 @@ pub const CodeGenerator = struct {
     }
 
     fn isMainCandidate(f: *const sem.FunctionDeclaration) bool {
-        // Heuristic used by tests: no inputs and one named Int32 return "status_code"
         if (f.input.fields.len != 0) return false;
+        if (f.output.fields.len != 1) return false;
+        const fld = f.output.fields[0];
+        if (!std.mem.eql(u8, fld.name, "status_code")) return false;
+        return switch (fld.ty) {
+            .builtin => |bt| bt == .Int32,
+            else => false,
+        };
+    }
+
+    fn isSystemMainCandidate(f: *const sem.FunctionDeclaration) bool {
+        if (f.input.fields.len != 1) return false;
+        if (!std.mem.eql(u8, f.input.fields[0].name, "system")) return false;
         if (f.output.fields.len != 1) return false;
         const fld = f.output.fields[0];
         if (!std.mem.eql(u8, fld.name, "status_code")) return false;
@@ -490,6 +506,10 @@ pub const CodeGenerator = struct {
         const prev_fn = self.current_fn_decl;
         self.current_fn_decl = f;
         defer self.current_fn_decl = prev_fn;
+
+        if (isSystemMainCandidate(f)) {
+            self.system_main_candidate = f;
+        }
 
         const is_extern = (f.body == null);
 
@@ -519,7 +539,7 @@ pub const CodeGenerator = struct {
         }
 
         // ─── creación / tabla de símbolos ────────────────────────────────
-        const key_name = if (is_extern or isMainName(f.name) or isMainCandidate(f)) f.name else blk: {
+        const key_name = if (is_extern or isMainCandidate(f) or (isMainName(f.name) and !isSystemMainCandidate(f))) f.name else blk: {
             const m = try self.mangledNameFor(f);
             break :blk m;
         };
@@ -1553,5 +1573,96 @@ pub const CodeGenerator = struct {
         std.mem.copyForwards(u8, buf, s);
         buf[s.len] = 0;
         return buf;
+    }
+
+    fn genAutoMaterializedValue(self: *CodeGenerator, ty: sem.Type) !TypedValue {
+        const llvm_ty = try self.toLLVMType(ty);
+        return switch (ty) {
+            .builtin => |bt| switch (bt) {
+                .Float16, .Float32, .Float64 => .{
+                    .value_ref = c.LLVMConstReal(llvm_ty, 0.0),
+                    .type_ref = llvm_ty,
+                    .sem_type = ty,
+                },
+                else => .{
+                    .value_ref = c.LLVMConstNull(llvm_ty),
+                    .type_ref = llvm_ty,
+                    .sem_type = ty,
+                },
+            },
+            .array_type => .{
+                .value_ref = c.LLVMConstNull(llvm_ty),
+                .type_ref = llvm_ty,
+                .sem_type = ty,
+            },
+            .struct_type => |st| blk: {
+                var agg = c.LLVMGetUndef(llvm_ty);
+                for (st.fields, 0..) |field, idx| {
+                    const field_tv = if (field.default_value) |default_node|
+                        (try self.visitNode(default_node)) orelse return CodegenError.ValueNotFound
+                    else
+                        try self.genAutoMaterializedValue(field.ty);
+                    agg = c.LLVMBuildInsertValue(self.builder, agg, field_tv.value_ref, @intCast(idx), "main.auto.field");
+                }
+                break :blk .{
+                    .value_ref = agg,
+                    .type_ref = llvm_ty,
+                    .sem_type = ty,
+                };
+            },
+            .pointer_type => |ptr_info| blk: {
+                const child_tv = try self.genAutoMaterializedValue(ptr_info.child.*);
+                const storage = c.LLVMBuildAlloca(self.builder, child_tv.type_ref, "main.auto.ptr");
+                _ = c.LLVMBuildStore(self.builder, child_tv.value_ref, storage);
+                break :blk .{
+                    .value_ref = storage,
+                    .type_ref = llvm_ty,
+                    .sem_type = ty,
+                };
+            },
+            .choice_type, .abstract_type => CodegenError.InvalidType,
+        };
+    }
+
+    fn genSystemMainWrapper(self: *CodeGenerator, user_main: *const sem.FunctionDeclaration) !void {
+        // TODO: If system setup grows, move this bootstrapping logic into a core
+        // prelude module instead of hard-coding the runtime shape in codegen.
+        // TODO: Decide whether plain `main()` should remain a supported way to
+        // skip that prelude and opt out of system injection entirely.
+        const user_key = try self.mangledNameFor(user_main);
+        const user_sym = self.global_scope.lookup(user_key) orelse return CodegenError.SymbolNotFound;
+
+        const empty_input = try self.allocator.create(sem.StructType);
+        empty_input.* = .{ .fields = &.{} };
+
+        const wrapper_input_ty = try self.toLLVMType(.{ .struct_type = empty_input });
+        const wrapper_output_ty = try self.toLLVMType(.{ .struct_type = &user_main.output });
+        const wrapper_fn_ty = c.LLVMFunctionType(
+            wrapper_output_ty,
+            blk: {
+                var a = try self.allocator.alloc(llvm.c.LLVMTypeRef, 1);
+                a[0] = wrapper_input_ty;
+                break :blk a.ptr;
+            },
+            1,
+            0,
+        );
+
+        const cname = try self.dupZ("main");
+        const fn_ref = c.LLVMAddFunction(self.module, cname.ptr, wrapper_fn_ty);
+        const entry = c.LLVMAppendBasicBlock(fn_ref, "entry");
+        c.LLVMPositionBuilderAtEnd(self.builder, entry);
+
+        var input_agg = c.LLVMGetUndef(try self.toLLVMType(.{ .struct_type = &user_main.input }));
+        const system_field = user_main.input.fields[0];
+        const system_tv = try self.genAutoMaterializedValue(system_field.ty);
+        input_agg = c.LLVMBuildInsertValue(self.builder, input_agg, system_tv.value_ref, 0, "main.system");
+
+        var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, 1);
+        defer self.allocator.free(argv);
+        argv[0] = input_agg;
+
+        const result = c.LLVMBuildCall2(self.builder, user_sym.type_ref, user_sym.ref, argv.ptr, 1, "main.call");
+        _ = c.LLVMBuildRet(self.builder, result);
     }
 };

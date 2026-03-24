@@ -1,5 +1,6 @@
 -- Printing
-putchar ( .character : Char ) -> () : ExternFunction
+putchar ( .character : UInt8 ) -> () : ExternFunction
+getchar ( ) -> ( .character : Int32 ) : ExternFunction
 puts ( .string : &Char ) -> () : ExternFunction
 
 -- Memory management

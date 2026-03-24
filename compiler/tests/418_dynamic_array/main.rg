@@ -1,5 +1,5 @@
-main () -> (.status_code: Int32) := {
-    allocator :: CAllocator = CAllocator()
+main(.system: System) -> (.status_code: Int32) := {
+    allocator ::= system.allocator
     initial_capacity :: UIntNative = 2
     first_offset :: UIntNative = 0
     second_offset :: UIntNative = 1

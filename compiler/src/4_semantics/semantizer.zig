@@ -1044,6 +1044,13 @@ pub const Semantizer = struct {
         return try self.isSameModule(requester_file, fd.location.file);
     }
 
+    fn typeDeclIsReady(td: *const sg.TypeDeclaration) bool {
+        return switch (td.ty) {
+            .struct_type => |st| !(st.fields.len == 0 and st.identity == null),
+            else => true,
+        };
+    }
+
     fn addPrivateMemberDiag(
         self: *Semantizer,
         loc: tok.Location,
@@ -6604,6 +6611,7 @@ const GenericParamSyntaxInfo = struct {
                     break :blk error.AbstractNeedsDefault;
                 }
                 if (s.lookupType(id)) |td| {
+                    if (!typeDeclIsReady(td)) break :blk error.UnknownType;
                     if (!(try self.typeIsVisible(td, tn.location.file))) {
                         try self.addPrivateMemberDiag(tn.location, "type", id);
                         return error.Reported;
@@ -6682,6 +6690,7 @@ const GenericParamSyntaxInfo = struct {
                     break :blk error.UnknownType;
                 }
                 if (s.lookupType(id)) |td| {
+                    if (!typeDeclIsReady(td)) break :blk error.UnknownType;
                     if (!(try self.typeIsVisible(td, tn.location.file))) {
                         try self.addPrivateMemberDiag(tn.location, "type", id);
                         return error.Reported;

@@ -1,6 +1,6 @@
-System#(.terminal_type: Type) : Type = (
-  .allocator : $&Allocator
-  .terminal  : $&terminal_type
+System : Type = (
+  .allocator : $&CAllocator
+  .terminal  : $&Terminal
   .args      :  &Arguments
   .env_vars  : $&EnvironmentVariables
   .file_sys  : $&FileSystem

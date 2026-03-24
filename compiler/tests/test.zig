@@ -831,6 +831,12 @@ test "448_reached_allocator_dynamic_array" {
     try runExpect(22);
 }
 
+test "449_main_system_input" {
+    try clean();
+    try expectSuccessfulBuild("tests/449_main_system_input/main.rg");
+    try runExpect(0);
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");
