@@ -920,6 +920,18 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
+            .keep_statement => |name| self.handleKeep(name, s) catch |err| blk: {
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in keep statement: {s}",
+                        .{@errorName(err)},
+                    );
+                }
+                break :blk err;
+            },
+
             .if_statement => |ifs| self.handleIf(ifs, s) catch |err| blk: {
                 try self.diags.add(
                     n.location,
@@ -6132,6 +6144,54 @@ pub const Semantizer = struct {
         }
 
         return .{ .node = te.node, .ty = .{ .builtin = .Any } };
+    }
+
+    fn cancelAutoDeinitForBinding(self: *Semantizer, binding: *sg.BindingDeclaration, s: *Scope) bool {
+        var cur: ?*Scope = s;
+        while (cur) |scope_ptr| : (cur = scope_ptr.parent) {
+            var idx: usize = 0;
+            while (idx < scope_ptr.deferred.items.len) : (idx += 1) {
+                const group = scope_ptr.deferred.items[idx];
+                if (group.nodes.len != 1) continue;
+                const node = group.nodes[0];
+                if (node.content != .auto_deinit_binding) continue;
+                if (node.content.auto_deinit_binding.binding != binding) continue;
+                self.allocator.free(group.nodes);
+                _ = scope_ptr.deferred.orderedRemove(idx);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn handleKeep(
+        self: *Semantizer,
+        name: syn.Name,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const binding = s.lookupBinding(name.string) orelse {
+            try self.diags.add(
+                name.location,
+                .semantic,
+                "cannot keep unknown binding '{s}'",
+                .{name.string},
+            );
+            return error.Reported;
+        };
+
+        if (!self.cancelAutoDeinitForBinding(binding, s)) {
+            try self.diags.add(
+                name.location,
+                .semantic,
+                "cannot keep binding '{s}': no automatic deinit is scheduled",
+                .{name.string},
+            );
+            return error.Reported;
+        }
+
+        const use_node = try sg.makeSGNode(.{ .binding_use = binding }, name.location, self.allocator);
+        use_node.sem_type = binding.ty;
+        return .{ .node = use_node, .ty = .{ .builtin = .Any } };
     }
 
     //──────────────────────────────────────────────────── DEREFERENCE

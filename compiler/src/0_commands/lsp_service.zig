@@ -1179,6 +1179,7 @@ fn collectSyntaxRefs(
             },
             .list_literal => |list| for (list.elements) |elem| try stack.append(elem),
             .defer_statement => |expr| try stack.append(expr),
+            .keep_statement => {},
             .address_of => |addr| try stack.append(addr.value),
             .dereference => |expr| try stack.append(expr),
             .pointer_assignment => |pa| {

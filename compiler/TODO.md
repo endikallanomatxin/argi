@@ -290,7 +290,6 @@
       cada capability real sin hardcodear la estructura completa en codegen.
 
     - Añadir tests específicos para:
-        - defaults con `Type()` en argumentos,
         - reached arguments que consumen `system.allocator`,
         - reached arguments con rutas anidadas como `system.terminal.stdout`.
 

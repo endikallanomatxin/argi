@@ -60,6 +60,7 @@ pub const Content = union(enum) {
     match_statement: MatchStatement,
     import_statement: ImportStatement,
     defer_statement: *STNode,
+    keep_statement: Name,
     index_assignment: IndexAssignment,
     address_of: AddressOf,
     dereference: *STNode,
