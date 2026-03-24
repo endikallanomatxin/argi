@@ -2,22 +2,155 @@ FileKind : Type = (
     ..stdin
     ..stdout
     ..stderr
+    ..file
     ..other
 )
 
 File : Type = (
-    .descriptor : UIntNative
-    .kind       : FileKind
+    .handle       : UIntNative = 0
+    .kind         : FileKind = ..other
+    .should_close : Bool = 0 == 1
 )
 
 init(
     .p: $&File,
-    .descriptor: UIntNative,
+    .handle: UIntNative,
     .kind: FileKind = ..other,
+    .should_close: Bool,
 ) -> () := {
     p& = (
-        .descriptor = descriptor,
+        .handle = handle,
         .kind = kind,
+        .should_close = should_close,
+    )
+}
+
+is_open(.self: &File) -> (.ok: Bool) := {
+    ok = self&.handle != 0
+}
+
+file_stream_pointer(.self: &File) -> (.stream: &Any) := {
+    stream = cast#(.to: &Any)(.value = self&.handle)
+}
+
+file_open(
+    .p: $&File,
+    .path: &Char,
+    .mode: &Char,
+) -> () := {
+    opened : $&Any = fopen(.path = path, .mode = mode)
+    p& = (
+        .handle = cast#(.to: UIntNative)(.value = opened),
+        .kind = ..file,
+        .should_close = 1 == 1,
+    )
+}
+
+open_read(
+    .p: $&File,
+    .path: &Char,
+) -> () := {
+    file_open(.p = p, .path = path, .mode = "rb")
+}
+
+open_write(
+    .p: $&File,
+    .path: &Char,
+) -> () := {
+    file_open(.p = p, .path = path, .mode = "wb")
+}
+
+open_append(
+    .p: $&File,
+    .path: &Char,
+) -> () := {
+    file_open(.p = p, .path = path, .mode = "ab")
+}
+
+init_stdin(.p: $&File) -> () := {
+    stream : $&Any = fdopen(.fd = 0, .mode = "rb")
+    p& = (
+        .handle = cast#(.to: UIntNative)(.value = stream),
+        .kind = ..stdin,
+        .should_close = 0 == 1,
+    )
+}
+
+init_stdout(.p: $&File) -> () := {
+    stream : $&Any = fdopen(.fd = 1, .mode = "wb")
+    p& = (
+        .handle = cast#(.to: UIntNative)(.value = stream),
+        .kind = ..stdout,
+        .should_close = 0 == 1,
+    )
+}
+
+init_stderr(.p: $&File) -> () := {
+    stream : $&Any = fdopen(.fd = 2, .mode = "wb")
+    p& = (
+        .handle = cast#(.to: UIntNative)(.value = stream),
+        .kind = ..stderr,
+        .should_close = 0 == 1,
+    )
+}
+
+close(.self: $&File) -> () := {
+    if self&.handle == 0 {
+        return
+    }
+
+    if self&.should_close {
+        _ ::= fclose(.stream = file_stream_pointer(.self = self).stream)
+    }
+
+    self& = (
+        .handle = 0,
+        .kind = self&.kind,
+        .should_close = 0 == 1,
+    )
+}
+
+flush(.self: $&File) -> () := {
+    if self&.handle == 0 {
+        return
+    }
+
+    _ ::= fflush(.stream = file_stream_pointer(.self = self).stream)
+}
+
+read_byte(.self: $&File) -> (.result: ReadByte) := {
+    if self&.handle == 0 {
+        result = ..end
+        return
+    }
+
+    byte :: UInt8 = 0
+    read_count ::= fread(
+        .buffer = $&byte,
+        .size = 1,
+        .count = 1,
+        .stream = file_stream_pointer(.self = self).stream,
+    ).count
+
+    if read_count == 0 {
+        result = ..end
+        return
+    }
+
+    result = ..ok(.byte = byte)
+}
+
+write_byte(.self: $&File, .byte: UInt8) -> () := {
+    if self&.handle == 0 {
+        return
+    }
+
+    single_byte :: UInt8 = byte
+    _ ::= fwrite(
+        .buffer = &single_byte,
+        .size = 1,
+        .count = 1,
+        .stream = file_stream_pointer(.self = self).stream,
     )
 }
 
@@ -32,12 +165,7 @@ init(.p: $&FileReader, .file: $&File) -> () := {
 }
 
 read_byte(.self: $&FileReader) -> (.result: ReadByte) := {
-    -- TODO: bridge real file descriptors/handles to libc or platform syscalls.
-    -- `getchar()` returns Int32 and the compiler does not support the casts we
-    -- need yet, so keep the lowest-level reader shape in place and stub actual
-    -- byte reads for now.
-    _ ::= self
-    result = ..end
+    result = read_byte(.self = self&.file)
 }
 
 FileReader implements Reader
@@ -53,13 +181,11 @@ init(.p: $&FileWriter, .file: $&File) -> () := {
 }
 
 write_byte(.self: $&FileWriter, .byte: UInt8) -> () := {
-    -- Current libc bindings only expose `putchar`, so stdout and stderr share
-    -- the same backend for now. Keep the `File` split so the API can grow into
-    -- proper descriptors/handles later without changing the layering.
-    putchar(.character = byte)
+    write_byte(.self = self&.file, .byte = byte)
 }
 
 flush(.self: $&FileWriter) -> () := {
+    flush(.self = self&.file)
 }
 
 FileWriter implements Writer

@@ -1,3 +1,15 @@
+init_stdin_handle(.p: $&File) -> () := {
+    init_stdin(.p = p)
+}
+
+init_stdout_handle(.p: $&File) -> () := {
+    init_stdout(.p = p)
+}
+
+init_stderr_handle(.p: $&File) -> () := {
+    init_stderr(.p = p)
+}
+
 StdIn : Type = (
     .file            : File
     .reader          : FileReader
@@ -18,27 +30,27 @@ StdErr : Type = (
 
 init(
     .p: $&StdIn,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&CAllocator,
 ) -> () := {
-    p&.file = File(.descriptor = 0, .kind = ..stdin)
+    init_stdin_handle(.p = $&p&.file)
     p&.reader = FileReader(.file = $&p&.file)
     p&.buffered_reader = BufferedReader(.allocator = allocator, .reader = $&p&.reader, .capacity = 256)
 }
 
 init(
     .p: $&StdOut,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&CAllocator,
 ) -> () := {
-    p&.file = File(.descriptor = 1, .kind = ..stdout)
+    init_stdout_handle(.p = $&p&.file)
     p&.writer = FileWriter(.file = $&p&.file)
     p&.buffered_writer = BufferedWriter(.allocator = allocator, .writer = $&p&.writer, .capacity = 256)
 }
 
 init(
     .p: $&StdErr,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&CAllocator,
 ) -> () := {
-    p&.file = File(.descriptor = 2, .kind = ..stderr)
+    init_stderr_handle(.p = $&p&.file)
     p&.writer = FileWriter(.file = $&p&.file)
     p&.buffered_writer = BufferedWriter(.allocator = allocator, .writer = $&p&.writer, .capacity = 256)
 }
