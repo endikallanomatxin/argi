@@ -1,5 +1,8 @@
 FileSystem : Type = ()
 
+init(.p: $&FileSystem) -> () := {
+}
+
 -- FileOpeningMode : Type = [
 --     ..Read
 --     ..Write

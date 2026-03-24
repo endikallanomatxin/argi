@@ -1,5 +1,8 @@
 RandomNumberGenerator : Type = ()
 
+init(.p: $&RandomNumberGenerator) -> () := {
+}
+
 -- randomRIO :: Random a ⇒ (a, a) → IO a
 -- Genera un valor aleatorio en el rango inclusivo dado, usando la generación global.
 -- getStdRandom :: (StdGen → (a, StdGen)) → IO a

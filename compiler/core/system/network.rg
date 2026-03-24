@@ -1,5 +1,8 @@
 Network : Type = ()
 
+init(.p: $&Network) -> () := {
+}
+
 -- No se si meter también aquí todos los protocolos de red
 -- O eso igual no corresponde a system
 

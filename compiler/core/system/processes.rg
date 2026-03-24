@@ -1,5 +1,8 @@
 ProcessManager : Type = ()
 
+init(.p: $&ProcessManager) -> () := {
+}
+
 -- The capability for calling processes
 
 

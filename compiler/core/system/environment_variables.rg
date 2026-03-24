@@ -1,4 +1,7 @@
 EnvironmentVariables : Type = ()
+
+init(.p: $&EnvironmentVariables) -> () := {
+}
 --EnvironmentVariables : Type = Map<String,String>
 
 

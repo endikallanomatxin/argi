@@ -2,6 +2,15 @@ StdIn : Type = ()
 StdOut : Type = ()
 StdErr : Type = ()
 
+init(.p: $&StdIn) -> () := {
+}
+
+init(.p: $&StdOut) -> () := {
+}
+
+init(.p: $&StdErr) -> () := {
+}
+
 Terminal : Type = (
     .stdin  : $&StdIn
     .stdout : $&StdOut
