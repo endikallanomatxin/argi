@@ -19,7 +19,83 @@ de limpiarla.
 
 ## TODOs específicos
 
-- Coherencia lenguaje <-> compilador
+- Core library
+
+    - Strings
+        - Cuando `StringView` esté realmente maduro como vista borrowed
+          usable, hacer que las string literals se materialicen en el
+          segmento de datos/constants de solo lectura y que el usuario las
+          vea semánticamente como `StringView`, no como `String` owner ni
+          como C-string ad hoc del backend.
+
+    - IO / system streams
+
+        - La capa nueva `File -> Reader/Writer`
+          ya existe en `core`, pero ahora mismo es todavía un esqueleto de
+          arquitectura más que una implementación final.
+
+        - Cosas claramente temporales del estado actual:
+            - `FileReader.read_byte()` está stubbeado a `..end` porque aún
+              faltan casts/modelado suficientes para bajar bien desde las
+              APIs reales del sistema.
+            - `FileWriter.write_byte()` sigue usando `putchar()`, así que
+              `stdout` y `stderr` todavía comparten backend real.
+            - `FileReader` y `FileWriter` ya llevan buffer interno para
+              acercarse al modelo final, pero el buffering sigue siendo una
+              primera versión y necesita consolidarse.
+            - `read_line()` sigue siendo placeholder; la capa de texto sobre
+              IO todavía no está cerrada.
+            - La helper `write(.text: String)` sobre `Writer` es útil de
+              transición, pero no debería condicionar el diseño bajo nivel.
+
+        - Dirección deseable:
+            - `File` debería representar un handle/fd abierto del sistema,
+              no necesariamente un archivo regular.
+            - `stdin`, `stdout` y `stderr` deberían ser simplemente `File`s
+              preabiertos por el runtime/sistema.
+            - `Reader` y `Writer` deben quedarse byte-oriented; texto,
+              líneas, formatting y parsing tienen que vivir en capas
+              superiores.
+            - `Reader` y `Writer` deberían ser la capa normal de uso, con
+              buffering integrado por defecto cuando tenga sentido.
+            - `File` debería quedarse como capa raw del handle, y el detalle
+              del buffering no tendría que desbordar al usuario normal.
+
+        - Trabajo pendiente para acercarlo a algo final:
+            - Añadir bindings/platform layer para leer y escribir bytes de
+              verdad distinguiendo `stdin`, `stdout` y `stderr`.
+            - Cerrar una historia mínima de EOF/errores/short reads/short
+              writes.
+            - Hacer crecer la capa de texto simple actual (`TextBuffer`) sin
+              arrastrar todavía todo el diseño de IO a `String` owner.
+            - Rehacer `read_line()` y helpers de impresión alrededor de esa
+              capa de texto simple hasta que haya una historia mejor de
+              strings/views.
+            - Revisar ownership/lifetime de buffers internos para que quede
+              claro qué inicializa, quién hace `deinit` y qué parte vive en
+              allocator externo vs storage interno.
+
+    - Allocators
+        - Implementar el story mínimo de allocators descrito en
+          `description/35_allocation.md`.
+        - En particular, hace falta un allocator tipo arena/bump usable para
+          futuras fases reescritas en Argi.
+
+    - System
+        - Mantener `System` como agregador de capabilities por puntero/handle donde
+          eso exprese mejor la semántica del runtime.
+        - Decidir qué primitivas mínimas de runtime/FFI hacen falta para inicializar
+          cada capability real sin hardcodear la estructura completa en codegen.
+
+    - Lists / arrays / slices
+    - Hash maps / sets
+    - Allocators
+    - Basic file/path handling
+    - Diagnostics helpers
+    - Testing helpers
+
+
+- Language features:
 
     - Abstracts
 
@@ -83,138 +159,92 @@ de limpiarla.
           tapar huecos de semántica base.
 
 
-- Infraestructura mínima para self-hosting
+- C subset / FFI
 
-    - Core library usable para un compilador
+    - Si el compilador futuro quiere seguir usando LLVM o librerías del
+      sistema, la interop con C no es opcional.
 
-        - Strings
-            - Cuando `StringView` esté realmente maduro como vista borrowed
-              usable, hacer que las string literals se materialicen en el
-              segmento de datos/constants de solo lectura y que el usuario las
-              vea semánticamente como `StringView`, no como `String` owner ni
-              como C-string ad hoc del backend.
-        - IO / system streams
+    - Hay que concretar e implementar el mínimo de `description/20_c.md`:
+        - `CFunction`,
+        - `CString`,
+        - `CArray`,
+        - enums/unions mínimos,
+        - calling convention clara.
 
-            - La capa nueva `File -> Reader/Writer`
-              ya existe en `core`, pero ahora mismo es todavía un esqueleto de
-              arquitectura más que una implementación final.
-
-            - Cosas claramente temporales del estado actual:
-                - `FileReader.read_byte()` está stubbeado a `..end` porque aún
-                  faltan casts/modelado suficientes para bajar bien desde las
-                  APIs reales del sistema.
-                - `FileWriter.write_byte()` sigue usando `putchar()`, así que
-                  `stdout` y `stderr` todavía comparten backend real.
-                - `FileReader` y `FileWriter` ya llevan buffer interno para
-                  acercarse al modelo final, pero el buffering sigue siendo una
-                  primera versión y necesita consolidarse.
-                - `read_line()` sigue siendo placeholder; la capa de texto sobre
-                  IO todavía no está cerrada.
-                - La helper `write(.text: String)` sobre `Writer` es útil de
-                  transición, pero no debería condicionar el diseño bajo nivel.
-
-            - Dirección deseable:
-                - `File` debería representar un handle/fd abierto del sistema,
-                  no necesariamente un archivo regular.
-                - `stdin`, `stdout` y `stderr` deberían ser simplemente `File`s
-                  preabiertos por el runtime/sistema.
-                - `Reader` y `Writer` deben quedarse byte-oriented; texto,
-                  líneas, formatting y parsing tienen que vivir en capas
-                  superiores.
-                - `Reader` y `Writer` deberían ser la capa normal de uso, con
-                  buffering integrado por defecto cuando tenga sentido.
-                - `File` debería quedarse como capa raw del handle, y el detalle
-                  del buffering no tendría que desbordar al usuario normal.
-
-            - Trabajo pendiente para acercarlo a algo final:
-                - Añadir bindings/platform layer para leer y escribir bytes de
-                  verdad distinguiendo `stdin`, `stdout` y `stderr`.
-                - Cerrar una historia mínima de EOF/errores/short reads/short
-                  writes.
-                - Hacer crecer la capa de texto simple actual (`TextBuffer`) sin
-                  arrastrar todavía todo el diseño de IO a `String` owner.
-                - Rehacer `read_line()` y helpers de impresión alrededor de esa
-                  capa de texto simple hasta que haya una historia mejor de
-                  strings/views.
-                - Revisar ownership/lifetime de buffers internos para que quede
-                  claro qué inicializa, quién hace `deinit` y qué parte vive en
-                  allocator externo vs storage interno.
-        - Lists / arrays / slices
-        - Hash maps / sets
-        - Allocators
-        - Basic file/path handling
-        - Diagnostics helpers
-        - Testing helpers
-
-        - CLI
-            - Implementar `audit` para detectar red flags y antipatterns de uso
-              del lenguaje en el código compilado, por ejemplo `#reach` más
-              allá de lo que la core lib suele esperar o patrones similares
-              que merezcan aviso.
-
-            - Añadir `init project` y `init module` sin `main` como punto de
-              entrada, dejando claro qué esqueleto generan y cómo encajan con
-              el flujo normal de compilación.
-
-            - Preparar `argi test` para ejecutar la suite completa; dejar su
-              funcionamiento final pendiente de la historia de testing aún no
-              cerrada.
-
-    - Asignadores
-
-        - Implementar el story mínimo de allocators descrito en
-          `description/35_allocation.md`.
-
-        - En particular, hace falta un allocator tipo arena/bump usable para
-          futuras fases reescritas en Argi.
-
-        - `build` y LSP ya analizan módulos dentro de una arena, y el
-          semantizador ya ha reducido bastante su dependencia de temporales con
-          `alloc/free` manual. El siguiente paso es terminar de empujar ese
-          modelo de lifetime hacia helpers internos y estructuras auxiliares.
-
-    - Testing language-side
-
-        - Llevar `description/72_testing.md` a algo implementable.
-
-        - Un compilador en Argi necesitará poder testear:
-            - parsing,
-            - semántica,
-            - utilidades de `core`,
-            - golden tests de diagnósticos.
-
-        - No hace falta un framework enorme, pero sí un mínimo viable real.
-
-    - Build / package model
-
-        - `build` ya compila módulos-carpeta. El siguiente paso es acercarlo al
-          modelo de `description/03_building.md`.
-
-        - Definir una historia mínima y realista para el fichero de proyecto
-          (`argi.toml` hoy; quizá `project.rgo` u otro formato más adelante).
-
-        - Añadir target selection, optimization mode y salidas configurables.
-
-        - Más adelante: tests/build/install como comandos declarables desde el
-          propio proyecto.
-
-    - C subset / FFI
-
-        - Si el compilador futuro quiere seguir usando LLVM o librerías del
-          sistema, la interop con C no es opcional.
-
-        - Hay que concretar e implementar el mínimo de `description/20_c.md`:
-            - `CFunction`,
-            - `CString`,
-            - `CArray`,
-            - enums/unions mínimos,
-            - calling convention clara.
-
-        - Sin eso, la transición del backend desde Zig a Argi será mucho más
-          difícil.
+    - Sin eso, la transición del backend desde Zig a Argi será mucho más
+      difícil.
 
 
 - Backend y toolchain
+
+    - CLI
+
+        - Build
+
+            - `build` ya compila módulos-carpeta. El siguiente paso es acercarlo al
+              modelo de `description/03_building.md`.
+
+            - Definir una historia mínima y realista para el fichero de proyecto
+              (`argi.toml` hoy; quizá `project.rgo` u otro formato más adelante).
+
+            - Añadir target selection, optimization mode y salidas configurables.
+
+            - Más adelante: tests/build/install como comandos declarables desde el
+              propio proyecto.
+
+        - Implementar `audit` para detectar red flags y antipatterns de uso
+          del lenguaje en el código compilado, por ejemplo `#reach` más
+          allá de lo que la core lib suele esperar o patrones similares
+          que merezcan aviso.
+
+        - Añadir `init project` y `init module` sin `main` como punto de
+          entrada, dejando claro qué esqueleto generan y cómo encajan con
+          el flujo normal de compilación.
+
+        - Preparar `argi test` para ejecutar la suite completa; dejar su
+          funcionamiento final pendiente de la historia de testing aún no
+          cerrada.
+
+            - Llevar `description/72_testing.md` a algo implementable.
+
+            - Un compilador en Argi necesitará poder testear:
+                - parsing,
+                - semántica,
+                - utilidades de `core`,
+                - golden tests de diagnósticos.
+
+            - No hace falta un framework enorme, pero sí un mínimo viable real.
+
+        - `lsp`
+
+            - Endurecer el servidor LSP:
+                - menos `catch {}` / `catch return`,
+                - mejores respuestas de error,
+                - logs o diagnósticos cuando falla el pipeline.
+
+            - Añadir tests visibles para:
+                - `LanguageService`,
+                - `semanticTokens`,
+                - `hover`,
+                - `definition`,
+                - resolución de módulo,
+                - diagnóstico incremental.
+
+            - Hacer que el harness también cubra LSP de forma explícita, no solo
+              `build`, para detectar regresiones de protocolo y tooling.
+
+
+    - Linking / outputs
+
+        - Mejorar el flujo actual de `output.ll` / `output.o` / `output`.
+
+        - Permitir salidas configurables y controlar mejor la etapa de link.
+
+        - Eventualmente separar:
+            - emitir LLVM IR,
+            - emitir objeto,
+            - enlazar ejecutable,
+            - enlazar librería.
 
     - Separar mejor front-end semántico de backend LLVM.
 
@@ -235,30 +265,8 @@ de limpiarla.
           un compilador en Argi tendrá que compilarse y generar artefactos para
           más de un target.
 
-    - Linking / outputs
-
-        - Mejorar el flujo actual de `output.ll` / `output.o` / `output`.
-
-        - Permitir salidas configurables y controlar mejor la etapa de link.
-
-        - Eventualmente separar:
-            - emitir LLVM IR,
-            - emitir objeto,
-            - enlazar ejecutable,
-            - enlazar librería.
-
 
 - Arquitectura interna del compilador
-
-    - Semantizer arena allocator
-
-        - El pipeline principal ya usa arena en `build` y LSP.
-
-        - El semantizador y `types.zig` ya han eliminado bastante boilerplate
-          de ownership temporal y varias allocations auxiliares.
-
-        - Falta rematar helpers internos y estructuras auxiliares para que la
-          fase deje de depender de cleanup manual disperso.
 
     - `refineStructTypeWithActual`
 
@@ -282,33 +290,9 @@ de limpiarla.
             - futura reescritura parcial en Argi.
 
 
-- LSP y tooling de desarrollo
-
-    - Endurecer el servidor LSP:
-        - menos `catch {}` / `catch return`,
-        - mejores respuestas de error,
-        - logs o diagnósticos cuando falla el pipeline.
-
-    - Añadir tests visibles para:
-        - `LanguageService`,
-        - `semanticTokens`,
-        - `hover`,
-        - `definition`,
-        - resolución de módulo,
-        - diagnóstico incremental.
-
-    - Hacer que el harness también cubra LSP de forma explícita, no solo
-      `build`, para detectar regresiones de protocolo y tooling.
-
-    - Mantener el LSP usando exactamente el mismo pipeline que `build`.
-      Eso ya está bastante mejor alineado; toca evitar regresiones y seguir
-      cerrando diferencias de diagnóstico o errores degradados.
-
-
 - Tests y cobertura
 
-    - Seguir ampliando cobertura de features ya soportadas, especialmente en
-      `Abstract`, módulos, reached arguments y ownership.
+    - Seguir ampliando cobertura de features ya soportadas
 
     - Eliminar o activar placeholders:
         - `81_comptime`
@@ -334,14 +318,6 @@ de limpiarla.
         - LSP,
         - end-to-end.
 
-
-- Refactor de `System` y bootstrap de runtime
-
-    - Mantener `System` como agregador de capabilities por puntero/handle donde
-      eso exprese mejor la semántica del runtime.
-
-    - Decidir qué primitivas mínimas de runtime/FFI hacen falta para inicializar
-      cada capability real sin hardcodear la estructura completa en codegen.
 
 
 - Roadmap de bootstrap
