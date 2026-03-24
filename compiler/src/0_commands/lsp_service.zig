@@ -548,6 +548,9 @@ pub const LanguageService = struct {
                     try em.identAt(td.name.location, TOKEN_INDEX.type_, DECL);
                     try stack.append(td.value);
                 },
+                .assignment => |assign| {
+                    try stack.append(assign.value);
+                },
                 .function_call => |fc| {
                     try em.identAt(fc.callee_loc, TOKEN_INDEX.function, 0);
                     if (fc.type_arguments) |tas| {
