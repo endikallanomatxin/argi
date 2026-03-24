@@ -813,6 +813,12 @@ test "443_terminal_stderr_helper" {
     try runExpect(11);
 }
 
+test "444_input_stream_capability" {
+    try clean();
+    try expectSuccessfulBuild("tests/444_input_stream_capability/main.rg");
+    try runExpect(11);
+}
+
 test "447_reached_allocator_string" {
     try clean();
     try expectSuccessfulBuild("tests/447_reached_allocator_string/main.rg");
