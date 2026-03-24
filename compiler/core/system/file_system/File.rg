@@ -1,3 +1,9 @@
+FileOpenMode : Type = (
+    ..read
+    ..write
+    ..append
+)
+
 File : Type = (
     .handle       : UIntNative = 0
     .should_close : Bool = 0 == 1
@@ -18,16 +24,35 @@ is_open(.self: &File) -> (.ok: Bool) := {
     ok = self&.handle != 0
 }
 
+file_open_mode_c_string(
+    .mode: FileOpenMode,
+) -> (.text: CString) := {
+    if is(.value = mode, .variant = ..read) {
+        text = from_literal(.data = "rb")
+        return
+    }
+
+    if is(.value = mode, .variant = ..write) {
+        text = from_literal(.data = "wb")
+        return
+    }
+
+    text = from_literal(.data = "ab")
+}
+
 file_stream_pointer(.self: &File) -> (.stream: &Any) := {
     stream = cast#(.to: &Any)(.value = self&.handle)
 }
 
-file_open(
+open(
     .p: $&File,
-    .path: &Char,
-    .mode: &Char,
+    .path: CString,
+    .mode: FileOpenMode,
 ) -> () := {
-    opened : $&Any = fopen(.path = path, .mode = mode)
+    path_ptr ::= pointer(.self = &path)
+    mode_text ::= file_open_mode_c_string(.mode = mode)
+    mode_ptr ::= pointer(.self = &mode_text)
+    opened : $&Any = fopen(.path = path_ptr, .mode = mode_ptr)
     p& = (
         .handle = cast#(.to: UIntNative)(.value = opened),
         .should_close = 1 == 1,
@@ -36,27 +61,29 @@ file_open(
 
 open_read(
     .p: $&File,
-    .path: &Char,
+    .path: CString,
 ) -> () := {
-    file_open(.p = p, .path = path, .mode = "rb")
+    open(.p = p, .path = path, .mode = ..read)
 }
 
 open_write(
     .p: $&File,
-    .path: &Char,
+    .path: CString,
 ) -> () := {
-    file_open(.p = p, .path = path, .mode = "wb")
+    open(.p = p, .path = path, .mode = ..write)
 }
 
 open_append(
     .p: $&File,
-    .path: &Char,
+    .path: CString,
 ) -> () := {
-    file_open(.p = p, .path = path, .mode = "ab")
+    open(.p = p, .path = path, .mode = ..append)
 }
 
 init_stdin(.p: $&File) -> () := {
-    stream : $&Any = fdopen(.fd = 0, .mode = "rb")
+    mode_text ::= file_open_mode_c_string(.mode = ..read)
+    mode_ptr ::= pointer(.self = &mode_text)
+    stream : $&Any = fdopen(.fd = 0, .mode = mode_ptr)
     p& = (
         .handle = cast#(.to: UIntNative)(.value = stream),
         .should_close = 0 == 1,
@@ -64,7 +91,9 @@ init_stdin(.p: $&File) -> () := {
 }
 
 init_stdout(.p: $&File) -> () := {
-    stream : $&Any = fdopen(.fd = 1, .mode = "wb")
+    mode_text ::= file_open_mode_c_string(.mode = ..write)
+    mode_ptr ::= pointer(.self = &mode_text)
+    stream : $&Any = fdopen(.fd = 1, .mode = mode_ptr)
     p& = (
         .handle = cast#(.to: UIntNative)(.value = stream),
         .should_close = 0 == 1,
@@ -72,7 +101,9 @@ init_stdout(.p: $&File) -> () := {
 }
 
 init_stderr(.p: $&File) -> () := {
-    stream : $&Any = fdopen(.fd = 2, .mode = "wb")
+    mode_text ::= file_open_mode_c_string(.mode = ..write)
+    mode_ptr ::= pointer(.self = &mode_text)
+    stream : $&Any = fdopen(.fd = 2, .mode = mode_ptr)
     p& = (
         .handle = cast#(.to: UIntNative)(.value = stream),
         .should_close = 0 == 1,
