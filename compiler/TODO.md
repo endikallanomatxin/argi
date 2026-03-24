@@ -99,6 +99,55 @@
               segmento de datos/constants de solo lectura y que el usuario las
               vea semánticamente como `StringView`, no como `String` owner ni
               como C-string ad hoc del backend.
+        - IO / system streams
+
+            - La capa nueva `File -> Reader/Writer -> BufferedReader/BufferedWriter`
+              ya existe en `core`, pero ahora mismo es todavía un esqueleto de
+              arquitectura más que una implementación final.
+
+            - Cosas claramente temporales del estado actual:
+                - `FileReader.read_byte()` está stubbeado a `..end` porque aún
+                  faltan casts/modelado suficientes para bajar bien desde las
+                  APIs reales del sistema.
+                - `FileWriter.write_byte()` sigue usando `putchar()`, así que
+                  `stdout` y `stderr` todavía comparten backend real.
+                - `BufferedReader` y `BufferedWriter` tienen shape propia, pero
+                  su comportamiento está simplificado para evitar chocar con
+                  limitaciones actuales del compilador/codegen.
+                - `read_line()` sigue siendo placeholder; la capa de texto sobre
+                  IO todavía no está cerrada.
+                - La helper `write(.text: String)` sobre `Writer` es útil de
+                  transición, pero no debería condicionar el diseño bajo nivel.
+
+            - Dirección deseable:
+                - `File` debería representar un handle/fd abierto del sistema,
+                  no necesariamente un archivo regular.
+                - `stdin`, `stdout` y `stderr` deberían ser simplemente `File`s
+                  preabiertos por el runtime/sistema.
+                - `Reader` y `Writer` deben quedarse byte-oriented; texto,
+                  líneas, formatting y parsing tienen que vivir en capas
+                  superiores.
+                - `BufferedReader` y `BufferedWriter` deberían ser wrappers
+                  reales, con buffering efectivo y semántica clara sobre si
+                  poseen o no el recurso subyacente.
+                - A medio plazo conviene decidir si `Reader`/`Writer` cuelgan de
+                  `File` como wrappers concretos o si `File` implementa además
+                  las operaciones base directamente y los wrappers sólo añaden
+                  política de buffering/posición.
+
+            - Trabajo pendiente para acercarlo a algo final:
+                - Añadir bindings/platform layer para leer y escribir bytes de
+                  verdad distinguiendo `stdin`, `stdout` y `stderr`.
+                - Cerrar una historia mínima de EOF/errores/short reads/short
+                  writes.
+                - Diseñar una capa de texto sencilla y explícita para esta fase:
+                  probablemente algo estilo buffer C (`$&Char` + longitud /
+                  capacidad) antes de apoyar todo en `String` owner.
+                - Rehacer `read_line()` y helpers de impresión encima de esa
+                  capa de texto simple.
+                - Revisar ownership/lifetime de buffers internos para que quede
+                  claro qué inicializa, quién hace `deinit` y qué parte vive en
+                  allocator externo vs storage interno.
         - Lists / arrays / slices
         - Hash maps / sets
         - Allocators

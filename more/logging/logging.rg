@@ -6,19 +6,19 @@ Logger : Abstract = (
 )
 
 FileLogger : Type = (
-    .file: $& OutputStream#(.text: String)
+    .file: $&Writer
 )
 
-init(.t: Type = FileLogger, .file: OutputStream#(.text: String)) -> (.out: FileLogger) := {
+init(.t: Type = FileLogger, .file: $&Writer) -> (.out: FileLogger) := {
     return FileLogger(.file = file)
 }
 
 StdLogger : Type = (
-    .stdout: $& OutputStream#(.text: String)
-    .stderr: $& OutputStream#(.text: String)
+    .stdout: $&Writer
+    .stderr: $&Writer
 )
 
-init(.t: Type = StdLogger, .stdout: OutputStream#(.text: String), .stderr: OutputStream#(.text: String)) -> (.out: StdLogger) := {
+init(.t: Type = StdLogger, .stdout: $&Writer, .stderr: $&Writer) -> (.out: StdLogger) := {
     -- TODO: Pensar como eso se puede declarar usando la sintaxis cómoda de init.
     return StdLogger(.stdout = stdout, .stderr = stderr)
 }

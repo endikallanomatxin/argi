@@ -11,10 +11,13 @@ flush(.self: $&DummyOutput) -> () := {
 write(.self: $&DummyOutput, .text: String) -> () := {
 }
 
-DummyOutput implements OutputStream#(.text: String)
+write_byte(.self: $&DummyOutput, .byte: UInt8) -> () := {
+}
+
+DummyOutput implements Writer
 
 flush_stdout(
-    .stdout: $&OutputStream#(.text: String) = #reach stdout, terminal.stdout, system.terminal.stdout,
+    .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout,
 ) -> (.value: Int32) := {
     flush(.self = stdout)
     value = 0

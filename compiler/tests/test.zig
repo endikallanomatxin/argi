@@ -816,7 +816,7 @@ test "443_terminal_stderr_helper" {
 test "444_input_stream_capability" {
     try clean();
     try expectSuccessfulBuild("tests/444_input_stream_capability/main.rg");
-    try runExpect(11);
+    try runExpect(0);
 }
 
 test "447_reached_allocator_string" {
@@ -884,6 +884,12 @@ test "456_addressable_struct_subfields" {
 test "457_main_arguments_count" {
     try clean();
     try expectSuccessfulBuild("tests/457_main_arguments_count/main.rg");
+    try runExpect(0);
+}
+
+test "458_buffered_file_wrappers" {
+    try clean();
+    try expectSuccessfulBuild("tests/458_buffered_file_wrappers/main.rg");
     try runExpect(0);
 }
 

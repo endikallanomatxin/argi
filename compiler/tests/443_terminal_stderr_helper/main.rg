@@ -3,7 +3,7 @@ DummyOutput : Type = (
     .flush_count: Int32 = 0
 )
 
-write(.self: $&DummyOutput, .text: String) -> () := {
+write_byte(.self: $&DummyOutput, .byte: UInt8) -> () := {
     self& = (
         .write_count = self&.write_count + 1,
         .flush_count = self&.flush_count,
@@ -17,7 +17,7 @@ flush(.self: $&DummyOutput) -> () := {
     )
 }
 
-DummyOutput implements OutputStream#(.text: String)
+DummyOutput implements Writer
 
 main(.system: System) -> (.status_code: Int32) := {
     allocator ::= system.allocator
