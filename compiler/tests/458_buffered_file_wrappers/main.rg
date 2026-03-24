@@ -1,10 +1,10 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
-    input_file ::= File(.handle = 0, .kind = ..other, .should_close = 0 == 1)
+    input_file ::= File(.handle = 0, .should_close = 0 == 1)
     init_stdin_handle(.p = $&input_file)
     input_reader ::= FileReader(.file = $&input_file)
     buffered_reader ::= BufferedReader(.reader = $&input_reader, .capacity = 4)
 
-    output_file ::= File(.handle = 0, .kind = ..other, .should_close = 0 == 1)
+    output_file ::= File(.handle = 0, .should_close = 0 == 1)
     init_stdout_handle(.p = $&output_file)
     output_writer ::= FileWriter(.file = $&output_file)
     buffered_writer ::= BufferedWriter(.writer = $&output_writer, .capacity = 4)

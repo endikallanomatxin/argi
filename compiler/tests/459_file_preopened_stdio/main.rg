@@ -21,23 +21,5 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    if stdin_file.kind == ..stdin {
-    } else {
-        status_code = 4
-        return
-    }
-
-    if stdout_file.kind == ..stdout {
-    } else {
-        status_code = 5
-        return
-    }
-
-    if stderr_file.kind == ..stderr {
-    } else {
-        status_code = 6
-        return
-    }
-
     status_code = 0
 }

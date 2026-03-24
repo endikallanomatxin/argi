@@ -1,5 +1,5 @@
 main() -> (.status_code: Int32) := {
-    file ::= File(.handle = 0, .kind = ..other, .should_close = 0 == 1)
+    file ::= File(.handle = 0, .should_close = 0 == 1)
     open_write(.p = $&file, .path = "/dev/null")
 
     if is_open(.self = &file).ok {
