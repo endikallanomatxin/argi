@@ -137,11 +137,11 @@
                   verdad distinguiendo `stdin`, `stdout` y `stderr`.
                 - Cerrar una historia mínima de EOF/errores/short reads/short
                   writes.
-                - Diseñar una capa de texto sencilla y explícita para esta fase:
-                  probablemente algo estilo buffer C (`$&Char` + longitud /
-                  capacidad) antes de apoyar todo en `String` owner.
-                - Rehacer `read_line()` y helpers de impresión encima de esa
-                  capa de texto simple.
+                - Hacer crecer la capa de texto simple actual (`TextBuffer`) sin
+                  arrastrar todavía todo el diseño de IO a `String` owner.
+                - Rehacer `read_line()` y helpers de impresión alrededor de esa
+                  capa de texto simple hasta que haya una historia mejor de
+                  strings/views.
                 - Revisar ownership/lifetime de buffers internos para que quede
                   claro qué inicializa, quién hace `deinit` y qué parte vive en
                   allocator externo vs storage interno.

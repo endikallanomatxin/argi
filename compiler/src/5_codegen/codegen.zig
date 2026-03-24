@@ -1143,13 +1143,15 @@ pub const CodeGenerator = struct {
 
         c.LLVMPositionBuilderAtEnd(self.builder, thenB);
         _ = try self.genCodeBlock(i.then_block);
-        if (c.LLVMGetBasicBlockTerminator(thenB) == null)
+        const then_end = c.LLVMGetInsertBlock(self.builder);
+        if (c.LLVMGetBasicBlockTerminator(then_end) == null)
             _ = c.LLVMBuildBr(self.builder, endB);
 
         if (i.else_block) |eb| {
             c.LLVMPositionBuilderAtEnd(self.builder, elseB.?);
             _ = try self.genCodeBlock(eb);
-            if (c.LLVMGetBasicBlockTerminator(elseB.?) == null)
+            const else_end = c.LLVMGetInsertBlock(self.builder);
+            if (c.LLVMGetBasicBlockTerminator(else_end) == null)
                 _ = c.LLVMBuildBr(self.builder, endB);
         }
         c.LLVMPositionBuilderAtEnd(self.builder, endB);
@@ -1172,7 +1174,8 @@ pub const CodeGenerator = struct {
         try self.loop_stack.append(.{ .break_block = endB, .continue_block = condB });
         defer _ = self.loop_stack.pop();
         _ = try self.genCodeBlock(w.body);
-        if (c.LLVMGetBasicBlockTerminator(bodyB) == null)
+        const body_end = c.LLVMGetInsertBlock(self.builder);
+        if (c.LLVMGetBasicBlockTerminator(body_end) == null)
             _ = c.LLVMBuildBr(self.builder, condB);
 
         c.LLVMPositionBuilderAtEnd(self.builder, endB);
@@ -1185,6 +1188,10 @@ pub const CodeGenerator = struct {
         }
         const loop_ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
         _ = c.LLVMBuildBr(self.builder, loop_ctx.break_block);
+        const cur_bb = c.LLVMGetInsertBlock(self.builder);
+        const fnc = c.LLVMGetBasicBlockParent(cur_bb);
+        const after_break = c.LLVMAppendBasicBlock(fnc, "after.break");
+        c.LLVMPositionBuilderAtEnd(self.builder, after_break);
     }
 
     fn genContinue(self: *CodeGenerator, loc: tok.Location) !void {
@@ -1194,6 +1201,10 @@ pub const CodeGenerator = struct {
         }
         const loop_ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
         _ = c.LLVMBuildBr(self.builder, loop_ctx.continue_block);
+        const cur_bb = c.LLVMGetInsertBlock(self.builder);
+        const fnc = c.LLVMGetBasicBlockParent(cur_bb);
+        const after_continue = c.LLVMAppendBasicBlock(fnc, "after.continue");
+        c.LLVMPositionBuilderAtEnd(self.builder, after_continue);
     }
 
     fn genSwitchStatement(self: *CodeGenerator, sw: *const sem.SwitchStatement) !void {
