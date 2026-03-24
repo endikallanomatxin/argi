@@ -11,21 +11,18 @@ init_stderr_handle(.p: $&File) -> () := {
 }
 
 StdIn : Type = (
-    .file            : File
-    .reader          : FileReader
-    .buffered_reader : BufferedReader
+    .file   : File
+    .reader : FileReader
 )
 
 StdOut : Type = (
-    .file            : File
-    .writer          : FileWriter
-    .buffered_writer : BufferedWriter
+    .file   : File
+    .writer : FileWriter
 )
 
 StdErr : Type = (
-    .file            : File
-    .writer          : FileWriter
-    .buffered_writer : BufferedWriter
+    .file   : File
+    .writer : FileWriter
 )
 
 init(
@@ -33,8 +30,7 @@ init(
     .allocator: $&CAllocator,
 ) -> () := {
     init_stdin_handle(.p = $&p&.file)
-    p&.reader = FileReader(.file = $&p&.file)
-    p&.buffered_reader = BufferedReader(.allocator = allocator, .reader = $&p&.reader, .capacity = 256)
+    p&.reader = FileReader(.allocator = allocator, .file = $&p&.file, .capacity = 256)
 }
 
 init(
@@ -42,8 +38,7 @@ init(
     .allocator: $&CAllocator,
 ) -> () := {
     init_stdout_handle(.p = $&p&.file)
-    p&.writer = FileWriter(.file = $&p&.file)
-    p&.buffered_writer = BufferedWriter(.allocator = allocator, .writer = $&p&.writer, .capacity = 256)
+    p&.writer = FileWriter(.allocator = allocator, .file = $&p&.file, .capacity = 256)
 }
 
 init(
@@ -51,8 +46,7 @@ init(
     .allocator: $&CAllocator,
 ) -> () := {
     init_stderr_handle(.p = $&p&.file)
-    p&.writer = FileWriter(.file = $&p&.file)
-    p&.buffered_writer = BufferedWriter(.allocator = allocator, .writer = $&p&.writer, .capacity = 256)
+    p&.writer = FileWriter(.allocator = allocator, .file = $&p&.file, .capacity = 256)
 }
 
 Terminal : Type = (
@@ -80,24 +74,24 @@ read_line(
 }
 
 read_byte(.self: $&StdIn) -> (.result: ReadByte) := {
-    next ::= read_byte(.self = $&self&.buffered_reader)
+    next ::= read_byte(.self = $&self&.reader)
     result = next
 }
 
 write_byte(.self: $&StdOut, .byte: UInt8) -> () := {
-    write_byte(.self = self&.buffered_writer.writer, .byte = byte)
+    write_byte(.self = $&self&.writer, .byte = byte)
 }
 
 flush(.self: $&StdOut) -> () := {
-    flush(.self = $&self&.buffered_writer)
+    flush(.self = $&self&.writer)
 }
 
 write_byte(.self: $&StdErr, .byte: UInt8) -> () := {
-    write_byte(.self = self&.buffered_writer.writer, .byte = byte)
+    write_byte(.self = $&self&.writer, .byte = byte)
 }
 
 flush(.self: $&StdErr) -> () := {
-    flush(.self = $&self&.buffered_writer)
+    flush(.self = $&self&.writer)
 }
 
 StdIn implements Reader

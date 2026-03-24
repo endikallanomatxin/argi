@@ -101,7 +101,7 @@
               como C-string ad hoc del backend.
         - IO / system streams
 
-            - La capa nueva `File -> Reader/Writer -> BufferedReader/BufferedWriter`
+            - La capa nueva `File -> Reader/Writer`
               ya existe en `core`, pero ahora mismo es todavía un esqueleto de
               arquitectura más que una implementación final.
 
@@ -111,9 +111,9 @@
                   APIs reales del sistema.
                 - `FileWriter.write_byte()` sigue usando `putchar()`, así que
                   `stdout` y `stderr` todavía comparten backend real.
-                - `BufferedReader` y `BufferedWriter` tienen shape propia, pero
-                  su comportamiento está simplificado para evitar chocar con
-                  limitaciones actuales del compilador/codegen.
+                - `FileReader` y `FileWriter` ya llevan buffer interno para
+                  acercarse al modelo final, pero el buffering sigue siendo una
+                  primera versión y necesita consolidarse.
                 - `read_line()` sigue siendo placeholder; la capa de texto sobre
                   IO todavía no está cerrada.
                 - La helper `write(.text: String)` sobre `Writer` es útil de
@@ -127,13 +127,10 @@
                 - `Reader` y `Writer` deben quedarse byte-oriented; texto,
                   líneas, formatting y parsing tienen que vivir en capas
                   superiores.
-                - `BufferedReader` y `BufferedWriter` deberían ser wrappers
-                  reales, con buffering efectivo y semántica clara sobre si
-                  poseen o no el recurso subyacente.
-                - A medio plazo conviene decidir si `Reader`/`Writer` cuelgan de
-                  `File` como wrappers concretos o si `File` implementa además
-                  las operaciones base directamente y los wrappers sólo añaden
-                  política de buffering/posición.
+                - `Reader` y `Writer` deberían ser la capa normal de uso, con
+                  buffering integrado por defecto cuando tenga sentido.
+                - `File` debería quedarse como capa raw del handle, y el detalle
+                  del buffering no tendría que desbordar al usuario normal.
 
             - Trabajo pendiente para acercarlo a algo final:
                 - Añadir bindings/platform layer para leer y escribir bytes de
