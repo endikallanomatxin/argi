@@ -27,7 +27,7 @@ DummyInput : Type = ()
 
 read_line(
     .self: $&DummyInput,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&CountingAllocator = #reach allocator, system.allocator,
 ) -> (.line: String) := {
     line = String(.length = 2)
     bytes_set(.string = $&line, .index = 0, .value = 79)

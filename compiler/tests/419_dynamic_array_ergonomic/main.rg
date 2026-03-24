@@ -2,8 +2,8 @@ sum_pair (.a: Int32, .b: Int32) -> (.sum: Int32) := {
     sum = a + b
 }
 
-main () -> (.status_code: Int32) := {
-    allocator :: CAllocator = CAllocator()
+main(.system: System) -> (.status_code: Int32) := {
+    allocator ::= system.allocator
     arr ::= DynamicArray#(.t: Int32)(.capacity = 1)
     #defer deinit(.self = $&arr)
 

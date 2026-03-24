@@ -19,8 +19,8 @@ flush(.self: $&DummyOutput) -> () := {
 
 DummyOutput implements OutputStream#(.text: String)
 
-main() -> (.status_code: Int32) := {
-    allocator :: CAllocator = CAllocator()
+main(.system: System) -> (.status_code: Int32) := {
+    allocator ::= system.allocator
     stderr :: DummyOutput = (
         .write_count = 0,
         .flush_count = 0,
