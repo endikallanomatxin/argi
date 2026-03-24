@@ -972,6 +972,18 @@ test "468_string_allocator_size" {
     try runExpect(0);
 }
 
+test "469_cstring_literal" {
+    try clean();
+    try expectSuccessfulBuild("tests/469_cstring_literal/main.rg");
+    try runExpect(0);
+}
+
+test "470_file_open_modes" {
+    try clean();
+    try expectSuccessfulBuild("tests/470_file_open_modes/main.rg");
+    try runExpect(0);
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");

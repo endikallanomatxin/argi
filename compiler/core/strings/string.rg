@@ -16,6 +16,23 @@ CString : Type = (
     .data : UIntNative
 )
 
+init(
+    .p: $&CString,
+    .data: &Char,
+) -> () := {
+    p& = (
+        .data = cast#(.to: UIntNative)(.value = data)
+    )
+}
+
+from_literal(
+    .data: &Char,
+) -> (.text: CString) := {
+    text = (
+        .data = cast#(.to: UIntNative)(.value = data)
+    )
+}
+
 init (
     .p: $&String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
