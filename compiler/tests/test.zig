@@ -893,6 +893,18 @@ test "458_buffered_file_wrappers" {
     try runExpect(0);
 }
 
+test "459_file_preopened_stdio" {
+    try clean();
+    try expectSuccessfulBuild("tests/459_file_preopened_stdio/main.rg");
+    try runExpect(0);
+}
+
+test "460_file_open_close" {
+    try clean();
+    try expectSuccessfulBuild("tests/460_file_open_close/main.rg");
+    try runExpect(0);
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");
