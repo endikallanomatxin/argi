@@ -12,19 +12,25 @@ String : Type = (
     .length     : UIntNative
 )
 
+CString : Type = (
+    .data : UIntNative
+)
+
 init (
     .p: $&String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .length: UIntNative,
 ) -> () := {
-    data ::= allocate(.self = allocator, .size = length)
+    allocation_size ::= length + 1
+    data ::= allocate(.self = allocator, .size = allocation_size)
     p& = (
         .allocation = (
             .data = data,
-            .size = length,
+            .size = allocation_size,
         ),
         .length = length,
     )
+    bytes_set(.string = p, .index = length, .value = 0)
 }
 
 deinit (
@@ -43,23 +49,24 @@ copy (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: String,
 ) -> (.out: String) := {
-    new_data ::= allocate(.self = allocator, .size = self.length)
+    allocation_size ::= self.length + 1
+    new_data ::= allocate(.self = allocator, .size = allocation_size)
     out = (
         .allocation = (
             .data = new_data,
-            .size = self.length,
+            .size = allocation_size,
         ),
         .length = self.length,
     )
 
-    if self.length > 0 {
+    if allocation_size > 0 {
         src_addr :: UIntNative = cast#(.to: UIntNative)(.value = self.allocation.data)
         dst_addr :: UIntNative = cast#(.to: UIntNative)(.value = out.allocation.data)
 
         memcpy(
             .dst = cast#(.to: $&Any)(.value = dst_addr),
             .src = cast#(.to: &Any)(.value = src_addr),
-            .n = self.length,
+            .n = allocation_size,
         )
     }
 }
@@ -89,4 +96,27 @@ bytes_set (
     addr :: UIntNative = string_byte_address(.string = string, .index = index).address
     ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
     ptr& = value
+}
+
+as_view(
+    .self: &String,
+) -> (.view: StringView) := {
+    view = (
+        .data = cast#(.to: UIntNative)(.value = self&.allocation.data),
+        .length = self&.length,
+    )
+}
+
+as_c_string(
+    .self: &String,
+) -> (.text: CString) := {
+    text = (
+        .data = cast#(.to: UIntNative)(.value = self&.allocation.data)
+    )
+}
+
+pointer(
+    .self: &CString,
+) -> (.out: &Char) := {
+    out = cast#(.to: &Char)(.value = self&.data)
 }

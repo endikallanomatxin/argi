@@ -10,6 +10,7 @@ main(.system: System) -> (.status_code: Int32) := {
 
     original_first ::= bytes_get(.string = &original, .index = 0).byte
     copied_first ::= bytes_get(.string = &copied, .index = 0).byte
+    copied_nul ::= bytes_get(.string = &copied, .index = 3).byte
 
     if original_first != 65 {
         status_code = 1
@@ -18,6 +19,11 @@ main(.system: System) -> (.status_code: Int32) := {
 
     if copied_first != 66 {
         status_code = 2
+        return
+    }
+
+    if copied_nul != 0 {
+        status_code = 3
         return
     }
 
