@@ -869,6 +869,12 @@ test "454_main_system_reached_stdout" {
     try runExpect(0);
 }
 
+test "455_empty_type_initializer_resolution" {
+    try clean();
+    try expectSuccessfulBuild("tests/455_empty_type_initializer_resolution/main.rg");
+    try runExpect(0);
+}
+
 test "62_folder_module_namespace" {
     try clean();
     try expectSuccessfulBuild("tests/62_folder_module_namespace/main.rg");

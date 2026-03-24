@@ -253,8 +253,10 @@ pub fn typeImplementsAbstract(
 
 // Lower score = more specific. Assumes typesStructurallyEqual(expected, actual) already true.
 pub fn specificityScore(expected: sg.Type, actual: sg.Type) u32 {
+    if (typ.typesExactlyEqual(expected, actual)) return 0;
+
     return switch (expected) {
-        .builtin => 0,
+        .builtin => 1,
         .abstract_type => switch (actual) {
             .abstract_type => 0,
             else => 1,
@@ -272,7 +274,7 @@ pub fn specificityScore(expected: sg.Type, actual: sg.Type) u32 {
                 const fa = ast.fields[i];
                 sum += specificityScore(fe.ty, fa.ty);
             }
-            break :blk sum;
+            break :blk sum + 1;
         },
         .pointer_type => |ept_ptr| blk2: {
             const apt_ptr = actual.pointer_type;
@@ -295,7 +297,7 @@ pub fn specificityScore(expected: sg.Type, actual: sg.Type) u32 {
             const eat = eat_ptr.*;
             const aat = aat_ptr.*;
             if (eat.length != aat.length) break :blk_arr 10;
-            break :blk_arr specificityScore(eat.element_type.*, aat.element_type.*);
+            break :blk_arr specificityScore(eat.element_type.*, aat.element_type.*) + 1;
         },
     };
 }
@@ -338,6 +340,10 @@ pub fn typesCompatibleForDispatch(expected: sg.Type, actual: sg.Type, s: *Scope)
 
                 if (typ.isAny(expected_child) or typ.isAny(actual_child))
                     break :blk true;
+
+                if (expected_child == .struct_type and actual_child == .struct_type) {
+                    break :blk typ.typesExactlyEqual(expected_child, actual_child);
+                }
 
                 break :blk typesCompatibleForDispatch(expected_child, actual_child, s);
             },

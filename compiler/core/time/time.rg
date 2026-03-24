@@ -1,6 +1,9 @@
 -- Pensar si la capability tiene que ir aquí o no
 
 Clock : Type = ()
+
+init(.p: $&Clock) -> () := {
+}
 -- getCurrentTime :: IO UTCTime
 -- Obtiene la hora actual en UTC.
 -- getZonedTime :: IO ZonedTime

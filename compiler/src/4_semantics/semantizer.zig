@@ -3856,6 +3856,30 @@ pub const Semantizer = struct {
         s: *Scope,
         loc: tok.Location,
     ) SemErr!*sg.FunctionDeclaration {
+        return self.tryResolveRegularCallCallee(call, input_te, s, loc) catch |err| switch (err) {
+            error.SymbolNotFound => {
+                if (self.defer_unknown_top_level and self.current_top_node != null) {
+                    if (!(try self.hasVisibleFunctionNamed(call.callee, s, loc))) {
+                        return error.SymbolNotFound;
+                    }
+                }
+                if (try self.addMissingAbstractImplementationDiagnostic(call.callee, input_te.ty, s, loc)) {
+                    return error.Reported;
+                }
+                try self.addMissingFunctionDiagnostic(call.callee, input_te.ty, s, loc);
+                return error.Reported;
+            },
+            else => return err,
+        };
+    }
+
+    fn tryResolveRegularCallCallee(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        input_te: typ.TypedExpr,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!*sg.FunctionDeclaration {
         var chosen: *sg.FunctionDeclaration = undefined;
         if (call.type_arguments_struct) |stargs| {
             chosen = try self.instantiateGenericNamed(call.callee, stargs, input_te, s, .regular);
@@ -3868,34 +3892,25 @@ pub const Semantizer = struct {
                 else => return err,
             };
 
-            if (inferred) |instantiated| {
-                chosen = instantiated;
-            } else {
-                if (call.module_qualifier) |module_name| {
-                    chosen = try self.resolveQualifiedOverload(module_name, call.callee, input_te, s, loc);
+                if (inferred) |instantiated| {
+                    chosen = instantiated;
                 } else {
-                    chosen = self.resolveVisibleOverload(call.callee, input_te, s, loc) catch |err| switch (err) {
-                        error.SymbolNotFound => blk: {
-                            const abstract_inferred = self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .abstract_contract) catch |inner_err| switch (inner_err) {
-                                error.SymbolNotFound => null,
-                                else => return inner_err,
-                            };
-                            if (abstract_inferred) |instantiated_abstract| break :blk instantiated_abstract;
-                            if (self.defer_unknown_top_level and self.current_top_node != null) {
-                                if (!(try self.hasVisibleFunctionNamed(call.callee, s, loc))) {
-                                    return error.SymbolNotFound;
-                                }
-                            }
-                            if (try self.addMissingAbstractImplementationDiagnostic(call.callee, input_te.ty, s, loc)) {
-                                return error.Reported;
-                            }
-                            try self.addMissingFunctionDiagnostic(call.callee, input_te.ty, s, loc);
-                            return error.Reported;
-                        },
-                        else => return err,
-                    };
+                    if (call.module_qualifier) |module_name| {
+                        chosen = try self.resolveQualifiedOverload(module_name, call.callee, input_te, s, loc);
+                    } else {
+                        chosen = self.resolveVisibleOverload(call.callee, input_te, s, loc) catch |err| switch (err) {
+                            error.SymbolNotFound => {
+                                const abstract_inferred = self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .abstract_contract) catch |inner_err| switch (inner_err) {
+                                    error.SymbolNotFound => null,
+                                    else => return inner_err,
+                                };
+                                if (abstract_inferred) |instantiated_abstract| return instantiated_abstract;
+                                return error.SymbolNotFound;
+                            },
+                            else => return err,
+                        };
+                    }
                 }
-            }
         }
         return chosen;
     }
@@ -4267,10 +4282,7 @@ pub const Semantizer = struct {
             };
         }
 
-        const positional_prefix: u32 = if (user_value.dispatch_prefix_positional_count == 0)
-            0
-        else
-            @intCast(user_value.dispatch_prefix_positional_count + 1);
+        const positional_prefix: u32 = @intCast(user_value.dispatch_prefix_positional_count + 1);
         return self.buildCallInputWithPositionalPrefix(args, positional_prefix);
     }
 
@@ -4818,17 +4830,20 @@ pub const Semantizer = struct {
                 .input = call.input,
             };
 
-            break :blk self.resolveRegularCallCallee(synthetic_init_call, init_input_te, s, call.input.*.location) catch |err| switch (err) {
-                error.Reported => return err,
+            break :blk self.tryResolveRegularCallCallee(synthetic_init_call, init_input_te, s, call.input.*.location) catch |err| switch (err) {
                 error.SymbolNotFound => {
-                const sigs = try self.collectVisibleSignatureText("init", user_struct, s, call.input.*.location);
-                defer sigs.deinit();
-                try self.diags.add(
-                    call.input.*.location,
-                    .semantic,
-                    "failed to initialize type '{s}': no visible 'init' overload accepts arguments {s}. Available overloads:\n{s}",
-                    .{ call.callee, sigs.actual.bytes, sigs.available.bytes },
-                );
+                    if (type_decl.ty == .struct_type) {
+                        return try self.coerceCallInputToExpected(type_decl.ty.struct_type, tv_in, call.input, s);
+                    }
+
+                    const sigs = try self.collectVisibleSignatureText("init", user_struct, s, call.input.*.location);
+                    defer sigs.deinit();
+                    try self.diags.add(
+                        call.input.*.location,
+                        .semantic,
+                        "failed to initialize type '{s}': no visible 'init' overload accepts arguments {s}. Available overloads:\n{s}",
+                        .{ call.callee, sigs.actual.bytes, sigs.available.bytes },
+                    );
                     return error.Reported;
                 },
                 error.AmbiguousOverload => {

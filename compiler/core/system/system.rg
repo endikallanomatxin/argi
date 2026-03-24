@@ -31,8 +31,19 @@ init(.p: $&System) -> () := {
     rand_gen_ptr ::= allocate_runtime_value#(.t = RandomNumberGenerator)()
     ffi_ptr ::= allocate_runtime_value#(.t = ForeignFunctionInterface)()
 
-    init(.p = allocator_ptr)
-    init(.p = terminal_ptr, .stdin = stdin_ptr, .stdout = stdout_ptr, .stderr = stderr_ptr)
+    allocator_ptr& = CAllocator()
+    stdin_ptr& = StdIn()
+    stdout_ptr& = StdOut()
+    stderr_ptr& = StdErr()
+    terminal_ptr& = Terminal(.stdin = stdin_ptr, .stdout = stdout_ptr, .stderr = stderr_ptr)
+    args_ptr& = Arguments()
+    env_vars_ptr& = EnvironmentVariables()
+    file_sys_ptr& = FileSystem()
+    network_ptr& = Network()
+    proc_man_ptr& = ProcessManager()
+    clock_ptr& = Clock()
+    rand_gen_ptr& = RandomNumberGenerator()
+    ffi_ptr& = ForeignFunctionInterface()
 
     p& = (
         .allocator = allocator_ptr,
