@@ -983,6 +983,24 @@ test "471_arguments_access" {
     try runExpect(test_path, 0);
 }
 
+test "472_arguments_index_operator" {
+    const test_path = "tests/472_arguments_index_operator";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "473_arguments_iterable" {
+    const test_path = "tests/473_arguments_iterable";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "474_length_named_function" {
+    const test_path = "tests/474_length_named_function";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "62_folder_module_namespace" {
     const test_path = "tests/62_folder_module_namespace";
     try expectSuccessfulBuild(test_path);

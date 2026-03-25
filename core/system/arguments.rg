@@ -6,6 +6,14 @@ Arguments : Type = (
     .argv  : UIntNative
 )
 
+ArgumentsIterator : Type = (
+    .args  : &Arguments
+    .index : UIntNative
+)
+
+ArgumentsIterator implements Iterator#(.t: StringView)
+Arguments implements Iterable#(.t: StringView)
+
 init(.p: $&Arguments) -> () := {
     p& = (
         .count = __argi_runtime_argc().count,
@@ -15,6 +23,17 @@ init(.p: $&Arguments) -> () := {
 
 argument_count(.self: &Arguments) -> (.count: UIntNative) := {
     count = self&.count
+}
+
+length(.self: &Arguments) -> (.count: UIntNative) := {
+    count = self&.count
+}
+
+has_argument(
+    .self: &Arguments,
+    .index: UIntNative,
+) -> (.ok: Bool) := {
+    ok = index < self&.count
 }
 
 argument_pointer_address(
@@ -45,5 +64,38 @@ argument_view_at(
     view = (
         .data = text.data,
         .length = strlen(.string = c_ptr).length,
+    )
+}
+
+operator get[](
+    .self: &Arguments,
+    .index: UIntNative,
+) -> (.view: StringView) := {
+    view = argument_view_at(.self = self, .index = index)
+}
+
+to_iterator(
+    .value: &Arguments,
+) -> (.iterator: ArgumentsIterator) := {
+    iterator = (
+        .args = value,
+        .index = 0,
+    )
+}
+
+has_next(
+    .self: &ArgumentsIterator,
+) -> (.ok: Bool) := {
+    ok = self&.index < self&.args&.count
+}
+
+next(
+    .self: $&ArgumentsIterator,
+) -> (.value: StringView) := {
+    current_index :: UIntNative = self&.index
+    value = self&.args[current_index]
+    self& = (
+        .args = self&.args,
+        .index = current_index + 1,
     )
 }
