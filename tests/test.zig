@@ -1001,6 +1001,12 @@ test "474_length_named_function" {
     try runExpect(test_path, 0);
 }
 
+test "475_environment_variables" {
+    const test_path = "tests/475_environment_variables";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "62_folder_module_namespace" {
     const test_path = "tests/62_folder_module_namespace";
     try expectSuccessfulBuild(test_path);

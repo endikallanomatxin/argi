@@ -2,15 +2,30 @@ EnvironmentVariables : Type = ()
 
 init(.p: $&EnvironmentVariables) -> () := {
 }
---EnvironmentVariables : Type = Map<String,String>
 
+get(
+    .self: &EnvironmentVariables,
+    .key: CString,
+) -> (.value: Nullable#(.t: StringView)) := {
+    key_ptr ::= pointer(.self = &key)
+    raw_ptr ::= getenv(.name = key_ptr).value
+    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = raw_ptr)
 
--- Si vienen pre-fetcheados, entonces es un map.
--- Si no vacío y syscalls en los get y set
+    if raw_addr == 0 {
+        value = ..none
+        return
+    }
 
--- get[] is the regular get of any map
+    value = ..some(.value = (
+        .data = raw_addr,
+        .length = strlen(.string = raw_ptr).length,
+    ))
+}
 
--- op set$[]($&EnvironmentVariables, key: String, value: String) : !{
---     -- Set is overloaded to modify the environment variables of the system
---     -- via syscall
--- }
+has(
+    .self: &EnvironmentVariables,
+    .key: CString,
+) -> (.ok: Bool) := {
+    found ::= get(.self = self, .key = key)
+    ok = is(.value = found, .variant = ..some)
+}
