@@ -179,7 +179,11 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
 
         // ── FUNCTION DECLARATION ──────────────────────────────────────────
         .function_declaration => |fd| {
-            std.debug.print("FuncDecl \"{s}\"\n", .{fd.name.string});
+            if (fd.is_once) {
+                std.debug.print("FuncDecl once \"{s}\"\n", .{fd.name.string});
+            } else {
+                std.debug.print("FuncDecl \"{s}\"\n", .{fd.name.string});
+            }
 
             indent(lvl + 1);
             std.debug.print("input : ", .{});

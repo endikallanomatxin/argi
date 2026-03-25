@@ -2112,7 +2112,7 @@ inline fn classify(c: token.Content) ?u32 {
             else => TOKEN_INDEX.number,
         },
 
-        .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue => TOKEN_INDEX.keyword,
+        .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once => TOKEN_INDEX.keyword,
 
         .comparison_operator, .binary_operator, .equal, .arrow, .colon, .double_colon, .dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar => TOKEN_INDEX.operator,
 
@@ -2254,6 +2254,7 @@ fn tokenLenBytes(tk: token.Token) usize {
         .keyword_while => "while".len,
         .keyword_break => "break".len,
         .keyword_continue => "continue".len,
+        .keyword_once => "once".len,
 
         .double_colon => 2,
         .arrow => 2,
@@ -2275,7 +2276,7 @@ inline fn classify_lex_only(c: token.Content) ?u32 {
             .string_literal, .char_literal => TOKEN_INDEX.string,
             .bool_literal => TOKEN_INDEX.keyword,
         },
-        .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue => TOKEN_INDEX.keyword,
+        .keyword_return, .keyword_if, .keyword_else, .keyword_match, .keyword_for, .keyword_in, .keyword_while, .keyword_break, .keyword_continue, .keyword_once => TOKEN_INDEX.keyword,
         .comparison_operator, .binary_operator, .equal, .arrow, .colon, .double_colon, .dot, .double_dot, .comma, .open_parenthesis, .close_parenthesis, .open_bracket, .close_bracket, .open_brace, .close_brace, .hash, .ampersand, .pipe, .dollar, .tilde => TOKEN_INDEX.operator,
         .identifier => null,
         .new_line, .eof => null,

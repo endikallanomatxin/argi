@@ -1039,6 +1039,53 @@ test "480X_system_noncopyable_argument" {
     );
 }
 
+test "481_once_single_use" {
+    const test_path = "tests/481_once_single_use";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "482X_once_duplicate_direct" {
+    try buildExpectFail(
+        "tests/482X_once_duplicate_direct",
+        "once function 'setup' is consumed more than once from the reachable entrypoint graph",
+    );
+}
+
+test "483_once_unreached_duplicate_allowed" {
+    const test_path = "tests/483_once_unreached_duplicate_allowed";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "484X_once_duplicate_indirect" {
+    try buildExpectFail(
+        "tests/484X_once_duplicate_indirect",
+        "once function 'setup' is consumed more than once from the reachable entrypoint graph",
+    );
+}
+
+test "485X_once_duplicate_branches" {
+    try buildExpectFail(
+        "tests/485X_once_duplicate_branches",
+        "once function 'setup' is consumed more than once from the reachable entrypoint graph",
+    );
+}
+
+test "486X_once_duplicate_init" {
+    try buildExpectFail(
+        "tests/486X_once_duplicate_init",
+        "once function 'init' is consumed more than once from the reachable entrypoint graph",
+    );
+}
+
+test "487X_system_duplicate_init" {
+    try buildExpectFail(
+        "tests/487X_system_duplicate_init",
+        "once function 'init' is consumed more than once from the reachable entrypoint graph",
+    );
+}
+
 test "62_folder_module_namespace" {
     const test_path = "tests/62_folder_module_namespace";
     try expectSuccessfulBuild(test_path);

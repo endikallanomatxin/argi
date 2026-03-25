@@ -149,6 +149,7 @@ pub const AbstractFunctionRequirement = struct {
 
 pub const FunctionDeclaration = struct {
     name: Name,
+    is_once: bool,
     generic_params: []const []const u8,
     generic_params_struct: ?StructTypeLiteral,
     input: StructTypeLiteral, // Arguments

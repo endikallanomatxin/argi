@@ -1,4 +1,4 @@
 ForeignFunctionInterface : Type = ()
 
-init(.p: $&ForeignFunctionInterface) -> () := {
+once init(.p: $&ForeignFunctionInterface) -> () := {
 }

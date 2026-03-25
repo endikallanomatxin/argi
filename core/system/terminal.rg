@@ -25,7 +25,7 @@ StdErr : Type = (
     .writer : FileWriter
 )
 
-init(
+once init(
     .p: $&StdIn,
     .allocator: $&CAllocator,
 ) -> () := {
@@ -41,7 +41,7 @@ deinit(
     close(.self = $&self&.file)
 }
 
-init(
+once init(
     .p: $&StdOut,
     .allocator: $&CAllocator,
 ) -> () := {
@@ -57,7 +57,7 @@ deinit(
     close(.self = $&self&.file)
 }
 
-init(
+once init(
     .p: $&StdErr,
     .allocator: $&CAllocator,
 ) -> () := {
@@ -79,7 +79,7 @@ Terminal : Type = (
     .stderr : $&StdErr
 )
 
-init(.p: $&Terminal, .stdin: $&StdIn, .stdout: $&StdOut, .stderr: $&StdErr) -> () := {
+once init(.p: $&Terminal, .stdin: $&StdIn, .stdout: $&StdOut, .stderr: $&StdErr) -> () := {
     p& = (
         .stdin = stdin,
         .stdout = stdout,

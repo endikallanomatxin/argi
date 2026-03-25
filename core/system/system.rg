@@ -28,7 +28,7 @@ System : Type = (
   .ffi       : $&ForeignFunctionInterface
 )
 
-init(.p: $&System) -> () := {
+once init(.p: $&System) -> () := {
     p&._storage.allocator = CAllocator()
     p&._storage.stdin = StdIn(.allocator = $&p&._storage.allocator)
     p&._storage.stdout = StdOut(.allocator = $&p&._storage.allocator)

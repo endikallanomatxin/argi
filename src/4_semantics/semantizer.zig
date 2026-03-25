@@ -60,6 +60,28 @@ const ReachFunctionContext = struct {
     body_scope: *Scope,
 };
 
+const OnceConsumption = struct {
+    first_location: tok.Location,
+    first_consumer: *const sg.FunctionDeclaration,
+};
+
+const OnceTraversalState = struct {
+    seen_once: std.AutoHashMap(*const sg.FunctionDeclaration, OnceConsumption),
+    active_functions: std.array_list.Managed(*const sg.FunctionDeclaration),
+
+    fn init(allocator: *const std.mem.Allocator) OnceTraversalState {
+        return .{
+            .seen_once = std.AutoHashMap(*const sg.FunctionDeclaration, OnceConsumption).init(allocator.*),
+            .active_functions = std.array_list.Managed(*const sg.FunctionDeclaration).init(allocator.*),
+        };
+    }
+
+    fn deinit(self: *OnceTraversalState) void {
+        self.seen_once.deinit();
+        self.active_functions.deinit();
+    }
+};
+
 const GenericSubst = struct {
     allocator: *const std.mem.Allocator,
     types: std.StringHashMap(sg.Type),
@@ -175,6 +197,7 @@ pub const Semantizer = struct {
 
         // Final conformance verification for abstracts (top-level scope)
         try abs.verifyAbstracts(&global, self.allocator, self.diags);
+        try self.verifyOnceFunctions(&global);
 
         self.root_nodes = try self.root_list.toOwnedSlice();
         self.root_list.deinit();
@@ -227,6 +250,262 @@ pub const Semantizer = struct {
             .actual = self.formatOwnedText(try typ.formatCallInput(input, s, self.allocator)),
             .available = self.formatOwnedText(try self.collectModuleFunctionSignatures(module_dir, fn_name, s, loc)),
         };
+    }
+
+    fn isWrappableMainCandidate(self: *Semantizer, f: *const sg.FunctionDeclaration) bool {
+        _ = self;
+        if (!std.mem.eql(u8, f.name, "main")) return false;
+        if (f.output.fields.len != 1) return false;
+        const fld = f.output.fields[0];
+        if (!std.mem.eql(u8, fld.name, "status_code")) return false;
+        return switch (fld.ty) {
+            .builtin => |bt| bt == .Int32,
+            else => false,
+        };
+    }
+
+    fn verifyOnceFunctions(self: *Semantizer, global: *Scope) SemErr!void {
+        if (global.functions.getPtr("main")) |main_list| {
+            for (main_list.items) |main_fn| {
+                if (!self.isWrappableMainCandidate(main_fn)) continue;
+                var state = OnceTraversalState.init(self.allocator);
+                defer state.deinit();
+                try self.walkFunctionOnceReachability(main_fn, main_fn.location, &state);
+            }
+        }
+    }
+
+    fn walkFunctionOnceReachability(
+        self: *Semantizer,
+        func: *const sg.FunctionDeclaration,
+        call_loc: tok.Location,
+        state: *OnceTraversalState,
+    ) SemErr!void {
+        if (func.body == null) return;
+
+        for (state.active_functions.items) |active| {
+            if (active == func) {
+                try self.diags.add(
+                    call_loc,
+                    .semantic,
+                    "once analysis does not support recursive call cycles; cycle detected while expanding '{s}'",
+                    .{func.name},
+                );
+                return error.Reported;
+            }
+        }
+
+        try state.active_functions.append(func);
+        defer _ = state.active_functions.pop();
+
+        for (func.input.fields) |field| {
+            if (field.default_value) |default_node| {
+                try self.walkNodeOnceReachability(func, default_node, state);
+            }
+        }
+        for (func.output.fields) |field| {
+            if (field.default_value) |default_node| {
+                try self.walkNodeOnceReachability(func, default_node, state);
+            }
+        }
+
+        try self.walkCodeBlockOnceReachability(func, func.body.?, state);
+    }
+
+    fn recordOnceConsumption(
+        self: *Semantizer,
+        once_fn: *const sg.FunctionDeclaration,
+        consumer: *const sg.FunctionDeclaration,
+        loc: tok.Location,
+        state: *OnceTraversalState,
+    ) SemErr!void {
+        const result = try state.seen_once.getOrPut(once_fn);
+        if (!result.found_existing) {
+            result.value_ptr.* = .{
+                .first_location = loc,
+                .first_consumer = consumer,
+            };
+            return;
+        }
+
+        const first = result.value_ptr.*;
+        try self.diags.add(
+            loc,
+            .semantic,
+            "once function '{s}' is consumed more than once from the reachable entrypoint graph (first use at {s}:{d}:{d} via '{s}')",
+            .{
+                once_fn.name,
+                first.first_location.file,
+                first.first_location.line,
+                first.first_location.column,
+                first.first_consumer.name,
+            },
+        );
+        return error.Reported;
+    }
+
+    fn walkCodeBlockOnceReachability(
+        self: *Semantizer,
+        current_fn: *const sg.FunctionDeclaration,
+        block: *const sg.CodeBlock,
+        state: *OnceTraversalState,
+    ) SemErr!void {
+        for (block.nodes) |node| {
+            try self.walkNodeOnceReachability(current_fn, node, state);
+        }
+        if (block.ret_val) |ret_node| {
+            try self.walkNodeOnceReachability(current_fn, ret_node, state);
+        }
+    }
+
+    fn walkNodeOnceReachability(
+        self: *Semantizer,
+        current_fn: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        state: *OnceTraversalState,
+    ) SemErr!void {
+        switch (node.content) {
+            .binding_declaration => |binding| {
+                if (binding.initialization) |init_node| {
+                    try self.walkNodeOnceReachability(current_fn, init_node, state);
+                }
+            },
+            .binding_assignment => |assign| {
+                try self.walkNodeOnceReachability(current_fn, assign.value, state);
+            },
+            .auto_deinit_binding => |auto| {
+                if (auto.deinit_fn.is_once) {
+                    try self.recordOnceConsumption(auto.deinit_fn, current_fn, node.location, state);
+                }
+                try self.walkFunctionOnceReachability(auto.deinit_fn, node.location, state);
+            },
+            .reach_directive,
+            .binding_use,
+            .value_literal,
+            .type_literal,
+            .break_statement,
+            .continue_statement,
+            => {},
+            .move_value => |inner| {
+                try self.walkNodeOnceReachability(current_fn, inner, state);
+            },
+            .function_call => |call| {
+                try self.walkNodeOnceReachability(current_fn, call.input, state);
+                if (call.callee.is_once) {
+                    try self.recordOnceConsumption(call.callee, current_fn, node.location, state);
+                }
+                try self.walkFunctionOnceReachability(call.callee, node.location, state);
+            },
+            .code_block => |block| {
+                try self.walkCodeBlockOnceReachability(current_fn, block, state);
+            },
+            .choice_literal => |choice| {
+                if (choice.payload) |payload| {
+                    try self.walkNodeOnceReachability(current_fn, payload, state);
+                }
+            },
+            .list_literal => |list| {
+                for (list.elements) |elem| {
+                    try self.walkNodeOnceReachability(current_fn, elem, state);
+                }
+            },
+            .struct_value_literal => |st| {
+                for (st.fields) |field| {
+                    try self.walkNodeOnceReachability(current_fn, field.value, state);
+                }
+            },
+            .struct_field_access => |access| {
+                try self.walkNodeOnceReachability(current_fn, access.struct_value, state);
+            },
+            .choice_payload_access => |access| {
+                try self.walkNodeOnceReachability(current_fn, access.choice_value, state);
+            },
+            .array_literal => |arr| {
+                for (arr.elements) |elem| {
+                    try self.walkNodeOnceReachability(current_fn, elem, state);
+                }
+            },
+            .array_index => |index| {
+                try self.walkNodeOnceReachability(current_fn, index.array_ptr, state);
+                try self.walkNodeOnceReachability(current_fn, index.index, state);
+            },
+            .array_store => |store| {
+                try self.walkNodeOnceReachability(current_fn, store.array_ptr, state);
+                try self.walkNodeOnceReachability(current_fn, store.index, state);
+                try self.walkNodeOnceReachability(current_fn, store.value, state);
+            },
+            .struct_field_store => |store| {
+                try self.walkNodeOnceReachability(current_fn, store.struct_ptr, state);
+                try self.walkNodeOnceReachability(current_fn, store.value, state);
+            },
+            .binary_operation => |op| {
+                try self.walkNodeOnceReachability(current_fn, op.left, state);
+                try self.walkNodeOnceReachability(current_fn, op.right, state);
+            },
+            .comparison => |cmp| {
+                try self.walkNodeOnceReachability(current_fn, cmp.left, state);
+                try self.walkNodeOnceReachability(current_fn, cmp.right, state);
+            },
+            .return_statement => |ret| {
+                if (ret.expression) |expr| {
+                    try self.walkNodeOnceReachability(current_fn, expr, state);
+                }
+            },
+            .if_statement => |if_stmt| {
+                try self.walkNodeOnceReachability(current_fn, if_stmt.condition, state);
+                try self.walkCodeBlockOnceReachability(current_fn, if_stmt.then_block, state);
+                if (if_stmt.else_block) |else_block| {
+                    try self.walkCodeBlockOnceReachability(current_fn, else_block, state);
+                }
+            },
+            .while_statement => |while_stmt| {
+                try self.walkNodeOnceReachability(current_fn, while_stmt.condition, state);
+                try self.walkCodeBlockOnceReachability(current_fn, while_stmt.body, state);
+            },
+            .for_statement => |for_stmt| {
+                if (for_stmt.init) |init_node| {
+                    try self.walkNodeOnceReachability(current_fn, init_node, state);
+                }
+                try self.walkNodeOnceReachability(current_fn, for_stmt.condition, state);
+                if (for_stmt.increment) |inc_node| {
+                    try self.walkNodeOnceReachability(current_fn, inc_node, state);
+                }
+                try self.walkCodeBlockOnceReachability(current_fn, for_stmt.body, state);
+            },
+            .switch_statement => |switch_stmt| {
+                try self.walkNodeOnceReachability(current_fn, switch_stmt.expression, state);
+                for (switch_stmt.cases) |case| {
+                    try self.walkNodeOnceReachability(current_fn, case.value, state);
+                    try self.walkCodeBlockOnceReachability(current_fn, case.body, state);
+                }
+                if (switch_stmt.default_case) |default_block| {
+                    try self.walkCodeBlockOnceReachability(current_fn, default_block, state);
+                }
+            },
+            .address_of => |inner| {
+                try self.walkNodeOnceReachability(current_fn, inner, state);
+            },
+            .dereference => |deref| {
+                try self.walkNodeOnceReachability(current_fn, deref.pointer, state);
+            },
+            .pointer_assignment => |assign| {
+                try self.walkNodeOnceReachability(current_fn, assign.pointer, state);
+                try self.walkNodeOnceReachability(current_fn, assign.value, state);
+            },
+            .type_initializer => |type_init| {
+                try self.walkNodeOnceReachability(current_fn, type_init.args, state);
+                if (type_init.init_fn.is_once) {
+                    try self.recordOnceConsumption(type_init.init_fn, current_fn, node.location, state);
+                }
+                try self.walkFunctionOnceReachability(type_init.init_fn, node.location, state);
+            },
+            .explicit_cast => |cast_expr| {
+                try self.walkNodeOnceReachability(current_fn, cast_expr.value, state);
+            },
+            .function_declaration,
+            .type_declaration,
+            => {},
+        }
     }
 
     fn buildOverloadCandidatesText(
@@ -2121,6 +2400,15 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         // Register generic template and skip direct emission
         if (f.generic_params.len > 0 or f.generic_params_struct != null) {
+            if (f.is_once) {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "once is not supported on generic functions yet",
+                    .{},
+                );
+                return error.Reported;
+            }
             const params_struct = try self.genericParamsStructOrNames(
                 f.generic_params_struct,
                 f.generic_params,
@@ -2147,6 +2435,16 @@ pub const Semantizer = struct {
             const noop = try self.makeNoopNode(loc);
             try p.nodes.append(noop);
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
+        }
+
+        if (f.is_once and f.body == null) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "once is not supported on extern functions",
+                .{},
+            );
+            return error.Reported;
         }
 
         var child = try Scope.init(self.allocator, p, null);
@@ -2225,6 +2523,7 @@ pub const Semantizer = struct {
         fn_ptr.* = .{
             .name = f.name.string,
             .location = loc,
+            .is_once = f.is_once,
             .input = in_struct_ptr.*,
             .output = out_struct,
             .body = body_cb,
@@ -5550,6 +5849,7 @@ pub const Semantizer = struct {
         fn_ptr.* = .{
             .name = tmpl.name,
             .location = tmpl.location,
+            .is_once = false,
             .input = in_struct_ptr.*,
             .output = out_struct_ptr.*,
             .body = body_cb,

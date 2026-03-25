@@ -14,7 +14,7 @@ ArgumentsIterator : Type = (
 ArgumentsIterator implements Iterator#(.t: StringView)
 Arguments implements Iterable#(.t: StringView)
 
-init(.p: $&Arguments) -> () := {
+once init(.p: $&Arguments) -> () := {
     p& = (
         .count = __argi_runtime_argc().count,
         .argv = __argi_runtime_argv().argv,

@@ -1,6 +1,6 @@
 RandomNumberGenerator : Type = ()
 
-init(.p: $&RandomNumberGenerator) -> () := {
+once init(.p: $&RandomNumberGenerator) -> () := {
 }
 
 -- randomRIO :: Random a ⇒ (a, a) → IO a
