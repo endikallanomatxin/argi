@@ -102,3 +102,7 @@ literals to lexer").
 - If you think some important information is missing from this guide, please
 add it. If you learn something non-obvious, document it here so future work is
 faster.
+
+- Treat `plan/*.md` as active planning documents. If you notice they are
+  outdated while doing relevant work, update them so they remain useful as
+  development references.

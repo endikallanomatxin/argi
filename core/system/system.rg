@@ -58,3 +58,7 @@ init(.p: $&System) -> () := {
     p&.rand_gen = $&p&._storage.rand_gen
     p&.ffi = $&p&._storage.ffi
 }
+
+deinit(.self: $&System) -> () := {
+    deinit(.self = self&.terminal, .allocator = self&.allocator)
+}
