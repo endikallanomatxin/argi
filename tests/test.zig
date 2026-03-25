@@ -1013,6 +1013,12 @@ test "476_environment_variables_index_operator" {
     try runExpect(test_path, 0);
 }
 
+test "477_environment_variables_string_keys" {
+    const test_path = "tests/477_environment_variables_string_keys";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "62_folder_module_namespace" {
     const test_path = "tests/62_folder_module_namespace";
     try expectSuccessfulBuild(test_path);
