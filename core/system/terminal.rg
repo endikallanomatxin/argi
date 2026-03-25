@@ -33,6 +33,14 @@ init(
     p&.reader = FileReader(.allocator = allocator, .file = $&p&.file, .capacity = 256)
 }
 
+deinit(
+    .self: $&StdIn,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> () := {
+    deinit(.self = $&self&.reader, .allocator = allocator)
+    close(.self = $&self&.file)
+}
+
 init(
     .p: $&StdOut,
     .allocator: $&CAllocator,
@@ -41,12 +49,28 @@ init(
     p&.writer = FileWriter(.allocator = allocator, .file = $&p&.file, .capacity = 256)
 }
 
+deinit(
+    .self: $&StdOut,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> () := {
+    deinit(.self = $&self&.writer, .allocator = allocator)
+    close(.self = $&self&.file)
+}
+
 init(
     .p: $&StdErr,
     .allocator: $&CAllocator,
 ) -> () := {
     init_stderr_handle(.p = $&p&.file)
     p&.writer = FileWriter(.allocator = allocator, .file = $&p&.file, .capacity = 256)
+}
+
+deinit(
+    .self: $&StdErr,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> () := {
+    deinit(.self = $&self&.writer, .allocator = allocator)
+    close(.self = $&self&.file)
 }
 
 Terminal : Type = (
@@ -61,6 +85,15 @@ init(.p: $&Terminal, .stdin: $&StdIn, .stdout: $&StdOut, .stderr: $&StdErr) -> (
         .stdout = stdout,
         .stderr = stderr
     )
+}
+
+deinit(
+    .self: $&Terminal,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> () := {
+    deinit(.self = self&.stdin, .allocator = allocator)
+    deinit(.self = self&.stdout, .allocator = allocator)
+    deinit(.self = self&.stderr, .allocator = allocator)
 }
 
 read_line(
