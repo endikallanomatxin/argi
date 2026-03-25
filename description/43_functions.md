@@ -15,6 +15,10 @@ add ( .a: Int, .b: Int ) -> (.o: Int) := {
 square (i:Int) -> (o:Int) := {o = i^2}
 ```
 
+Functions may also be marked with `once` to express that the function is meant
+to be consumed at most once from the reachable call graph of the compiled
+entrypoint. See [`44_once.md`](./44_once.md).
+
 - Todos los parámetros viajan en un único struct de entrada (in).
 - Todos los resultados se devuelven en un único struct de salida (out).
 
