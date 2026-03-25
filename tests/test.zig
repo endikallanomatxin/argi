@@ -1025,6 +1025,20 @@ test "478_file_system_capability" {
     try runExpect(test_path, 0);
 }
 
+test "479X_system_noncopyable_assignment" {
+    try buildExpectFail(
+        "tests/479X_system_noncopyable_assignment",
+        "type 'System' is not copyable, so it cannot be used by value here",
+    );
+}
+
+test "480X_system_noncopyable_argument" {
+    try buildExpectFail(
+        "tests/480X_system_noncopyable_argument",
+        "type 'System' is not copyable, so it cannot be used by value here",
+    );
+}
+
 test "62_folder_module_namespace" {
     const test_path = "tests/62_folder_module_namespace";
     try expectSuccessfulBuild(test_path);
