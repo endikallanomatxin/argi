@@ -6995,13 +6995,7 @@ pub const Semantizer = struct {
         if (arg_node.content == .struct_value_literal) {
             const sv = arg_node.content.struct_value_literal;
             if (sv.fields.len != 1 or !std.mem.eql(u8, sv.fields[0].name.string, "value")) {
-                try self.diags.add(
-                    arg_loc,
-                    .semantic,
-                    "length expects a single '.value' argument when using named parameters",
-                    .{},
-                );
-                return error.Reported;
+                return error.SymbolNotFound;
             }
             value_te = try self.visitNode(sv.fields[0].value.*, s);
         } else {
