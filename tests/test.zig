@@ -977,6 +977,12 @@ test "470_file_open_modes" {
     try runExpect(test_path, 0);
 }
 
+test "471_arguments_access" {
+    const test_path = "tests/471_arguments_access";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "62_folder_module_namespace" {
     const test_path = "tests/62_folder_module_namespace";
     try expectSuccessfulBuild(test_path);
