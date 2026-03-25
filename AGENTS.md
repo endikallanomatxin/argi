@@ -21,8 +21,8 @@ This repository contains a compiler for a new programming language written in Zi
 
 ## Usage
 
-- Build compiler: `cd compiler && zig build`
-- Run compiler tests: `cd compiler && zig build test`
+- Build compiler: `zig build`
+- Run compiler tests: `zig build test`
 - Compile a test program: `./zig-out/bin/argi build tests/00_minimal_main`
 
 > It might be necessary to set the following environment variables to make zig work:
