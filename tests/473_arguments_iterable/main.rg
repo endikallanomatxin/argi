@@ -11,10 +11,9 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    args :: Arguments = system.args&
     seen :: UIntNative = 0
     first_length :: UIntNative = 0
-    for arg in args {
+    for arg in system.args {
         if seen == 0 {
             first_length = arg.length
         }
