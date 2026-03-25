@@ -5,15 +5,14 @@ This repository contains a compiler for a new programming language written in Zi
 
 ## Project Structure & Module Organization
 
-- `compiler/`: Zig sources for the compiler.
-    - `core/`: Core modules (standard library for the compiler).
-    - `src/`: Source files for the compiler.
-        - The compiler is structured in four phases:
-        tokenizing, syntaxing, semantizing and codegen.
-    - `tests/`: Example `.rg` programs used as tests.
-        - Test cases live under `compiler/tests/<case_name>/main.rg`.
-        - Files in the same test case directory share namespace and are compiled together as one folder-level module.
-        - Negative tests should include `X` in their numeric prefix, e.g. `131X_multiple_dispatch_ambiguous`.
+- `core/`: Core modules (standard library for the compiler).
+- `src/`: Source files for the compiler.
+    - The compiler is structured in four phases:
+    tokenizing, syntaxing, semantizing and codegen.
+- `tests/`: Example `.rg` programs used as tests.
+    - Test cases live under `tests/<case_name>/main.rg`.
+    - Files in the same test case directory share namespace and are compiled together as one folder-level module.
+    - Negative tests should include `X` in their numeric prefix, e.g. `131X_multiple_dispatch_ambiguous`.
 
 - `more/`: Official library modules that are not part of `core/`.
 
@@ -30,11 +29,8 @@ This repository contains a compiler for a new programming language written in Zi
 > `ZIG_LOCAL_CACHE_DIR="$PWD/.zig-cache"`
 > `ZIG_GLOBAL_CACHE_DIR="$PWD/.zig-global-cache"`
 >
-> In restricted environments, prefer running Zig commands with both cache
-> directories set inside `compiler/`.
->
 > The current compiler has been updated to run with Zig `0.15.x`. If the local
-> Zig version differs significantly, check `compiler/build.zig` and stdlib API
+> Zig version differs significantly, check `build.zig` and stdlib API
 > usage before assuming a compiler regression.
 
 
@@ -43,13 +39,13 @@ This repository contains a compiler for a new programming language written in Zi
 - To add a new feature:
     1. Checkout the language description and `more/` to understand the
        feature.
-    2. Create a `.rg` test that demonstrates the feature in `compiler/tests/<case_name>/main.rg`.
-       Put positive executable cases under `compiler/tests/<case_name>/main.rg`.
+    2. Create a `.rg` test that demonstrates the feature in `tests/<case_name>/main.rg`.
+       Put positive executable cases under `tests/<case_name>/main.rg`.
     3. Draft a small implementation plan, evaluating whether the change affects
        tokenizing, syntaxing, semantizing or codegen.
-    4. Implement the feature in `compiler/src/` until it compiles.
+    4. Implement the feature in `src/` until it compiles.
     5. Ensure all tests pass and generated LLVM IR makes sense for the feature.
-    6. Add the test to `compiler/tests/test.zig` where applicable.
+    6. Add the test to `tests/test.zig` where applicable.
     7. Evaluate if the diagnostics need improvement for the new feature and
        enhance them.
 
@@ -64,7 +60,7 @@ feature first.
 - Keep CLI help aligned with the tool's current capabilities.
 
 - When validating the compiler locally, prefer:
-  `cd compiler && env ZIG_LOCAL_CACHE_DIR=$PWD/.zig-cache ZIG_GLOBAL_CACHE_DIR=$PWD/.zig-global-cache zig build test`
+  `env ZIG_LOCAL_CACHE_DIR=$PWD/.zig-cache ZIG_GLOBAL_CACHE_DIR=$PWD/.zig-global-cache zig build test`
 
 - Current module rules in the compiler:
   - all `.rg` files in a folder share namespace
@@ -81,7 +77,7 @@ feature first.
 design decisions. If you leave comments, ensure they are descriptive and
 timeless; not refering to the current change.
 
-- In `compiler/core/`, when a `feature.rg` has become a reasonably complete
+- In `core/`, when a `feature.rg` has become a reasonably complete
 implementation, remove the corresponding `feature.txt` scratch/design file and
 move any still-useful notes into comments in `feature.rg`. If some ideas remain
 unfinished, leave them commented there rather than keeping a parallel `.txt`

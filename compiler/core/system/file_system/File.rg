@@ -1,7 +1,0 @@
--- FileHandle : Abstract = (
---     read_all(.self: &Self) -> (.bytes: Array#(.t: Byte))
---     write(.self: $&Self, .data: ByteSlice) -> ()
---     seek(.self: $&Self, .position: Int) -> ()
---     flush(.self: $&Self) -> ()
---     close(.self: $&Self) -> ()
--- )

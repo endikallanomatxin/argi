@@ -1,9 +1,0 @@
-InputStream : Abstract = (
-    read(.self: $&Self, .buffer: $&ByteSlice) -> (.count: Int)
-    read_line(.self: $&Self) -> (.line: String)
-)
-
-OutputStream : Abstract = (
-    write(.self: $&Self, .data: ByteSlice) -> (.count: Int)
-    write_line(.self: $&Self, .data: String) -> (.count: Int)
-)
