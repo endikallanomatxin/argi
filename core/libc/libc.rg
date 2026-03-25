@@ -3,6 +3,7 @@ putchar ( .character : UInt8 ) -> () : ExternFunction
 getchar ( ) -> ( .character : Int32 ) : ExternFunction
 puts ( .string : &Char ) -> () : ExternFunction
 strlen ( .string : &Char ) -> ( .length : UIntNative ) : ExternFunction
+getenv ( .name : &Char ) -> ( .value : &Char ) : ExternFunction
 fdopen ( .fd : Int32, .mode : &Char ) -> ( .stream : $&Any ) : ExternFunction
 fopen ( .path : &Char, .mode : &Char ) -> ( .stream : $&Any ) : ExternFunction
 fclose ( .stream : &Any ) -> ( .status : Int32 ) : ExternFunction
