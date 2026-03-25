@@ -29,3 +29,17 @@ has(
     found ::= get(.self = self, .key = key)
     ok = is(.value = found, .variant = ..some)
 }
+
+operator get[](
+    .self: &EnvironmentVariables,
+    .index: CString,
+) -> (.value: Nullable#(.t: StringView)) := {
+    found ::= get(.self = self, .key = index)
+    if is(.value = found, .variant = ..some) {
+        payload ::= found..some
+        value = ..some(.value = payload.value)
+        return
+    }
+
+    value = ..none
+}
