@@ -5846,6 +5846,7 @@ pub const Semantizer = struct {
         const iterable_copyable = typ.isTypeCopyable(iterable_ty, s);
         const iterable_name = try self.makeSyntheticName("iterable");
         const iterator_name = try self.makeSyntheticName("iterator");
+        const iterable_direct_ok = iterable_ty == .pointer_type and abs.typeImplementsAbstract("Iterable", iterable_ty.pointer_type.child.*, s);
 
         const iterable_ident = if (iterable_copyable and f.iterable.*.content != .identifier)
             try self.makeSynNode(.{ .identifier = iterable_name }, loc)
@@ -5862,7 +5863,7 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        if (!abs.typeImplementsAbstract("Iterable", iterable_ty, s)) {
+        if (!abs.typeImplementsAbstract("Iterable", iterable_ty, s) and !iterable_direct_ok) {
             const iterable_ty_text = try self.formatTypeText(iterable_ty, s);
             defer iterable_ty_text.deinit();
             try self.diags.add(
@@ -5874,15 +5875,16 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const iterable_addr = try self.makeSynNode(.{ .address_of = .{
-            .value = iterable_ident,
-            .mutability = .read_only,
-        } }, loc);
-
         const to_iterator_fields = try self.allocator.alloc(syn.StructValueLiteralField, 1);
         to_iterator_fields[0] = .{
             .name = .{ .string = "value", .location = loc },
-            .value = iterable_addr,
+            .value = if (iterable_direct_ok)
+                iterable_ident
+            else
+                try self.makeSynNode(.{ .address_of = .{
+                    .value = iterable_ident,
+                    .mutability = .read_only,
+                } }, loc),
         };
         const to_iterator_arg = try self.makeSynNode(.{ .struct_value_literal = .{
             .fields = to_iterator_fields,
