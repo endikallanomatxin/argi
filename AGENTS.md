@@ -18,6 +18,11 @@ This repository contains a compiler for a new programming language written in Zi
 
 - `description/`: Design documents and architecture notes.
 
+- `references/`: Local reference checkouts.
+    - `references/go`
+    - `references/zig`
+    - `references/odin`
+
 
 ## Usage
 
@@ -76,6 +81,14 @@ feature first.
 - Use comments to explain non-obvious code, especially complex algorithms or
 design decisions. If you leave comments, ensure they are descriptive and
 timeless; not refering to the current change.
+
+- If you want implementation references, inspect `references/go` and
+  `references/zig`, and `references/odin` for architecture and algorithmic
+  ideas.
+
+- Treat `references/` as inspiration only. Do not copy or mechanically
+  translate code, comments, tests, docs, APIs, type layouts, or file structure.
+  Re-express ideas in argi's own design and implement them with original code.
 
 - In `core/`, when a `feature.rg` has become a reasonably complete
 implementation, remove the corresponding `feature.txt` scratch/design file and
