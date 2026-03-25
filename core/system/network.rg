@@ -1,6 +1,6 @@
 Network : Type = ()
 
-init(.p: $&Network) -> () := {
+once init(.p: $&Network) -> () := {
 }
 
 -- No se si meter también aquí todos los protocolos de red

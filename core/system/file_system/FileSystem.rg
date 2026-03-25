@@ -1,6 +1,6 @@
 FileSystem : Type = ()
 
-init(.p: $&FileSystem) -> () := {
+once init(.p: $&FileSystem) -> () := {
 }
 
 open_read(

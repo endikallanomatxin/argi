@@ -1,6 +1,6 @@
 EnvironmentVariables : Type = ()
 
-init(.p: $&EnvironmentVariables) -> () := {
+once init(.p: $&EnvironmentVariables) -> () := {
 }
 
 get(

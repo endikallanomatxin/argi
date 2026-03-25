@@ -49,7 +49,11 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
         },
 
         .function_declaration => |f| {
-            std.debug.print("Function \"{s}\"\n", .{f.name});
+            if (f.is_once) {
+                std.debug.print("Function once \"{s}\"\n", .{f.name});
+            } else {
+                std.debug.print("Function \"{s}\"\n", .{f.name});
+            }
 
             indent(lvl + 1);
             std.debug.print("Input:\n", .{});

@@ -901,6 +901,13 @@ pub const Syntaxer = struct {
             else => {},
         }
 
+        var is_once = false;
+        if (self.tokenIs(.keyword_once)) {
+            is_once = true;
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+        }
+
         if (self.tokenIs(.hash)) {
             const hash_loc = self.tokenLocation();
             self.advanceOne();
@@ -955,6 +962,10 @@ pub const Syntaxer = struct {
 
         // Assignment (store/pointer/index/regular)
         if (self.tokenIs(.equal)) {
+            if (is_once) {
+                try self.diags.add(id_loc, .syntax, "once can only be used on function declarations", .{});
+                return SyntaxerError.ExpectedDeclarationOrAssignment;
+            }
             self.advanceOne();
             const rhs_expr = try self.parseExpression();
 
@@ -991,6 +1002,7 @@ pub const Syntaxer = struct {
                             self.advanceOne();
                             const ef = syn.FunctionDeclaration{
                                 .name = name,
+                                .is_once = is_once,
                                 .generic_params = generic_params,
                                 .generic_params_struct = generic_params_struct,
                                 .input = input,
@@ -1009,6 +1021,7 @@ pub const Syntaxer = struct {
 
                 const fn_decl = syn.FunctionDeclaration{
                     .name = name,
+                    .is_once = is_once,
                     .generic_params = generic_params,
                     .generic_params_struct = generic_params_struct,
                     .input = input,
@@ -1017,6 +1030,10 @@ pub const Syntaxer = struct {
                 };
                 return try self.makeNode(.{ .function_declaration = fn_decl }, id_loc);
             } else {
+                if (is_once) {
+                    try self.diags.add(id_loc, .syntax, "once can only be used on function declarations", .{});
+                    return SyntaxerError.ExpectedDeclarationOrAssignment;
+                }
                 // call: Name(...)
                 const input_node = try self.makeNode(.{ .struct_type_literal = input }, id_loc);
                 return try self.makeNode(
@@ -1036,6 +1053,10 @@ pub const Syntaxer = struct {
         // Abstract relations (implements/defaultsto)
         switch (self.current().content) {
             .identifier => |kw| {
+                if (is_once) {
+                    try self.diags.add(id_loc, .syntax, "once can only be used on function declarations", .{});
+                    return SyntaxerError.ExpectedDeclarationOrAssignment;
+                }
                 if (std.mem.eql(u8, kw, "implements")) {
                     self.advanceOne();
                     const abstract_ty = (try self.parseType()).?; // required
