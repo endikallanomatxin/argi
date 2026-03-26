@@ -12,17 +12,17 @@ init_stderr_handle(.p: $&File) -> () := {
 
 StdIn : Type = (
     .file   : File
-    .reader : FileReader
+    .reader : BufferedReader#(.base_type: File)
 )
 
 StdOut : Type = (
     .file   : File
-    .writer : FileWriter
+    .writer : BufferedWriter#(.base_type: File)
 )
 
 StdErr : Type = (
     .file   : File
-    .writer : FileWriter
+    .writer : BufferedWriter#(.base_type: File)
 )
 
 once init(
@@ -30,7 +30,7 @@ once init(
     .allocator: $&CAllocator,
 ) -> () := {
     init_stdin_handle(.p = $&p&.file)
-    p&.reader = FileReader(.allocator = allocator, .file = $&p&.file, .capacity = 256)
+    p&.reader = BufferedReader#(.base_type: File)(.allocator = allocator, .base = $&p&.file, .capacity = 256)
 }
 
 deinit(
@@ -46,7 +46,7 @@ once init(
     .allocator: $&CAllocator,
 ) -> () := {
     init_stdout_handle(.p = $&p&.file)
-    p&.writer = FileWriter(.allocator = allocator, .file = $&p&.file, .capacity = 256)
+    p&.writer = BufferedWriter#(.base_type: File)(.allocator = allocator, .base = $&p&.file, .capacity = 256)
 }
 
 deinit(
@@ -62,7 +62,7 @@ once init(
     .allocator: $&CAllocator,
 ) -> () := {
     init_stderr_handle(.p = $&p&.file)
-    p&.writer = FileWriter(.allocator = allocator, .file = $&p&.file, .capacity = 256)
+    p&.writer = BufferedWriter#(.base_type: File)(.allocator = allocator, .base = $&p&.file, .capacity = 256)
 }
 
 deinit(
