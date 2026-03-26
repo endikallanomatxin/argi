@@ -1633,6 +1633,7 @@ pub const Semantizer = struct {
     fn concreteTypePatternFromImplements(
         self: *Semantizer,
         rel: syn.AbstractImplements,
+        s: *Scope,
         loc: tok.Location,
     ) !syn.Type {
         if (rel.generic_params_struct != null or rel.generic_params.len != 0) {
@@ -1649,7 +1650,12 @@ pub const Semantizer = struct {
                     continue;
                 };
 
-                if (field_ty == .type_name and std.mem.eql(u8, field_ty.type_name.string, "Type")) {
+                const is_type_param =
+                    (field_ty == .type_name and std.mem.eql(u8, field_ty.type_name.string, "Type")) or
+                    (field_ty == .type_name and s.lookupAbstractInfo(field_ty.type_name.string) != null) or
+                    (field_ty == .generic_type_instantiation and s.lookupAbstractInfo(field_ty.generic_type_instantiation.base_name.string) != null);
+
+                if (is_type_param) {
                     pattern_fields[idx] = .{
                         .name = field.name,
                         .type = .{ .type_name = field.name },
@@ -1684,7 +1690,20 @@ pub const Semantizer = struct {
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
         const abstract_name = abstractNameFromImplementsTarget(rel.abstract_ty) orelse return error.UnknownType;
-        const concrete_pattern = try self.concreteTypePatternFromImplements(rel, loc);
+        const concrete_pattern = try self.concreteTypePatternFromImplements(rel, s, loc);
+
+        if (rel.generic_params_struct == null and rel.generic_params.len == 0) {
+            const concrete_direct = self.resolveType(concrete_pattern, s) catch |err| switch (err) {
+                error.UnknownType, error.AbstractNeedsDefault => null,
+                else => return err,
+            };
+            if (concrete_direct) |concrete_ty| {
+                try s.appendAbstractImpl(abstract_name, .{ .ty = concrete_ty, .location = loc });
+                const n = try self.makeNoopNode(loc);
+                try s.nodes.append(n);
+                return .{ .node = n, .ty = .{ .builtin = .Any } };
+            }
+        }
 
         if (rel.generic_params_struct != null or rel.generic_params.len != 0 or concrete_pattern == .generic_type_instantiation) {
             var params_buf = std.array_list.Managed(gen.GenericParam).init(self.allocator.*);
