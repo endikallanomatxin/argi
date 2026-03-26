@@ -194,7 +194,7 @@ Reached arguments may refer to nested capability paths:
 
 ```argi
 print_line(
-    .stdout: $&OutputStream#(.text: String) = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
+    .stdout: $&Writer = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
     .text: String,
 ) -> () := {
     ...
