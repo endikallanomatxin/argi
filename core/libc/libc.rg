@@ -10,6 +10,9 @@ fclose ( .stream : &Any ) -> ( .status : Int32 ) : ExternFunction
 fflush ( .stream : &Any ) -> ( .status : Int32 ) : ExternFunction
 fread ( .buffer : $&UInt8, .size : UIntNative, .count : UIntNative, .stream : &Any ) -> ( .count : UIntNative ) : ExternFunction
 fwrite ( .buffer : &UInt8, .size : UIntNative, .count : UIntNative, .stream : &Any ) -> ( .count : UIntNative ) : ExternFunction
+remove ( .path : &Char ) -> ( .status : Int32 ) : ExternFunction
+rename ( .old_path : &Char, .new_path : &Char ) -> ( .status : Int32 ) : ExternFunction
+access ( .path : &Char, .mode : Int32 ) -> ( .status : Int32 ) : ExternFunction
 
 -- Memory management
 alloca ( .size : UIntNative ) -> ( .pointer: $&Any ) : ExternFunction

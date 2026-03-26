@@ -1086,6 +1086,12 @@ test "487X_system_duplicate_init" {
     );
 }
 
+test "488_file_system_mutations" {
+    const test_path = "tests/488_file_system_mutations";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "62_folder_module_namespace" {
     const test_path = "tests/62_folder_module_namespace";
     try expectSuccessfulBuild(test_path);
