@@ -1098,6 +1098,19 @@ test "489_file_system_read_write" {
     try runExpect(test_path, 0);
 }
 
+test "490_generic_abstract_bound_syntax" {
+    const test_path = "tests/490_generic_abstract_bound_syntax";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
+test "491X_generic_bound_requires_type_keyword" {
+    try buildExpectFail(
+        "tests/491X_generic_bound_requires_type_keyword",
+        "generic parameter bounds use '.t: Type: Constraint'",
+    );
+}
+
 test "62_folder_module_namespace" {
     const test_path = "tests/62_folder_module_namespace";
     try expectSuccessfulBuild(test_path);

@@ -471,6 +471,61 @@ pub const Syntaxer = struct {
         return .{ .fields = fields.items };
     }
 
+    fn parseGenericParamsStruct(self: *Syntaxer) SyntaxerError!syn.StructTypeLiteral {
+        if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        var fields = std.array_list.Managed(syn.StructTypeLiteralField).init(self.allocator.*);
+
+        while (!self.tokenIs(.close_parenthesis)) {
+            if (!self.tokenIs(.dot)) {
+                try self.diags.add(self.tokenLocation(), .syntax, "expected generic parameter, found '{s}'", .{@tagName(self.current().content)});
+                return SyntaxerError.ExpectedStructField;
+            }
+            self.advanceOne();
+            const fname = try self.parseName();
+
+            var ftype: ?syn.Type = null;
+            if (self.tokenIs(.colon)) {
+                self.advanceOne();
+                ftype = try self.parseType();
+
+                if (self.tokenIs(.colon)) {
+                    if (ftype == null or ftype.? != .type_name or !std.mem.eql(u8, ftype.?.type_name.string, "Type")) {
+                        try self.diags.add(
+                            self.tokenLocation(),
+                            .syntax,
+                            "generic parameter bounds use '.{s}: Type: Constraint'",
+                            .{fname.string},
+                        );
+                        return SyntaxerError.ExpectedStructField;
+                    }
+                    self.advanceOne();
+                    ftype = try self.parseType();
+                }
+            }
+
+            var def_val: ?*syn.STNode = null;
+            if (self.tokenIs(.equal)) {
+                self.advanceOne();
+                def_val = try self.parseExpression();
+            }
+
+            try fields.append(.{ .name = fname, .type = ftype, .default_value = def_val });
+
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            }
+        }
+        if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+        self.advanceOne();
+
+        return .{ .fields = fields.items };
+    }
+
     fn parseChoiceTypeLiteral(self: *Syntaxer) SyntaxerError!syn.ChoiceTypeLiteral {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         self.advanceOne();
@@ -946,7 +1001,7 @@ pub const Syntaxer = struct {
         var generic_params_struct: ?syn.StructTypeLiteral = null;
         if (self.tokenIs(.hash)) {
             self.advanceOne();
-            const gen_struct = try self.parseStructTypeLiteral();
+            const gen_struct = try self.parseGenericParamsStruct();
             var names = std.array_list.Managed([]const u8).init(self.allocator.*);
             for (gen_struct.fields) |fld| try names.append(fld.name.string);
             generic_params = names.items;
