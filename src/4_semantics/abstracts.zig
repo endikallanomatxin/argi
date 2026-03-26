@@ -526,6 +526,66 @@ fn buildExpectedInputWithConcrete(rq: *const AbstractFunctionReqSem, concrete: s
     return st_ptr;
 }
 
+fn buildExpectedOutputWithConcrete(rq: *const AbstractFunctionReqSem, concrete: sg.Type, allocator: *const std.mem.Allocator) !*sg.StructType {
+    var fields = try allocator.alloc(sg.StructTypeField, rq.output.fields.len);
+    for (rq.output.fields, 0..) |f, i| {
+        const is_self = containsIndex(rq.output_self_indices, @intCast(i));
+        const is_pointer_self = containsIndex(rq.output_pointer_self_indices, @intCast(i));
+        const field_ty = if (is_self) blk: {
+            break :blk concrete;
+        } else if (is_pointer_self and f.ty == .pointer_type) blk: {
+            const child = try allocator.create(sg.Type);
+            child.* = concrete;
+            const sem_ptr = try allocator.create(sg.PointerType);
+            sem_ptr.* = .{
+                .mutability = f.ty.pointer_type.mutability,
+                .child = child,
+            };
+            break :blk sg.Type{ .pointer_type = sem_ptr };
+        } else blk: {
+            break :blk f.ty;
+        };
+        fields[i] = .{ .name = f.name, .ty = field_ty, .default_value = null };
+    }
+    const st_ptr = try allocator.create(sg.StructType);
+    st_ptr.* = .{ .fields = fields };
+    return st_ptr;
+}
+
+fn genericTemplateFieldsMatchExpected(
+    expected: *const sg.StructType,
+    template_fields: []const syn.StructTypeLiteralField,
+    params: []const gen.GenericParam,
+    bindings: *TemplateBindings,
+) bool {
+    if (expected.fields.len != template_fields.len) return false;
+
+    var i: usize = 0;
+    while (i < expected.fields.len) : (i += 1) {
+        const template_field = template_fields[i];
+        const template_ty = template_field.type orelse return false;
+        if (!matchTemplateType(template_ty, expected.fields[i].ty, params, bindings)) return false;
+    }
+
+    return true;
+}
+
+fn templateBindingsSatisfyConstraints(
+    tmpl: gen.GenericTemplate,
+    bindings: *TemplateBindings,
+    s: *Scope,
+) bool {
+    var i: usize = 0;
+    while (i < tmpl.params.len) : (i += 1) {
+        const constraint = tmpl.param_abstract_constraints[i] orelse continue;
+        const param = tmpl.params[i];
+        if (param.kind != .type) continue;
+        const actual = bindings.types.get(param.name) orelse return false;
+        if (!typeImplementsAbstract(constraint, actual, s)) return false;
+    }
+    return true;
+}
+
 fn existsFunctionForRequirement(
     info: *const AbstractInfo,
     rq: AbstractFunctionReqSem,
@@ -555,6 +615,27 @@ fn existsFunctionForRequirement(
                         continue;
                     return true;
                 }
+            }
+        }
+
+        if (sc.generic_functions.getPtr(rq.name)) |lst| {
+            const expected_in = try buildExpectedInputWithConcrete(&rq, concrete, allocator);
+            const expected_out = try buildExpectedOutputWithConcrete(&rq, concrete, allocator);
+
+            for (lst.items) |tmpl| {
+                if (tmpl.dispatch_kind != .regular) continue;
+
+                var bindings = TemplateBindings.init(allocator);
+                defer bindings.deinit();
+
+                if (!genericTemplateFieldsMatchExpected(expected_in, tmpl.input.fields, tmpl.params, &bindings))
+                    continue;
+                if (!genericTemplateFieldsMatchExpected(expected_out, tmpl.output.fields, tmpl.params, &bindings))
+                    continue;
+                if (!templateBindingsSatisfyConstraints(tmpl, &bindings, s))
+                    continue;
+
+                return true;
             }
         }
     }

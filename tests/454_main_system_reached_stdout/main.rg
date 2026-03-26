@@ -1,5 +1,5 @@
 emit_ok(
-    .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout,
+    .stdout: $&Writer = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
 ) -> (.ok: Int32) := {
     _ ::= stdout
     ok = 0

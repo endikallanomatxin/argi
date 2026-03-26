@@ -17,7 +17,7 @@ write_byte(.self: $&DummyOutput, .byte: UInt8) -> () := {
 DummyOutput implements Writer
 
 flush_stdout(
-    .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout,
+    .stdout: $&Writer = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
 ) -> (.value: Int32) := {
     flush(.self = stdout)
     value = 0
@@ -26,11 +26,11 @@ flush_stdout(
 main() -> (.status_code: Int32) := {
     system : (
         .terminal: (
-            .stdout: DummyOutput
+            .stdout_buffered_writer: DummyOutput
         )
     ) = (
         .terminal = (
-            .stdout = (
+            .stdout_buffered_writer = (
                 .flush_count = 5
             )
         )
@@ -41,5 +41,5 @@ main() -> (.status_code: Int32) := {
     )
 
     flush_stdout()
-    status_code = stdout.flush_count * 10 + system.terminal.stdout.flush_count
+    status_code = stdout.flush_count * 10 + system.terminal.stdout_buffered_writer.flush_count
 }

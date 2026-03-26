@@ -264,7 +264,7 @@ main (system: $&System&) -> (status_code: $&StatusCode&) := {
 	-- Acceso a los argumentos de la línea de comandos
         argsmap := system.args | parse &_
         if argsmap has ($&_, "name") {
-            greet_user (argsmap("name"), $&system.terminal.stdout)
+            greet_user (argsmap("name"), $&system.terminal.stdout_buffered_writer)
         }
 
 	-- Acceso a las variables de entorno
@@ -331,7 +331,7 @@ import fs
 
 main (system: $&System&) -> (status_code: $&StatusCode&) := {
 	-- Creamos un archivo de IO
-	stdo = system.terminal.stdout
+	stdo = system.terminal.stdout_buffered_writer
 
 	-- Llamada a una función pura que imprime
 	do_something_pure(123, log = $&stdo)

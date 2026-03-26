@@ -1,7 +1,7 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
-    stdin_file ::= system.terminal&.stdin&.file
-    stdout_file ::= system.terminal&.stdout&.file
-    stderr_file ::= system.terminal&.stderr&.file
+    stdin_file ::= system.terminal&.stdin_file
+    stdout_file ::= system.terminal&.stdout_file
+    stderr_file ::= system.terminal&.stderr_file
 
     if is_open(.self = &stdin_file).ok {
     } else {
