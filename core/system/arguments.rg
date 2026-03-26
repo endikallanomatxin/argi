@@ -21,10 +21,6 @@ once init(.p: $&Arguments) -> () := {
     )
 }
 
-argument_count(.self: &Arguments) -> (.count: UIntNative) := {
-    count = self&.count
-}
-
 length(.self: &Arguments) -> (.count: UIntNative) := {
     count = self&.count
 }
