@@ -169,6 +169,9 @@ write_byte(.self: $&File, .byte: UInt8) -> () := {
     )
 }
 
+File implements Reader
+File implements Writer
+
 FileReader : Type = (
     .file     : $&File
     .buffer   : $&UInt8
