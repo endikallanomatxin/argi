@@ -152,6 +152,7 @@ rename(
     free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = temp_to)))
 }
 
+
 open_read(
     .self: &FileSystem,
     .path: CString,
@@ -263,5 +264,138 @@ open_append(
         .data = cast#(.to: UIntNative)(.value = temp_path)
     )
     file = open_append(.self = self, .path = c_path)
+    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = temp_path)))
+}
+
+read_file(
+    .self: &FileSystem,
+    .path: CString,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.text: String) := {
+    file ::= open_read(.self = self, .path = path)
+
+    initial_capacity :: UIntNative = 16
+    zero :: UIntNative = 0
+    capacity :: UIntNative = initial_capacity
+    buffer :: $&UInt8 = allocate(.self = allocator, .size = capacity)
+    length :: UIntNative = zero
+
+    while 1 == 1 {
+        next ::= read_byte(.self = $&file)
+        if is(.value = next, .variant = ..end) {
+            break
+        }
+
+        if length == capacity {
+            new_capacity :: UIntNative = capacity * 2
+            new_buffer : $&UInt8 = allocate(.self = allocator, .size = new_capacity)
+            memcpy(
+                .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = new_buffer)),
+                .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = buffer)),
+                .n = length,
+            )
+            deallocate(.self = allocator, .data = buffer, .size = capacity)
+            buffer = new_buffer
+            capacity = new_capacity
+        }
+
+        payload ::= next..ok
+        byte_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = buffer) + length)
+        byte_ptr& = payload.byte
+        length = length + 1
+    }
+
+    text = String(.allocator = allocator, .length = length)
+    if length > 0 {
+        memcpy(
+            .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = text.allocation.data)),
+            .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = buffer)),
+            .n = length,
+        )
+    }
+
+    deallocate(.self = allocator, .data = buffer, .size = capacity)
+    close(.self = $&file)
+}
+
+read_file(
+    .self: &FileSystem,
+    .path: &String,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.text: String) := {
+    c_path ::= as_c_string(.self = path)
+    text = read_file(.self = self, .path = c_path, .allocator = allocator)
+}
+
+read_file(
+    .self: &FileSystem,
+    .path: StringView,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.text: String) := {
+    size :: UIntNative = path.length + 1
+    raw_buffer : $&Any = malloc(.size = size)
+    temp_path : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = raw_buffer))
+    i :: UIntNative = 0
+    while i < path.length {
+        ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = temp_path) + i)
+        ptr& = bytes_get(.view = &path, .index = i).byte
+        i = i + 1
+    }
+    nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = temp_path) + path.length)
+    nul_ptr& = 0
+    c_path : CString = (
+        .data = cast#(.to: UIntNative)(.value = temp_path)
+    )
+    text = read_file(.self = self, .path = c_path, .allocator = allocator)
+    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = temp_path)))
+}
+
+write_file(
+    .self: &FileSystem,
+    .path: CString,
+    .text: String,
+) -> (.ok: Bool) := {
+    file ::= open_write(.self = self, .path = path)
+    if is_open(.self = &file).ok {
+    } else {
+        ok = 0 == 1
+        return
+    }
+
+    write(.self = $&file, .text = text)
+    flush(.self = $&file)
+    close(.self = $&file)
+    ok = 1 == 1
+}
+
+write_file(
+    .self: &FileSystem,
+    .path: &String,
+    .text: String,
+) -> (.ok: Bool) := {
+    c_path ::= as_c_string(.self = path)
+    ok = write_file(.self = self, .path = c_path, .text = text).ok
+}
+
+write_file(
+    .self: &FileSystem,
+    .path: StringView,
+    .text: String,
+) -> (.ok: Bool) := {
+    size :: UIntNative = path.length + 1
+    raw_buffer : $&Any = malloc(.size = size)
+    temp_path : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = raw_buffer))
+    i :: UIntNative = 0
+    while i < path.length {
+        ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = temp_path) + i)
+        ptr& = bytes_get(.view = &path, .index = i).byte
+        i = i + 1
+    }
+    nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = temp_path) + path.length)
+    nul_ptr& = 0
+    c_path : CString = (
+        .data = cast#(.to: UIntNative)(.value = temp_path)
+    )
+    ok = write_file(.self = self, .path = c_path, .text = text).ok
     free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = temp_path)))
 }
