@@ -57,7 +57,10 @@ deinit (
     zero :: UIntNative = 0
     deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
     self& = (
-        .allocation = self&.allocation,
+        .allocation = (
+            .data = self&.allocation.data,
+            .size = self&.allocation.size,
+        ),
         .length = zero,
     )
 }
