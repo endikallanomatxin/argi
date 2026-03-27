@@ -76,6 +76,25 @@ print(
     flush(.self = stdout)
 }
 
+print(
+    .value: &Char,
+    .stdout: $&Writer = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
+) -> () := {
+    i :: UIntNative = 0
+    while 1 == 1 {
+        addr :: UIntNative = cast#(.to: UIntNative)(.value = value) + i
+        ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
+        if ptr& == 0 {
+            break
+        }
+
+        write_byte(.self = stdout, .byte = ptr&)
+        i = i + 1
+    }
+
+    flush(.self = stdout)
+}
+
 print_text_buffer(
     .stdout: $&Writer = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
     .buffer: &TextBuffer,
