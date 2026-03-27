@@ -1,6 +1,6 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
-    src_path ::= from_literal(.data = "tests/488_file_system_mutations/build/temp_src.txt")
-    dst_path ::= from_literal(.data = "tests/488_file_system_mutations/build/temp_dst.txt")
+    src_path ::= from_literal(.data = "tests/feature_tests/system/22_file_system_mutations/build/temp_src.txt")
+    dst_path ::= from_literal(.data = "tests/feature_tests/system/22_file_system_mutations/build/temp_dst.txt")
 
     if exists(.self = system.file_sys, .path = src_path).ok {
         if remove(.self = system.file_sys, .path = src_path).ok {
