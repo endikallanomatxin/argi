@@ -154,9 +154,12 @@ test "usecase_tests/01_cat_cli" {
     try expectSuccessfulBuild(test_path);
     try runExpectStdoutWithArgs(
         test_path,
-        &[_][]const u8{"tests/usecase_tests/01_cat_cli/input.txt"},
+        &[_][]const u8{
+            "tests/usecase_tests/01_cat_cli/input.txt",
+            "tests/usecase_tests/01_cat_cli/input_2.txt",
+        },
         0,
-        "Hello from Argi.\nThis is a tiny cat clone.\n",
+        "Hello from Argi.\nThis is a tiny cat clone.\nAnd now a second file.\nCat should concatenate both.\n",
     );
 }
 
