@@ -56,23 +56,10 @@ has(
 has(
     .self: &EnvironmentVariables,
     .key: StringView,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.ok: Bool) := {
-    size :: UIntNative = key.length + 1
-    raw_buffer : $&Any = malloc(.size = size)
-    temp_key : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = raw_buffer))
-    i :: UIntNative = 0
-    while i < key.length {
-        ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = temp_key) + i)
-        ptr& = bytes_get(.view = &key, .index = i).byte
-        i = i + 1
-    }
-    nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = temp_key) + key.length)
-    nul_ptr& = 0
-    c_key : CString = (
-        .data = cast#(.to: UIntNative)(.value = temp_key)
-    )
-    found ::= get(.self = self, .key = c_key)
-    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = temp_key)))
+    c_key ::= as_c_string(.self = key, .allocator = allocator)
+    found ::= get(.self = self, .key = c_key.text)
     ok = is(.value = found, .variant = ..some)
 }
 
