@@ -285,8 +285,17 @@ pub const Assignment = struct {
 
 pub const AutoDeinitBinding = struct {
     binding: *const BindingDeclaration,
-    deinit_fn: *const FunctionDeclaration,
-    input: *const SGNode,
+    deinit_fn: ?*const FunctionDeclaration,
+    input: ?*const SGNode = null,
+    fields: []const AutoDeinitField = &.{},
+};
+
+pub const AutoDeinitField = struct {
+    field_index: u32,
+    deinit_fn: ?*const FunctionDeclaration,
+    input: ?*const SGNode = null,
+    self_field_index: u32 = 0,
+    fields: []const AutoDeinitField = &.{},
 };
 
 //

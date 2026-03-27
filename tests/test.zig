@@ -1117,6 +1117,12 @@ test "492_generic_wrapper_abstract_conformance" {
     try runExpect(test_path, 0);
 }
 
+test "493_anonymous_struct_auto_deinit" {
+    const test_path = "tests/493_anonymous_struct_auto_deinit";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 11);
+}
+
 test "494_keep_string_auto_deinit" {
     const test_path = "tests/494_keep_string_auto_deinit";
     try expectSuccessfulBuild(test_path);

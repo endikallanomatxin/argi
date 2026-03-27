@@ -84,6 +84,7 @@ const OnceTraversalState = struct {
 const AutoDeinitResolution = struct {
     function: *sg.FunctionDeclaration,
     input: typ.TypedExpr,
+    self_field_index: u32,
 };
 
 const GenericSubst = struct {
@@ -244,10 +245,56 @@ pub const Semantizer = struct {
             .content = .{ .identifier = binding.name },
         }, s) catch return null;
 
-        return .{
-            .function = chosen,
-            .input = coerced_input,
+        if (coerced_input.node.content != .struct_value_literal) return null;
+        const input_value = coerced_input.node.content.struct_value_literal;
+        const positional_prefix = @min(input_value.dispatch_prefix_positional_count, input_value.fields.len);
+
+        for (chosen.input.fields[0..positional_prefix], 0..) |expected_field, idx| {
+            if (expected_field.ty != .pointer_type) continue;
+            const arg_node = input_value.fields[idx].value;
+            if (arg_node.content != .address_of) continue;
+            const inner = arg_node.content.address_of;
+            if (inner.content != .binding_use) continue;
+            if (inner.content.binding_use != binding) continue;
+            return .{
+                .function = chosen,
+                .input = coerced_input,
+                .self_field_index = @intCast(idx),
+            };
+        }
+
+        for (chosen.input.fields[positional_prefix..], positional_prefix..) |expected_field, idx| {
+            if (expected_field.ty != .pointer_type) continue;
+            const actual_field = findStructValueFieldByNameFrom(input_value.fields, positional_prefix, expected_field.name) orelse continue;
+            if (actual_field.value.content != .address_of) continue;
+            const inner = actual_field.value.content.address_of;
+            if (inner.content != .binding_use) continue;
+            if (inner.content.binding_use != binding) continue;
+            return .{
+                .function = chosen,
+                .input = coerced_input,
+                .self_field_index = @intCast(idx),
+            };
+        }
+
+        return null;
+    }
+
+    fn findVisibleAutoDeinitForType(
+        self: *Semantizer,
+        ty: sg.Type,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!?AutoDeinitResolution {
+        const fake_binding = try self.allocator.create(sg.BindingDeclaration);
+        fake_binding.* = .{
+            .name = "__auto_deinit_target",
+            .origin_file = loc.file,
+            .mutability = .variable,
+            .ty = ty,
+            .initialization = null,
         };
+        return self.findVisibleAutoDeinit(fake_binding, loc, s);
     }
 
     fn findVisibleAutoDeinit(
@@ -332,6 +379,67 @@ pub const Semantizer = struct {
         }, 1);
 
         return self.tryResolveAutoDeinitWithInput(binding, positional_input, loc, s);
+    }
+
+    fn tryResolveCopyCallWithInput(
+        self: *Semantizer,
+        input_te: typ.TypedExpr,
+        loc: tok.Location,
+        s: *Scope,
+    ) ?typ.TypedExpr {
+        const synthetic_call = syn.FunctionCall{
+            .callee = "copy",
+            .callee_loc = loc,
+            .module_qualifier = null,
+            .type_arguments = null,
+            .type_arguments_struct = null,
+            .input = undefined,
+        };
+
+        const chosen = self.tryResolveRegularCallCallee(synthetic_call, input_te, s, loc) catch return null;
+        const coerced_input = self.coerceCallInputToExpected(&chosen.input, input_te, &syn.STNode{
+            .location = loc,
+            .content = .{ .identifier = "copy" },
+        }, s) catch return null;
+
+        const fc_ptr = self.allocator.create(sg.FunctionCall) catch return null;
+        fc_ptr.* = .{ .callee = chosen, .input = coerced_input.node };
+        const call_node = sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator) catch return null;
+        return .{ .node = call_node, .ty = typ.functionReturnType(chosen) };
+    }
+
+    fn ensureValuePositionAllowed(
+        self: *Semantizer,
+        expr: typ.TypedExpr,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (!typ.expressionNeedsCopyForValuePosition(expr.node)) return expr;
+        if (typ.isTypeTriviallyCopyable(expr.ty, s)) return expr;
+
+        const named_input = try self.buildNamedCallInput(&[_]CallArg{
+            .{ .name = "self", .expr = expr },
+        });
+        if (self.tryResolveCopyCallWithInput(named_input, loc, s)) |copy_expr| {
+            return copy_expr;
+        }
+
+        const positional_input = try self.buildCallInputWithPositionalPrefix(&[_]CallArg{
+            .{ .name = "__arg0", .expr = expr },
+        }, 1);
+        if (self.tryResolveCopyCallWithInput(positional_input, loc, s)) |copy_expr| {
+            return copy_expr;
+        }
+
+        const ty_text = try self.formatTypeText(expr.ty, s);
+        defer ty_text.deinit();
+        try self.diags.add(
+            loc,
+            .semantic,
+            "type '{s}' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'",
+            .{ty_text.bytes},
+        );
+        return error.Reported;
     }
 
     fn formatTypePairText(self: *Semantizer, expected: sg.Type, actual: sg.Type, s: *Scope) !TypePairText {
@@ -490,10 +598,7 @@ pub const Semantizer = struct {
                 try self.walkNodeOnceReachability(current_fn, assign.value, state);
             },
             .auto_deinit_binding => |auto| {
-                if (auto.deinit_fn.is_once) {
-                    try self.recordOnceConsumption(auto.deinit_fn, current_fn, node.location, state);
-                }
-                try self.walkFunctionOnceReachability(auto.deinit_fn, node.location, state);
+                try self.walkAutoDeinitOnceReachability(auto, current_fn, node.location, state);
             },
             .reach_directive,
             .binding_use,
@@ -1915,7 +2020,7 @@ pub const Semantizer = struct {
         var payload: ?*const sg.SGNode = null;
         if (lit.payload) |payload_node| {
             var payload_te = try self.visitNode(payload_node.*, s);
-            payload_te = try typ.ensureValuePositionAllowed(payload_te, payload_node.location, s, self.allocator, self.diags);
+            payload_te = try self.ensureValuePositionAllowed(payload_te, payload_node.location, s);
             payload_te.node.sem_type = payload_te.ty;
             payload = payload_te.node;
         }
@@ -2402,7 +2507,7 @@ pub const Semantizer = struct {
         }
 
         if (init_te_opt) |init_te| {
-            init_te_opt = try typ.ensureValuePositionAllowed(init_te, init_node.?.location, s, self.allocator, self.diags);
+            init_te_opt = try self.ensureValuePositionAllowed(init_te, init_node.?.location, s);
         }
 
         const bd = try self.allocator.create(sg.BindingDeclaration);
@@ -3386,7 +3491,7 @@ pub const Semantizer = struct {
 
         var rhs = try self.visitNode(a.value.*, s);
         rhs = try typ.coerceExprToType(b.ty, rhs, a.value, s, self.allocator, self.diags);
-        rhs = try typ.ensureValuePositionAllowed(rhs, a.value.location, s, self.allocator, self.diags);
+        rhs = try self.ensureValuePositionAllowed(rhs, a.value.location, s);
         if (!typ.typesExactlyEqual(b.ty, rhs.ty)) {
             const pair = try self.formatTypePairText(b.ty, rhs.ty, s);
             defer pair.deinit();
@@ -3419,7 +3524,7 @@ pub const Semantizer = struct {
 
         for (sl.fields) |f| {
             var tv = try self.visitNode(f.value.*, s);
-            tv = try typ.ensureValuePositionAllowed(tv, f.value.location, s, self.allocator, self.diags);
+            tv = try self.ensureValuePositionAllowed(tv, f.value.location, s);
             try fields_buf.append(.{ .name = f.name.string, .value = tv.node });
         }
 
@@ -6214,7 +6319,7 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         var e = if (r.expression) |ex| (try self.visitNode(ex.*, s)) else null;
         if (r.expression) |ex| {
-            if (e) |te| e = try typ.ensureValuePositionAllowed(te, ex.location, s, self.allocator, self.diags);
+            if (e) |te| e = try self.ensureValuePositionAllowed(te, ex.location, s);
         }
 
         const rs = try self.allocator.create(sg.ReturnStatement);
@@ -7699,12 +7804,28 @@ pub const Semantizer = struct {
         s: *Scope,
     ) !void {
         if (s.parent == null) return;
-        const resolved = (try self.findVisibleAutoDeinit(binding, loc, s)) orelse return;
+        if (try self.findVisibleAutoDeinit(binding, loc, s)) |resolved| {
+            const auto_ptr = try self.allocator.create(sg.AutoDeinitBinding);
+            auto_ptr.* = .{
+                .binding = binding,
+                .deinit_fn = resolved.function,
+                .input = resolved.input.node,
+                .fields = &.{},
+            };
+
+            const call_node = try sg.makeSGNode(.{ .auto_deinit_binding = auto_ptr }, loc, self.allocator);
+            try self.registerDefer(s, &[_]*sg.SGNode{call_node});
+            return;
+        }
+
+        const fields = try buildStructuralAutoDeinitFields(self, binding.ty, loc, s, self.allocator);
+        if (fields.len == 0) return;
         const auto_ptr = try self.allocator.create(sg.AutoDeinitBinding);
         auto_ptr.* = .{
             .binding = binding,
-            .deinit_fn = resolved.function,
-            .input = resolved.input.node,
+            .deinit_fn = null,
+            .input = null,
+            .fields = fields,
         };
 
         const call_node = try sg.makeSGNode(.{ .auto_deinit_binding = auto_ptr }, loc, self.allocator);
@@ -7718,7 +7839,102 @@ pub const Semantizer = struct {
             try self.pending_next.append(ptr);
         }
     }
+    fn walkAutoDeinitOnceReachability(
+        self: *Semantizer,
+        auto: *const sg.AutoDeinitBinding,
+        current_fn: *const sg.FunctionDeclaration,
+        loc: tok.Location,
+        state: *OnceTraversalState,
+    ) SemErr!void {
+        if (auto.deinit_fn) |deinit_fn| {
+            if (deinit_fn.is_once) {
+                try self.recordOnceConsumption(deinit_fn, current_fn, loc, state);
+            }
+            try self.walkFunctionOnceReachability(deinit_fn, loc, state);
+        }
+
+        try self.walkAutoDeinitFieldsOnceReachability(auto.fields, current_fn, loc, state);
+    }
+
+    fn walkAutoDeinitFieldsOnceReachability(
+        self: *Semantizer,
+        fields: []const sg.AutoDeinitField,
+        current_fn: *const sg.FunctionDeclaration,
+        loc: tok.Location,
+        state: *OnceTraversalState,
+    ) SemErr!void {
+        for (fields) |field| {
+            if (field.deinit_fn) |deinit_fn| {
+                if (deinit_fn.is_once) {
+                    try self.recordOnceConsumption(deinit_fn, current_fn, loc, state);
+                }
+                try self.walkFunctionOnceReachability(deinit_fn, loc, state);
+            }
+            try self.walkAutoDeinitFieldsOnceReachability(field.fields, current_fn, loc, state);
+        }
+    }
 };
+
+fn buildStructuralAutoDeinitFields(
+    sema: *Semantizer,
+    ty: sg.Type,
+    loc: tok.Location,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+) ![]const sg.AutoDeinitField {
+    return switch (ty) {
+        .struct_type => |st| blk: {
+            if (st.identity != null) break :blk &.{};
+
+            var fields = std.array_list.Managed(sg.AutoDeinitField).init(allocator.*);
+            errdefer fields.deinit();
+
+            for (st.fields, 0..) |field, idx| {
+                if (try sema.findVisibleAutoDeinitForType(field.ty, loc, s)) |deinit_info| {
+                    try fields.append(.{
+                        .field_index = @intCast(idx),
+                        .deinit_fn = deinit_info.function,
+                        .input = deinit_info.input.node,
+                        .self_field_index = deinit_info.self_field_index,
+                        .fields = &.{},
+                    });
+                    continue;
+                }
+
+                const nested = try buildStructuralAutoDeinitFields(sema, field.ty, loc, s, allocator);
+                if (nested.len > 0) {
+                    try fields.append(.{
+                        .field_index = @intCast(idx),
+                        .deinit_fn = null,
+                        .input = null,
+                        .self_field_index = 0,
+                        .fields = nested,
+                    });
+                    continue;
+                }
+
+                if (field.ty == .struct_type and field.ty.struct_type.identity != null) {
+                    try fields.append(.{
+                        .field_index = @intCast(idx),
+                        .deinit_fn = null,
+                        .input = null,
+                        .self_field_index = 0,
+                        .fields = &.{},
+                    });
+                    continue;
+                }
+
+                if (!typ.isTypeTriviallyCopyable(field.ty, s)) {
+                    fields.deinit();
+                    break :blk &.{};
+                }
+            }
+
+            break :blk try fields.toOwnedSlice();
+        },
+        else => &.{},
+    };
+}
 
 //────────────────────────────────────────────────────────────────────── BUILDER SCOPE
 
