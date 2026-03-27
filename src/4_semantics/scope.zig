@@ -221,7 +221,7 @@ pub const Scope = struct {
                     const ptr_info = first.ty.pointer_type.*;
                     if (ptr_info.mutability != .read_write) continue;
                     const pointee = ptr_info.child.*;
-                    if (typ.typesExactlyEqual(pointee, ty)) return cand;
+                    if (typ.typesStructurallyEqual(pointee, ty)) return cand;
                 }
             }
         }

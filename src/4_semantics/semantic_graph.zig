@@ -286,6 +286,7 @@ pub const Assignment = struct {
 pub const AutoDeinitBinding = struct {
     binding: *const BindingDeclaration,
     deinit_fn: *const FunctionDeclaration,
+    input: *const SGNode,
 };
 
 //

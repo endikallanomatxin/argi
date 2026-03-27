@@ -841,7 +841,7 @@ test "447_reached_allocator_string" {
 test "448_reached_allocator_dynamic_array" {
     const test_path = "tests/448_reached_allocator_dynamic_array";
     try expectSuccessfulBuild(test_path);
-    try runExpect(test_path, 22);
+    try runExpect(test_path, 24);
 }
 
 test "449_main_system_input" {
@@ -1115,6 +1115,12 @@ test "492_generic_wrapper_abstract_conformance" {
     const test_path = "tests/492_generic_wrapper_abstract_conformance";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
+}
+
+test "494_keep_string_auto_deinit" {
+    const test_path = "tests/494_keep_string_auto_deinit";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 11);
 }
 
 test "62_folder_module_namespace" {
