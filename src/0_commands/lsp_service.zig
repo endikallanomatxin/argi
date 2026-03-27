@@ -134,6 +134,21 @@ const SemanticTypeDeclRef = struct {
     decl: *const sg.TypeDeclaration,
 };
 
+const SyntaxBindingDeclRef = struct {
+    location: token.Location,
+    name: []const u8,
+};
+
+const SemanticBindingDeclRef = struct {
+    node: *const sg.SGNode,
+    decl: *const sg.BindingDeclaration,
+};
+
+const SemanticBindingUseRef = struct {
+    node: *const sg.SGNode,
+    binding: *const sg.BindingDeclaration,
+};
+
 const SyntaxTypeDeclRef = struct {
     node: *const st.STNode,
     name: st.Name,
@@ -744,7 +759,9 @@ pub const LanguageService = struct {
         defer syntax_type_decls.deinit();
         var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
         defer syntax_type_refs.deinit();
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_type_decls, &syntax_type_refs);
+        var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator);
+        defer syntax_binding_decls.deinit();
+        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
 
         var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator);
         defer semantic_functions.deinit();
@@ -754,7 +771,11 @@ pub const LanguageService = struct {
         defer semantic_type_inits.deinit();
         var semantic_types = std.array_list.Managed(SemanticTypeDeclRef).init(analysis_allocator);
         defer semantic_types.deinit();
-        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types);
+        var semantic_binding_decls = std.array_list.Managed(SemanticBindingDeclRef).init(analysis_allocator);
+        defer semantic_binding_decls.deinit();
+        var semantic_binding_uses = std.array_list.Managed(SemanticBindingUseRef).init(analysis_allocator);
+        defer semantic_binding_uses.deinit();
+        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses);
 
         for (syntax_functions.items) |syntax_fn| {
             if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc.path)) continue;
@@ -901,7 +922,9 @@ pub const LanguageService = struct {
         defer syntax_type_decls.deinit();
         var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
         defer syntax_type_refs.deinit();
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_type_decls, &syntax_type_refs);
+        var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator);
+        defer syntax_binding_decls.deinit();
+        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
 
         var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator);
         defer semantic_functions.deinit();
@@ -911,7 +934,11 @@ pub const LanguageService = struct {
         defer semantic_type_inits.deinit();
         var semantic_types = std.array_list.Managed(SemanticTypeDeclRef).init(analysis_allocator);
         defer semantic_types.deinit();
-        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types);
+        var semantic_binding_decls = std.array_list.Managed(SemanticBindingDeclRef).init(analysis_allocator);
+        defer semantic_binding_decls.deinit();
+        var semantic_binding_uses = std.array_list.Managed(SemanticBindingUseRef).init(analysis_allocator);
+        defer semantic_binding_uses.deinit();
+        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses);
 
         for (syntax_functions.items) |syntax_fn| {
             if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc.path)) continue;
@@ -954,6 +981,33 @@ pub const LanguageService = struct {
             return .{
                 .path = try self.ownedDefinitionPath(target.name.location.file),
                 .range = nameRange(target.name.location, target.name.string.len),
+            };
+        }
+
+        for (syntax_binding_decls.items) |syntax_decl| {
+            if (!std.mem.eql(u8, syntax_decl.location.file, doc.path)) continue;
+            if (!positionWithinName(position, syntax_decl.location, syntax_decl.name.len)) continue;
+            return .{
+                .path = try self.ownedDefinitionPath(syntax_decl.location.file),
+                .range = nameRange(syntax_decl.location, syntax_decl.name.len),
+            };
+        }
+
+        for (semantic_binding_decls.items) |binding_decl| {
+            if (!std.mem.eql(u8, binding_decl.node.location.file, doc.path)) continue;
+            if (!positionWithinName(position, binding_decl.node.location, binding_decl.decl.name.len)) continue;
+            return .{
+                .path = try self.ownedDefinitionPath(binding_decl.decl.location.file),
+                .range = nameRange(binding_decl.decl.location, binding_decl.decl.name.len),
+            };
+        }
+
+        for (semantic_binding_uses.items) |binding_use| {
+            if (!std.mem.eql(u8, binding_use.node.location.file, doc.path)) continue;
+            if (!positionWithinName(position, binding_use.node.location, binding_use.binding.name.len)) continue;
+            return .{
+                .path = try self.ownedDefinitionPath(binding_use.binding.location.file),
+                .range = nameRange(binding_use.binding.location, binding_use.binding.name.len),
             };
         }
 
@@ -1024,8 +1078,10 @@ pub const LanguageService = struct {
         defer syntax_type_decls.deinit();
         var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
         defer syntax_type_refs.deinit();
+        var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator);
+        defer syntax_binding_decls.deinit();
 
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_type_decls, &syntax_type_refs);
+        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
 
         var hints = std.array_list.Managed(InlayHint).init(self.allocator);
         errdefer {
@@ -1076,6 +1132,7 @@ fn collectSyntaxRefs(
     call_refs: *std.array_list.Managed(SyntaxFunctionCallRef),
     type_decl_refs: *std.array_list.Managed(SyntaxTypeDeclRef),
     type_refs: *std.array_list.Managed(SyntaxTypeRef),
+    binding_decl_refs: *std.array_list.Managed(SyntaxBindingDeclRef),
 ) !void {
     var stack = std.array_list.Managed(*const st.STNode).init(function_refs.allocator);
     defer stack.deinit();
@@ -1085,6 +1142,12 @@ fn collectSyntaxRefs(
         switch (node.content) {
             .function_declaration => |decl| {
                 try function_refs.append(.{ .node = node, .decl = decl });
+                for (decl.input.fields) |field| {
+                    try binding_decl_refs.append(.{ .location = field.name.location, .name = field.name.string });
+                }
+                for (decl.output.fields) |field| {
+                    try binding_decl_refs.append(.{ .location = field.name.location, .name = field.name.string });
+                }
                 try collectTypeRefsFromStructTypeLiteral(decl.input, type_refs, &stack);
                 try collectTypeRefsFromStructTypeLiteral(decl.output, type_refs, &stack);
                 if (decl.body) |body| try stack.append(body);
@@ -1100,6 +1163,7 @@ fn collectSyntaxRefs(
                 try stack.append(call.input);
             },
             .symbol_declaration => |sd| {
+                try binding_decl_refs.append(.{ .location = sd.name.location, .name = sd.name.string });
                 if (sd.type) |ty| try collectTypeRefsFromType(ty, type_refs);
                 if (sd.value) |value| try stack.append(value);
             },
@@ -1227,6 +1291,8 @@ fn collectSemanticRefs(
     call_refs: *std.array_list.Managed(SemanticFunctionCallRef),
     type_init_refs: *std.array_list.Managed(SemanticTypeInitializerRef),
     type_refs: *std.array_list.Managed(SemanticTypeDeclRef),
+    binding_decl_refs: *std.array_list.Managed(SemanticBindingDeclRef),
+    binding_use_refs: *std.array_list.Managed(SemanticBindingUseRef),
 ) !void {
     var stack = std.array_list.Managed(*const sg.SGNode).init(function_refs.allocator);
     defer stack.deinit();
@@ -1247,6 +1313,11 @@ fn collectSemanticRefs(
                 try appendSgChildren(&stack, node);
             },
             .type_declaration => |decl| try type_refs.append(.{ .decl = decl }),
+            .binding_declaration => |decl| {
+                try binding_decl_refs.append(.{ .node = node, .decl = decl });
+                try appendSgChildren(&stack, node);
+            },
+            .binding_use => |binding| try binding_use_refs.append(.{ .node = node, .binding = binding }),
             else => try appendSgChildren(&stack, node),
         }
     }
@@ -2330,4 +2401,71 @@ test "quoted literal semantic token length includes closing quote" {
 
     const escaped_char_len = quotedLiteralLenBytes("'\\n'", 0, '\'');
     try std.testing.expectEqual(@as(usize, 4), escaped_char_len);
+}
+
+test "definition resolves local binding use" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value :: Int32 = 1
+        \\    copy := value
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+
+    const diags = try svc.openDocument(uri, abs_path, 1, code);
+    defer diags.deinit();
+
+    const def = try svc.definition(uri, .{ .line = 2, .character = 13 });
+    try std.testing.expect(def != null);
+    defer def.?.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u32, 1), def.?.range.start.line);
+    try std.testing.expectEqual(@as(u32, 4), def.?.range.start.character);
+}
+
+test "definition resolves function parameter use" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const code =
+        \\identity(.value: Int32) -> (.out: Int32) := {
+        \\    out = value
+        \\}
+        \\
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    status_code = identity(1)
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+
+    const diags = try svc.openDocument(uri, abs_path, 1, code);
+    defer diags.deinit();
+
+    const def = try svc.definition(uri, .{ .line = 1, .character = 10 });
+    try std.testing.expect(def != null);
+    defer def.?.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u32, 0), def.?.range.start.line);
+    try std.testing.expectEqual(@as(u32, 10), def.?.range.start.character);
 }

@@ -289,6 +289,7 @@ pub const Semantizer = struct {
         const fake_binding = try self.allocator.create(sg.BindingDeclaration);
         fake_binding.* = .{
             .name = "__auto_deinit_target",
+            .location = loc,
             .origin_file = loc.file,
             .mutability = .variable,
             .ty = ty,
@@ -2290,6 +2291,7 @@ pub const Semantizer = struct {
         const binding = try self.allocator.create(sg.BindingDeclaration);
         binding.* = .{
             .name = field_name,
+            .location = loc,
             .origin_file = ctx.location.file,
             .mutability = .constant,
             .ty = expected_ty,
@@ -2532,6 +2534,7 @@ pub const Semantizer = struct {
         const bd = try self.allocator.create(sg.BindingDeclaration);
         bd.* = .{
             .name = d.name.string,
+            .location = loc,
             .origin_file = loc.file,
             .mutability = d.mutability,
             .ty = ty,
@@ -2728,6 +2731,7 @@ pub const Semantizer = struct {
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{
                 .name = fld.name.string,
+                .location = fld.name.location,
                 .origin_file = loc.file,
                 .mutability = .constant,
                 .ty = ty,
@@ -2757,6 +2761,7 @@ pub const Semantizer = struct {
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{
                 .name = fld.name.string,
+                .location = fld.name.location,
                 .origin_file = loc.file,
                 .mutability = .variable,
                 .ty = ty,
@@ -4904,6 +4909,7 @@ pub const Semantizer = struct {
         const fake_binding = try self.allocator.create(sg.BindingDeclaration);
         fake_binding.* = .{
             .name = "__init_target",
+            .location = loc,
             .origin_file = loc.file,
             .mutability = .variable,
             .ty = init_struct.fields[0].ty,
@@ -6134,12 +6140,12 @@ pub const Semantizer = struct {
 
         for (in_struct_ptr.fields) |fld| {
             const bd = try self.allocator.create(sg.BindingDeclaration);
-            bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
+            bd.* = .{ .name = fld.name, .location = tmpl.location, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
             try child.bindings.put(fld.name, bd);
         }
         for (out_struct_ptr.fields) |fld| {
             const bd = try self.allocator.create(sg.BindingDeclaration);
-            bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
+            bd.* = .{ .name = fld.name, .location = tmpl.location, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
             try child.bindings.put(fld.name, bd);
         }
 
@@ -6620,6 +6626,7 @@ pub const Semantizer = struct {
             const tmp_binding = try self.allocator.create(sg.BindingDeclaration);
             tmp_binding.* = .{
                 .name = iterable_name,
+                .location = loc,
                 .origin_file = loc.file,
                 .mutability = .constant,
                 .ty = iterable_ty,
@@ -6842,6 +6849,7 @@ pub const Semantizer = struct {
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{
                 .name = binding_name.string,
+                .location = binding_name.location,
                 .origin_file = binding_name.location.file,
                 .mutability = .constant,
                 .ty = resolved_payload_ty,

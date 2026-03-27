@@ -627,6 +627,7 @@ pub const CodeGenerator = struct {
         for (f.input.fields) |fld| {
             const bd = sem.BindingDeclaration{
                 .name = fld.name,
+                .location = f.location,
                 .origin_file = f.location.file,
                 .mutability = syn.Mutability.constant,
                 .ty = fld.ty,
@@ -648,6 +649,7 @@ pub const CodeGenerator = struct {
         for (f.output.fields) |fld| {
             const bd = sem.BindingDeclaration{
                 .name = fld.name,
+                .location = f.location,
                 .origin_file = f.location.file,
                 .mutability = syn.Mutability.variable,
                 .ty = fld.ty,
