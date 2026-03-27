@@ -844,12 +844,6 @@ test "feature_tests/system/05_reached_allocator_dynamic_array" {
     try runExpect(test_path, 24);
 }
 
-test "usecase_tests/02_main_system_input" {
-    const test_path = "tests/usecase_tests/02_main_system_input";
-    try expectSuccessfulBuild(test_path);
-    try runExpect(test_path, 0);
-}
-
 test "feature_tests/types/15_default_type_initializer_argument" {
     const test_path = "tests/feature_tests/types/15_default_type_initializer_argument";
     try expectSuccessfulBuild(test_path);
@@ -867,18 +861,6 @@ test "feature_tests/ownership/17X_keep_without_auto_deinit" {
         "tests/feature_tests/ownership/17X_keep_without_auto_deinit",
         "cannot keep binding 'value': no automatic deinit is scheduled",
     );
-}
-
-test "usecase_tests/03_main_system_reached_allocator" {
-    const test_path = "tests/usecase_tests/03_main_system_reached_allocator";
-    try expectSuccessfulBuild(test_path);
-    try runExpect(test_path, 0);
-}
-
-test "usecase_tests/04_main_system_reached_stdout" {
-    const test_path = "tests/usecase_tests/04_main_system_reached_stdout";
-    try expectSuccessfulBuild(test_path);
-    try runExpect(test_path, 0);
 }
 
 test "feature_tests/types/16_empty_type_initializer_resolution" {
@@ -1092,8 +1074,8 @@ test "feature_tests/system/22_file_system_mutations" {
     try runExpect(test_path, 0);
 }
 
-test "usecase_tests/05_file_system_read_write" {
-    const test_path = "tests/usecase_tests/05_file_system_read_write";
+test "feature_tests/system/23_file_system_read_write" {
+    const test_path = "tests/feature_tests/system/23_file_system_read_write";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
@@ -1129,8 +1111,8 @@ test "feature_tests/ownership/21_keep_string_auto_deinit" {
     try runExpect(test_path, 11);
 }
 
-test "usecase_tests/06_abstract_requirement_reached_default" {
-    const test_path = "tests/usecase_tests/06_abstract_requirement_reached_default";
+test "feature_tests/polymorphism/23_abstract_requirement_reached_default" {
+    const test_path = "tests/feature_tests/polymorphism/23_abstract_requirement_reached_default";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
