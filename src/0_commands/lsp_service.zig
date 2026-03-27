@@ -2180,7 +2180,7 @@ fn appendLexicalSemanticTokens(
         };
 
         const start_off: usize = tk.location.offset;
-        const len_u: usize = tokenLenBytes(tk);
+        const len_u: usize = tokenLenBytesInSource(text, tk);
         const end_off: usize = start_off + len_u;
 
         var line0: u32 = if (tk.location.line == 0) 0 else tk.location.line - 1;
@@ -2268,6 +2268,34 @@ fn tokenLenBytes(tk: token.Token) usize {
     };
 }
 
+fn tokenLenBytesInSource(text: []const u8, tk: token.Token) usize {
+    return switch (tk.content) {
+        .literal => |lit| switch (lit) {
+            .string_literal => quotedLiteralLenBytes(text, tk.location.offset, '"'),
+            .char_literal => quotedLiteralLenBytes(text, tk.location.offset, '\''),
+            else => tokenLenBytes(tk),
+        },
+        else => tokenLenBytes(tk),
+    };
+}
+
+fn quotedLiteralLenBytes(text: []const u8, start: usize, quote: u8) usize {
+    if (start >= text.len or text[start] != quote) return 0;
+
+    var i = start + 1;
+    while (i < text.len) : (i += 1) {
+        const ch = text[i];
+        if (ch == '\\') {
+            if (i + 1 >= text.len) return text.len - start;
+            i += 1;
+            continue;
+        }
+        if (ch == quote) return (i + 1) - start;
+    }
+
+    return text.len - start;
+}
+
 inline fn classify_lex_only(c: token.Content) ?u32 {
     return switch (c) {
         .comment => TOKEN_INDEX.comment,
@@ -2286,4 +2314,18 @@ inline fn classify_lex_only(c: token.Content) ?u32 {
 inline fn popOrNull(comptime T: type, list: *std.array_list.Managed(T)) ?T {
     if (list.items.len == 0) return null;
     return list.pop();
+}
+
+test "quoted literal semantic token length includes closing quote" {
+    const string_len = quotedLiteralLenBytes("\"adfasdf\"", 0, '"');
+    try std.testing.expectEqual(@as(usize, 9), string_len);
+
+    const escaped_string_len = quotedLiteralLenBytes("\"a\\\"b\"", 0, '"');
+    try std.testing.expectEqual(@as(usize, 6), escaped_string_len);
+
+    const char_len = quotedLiteralLenBytes("'a'", 0, '\'');
+    try std.testing.expectEqual(@as(usize, 3), char_len);
+
+    const escaped_char_len = quotedLiteralLenBytes("'\\n'", 0, '\'');
+    try std.testing.expectEqual(@as(usize, 4), escaped_char_len);
 }
