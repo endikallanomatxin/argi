@@ -1031,6 +1031,12 @@ test "feature_tests/control_flow/14_if_break_only_codegen" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/control_flow/15_logical_and_or" {
+    const test_path = "tests/feature_tests/control_flow/15_logical_and_or";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/text/04_text_buffer_helpers" {
     const test_path = "tests/feature_tests/text/04_text_buffer_helpers";
     try expectSuccessfulBuild(test_path);

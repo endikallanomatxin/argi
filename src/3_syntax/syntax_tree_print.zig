@@ -435,6 +435,20 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             printNode(c.right.*, lvl + 2);
         },
 
+        .logical_operation => |lo| {
+            const op = switch (lo.operator) {
+                .and_ => "and",
+                .or_ => "or",
+            };
+            std.debug.print("Logical \"{s}\"\n", .{op});
+            indent(lvl + 1);
+            std.debug.print("lhs:\n", .{});
+            printNode(lo.left.*, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("rhs:\n", .{});
+            printNode(lo.right.*, lvl + 2);
+        },
+
         // ── FUNCTION CALL ────────────────────────────────────────────────
         .function_call => |fc| {
             std.debug.print("Call {s}\n", .{fc.callee});
