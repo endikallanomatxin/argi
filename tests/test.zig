@@ -143,6 +143,10 @@ fn runExpectStdoutWithArgs(
     try expectEqualStrings(expected_stdout, result.stdout);
 }
 
+fn runExpectStdout(name: []const u8, expected_code: u8, expected_stdout: []const u8) !void {
+    try runExpectStdoutWithArgs(name, &[_][]const u8{}, expected_code, expected_stdout);
+}
+
 fn pathInTest(name: []const u8, leaf: []const u8) ![]u8 {
     return std.fmt.allocPrint(std.testing.allocator, "{s}/{s}", .{ name, leaf });
 }
@@ -1067,6 +1071,12 @@ test "feature_tests/io/08_file_open_modes" {
     const test_path = "tests/feature_tests/io/08_file_open_modes";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
+}
+
+test "feature_tests/io/09_print_c_string_literal" {
+    const test_path = "tests/feature_tests/io/09_print_c_string_literal";
+    try expectSuccessfulBuild(test_path);
+    try runExpectStdout(test_path, 0, "literal output");
 }
 
 test "feature_tests/system/07_arguments_access" {
