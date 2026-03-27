@@ -111,7 +111,11 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
         },
 
         .auto_deinit_binding => |adb| {
-            std.debug.print("AutoDeinit \"{s}\" via \"{s}\"\n", .{ adb.binding.name, adb.deinit_fn.name });
+            if (adb.deinit_fn) |deinit_fn| {
+                std.debug.print("AutoDeinit \"{s}\" via \"{s}\"\n", .{ adb.binding.name, deinit_fn.name });
+            } else {
+                std.debug.print("AutoDeinit \"{s}\" structurally ({d} fields)\n", .{ adb.binding.name, adb.fields.len });
+            }
         },
 
         .function_call => |fc| {

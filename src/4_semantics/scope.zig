@@ -10,6 +10,16 @@ pub const DeferredGroup = struct {
     nodes: []const *sg.SGNode,
 };
 
+pub const DeinitInfo = struct {
+    function: *sg.FunctionDeclaration,
+    self_field_index: u32,
+};
+
+pub const CopyInfo = struct {
+    function: *sg.FunctionDeclaration,
+    self_field_index: u32,
+};
+
 pub const Scope = struct {
     parent: ?*Scope,
     allocator: *const std.mem.Allocator,
@@ -210,18 +220,71 @@ pub const Scope = struct {
         return null;
     }
 
-    pub fn findDeinit(s: *Scope, ty: sg.Type) ?*sg.FunctionDeclaration {
+    pub fn findDeinitInfo(s: *Scope, ty: sg.Type) ?DeinitInfo {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.functions.getPtr("deinit")) |list_ptr| {
                 for (list_ptr.items) |cand| {
-                    if (cand.input.fields.len == 0) continue;
-                    const first = cand.input.fields[0];
-                    if (first.ty != .pointer_type) continue;
-                    const ptr_info = first.ty.pointer_type.*;
-                    if (ptr_info.mutability != .read_write) continue;
-                    const pointee = ptr_info.child.*;
-                    if (typ.typesStructurallyEqual(pointee, ty)) return cand;
+                    for (cand.input.fields, 0..) |field, idx| {
+                        if (field.ty != .pointer_type) continue;
+                        const ptr_info = field.ty.pointer_type.*;
+                        if (ptr_info.mutability != .read_write) continue;
+                        const pointee = ptr_info.child.*;
+                        if (!typ.typesStructurallyEqual(pointee, ty)) continue;
+
+                        var other_fields_have_defaults = true;
+                        for (cand.input.fields, 0..) |other_field, other_idx| {
+                            if (other_idx == idx) continue;
+                            if (other_field.default_value == null) {
+                                other_fields_have_defaults = false;
+                                break;
+                            }
+                        }
+                        if (!other_fields_have_defaults) continue;
+
+                        return .{
+                            .function = cand,
+                            .self_field_index = @intCast(idx),
+                        };
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    pub fn findDeinit(s: *Scope, ty: sg.Type) ?*sg.FunctionDeclaration {
+        const info = s.findDeinitInfo(ty) orelse return null;
+        return info.function;
+    }
+
+    pub fn findCopyInfo(s: *Scope, ty: sg.Type) ?CopyInfo {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr("copy")) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (cand.output.fields.len != 1) continue;
+                    const out_ty = cand.output.fields[0].ty;
+                    if (!typ.typesStructurallyEqual(out_ty, ty)) continue;
+
+                    for (cand.input.fields, 0..) |field, idx| {
+                        if (!typ.typesStructurallyEqual(field.ty, ty)) continue;
+
+                        var other_fields_have_defaults = true;
+                        for (cand.input.fields, 0..) |other_field, other_idx| {
+                            if (other_idx == idx) continue;
+                            if (other_field.default_value == null) {
+                                other_fields_have_defaults = false;
+                                break;
+                            }
+                        }
+                        if (!other_fields_have_defaults) continue;
+
+                        return .{
+                            .function = cand,
+                            .self_field_index = @intCast(idx),
+                        };
+                    }
                 }
             }
         }
@@ -229,20 +292,7 @@ pub const Scope = struct {
     }
 
     pub fn findCopy(s: *Scope, ty: sg.Type) ?*sg.FunctionDeclaration {
-        var cur: ?*Scope = s;
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.functions.getPtr("copy")) |list_ptr| {
-                for (list_ptr.items) |cand| {
-                    if (cand.input.fields.len != 1) continue;
-                    if (cand.output.fields.len != 1) continue;
-                    const in_ty = cand.input.fields[0].ty;
-                    const out_ty = cand.output.fields[0].ty;
-                    if (!typ.typesExactlyEqual(in_ty, ty)) continue;
-                    if (!typ.typesExactlyEqual(out_ty, ty)) continue;
-                    return cand;
-                }
-            }
-        }
-        return null;
+        const info = s.findCopyInfo(ty) orelse return null;
+        return info.function;
     }
 };
