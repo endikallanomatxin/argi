@@ -242,14 +242,11 @@ Typical examples are:
 
 ```
 System : Type = (
+  allocator : $& Allocator,
   terminal : $& Terminal,
-  args     :  & Arguments,
+  args     : $& Arguments,
   env_vars : $& EnvironmentVariables,
   file_sys : $& FileSystem,
-  network  : $& Network,
-  proc_man : $& ProcessManager,
-  clock    : $& time.Clock,
-  rand_gen : $& random.RandomNumberGenerator,
 )
 
 ```
@@ -262,40 +259,35 @@ main (system: $&System&) -> (status_code: $&StatusCode&) := {
 	system.terminal | print ($&_, "Hello, world")
 
 	-- Acceso a los argumentos de la línea de comandos
-        argsmap := system.args | parse &_
-        if argsmap has ($&_, "name") {
-            greet_user (argsmap("name"), $&system.terminal.stdout_buffered_writer)
-        }
+	arg0 = system.args[0]
 
 	-- Acceso a las variables de entorno
 	env_var = system.env_vars | get (&_, "MY_ENV_VAR")
 
 	-- Acceso al sistema de archivos
-	file1 = system.file_sys | open_file_for_read (&_,"my_file.txt")
-	content = file1 | read_all &_
-	file2 = system.file_sys | open_file_for_write ($&_,"output.txt")
+	file1 = system.file_sys | open_read (&_, "my_file.txt")
+	content = system.file_sys | read_file (&_, "my_file.txt")
+	file2 = system.file_sys | open_write (&_, "output.txt")
 	file2 | write ($&_, content)
-
-	-- Acceso a la red
-	response = system.network | http_get (&_, "https://example.com")
-
-	-- Acceso al proceso
-	system.proc_man | run_command (&_, "ls -l")
-
-	-- Acceso al reloj
-	current_time = system.clock | now &_
-
-	-- Generación de números aleatorios
-	system.rand_gen | set_seed ($&_, 42)
-	random_number = system.rand_gen | next_int ($&_, 1, 100)
 
 	status_code = ..OK
 }
 ```
 
-Capabilities are implemented as abstract types. Sometimes they can be empty
-structs, in which case they are ignored by the compiler when generating machine
-code. No se si es mejor abstract o structs.
+Today the stable, actually implemented nucleus of `System` is:
+
+- `allocator`
+- `terminal`
+- `args`
+- `env_vars`
+- `file_sys`
+
+Other capabilities may exist experimentally in the runtime shape, but should
+not yet be treated as part of the stable everyday model until they gain real
+operations and tests.
+
+Capabilities are implemented as abstract types or lightweight capability
+structs, depending on the shape that best fits the feature.
 
 ```rg
 Clock : Abstract = (
@@ -316,7 +308,7 @@ Rng : Abstract = (
 > [!IDEA]
 > Podría haber nombres de resevados, que si los usas automáticamente se pone el
 > input en todas las llamadas a funciones hasta llegar a main.
-> file_sys, terminal, env_vars, args, network
+> file_sys, terminal, env_vars, args
 > Así es cómodo meter un print por ejemplo.
 > Si guardas y algunas de estas no usaste, se borra del input.
 
