@@ -1028,6 +1028,11 @@ pub const CodeGenerator = struct {
         const sem_ty = if (n.sem_type) |ty| ty else self.inferLiteralSemType(n);
 
         return switch (l) {
+            .bool_literal => |b| .{
+                .type_ref = c.LLVMInt1Type(),
+                .value_ref = c.LLVMConstInt(c.LLVMInt1Type(), if (b) 1 else 0, 0),
+                .sem_type = sem_ty,
+            },
             .int_literal => |v| blk_int: {
                 const target_ty = if (sem_ty) |t| try self.toLLVMType(t) else c.LLVMInt32Type();
                 break :blk_int .{
@@ -1063,7 +1068,6 @@ pub const CodeGenerator = struct {
                     .sem_type = sem_ty,
                 };
             },
-            else => CodegenError.NotYetImplemented,
         };
     }
 
