@@ -930,6 +930,10 @@ pub const Semantizer = struct {
         mutability: syn.PointerMutability,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
+        if (inner.ty == .pointer_type and mutability == .read_only) {
+            return inner;
+        }
+
         switch (inner.node.content) {
             .binding_use => |binding| {
                 if (mutability == .read_write and binding.mutability != .variable) {
@@ -3537,7 +3541,7 @@ pub const Semantizer = struct {
         lit.* = .{
             .fields = fields,
             .ty = .{ .struct_type = st_ptr },
-            .dispatch_prefix_positional_count = 0,
+            .dispatch_prefix_positional_count = sl.positional_prefix_count,
         };
 
         const n = try sg.makeSGNode(.{ .struct_value_literal = lit }, undefined, self.allocator);
@@ -4693,7 +4697,7 @@ pub const Semantizer = struct {
         const actual_struct = input_te.ty.struct_type;
         const actual_value = input_te.node.content.struct_value_literal;
         const positional_prefix: usize = @min(actual_value.dispatch_prefix_positional_count, actual_value.fields.len);
-
+ 
         if (positional_prefix > expected.fields.len) {
             return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_node, s, self.allocator, self.diags);
         }
@@ -4914,7 +4918,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     loc,
                     .semantic,
-                    "pipe right-hand side must use named arguments",
+                    "pipe right-hand side must be a call with explicit arguments",
                     .{},
                 );
                 return error.Reported;
@@ -4931,10 +4935,8 @@ pub const Semantizer = struct {
                 return error.Reported;
             }
 
-            var field_names = std.array_list.Managed([]const u8).init(self.allocator.*);
-            defer field_names.deinit();
-            var evaluated_args = std.array_list.Managed(typ.TypedExpr).init(self.allocator.*);
-            defer evaluated_args.deinit();
+            var args = std.array_list.Managed(CallArg).init(self.allocator.*);
+            defer args.deinit();
 
             var found_placeholder = false;
             for (sv.fields) |field| {
@@ -4954,11 +4956,13 @@ pub const Semantizer = struct {
             }
 
             for (sv.fields) |field| {
-                try field_names.append(field.name.string);
-                try evaluated_args.append(try self.evalPipeArg(field.value, left_te, s));
+                try args.append(.{
+                    .name = field.name.string,
+                    .expr = try self.evalPipeArg(field.value, left_te, s),
+                });
             }
 
-            var input_te = try self.buildNamedPipeInput(field_names.items, evaluated_args.items);
+            var input_te = try self.buildCallInputWithPositionalPrefix(args.items, sv.positional_prefix_count);
 
             if (std.mem.eql(u8, call.callee, "is")) {
                 return self.handleIsBuiltinFromInput(input_te, loc, s);
@@ -7121,6 +7125,10 @@ pub const Semantizer = struct {
         }
 
         const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len == 1 and svl.positional_prefix_count == 1) {
+            return self.visitNode(svl.fields[0].value.*, s);
+        }
+
         if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, arg_name)) {
             try self.diags.add(
                 arg_node.location,
@@ -7146,6 +7154,9 @@ pub const Semantizer = struct {
             return error.Reported;
         }
         const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len == 1 and svl.positional_prefix_count == 1) {
+            return svl.fields[0].value;
+        }
         if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, arg_name)) {
             try self.diags.add(
                 arg_node.location,
@@ -7578,10 +7589,13 @@ pub const Semantizer = struct {
         var value_te: typ.TypedExpr = undefined;
         if (arg_node.content == .struct_value_literal) {
             const sv = arg_node.content.struct_value_literal;
-            if (sv.fields.len != 1 or !std.mem.eql(u8, sv.fields[0].name.string, "value")) {
+            if (sv.fields.len == 1 and sv.positional_prefix_count == 1) {
+                value_te = try self.visitNode(sv.fields[0].value.*, s);
+            } else if (sv.fields.len != 1 or !std.mem.eql(u8, sv.fields[0].name.string, "value")) {
                 return error.SymbolNotFound;
+            } else {
+                value_te = try self.visitNode(sv.fields[0].value.*, s);
             }
-            value_te = try self.visitNode(sv.fields[0].value.*, s);
         } else {
             value_te = try self.visitNode(arg_node, s);
         }
@@ -7651,6 +7665,12 @@ pub const Semantizer = struct {
         }
 
         const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len == 1 and svl.positional_prefix_count == 1) {
+            const tv = try self.visitNode(svl.fields[0].value.*, s);
+            const loc = call.input.*.location;
+            return try typ.makeTypeLiteral(self.allocator, loc, tv.ty);
+        }
+
         if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, "value")) {
             try self.diags.add(
                 arg_node.location,

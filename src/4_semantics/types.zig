@@ -1005,15 +1005,16 @@ pub fn coerceStructLiteral(
     if (expr.node.content != .struct_value_literal) return expr;
     const lit = expr.node.content.struct_value_literal;
     const actual_struct = lit.ty.struct_type;
+    const positional_prefix: usize = @min(lit.dispatch_prefix_positional_count, lit.fields.len);
 
-    if (lit.fields.len != actual_struct.fields.len) {
+    if (lit.fields.len != actual_struct.fields.len or positional_prefix > expected.fields.len) {
         return expr;
     }
 
     var coerced_fields = try allocator.alloc(sg.StructValueLiteralField, expected.fields.len);
     errdefer allocator.free(coerced_fields);
 
-    for (lit.fields) |actual_field| {
+    for (lit.fields[positional_prefix..]) |actual_field| {
         if (findFieldByName(expected, actual_field.name) == null) {
             allocator.free(coerced_fields);
             return expr;
@@ -1021,6 +1022,32 @@ pub fn coerceStructLiteral(
     }
 
     var i: usize = 0;
+    while (i < positional_prefix) : (i += 1) {
+        const exp_field = expected.fields[i];
+        const act_field = actual_struct.fields[i];
+        const lit_field = lit.fields[i];
+        const field_node = @constCast(lit_field.value);
+        var field_expr = TypedExpr{
+            .node = field_node,
+            .ty = act_field.ty,
+        };
+        field_expr = try coerceExprToType(exp_field.ty, field_expr, expr_node, s, allocator, diags);
+        if (!typesExactlyEqual(exp_field.ty, field_expr.ty)) {
+            const pair = try formatTypePairText(exp_field.ty, field_expr.ty, s, allocator);
+            defer pair.deinit();
+            try diags.add(
+                expr_node.location,
+                .semantic,
+                "cannot initialize positional field {d} with '{s}' (expected '{s}')",
+                .{ i, pair.actual.bytes, pair.expected.bytes },
+            );
+            allocator.free(coerced_fields);
+            return error.Reported;
+        }
+
+        coerced_fields[i] = .{ .name = exp_field.name, .value = field_expr.node };
+    }
+
     while (i < expected.fields.len) : (i += 1) {
         const exp_field = expected.fields[i];
         const act_field_ptr = findFieldByName(actual_struct, exp_field.name);
