@@ -117,1151 +117,1151 @@ fn run(name: []const u8) !void {
     try runExpect(name, 0);
 }
 
-test "00_minimal_main" {
-    const test_path = "tests/00_minimal_main";
+test "feature_tests/basics/01_minimal_main" {
+    const test_path = "tests/feature_tests/basics/01_minimal_main";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "01_comments" {
-    const test_path = "tests/01_comments";
+test "feature_tests/basics/02_comments" {
+    const test_path = "tests/feature_tests/basics/02_comments";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "02_constants_and_variables" {
-    const test_path = "tests/02_constants_and_variables";
+test "feature_tests/basics/03_constants_and_variables" {
+    const test_path = "tests/feature_tests/basics/03_constants_and_variables";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "03_expressions_and_type_inference" {
-    const test_path = "tests/03_expressions_and_type_inference";
+test "feature_tests/basics/04_expressions_and_type_inference" {
+    const test_path = "tests/feature_tests/basics/04_expressions_and_type_inference";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 3);
 }
 
-test "04_literals" {
-    const test_path = "tests/04_literals";
+test "feature_tests/basics/05_literals" {
+    const test_path = "tests/feature_tests/basics/05_literals";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "06_if" {
-    const test_path = "tests/06_if";
+test "feature_tests/control_flow/01_if" {
+    const test_path = "tests/feature_tests/control_flow/01_if";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "050_anonymous_structs" {
-    const test_path = "tests/050_anonymous_structs";
+test "feature_tests/basics/06_anonymous_structs" {
+    const test_path = "tests/feature_tests/basics/06_anonymous_structs";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "051_struct_default_fields" {
-    const test_path = "tests/051_struct_default_fields";
+test "feature_tests/basics/07_struct_default_fields" {
+    const test_path = "tests/feature_tests/basics/07_struct_default_fields";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "052_struct_field_store" {
-    const test_path = "tests/052_struct_field_store";
+test "feature_tests/basics/08_struct_field_store" {
+    const test_path = "tests/feature_tests/basics/08_struct_field_store";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "053X_integer_literal_overflow" {
+test "feature_tests/basics/09X_integer_literal_overflow" {
     try buildExpectFail(
-        "tests/053X_integer_literal_overflow",
+        "tests/feature_tests/basics/09X_integer_literal_overflow",
         "integer literal 300 does not fit in 'UInt8' (max 255)",
     );
 }
 
-test "054X_signed_integer_literal_overflow" {
+test "feature_tests/basics/10X_signed_integer_literal_overflow" {
     try buildExpectFail(
-        "tests/054X_signed_integer_literal_overflow",
+        "tests/feature_tests/basics/10X_signed_integer_literal_overflow",
         "integer literal 128 does not fit in 'Int8' (min -128, max 127)",
     );
 }
 
-test "055X_negative_integer_literal_overflow" {
+test "feature_tests/basics/11X_negative_integer_literal_overflow" {
     try buildExpectFail(
-        "tests/055X_negative_integer_literal_overflow",
+        "tests/feature_tests/basics/11X_negative_integer_literal_overflow",
         "integer literal -129 does not fit in 'Int8' (min -128, max 127)",
     );
 }
 
-test "11_function_calling" {
-    const test_path = "tests/11_function_calling";
+test "feature_tests/functions/01_function_calling" {
+    const test_path = "tests/feature_tests/functions/01_function_calling";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 42);
 }
 
-test "12_function_args" {
-    const test_path = "tests/12_function_args";
+test "feature_tests/functions/02_function_args" {
+    const test_path = "tests/feature_tests/functions/02_function_args";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 42);
 }
 
-test "13_pipe_operator" {
-    const test_path = "tests/13_pipe_operator";
+test "feature_tests/functions/03_pipe_operator" {
+    const test_path = "tests/feature_tests/functions/03_pipe_operator";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 42);
 }
 
-test "14_pipe_pointer" {
-    const test_path = "tests/14_pipe_pointer";
+test "feature_tests/functions/04_pipe_pointer" {
+    const test_path = "tests/feature_tests/functions/04_pipe_pointer";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 42);
 }
 
-test "15X_pipe_requires_parentheses" {
+test "feature_tests/functions/05X_pipe_requires_parentheses" {
     try buildExpectFail(
-        "tests/15X_pipe_requires_parentheses",
+        "tests/feature_tests/functions/05X_pipe_requires_parentheses",
         "pipe right-hand side must use at least one argument placeholder",
     );
 }
 
-test "16X_pipe_requires_placeholder" {
+test "feature_tests/functions/06X_pipe_requires_placeholder" {
     try buildExpectFail(
-        "tests/16X_pipe_requires_placeholder",
+        "tests/feature_tests/functions/06X_pipe_requires_placeholder",
         "expected struct field",
     );
 }
 
-test "17X_pipe_expression_placeholder_not_supported" {
+test "feature_tests/functions/07X_pipe_expression_placeholder_not_supported" {
     try buildExpectFail(
-        "tests/17X_pipe_expression_placeholder_not_supported",
+        "tests/feature_tests/functions/07X_pipe_expression_placeholder_not_supported",
         "expected struct field",
     );
 }
 
-test "18_pipe_chain" {
-    const test_path = "tests/18_pipe_chain";
+test "feature_tests/functions/08_pipe_chain" {
+    const test_path = "tests/feature_tests/functions/08_pipe_chain";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 42);
 }
 
-test "19_pipe_generic_inferred" {
-    const test_path = "tests/19_pipe_generic_inferred";
+test "feature_tests/functions/09_pipe_generic_inferred" {
+    const test_path = "tests/feature_tests/functions/09_pipe_generic_inferred";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 42);
 }
 
-test "20_pipe_generic_explicit" {
-    const test_path = "tests/20_pipe_generic_explicit";
+test "feature_tests/functions/10_pipe_generic_explicit" {
+    const test_path = "tests/feature_tests/functions/10_pipe_generic_explicit";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 42);
 }
 
-test "21_pipe_builtin_is" {
-    const test_path = "tests/21_pipe_builtin_is";
+test "feature_tests/functions/11_pipe_builtin_is" {
+    const test_path = "tests/feature_tests/functions/11_pipe_builtin_is";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "130_multiple_dispatch" {
-    const test_path = "tests/130_multiple_dispatch";
+test "feature_tests/polymorphism/01_multiple_dispatch" {
+    const test_path = "tests/feature_tests/polymorphism/01_multiple_dispatch";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 2);
 }
 
-test "131X_multiple_dispatch_ambiguous" {
+test "feature_tests/polymorphism/02X_multiple_dispatch_ambiguous" {
     try buildExpectFail(
-        "tests/131X_multiple_dispatch_ambiguous",
+        "tests/feature_tests/polymorphism/02X_multiple_dispatch_ambiguous",
         "ambiguous call to 'choose2'",
     );
 }
 
-test "21_named_struct_types" {
-    const test_path = "tests/21_named_struct_types";
+test "feature_tests/basics/12_named_struct_types" {
+    const test_path = "tests/feature_tests/basics/12_named_struct_types";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "221_pointers" {
-    const test_path = "tests/221_pointers";
+test "feature_tests/pointers/01_pointers" {
+    const test_path = "tests/feature_tests/pointers/01_pointers";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "222_read-only_vs_read-and-write_pointers" {
-    const test_path = "tests/222_read-only_vs_read-and-write_pointers";
+test "feature_tests/pointers/02_read-only_vs_read-and-write_pointers" {
+    const test_path = "tests/feature_tests/pointers/02_read-only_vs_read-and-write_pointers";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "223X_assign_through_readonly_pointer" {
+test "feature_tests/pointers/03X_assign_through_readonly_pointer" {
     try buildExpectFail(
-        "tests/223X_assign_through_readonly_pointer",
+        "tests/feature_tests/pointers/03X_assign_through_readonly_pointer",
         "cannot assign through pointer '&Int32' because it is read-only",
     );
 }
 
-test "224X_read-write_pointer_to_constant" {
+test "feature_tests/pointers/04X_read-write_pointer_to_constant" {
     try buildExpectFail(
-        "tests/224X_read-write_pointer_to_constant",
+        "tests/feature_tests/pointers/04X_read-write_pointer_to_constant",
         "binding 'value' is immutable",
     );
 }
 
-test "225X_pass_readonly_pointer_to_mutable_param" {
+test "feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param" {
     try buildExpectFail(
-        "tests/225X_pass_readonly_pointer_to_mutable_param",
+        "tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param",
         "no overload of 'increment' accepts arguments (.ptr: &Int32)",
     );
 }
 
-test "226_explicit_pointer_casts" {
-    const test_path = "tests/226_explicit_pointer_casts";
+test "feature_tests/pointers/06_explicit_pointer_casts" {
+    const test_path = "tests/feature_tests/pointers/06_explicit_pointer_casts";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "227X_pointer_arithmetic_requires_cast" {
+test "feature_tests/pointers/07X_pointer_arithmetic_requires_cast" {
     try buildExpectFail(
-        "tests/227X_pointer_arithmetic_requires_cast",
+        "tests/feature_tests/pointers/07X_pointer_arithmetic_requires_cast",
         "pointer arithmetic is not allowed; cast explicitly to an integer, perform the arithmetic, and cast back",
     );
 }
 
-test "228X_array_index_requires_uint_native" {
+test "feature_tests/pointers/08X_array_index_requires_uint_native" {
     try buildExpectFail(
-        "tests/228X_array_index_requires_uint_native",
+        "tests/feature_tests/pointers/08X_array_index_requires_uint_native",
         "array index must be 'UIntNative'",
     );
 }
 
-test "30_core_and_libc" {
-    const test_path = "tests/30_core_and_libc";
+test "feature_tests/basics/13_core_and_libc" {
+    const test_path = "tests/feature_tests/basics/13_core_and_libc";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "321_generic_functions" {
-    const test_path = "tests/321_generic_functions";
+test "feature_tests/polymorphism/03_generic_functions" {
+    const test_path = "tests/feature_tests/polymorphism/03_generic_functions";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 42);
 }
 
-test "322_generic_structs" {
-    const test_path = "tests/322_generic_structs";
+test "feature_tests/polymorphism/04_generic_structs" {
+    const test_path = "tests/feature_tests/polymorphism/04_generic_structs";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 42);
 }
 
-test "323_generic_functions_multi" {
-    const test_path = "tests/323_generic_functions_multi";
+test "feature_tests/polymorphism/05_generic_functions_multi" {
+    const test_path = "tests/feature_tests/polymorphism/05_generic_functions_multi";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 42);
 }
 
-test "324_generic_structs_multi" {
-    const test_path = "tests/324_generic_structs_multi";
+test "feature_tests/polymorphism/06_generic_structs_multi" {
+    const test_path = "tests/feature_tests/polymorphism/06_generic_structs_multi";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 20);
 }
 
-test "325_generic_statement_type_arguments" {
-    const test_path = "tests/325_generic_statement_type_arguments";
+test "feature_tests/polymorphism/07_generic_statement_type_arguments" {
+    const test_path = "tests/feature_tests/polymorphism/07_generic_statement_type_arguments";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "331_abstract" {
-    const test_path = "tests/331_abstract";
+test "feature_tests/polymorphism/08_abstract" {
+    const test_path = "tests/feature_tests/polymorphism/08_abstract";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "332X_abstract_missing_requirement" {
+test "feature_tests/polymorphism/09X_abstract_missing_requirement" {
     try buildExpectFail(
-        "tests/332X_abstract_missing_requirement",
+        "tests/feature_tests/polymorphism/09X_abstract_missing_requirement",
         "type does not implement abstract 'Animal':\n  missing function: speak (.who: Dog)",
     );
 }
 
-test "333X_abstract_wrong_signature" {
+test "feature_tests/polymorphism/10X_abstract_wrong_signature" {
     try buildExpectFail(
-        "tests/333X_abstract_wrong_signature",
+        "tests/feature_tests/polymorphism/10X_abstract_wrong_signature",
         "type does not implement abstract 'Animal':\n  missing function: speak (.who: Dog)",
     );
 }
 
-test "334_abstract_instantiation" {
-    const test_path = "tests/334_abstract_instantiation";
+test "feature_tests/polymorphism/11_abstract_instantiation" {
+    const test_path = "tests/feature_tests/polymorphism/11_abstract_instantiation";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "335X_abstract_instantiation_missing_default" {
+test "feature_tests/polymorphism/12X_abstract_instantiation_missing_default" {
     try buildExpectFail(
-        "tests/335X_abstract_instantiation_missing_default",
+        "tests/feature_tests/polymorphism/12X_abstract_instantiation_missing_default",
         "cannot use abstract 'ExampleAbstract' as a type for a symbol",
     );
 }
 
-test "339_abstract_self_output" {
-    const test_path = "tests/339_abstract_self_output";
+test "feature_tests/polymorphism/15_abstract_self_output" {
+    const test_path = "tests/feature_tests/polymorphism/15_abstract_self_output";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "340X_abstract_self_output_wrong" {
+test "feature_tests/polymorphism/16X_abstract_self_output_wrong" {
     try buildExpectFail(
-        "tests/340X_abstract_self_output_wrong",
+        "tests/feature_tests/polymorphism/16X_abstract_self_output_wrong",
         "type does not implement abstract 'Animal':\n  missing function: clone (.who: Dog)",
     );
 }
 
-test "341_abstract_function_input_monomorphization" {
-    const test_path = "tests/341_abstract_function_input_monomorphization";
+test "feature_tests/polymorphism/17_abstract_function_input_monomorphization" {
+    const test_path = "tests/feature_tests/polymorphism/17_abstract_function_input_monomorphization";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 7);
 }
 
-test "342_abstract_dispatch_prefers_concrete" {
-    const test_path = "tests/342_abstract_dispatch_prefers_concrete";
+test "feature_tests/polymorphism/18_abstract_dispatch_prefers_concrete" {
+    const test_path = "tests/feature_tests/polymorphism/18_abstract_dispatch_prefers_concrete";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 2);
 }
 
-test "343_abstract_monomorphization_isolation" {
-    const test_path = "tests/343_abstract_monomorphization_isolation";
+test "feature_tests/polymorphism/19_abstract_monomorphization_isolation" {
+    const test_path = "tests/feature_tests/polymorphism/19_abstract_monomorphization_isolation";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 3);
 }
 
-test "336X_abstract_function_input_requires_implementation" {
+test "feature_tests/polymorphism/13X_abstract_function_input_requires_implementation" {
     try buildExpectFail(
-        "tests/336X_abstract_function_input_requires_implementation",
+        "tests/feature_tests/polymorphism/13X_abstract_function_input_requires_implementation",
         "type 'Int32' does not implement abstract 'ExampleAbstract' required by parameter '.value' of 'use_value'",
     );
 }
 
-test "338X_abstract_function_output_requires_default" {
+test "feature_tests/polymorphism/14X_abstract_function_output_requires_default" {
     try buildExpectFail(
-        "tests/338X_abstract_function_output_requires_default",
+        "tests/feature_tests/polymorphism/14X_abstract_function_output_requires_default",
         "error generating function make_value: InvalidType",
     );
 }
 
-test "351_init" {
-    const test_path = "tests/351_init";
+test "feature_tests/ownership/01_init" {
+    const test_path = "tests/feature_tests/ownership/01_init";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "352_defer" {
-    const test_path = "tests/352_defer";
+test "feature_tests/ownership/02_defer" {
+    const test_path = "tests/feature_tests/ownership/02_defer";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "353_deinit" {
-    const test_path = "tests/353_deinit";
+test "feature_tests/ownership/03_deinit" {
+    const test_path = "tests/feature_tests/ownership/03_deinit";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "354_noncopyable_temporary_values" {
-    const test_path = "tests/354_noncopyable_temporary_values";
+test "feature_tests/ownership/04_noncopyable_temporary_values" {
+    const test_path = "tests/feature_tests/ownership/04_noncopyable_temporary_values";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "355X_noncopyable_assignment" {
+test "feature_tests/ownership/05X_noncopyable_assignment" {
     try buildExpectFail(
-        "tests/355X_noncopyable_assignment",
+        "tests/feature_tests/ownership/05X_noncopyable_assignment",
         "type 'Resource' is not copyable, so it cannot be used by value here",
     );
 }
 
-test "356X_noncopyable_argument_by_value" {
+test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
     try buildExpectFail(
-        "tests/356X_noncopyable_argument_by_value",
+        "tests/feature_tests/ownership/06X_noncopyable_argument_by_value",
         "type 'Resource' is not copyable, so it cannot be used by value here",
     );
 }
 
-test "357X_noncopyable_struct_field" {
+test "feature_tests/ownership/07X_noncopyable_struct_field" {
     try buildExpectFail(
-        "tests/357X_noncopyable_struct_field",
+        "tests/feature_tests/ownership/07X_noncopyable_struct_field",
         "type 'Resource' is not copyable, so it cannot be used by value here",
     );
 }
 
-test "358X_noncopyable_output_binding" {
+test "feature_tests/ownership/08X_noncopyable_output_binding" {
     try buildExpectFail(
-        "tests/358X_noncopyable_output_binding",
+        "tests/feature_tests/ownership/08X_noncopyable_output_binding",
         "type 'Resource' is not copyable, so it cannot be used by value here",
     );
 }
 
-test "359X_mutable_and_read_alias_same_call" {
+test "feature_tests/ownership/09X_mutable_and_read_alias_same_call" {
     try buildExpectFail(
-        "tests/359X_mutable_and_read_alias_same_call",
+        "tests/feature_tests/ownership/09X_mutable_and_read_alias_same_call",
         "binding 'value' cannot be passed as '$&' and '&' in the same call to 'mix'",
     );
 }
 
-test "360X_mutable_and_value_alias_same_call" {
+test "feature_tests/ownership/10X_mutable_and_value_alias_same_call" {
     try buildExpectFail(
-        "tests/360X_mutable_and_value_alias_same_call",
+        "tests/feature_tests/ownership/10X_mutable_and_value_alias_same_call",
         "binding 'value' cannot be passed as '$&' and 'value' in the same call to 'mix'",
     );
 }
 
-test "361X_double_mutable_alias_same_call" {
+test "feature_tests/ownership/11X_double_mutable_alias_same_call" {
     try buildExpectFail(
-        "tests/361X_double_mutable_alias_same_call",
+        "tests/feature_tests/ownership/11X_double_mutable_alias_same_call",
         "binding 'value' cannot be passed as '$&' and '$&' in the same call to 'mix'",
     );
 }
 
-test "362_copy_function_value_positions" {
-    const test_path = "tests/362_copy_function_value_positions";
+test "feature_tests/ownership/12_copy_function_value_positions" {
+    const test_path = "tests/feature_tests/ownership/12_copy_function_value_positions";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "363_move_operator" {
-    const test_path = "tests/363_move_operator";
+test "feature_tests/ownership/13_move_operator" {
+    const test_path = "tests/feature_tests/ownership/13_move_operator";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "364X_use_after_move" {
+test "feature_tests/ownership/14X_use_after_move" {
     try buildExpectFail(
-        "tests/364X_use_after_move",
+        "tests/feature_tests/ownership/14X_use_after_move",
         "binding 'handle' was moved and cannot be used again before reinitialization",
     );
 }
 
-test "365_move_then_reinitialize" {
-    const test_path = "tests/365_move_then_reinitialize";
+test "feature_tests/ownership/15_move_then_reinitialize" {
+    const test_path = "tests/feature_tests/ownership/15_move_then_reinitialize";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "36_get_and_set_index_operators" {
-    const test_path = "tests/36_get_and_set_index_operators";
+test "feature_tests/basics/14_get_and_set_index_operators" {
+    const test_path = "tests/feature_tests/basics/14_get_and_set_index_operators";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "37_size_of_and_alignment_of_builtin_functions" {
-    const test_path = "tests/37_size_of_and_alignment_of_builtin_functions";
+test "feature_tests/basics/15_size_of_and_alignment_of_builtin_functions" {
+    const test_path = "tests/feature_tests/basics/15_size_of_and_alignment_of_builtin_functions";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "42_choice" {
-    const test_path = "tests/42_choice";
+test "feature_tests/types/01_choice" {
+    const test_path = "tests/feature_tests/types/01_choice";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "43_choice_payloads" {
-    const test_path = "tests/43_choice_payloads";
+test "feature_tests/types/03_choice_payloads" {
+    const test_path = "tests/feature_tests/types/03_choice_payloads";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "44X_choice_missing_payload" {
+test "feature_tests/types/04X_choice_missing_payload" {
     try buildExpectFail(
-        "tests/44X_choice_missing_payload",
+        "tests/feature_tests/types/04X_choice_missing_payload",
         "choice variant '..ok' requires a payload",
     );
 }
 
-test "45_choice_is_builtin" {
-    const test_path = "tests/45_choice_is_builtin";
+test "feature_tests/types/05_choice_is_builtin" {
+    const test_path = "tests/feature_tests/types/05_choice_is_builtin";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "46_choice_match" {
-    const test_path = "tests/46_choice_match";
+test "feature_tests/types/06_choice_match" {
+    const test_path = "tests/feature_tests/types/06_choice_match";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "47_choice_match_payload_binding" {
-    const test_path = "tests/47_choice_match_payload_binding";
+test "feature_tests/types/07_choice_match_payload_binding" {
+    const test_path = "tests/feature_tests/types/07_choice_match_payload_binding";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "48_nullable_generic" {
-    const test_path = "tests/48_nullable_generic";
+test "feature_tests/types/08_nullable_generic" {
+    const test_path = "tests/feature_tests/types/08_nullable_generic";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "49_errable_generic" {
-    const test_path = "tests/49_errable_generic";
+test "feature_tests/types/09_errable_generic" {
+    const test_path = "tests/feature_tests/types/09_errable_generic";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "50X_choice_unknown_variant" {
+test "feature_tests/types/10X_choice_unknown_variant" {
     try buildExpectFail(
-        "tests/50X_choice_unknown_variant",
+        "tests/feature_tests/types/10X_choice_unknown_variant",
         "choice type 'Direction' has no variant '..east'",
     );
 }
 
-test "51X_choice_payload_access_without_payload" {
+test "feature_tests/types/11X_choice_payload_access_without_payload" {
     try buildExpectFail(
-        "tests/51X_choice_payload_access_without_payload",
+        "tests/feature_tests/types/11X_choice_payload_access_without_payload",
         "choice variant '..north' has no payload",
     );
 }
 
-test "52X_match_non_choice" {
+test "feature_tests/types/12X_match_non_choice" {
     try buildExpectFail(
-        "tests/52X_match_non_choice",
+        "tests/feature_tests/types/12X_match_non_choice",
         "match expects a choice value, found 'Int32'",
     );
 }
 
-test "54X_match_bind_payload_without_payload" {
+test "feature_tests/types/13X_match_bind_payload_without_payload" {
     try buildExpectFail(
-        "tests/54X_match_bind_payload_without_payload",
+        "tests/feature_tests/types/13X_match_bind_payload_without_payload",
         "choice variant '..north' has no payload to bind",
     );
 }
 
-test "411_list_literal_length" {
-    const test_path = "tests/411_list_literal_length";
+test "feature_tests/collections/01_list_literal_length" {
+    const test_path = "tests/feature_tests/collections/01_list_literal_length";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "412_list_literal_access" {
-    const test_path = "tests/412_list_literal_access";
+test "feature_tests/collections/02_list_literal_access" {
+    const test_path = "tests/feature_tests/collections/02_list_literal_access";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "413_arrays" {
-    const test_path = "tests/413_arrays";
+test "feature_tests/collections/03_arrays" {
+    const test_path = "tests/feature_tests/collections/03_arrays";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "414_list_view" {
-    const test_path = "tests/414_list_view";
+test "feature_tests/collections/04_list_view" {
+    const test_path = "tests/feature_tests/collections/04_list_view";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "417_array_index_uint_native" {
-    const test_path = "tests/417_array_index_uint_native";
+test "feature_tests/collections/07_array_index_uint_native" {
+    const test_path = "tests/feature_tests/collections/07_array_index_uint_native";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "418_dynamic_array" {
-    const test_path = "tests/418_dynamic_array";
+test "feature_tests/collections/08_dynamic_array" {
+    const test_path = "tests/feature_tests/collections/08_dynamic_array";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "419_dynamic_array_ergonomic" {
-    const test_path = "tests/419_dynamic_array_ergonomic";
+test "feature_tests/collections/09_dynamic_array_ergonomic" {
+    const test_path = "tests/feature_tests/collections/09_dynamic_array_ergonomic";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 80);
 }
 
-test "420_string_bytes" {
-    const test_path = "tests/420_string_bytes";
+test "feature_tests/text/01_string_bytes" {
+    const test_path = "tests/feature_tests/text/01_string_bytes";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "421_string_copy" {
-    const test_path = "tests/421_string_copy";
+test "feature_tests/text/02_string_copy" {
+    const test_path = "tests/feature_tests/text/02_string_copy";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "422_array_explicit_type" {
-    const test_path = "tests/422_array_explicit_type";
+test "feature_tests/collections/10_array_explicit_type" {
+    const test_path = "tests/feature_tests/collections/10_array_explicit_type";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "423_array_iterator_manual" {
-    const test_path = "tests/423_array_iterator_manual";
+test "feature_tests/collections/11_array_iterator_manual" {
+    const test_path = "tests/feature_tests/collections/11_array_iterator_manual";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "424_iterator_abstract" {
-    const test_path = "tests/424_iterator_abstract";
+test "feature_tests/collections/12_iterator_abstract" {
+    const test_path = "tests/feature_tests/collections/12_iterator_abstract";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "425X_iterator_abstract_missing_implements" {
+test "feature_tests/collections/13X_iterator_abstract_missing_implements" {
     try buildExpectFail(
-        "tests/425X_iterator_abstract_missing_implements",
+        "tests/feature_tests/collections/13X_iterator_abstract_missing_implements",
         "does not implement abstract 'Iterator'",
     );
 }
 
-test "426X_for_requires_iterator_contract" {
+test "feature_tests/control_flow/05X_for_requires_iterator_contract" {
     try buildExpectFail(
-        "tests/426X_for_requires_iterator_contract",
+        "tests/feature_tests/control_flow/05X_for_requires_iterator_contract",
         "for expects 'to_iterator(.value = &...)' to return a type implementing abstract 'Iterator'",
     );
 }
 
-test "427_iterable_abstract" {
-    const test_path = "tests/427_iterable_abstract";
+test "feature_tests/collections/14_iterable_abstract" {
+    const test_path = "tests/feature_tests/collections/14_iterable_abstract";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "428X_iterable_abstract_missing_implements" {
+test "feature_tests/collections/15X_iterable_abstract_missing_implements" {
     try buildExpectFail(
-        "tests/428X_iterable_abstract_missing_implements",
+        "tests/feature_tests/collections/15X_iterable_abstract_missing_implements",
         "does not implement abstract 'Iterable'",
     );
 }
 
-test "429_range_for" {
-    const test_path = "tests/429_range_for";
+test "feature_tests/control_flow/06_range_for" {
+    const test_path = "tests/feature_tests/control_flow/06_range_for";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "430_range_step" {
-    const test_path = "tests/430_range_step";
+test "feature_tests/control_flow/07_range_step" {
+    const test_path = "tests/feature_tests/control_flow/07_range_step";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "431_negative_integer_literals" {
-    const test_path = "tests/431_negative_integer_literals";
+test "feature_tests/control_flow/08_negative_integer_literals" {
+    const test_path = "tests/feature_tests/control_flow/08_negative_integer_literals";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "432_range_int64" {
-    const test_path = "tests/432_range_int64";
+test "feature_tests/control_flow/09_range_int64" {
+    const test_path = "tests/feature_tests/control_flow/09_range_int64";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "433_range_default_start" {
-    const test_path = "tests/433_range_default_start";
+test "feature_tests/control_flow/10_range_default_start" {
+    const test_path = "tests/feature_tests/control_flow/10_range_default_start";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "434_generic_type_initializer_from_init" {
-    const test_path = "tests/434_generic_type_initializer_from_init";
+test "feature_tests/types/17_generic_type_initializer_from_init" {
+    const test_path = "tests/feature_tests/types/17_generic_type_initializer_from_init";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "435_dynamic_array_iterator_manual" {
-    const test_path = "tests/435_dynamic_array_iterator_manual";
+test "feature_tests/collections/16_dynamic_array_iterator_manual" {
+    const test_path = "tests/feature_tests/collections/16_dynamic_array_iterator_manual";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "436_range_default_start_with_step" {
-    const test_path = "tests/436_range_default_start_with_step";
+test "feature_tests/control_flow/11_range_default_start_with_step" {
+    const test_path = "tests/feature_tests/control_flow/11_range_default_start_with_step";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "437X_for_nullable_not_iterable" {
+test "feature_tests/control_flow/12X_for_nullable_not_iterable" {
     try buildExpectFail(
-        "tests/437X_for_nullable_not_iterable",
+        "tests/feature_tests/control_flow/12X_for_nullable_not_iterable",
         "for expects a type implementing abstract 'Iterable', got 'Nullable#(.t: Int32)'",
     );
 }
 
-test "438X_errable_match_unknown_variant" {
+test "feature_tests/types/14X_errable_match_unknown_variant" {
     try buildExpectFail(
-        "tests/438X_errable_match_unknown_variant",
+        "tests/feature_tests/types/14X_errable_match_unknown_variant",
         "choice type 'Errable#(.t: Int32, .e: Char)' has no variant '..none'",
     );
 }
 
-test "439_reached_arguments" {
-    const test_path = "tests/439_reached_arguments";
+test "feature_tests/system/02_reached_arguments" {
+    const test_path = "tests/feature_tests/system/02_reached_arguments";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 9);
 }
 
-test "440X_reached_argument_missing" {
+test "feature_tests/system/03X_reached_argument_missing" {
     try buildExpectFail(
-        "tests/440X_reached_argument_missing",
+        "tests/feature_tests/system/03X_reached_argument_missing",
         "cannot resolve reached argument '.stdout'",
     );
 }
 
-test "441_output_stream_capability" {
-    const test_path = "tests/441_output_stream_capability";
+test "feature_tests/io/01_output_stream_capability" {
+    const test_path = "tests/feature_tests/io/01_output_stream_capability";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 1);
 }
 
-test "442_reached_output_stream" {
-    const test_path = "tests/442_reached_output_stream";
+test "feature_tests/io/02_reached_output_stream" {
+    const test_path = "tests/feature_tests/io/02_reached_output_stream";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 15);
 }
 
-test "443_terminal_stderr_helper" {
-    const test_path = "tests/443_terminal_stderr_helper";
+test "feature_tests/io/03_terminal_stderr_helper" {
+    const test_path = "tests/feature_tests/io/03_terminal_stderr_helper";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 11);
 }
 
-test "444_input_stream_capability" {
-    const test_path = "tests/444_input_stream_capability";
+test "feature_tests/io/04_input_stream_capability" {
+    const test_path = "tests/feature_tests/io/04_input_stream_capability";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "447_reached_allocator_string" {
-    const test_path = "tests/447_reached_allocator_string";
+test "feature_tests/system/04_reached_allocator_string" {
+    const test_path = "tests/feature_tests/system/04_reached_allocator_string";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 11);
 }
 
-test "448_reached_allocator_dynamic_array" {
-    const test_path = "tests/448_reached_allocator_dynamic_array";
+test "feature_tests/system/05_reached_allocator_dynamic_array" {
+    const test_path = "tests/feature_tests/system/05_reached_allocator_dynamic_array";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 24);
 }
 
-test "449_main_system_input" {
-    const test_path = "tests/449_main_system_input";
+test "usecase_tests/02_main_system_input" {
+    const test_path = "tests/usecase_tests/02_main_system_input";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "450_default_type_initializer_argument" {
-    const test_path = "tests/450_default_type_initializer_argument";
+test "feature_tests/types/15_default_type_initializer_argument" {
+    const test_path = "tests/feature_tests/types/15_default_type_initializer_argument";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 7);
 }
 
-test "451_keep_cancels_auto_deinit" {
-    const test_path = "tests/451_keep_cancels_auto_deinit";
+test "feature_tests/ownership/16_keep_cancels_auto_deinit" {
+    const test_path = "tests/feature_tests/ownership/16_keep_cancels_auto_deinit";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "452X_keep_without_auto_deinit" {
+test "feature_tests/ownership/17X_keep_without_auto_deinit" {
     try buildExpectFail(
-        "tests/452X_keep_without_auto_deinit",
+        "tests/feature_tests/ownership/17X_keep_without_auto_deinit",
         "cannot keep binding 'value': no automatic deinit is scheduled",
     );
 }
 
-test "453_main_system_reached_allocator" {
-    const test_path = "tests/453_main_system_reached_allocator";
+test "usecase_tests/03_main_system_reached_allocator" {
+    const test_path = "tests/usecase_tests/03_main_system_reached_allocator";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "454_main_system_reached_stdout" {
-    const test_path = "tests/454_main_system_reached_stdout";
+test "usecase_tests/04_main_system_reached_stdout" {
+    const test_path = "tests/usecase_tests/04_main_system_reached_stdout";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "455_empty_type_initializer_resolution" {
-    const test_path = "tests/455_empty_type_initializer_resolution";
+test "feature_tests/types/16_empty_type_initializer_resolution" {
+    const test_path = "tests/feature_tests/types/16_empty_type_initializer_resolution";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "456_addressable_struct_subfields" {
-    const test_path = "tests/456_addressable_struct_subfields";
+test "feature_tests/pointers/09_addressable_struct_subfields" {
+    const test_path = "tests/feature_tests/pointers/09_addressable_struct_subfields";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "457_main_arguments_count" {
-    const test_path = "tests/457_main_arguments_count";
+test "feature_tests/system/06_main_arguments_count" {
+    const test_path = "tests/feature_tests/system/06_main_arguments_count";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "458_buffered_file_wrappers" {
-    const test_path = "tests/458_buffered_file_wrappers";
+test "feature_tests/io/05_buffered_file_wrappers" {
+    const test_path = "tests/feature_tests/io/05_buffered_file_wrappers";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "459_file_preopened_stdio" {
-    const test_path = "tests/459_file_preopened_stdio";
+test "feature_tests/io/06_file_preopened_stdio" {
+    const test_path = "tests/feature_tests/io/06_file_preopened_stdio";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "460_file_open_close" {
-    const test_path = "tests/460_file_open_close";
+test "feature_tests/io/07_file_open_close" {
+    const test_path = "tests/feature_tests/io/07_file_open_close";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "461_text_buffer_io" {
-    const test_path = "tests/461_text_buffer_io";
+test "feature_tests/text/03_text_buffer_io" {
+    const test_path = "tests/feature_tests/text/03_text_buffer_io";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "462_while_if_break_codegen" {
-    const test_path = "tests/462_while_if_break_codegen";
+test "feature_tests/control_flow/13_while_if_break_codegen" {
+    const test_path = "tests/feature_tests/control_flow/13_while_if_break_codegen";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "463_if_break_only_codegen" {
-    const test_path = "tests/463_if_break_only_codegen";
+test "feature_tests/control_flow/14_if_break_only_codegen" {
+    const test_path = "tests/feature_tests/control_flow/14_if_break_only_codegen";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "464_text_buffer_helpers" {
-    const test_path = "tests/464_text_buffer_helpers";
+test "feature_tests/text/04_text_buffer_helpers" {
+    const test_path = "tests/feature_tests/text/04_text_buffer_helpers";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "465_string_views" {
-    const test_path = "tests/465_string_views";
+test "feature_tests/text/05_string_views" {
+    const test_path = "tests/feature_tests/text/05_string_views";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "466_empty_string_cstring" {
-    const test_path = "tests/466_empty_string_cstring";
+test "feature_tests/text/06_empty_string_cstring" {
+    const test_path = "tests/feature_tests/text/06_empty_string_cstring";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "467_string_view_length" {
-    const test_path = "tests/467_string_view_length";
+test "feature_tests/text/07_string_view_length" {
+    const test_path = "tests/feature_tests/text/07_string_view_length";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "468_string_allocator_size" {
-    const test_path = "tests/468_string_allocator_size";
+test "feature_tests/text/08_string_allocator_size" {
+    const test_path = "tests/feature_tests/text/08_string_allocator_size";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "469_cstring_literal" {
-    const test_path = "tests/469_cstring_literal";
+test "feature_tests/text/09_cstring_literal" {
+    const test_path = "tests/feature_tests/text/09_cstring_literal";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "470_file_open_modes" {
-    const test_path = "tests/470_file_open_modes";
+test "feature_tests/io/08_file_open_modes" {
+    const test_path = "tests/feature_tests/io/08_file_open_modes";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "471_arguments_access" {
-    const test_path = "tests/471_arguments_access";
+test "feature_tests/system/07_arguments_access" {
+    const test_path = "tests/feature_tests/system/07_arguments_access";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "472_arguments_index_operator" {
-    const test_path = "tests/472_arguments_index_operator";
+test "feature_tests/system/08_arguments_index_operator" {
+    const test_path = "tests/feature_tests/system/08_arguments_index_operator";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "473_arguments_iterable" {
-    const test_path = "tests/473_arguments_iterable";
+test "feature_tests/system/09_arguments_iterable" {
+    const test_path = "tests/feature_tests/system/09_arguments_iterable";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "474_length_named_function" {
-    const test_path = "tests/474_length_named_function";
+test "feature_tests/system/10_length_named_function" {
+    const test_path = "tests/feature_tests/system/10_length_named_function";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "475_environment_variables" {
-    const test_path = "tests/475_environment_variables";
+test "feature_tests/system/11_environment_variables" {
+    const test_path = "tests/feature_tests/system/11_environment_variables";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "476_environment_variables_index_operator" {
-    const test_path = "tests/476_environment_variables_index_operator";
+test "feature_tests/system/12_environment_variables_index_operator" {
+    const test_path = "tests/feature_tests/system/12_environment_variables_index_operator";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "477_environment_variables_string_keys" {
-    const test_path = "tests/477_environment_variables_string_keys";
+test "feature_tests/system/13_environment_variables_string_keys" {
+    const test_path = "tests/feature_tests/system/13_environment_variables_string_keys";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "478_file_system_capability" {
-    const test_path = "tests/478_file_system_capability";
+test "feature_tests/system/14_file_system_capability" {
+    const test_path = "tests/feature_tests/system/14_file_system_capability";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "479X_system_noncopyable_assignment" {
+test "feature_tests/ownership/18X_system_noncopyable_assignment" {
     try buildExpectFail(
-        "tests/479X_system_noncopyable_assignment",
+        "tests/feature_tests/ownership/18X_system_noncopyable_assignment",
         "type 'System' is not copyable, so it cannot be used by value here",
     );
 }
 
-test "480X_system_noncopyable_argument" {
+test "feature_tests/ownership/19X_system_noncopyable_argument" {
     try buildExpectFail(
-        "tests/480X_system_noncopyable_argument",
+        "tests/feature_tests/ownership/19X_system_noncopyable_argument",
         "type 'System' is not copyable, so it cannot be used by value here",
     );
 }
 
-test "481_once_single_use" {
-    const test_path = "tests/481_once_single_use";
+test "feature_tests/system/15_once_single_use" {
+    const test_path = "tests/feature_tests/system/15_once_single_use";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "482X_once_duplicate_direct" {
+test "feature_tests/system/16X_once_duplicate_direct" {
     try buildExpectFail(
-        "tests/482X_once_duplicate_direct",
+        "tests/feature_tests/system/16X_once_duplicate_direct",
         "once function 'setup' is consumed more than once from the reachable entrypoint graph",
     );
 }
 
-test "483_once_unreached_duplicate_allowed" {
-    const test_path = "tests/483_once_unreached_duplicate_allowed";
+test "feature_tests/system/17_once_unreached_duplicate_allowed" {
+    const test_path = "tests/feature_tests/system/17_once_unreached_duplicate_allowed";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "484X_once_duplicate_indirect" {
+test "feature_tests/system/18X_once_duplicate_indirect" {
     try buildExpectFail(
-        "tests/484X_once_duplicate_indirect",
+        "tests/feature_tests/system/18X_once_duplicate_indirect",
         "once function 'setup' is consumed more than once from the reachable entrypoint graph",
     );
 }
 
-test "485X_once_duplicate_branches" {
+test "feature_tests/system/19X_once_duplicate_branches" {
     try buildExpectFail(
-        "tests/485X_once_duplicate_branches",
+        "tests/feature_tests/system/19X_once_duplicate_branches",
         "once function 'setup' is consumed more than once from the reachable entrypoint graph",
     );
 }
 
-test "486X_once_duplicate_init" {
+test "feature_tests/system/20X_once_duplicate_init" {
     try buildExpectFail(
-        "tests/486X_once_duplicate_init",
+        "tests/feature_tests/system/20X_once_duplicate_init",
         "once function 'init' is consumed more than once from the reachable entrypoint graph",
     );
 }
 
-test "487X_system_duplicate_init" {
+test "feature_tests/system/21X_system_duplicate_init" {
     try buildExpectFail(
-        "tests/487X_system_duplicate_init",
+        "tests/feature_tests/system/21X_system_duplicate_init",
         "once function 'init' is consumed more than once from the reachable entrypoint graph",
     );
 }
 
-test "488_file_system_mutations" {
-    const test_path = "tests/488_file_system_mutations";
+test "feature_tests/system/22_file_system_mutations" {
+    const test_path = "tests/feature_tests/system/22_file_system_mutations";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "489_file_system_read_write" {
-    const test_path = "tests/489_file_system_read_write";
+test "usecase_tests/05_file_system_read_write" {
+    const test_path = "tests/usecase_tests/05_file_system_read_write";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "490_generic_abstract_bound_syntax" {
-    const test_path = "tests/490_generic_abstract_bound_syntax";
+test "feature_tests/polymorphism/20_generic_abstract_bound_syntax" {
+    const test_path = "tests/feature_tests/polymorphism/20_generic_abstract_bound_syntax";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 42);
 }
 
-test "491X_generic_bound_requires_type_keyword" {
+test "feature_tests/polymorphism/21X_generic_bound_requires_type_keyword" {
     try buildExpectFail(
-        "tests/491X_generic_bound_requires_type_keyword",
+        "tests/feature_tests/polymorphism/21X_generic_bound_requires_type_keyword",
         "generic parameter bounds use '.t: Type: Constraint'",
     );
 }
 
-test "492_generic_wrapper_abstract_conformance" {
-    const test_path = "tests/492_generic_wrapper_abstract_conformance";
+test "feature_tests/polymorphism/22_generic_wrapper_abstract_conformance" {
+    const test_path = "tests/feature_tests/polymorphism/22_generic_wrapper_abstract_conformance";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "493_anonymous_struct_auto_deinit" {
-    const test_path = "tests/493_anonymous_struct_auto_deinit";
+test "feature_tests/ownership/20_anonymous_struct_auto_deinit" {
+    const test_path = "tests/feature_tests/ownership/20_anonymous_struct_auto_deinit";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 11);
 }
 
-test "494_keep_string_auto_deinit" {
-    const test_path = "tests/494_keep_string_auto_deinit";
+test "feature_tests/ownership/21_keep_string_auto_deinit" {
+    const test_path = "tests/feature_tests/ownership/21_keep_string_auto_deinit";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 11);
 }
 
-test "495_abstract_requirement_reached_default" {
-    const test_path = "tests/495_abstract_requirement_reached_default";
+test "usecase_tests/06_abstract_requirement_reached_default" {
+    const test_path = "tests/usecase_tests/06_abstract_requirement_reached_default";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "496_string_view_c_string_storage" {
-    const test_path = "tests/496_string_view_c_string_storage";
+test "feature_tests/text/10_string_view_c_string_storage" {
+    const test_path = "tests/feature_tests/text/10_string_view_c_string_storage";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "62_folder_module_namespace" {
-    const test_path = "tests/62_folder_module_namespace";
+test "feature_tests/modules/01_folder_module_namespace" {
+    const test_path = "tests/feature_tests/modules/01_folder_module_namespace";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 1);
 }
 
-test "63_import_current_relative" {
-    const test_path = "tests/63_import_current_relative";
+test "feature_tests/modules/02_import_current_relative" {
+    const test_path = "tests/feature_tests/modules/02_import_current_relative";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "64X_import_missing_module" {
+test "feature_tests/modules/03X_import_missing_module" {
     try buildExpectFail(
-        "tests/64X_import_missing_module",
+        "tests/feature_tests/modules/03X_import_missing_module",
         "cannot resolve import './missing_dep'",
     );
 }
 
-test "65X_import_missing_value" {
+test "feature_tests/modules/04X_import_missing_value" {
     try buildExpectFail(
-        "tests/65X_import_missing_value",
+        "tests/feature_tests/modules/04X_import_missing_value",
         "module has no value '.missing_value'",
     );
 }
 
-test "66X_import_missing_overload" {
+test "feature_tests/modules/05X_import_missing_overload" {
     try buildExpectFail(
-        "tests/66X_import_missing_overload",
+        "tests/feature_tests/modules/05X_import_missing_overload",
         "module 'dep' has no function named 'missing_func'",
     );
 }
 
-test "67X_private_module_value" {
+test "feature_tests/modules/06X_private_module_value" {
     try buildExpectFail(
-        "tests/67X_private_module_value",
+        "tests/feature_tests/modules/06X_private_module_value",
         "value '_hidden_value' is private to its module",
     );
 }
 
-test "68X_private_module_type" {
+test "feature_tests/modules/07X_private_module_type" {
     try buildExpectFail(
-        "tests/68X_private_module_type",
+        "tests/feature_tests/modules/07X_private_module_type",
         "type '_HiddenStatus' is private to its module",
     );
 }
 
-test "69X_private_module_function" {
+test "feature_tests/modules/08X_private_module_function" {
     try buildExpectFail(
-        "tests/69X_private_module_function",
+        "tests/feature_tests/modules/08X_private_module_function",
         "function '_hidden_status' is private to its module",
     );
 }
 
-test "70_import_more_library" {
-    const test_path = "tests/70_import_more_library";
+test "feature_tests/modules/09_import_more_library" {
+    const test_path = "tests/feature_tests/modules/09_import_more_library";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "71_import_transitive" {
-    const test_path = "tests/71_import_transitive";
+test "feature_tests/modules/10_import_transitive" {
+    const test_path = "tests/feature_tests/modules/10_import_transitive";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "71_loops" {
-    const test_path = "tests/71_loops";
+test "feature_tests/control_flow/02_loops" {
+    const test_path = "tests/feature_tests/control_flow/02_loops";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "72X_import_cycle" {
+test "feature_tests/modules/11X_import_cycle" {
     try buildExpectFail(
-        "tests/72X_import_cycle",
+        "tests/feature_tests/modules/11X_import_cycle",
         "import cycle detected",
     );
 }
 
-test "73X_import_requires_binding" {
+test "feature_tests/modules/12X_import_requires_binding" {
     try buildExpectFail(
-        "tests/73X_import_requires_binding",
+        "tests/feature_tests/modules/12X_import_requires_binding",
         "#import must be assigned to a name",
     );
 }
 
-test "74X_import_requires_binding_nested" {
+test "feature_tests/modules/13X_import_requires_binding_nested" {
     try buildExpectFail(
-        "tests/74X_import_requires_binding_nested",
+        "tests/feature_tests/modules/13X_import_requires_binding_nested",
         "#import must be assigned to a name",
     );
 }
 
-test "75X_missing_function_name" {
+test "feature_tests/modules/14X_missing_function_name" {
     try buildExpectFail(
-        "tests/75X_missing_function_name",
+        "tests/feature_tests/modules/14X_missing_function_name",
         "no function named 'missing_func' exists",
     );
 }
 
-test "76_import_root_relative" {
-    const test_path = "tests/76_import_root_relative/project/app";
+test "feature_tests/modules/15_import_root_relative" {
+    const test_path = "tests/feature_tests/modules/15_import_root_relative/project/app";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "77X_root_relative_missing_import" {
+test "feature_tests/modules/16X_root_relative_missing_import" {
     try buildExpectFail(
-        "tests/77X_root_relative_missing_import/project/app",
+        "tests/feature_tests/modules/16X_root_relative_missing_import/project/app",
         "cannot resolve import '.../missing_shared'",
     );
 }
 
-test "78_for_array" {
-    const test_path = "tests/78_for_array";
+test "feature_tests/control_flow/03_for_array" {
+    const test_path = "tests/feature_tests/control_flow/03_for_array";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
 
-test "79_for_dynamic_array" {
-    const test_path = "tests/79_for_dynamic_array";
+test "feature_tests/control_flow/04_for_dynamic_array" {
+    const test_path = "tests/feature_tests/control_flow/04_for_dynamic_array";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
