@@ -65,8 +65,8 @@ read_line_into_buffer(
 }
 
 print(
-    .stdout: $&Writer = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
     .value: String,
+    .stdout: $&Writer = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
 ) -> () := {
     i :: UIntNative = 0
     while i < value.length {
@@ -97,8 +97,8 @@ flush(
 }
 
 print_error(
-    .stderr: $&Writer = #reach stderr, terminal.stderr_buffered_writer, system.terminal.stderr_buffered_writer,
     .value: String,
+    .stderr: $&Writer = #reach stderr, terminal.stderr_buffered_writer, system.terminal.stderr_buffered_writer,
 ) -> () := {
     i :: UIntNative = 0
     while i < value.length {
