@@ -66,3 +66,39 @@ equals(
     terminator_ptr : &UInt8 = cast#(.to: &UInt8)(.value = terminator_addr)
     ok = terminator_ptr& == 0
 }
+
+operator ==(
+    .left: &StringView,
+    .right: &StringView,
+) -> (.ok: Bool) := {
+    ok = equals(.left = left, .right = right).ok
+}
+
+operator ==(
+    .left: &StringView,
+    .right: &Char,
+) -> (.ok: Bool) := {
+    ok = equals(.left = left, .right = right).ok
+}
+
+operator !=(
+    .left: &StringView,
+    .right: &StringView,
+) -> (.ok: Bool) := {
+    if equals(.left = left, .right = right).ok {
+        ok = false
+    } else {
+        ok = true
+    }
+}
+
+operator !=(
+    .left: &StringView,
+    .right: &Char,
+) -> (.ok: Bool) := {
+    if equals(.left = left, .right = right).ok {
+        ok = false
+    } else {
+        ok = true
+    }
+}
