@@ -38,7 +38,7 @@ deinit(
     close(.self = self&.stderr_file)
 }
 
-read_line(
+read_line_into_buffer(
     .stdin: $&Reader = #reach stdin, terminal.stdin_buffered_reader, system.terminal.stdin_buffered_reader,
     .buffer: $&TextBuffer,
 ) -> () := {

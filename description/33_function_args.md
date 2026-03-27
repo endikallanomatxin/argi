@@ -152,7 +152,6 @@ This is intended for ambient capabilities such as:
 - `system`
 - `stdout`
 - `logger`
-- `clock`
 
 ### Resolution rules
 
