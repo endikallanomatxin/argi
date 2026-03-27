@@ -179,23 +179,39 @@ pub const Syntaxer = struct {
     }
 
     fn parseOperatorName(self: *Syntaxer) SyntaxerError![]const u8 {
-        if (std.meta.activeTag(self.current().content) != .identifier) {
-            try self.diags.add(self.tokenLocation(), .syntax, "expected operator name after 'operator'", .{});
-            return SyntaxerError.ExpectedIdentifier;
+        switch (self.current().content) {
+            .identifier => {
+                const ident = try self.parseIdentifier();
+
+                if (std.mem.eql(u8, ident, "get") or std.mem.eql(u8, ident, "set")) {
+                    if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
+                    self.advanceOne();
+                    if (!self.tokenIs(.close_bracket)) return SyntaxerError.ExpectedRightBracket;
+                    self.advanceOne();
+                    return try std.fmt.allocPrint(self.allocator.*, "operator {s}[]", .{ident});
+                }
+
+                try self.diags.add(self.tokenLocation(), .syntax, "unsupported operator '{s}'", .{ident});
+                return SyntaxerError.ExpectedIdentifier;
+            },
+            .comparison_operator => |cmp| {
+                const name = switch (cmp) {
+                    .equal => "operator ==",
+                    .not_equal => "operator !=",
+                    else => blk: {
+                        try self.diags.add(self.tokenLocation(), .syntax, "unsupported comparison operator after 'operator'", .{});
+                        break :blk "";
+                    },
+                };
+                if (name.len == 0) return SyntaxerError.ExpectedIdentifier;
+                self.advanceOne();
+                return name;
+            },
+            else => {
+                try self.diags.add(self.tokenLocation(), .syntax, "expected operator name after 'operator'", .{});
+                return SyntaxerError.ExpectedIdentifier;
+            },
         }
-
-        const ident = try self.parseIdentifier();
-
-        if (std.mem.eql(u8, ident, "get") or std.mem.eql(u8, ident, "set")) {
-            if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
-            self.advanceOne();
-            if (!self.tokenIs(.close_bracket)) return SyntaxerError.ExpectedRightBracket;
-            self.advanceOne();
-            return try std.fmt.allocPrint(self.allocator.*, "operator {s}[]", .{ident});
-        }
-
-        try self.diags.add(self.tokenLocation(), .syntax, "unsupported operator '{s}'", .{ident});
-        return SyntaxerError.ExpectedIdentifier;
     }
 
     fn parseGenericParamNames(self: *Syntaxer) SyntaxerError![]const []const u8 {

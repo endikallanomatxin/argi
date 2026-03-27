@@ -1,10 +1,10 @@
 is_help_flag(.arg: &StringView) -> (.ok: Bool) := {
-    if equals(.left = arg, .right = "-h").ok {
+    if arg == "-h" {
         ok = true
         return
     }
 
-    ok = equals(.left = arg, .right = "--help").ok
+    ok = arg == "--help"
 }
 
 print_help(.system: &System) -> () := {

@@ -47,6 +47,18 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
+    if hello == "hello" {
+    } else {
+        status_code = 4
+        return
+    }
+
+    if hello != "help" {
+    } else {
+        status_code = 5
+        return
+    }
+
     deinit(.self = $&text)
     status_code = 0
 }

@@ -4831,7 +4831,6 @@ pub const Semantizer = struct {
         input_te: typ.TypedExpr,
         s: *Scope,
     ) u32 {
-        _ = self;
         _ = s;
 
         if (input_te.ty != .struct_type or input_te.node.content != .struct_value_literal) {
@@ -4846,13 +4845,27 @@ pub const Semantizer = struct {
 
         for (expected.fields[0..positional_prefix], 0..) |exp_field, idx| {
             if (idx >= actual_struct.fields.len) break;
-            score += abs.specificityScore(exp_field.ty, actual_struct.fields[idx].ty);
+            var actual_field_expr = typ.TypedExpr{
+                .node = @constCast(actual_value.fields[idx].value),
+                .ty = actual_struct.fields[idx].ty,
+            };
+            if (self.tryImplicitPointerLiftForDispatch(exp_field.ty, actual_field_expr)) |lifted| {
+                actual_field_expr = lifted;
+            }
+            score += abs.specificityScore(exp_field.ty, actual_field_expr.ty);
         }
 
         for (actual_value.fields[positional_prefix..]) |actual_field| {
             const actual_field_ty = findStructTypeFieldByNameFrom(actual_struct.fields, positional_prefix, actual_field.name) orelse continue;
             const exp_field = typ.findFieldByName(expected, actual_field.name) orelse continue;
-            score += abs.specificityScore(exp_field.ty, actual_field_ty.ty);
+            var actual_field_expr = typ.TypedExpr{
+                .node = @constCast(actual_field.value),
+                .ty = actual_field_ty.ty,
+            };
+            if (self.tryImplicitPointerLiftForDispatch(exp_field.ty, actual_field_expr)) |lifted| {
+                actual_field_expr = lifted;
+            }
+            score += abs.specificityScore(exp_field.ty, actual_field_expr.ty);
         }
 
         return score;
@@ -6287,6 +6300,60 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         var lhs = try self.visitNode(c.left.*, s);
         var rhs = try self.visitNode(c.right.*, s);
+
+        const operator_name = switch (c.operator) {
+            .equal => "operator ==",
+            .not_equal => "operator !=",
+            else => null,
+        };
+
+        if (operator_name) |name| {
+            var input_te = try self.buildCallInput(&[_]CallArg{
+                .{ .name = "left", .expr = lhs },
+                .{ .name = "right", .expr = rhs },
+            });
+            const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+
+            var chosen: ?*sg.FunctionDeclaration = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
+                error.SymbolNotFound => null,
+                else => return err,
+            };
+
+            if (chosen == null) {
+                chosen = self.resolveVisibleOverload(name, input_te, s, c.left.*.location) catch |err| switch (err) {
+                    error.SymbolNotFound => null,
+                    error.AmbiguousOverload => {
+                        try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, c.left.*.location);
+                        return error.Reported;
+                    },
+                    else => return err,
+                };
+            }
+
+            if (chosen) |chosen_fn| {
+                input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, c.left, s);
+
+                const result_ty = typ.functionReturnType(chosen_fn);
+                if (!typ.typesExactlyEqual(result_ty, .{ .builtin = .Bool })) {
+                    const actual = try self.formatTypeText(result_ty, s);
+                    defer actual.deinit();
+                    try self.diags.add(
+                        c.left.*.location,
+                        .semantic,
+                        "comparison operator '{s}' must return 'Bool', got '{s}'",
+                        .{ name, actual.bytes },
+                    );
+                    return error.Reported;
+                }
+
+                const fc_ptr = try self.allocator.create(sg.FunctionCall);
+                fc_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
+
+                const node = try sg.makeSGNode(.{ .function_call = fc_ptr }, c.left.*.location, self.allocator);
+                try s.nodes.append(node);
+                return .{ .node = node, .ty = result_ty };
+            }
+        }
 
         rhs = try typ.coerceExprToType(lhs.ty, rhs, c.right, s, self.allocator, self.diags);
         lhs = try typ.coerceExprToType(rhs.ty, lhs, c.left, s, self.allocator, self.diags);

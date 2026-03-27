@@ -127,6 +127,64 @@ as_view(
     )
 }
 
+operator ==(
+    .left: &String,
+    .right: &String,
+) -> (.ok: Bool) := {
+    left_view ::= as_view(.self = left)
+    right_view ::= as_view(.self = right)
+    ok = left_view == right_view
+}
+
+operator ==(
+    .left: &String,
+    .right: &StringView,
+) -> (.ok: Bool) := {
+    left_view ::= as_view(.self = left)
+    ok = left_view == right
+}
+
+operator ==(
+    .left: &String,
+    .right: &Char,
+) -> (.ok: Bool) := {
+    left_view ::= as_view(.self = left)
+    ok = left_view == right
+}
+
+operator !=(
+    .left: &String,
+    .right: &String,
+) -> (.ok: Bool) := {
+    if left == right {
+        ok = false
+    } else {
+        ok = true
+    }
+}
+
+operator !=(
+    .left: &String,
+    .right: &StringView,
+) -> (.ok: Bool) := {
+    if left == right {
+        ok = false
+    } else {
+        ok = true
+    }
+}
+
+operator !=(
+    .left: &String,
+    .right: &Char,
+) -> (.ok: Bool) := {
+    if left == right {
+        ok = false
+    } else {
+        ok = true
+    }
+}
+
 as_c_string(
     .self: &String,
 ) -> (.text: CString) := {
