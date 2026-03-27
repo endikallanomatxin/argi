@@ -1,5 +1,5 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
-    path ::= from_literal(.data = "tests/usecase_tests/05_file_system_read_write/build/temp.txt")
+    path ::= from_literal(.data = "tests/feature_tests/system/23_file_system_read_write/build/temp.txt")
 
     if exists(.self = system.file_sys, .path = path).ok {
         if remove(.self = system.file_sys, .path = path).ok {
