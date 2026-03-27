@@ -263,14 +263,14 @@ test "feature_tests/functions/05X_pipe_requires_parentheses" {
 test "feature_tests/functions/06X_pipe_requires_placeholder" {
     try buildExpectFail(
         "tests/feature_tests/functions/06X_pipe_requires_placeholder",
-        "expected struct field",
+        "pipe right-hand side must use at least one argument placeholder",
     );
 }
 
 test "feature_tests/functions/07X_pipe_expression_placeholder_not_supported" {
     try buildExpectFail(
         "tests/feature_tests/functions/07X_pipe_expression_placeholder_not_supported",
-        "expected struct field",
+        "pipe placeholders are only supported as '_', '&_', '$&_', '_.field', or '..variant' payload access for now",
     );
 }
 
@@ -296,6 +296,25 @@ test "feature_tests/functions/11_pipe_builtin_is" {
     const test_path = "tests/feature_tests/functions/11_pipe_builtin_is";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
+}
+
+test "feature_tests/functions/12_positional_function_call" {
+    const test_path = "tests/feature_tests/functions/12_positional_function_call";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
+test "feature_tests/functions/13_mixed_function_call" {
+    const test_path = "tests/feature_tests/functions/13_mixed_function_call";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
+test "feature_tests/functions/14X_positional_after_named_call" {
+    try buildExpectFail(
+        "tests/feature_tests/functions/14X_positional_after_named_call",
+        "positional collection items must appear before named items",
+    );
 }
 
 test "feature_tests/polymorphism/01_multiple_dispatch" {
@@ -806,6 +825,18 @@ test "feature_tests/types/17_generic_type_initializer_from_init" {
     try run(test_path);
 }
 
+test "feature_tests/types/18_positional_type_initializer" {
+    const test_path = "tests/feature_tests/types/18_positional_type_initializer";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
+test "feature_tests/types/19_mixed_type_initializer" {
+    const test_path = "tests/feature_tests/types/19_mixed_type_initializer";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
 test "feature_tests/collections/16_dynamic_array_iterator_manual" {
     const test_path = "tests/feature_tests/collections/16_dynamic_array_iterator_manual";
     try expectSuccessfulBuild(test_path);
@@ -1113,6 +1144,12 @@ test "feature_tests/system/22_file_system_mutations" {
 
 test "feature_tests/system/23_file_system_read_write" {
     const test_path = "tests/feature_tests/system/23_file_system_read_write";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/system/24_arguments_length_pipe_positional" {
+    const test_path = "tests/feature_tests/system/24_arguments_length_pipe_positional";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }

@@ -606,28 +606,126 @@ pub const Syntaxer = struct {
         return try self.makeNode(.{ .reach_directive = .{ .alternatives = try alternatives.toOwnedSlice() } }, hash_loc);
     }
 
-    // ─────── struct VALUE literal  (p.e.  (.x=1, .y=2) ) ─────────────────────
-    fn parseStructValueLiteral(self: *Syntaxer) SyntaxerError!*syn.STNode {
+    fn makeSyntheticPositionalName(self: *Syntaxer, idx: usize, loc: tok.Location) !syn.Name {
+        const name = try std.fmt.allocPrint(self.allocator.*, "__positional_{d}", .{idx});
+        return .{
+            .string = name,
+            .location = loc,
+        };
+    }
+
+    fn findMatchingCloseParenIndex(self: *Syntaxer, open_paren_index: usize) ?usize {
+        if (open_paren_index >= self.tokens.len) return null;
+        if (std.meta.activeTag(self.tokens[open_paren_index].content) != .open_parenthesis) return null;
+
+        var depth: i32 = 0;
+        var idx = open_paren_index;
+        while (idx < self.tokens.len) : (idx += 1) {
+            const tag = std.meta.activeTag(self.tokens[idx].content);
+            switch (tag) {
+                .open_parenthesis => depth += 1,
+                .close_parenthesis => {
+                    depth -= 1;
+                    if (depth == 0) return idx;
+                },
+                else => {},
+            }
+        }
+
+        return null;
+    }
+
+    fn tokenIndexAfterCloseParen(self: *Syntaxer, open_paren_index: usize) ?usize {
+        const close_idx = self.findMatchingCloseParenIndex(open_paren_index) orelse return null;
+        var idx = close_idx + 1;
+        while (idx < self.tokens.len) : (idx += 1) {
+            switch (self.tokens[idx].content) {
+                .new_line, .comment => continue,
+                else => return idx,
+            }
+        }
+        return null;
+    }
+
+    fn looksLikeFunctionDeclarationInput(self: *Syntaxer, open_paren_index: usize) bool {
+        const after_close_idx = self.tokenIndexAfterCloseParen(open_paren_index) orelse return false;
+        if (std.meta.activeTag(self.tokens[after_close_idx].content) != .arrow) return false;
+
+        var idx = open_paren_index + 1;
+        while (idx < self.tokens.len) : (idx += 1) {
+            switch (self.tokens[idx].content) {
+                .new_line, .comment => continue,
+                .close_parenthesis => return true,
+                .dot => {
+                    idx += 1;
+                    while (idx < self.tokens.len) : (idx += 1) {
+                        switch (self.tokens[idx].content) {
+                            .new_line, .comment => continue,
+                            .identifier => {
+                                idx += 1;
+                                while (idx < self.tokens.len) : (idx += 1) {
+                                    switch (self.tokens[idx].content) {
+                                        .new_line, .comment => continue,
+                                        .colon => return true,
+                                        .equal => return false,
+                                        else => return false,
+                                    }
+                                }
+                                return false;
+                            },
+                            else => return false,
+                        }
+                    }
+                    return false;
+                },
+                else => return false,
+            }
+        }
+
+        return false;
+    }
+
+    fn parseCollectionLiteral(self: *Syntaxer, force_struct: bool) SyntaxerError!*syn.STNode {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         const start_loc = self.tokenLocation();
         self.advanceOne();
         self.skipNewLinesAndComments();
 
         var fields = std.array_list.Managed(syn.StructValueLiteralField).init(self.allocator.*);
+        var positional_elements = std.array_list.Managed(*syn.STNode).init(self.allocator.*);
+        var positional_prefix_count: u32 = 0;
+        var has_named = false;
+        var positional_index: usize = 0;
 
         while (!self.tokenIs(.close_parenthesis)) {
-            if (!self.tokenIs(.dot)) {
-                try self.diags.add(self.tokenLocation(), .syntax, "expected struct field, found '{s}'", .{@tagName(self.current().content)});
-                return SyntaxerError.ExpectedStructField;
+            if (self.tokenIs(.dot)) {
+                has_named = true;
+                self.advanceOne();
+                const fname = try self.parseName();
+
+                if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
+                self.advanceOne();
+
+                const val = try self.parseExpression();
+                try fields.append(.{ .name = fname, .value = val });
+            } else {
+                if (has_named) {
+                    try self.diags.add(
+                        self.tokenLocation(),
+                        .syntax,
+                        "positional collection items must appear before named items",
+                        .{},
+                    );
+                    return SyntaxerError.ExpectedStructField;
+                }
+
+                const val = try self.parseExpression();
+                try positional_elements.append(val);
+                const synthetic_name = try self.makeSyntheticPositionalName(positional_index, val.location);
+                try fields.append(.{ .name = synthetic_name, .value = val });
+                positional_index += 1;
+                positional_prefix_count += 1;
             }
-            self.advanceOne();
-            const fname = try self.parseName();
-
-            if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
-            self.advanceOne();
-
-            const val = try self.parseExpression();
-            try fields.append(.{ .name = fname, .value = val });
 
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
@@ -638,8 +736,22 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
         self.advanceOne();
 
+        if (!force_struct and !has_named) {
+            const elems = try positional_elements.toOwnedSlice();
+            positional_elements.deinit();
+            fields.deinit();
+            return try self.makeNode(
+                .{ .list_literal = .{ .element_type = null, .elements = elems } },
+                start_loc,
+            );
+        }
+
+        positional_elements.deinit();
         return try self.makeNode(
-            .{ .struct_value_literal = .{ .fields = fields.items } },
+            .{ .struct_value_literal = .{
+                .fields = fields.items,
+                .positional_prefix_count = positional_prefix_count,
+            } },
             start_loc,
         );
     }
@@ -678,7 +790,7 @@ pub const Syntaxer = struct {
                 if (node.content == .struct_field_access and node.content.struct_field_access.struct_value.*.content == .identifier) {
                     const sfa = node.content.struct_field_access;
                     const module_name = sfa.struct_value.*.content.identifier;
-                    const struct_value_literal = try self.parseStructValueLiteral();
+                    const struct_value_literal = try self.parseCollectionLiteral(true);
                     node = try self.makeNode(
                         .{ .function_call = .{
                             .callee = sfa.field_name.string,
@@ -805,7 +917,7 @@ pub const Syntaxer = struct {
                 const variant = try self.parseName();
                 var payload: ?*syn.STNode = null;
                 if (self.tokenIs(.open_parenthesis)) {
-                    payload = try self.parseStructValueLiteral();
+                    payload = try self.parseCollectionLiteral(true);
                 }
                 break :blk try self.makeNode(.{ .choice_literal = .{
                     .name = variant,
@@ -830,7 +942,7 @@ pub const Syntaxer = struct {
                     type_args_struct = try self.parseStructTypeLiteral();
                 }
                 if (self.tokenIs(.open_parenthesis)) { // llamada
-                    const struct_value_literal = try self.parseStructValueLiteral();
+                    const struct_value_literal = try self.parseCollectionLiteral(true);
                     break :blk try self.makeNode(
                         .{ .function_call = .{
                             .callee = name,
@@ -854,28 +966,7 @@ pub const Syntaxer = struct {
 
             // ─── struct value literal o list literal ─────────────────────────────────
             .open_parenthesis => blk: {
-                // Mirar el primer token no-trivial tras '(' para decidir:
-                var saw_dot = false;
-                {
-                    var idx: usize = self.index + 1;
-                    while (idx < self.tokens.len) : (idx += 1) {
-                        const tag = std.meta.activeTag(self.tokens[idx].content);
-                        switch (tag) {
-                            .new_line, .comment => continue,
-                            .dot => {
-                                saw_dot = true;
-                            },
-                            else => {},
-                        }
-                        break;
-                    }
-                }
-
-                if (saw_dot) {
-                    break :blk try self.parseStructValueLiteral();
-                } else {
-                    break :blk try self.parseListLiteral();
-                }
+                break :blk try self.parseCollectionLiteral(false);
             },
 
             // ─── bloque `{}` embebido ───────────────────────────────────────
@@ -1043,9 +1134,10 @@ pub const Syntaxer = struct {
         }
 
         if (self.tokenIs(.open_parenthesis)) {
-            const input = try self.parseStructTypeLiteral();
+            if (self.looksLikeFunctionDeclarationInput(self.index)) {
+                const input = try self.parseStructTypeLiteral();
 
-            if (self.tokenIs(.arrow)) {
+                if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
                 self.advanceOne();
                 const output = try self.parseStructTypeLiteral();
                 if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
@@ -1090,7 +1182,7 @@ pub const Syntaxer = struct {
                     return SyntaxerError.ExpectedDeclarationOrAssignment;
                 }
                 // call: Name(...)
-                const input_node = try self.makeNode(.{ .struct_type_literal = input }, id_loc);
+                const input_node = try self.parseCollectionLiteral(true);
                 return try self.makeNode(
                     .{ .function_call = .{
                         .callee = name.string,

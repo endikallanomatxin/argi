@@ -28,7 +28,7 @@ main(.system: System) -> (.status_code: Int32) := {
     text ::= String(.length = 1)
     bytes_set(.string = $&text, .index = 0, .value = 69)
 
-    print_error(.stderr = $&stderr, .text = text)
+    print_error(.stderr = $&stderr, .value = text)
     flush_error(.stderr = $&stderr)
 
     status_code = stderr.write_count * 10 + stderr.flush_count

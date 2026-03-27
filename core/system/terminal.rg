@@ -39,8 +39,8 @@ deinit(
 }
 
 read_line_into_buffer(
-    .stdin: $&Reader = #reach stdin, terminal.stdin_buffered_reader, system.terminal.stdin_buffered_reader,
     .buffer: $&TextBuffer,
+    .stdin: $&Reader = #reach stdin, terminal.stdin_buffered_reader, system.terminal.stdin_buffered_reader,
 ) -> () := {
     clear(.self = buffer)
 
@@ -66,9 +66,14 @@ read_line_into_buffer(
 
 print(
     .stdout: $&Writer = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
-    .text: String,
+    .value: String,
 ) -> () := {
-    write(.self = stdout, .text = text)
+    i :: UIntNative = 0
+    while i < value.length {
+        write_byte(.self = stdout, .byte = bytes_get(.string = &value, .index = i).byte)
+        i = i + 1
+    }
+    flush(.self = stdout)
 }
 
 print_text_buffer(
@@ -93,9 +98,13 @@ flush(
 
 print_error(
     .stderr: $&Writer = #reach stderr, terminal.stderr_buffered_writer, system.terminal.stderr_buffered_writer,
-    .text: String,
+    .value: String,
 ) -> () := {
-    write(.self = stderr, .text = text)
+    i :: UIntNative = 0
+    while i < value.length {
+        write_byte(.self = stderr, .byte = bytes_get(.string = &value, .index = i).byte)
+        i = i + 1
+    }
 }
 
 print_error_text_buffer(

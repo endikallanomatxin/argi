@@ -206,6 +206,7 @@ pub const StructTypeLiteralField = struct {
 
 pub const StructValueLiteral = struct {
     fields: []const StructValueLiteralField,
+    positional_prefix_count: u32 = 0,
 };
 
 pub const ChoiceTypeLiteral = struct {
