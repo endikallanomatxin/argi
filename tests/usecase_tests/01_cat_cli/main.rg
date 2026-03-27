@@ -18,7 +18,6 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
         path := system.args[i]
         text ::= read_file(system.file_sys, path)
         print(text)
-        deinit(.self = $&text)
         i = i + 1
     }
 }
