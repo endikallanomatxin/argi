@@ -9,7 +9,6 @@ const source_files = @import("../1_base/source_files.zig");
 const typ = @import("types.zig");
 const abs = @import("abstracts.zig");
 const gen = @import("generics.zig");
-
 const Scope = @import("scope.zig").Scope;
 const SemErr = @import("errors.zig").SemErr;
 
@@ -80,6 +79,11 @@ const OnceTraversalState = struct {
         self.seen_once.deinit();
         self.active_functions.deinit();
     }
+};
+
+const AutoDeinitResolution = struct {
+    function: *sg.FunctionDeclaration,
+    input: typ.TypedExpr,
 };
 
 const GenericSubst = struct {
@@ -216,6 +220,118 @@ pub const Semantizer = struct {
 
     fn formatTypeText(self: *Semantizer, ty: sg.Type, s: *Scope) !OwnedText {
         return self.formatOwnedText(try typ.formatType(ty, s, self.allocator));
+    }
+
+    fn tryResolveAutoDeinitWithInput(
+        self: *Semantizer,
+        binding: *sg.BindingDeclaration,
+        input_te: typ.TypedExpr,
+        loc: tok.Location,
+        s: *Scope,
+    ) ?AutoDeinitResolution {
+        const synthetic_call = syn.FunctionCall{
+            .callee = "deinit",
+            .callee_loc = loc,
+            .module_qualifier = null,
+            .type_arguments = null,
+            .type_arguments_struct = null,
+            .input = undefined,
+        };
+
+        const chosen = self.tryResolveRegularCallCallee(synthetic_call, input_te, s, loc) catch return null;
+        const coerced_input = self.coerceCallInputToExpected(&chosen.input, input_te, &syn.STNode{
+            .location = loc,
+            .content = .{ .identifier = binding.name },
+        }, s) catch return null;
+
+        return .{
+            .function = chosen,
+            .input = coerced_input,
+        };
+    }
+
+    fn findVisibleAutoDeinit(
+        self: *Semantizer,
+        binding: *sg.BindingDeclaration,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!?AutoDeinitResolution {
+        const binding_use = try sg.makeSGNode(.{ .binding_use = binding }, loc, self.allocator);
+        binding_use.sem_type = binding.ty;
+
+        var candidate_names = std.StringHashMap(void).init(self.allocator.*);
+        defer candidate_names.deinit();
+        try candidate_names.put("self", {});
+
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr("deinit")) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    for (cand.input.fields) |field| {
+                        if (field.ty != .pointer_type) continue;
+                        if (field.ty.pointer_type.mutability != .read_write) continue;
+                        try candidate_names.put(field.name, {});
+                    }
+                }
+            }
+            if (sc.generic_functions.getPtr("deinit")) |list_ptr| {
+                for (list_ptr.items) |tmpl| {
+                    for (tmpl.input.fields) |field| {
+                        const field_ty = field.type orelse continue;
+                        if (field_ty != .pointer_type) continue;
+                        if (field_ty.pointer_type.mutability != .read_write) continue;
+                        try candidate_names.put(field.name.string, {});
+                    }
+                }
+            }
+        }
+
+        var it = candidate_names.iterator();
+        while (it.next()) |entry| {
+            const field_name = entry.key_ptr.*;
+            const child_ty = try self.allocator.create(sg.Type);
+            child_ty.* = binding.ty;
+
+            const ptr_info = try self.allocator.create(sg.PointerType);
+            ptr_info.* = .{
+                .mutability = .read_write,
+                .child = child_ty,
+            };
+
+            const raw_input = try self.buildNamedCallInput(&[_]CallArg{
+                .{
+                    .name = field_name,
+                    .expr = .{
+                        .node = try sg.makeSGNode(.{ .address_of = binding_use }, loc, self.allocator),
+                        .ty = .{ .pointer_type = ptr_info },
+                    },
+                },
+            });
+            if (self.tryResolveAutoDeinitWithInput(binding, raw_input, loc, s)) |resolved| {
+                return resolved;
+            }
+        }
+
+        const child_ty = try self.allocator.create(sg.Type);
+        child_ty.* = binding.ty;
+
+        const ptr_info = try self.allocator.create(sg.PointerType);
+        ptr_info.* = .{
+            .mutability = .read_write,
+            .child = child_ty,
+        };
+
+        const positional_input = try self.buildCallInputWithPositionalPrefix(&[_]CallArg{
+            .{
+                .name = "__arg0",
+                .expr = .{
+                    .node = try sg.makeSGNode(.{ .address_of = binding_use }, loc, self.allocator),
+                    .ty = .{ .pointer_type = ptr_info },
+                },
+            },
+        }, 1);
+
+        return self.tryResolveAutoDeinitWithInput(binding, positional_input, loc, s);
     }
 
     fn formatTypePairText(self: *Semantizer, expected: sg.Type, actual: sg.Type, s: *Scope) !TypePairText {
@@ -1234,6 +1350,9 @@ pub const Semantizer = struct {
             },
 
             .keep_statement => |name| self.handleKeep(name, s) catch |err| blk: {
+                if (err == error.SymbolNotFound and self.defer_unknown_top_level and self.current_top_node != null) {
+                    break :blk err;
+                }
                 if (err != error.Reported) {
                     try self.diags.add(
                         n.location,
@@ -4001,6 +4120,7 @@ pub const Semantizer = struct {
         const chosen = try self.resolveRegularCallCallee(call, tv_in, s, call.input.*.location);
         const coerced_input = try self.coerceCallInputToExpected(&chosen.input, tv_in, call.input, s);
         try self.checkCallBindingExclusivity(call.callee, coerced_input, call.input.*.location);
+        self.cancelExplicitDeinitAutoCleanup(chosen, coerced_input, s);
 
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
         fc_ptr.* = .{ .callee = chosen, .input = coerced_input.node };
@@ -4010,6 +4130,41 @@ pub const Semantizer = struct {
         const result_ty = typ.functionReturnType(chosen);
 
         return .{ .node = n, .ty = result_ty };
+    }
+
+    fn cancelExplicitDeinitAutoCleanup(
+        self: *Semantizer,
+        chosen: *sg.FunctionDeclaration,
+        coerced_input: typ.TypedExpr,
+        s: *Scope,
+    ) void {
+        if (!std.mem.eql(u8, chosen.name, "deinit")) return;
+        if (coerced_input.node.content != .struct_value_literal) return;
+
+        const input_value = coerced_input.node.content.struct_value_literal;
+        const positional_prefix = @min(input_value.dispatch_prefix_positional_count, input_value.fields.len);
+
+        for (chosen.input.fields[0..positional_prefix], 0..) |expected_field, idx| {
+            if (expected_field.ty != .pointer_type) continue;
+            if (expected_field.ty.pointer_type.mutability != .read_write) continue;
+
+            const arg_node = input_value.fields[idx].value;
+            if (arg_node.content != .address_of) continue;
+            const inner = arg_node.content.address_of;
+            if (inner.content != .binding_use) continue;
+            _ = self.cancelAutoDeinitForBinding(inner.content.binding_use, s);
+        }
+
+        for (chosen.input.fields[positional_prefix..]) |expected_field| {
+            if (expected_field.ty != .pointer_type) continue;
+            if (expected_field.ty.pointer_type.mutability != .read_write) continue;
+
+            const actual_field = findStructValueFieldByNameFrom(input_value.fields, positional_prefix, expected_field.name) orelse continue;
+            if (actual_field.value.content != .address_of) continue;
+            const inner = actual_field.value.content.address_of;
+            if (inner.content != .binding_use) continue;
+            _ = self.cancelAutoDeinitForBinding(inner.content.binding_use, s);
+        }
     }
 
     fn extractCallBindingAccess(
@@ -6547,6 +6702,9 @@ pub const Semantizer = struct {
         };
 
         if (!self.cancelAutoDeinitForBinding(binding, s)) {
+            if (self.defer_unknown_top_level and self.current_top_node != null) {
+                return error.SymbolNotFound;
+            }
             try self.diags.add(
                 name.location,
                 .semantic,
@@ -7541,9 +7699,13 @@ pub const Semantizer = struct {
         s: *Scope,
     ) !void {
         if (s.parent == null) return;
-        const deinit_fn = s.findDeinit(binding.ty) orelse return;
+        const resolved = (try self.findVisibleAutoDeinit(binding, loc, s)) orelse return;
         const auto_ptr = try self.allocator.create(sg.AutoDeinitBinding);
-        auto_ptr.* = .{ .binding = binding, .deinit_fn = deinit_fn };
+        auto_ptr.* = .{
+            .binding = binding,
+            .deinit_fn = resolved.function,
+            .input = resolved.input.node,
+        };
 
         const call_node = try sg.makeSGNode(.{ .auto_deinit_binding = auto_ptr }, loc, self.allocator);
         try self.registerDefer(s, &[_]*sg.SGNode{call_node});

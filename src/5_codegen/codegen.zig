@@ -795,21 +795,8 @@ pub const CodeGenerator = struct {
             self.current_scope.lookup(adb.deinit_fn.name) orelse
             return CodegenError.SymbolNotFound;
 
-        const binding_use = try sem.makeSGNode(.{ .binding_use = @constCast(adb.binding) }, adb.deinit_fn.location, self.allocator);
-        const addr_node = try sem.makeSGNode(.{ .address_of = binding_use }, adb.deinit_fn.location, self.allocator);
-
-        const arg_fields = try self.allocator.alloc(sem.StructValueLiteralField, 1);
-        arg_fields[0] = .{ .name = adb.deinit_fn.input.fields[0].name, .value = addr_node };
-
-        const args_struct = try self.allocator.create(sem.StructValueLiteral);
-        args_struct.* = .{
-            .fields = arg_fields,
-            .ty = .{ .struct_type = &adb.deinit_fn.input },
-        };
-
-        const args_node = try sem.makeSGNode(.{ .struct_value_literal = args_struct }, adb.deinit_fn.location, self.allocator);
         const call = try self.allocator.create(sem.FunctionCall);
-        call.* = .{ .callee = adb.deinit_fn, .input = args_node };
+        call.* = .{ .callee = adb.deinit_fn, .input = @constCast(adb.input) };
         const call_node = try sem.makeSGNode(.{ .function_call = call }, adb.deinit_fn.location, self.allocator);
         _ = try self.visitNode(call_node);
         sym.initialized = false;
