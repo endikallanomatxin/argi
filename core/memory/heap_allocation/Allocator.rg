@@ -37,3 +37,17 @@ Allocation : Type = (
     .data      : $&UInt8
     .size      : UIntNative
 )
+
+deinit(
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .self: $&Allocation,
+) -> () := {
+    if self&.size > 0 {
+        deallocate(.self = allocator, .data = self&.data, .size = self&.size)
+    }
+
+    self& = (
+        .data = self&.data,
+        .size = 0,
+    )
+}

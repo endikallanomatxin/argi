@@ -1135,6 +1135,12 @@ test "495_abstract_requirement_reached_default" {
     try runExpect(test_path, 0);
 }
 
+test "496_string_view_c_string_storage" {
+    const test_path = "tests/496_string_view_c_string_storage";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "62_folder_module_namespace" {
     const test_path = "tests/62_folder_module_namespace";
     try expectSuccessfulBuild(test_path);
