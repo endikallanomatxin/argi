@@ -1,5 +1,13 @@
 main(.system: System = System()) -> (.status_code: Int32 = 0) := {
     argc ::= system.args | length(&_) | _.count
+    if argc >= 2 {
+        first_arg := system.args[1]
+        if is_help_flag(.arg = &first_arg).ok {
+            print_help(.system = &system)
+            return
+        }
+    }
+
     if argc < 2 {
         status_code = 1
         return
@@ -10,6 +18,7 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
         path := system.args[i]
         text ::= read_file(system.file_sys, path)
         print(text)
+        deinit(.self = $&text)
         i = i + 1
     }
 }

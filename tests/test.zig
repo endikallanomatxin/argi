@@ -143,6 +143,10 @@ fn runExpectStdoutWithArgs(
     try expectEqualStrings(expected_stdout, result.stdout);
 }
 
+fn pathInTest(name: []const u8, leaf: []const u8) ![]u8 {
+    return std.fmt.allocPrint(std.testing.allocator, "{s}/{s}", .{ name, leaf });
+}
+
 test "feature_tests/basics/01_minimal_main" {
     const test_path = "tests/feature_tests/basics/01_minimal_main";
     try expectSuccessfulBuild(test_path);
@@ -151,15 +155,38 @@ test "feature_tests/basics/01_minimal_main" {
 
 test "usecase_tests/01_cat_cli" {
     const test_path = "tests/usecase_tests/01_cat_cli";
+    const input_1 = try pathInTest(test_path, "input.txt");
+    defer std.testing.allocator.free(input_1);
+    const input_2 = try pathInTest(test_path, "input_2.txt");
+    defer std.testing.allocator.free(input_2);
     try expectSuccessfulBuild(test_path);
     try runExpectStdoutWithArgs(
         test_path,
-        &[_][]const u8{
-            "tests/usecase_tests/01_cat_cli/input.txt",
-            "tests/usecase_tests/01_cat_cli/input_2.txt",
-        },
+        &[_][]const u8{ input_1, input_2 },
         0,
         "Hello from Argi.\nThis is a tiny cat clone.\nAnd now a second file.\nCat should concatenate both.\n",
+    );
+}
+
+test "usecase_tests/01_cat_cli_help_short" {
+    const test_path = "tests/usecase_tests/01_cat_cli";
+    try expectSuccessfulBuild(test_path);
+    try runExpectStdoutWithArgs(
+        test_path,
+        &[_][]const u8{"-h"},
+        0,
+        "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help.\n",
+    );
+}
+
+test "usecase_tests/01_cat_cli_help_long" {
+    const test_path = "tests/usecase_tests/01_cat_cli";
+    try expectSuccessfulBuild(test_path);
+    try runExpectStdoutWithArgs(
+        test_path,
+        &[_][]const u8{"--help"},
+        0,
+        "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help.\n",
     );
 }
 
