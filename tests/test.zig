@@ -317,6 +317,12 @@ test "feature_tests/functions/14X_positional_after_named_call" {
     );
 }
 
+test "feature_tests/functions/15_output_default_implicit_return" {
+    const test_path = "tests/feature_tests/functions/15_output_default_implicit_return";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
 test "feature_tests/polymorphism/01_multiple_dispatch" {
     const test_path = "tests/feature_tests/polymorphism/01_multiple_dispatch";
     try expectSuccessfulBuild(test_path);

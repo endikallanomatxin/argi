@@ -647,7 +647,7 @@ pub const CodeGenerator = struct {
                 .origin_file = f.location.file,
                 .mutability = syn.Mutability.variable,
                 .ty = fld.ty,
-                .initialization = null,
+                .initialization = fld.default_value,
             };
             try self.genBindingDecl(&bd);
         }
