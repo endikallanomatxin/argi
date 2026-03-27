@@ -133,7 +133,7 @@ operator ==(
 ) -> (.ok: Bool) := {
     left_view ::= as_view(.self = left)
     right_view ::= as_view(.self = right)
-    ok = left_view == right_view
+    ok = equals(.left = &left_view, .right = &right_view).ok
 }
 
 operator ==(
@@ -141,7 +141,7 @@ operator ==(
     .right: &StringView,
 ) -> (.ok: Bool) := {
     left_view ::= as_view(.self = left)
-    ok = left_view == right
+    ok = equals(.left = &left_view, .right = right).ok
 }
 
 operator ==(
@@ -149,7 +149,7 @@ operator ==(
     .right: &Char,
 ) -> (.ok: Bool) := {
     left_view ::= as_view(.self = left)
-    ok = left_view == right
+    ok = equals(.left = &left_view, .right = right).ok
 }
 
 operator !=(

@@ -284,6 +284,10 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "error generating comparison: {s}", .{@errorName(e)});
                 return e;
             },
+            .logical_operation => |lo| self.genLogicalOperation(&lo) catch |e| {
+                try self.diags.add(n.location, .codegen, "error generating logical operation: {s}", .{@errorName(e)});
+                return e;
+            },
             .if_statement => |ifs| {
                 self.genIfStatement(ifs) catch |e| {
                     try self.diags.add(n.location, .codegen, "error generating if statement: {s}", .{@errorName(e)});
@@ -1313,6 +1317,51 @@ pub const CodeGenerator = struct {
         };
 
         return .{ .value_ref = val, .type_ref = c.LLVMInt1Type() };
+    }
+
+    fn genLogicalOperation(self: *CodeGenerator, lo: *const sem.LogicalOperation) !TypedValue {
+        const lhs_tv = (try self.visitNode(lo.left)) orelse return CodegenError.ValueNotFound;
+        if (lhs_tv.type_ref != c.LLVMInt1Type())
+            return CodegenError.InvalidType;
+
+        const current_bb = c.LLVMGetInsertBlock(self.builder);
+        const current_fn = c.LLVMGetBasicBlockParent(current_bb);
+        const rhs_bb = c.LLVMAppendBasicBlock(current_fn, switch (lo.operator) {
+            .and_ => "logic.and.rhs",
+            .or_ => "logic.or.rhs",
+        });
+        const merge_bb = c.LLVMAppendBasicBlock(current_fn, switch (lo.operator) {
+            .and_ => "logic.and.merge",
+            .or_ => "logic.or.merge",
+        });
+
+        const short_val = switch (lo.operator) {
+            .and_ => c.LLVMConstInt(c.LLVMInt1Type(), 0, 0),
+            .or_ => c.LLVMConstInt(c.LLVMInt1Type(), 1, 0),
+        };
+
+        switch (lo.operator) {
+            .and_ => _ = c.LLVMBuildCondBr(self.builder, lhs_tv.value_ref, rhs_bb, merge_bb),
+            .or_ => _ = c.LLVMBuildCondBr(self.builder, lhs_tv.value_ref, merge_bb, rhs_bb),
+        }
+
+        c.LLVMPositionBuilderAtEnd(self.builder, rhs_bb);
+        const rhs_tv = (try self.visitNode(lo.right)) orelse return CodegenError.ValueNotFound;
+        if (rhs_tv.type_ref != c.LLVMInt1Type())
+            return CodegenError.InvalidType;
+        _ = c.LLVMBuildBr(self.builder, merge_bb);
+        const rhs_end_bb = c.LLVMGetInsertBlock(self.builder);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, merge_bb);
+        const phi = c.LLVMBuildPhi(self.builder, c.LLVMInt1Type(), switch (lo.operator) {
+            .and_ => "logic.and",
+            .or_ => "logic.or",
+        });
+        var incoming_values = [_]llvm.c.LLVMValueRef{ short_val, rhs_tv.value_ref };
+        var incoming_blocks = [_]llvm.c.LLVMBasicBlockRef{ current_bb, rhs_end_bb };
+        c.LLVMAddIncoming(phi, &incoming_values, &incoming_blocks, 2);
+
+        return .{ .value_ref = phi, .type_ref = c.LLVMInt1Type(), .sem_type = .{ .builtin = .Bool } };
     }
 
     // ────────────────────────────────────────── if ──

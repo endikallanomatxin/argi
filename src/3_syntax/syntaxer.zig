@@ -995,7 +995,7 @@ pub const Syntaxer = struct {
         return try self.parsePostfix(base);
     }
 
-    fn parseExpression(self: *Syntaxer) SyntaxerError!*syn.STNode {
+    fn parsePipeExpr(self: *Syntaxer) SyntaxerError!*syn.STNode {
         var lhs = try self.parsePrimary();
 
         while (self.tokenIs(.pipe)) {
@@ -1008,19 +1008,29 @@ pub const Syntaxer = struct {
                 pipe_loc,
             );
         }
+        return lhs;
+    }
 
-        // (solo bin-op derecha-recursivo por ahora)
+    fn parseBinaryExpr(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        var lhs = try self.parsePipeExpr();
+
         if (self.current().content == .binary_operator) {
             const op_tok = self.current();
             self.advanceOne();
-            const rhs = try self.parseExpression();
-            return try self.makeNode(
+            const rhs = try self.parseBinaryExpr();
+            lhs = try self.makeNode(
                 .{ .binary_operation = .{ .operator = op_tok.content.binary_operator, .left = lhs, .right = rhs } },
                 op_tok.location,
             );
         }
 
-        if (self.current().content == .comparison_operator) {
+        return lhs;
+    }
+
+    fn parseComparisonExpr(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        var lhs = try self.parseBinaryExpr();
+
+        while (self.current().content == .comparison_operator) {
             const op_tok = self.current();
             var op: tok.ComparisonOperator = undefined;
             switch (op_tok.content) {
@@ -1028,13 +1038,57 @@ pub const Syntaxer = struct {
                 else => unreachable,
             }
             self.advanceOne();
-            const rhs = try self.parseExpression();
-            return try self.makeNode(
+            const rhs = try self.parseBinaryExpr();
+            lhs = try self.makeNode(
                 .{ .comparison = .{ .operator = op, .left = lhs, .right = rhs } },
                 op_tok.location,
             );
         }
         return lhs;
+    }
+
+    fn parseAndExpr(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        var lhs = try self.parseComparisonExpr();
+
+        while (self.tokenIs(.keyword_and)) {
+            const op_loc = self.tokenLocation();
+            self.advanceOne();
+            const rhs = try self.parseComparisonExpr();
+            lhs = try self.makeNode(
+                .{ .logical_operation = .{
+                    .operator = .and_,
+                    .left = lhs,
+                    .right = rhs,
+                } },
+                op_loc,
+            );
+        }
+
+        return lhs;
+    }
+
+    fn parseOrExpr(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        var lhs = try self.parseAndExpr();
+
+        while (self.tokenIs(.keyword_or)) {
+            const op_loc = self.tokenLocation();
+            self.advanceOne();
+            const rhs = try self.parseAndExpr();
+            lhs = try self.makeNode(
+                .{ .logical_operation = .{
+                    .operator = .or_,
+                    .left = lhs,
+                    .right = rhs,
+                } },
+                op_loc,
+            );
+        }
+
+        return lhs;
+    }
+
+    fn parseExpression(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        return self.parseOrExpr();
     }
 
     // (old parseStatement removed; unified version with generics is below)

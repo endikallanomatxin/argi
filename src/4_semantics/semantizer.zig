@@ -667,6 +667,10 @@ pub const Semantizer = struct {
                 try self.walkNodeOnceReachability(current_fn, cmp.left, state);
                 try self.walkNodeOnceReachability(current_fn, cmp.right, state);
             },
+            .logical_operation => |lo| {
+                try self.walkNodeOnceReachability(current_fn, lo.left, state);
+                try self.walkNodeOnceReachability(current_fn, lo.right, state);
+            },
             .return_statement => |ret| {
                 if (ret.expression) |expr| {
                     try self.walkNodeOnceReachability(current_fn, expr, state);
@@ -788,6 +792,7 @@ pub const Semantizer = struct {
             .address_of => |addr| syntaxNodeContainsPipePlaceholder(addr.value),
             .binary_operation => |bo| syntaxNodeContainsPipePlaceholder(bo.left) or syntaxNodeContainsPipePlaceholder(bo.right),
             .comparison => |cmp| syntaxNodeContainsPipePlaceholder(cmp.left) or syntaxNodeContainsPipePlaceholder(cmp.right),
+            .logical_operation => |lo| syntaxNodeContainsPipePlaceholder(lo.left) or syntaxNodeContainsPipePlaceholder(lo.right),
             .index_access => |ia| syntaxNodeContainsPipePlaceholder(ia.value) or syntaxNodeContainsPipePlaceholder(ia.index),
             .function_call => |fc| syntaxNodeContainsPipePlaceholder(fc.input),
             .struct_value_literal => |sv| blk: {
@@ -1412,6 +1417,16 @@ pub const Semantizer = struct {
                     .semantic,
                     "error in comparison '{any}': {s}",
                     .{ c.operator, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .logical_operation => |lo| self.handleLogicalOperation(lo, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in logical operation: {s}",
+                    .{@errorName(err)},
                 );
                 break :blk err;
             },
@@ -6380,6 +6395,54 @@ pub const Semantizer = struct {
         const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, undefined, self.allocator);
         try s.nodes.append(node);
         return .{ .node = node, .ty = .{ .builtin = .Bool } };
+    }
+
+    fn handleLogicalOperation(
+        self: *Semantizer,
+        lo: syn.LogicalOperation,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        var lhs = try self.visitNode(lo.left.*, s);
+        var rhs = try self.visitNode(lo.right.*, s);
+        const bool_ty: sg.Type = .{ .builtin = .Bool };
+
+        lhs = try typ.coerceExprToType(bool_ty, lhs, lo.left, s, self.allocator, self.diags);
+        rhs = try typ.coerceExprToType(bool_ty, rhs, lo.right, s, self.allocator, self.diags);
+
+        if (!typ.typesExactlyEqual(lhs.ty, bool_ty)) {
+            const actual = try self.formatTypeText(lhs.ty, s);
+            defer actual.deinit();
+            try self.diags.add(
+                lo.left.*.location,
+                .semantic,
+                "left operand of logical operator must be 'Bool', got '{s}'",
+                .{actual.bytes},
+            );
+            return error.Reported;
+        }
+
+        if (!typ.typesExactlyEqual(rhs.ty, bool_ty)) {
+            const actual = try self.formatTypeText(rhs.ty, s);
+            defer actual.deinit();
+            try self.diags.add(
+                lo.right.*.location,
+                .semantic,
+                "right operand of logical operator must be 'Bool', got '{s}'",
+                .{actual.bytes},
+            );
+            return error.Reported;
+        }
+
+        const logical_ptr = try self.allocator.create(sg.LogicalOperation);
+        logical_ptr.* = .{
+            .operator = lo.operator,
+            .left = lhs.node,
+            .right = rhs.node,
+        };
+
+        const node = try sg.makeSGNode(.{ .logical_operation = logical_ptr.* }, undefined, self.allocator);
+        try s.nodes.append(node);
+        return .{ .node = node, .ty = bool_ty };
     }
 
     //──────────────────────────────────────────────────── RETURN

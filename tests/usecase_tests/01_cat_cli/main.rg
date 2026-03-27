@@ -1,8 +1,21 @@
+is_help_flag(.arg: &StringView) -> (.ok: Bool) := {
+    if arg == "-h" or arg == "--help" {
+        ok = true
+        return
+    }
+
+    ok = false
+}
+
+print_help(.system: &System) -> () := {
+    print("usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help.\n")
+}
+
 main(.system: System = System()) -> (.status_code: Int32 = 0) := {
     argc ::= system.args | length(&_) | _.count
     if argc >= 2 {
         first_arg := system.args[1]
-        if is_help_flag(.arg = &first_arg).ok {
+        if is_help_flag(.arg = &first_arg) {
             print_help(.system = &system)
             return
         }
