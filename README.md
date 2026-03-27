@@ -8,33 +8,61 @@ performance and control of low-level languages (C, Zig...).
 
 It’s an early work-in-progress.
 
+
+## Highlights
+
+- 🧩 Consistency and simplicity.
+- 🧮 Manual but very ergonomic memory management.
+- 🎯 Explicitness without annoyance:
+  - ⚠️ Side-effects are always explicit.
+  - 🔐 Capability-based design for resource management.
+  - 🪶 `reach` feature for reducing function signature clutter while
+  maintaining explicitness.
+- 🚫 No objects or inheritance.
+- 🔀 Polymorphism through:
+  - 🎛️ Multiple dispatch
+  - ⚙️ Compile time parameters (rust's generics style)
+  - 📜 Abstract types that are monomorphisized at compile time (rust's traits
+  style)
+  - 🎭 Virtual types for runtime dynamic dispatch.
+- ❓ Errable and Nullable types.
+- 📚 Batteries included. Two official module libraries: Minimalist `core` and
+maximalist `more`.
+- 🛠️ Great tooling (official formatter, lsp...).
+
+
+## Repository structure
+
 - 💭 Language design notes are in [`description/`](description/).
 - ⚙️ The compiler source code is in [`src/`](src/) and is written in **Zig**,
 targeting **LLVM**.
-- 📚 The core library is in [`core/`](core/), and additional official libraries are in
-[`more/`](more/).
+- 📚 The core library is in [`core/`](core/), and additional official libraries
+are in [`more/`](more/).
 - 🧪 Example programs and tests are in [`tests/`](tests/).
 
 
-Highlights:
+## Usage
 
-- Manual but very ergonomic memory management.
-- Explicitness without annoyance:
-    - Side-effects are always explicit.
-    - Capability-based design for resource management.
-    - `reach` feature for reducing function signature clutter while maintaining
-    explicitness.
-- No objects or inheritance.
-- Polymorphism through:
-    - Multiple dispatch
-    - Generics
-    - Abstract types (rust's traits style)
-    - Virtual types (dynamic dispatch)
-- Errable and Nullable types.
-- Big core library.
-- Great tooling (official formatter, lsp...).
+### Building
 
-## Prerequisites
+Build a module by running:
+
+```bash
+argi build <root_dir>
+```
+
+### LSP
+
+Start the language server:
+
+```sh
+argi lsp
+```
+
+
+## Installation
+
+### Prerequisites
 
 The build script needs to know where LLVM is installed. Normally it attempts to
 invoke `llvm-config` but this may fail in restricted environments. As an
@@ -49,11 +77,10 @@ export LLVM_LIBS="$(llvm-config --libs)"
 
 If these variables are set `llvm-config` will not be executed.
 
-## Usage
 
-### Build
+### Compilation
 
-Build the compiler:
+To build the tool:
 
 ```sh
 zig build
@@ -61,28 +88,25 @@ zig build
 
 That will create a binary called `argi` in the `zig-out/bin/` directory.
 
-Then you can build a folder module by running:
+Yo can create a symlink to it in your `~/.local/bin/` (or any directory in your
+PATH) to run it from anywhere:
 
 ```bash
-./zig-out/bin/argi build tests/00_minimal_main
+ln -s "$(pwd)/zig-out/bin/argi" ~/.local/bin/argi
 ```
 
-You can also run the compiler directly with:
+That way the editor will be able to find the tool for formatting and LSP
+features, and you can run it from anywhere in the terminal as well.
+
+
+Also, for recompiling and using the tool directly, you can run:
 
 ```bash
-zig build run -- build tests/00_minimal_main
+zig build run -- <arguments>
 ```
 
 
-### LSP
-
-Start the language server:
-
-```sh
-./zig-out/bin/argi lsp
-```
-
-### Tests
+## Testing
 
 You can run the tests in `test/` by doing:
 
