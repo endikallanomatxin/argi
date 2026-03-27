@@ -1,6 +1,7 @@
 const std = @import("std");
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
+const expectEqualStrings = std.testing.expectEqualStrings;
 
 const argi_bin = "zig-out/bin/argi";
 
@@ -117,10 +118,46 @@ fn run(name: []const u8) !void {
     try runExpect(name, 0);
 }
 
+fn runExpectStdoutWithArgs(
+    name: []const u8,
+    args: []const []const u8,
+    expected_code: u8,
+    expected_stdout: []const u8,
+) !void {
+    const output_path = try outputPathFor(name);
+    defer std.testing.allocator.free(output_path);
+
+    const argv = try std.testing.allocator.alloc([]const u8, args.len + 1);
+    defer std.testing.allocator.free(argv);
+
+    argv[0] = output_path;
+    for (args, 0..) |arg, i| {
+        argv[i + 1] = arg;
+    }
+
+    const result = try runChild(argv);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = expected_code }, result.term);
+    try expectEqualStrings(expected_stdout, result.stdout);
+}
+
 test "feature_tests/basics/01_minimal_main" {
     const test_path = "tests/feature_tests/basics/01_minimal_main";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
+}
+
+test "usecase_tests/01_cat_cli" {
+    const test_path = "tests/usecase_tests/01_cat_cli";
+    try expectSuccessfulBuild(test_path);
+    try runExpectStdoutWithArgs(
+        test_path,
+        &[_][]const u8{"tests/usecase_tests/01_cat_cli/input.txt"},
+        0,
+        "Hello from Argi.\nThis is a tiny cat clone.\n",
+    );
 }
 
 test "feature_tests/basics/02_comments" {
