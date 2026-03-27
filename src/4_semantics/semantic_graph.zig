@@ -265,6 +265,7 @@ pub const FunctionDeclaration = struct {
 
 pub const BindingDeclaration = struct {
     name: []const u8,
+    location: tok.Location,
     origin_file: []const u8,
     mutability: syn.Mutability,
     ty: Type,
