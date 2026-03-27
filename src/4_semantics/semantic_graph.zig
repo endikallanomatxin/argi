@@ -252,6 +252,7 @@ pub const TypeDeclaration = struct {
 pub const FunctionDeclaration = struct {
     name: []const u8,
     location: tok.Location,
+    is_once: bool,
     input: StructType, // Arguments
     output: StructType, // Named return params
     body: ?*const CodeBlock,
@@ -284,7 +285,17 @@ pub const Assignment = struct {
 
 pub const AutoDeinitBinding = struct {
     binding: *const BindingDeclaration,
-    deinit_fn: *const FunctionDeclaration,
+    deinit_fn: ?*const FunctionDeclaration,
+    input: ?*const SGNode = null,
+    fields: []const AutoDeinitField = &.{},
+};
+
+pub const AutoDeinitField = struct {
+    field_index: u32,
+    deinit_fn: ?*const FunctionDeclaration,
+    input: ?*const SGNode = null,
+    self_field_index: u32 = 0,
+    fields: []const AutoDeinitField = &.{},
 };
 
 //

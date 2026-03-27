@@ -1,11 +1,11 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
     input_file ::= File(.handle = 0, .should_close = 0 == 1)
-    init_stdin_handle(.p = $&input_file)
-    input_reader ::= FileReader(.allocator = system.allocator, .file = $&input_file, .capacity = 4)
+    init_stdin(.p = $&input_file)
+    input_reader ::= BufferedReader#(.base_type: File)(.allocator = system.allocator, .base = $&input_file, .capacity = 4)
 
     output_file ::= File(.handle = 0, .should_close = 0 == 1)
-    init_stdout_handle(.p = $&output_file)
-    output_writer ::= FileWriter(.allocator = system.allocator, .file = $&output_file, .capacity = 4)
+    init_stdout(.p = $&output_file)
+    output_writer ::= BufferedWriter#(.base_type: File)(.allocator = system.allocator, .base = $&output_file, .capacity = 4)
 
     if is_open(.self = &input_file).ok {
     } else {

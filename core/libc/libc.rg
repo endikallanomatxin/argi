@@ -3,12 +3,16 @@ putchar ( .character : UInt8 ) -> () : ExternFunction
 getchar ( ) -> ( .character : Int32 ) : ExternFunction
 puts ( .string : &Char ) -> () : ExternFunction
 strlen ( .string : &Char ) -> ( .length : UIntNative ) : ExternFunction
+getenv ( .name : &Char ) -> ( .value : &Char ) : ExternFunction
 fdopen ( .fd : Int32, .mode : &Char ) -> ( .stream : $&Any ) : ExternFunction
 fopen ( .path : &Char, .mode : &Char ) -> ( .stream : $&Any ) : ExternFunction
 fclose ( .stream : &Any ) -> ( .status : Int32 ) : ExternFunction
 fflush ( .stream : &Any ) -> ( .status : Int32 ) : ExternFunction
 fread ( .buffer : $&UInt8, .size : UIntNative, .count : UIntNative, .stream : &Any ) -> ( .count : UIntNative ) : ExternFunction
 fwrite ( .buffer : &UInt8, .size : UIntNative, .count : UIntNative, .stream : &Any ) -> ( .count : UIntNative ) : ExternFunction
+remove ( .path : &Char ) -> ( .status : Int32 ) : ExternFunction
+rename ( .old_path : &Char, .new_path : &Char ) -> ( .status : Int32 ) : ExternFunction
+access ( .path : &Char, .mode : Int32 ) -> ( .status : Int32 ) : ExternFunction
 
 -- Memory management
 alloca ( .size : UIntNative ) -> ( .pointer: $&Any ) : ExternFunction

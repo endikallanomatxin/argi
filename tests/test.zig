@@ -841,7 +841,7 @@ test "447_reached_allocator_string" {
 test "448_reached_allocator_dynamic_array" {
     const test_path = "tests/448_reached_allocator_dynamic_array";
     try expectSuccessfulBuild(test_path);
-    try runExpect(test_path, 22);
+    try runExpect(test_path, 24);
 }
 
 test "449_main_system_input" {
@@ -973,6 +973,170 @@ test "469_cstring_literal" {
 
 test "470_file_open_modes" {
     const test_path = "tests/470_file_open_modes";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "471_arguments_access" {
+    const test_path = "tests/471_arguments_access";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "472_arguments_index_operator" {
+    const test_path = "tests/472_arguments_index_operator";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "473_arguments_iterable" {
+    const test_path = "tests/473_arguments_iterable";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "474_length_named_function" {
+    const test_path = "tests/474_length_named_function";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "475_environment_variables" {
+    const test_path = "tests/475_environment_variables";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "476_environment_variables_index_operator" {
+    const test_path = "tests/476_environment_variables_index_operator";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "477_environment_variables_string_keys" {
+    const test_path = "tests/477_environment_variables_string_keys";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "478_file_system_capability" {
+    const test_path = "tests/478_file_system_capability";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "479X_system_noncopyable_assignment" {
+    try buildExpectFail(
+        "tests/479X_system_noncopyable_assignment",
+        "type 'System' is not copyable, so it cannot be used by value here",
+    );
+}
+
+test "480X_system_noncopyable_argument" {
+    try buildExpectFail(
+        "tests/480X_system_noncopyable_argument",
+        "type 'System' is not copyable, so it cannot be used by value here",
+    );
+}
+
+test "481_once_single_use" {
+    const test_path = "tests/481_once_single_use";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "482X_once_duplicate_direct" {
+    try buildExpectFail(
+        "tests/482X_once_duplicate_direct",
+        "once function 'setup' is consumed more than once from the reachable entrypoint graph",
+    );
+}
+
+test "483_once_unreached_duplicate_allowed" {
+    const test_path = "tests/483_once_unreached_duplicate_allowed";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "484X_once_duplicate_indirect" {
+    try buildExpectFail(
+        "tests/484X_once_duplicate_indirect",
+        "once function 'setup' is consumed more than once from the reachable entrypoint graph",
+    );
+}
+
+test "485X_once_duplicate_branches" {
+    try buildExpectFail(
+        "tests/485X_once_duplicate_branches",
+        "once function 'setup' is consumed more than once from the reachable entrypoint graph",
+    );
+}
+
+test "486X_once_duplicate_init" {
+    try buildExpectFail(
+        "tests/486X_once_duplicate_init",
+        "once function 'init' is consumed more than once from the reachable entrypoint graph",
+    );
+}
+
+test "487X_system_duplicate_init" {
+    try buildExpectFail(
+        "tests/487X_system_duplicate_init",
+        "once function 'init' is consumed more than once from the reachable entrypoint graph",
+    );
+}
+
+test "488_file_system_mutations" {
+    const test_path = "tests/488_file_system_mutations";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "489_file_system_read_write" {
+    const test_path = "tests/489_file_system_read_write";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "490_generic_abstract_bound_syntax" {
+    const test_path = "tests/490_generic_abstract_bound_syntax";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
+test "491X_generic_bound_requires_type_keyword" {
+    try buildExpectFail(
+        "tests/491X_generic_bound_requires_type_keyword",
+        "generic parameter bounds use '.t: Type: Constraint'",
+    );
+}
+
+test "492_generic_wrapper_abstract_conformance" {
+    const test_path = "tests/492_generic_wrapper_abstract_conformance";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "493_anonymous_struct_auto_deinit" {
+    const test_path = "tests/493_anonymous_struct_auto_deinit";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 11);
+}
+
+test "494_keep_string_auto_deinit" {
+    const test_path = "tests/494_keep_string_auto_deinit";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 11);
+}
+
+test "495_abstract_requirement_reached_default" {
+    const test_path = "tests/495_abstract_requirement_reached_default";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "496_string_view_c_string_storage" {
+    const test_path = "tests/496_string_view_c_string_storage";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }

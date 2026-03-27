@@ -49,7 +49,11 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
         },
 
         .function_declaration => |f| {
-            std.debug.print("Function \"{s}\"\n", .{f.name});
+            if (f.is_once) {
+                std.debug.print("Function once \"{s}\"\n", .{f.name});
+            } else {
+                std.debug.print("Function \"{s}\"\n", .{f.name});
+            }
 
             indent(lvl + 1);
             std.debug.print("Input:\n", .{});
@@ -107,7 +111,11 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
         },
 
         .auto_deinit_binding => |adb| {
-            std.debug.print("AutoDeinit \"{s}\" via \"{s}\"\n", .{ adb.binding.name, adb.deinit_fn.name });
+            if (adb.deinit_fn) |deinit_fn| {
+                std.debug.print("AutoDeinit \"{s}\" via \"{s}\"\n", .{ adb.binding.name, deinit_fn.name });
+            } else {
+                std.debug.print("AutoDeinit \"{s}\" structurally ({d} fields)\n", .{ adb.binding.name, adb.fields.len });
+            }
         },
 
         .function_call => |fc| {

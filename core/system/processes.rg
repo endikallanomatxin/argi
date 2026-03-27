@@ -1,6 +1,6 @@
 ProcessManager : Type = ()
 
-init(.p: $&ProcessManager) -> () := {
+once init(.p: $&ProcessManager) -> () := {
 }
 
 -- The capability for calling processes

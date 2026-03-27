@@ -1,8 +1,11 @@
 SystemStorage : Type = (
   .allocator : CAllocator
-  .stdin     : StdIn
-  .stdout    : StdOut
-  .stderr    : StdErr
+  .stdin_file : File
+  .stdout_file : File
+  .stderr_file : File
+  .stdin_buffered_reader : BufferedReader#(.base_type: File)
+  .stdout_buffered_writer : BufferedWriter#(.base_type: File)
+  .stderr_buffered_writer : BufferedWriter#(.base_type: File)
   .terminal  : Terminal
   .args      : Arguments
   .env_vars  : EnvironmentVariables
@@ -28,15 +31,33 @@ System : Type = (
   .ffi       : $&ForeignFunctionInterface
 )
 
-init(.p: $&System) -> () := {
+once init(.p: $&System) -> () := {
     p&._storage.allocator = CAllocator()
-    p&._storage.stdin = StdIn(.allocator = $&p&._storage.allocator)
-    p&._storage.stdout = StdOut(.allocator = $&p&._storage.allocator)
-    p&._storage.stderr = StdErr(.allocator = $&p&._storage.allocator)
+    init_stdin(.p = $&p&._storage.stdin_file)
+    init_stdout(.p = $&p&._storage.stdout_file)
+    init_stderr(.p = $&p&._storage.stderr_file)
+    p&._storage.stdin_buffered_reader = BufferedReader#(.base_type: File)(
+        .allocator = $&p&._storage.allocator,
+        .base = $&p&._storage.stdin_file,
+        .capacity = 256,
+    )
+    p&._storage.stdout_buffered_writer = BufferedWriter#(.base_type: File)(
+        .allocator = $&p&._storage.allocator,
+        .base = $&p&._storage.stdout_file,
+        .capacity = 256,
+    )
+    p&._storage.stderr_buffered_writer = BufferedWriter#(.base_type: File)(
+        .allocator = $&p&._storage.allocator,
+        .base = $&p&._storage.stderr_file,
+        .capacity = 256,
+    )
     p&._storage.terminal = Terminal(
-        .stdin = $&p&._storage.stdin,
-        .stdout = $&p&._storage.stdout,
-        .stderr = $&p&._storage.stderr,
+        .stdin_file = $&p&._storage.stdin_file,
+        .stdout_file = $&p&._storage.stdout_file,
+        .stderr_file = $&p&._storage.stderr_file,
+        .stdin_buffered_reader = $&p&._storage.stdin_buffered_reader,
+        .stdout_buffered_writer = $&p&._storage.stdout_buffered_writer,
+        .stderr_buffered_writer = $&p&._storage.stderr_buffered_writer,
     )
     p&._storage.args = Arguments()
     p&._storage.env_vars = EnvironmentVariables()
@@ -57,4 +78,8 @@ init(.p: $&System) -> () := {
     p&.clock = $&p&._storage.clock
     p&.rand_gen = $&p&._storage.rand_gen
     p&.ffi = $&p&._storage.ffi
+}
+
+deinit(.self: $&System) -> () := {
+    deinit(.self = self&.terminal, .allocator = self&.allocator)
 }

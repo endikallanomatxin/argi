@@ -15,6 +15,10 @@ add ( .a: Int, .b: Int ) -> (.o: Int) := {
 square (i:Int) -> (o:Int) := {o = i^2}
 ```
 
+Functions may also be marked with `once` to express that the function is meant
+to be consumed at most once from the reachable call graph of the compiled
+entrypoint. See [`44_once.md`](./44_once.md).
+
 - Todos los parámetros viajan en un único struct de entrada (in).
 - Todos los resultados se devuelven en un único struct de salida (out).
 
@@ -218,6 +222,12 @@ main (system: $&System&) -> (status_code: $&StatusCode&) := {
 System is a struct that contains all the capabilities of the system.
 (Inspired by Haskell's `IO` monad)
 
+> [!TODO]
+> Decide whether moving `System` by value should be prohibited as well.
+> It is already protected from implicit copies, but allowing `~system` may
+> still be too permissive for a capability root that owns process-level
+> initialization and ambient resources.
+
 For capabilities that would otherwise force repetitive argument threading, a
 function may declare a reached argument with `#reach`. This keeps the
 dependency explicit in the function interface while allowing the compiler and
@@ -254,7 +264,7 @@ main (system: $&System&) -> (status_code: $&StatusCode&) := {
 	-- Acceso a los argumentos de la línea de comandos
         argsmap := system.args | parse &_
         if argsmap has ($&_, "name") {
-            greet_user (argsmap("name"), $&system.terminal.stdout)
+            greet_user (argsmap("name"), $&system.terminal.stdout_buffered_writer)
         }
 
 	-- Acceso a las variables de entorno
@@ -321,7 +331,7 @@ import fs
 
 main (system: $&System&) -> (status_code: $&StatusCode&) := {
 	-- Creamos un archivo de IO
-	stdo = system.terminal.stdout
+	stdo = system.terminal.stdout_buffered_writer
 
 	-- Llamada a una función pura que imprime
 	do_something_pure(123, log = $&stdo)

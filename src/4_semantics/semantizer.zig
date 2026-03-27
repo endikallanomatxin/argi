@@ -9,7 +9,6 @@ const source_files = @import("../1_base/source_files.zig");
 const typ = @import("types.zig");
 const abs = @import("abstracts.zig");
 const gen = @import("generics.zig");
-
 const Scope = @import("scope.zig").Scope;
 const SemErr = @import("errors.zig").SemErr;
 
@@ -58,6 +57,34 @@ const ReachFunctionContext = struct {
     location: tok.Location,
     input_struct: *sg.StructType,
     body_scope: *Scope,
+};
+
+const OnceConsumption = struct {
+    first_location: tok.Location,
+    first_consumer: *const sg.FunctionDeclaration,
+};
+
+const OnceTraversalState = struct {
+    seen_once: std.AutoHashMap(*const sg.FunctionDeclaration, OnceConsumption),
+    active_functions: std.array_list.Managed(*const sg.FunctionDeclaration),
+
+    fn init(allocator: *const std.mem.Allocator) OnceTraversalState {
+        return .{
+            .seen_once = std.AutoHashMap(*const sg.FunctionDeclaration, OnceConsumption).init(allocator.*),
+            .active_functions = std.array_list.Managed(*const sg.FunctionDeclaration).init(allocator.*),
+        };
+    }
+
+    fn deinit(self: *OnceTraversalState) void {
+        self.seen_once.deinit();
+        self.active_functions.deinit();
+    }
+};
+
+const AutoDeinitResolution = struct {
+    function: *sg.FunctionDeclaration,
+    input: typ.TypedExpr,
+    self_field_index: u32,
 };
 
 const GenericSubst = struct {
@@ -175,6 +202,7 @@ pub const Semantizer = struct {
 
         // Final conformance verification for abstracts (top-level scope)
         try abs.verifyAbstracts(&global, self.allocator, self.diags);
+        try self.verifyOnceFunctions(&global);
 
         self.root_nodes = try self.root_list.toOwnedSlice();
         self.root_list.deinit();
@@ -193,6 +221,225 @@ pub const Semantizer = struct {
 
     fn formatTypeText(self: *Semantizer, ty: sg.Type, s: *Scope) !OwnedText {
         return self.formatOwnedText(try typ.formatType(ty, s, self.allocator));
+    }
+
+    fn tryResolveAutoDeinitWithInput(
+        self: *Semantizer,
+        binding: *sg.BindingDeclaration,
+        input_te: typ.TypedExpr,
+        loc: tok.Location,
+        s: *Scope,
+    ) ?AutoDeinitResolution {
+        const synthetic_call = syn.FunctionCall{
+            .callee = "deinit",
+            .callee_loc = loc,
+            .module_qualifier = null,
+            .type_arguments = null,
+            .type_arguments_struct = null,
+            .input = undefined,
+        };
+
+        const chosen = self.tryResolveRegularCallCallee(synthetic_call, input_te, s, loc) catch return null;
+        const coerced_input = self.coerceCallInputToExpected(&chosen.input, input_te, &syn.STNode{
+            .location = loc,
+            .content = .{ .identifier = binding.name },
+        }, s) catch return null;
+
+        if (coerced_input.node.content != .struct_value_literal) return null;
+        const input_value = coerced_input.node.content.struct_value_literal;
+        const positional_prefix = @min(input_value.dispatch_prefix_positional_count, input_value.fields.len);
+
+        for (chosen.input.fields[0..positional_prefix], 0..) |expected_field, idx| {
+            if (expected_field.ty != .pointer_type) continue;
+            const arg_node = input_value.fields[idx].value;
+            if (arg_node.content != .address_of) continue;
+            const inner = arg_node.content.address_of;
+            if (inner.content != .binding_use) continue;
+            if (inner.content.binding_use != binding) continue;
+            return .{
+                .function = chosen,
+                .input = coerced_input,
+                .self_field_index = @intCast(idx),
+            };
+        }
+
+        for (chosen.input.fields[positional_prefix..], positional_prefix..) |expected_field, idx| {
+            if (expected_field.ty != .pointer_type) continue;
+            const actual_field = findStructValueFieldByNameFrom(input_value.fields, positional_prefix, expected_field.name) orelse continue;
+            if (actual_field.value.content != .address_of) continue;
+            const inner = actual_field.value.content.address_of;
+            if (inner.content != .binding_use) continue;
+            if (inner.content.binding_use != binding) continue;
+            return .{
+                .function = chosen,
+                .input = coerced_input,
+                .self_field_index = @intCast(idx),
+            };
+        }
+
+        return null;
+    }
+
+    fn findVisibleAutoDeinitForType(
+        self: *Semantizer,
+        ty: sg.Type,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!?AutoDeinitResolution {
+        const fake_binding = try self.allocator.create(sg.BindingDeclaration);
+        fake_binding.* = .{
+            .name = "__auto_deinit_target",
+            .origin_file = loc.file,
+            .mutability = .variable,
+            .ty = ty,
+            .initialization = null,
+        };
+        return self.findVisibleAutoDeinit(fake_binding, loc, s);
+    }
+
+    fn findVisibleAutoDeinit(
+        self: *Semantizer,
+        binding: *sg.BindingDeclaration,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!?AutoDeinitResolution {
+        const binding_use = try sg.makeSGNode(.{ .binding_use = binding }, loc, self.allocator);
+        binding_use.sem_type = binding.ty;
+
+        var candidate_names = std.StringHashMap(void).init(self.allocator.*);
+        defer candidate_names.deinit();
+        try candidate_names.put("self", {});
+
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr("deinit")) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    for (cand.input.fields) |field| {
+                        if (field.ty != .pointer_type) continue;
+                        if (field.ty.pointer_type.mutability != .read_write) continue;
+                        try candidate_names.put(field.name, {});
+                    }
+                }
+            }
+            if (sc.generic_functions.getPtr("deinit")) |list_ptr| {
+                for (list_ptr.items) |tmpl| {
+                    for (tmpl.input.fields) |field| {
+                        const field_ty = field.type orelse continue;
+                        if (field_ty != .pointer_type) continue;
+                        if (field_ty.pointer_type.mutability != .read_write) continue;
+                        try candidate_names.put(field.name.string, {});
+                    }
+                }
+            }
+        }
+
+        var it = candidate_names.iterator();
+        while (it.next()) |entry| {
+            const field_name = entry.key_ptr.*;
+            const child_ty = try self.allocator.create(sg.Type);
+            child_ty.* = binding.ty;
+
+            const ptr_info = try self.allocator.create(sg.PointerType);
+            ptr_info.* = .{
+                .mutability = .read_write,
+                .child = child_ty,
+            };
+
+            const raw_input = try self.buildNamedCallInput(&[_]CallArg{
+                .{
+                    .name = field_name,
+                    .expr = .{
+                        .node = try sg.makeSGNode(.{ .address_of = binding_use }, loc, self.allocator),
+                        .ty = .{ .pointer_type = ptr_info },
+                    },
+                },
+            });
+            if (self.tryResolveAutoDeinitWithInput(binding, raw_input, loc, s)) |resolved| {
+                return resolved;
+            }
+        }
+
+        const child_ty = try self.allocator.create(sg.Type);
+        child_ty.* = binding.ty;
+
+        const ptr_info = try self.allocator.create(sg.PointerType);
+        ptr_info.* = .{
+            .mutability = .read_write,
+            .child = child_ty,
+        };
+
+        const positional_input = try self.buildCallInputWithPositionalPrefix(&[_]CallArg{
+            .{
+                .name = "__arg0",
+                .expr = .{
+                    .node = try sg.makeSGNode(.{ .address_of = binding_use }, loc, self.allocator),
+                    .ty = .{ .pointer_type = ptr_info },
+                },
+            },
+        }, 1);
+
+        return self.tryResolveAutoDeinitWithInput(binding, positional_input, loc, s);
+    }
+
+    fn tryResolveCopyCallWithInput(
+        self: *Semantizer,
+        input_te: typ.TypedExpr,
+        loc: tok.Location,
+        s: *Scope,
+    ) ?typ.TypedExpr {
+        const synthetic_call = syn.FunctionCall{
+            .callee = "copy",
+            .callee_loc = loc,
+            .module_qualifier = null,
+            .type_arguments = null,
+            .type_arguments_struct = null,
+            .input = undefined,
+        };
+
+        const chosen = self.tryResolveRegularCallCallee(synthetic_call, input_te, s, loc) catch return null;
+        const coerced_input = self.coerceCallInputToExpected(&chosen.input, input_te, &syn.STNode{
+            .location = loc,
+            .content = .{ .identifier = "copy" },
+        }, s) catch return null;
+
+        const fc_ptr = self.allocator.create(sg.FunctionCall) catch return null;
+        fc_ptr.* = .{ .callee = chosen, .input = coerced_input.node };
+        const call_node = sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator) catch return null;
+        return .{ .node = call_node, .ty = typ.functionReturnType(chosen) };
+    }
+
+    fn ensureValuePositionAllowed(
+        self: *Semantizer,
+        expr: typ.TypedExpr,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (!typ.expressionNeedsCopyForValuePosition(expr.node)) return expr;
+        if (typ.isTypeTriviallyCopyable(expr.ty, s)) return expr;
+
+        const named_input = try self.buildNamedCallInput(&[_]CallArg{
+            .{ .name = "self", .expr = expr },
+        });
+        if (self.tryResolveCopyCallWithInput(named_input, loc, s)) |copy_expr| {
+            return copy_expr;
+        }
+
+        const positional_input = try self.buildCallInputWithPositionalPrefix(&[_]CallArg{
+            .{ .name = "__arg0", .expr = expr },
+        }, 1);
+        if (self.tryResolveCopyCallWithInput(positional_input, loc, s)) |copy_expr| {
+            return copy_expr;
+        }
+
+        const ty_text = try self.formatTypeText(expr.ty, s);
+        defer ty_text.deinit();
+        try self.diags.add(
+            loc,
+            .semantic,
+            "type '{s}' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'",
+            .{ty_text.bytes},
+        );
+        return error.Reported;
     }
 
     fn formatTypePairText(self: *Semantizer, expected: sg.Type, actual: sg.Type, s: *Scope) !TypePairText {
@@ -227,6 +474,259 @@ pub const Semantizer = struct {
             .actual = self.formatOwnedText(try typ.formatCallInput(input, s, self.allocator)),
             .available = self.formatOwnedText(try self.collectModuleFunctionSignatures(module_dir, fn_name, s, loc)),
         };
+    }
+
+    fn isWrappableMainCandidate(self: *Semantizer, f: *const sg.FunctionDeclaration) bool {
+        _ = self;
+        if (!std.mem.eql(u8, f.name, "main")) return false;
+        if (f.output.fields.len != 1) return false;
+        const fld = f.output.fields[0];
+        if (!std.mem.eql(u8, fld.name, "status_code")) return false;
+        return switch (fld.ty) {
+            .builtin => |bt| bt == .Int32,
+            else => false,
+        };
+    }
+
+    fn verifyOnceFunctions(self: *Semantizer, global: *Scope) SemErr!void {
+        if (global.functions.getPtr("main")) |main_list| {
+            for (main_list.items) |main_fn| {
+                if (!self.isWrappableMainCandidate(main_fn)) continue;
+                var state = OnceTraversalState.init(self.allocator);
+                defer state.deinit();
+                try self.walkFunctionOnceReachability(main_fn, main_fn.location, &state);
+            }
+        }
+    }
+
+    fn walkFunctionOnceReachability(
+        self: *Semantizer,
+        func: *const sg.FunctionDeclaration,
+        call_loc: tok.Location,
+        state: *OnceTraversalState,
+    ) SemErr!void {
+        if (func.body == null) return;
+
+        for (state.active_functions.items) |active| {
+            if (active == func) {
+                try self.diags.add(
+                    call_loc,
+                    .semantic,
+                    "once analysis does not support recursive call cycles; cycle detected while expanding '{s}'",
+                    .{func.name},
+                );
+                return error.Reported;
+            }
+        }
+
+        try state.active_functions.append(func);
+        defer _ = state.active_functions.pop();
+
+        for (func.input.fields) |field| {
+            if (field.default_value) |default_node| {
+                try self.walkNodeOnceReachability(func, default_node, state);
+            }
+        }
+        for (func.output.fields) |field| {
+            if (field.default_value) |default_node| {
+                try self.walkNodeOnceReachability(func, default_node, state);
+            }
+        }
+
+        try self.walkCodeBlockOnceReachability(func, func.body.?, state);
+    }
+
+    fn recordOnceConsumption(
+        self: *Semantizer,
+        once_fn: *const sg.FunctionDeclaration,
+        consumer: *const sg.FunctionDeclaration,
+        loc: tok.Location,
+        state: *OnceTraversalState,
+    ) SemErr!void {
+        const result = try state.seen_once.getOrPut(once_fn);
+        if (!result.found_existing) {
+            result.value_ptr.* = .{
+                .first_location = loc,
+                .first_consumer = consumer,
+            };
+            return;
+        }
+
+        const first = result.value_ptr.*;
+        try self.diags.add(
+            loc,
+            .semantic,
+            "once function '{s}' is consumed more than once from the reachable entrypoint graph (first use at {s}:{d}:{d} via '{s}')",
+            .{
+                once_fn.name,
+                first.first_location.file,
+                first.first_location.line,
+                first.first_location.column,
+                first.first_consumer.name,
+            },
+        );
+        return error.Reported;
+    }
+
+    fn walkCodeBlockOnceReachability(
+        self: *Semantizer,
+        current_fn: *const sg.FunctionDeclaration,
+        block: *const sg.CodeBlock,
+        state: *OnceTraversalState,
+    ) SemErr!void {
+        for (block.nodes) |node| {
+            try self.walkNodeOnceReachability(current_fn, node, state);
+        }
+        if (block.ret_val) |ret_node| {
+            try self.walkNodeOnceReachability(current_fn, ret_node, state);
+        }
+    }
+
+    fn walkNodeOnceReachability(
+        self: *Semantizer,
+        current_fn: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        state: *OnceTraversalState,
+    ) SemErr!void {
+        switch (node.content) {
+            .binding_declaration => |binding| {
+                if (binding.initialization) |init_node| {
+                    try self.walkNodeOnceReachability(current_fn, init_node, state);
+                }
+            },
+            .binding_assignment => |assign| {
+                try self.walkNodeOnceReachability(current_fn, assign.value, state);
+            },
+            .auto_deinit_binding => |auto| {
+                try self.walkAutoDeinitOnceReachability(auto, current_fn, node.location, state);
+            },
+            .reach_directive,
+            .binding_use,
+            .value_literal,
+            .type_literal,
+            .break_statement,
+            .continue_statement,
+            => {},
+            .move_value => |inner| {
+                try self.walkNodeOnceReachability(current_fn, inner, state);
+            },
+            .function_call => |call| {
+                try self.walkNodeOnceReachability(current_fn, call.input, state);
+                if (call.callee.is_once) {
+                    try self.recordOnceConsumption(call.callee, current_fn, node.location, state);
+                }
+                try self.walkFunctionOnceReachability(call.callee, node.location, state);
+            },
+            .code_block => |block| {
+                try self.walkCodeBlockOnceReachability(current_fn, block, state);
+            },
+            .choice_literal => |choice| {
+                if (choice.payload) |payload| {
+                    try self.walkNodeOnceReachability(current_fn, payload, state);
+                }
+            },
+            .list_literal => |list| {
+                for (list.elements) |elem| {
+                    try self.walkNodeOnceReachability(current_fn, elem, state);
+                }
+            },
+            .struct_value_literal => |st| {
+                for (st.fields) |field| {
+                    try self.walkNodeOnceReachability(current_fn, field.value, state);
+                }
+            },
+            .struct_field_access => |access| {
+                try self.walkNodeOnceReachability(current_fn, access.struct_value, state);
+            },
+            .choice_payload_access => |access| {
+                try self.walkNodeOnceReachability(current_fn, access.choice_value, state);
+            },
+            .array_literal => |arr| {
+                for (arr.elements) |elem| {
+                    try self.walkNodeOnceReachability(current_fn, elem, state);
+                }
+            },
+            .array_index => |index| {
+                try self.walkNodeOnceReachability(current_fn, index.array_ptr, state);
+                try self.walkNodeOnceReachability(current_fn, index.index, state);
+            },
+            .array_store => |store| {
+                try self.walkNodeOnceReachability(current_fn, store.array_ptr, state);
+                try self.walkNodeOnceReachability(current_fn, store.index, state);
+                try self.walkNodeOnceReachability(current_fn, store.value, state);
+            },
+            .struct_field_store => |store| {
+                try self.walkNodeOnceReachability(current_fn, store.struct_ptr, state);
+                try self.walkNodeOnceReachability(current_fn, store.value, state);
+            },
+            .binary_operation => |op| {
+                try self.walkNodeOnceReachability(current_fn, op.left, state);
+                try self.walkNodeOnceReachability(current_fn, op.right, state);
+            },
+            .comparison => |cmp| {
+                try self.walkNodeOnceReachability(current_fn, cmp.left, state);
+                try self.walkNodeOnceReachability(current_fn, cmp.right, state);
+            },
+            .return_statement => |ret| {
+                if (ret.expression) |expr| {
+                    try self.walkNodeOnceReachability(current_fn, expr, state);
+                }
+            },
+            .if_statement => |if_stmt| {
+                try self.walkNodeOnceReachability(current_fn, if_stmt.condition, state);
+                try self.walkCodeBlockOnceReachability(current_fn, if_stmt.then_block, state);
+                if (if_stmt.else_block) |else_block| {
+                    try self.walkCodeBlockOnceReachability(current_fn, else_block, state);
+                }
+            },
+            .while_statement => |while_stmt| {
+                try self.walkNodeOnceReachability(current_fn, while_stmt.condition, state);
+                try self.walkCodeBlockOnceReachability(current_fn, while_stmt.body, state);
+            },
+            .for_statement => |for_stmt| {
+                if (for_stmt.init) |init_node| {
+                    try self.walkNodeOnceReachability(current_fn, init_node, state);
+                }
+                try self.walkNodeOnceReachability(current_fn, for_stmt.condition, state);
+                if (for_stmt.increment) |inc_node| {
+                    try self.walkNodeOnceReachability(current_fn, inc_node, state);
+                }
+                try self.walkCodeBlockOnceReachability(current_fn, for_stmt.body, state);
+            },
+            .switch_statement => |switch_stmt| {
+                try self.walkNodeOnceReachability(current_fn, switch_stmt.expression, state);
+                for (switch_stmt.cases) |case| {
+                    try self.walkNodeOnceReachability(current_fn, case.value, state);
+                    try self.walkCodeBlockOnceReachability(current_fn, case.body, state);
+                }
+                if (switch_stmt.default_case) |default_block| {
+                    try self.walkCodeBlockOnceReachability(current_fn, default_block, state);
+                }
+            },
+            .address_of => |inner| {
+                try self.walkNodeOnceReachability(current_fn, inner, state);
+            },
+            .dereference => |deref| {
+                try self.walkNodeOnceReachability(current_fn, deref.pointer, state);
+            },
+            .pointer_assignment => |assign| {
+                try self.walkNodeOnceReachability(current_fn, assign.pointer, state);
+                try self.walkNodeOnceReachability(current_fn, assign.value, state);
+            },
+            .type_initializer => |type_init| {
+                try self.walkNodeOnceReachability(current_fn, type_init.args, state);
+                if (type_init.init_fn.is_once) {
+                    try self.recordOnceConsumption(type_init.init_fn, current_fn, node.location, state);
+                }
+                try self.walkFunctionOnceReachability(type_init.init_fn, node.location, state);
+            },
+            .explicit_cast => |cast_expr| {
+                try self.walkNodeOnceReachability(current_fn, cast_expr.value, state);
+            },
+            .function_declaration,
+            .type_declaration,
+            => {},
+        }
     }
 
     fn buildOverloadCandidatesText(
@@ -955,6 +1455,9 @@ pub const Semantizer = struct {
             },
 
             .keep_statement => |name| self.handleKeep(name, s) catch |err| blk: {
+                if (err == error.SymbolNotFound and self.defer_unknown_top_level and self.current_top_node != null) {
+                    break :blk err;
+                }
                 if (err != error.Reported) {
                     try self.diags.add(
                         n.location,
@@ -1354,6 +1857,7 @@ pub const Semantizer = struct {
     fn concreteTypePatternFromImplements(
         self: *Semantizer,
         rel: syn.AbstractImplements,
+        s: *Scope,
         loc: tok.Location,
     ) !syn.Type {
         if (rel.generic_params_struct != null or rel.generic_params.len != 0) {
@@ -1370,7 +1874,12 @@ pub const Semantizer = struct {
                     continue;
                 };
 
-                if (field_ty == .type_name and std.mem.eql(u8, field_ty.type_name.string, "Type")) {
+                const is_type_param =
+                    (field_ty == .type_name and std.mem.eql(u8, field_ty.type_name.string, "Type")) or
+                    (field_ty == .type_name and s.lookupAbstractInfo(field_ty.type_name.string) != null) or
+                    (field_ty == .generic_type_instantiation and s.lookupAbstractInfo(field_ty.generic_type_instantiation.base_name.string) != null);
+
+                if (is_type_param) {
                     pattern_fields[idx] = .{
                         .name = field.name,
                         .type = .{ .type_name = field.name },
@@ -1405,7 +1914,20 @@ pub const Semantizer = struct {
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
         const abstract_name = abstractNameFromImplementsTarget(rel.abstract_ty) orelse return error.UnknownType;
-        const concrete_pattern = try self.concreteTypePatternFromImplements(rel, loc);
+        const concrete_pattern = try self.concreteTypePatternFromImplements(rel, s, loc);
+
+        if (rel.generic_params_struct == null and rel.generic_params.len == 0) {
+            const concrete_direct = self.resolveType(concrete_pattern, s) catch |err| switch (err) {
+                error.UnknownType, error.AbstractNeedsDefault => null,
+                else => return err,
+            };
+            if (concrete_direct) |concrete_ty| {
+                try s.appendAbstractImpl(abstract_name, .{ .ty = concrete_ty, .location = loc });
+                const n = try self.makeNoopNode(loc);
+                try s.nodes.append(n);
+                return .{ .node = n, .ty = .{ .builtin = .Any } };
+            }
+        }
 
         if (rel.generic_params_struct != null or rel.generic_params.len != 0 or concrete_pattern == .generic_type_instantiation) {
             var params_buf = std.array_list.Managed(gen.GenericParam).init(self.allocator.*);
@@ -1498,7 +2020,7 @@ pub const Semantizer = struct {
         var payload: ?*const sg.SGNode = null;
         if (lit.payload) |payload_node| {
             var payload_te = try self.visitNode(payload_node.*, s);
-            payload_te = try typ.ensureValuePositionAllowed(payload_te, payload_node.location, s, self.allocator, self.diags);
+            payload_te = try self.ensureValuePositionAllowed(payload_te, payload_node.location, s);
             payload_te.node.sem_type = payload_te.ty;
             payload = payload_te.node;
         }
@@ -1985,7 +2507,7 @@ pub const Semantizer = struct {
         }
 
         if (init_te_opt) |init_te| {
-            init_te_opt = try typ.ensureValuePositionAllowed(init_te, init_node.?.location, s, self.allocator, self.diags);
+            init_te_opt = try self.ensureValuePositionAllowed(init_te, init_node.?.location, s);
         }
 
         const bd = try self.allocator.create(sg.BindingDeclaration);
@@ -2121,6 +2643,15 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         // Register generic template and skip direct emission
         if (f.generic_params.len > 0 or f.generic_params_struct != null) {
+            if (f.is_once) {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "once is not supported on generic functions yet",
+                    .{},
+                );
+                return error.Reported;
+            }
             const params_struct = try self.genericParamsStructOrNames(
                 f.generic_params_struct,
                 f.generic_params,
@@ -2147,6 +2678,16 @@ pub const Semantizer = struct {
             const noop = try self.makeNoopNode(loc);
             try p.nodes.append(noop);
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
+        }
+
+        if (f.is_once and f.body == null) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "once is not supported on extern functions",
+                .{},
+            );
+            return error.Reported;
         }
 
         var child = try Scope.init(self.allocator, p, null);
@@ -2225,6 +2766,7 @@ pub const Semantizer = struct {
         fn_ptr.* = .{
             .name = f.name.string,
             .location = loc,
+            .is_once = f.is_once,
             .input = in_struct_ptr.*,
             .output = out_struct,
             .body = body_cb,
@@ -2949,7 +3491,7 @@ pub const Semantizer = struct {
 
         var rhs = try self.visitNode(a.value.*, s);
         rhs = try typ.coerceExprToType(b.ty, rhs, a.value, s, self.allocator, self.diags);
-        rhs = try typ.ensureValuePositionAllowed(rhs, a.value.location, s, self.allocator, self.diags);
+        rhs = try self.ensureValuePositionAllowed(rhs, a.value.location, s);
         if (!typ.typesExactlyEqual(b.ty, rhs.ty)) {
             const pair = try self.formatTypePairText(b.ty, rhs.ty, s);
             defer pair.deinit();
@@ -2982,7 +3524,7 @@ pub const Semantizer = struct {
 
         for (sl.fields) |f| {
             var tv = try self.visitNode(f.value.*, s);
-            tv = try typ.ensureValuePositionAllowed(tv, f.value.location, s, self.allocator, self.diags);
+            tv = try self.ensureValuePositionAllowed(tv, f.value.location, s);
             try fields_buf.append(.{ .name = f.name.string, .value = tv.node });
         }
 
@@ -3683,6 +4225,7 @@ pub const Semantizer = struct {
         const chosen = try self.resolveRegularCallCallee(call, tv_in, s, call.input.*.location);
         const coerced_input = try self.coerceCallInputToExpected(&chosen.input, tv_in, call.input, s);
         try self.checkCallBindingExclusivity(call.callee, coerced_input, call.input.*.location);
+        self.cancelExplicitDeinitAutoCleanup(chosen, coerced_input, s);
 
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
         fc_ptr.* = .{ .callee = chosen, .input = coerced_input.node };
@@ -3692,6 +4235,41 @@ pub const Semantizer = struct {
         const result_ty = typ.functionReturnType(chosen);
 
         return .{ .node = n, .ty = result_ty };
+    }
+
+    fn cancelExplicitDeinitAutoCleanup(
+        self: *Semantizer,
+        chosen: *sg.FunctionDeclaration,
+        coerced_input: typ.TypedExpr,
+        s: *Scope,
+    ) void {
+        if (!std.mem.eql(u8, chosen.name, "deinit")) return;
+        if (coerced_input.node.content != .struct_value_literal) return;
+
+        const input_value = coerced_input.node.content.struct_value_literal;
+        const positional_prefix = @min(input_value.dispatch_prefix_positional_count, input_value.fields.len);
+
+        for (chosen.input.fields[0..positional_prefix], 0..) |expected_field, idx| {
+            if (expected_field.ty != .pointer_type) continue;
+            if (expected_field.ty.pointer_type.mutability != .read_write) continue;
+
+            const arg_node = input_value.fields[idx].value;
+            if (arg_node.content != .address_of) continue;
+            const inner = arg_node.content.address_of;
+            if (inner.content != .binding_use) continue;
+            _ = self.cancelAutoDeinitForBinding(inner.content.binding_use, s);
+        }
+
+        for (chosen.input.fields[positional_prefix..]) |expected_field| {
+            if (expected_field.ty != .pointer_type) continue;
+            if (expected_field.ty.pointer_type.mutability != .read_write) continue;
+
+            const actual_field = findStructValueFieldByNameFrom(input_value.fields, positional_prefix, expected_field.name) orelse continue;
+            if (actual_field.value.content != .address_of) continue;
+            const inner = actual_field.value.content.address_of;
+            if (inner.content != .binding_use) continue;
+            _ = self.cancelAutoDeinitForBinding(inner.content.binding_use, s);
+        }
     }
 
     fn extractCallBindingAccess(
@@ -5550,6 +6128,7 @@ pub const Semantizer = struct {
         fn_ptr.* = .{
             .name = tmpl.name,
             .location = tmpl.location,
+            .is_once = false,
             .input = in_struct_ptr.*,
             .output = out_struct_ptr.*,
             .body = body_cb,
@@ -5740,7 +6319,7 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         var e = if (r.expression) |ex| (try self.visitNode(ex.*, s)) else null;
         if (r.expression) |ex| {
-            if (e) |te| e = try typ.ensureValuePositionAllowed(te, ex.location, s, self.allocator, self.diags);
+            if (e) |te| e = try self.ensureValuePositionAllowed(te, ex.location, s);
         }
 
         const rs = try self.allocator.create(sg.ReturnStatement);
@@ -5846,6 +6425,7 @@ pub const Semantizer = struct {
         const iterable_copyable = typ.isTypeCopyable(iterable_ty, s);
         const iterable_name = try self.makeSyntheticName("iterable");
         const iterator_name = try self.makeSyntheticName("iterator");
+        const iterable_direct_ok = iterable_ty == .pointer_type and abs.typeImplementsAbstract("Iterable", iterable_ty.pointer_type.child.*, s);
 
         const iterable_ident = if (iterable_copyable and f.iterable.*.content != .identifier)
             try self.makeSynNode(.{ .identifier = iterable_name }, loc)
@@ -5862,7 +6442,7 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        if (!abs.typeImplementsAbstract("Iterable", iterable_ty, s)) {
+        if (!abs.typeImplementsAbstract("Iterable", iterable_ty, s) and !iterable_direct_ok) {
             const iterable_ty_text = try self.formatTypeText(iterable_ty, s);
             defer iterable_ty_text.deinit();
             try self.diags.add(
@@ -5874,15 +6454,16 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const iterable_addr = try self.makeSynNode(.{ .address_of = .{
-            .value = iterable_ident,
-            .mutability = .read_only,
-        } }, loc);
-
         const to_iterator_fields = try self.allocator.alloc(syn.StructValueLiteralField, 1);
         to_iterator_fields[0] = .{
             .name = .{ .string = "value", .location = loc },
-            .value = iterable_addr,
+            .value = if (iterable_direct_ok)
+                iterable_ident
+            else
+                try self.makeSynNode(.{ .address_of = .{
+                    .value = iterable_ident,
+                    .mutability = .read_only,
+                } }, loc),
         };
         const to_iterator_arg = try self.makeSynNode(.{ .struct_value_literal = .{
             .fields = to_iterator_fields,
@@ -6226,6 +6807,9 @@ pub const Semantizer = struct {
         };
 
         if (!self.cancelAutoDeinitForBinding(binding, s)) {
+            if (self.defer_unknown_top_level and self.current_top_node != null) {
+                return error.SymbolNotFound;
+            }
             try self.diags.add(
                 name.location,
                 .semantic,
@@ -6995,13 +7579,7 @@ pub const Semantizer = struct {
         if (arg_node.content == .struct_value_literal) {
             const sv = arg_node.content.struct_value_literal;
             if (sv.fields.len != 1 or !std.mem.eql(u8, sv.fields[0].name.string, "value")) {
-                try self.diags.add(
-                    arg_loc,
-                    .semantic,
-                    "length expects a single '.value' argument when using named parameters",
-                    .{},
-                );
-                return error.Reported;
+                return error.SymbolNotFound;
             }
             value_te = try self.visitNode(sv.fields[0].value.*, s);
         } else {
@@ -7226,9 +7804,29 @@ pub const Semantizer = struct {
         s: *Scope,
     ) !void {
         if (s.parent == null) return;
-        const deinit_fn = s.findDeinit(binding.ty) orelse return;
+        if (try self.findVisibleAutoDeinit(binding, loc, s)) |resolved| {
+            const auto_ptr = try self.allocator.create(sg.AutoDeinitBinding);
+            auto_ptr.* = .{
+                .binding = binding,
+                .deinit_fn = resolved.function,
+                .input = resolved.input.node,
+                .fields = &.{},
+            };
+
+            const call_node = try sg.makeSGNode(.{ .auto_deinit_binding = auto_ptr }, loc, self.allocator);
+            try self.registerDefer(s, &[_]*sg.SGNode{call_node});
+            return;
+        }
+
+        const fields = try buildStructuralAutoDeinitFields(self, binding.ty, loc, s, self.allocator);
+        if (fields.len == 0) return;
         const auto_ptr = try self.allocator.create(sg.AutoDeinitBinding);
-        auto_ptr.* = .{ .binding = binding, .deinit_fn = deinit_fn };
+        auto_ptr.* = .{
+            .binding = binding,
+            .deinit_fn = null,
+            .input = null,
+            .fields = fields,
+        };
 
         const call_node = try sg.makeSGNode(.{ .auto_deinit_binding = auto_ptr }, loc, self.allocator);
         try self.registerDefer(s, &[_]*sg.SGNode{call_node});
@@ -7241,7 +7839,102 @@ pub const Semantizer = struct {
             try self.pending_next.append(ptr);
         }
     }
+    fn walkAutoDeinitOnceReachability(
+        self: *Semantizer,
+        auto: *const sg.AutoDeinitBinding,
+        current_fn: *const sg.FunctionDeclaration,
+        loc: tok.Location,
+        state: *OnceTraversalState,
+    ) SemErr!void {
+        if (auto.deinit_fn) |deinit_fn| {
+            if (deinit_fn.is_once) {
+                try self.recordOnceConsumption(deinit_fn, current_fn, loc, state);
+            }
+            try self.walkFunctionOnceReachability(deinit_fn, loc, state);
+        }
+
+        try self.walkAutoDeinitFieldsOnceReachability(auto.fields, current_fn, loc, state);
+    }
+
+    fn walkAutoDeinitFieldsOnceReachability(
+        self: *Semantizer,
+        fields: []const sg.AutoDeinitField,
+        current_fn: *const sg.FunctionDeclaration,
+        loc: tok.Location,
+        state: *OnceTraversalState,
+    ) SemErr!void {
+        for (fields) |field| {
+            if (field.deinit_fn) |deinit_fn| {
+                if (deinit_fn.is_once) {
+                    try self.recordOnceConsumption(deinit_fn, current_fn, loc, state);
+                }
+                try self.walkFunctionOnceReachability(deinit_fn, loc, state);
+            }
+            try self.walkAutoDeinitFieldsOnceReachability(field.fields, current_fn, loc, state);
+        }
+    }
 };
+
+fn buildStructuralAutoDeinitFields(
+    sema: *Semantizer,
+    ty: sg.Type,
+    loc: tok.Location,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+) ![]const sg.AutoDeinitField {
+    return switch (ty) {
+        .struct_type => |st| blk: {
+            if (st.identity != null) break :blk &.{};
+
+            var fields = std.array_list.Managed(sg.AutoDeinitField).init(allocator.*);
+            errdefer fields.deinit();
+
+            for (st.fields, 0..) |field, idx| {
+                if (try sema.findVisibleAutoDeinitForType(field.ty, loc, s)) |deinit_info| {
+                    try fields.append(.{
+                        .field_index = @intCast(idx),
+                        .deinit_fn = deinit_info.function,
+                        .input = deinit_info.input.node,
+                        .self_field_index = deinit_info.self_field_index,
+                        .fields = &.{},
+                    });
+                    continue;
+                }
+
+                const nested = try buildStructuralAutoDeinitFields(sema, field.ty, loc, s, allocator);
+                if (nested.len > 0) {
+                    try fields.append(.{
+                        .field_index = @intCast(idx),
+                        .deinit_fn = null,
+                        .input = null,
+                        .self_field_index = 0,
+                        .fields = nested,
+                    });
+                    continue;
+                }
+
+                if (field.ty == .struct_type and field.ty.struct_type.identity != null) {
+                    try fields.append(.{
+                        .field_index = @intCast(idx),
+                        .deinit_fn = null,
+                        .input = null,
+                        .self_field_index = 0,
+                        .fields = &.{},
+                    });
+                    continue;
+                }
+
+                if (!typ.isTypeTriviallyCopyable(field.ty, s)) {
+                    fields.deinit();
+                    break :blk &.{};
+                }
+            }
+
+            break :blk try fields.toOwnedSlice();
+        },
+        else => &.{},
+    };
+}
 
 //────────────────────────────────────────────────────────────────────── BUILDER SCOPE
 

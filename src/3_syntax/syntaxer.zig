@@ -471,6 +471,61 @@ pub const Syntaxer = struct {
         return .{ .fields = fields.items };
     }
 
+    fn parseGenericParamsStruct(self: *Syntaxer) SyntaxerError!syn.StructTypeLiteral {
+        if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        var fields = std.array_list.Managed(syn.StructTypeLiteralField).init(self.allocator.*);
+
+        while (!self.tokenIs(.close_parenthesis)) {
+            if (!self.tokenIs(.dot)) {
+                try self.diags.add(self.tokenLocation(), .syntax, "expected generic parameter, found '{s}'", .{@tagName(self.current().content)});
+                return SyntaxerError.ExpectedStructField;
+            }
+            self.advanceOne();
+            const fname = try self.parseName();
+
+            var ftype: ?syn.Type = null;
+            if (self.tokenIs(.colon)) {
+                self.advanceOne();
+                ftype = try self.parseType();
+
+                if (self.tokenIs(.colon)) {
+                    if (ftype == null or ftype.? != .type_name or !std.mem.eql(u8, ftype.?.type_name.string, "Type")) {
+                        try self.diags.add(
+                            self.tokenLocation(),
+                            .syntax,
+                            "generic parameter bounds use '.{s}: Type: Constraint'",
+                            .{fname.string},
+                        );
+                        return SyntaxerError.ExpectedStructField;
+                    }
+                    self.advanceOne();
+                    ftype = try self.parseType();
+                }
+            }
+
+            var def_val: ?*syn.STNode = null;
+            if (self.tokenIs(.equal)) {
+                self.advanceOne();
+                def_val = try self.parseExpression();
+            }
+
+            try fields.append(.{ .name = fname, .type = ftype, .default_value = def_val });
+
+            self.skipNewLinesAndComments();
+            if (self.tokenIs(.comma)) {
+                self.advanceOne();
+                self.skipNewLinesAndComments();
+            }
+        }
+        if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+        self.advanceOne();
+
+        return .{ .fields = fields.items };
+    }
+
     fn parseChoiceTypeLiteral(self: *Syntaxer) SyntaxerError!syn.ChoiceTypeLiteral {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         self.advanceOne();
@@ -901,6 +956,13 @@ pub const Syntaxer = struct {
             else => {},
         }
 
+        var is_once = false;
+        if (self.tokenIs(.keyword_once)) {
+            is_once = true;
+            self.advanceOne();
+            self.skipNewLinesAndComments();
+        }
+
         if (self.tokenIs(.hash)) {
             const hash_loc = self.tokenLocation();
             self.advanceOne();
@@ -939,7 +1001,7 @@ pub const Syntaxer = struct {
         var generic_params_struct: ?syn.StructTypeLiteral = null;
         if (self.tokenIs(.hash)) {
             self.advanceOne();
-            const gen_struct = try self.parseStructTypeLiteral();
+            const gen_struct = try self.parseGenericParamsStruct();
             var names = std.array_list.Managed([]const u8).init(self.allocator.*);
             for (gen_struct.fields) |fld| try names.append(fld.name.string);
             generic_params = names.items;
@@ -955,6 +1017,10 @@ pub const Syntaxer = struct {
 
         // Assignment (store/pointer/index/regular)
         if (self.tokenIs(.equal)) {
+            if (is_once) {
+                try self.diags.add(id_loc, .syntax, "once can only be used on function declarations", .{});
+                return SyntaxerError.ExpectedDeclarationOrAssignment;
+            }
             self.advanceOne();
             const rhs_expr = try self.parseExpression();
 
@@ -991,6 +1057,7 @@ pub const Syntaxer = struct {
                             self.advanceOne();
                             const ef = syn.FunctionDeclaration{
                                 .name = name,
+                                .is_once = is_once,
                                 .generic_params = generic_params,
                                 .generic_params_struct = generic_params_struct,
                                 .input = input,
@@ -1009,6 +1076,7 @@ pub const Syntaxer = struct {
 
                 const fn_decl = syn.FunctionDeclaration{
                     .name = name,
+                    .is_once = is_once,
                     .generic_params = generic_params,
                     .generic_params_struct = generic_params_struct,
                     .input = input,
@@ -1017,6 +1085,10 @@ pub const Syntaxer = struct {
                 };
                 return try self.makeNode(.{ .function_declaration = fn_decl }, id_loc);
             } else {
+                if (is_once) {
+                    try self.diags.add(id_loc, .syntax, "once can only be used on function declarations", .{});
+                    return SyntaxerError.ExpectedDeclarationOrAssignment;
+                }
                 // call: Name(...)
                 const input_node = try self.makeNode(.{ .struct_type_literal = input }, id_loc);
                 return try self.makeNode(
@@ -1036,6 +1108,10 @@ pub const Syntaxer = struct {
         // Abstract relations (implements/defaultsto)
         switch (self.current().content) {
             .identifier => |kw| {
+                if (is_once) {
+                    try self.diags.add(id_loc, .syntax, "once can only be used on function declarations", .{});
+                    return SyntaxerError.ExpectedDeclarationOrAssignment;
+                }
                 if (std.mem.eql(u8, kw, "implements")) {
                     self.advanceOne();
                     const abstract_ty = (try self.parseType()).?; // required

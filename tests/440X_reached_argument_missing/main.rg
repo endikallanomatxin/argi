@@ -1,5 +1,5 @@
 read_value(
-    .stdout: Int32 = #reach stdout, terminal.stdout, system.terminal.stdout,
+    .stdout: Int32 = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
 ) -> (.value: Int32) := {
     value = stdout
 }

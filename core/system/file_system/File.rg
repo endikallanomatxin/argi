@@ -169,18 +169,21 @@ write_byte(.self: $&File, .byte: UInt8) -> () := {
     )
 }
 
-FileReader : Type = (
-    .file     : $&File
+File implements Reader
+File implements Writer
+
+BufferedReader#(.base_type: Type: Reader) : Type = (
+    .base     : $&base_type
     .buffer   : $&UInt8
     .capacity : UIntNative
     .start    : UIntNative
     .end      : UIntNative
 )
 
-init(
-    .p: $&FileReader,
+init#(.base_type: Type: Reader)(
+    .p: $&BufferedReader#(.base_type: base_type),
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .file: $&File,
+    .base: $&base_type,
     .capacity: UIntNative,
 ) -> () := {
     actual_capacity ::= capacity
@@ -191,7 +194,7 @@ init(
     }
 
     p& = (
-        .file = file,
+        .base = base,
         .buffer = allocate(.self = allocator, .size = actual_capacity),
         .capacity = actual_capacity,
         .start = 0,
@@ -199,13 +202,13 @@ init(
     )
 }
 
-deinit(
-    .self: $&FileReader,
+deinit#(.base_type: Type: Reader)(
+    .self: $&BufferedReader#(.base_type: base_type),
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> () := {
     deallocate(.self = allocator, .data = self&.buffer, .size = self&.capacity)
     self& = (
-        .file = self&.file,
+        .base = self&.base,
         .buffer = self&.buffer,
         .capacity = 0,
         .start = 0,
@@ -213,21 +216,21 @@ deinit(
     )
 }
 
-buffered_reader_byte_address(
-    .self: &FileReader,
+buffered_reader_byte_address#(.base_type: Type: Reader)(
+    .self: &BufferedReader#(.base_type: base_type),
     .index: UIntNative,
 ) -> (.address: UIntNative) := {
     base :: UIntNative = cast#(.to: UIntNative)(.value = self&.buffer)
     address = base + index
 }
 
-read_byte(.self: $&FileReader) -> (.result: ReadByte) := {
+read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_type)) -> (.result: ReadByte) := {
     if self&.start < self&.end {
         addr :: UIntNative = buffered_reader_byte_address(.self = self, .index = self&.start).address
         ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
         result = ..ok(.byte = ptr&)
         self& = (
-            .file = self&.file,
+            .base = self&.base,
             .buffer = self&.buffer,
             .capacity = self&.capacity,
             .start = self&.start + 1,
@@ -237,11 +240,11 @@ read_byte(.self: $&FileReader) -> (.result: ReadByte) := {
     }
 
     if self&.capacity == 0 {
-        result = read_byte(.self = self&.file)
+        result = read_byte(.self = self&.base)
         return
     }
 
-    first ::= read_byte(.self = self&.file)
+    first ::= read_byte(.self = self&.base)
     if is(.value = first, .variant = ..end) {
         result = ..end
         return
@@ -252,7 +255,7 @@ read_byte(.self: $&FileReader) -> (.result: ReadByte) := {
     ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
     ptr& = payload.byte
     self& = (
-        .file = self&.file,
+        .base = self&.base,
         .buffer = self&.buffer,
         .capacity = self&.capacity,
         .start = 1,
@@ -261,19 +264,19 @@ read_byte(.self: $&FileReader) -> (.result: ReadByte) := {
     result = ..ok(.byte = payload.byte)
 }
 
-FileReader implements Reader
+BufferedReader#(.base_type: Type: Reader) implements Reader
 
-FileWriter : Type = (
-    .file     : $&File
+BufferedWriter#(.base_type: Type: Writer) : Type = (
+    .base     : $&base_type
     .buffer   : $&UInt8
     .capacity : UIntNative
     .length   : UIntNative
 )
 
-init(
-    .p: $&FileWriter,
+init#(.base_type: Type: Writer)(
+    .p: $&BufferedWriter#(.base_type: base_type),
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .file: $&File,
+    .base: $&base_type,
     .capacity: UIntNative,
 ) -> () := {
     actual_capacity ::= capacity
@@ -284,72 +287,72 @@ init(
     }
 
     p& = (
-        .file = file,
+        .base = base,
         .buffer = allocate(.self = allocator, .size = actual_capacity),
         .capacity = actual_capacity,
         .length = 0,
     )
 }
 
-deinit(
-    .self: $&FileWriter,
+deinit#(.base_type: Type: Writer)(
+    .self: $&BufferedWriter#(.base_type: base_type),
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> () := {
-    file_writer_flush(.self = self)
+    buffered_writer_flush(.self = self)
     deallocate(.self = allocator, .data = self&.buffer, .size = self&.capacity)
     self& = (
-        .file = self&.file,
+        .base = self&.base,
         .buffer = self&.buffer,
         .capacity = 0,
         .length = 0,
     )
 }
 
-buffered_writer_byte_address(
-    .self: &FileWriter,
+buffered_writer_byte_address#(.base_type: Type: Writer)(
+    .self: &BufferedWriter#(.base_type: base_type),
     .index: UIntNative,
 ) -> (.address: UIntNative) := {
     base :: UIntNative = cast#(.to: UIntNative)(.value = self&.buffer)
     address = base + index
 }
 
-file_writer_flush(.self: $&FileWriter) -> () := {
+buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> () := {
     i :: UIntNative = 0
     while i < self&.length {
         addr :: UIntNative = buffered_writer_byte_address(.self = self, .index = i).address
         ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
-        write_byte(.self = self&.file, .byte = ptr&)
+        write_byte(.self = self&.base, .byte = ptr&)
         i = i + 1
     }
 
-    flush(.self = self&.file)
+    flush(.self = self&.base)
     self& = (
-        .file = self&.file,
+        .base = self&.base,
         .buffer = self&.buffer,
         .capacity = self&.capacity,
         .length = 0,
     )
 }
 
-write_byte(.self: $&FileWriter, .byte: UInt8) -> () := {
+write_byte#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type), .byte: UInt8) -> () := {
     addr :: UIntNative = buffered_writer_byte_address(.self = self, .index = self&.length).address
     ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
     ptr& = byte
     next_length ::= self&.length + 1
     self& = (
-        .file = self&.file,
+        .base = self&.base,
         .buffer = self&.buffer,
         .capacity = self&.capacity,
         .length = next_length,
     )
 
     if next_length == self&.capacity {
-        file_writer_flush(.self = self)
+        buffered_writer_flush(.self = self)
     }
 }
 
-flush(.self: $&FileWriter) -> () := {
-    file_writer_flush(.self = self)
+flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> () := {
+    buffered_writer_flush(.self = self)
 }
 
-FileWriter implements Writer
+BufferedWriter#(.base_type: Type: Writer) implements Writer
