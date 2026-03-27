@@ -1,10 +1,15 @@
 main(.system: System = System()) -> (.status_code: Int32 = 0) := {
-    if system.args | length(&_) < 2 {
+    argc ::= system.args | length(&_) | _.count
+    if argc < 2 {
         status_code = 1
         return
     }
 
-    path := system.args[1]
-    text := read_file(system.file_sys, path)
-    print(text)
+    i :: UIntNative = 1
+    while i < argc {
+        path := system.args[i]
+        text ::= read_file(system.file_sys, path)
+        print(text)
+        i = i + 1
+    }
 }
