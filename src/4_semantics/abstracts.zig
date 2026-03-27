@@ -516,6 +516,24 @@ fn buildExpectedInputWithConcrete(rq: *const AbstractFunctionReqSem, concrete: s
                 .child = child,
             };
             break :blk sg.Type{ .pointer_type = sem_ptr };
+        } else if (rq.input_abstract_requirements.len > i and rq.input_abstract_requirements[i] != null) blk: {
+            const abs_name = rq.input_abstract_requirements[i].?;
+            const abs_ptr = try allocator.create(sg.AbstractType);
+            abs_ptr.* = .{ .name = abs_name };
+            const abs_ty: sg.Type = .{ .abstract_type = abs_ptr };
+
+            if (f.ty == .pointer_type) {
+                const child = try allocator.create(sg.Type);
+                child.* = abs_ty;
+                const sem_ptr = try allocator.create(sg.PointerType);
+                sem_ptr.* = .{
+                    .mutability = f.ty.pointer_type.mutability,
+                    .child = child,
+                };
+                break :blk sg.Type{ .pointer_type = sem_ptr };
+            }
+
+            break :blk abs_ty;
         } else blk: {
             break :blk f.ty;
         };
@@ -542,6 +560,24 @@ fn buildExpectedOutputWithConcrete(rq: *const AbstractFunctionReqSem, concrete: 
                 .child = child,
             };
             break :blk sg.Type{ .pointer_type = sem_ptr };
+        } else if (rq.output_abstract_requirements.len > i and rq.output_abstract_requirements[i] != null) blk: {
+            const abs_name = rq.output_abstract_requirements[i].?;
+            const abs_ptr = try allocator.create(sg.AbstractType);
+            abs_ptr.* = .{ .name = abs_name };
+            const abs_ty: sg.Type = .{ .abstract_type = abs_ptr };
+
+            if (f.ty == .pointer_type) {
+                const child = try allocator.create(sg.Type);
+                child.* = abs_ty;
+                const sem_ptr = try allocator.create(sg.PointerType);
+                sem_ptr.* = .{
+                    .mutability = f.ty.pointer_type.mutability,
+                    .child = child,
+                };
+                break :blk sg.Type{ .pointer_type = sem_ptr };
+            }
+
+            break :blk abs_ty;
         } else blk: {
             break :blk f.ty;
         };
@@ -623,7 +659,7 @@ fn existsFunctionForRequirement(
             const expected_out = try buildExpectedOutputWithConcrete(&rq, concrete, allocator);
 
             for (lst.items) |tmpl| {
-                if (tmpl.dispatch_kind != .regular) continue;
+                if (tmpl.dispatch_kind != .regular and tmpl.dispatch_kind != .abstract_contract) continue;
 
                 var bindings = TemplateBindings.init(allocator);
                 defer bindings.deinit();

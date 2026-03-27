@@ -1129,6 +1129,12 @@ test "494_keep_string_auto_deinit" {
     try runExpect(test_path, 11);
 }
 
+test "495_abstract_requirement_reached_default" {
+    const test_path = "tests/495_abstract_requirement_reached_default";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "62_folder_module_namespace" {
     const test_path = "tests/62_folder_module_namespace";
     try expectSuccessfulBuild(test_path);
