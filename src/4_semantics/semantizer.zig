@@ -1403,6 +1403,9 @@ pub const Semantizer = struct {
             },
 
             .binary_operation => |bo| self.handleBinOp(bo, s) catch |err| blk: {
+                if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
+                    break :blk err;
+                }
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -1413,6 +1416,9 @@ pub const Semantizer = struct {
             },
 
             .comparison => |c| self.handleComparison(c, s) catch |err| blk: {
+                if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
+                    break :blk err;
+                }
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -1423,6 +1429,9 @@ pub const Semantizer = struct {
             },
 
             .logical_operation => |lo| self.handleLogicalOperation(lo, s) catch |err| blk: {
+                if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
+                    break :blk err;
+                }
                 try self.diags.add(
                     n.location,
                     .semantic,

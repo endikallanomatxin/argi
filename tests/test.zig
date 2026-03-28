@@ -1392,6 +1392,12 @@ test "feature_tests/modules/16X_root_relative_missing_import" {
     );
 }
 
+test "feature_tests/modules/17_multi_file_module_forward_calls" {
+    const test_path = "tests/feature_tests/modules/17_multi_file_module_forward_calls";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/control_flow/03_for_array" {
     const test_path = "tests/feature_tests/control_flow/03_for_array";
     try expectSuccessfulBuild(test_path);
