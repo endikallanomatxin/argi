@@ -39,7 +39,7 @@ deinit(
 }
 
 read_line_into_buffer(
-    .buffer: $&TextBuffer,
+    .buffer: $&String,
     .stdin: $&Reader = #reach stdin, terminal.stdin_buffered_reader, system.terminal.stdin_buffered_reader,
 ) -> () := {
     clear(.self = buffer)
@@ -95,20 +95,6 @@ print(
     flush(.self = stdout)
 }
 
-print_text_buffer(
-    .stdout: $&Writer = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
-    .buffer: &TextBuffer,
-) -> () := {
-    write_text_buffer(.writer = stdout, .buffer = buffer)
-}
-
-print_line_text_buffer(
-    .stdout: $&Writer = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
-    .buffer: &TextBuffer,
-) -> () := {
-    write_line_text_buffer(.writer = stdout, .buffer = buffer)
-}
-
 flush(
     .stdout: $&Writer = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
 ) -> () := {
@@ -124,20 +110,6 @@ print_error(
         write_byte(.self = stderr, .byte = bytes_get(.string = &value, .index = i).byte)
         i = i + 1
     }
-}
-
-print_error_text_buffer(
-    .stderr: $&Writer = #reach stderr, terminal.stderr_buffered_writer, system.terminal.stderr_buffered_writer,
-    .buffer: &TextBuffer,
-) -> () := {
-    write_text_buffer(.writer = stderr, .buffer = buffer)
-}
-
-print_error_line_text_buffer(
-    .stderr: $&Writer = #reach stderr, terminal.stderr_buffered_writer, system.terminal.stderr_buffered_writer,
-    .buffer: &TextBuffer,
-) -> () := {
-    write_line_text_buffer(.writer = stderr, .buffer = buffer)
 }
 
 flush_error(

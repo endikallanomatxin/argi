@@ -1013,8 +1013,8 @@ test "feature_tests/io/07_file_open_close" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/text/03_text_buffer_io" {
-    const test_path = "tests/feature_tests/text/03_text_buffer_io";
+test "feature_tests/text/03_string_buffer_io" {
+    const test_path = "tests/feature_tests/text/03_string_buffer_io";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
@@ -1037,8 +1037,8 @@ test "feature_tests/control_flow/15_logical_and_or" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/text/04_text_buffer_helpers" {
-    const test_path = "tests/feature_tests/text/04_text_buffer_helpers";
+test "feature_tests/text/04_string_buffer_helpers" {
+    const test_path = "tests/feature_tests/text/04_string_buffer_helpers";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }

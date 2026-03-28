@@ -50,6 +50,30 @@ init (
     bytes_set(.string = p, .index = length, .value = 0)
 }
 
+init (
+    .p: $&String,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .capacity: UIntNative,
+) -> () := {
+    actual_capacity ::= capacity
+    one :: UIntNative = 1
+
+    if actual_capacity == 0 {
+        actual_capacity = one
+    }
+
+    allocation_size ::= actual_capacity + 1
+    data ::= allocate(.self = allocator, .size = allocation_size)
+    p& = (
+        .allocation = (
+            .data = data,
+            .size = allocation_size,
+        ),
+        .length = 0,
+    )
+    bytes_set(.string = p, .index = 0, .value = 0)
+}
+
 deinit (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&String,
@@ -125,6 +149,67 @@ as_view(
         .data = cast#(.to: UIntNative)(.value = self&.allocation.data),
         .length = self&.length,
     )
+}
+
+capacity(
+    .self: &String,
+) -> (.value: UIntNative) := {
+    if self&.allocation.size == 0 {
+        value = 0
+        return
+    }
+
+    value = self&.allocation.size - 1
+}
+
+clear(.self: $&String) -> () := {
+    self& = (
+        .allocation = self&.allocation,
+        .length = 0,
+    )
+    if self&.allocation.size > 0 {
+        bytes_set(.string = self, .index = 0, .value = 0)
+    }
+}
+
+has_space(.self: &String) -> (.ok: Bool) := {
+    ok = self&.length < capacity(.self = self).value
+}
+
+push_byte(.self: $&String, .byte: UInt8) -> () := {
+    if has_space(.self = self).ok {
+    } else {
+        return
+    }
+
+    bytes_set(.string = self, .index = self&.length, .value = byte)
+    self& = (
+        .allocation = self&.allocation,
+        .length = self&.length + 1,
+    )
+    bytes_set(.string = self, .index = self&.length, .value = 0)
+}
+
+push_c_string(
+    .self: $&String,
+    .text: &Char,
+) -> () := {
+    i :: UIntNative = 0
+    while 1 == 1 {
+        addr :: UIntNative = cast#(.to: UIntNative)(.value = text) + i
+        ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
+        if ptr& == 0 {
+            break
+        }
+
+        if has_space(.self = self).ok {
+        } else {
+            break
+        }
+
+        push_byte(.self = self, .byte = ptr&)
+        i = i + 1
+    }
 }
 
 operator ==(
