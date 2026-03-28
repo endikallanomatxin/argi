@@ -4518,9 +4518,7 @@ pub const Semantizer = struct {
         return self.tryResolveRegularCallCallee(call, input_te, s, loc) catch |err| switch (err) {
             error.SymbolNotFound => {
                 if (self.defer_unknown_top_level and self.current_top_node != null) {
-                    if (!(try self.hasVisibleFunctionNamed(call.callee, s, loc))) {
-                        return error.SymbolNotFound;
-                    }
+                    return error.SymbolNotFound;
                 }
                 if (try self.addMissingAbstractImplementationDiagnostic(call.callee, input_te.ty, s, loc)) {
                     return error.Reported;
