@@ -57,7 +57,10 @@ deinit (
     zero :: UIntNative = 0
     deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
     self& = (
-        .allocation = self&.allocation,
+        .allocation = (
+            .data = self&.allocation.data,
+            .size = self&.allocation.size,
+        ),
         .length = zero,
     )
 }
@@ -122,6 +125,64 @@ as_view(
         .data = cast#(.to: UIntNative)(.value = self&.allocation.data),
         .length = self&.length,
     )
+}
+
+operator ==(
+    .left: &String,
+    .right: &String,
+) -> (.ok: Bool) := {
+    left_view ::= as_view(.self = left)
+    right_view ::= as_view(.self = right)
+    ok = equals(.left = &left_view, .right = &right_view).ok
+}
+
+operator ==(
+    .left: &String,
+    .right: &StringView,
+) -> (.ok: Bool) := {
+    left_view ::= as_view(.self = left)
+    ok = equals(.left = &left_view, .right = right).ok
+}
+
+operator ==(
+    .left: &String,
+    .right: &Char,
+) -> (.ok: Bool) := {
+    left_view ::= as_view(.self = left)
+    ok = equals(.left = &left_view, .right = right).ok
+}
+
+operator !=(
+    .left: &String,
+    .right: &String,
+) -> (.ok: Bool) := {
+    if left == right {
+        ok = false
+    } else {
+        ok = true
+    }
+}
+
+operator !=(
+    .left: &String,
+    .right: &StringView,
+) -> (.ok: Bool) := {
+    if left == right {
+        ok = false
+    } else {
+        ok = true
+    }
+}
+
+operator !=(
+    .left: &String,
+    .right: &Char,
+) -> (.ok: Bool) := {
+    if left == right {
+        ok = false
+    } else {
+        ok = true
+    }
 }
 
 as_c_string(

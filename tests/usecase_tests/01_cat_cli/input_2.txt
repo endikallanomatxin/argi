@@ -1,0 +1,2 @@
+And now a second file.
+Cat should concatenate both.

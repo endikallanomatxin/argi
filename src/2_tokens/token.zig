@@ -47,6 +47,8 @@ pub const Content = union(enum) {
     keyword_break: struct {},
     keyword_continue: struct {},
     keyword_once: struct {},
+    keyword_and: struct {},
+    keyword_or: struct {},
 
     // Variables and constants
     colon: struct {},

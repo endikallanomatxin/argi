@@ -289,6 +289,7 @@ pub const Semantizer = struct {
         const fake_binding = try self.allocator.create(sg.BindingDeclaration);
         fake_binding.* = .{
             .name = "__auto_deinit_target",
+            .location = loc,
             .origin_file = loc.file,
             .mutability = .variable,
             .ty = ty,
@@ -667,6 +668,10 @@ pub const Semantizer = struct {
                 try self.walkNodeOnceReachability(current_fn, cmp.left, state);
                 try self.walkNodeOnceReachability(current_fn, cmp.right, state);
             },
+            .logical_operation => |lo| {
+                try self.walkNodeOnceReachability(current_fn, lo.left, state);
+                try self.walkNodeOnceReachability(current_fn, lo.right, state);
+            },
             .return_statement => |ret| {
                 if (ret.expression) |expr| {
                     try self.walkNodeOnceReachability(current_fn, expr, state);
@@ -788,6 +793,7 @@ pub const Semantizer = struct {
             .address_of => |addr| syntaxNodeContainsPipePlaceholder(addr.value),
             .binary_operation => |bo| syntaxNodeContainsPipePlaceholder(bo.left) or syntaxNodeContainsPipePlaceholder(bo.right),
             .comparison => |cmp| syntaxNodeContainsPipePlaceholder(cmp.left) or syntaxNodeContainsPipePlaceholder(cmp.right),
+            .logical_operation => |lo| syntaxNodeContainsPipePlaceholder(lo.left) or syntaxNodeContainsPipePlaceholder(lo.right),
             .index_access => |ia| syntaxNodeContainsPipePlaceholder(ia.value) or syntaxNodeContainsPipePlaceholder(ia.index),
             .function_call => |fc| syntaxNodeContainsPipePlaceholder(fc.input),
             .struct_value_literal => |sv| blk: {
@@ -930,6 +936,10 @@ pub const Semantizer = struct {
         mutability: syn.PointerMutability,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
+        if (inner.ty == .pointer_type and mutability == .read_only) {
+            return inner;
+        }
+
         switch (inner.node.content) {
             .binding_use => |binding| {
                 if (mutability == .read_write and binding.mutability != .variable) {
@@ -1408,6 +1418,16 @@ pub const Semantizer = struct {
                     .semantic,
                     "error in comparison '{any}': {s}",
                     .{ c.operator, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .logical_operation => |lo| self.handleLogicalOperation(lo, s) catch |err| blk: {
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in logical operation: {s}",
+                    .{@errorName(err)},
                 );
                 break :blk err;
             },
@@ -2271,6 +2291,7 @@ pub const Semantizer = struct {
         const binding = try self.allocator.create(sg.BindingDeclaration);
         binding.* = .{
             .name = field_name,
+            .location = loc,
             .origin_file = ctx.location.file,
             .mutability = .constant,
             .ty = expected_ty,
@@ -2513,6 +2534,7 @@ pub const Semantizer = struct {
         const bd = try self.allocator.create(sg.BindingDeclaration);
         bd.* = .{
             .name = d.name.string,
+            .location = loc,
             .origin_file = loc.file,
             .mutability = d.mutability,
             .ty = ty,
@@ -2709,6 +2731,7 @@ pub const Semantizer = struct {
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{
                 .name = fld.name.string,
+                .location = fld.name.location,
                 .origin_file = loc.file,
                 .mutability = .constant,
                 .ty = ty,
@@ -2738,6 +2761,7 @@ pub const Semantizer = struct {
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{
                 .name = fld.name.string,
+                .location = fld.name.location,
                 .origin_file = loc.file,
                 .mutability = .variable,
                 .ty = ty,
@@ -3537,7 +3561,7 @@ pub const Semantizer = struct {
         lit.* = .{
             .fields = fields,
             .ty = .{ .struct_type = st_ptr },
-            .dispatch_prefix_positional_count = 0,
+            .dispatch_prefix_positional_count = sl.positional_prefix_count,
         };
 
         const n = try sg.makeSGNode(.{ .struct_value_literal = lit }, undefined, self.allocator);
@@ -4693,7 +4717,7 @@ pub const Semantizer = struct {
         const actual_struct = input_te.ty.struct_type;
         const actual_value = input_te.node.content.struct_value_literal;
         const positional_prefix: usize = @min(actual_value.dispatch_prefix_positional_count, actual_value.fields.len);
-
+ 
         if (positional_prefix > expected.fields.len) {
             return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_node, s, self.allocator, self.diags);
         }
@@ -4827,7 +4851,6 @@ pub const Semantizer = struct {
         input_te: typ.TypedExpr,
         s: *Scope,
     ) u32 {
-        _ = self;
         _ = s;
 
         if (input_te.ty != .struct_type or input_te.node.content != .struct_value_literal) {
@@ -4842,13 +4865,27 @@ pub const Semantizer = struct {
 
         for (expected.fields[0..positional_prefix], 0..) |exp_field, idx| {
             if (idx >= actual_struct.fields.len) break;
-            score += abs.specificityScore(exp_field.ty, actual_struct.fields[idx].ty);
+            var actual_field_expr = typ.TypedExpr{
+                .node = @constCast(actual_value.fields[idx].value),
+                .ty = actual_struct.fields[idx].ty,
+            };
+            if (self.tryImplicitPointerLiftForDispatch(exp_field.ty, actual_field_expr)) |lifted| {
+                actual_field_expr = lifted;
+            }
+            score += abs.specificityScore(exp_field.ty, actual_field_expr.ty);
         }
 
         for (actual_value.fields[positional_prefix..]) |actual_field| {
             const actual_field_ty = findStructTypeFieldByNameFrom(actual_struct.fields, positional_prefix, actual_field.name) orelse continue;
             const exp_field = typ.findFieldByName(expected, actual_field.name) orelse continue;
-            score += abs.specificityScore(exp_field.ty, actual_field_ty.ty);
+            var actual_field_expr = typ.TypedExpr{
+                .node = @constCast(actual_field.value),
+                .ty = actual_field_ty.ty,
+            };
+            if (self.tryImplicitPointerLiftForDispatch(exp_field.ty, actual_field_expr)) |lifted| {
+                actual_field_expr = lifted;
+            }
+            score += abs.specificityScore(exp_field.ty, actual_field_expr.ty);
         }
 
         return score;
@@ -4872,6 +4909,7 @@ pub const Semantizer = struct {
         const fake_binding = try self.allocator.create(sg.BindingDeclaration);
         fake_binding.* = .{
             .name = "__init_target",
+            .location = loc,
             .origin_file = loc.file,
             .mutability = .variable,
             .ty = init_struct.fields[0].ty,
@@ -4914,7 +4952,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     loc,
                     .semantic,
-                    "pipe right-hand side must use named arguments",
+                    "pipe right-hand side must be a call with explicit arguments",
                     .{},
                 );
                 return error.Reported;
@@ -4931,10 +4969,8 @@ pub const Semantizer = struct {
                 return error.Reported;
             }
 
-            var field_names = std.array_list.Managed([]const u8).init(self.allocator.*);
-            defer field_names.deinit();
-            var evaluated_args = std.array_list.Managed(typ.TypedExpr).init(self.allocator.*);
-            defer evaluated_args.deinit();
+            var args = std.array_list.Managed(CallArg).init(self.allocator.*);
+            defer args.deinit();
 
             var found_placeholder = false;
             for (sv.fields) |field| {
@@ -4954,11 +4990,13 @@ pub const Semantizer = struct {
             }
 
             for (sv.fields) |field| {
-                try field_names.append(field.name.string);
-                try evaluated_args.append(try self.evalPipeArg(field.value, left_te, s));
+                try args.append(.{
+                    .name = field.name.string,
+                    .expr = try self.evalPipeArg(field.value, left_te, s),
+                });
             }
 
-            var input_te = try self.buildNamedPipeInput(field_names.items, evaluated_args.items);
+            var input_te = try self.buildCallInputWithPositionalPrefix(args.items, sv.positional_prefix_count);
 
             if (std.mem.eql(u8, call.callee, "is")) {
                 return self.handleIsBuiltinFromInput(input_te, loc, s);
@@ -6102,12 +6140,12 @@ pub const Semantizer = struct {
 
         for (in_struct_ptr.fields) |fld| {
             const bd = try self.allocator.create(sg.BindingDeclaration);
-            bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
+            bd.* = .{ .name = fld.name, .location = tmpl.location, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
             try child.bindings.put(fld.name, bd);
         }
         for (out_struct_ptr.fields) |fld| {
             const bd = try self.allocator.create(sg.BindingDeclaration);
-            bd.* = .{ .name = fld.name, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
+            bd.* = .{ .name = fld.name, .location = tmpl.location, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
             try child.bindings.put(fld.name, bd);
         }
 
@@ -6284,6 +6322,60 @@ pub const Semantizer = struct {
         var lhs = try self.visitNode(c.left.*, s);
         var rhs = try self.visitNode(c.right.*, s);
 
+        const operator_name = switch (c.operator) {
+            .equal => "operator ==",
+            .not_equal => "operator !=",
+            else => null,
+        };
+
+        if (operator_name) |name| {
+            var input_te = try self.buildCallInput(&[_]CallArg{
+                .{ .name = "left", .expr = lhs },
+                .{ .name = "right", .expr = rhs },
+            });
+            const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+
+            var chosen: ?*sg.FunctionDeclaration = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
+                error.SymbolNotFound => null,
+                else => return err,
+            };
+
+            if (chosen == null) {
+                chosen = self.resolveVisibleOverload(name, input_te, s, c.left.*.location) catch |err| switch (err) {
+                    error.SymbolNotFound => null,
+                    error.AmbiguousOverload => {
+                        try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, c.left.*.location);
+                        return error.Reported;
+                    },
+                    else => return err,
+                };
+            }
+
+            if (chosen) |chosen_fn| {
+                input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, c.left, s);
+
+                const result_ty = typ.functionReturnType(chosen_fn);
+                if (!typ.typesExactlyEqual(result_ty, .{ .builtin = .Bool })) {
+                    const actual = try self.formatTypeText(result_ty, s);
+                    defer actual.deinit();
+                    try self.diags.add(
+                        c.left.*.location,
+                        .semantic,
+                        "comparison operator '{s}' must return 'Bool', got '{s}'",
+                        .{ name, actual.bytes },
+                    );
+                    return error.Reported;
+                }
+
+                const fc_ptr = try self.allocator.create(sg.FunctionCall);
+                fc_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
+
+                const node = try sg.makeSGNode(.{ .function_call = fc_ptr }, c.left.*.location, self.allocator);
+                try s.nodes.append(node);
+                return .{ .node = node, .ty = result_ty };
+            }
+        }
+
         rhs = try typ.coerceExprToType(lhs.ty, rhs, c.right, s, self.allocator, self.diags);
         lhs = try typ.coerceExprToType(rhs.ty, lhs, c.left, s, self.allocator, self.diags);
 
@@ -6309,6 +6401,54 @@ pub const Semantizer = struct {
         const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, undefined, self.allocator);
         try s.nodes.append(node);
         return .{ .node = node, .ty = .{ .builtin = .Bool } };
+    }
+
+    fn handleLogicalOperation(
+        self: *Semantizer,
+        lo: syn.LogicalOperation,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        var lhs = try self.visitNode(lo.left.*, s);
+        var rhs = try self.visitNode(lo.right.*, s);
+        const bool_ty: sg.Type = .{ .builtin = .Bool };
+
+        lhs = try typ.coerceExprToType(bool_ty, lhs, lo.left, s, self.allocator, self.diags);
+        rhs = try typ.coerceExprToType(bool_ty, rhs, lo.right, s, self.allocator, self.diags);
+
+        if (!typ.typesExactlyEqual(lhs.ty, bool_ty)) {
+            const actual = try self.formatTypeText(lhs.ty, s);
+            defer actual.deinit();
+            try self.diags.add(
+                lo.left.*.location,
+                .semantic,
+                "left operand of logical operator must be 'Bool', got '{s}'",
+                .{actual.bytes},
+            );
+            return error.Reported;
+        }
+
+        if (!typ.typesExactlyEqual(rhs.ty, bool_ty)) {
+            const actual = try self.formatTypeText(rhs.ty, s);
+            defer actual.deinit();
+            try self.diags.add(
+                lo.right.*.location,
+                .semantic,
+                "right operand of logical operator must be 'Bool', got '{s}'",
+                .{actual.bytes},
+            );
+            return error.Reported;
+        }
+
+        const logical_ptr = try self.allocator.create(sg.LogicalOperation);
+        logical_ptr.* = .{
+            .operator = lo.operator,
+            .left = lhs.node,
+            .right = rhs.node,
+        };
+
+        const node = try sg.makeSGNode(.{ .logical_operation = logical_ptr.* }, undefined, self.allocator);
+        try s.nodes.append(node);
+        return .{ .node = node, .ty = bool_ty };
     }
 
     //──────────────────────────────────────────────────── RETURN
@@ -6486,6 +6626,7 @@ pub const Semantizer = struct {
             const tmp_binding = try self.allocator.create(sg.BindingDeclaration);
             tmp_binding.* = .{
                 .name = iterable_name,
+                .location = loc,
                 .origin_file = loc.file,
                 .mutability = .constant,
                 .ty = iterable_ty,
@@ -6708,6 +6849,7 @@ pub const Semantizer = struct {
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{
                 .name = binding_name.string,
+                .location = binding_name.location,
                 .origin_file = binding_name.location.file,
                 .mutability = .constant,
                 .ty = resolved_payload_ty,
@@ -7121,6 +7263,10 @@ pub const Semantizer = struct {
         }
 
         const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len == 1 and svl.positional_prefix_count == 1) {
+            return self.visitNode(svl.fields[0].value.*, s);
+        }
+
         if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, arg_name)) {
             try self.diags.add(
                 arg_node.location,
@@ -7146,6 +7292,9 @@ pub const Semantizer = struct {
             return error.Reported;
         }
         const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len == 1 and svl.positional_prefix_count == 1) {
+            return svl.fields[0].value;
+        }
         if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, arg_name)) {
             try self.diags.add(
                 arg_node.location,
@@ -7578,10 +7727,13 @@ pub const Semantizer = struct {
         var value_te: typ.TypedExpr = undefined;
         if (arg_node.content == .struct_value_literal) {
             const sv = arg_node.content.struct_value_literal;
-            if (sv.fields.len != 1 or !std.mem.eql(u8, sv.fields[0].name.string, "value")) {
+            if (sv.fields.len == 1 and sv.positional_prefix_count == 1) {
+                value_te = try self.visitNode(sv.fields[0].value.*, s);
+            } else if (sv.fields.len != 1 or !std.mem.eql(u8, sv.fields[0].name.string, "value")) {
                 return error.SymbolNotFound;
+            } else {
+                value_te = try self.visitNode(sv.fields[0].value.*, s);
             }
-            value_te = try self.visitNode(sv.fields[0].value.*, s);
         } else {
             value_te = try self.visitNode(arg_node, s);
         }
@@ -7651,6 +7803,12 @@ pub const Semantizer = struct {
         }
 
         const svl = arg_node.content.struct_value_literal;
+        if (svl.fields.len == 1 and svl.positional_prefix_count == 1) {
+            const tv = try self.visitNode(svl.fields[0].value.*, s);
+            const loc = call.input.*.location;
+            return try typ.makeTypeLiteral(self.allocator, loc, tv.ty);
+        }
+
         if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, "value")) {
             try self.diags.add(
                 arg_node.location,

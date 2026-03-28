@@ -56,6 +56,7 @@ pub const Content = union(enum) {
     continue_statement: struct {},
     binary_operation: BinaryOperation,
     comparison: Comparison,
+    logical_operation: LogicalOperation,
     if_statement: IfStatement,
     for_statement: ForStatement,
     while_statement: WhileStatement,
@@ -206,6 +207,7 @@ pub const StructTypeLiteralField = struct {
 
 pub const StructValueLiteral = struct {
     fields: []const StructValueLiteralField,
+    positional_prefix_count: u32 = 0,
 };
 
 pub const ChoiceTypeLiteral = struct {
@@ -264,6 +266,17 @@ pub const BinaryOperation = struct {
 
 pub const Comparison = struct {
     operator: tok.ComparisonOperator,
+    left: *STNode,
+    right: *STNode,
+};
+
+pub const LogicalOperator = enum {
+    and_,
+    or_,
+};
+
+pub const LogicalOperation = struct {
+    operator: LogicalOperator,
     left: *STNode,
     right: *STNode,
 };

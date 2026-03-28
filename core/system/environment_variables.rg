@@ -95,22 +95,10 @@ operator get[](
     .self: &EnvironmentVariables,
     .index: StringView,
 ) -> (.value: Nullable#(.t: StringView)) := {
-    size :: UIntNative = index.length + 1
-    raw_buffer : $&Any = malloc(.size = size)
-    temp_key : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = raw_buffer))
-    i :: UIntNative = 0
-    while i < index.length {
-        ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = temp_key) + i)
-        ptr& = bytes_get(.view = &index, .index = i).byte
-        i = i + 1
-    }
-    nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = temp_key) + index.length)
-    nul_ptr& = 0
-    c_key : CString = (
-        .data = cast#(.to: UIntNative)(.value = temp_key)
-    )
-    found ::= get(.self = self, .key = c_key)
-    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = temp_key)))
+    allocator :: CAllocator = CAllocator()
+    c_key ::= as_c_string(.self = index, .allocator = $&allocator)
+    found ::= get(.self = self, .key = c_key.text)
+    deinit(.self = $&c_key.storage, .allocator = $&allocator)
 
     if is(.value = found, .variant = ..some) {
         payload ::= found..some

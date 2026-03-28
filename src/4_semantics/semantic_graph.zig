@@ -56,6 +56,7 @@ pub const Content = union(enum) {
     struct_field_store: StructFieldStore,
     binary_operation: BinaryOperation,
     comparison: Comparison,
+    logical_operation: LogicalOperation,
     return_statement: *ReturnStatement,
     if_statement: *IfStatement,
 
@@ -264,6 +265,7 @@ pub const FunctionDeclaration = struct {
 
 pub const BindingDeclaration = struct {
     name: []const u8,
+    location: tok.Location,
     origin_file: []const u8,
     mutability: syn.Mutability,
     ty: Type,
@@ -325,6 +327,14 @@ pub const BinaryOperation = struct {
 
 pub const Comparison = struct {
     operator: tok.ComparisonOperator,
+    left: *const SGNode,
+    right: *const SGNode,
+};
+
+pub const LogicalOperator = syn.LogicalOperator;
+
+pub const LogicalOperation = struct {
+    operator: LogicalOperator,
     left: *const SGNode,
     right: *const SGNode,
 };

@@ -242,6 +242,20 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             printNode(c.right, lvl + 2);
         },
 
+        .logical_operation => |lo| {
+            const op = switch (lo.operator) {
+                .and_ => "and",
+                .or_ => "or",
+            };
+            std.debug.print("Logical \"{s}\"\n", .{op});
+            indent(lvl + 1);
+            std.debug.print("Left:\n", .{});
+            printNode(lo.left, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("Right:\n", .{});
+            printNode(lo.right, lvl + 2);
+        },
+
         .return_statement => |r| {
             std.debug.print("Return\n", .{});
             if (r.expression) |e| printNode(e, lvl + 1);
