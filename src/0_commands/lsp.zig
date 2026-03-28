@@ -1,5 +1,6 @@
 const std = @import("std");
 const json = std.json;
+const log = std.log.scoped(.argi_lsp);
 
 const service = @import("lsp_service.zig");
 
@@ -51,7 +52,8 @@ const LanguageServer = struct {
             };
             if (payload.len == 0) continue;
 
-            var parsed = json.parseFromSlice(json.Value, self.allocator, payload, .{}) catch {
+            var parsed = json.parseFromSlice(json.Value, self.allocator, payload, .{}) catch |err| {
+                log.warn("failed to parse JSON-RPC payload: {s}", .{@errorName(err)});
                 continue;
             };
             defer parsed.deinit();
@@ -69,34 +71,67 @@ const LanguageServer = struct {
 
             if (std.mem.eql(u8, method, "initialize")) {
                 if (id_value) |id| {
-                    self.handleInitialize(&writer, id, params_value) catch {};
+                    self.handleInitialize(&writer, id, params_value) catch |err| {
+                        log.err("initialize failed: {s}", .{@errorName(err)});
+                        self.respondInternalError(&writer, id, "initialize failed") catch {};
+                    };
                 }
             } else if (std.mem.eql(u8, method, "initialized")) {
                 // No-op
             } else if (std.mem.eql(u8, method, "textDocument/didOpen")) {
-                self.handleDidOpen(&writer, params_value) catch {};
+                self.handleDidOpen(&writer, params_value) catch |err| {
+                    log.err("didOpen failed: {s}", .{@errorName(err)});
+                };
             } else if (std.mem.eql(u8, method, "textDocument/didChange")) {
-                self.handleDidChange(&writer, params_value) catch {};
+                self.handleDidChange(&writer, params_value) catch |err| {
+                    log.err("didChange failed: {s}", .{@errorName(err)});
+                };
             } else if (std.mem.eql(u8, method, "textDocument/didClose")) {
-                self.handleDidClose(&writer, params_value) catch {};
+                self.handleDidClose(&writer, params_value) catch |err| {
+                    log.err("didClose failed: {s}", .{@errorName(err)});
+                };
             } else if (std.mem.eql(u8, method, "shutdown")) {
-                if (id_value) |id| self.handleShutdown(&writer, id) catch {};
+                if (id_value) |id| self.handleShutdown(&writer, id) catch |err| {
+                    log.err("shutdown failed: {s}", .{@errorName(err)});
+                    self.respondInternalError(&writer, id, "shutdown failed") catch {};
+                };
             } else if (std.mem.eql(u8, method, "exit")) {
                 break;
             } else if (std.mem.eql(u8, method, "textDocument/semanticTokens/full")) {
-                if (id_value) |id| self.handleSemanticTokensFull(&writer, id, params_value) catch {};
+                if (id_value) |id| self.handleSemanticTokensFull(&writer, id, params_value) catch |err| {
+                    log.err("semanticTokens/full failed: {s}", .{@errorName(err)});
+                    self.respondInternalError(&writer, id, "semantic tokens failed") catch {};
+                };
             } else if (std.mem.eql(u8, method, "textDocument/semanticTokens/range")) {
-                if (id_value) |id| self.handleSemanticTokensRange(&writer, id, params_value) catch {};
+                if (id_value) |id| self.handleSemanticTokensRange(&writer, id, params_value) catch |err| {
+                    log.err("semanticTokens/range failed: {s}", .{@errorName(err)});
+                    self.respondInternalError(&writer, id, "semantic tokens failed") catch {};
+                };
             } else if (std.mem.eql(u8, method, "textDocument/hover")) {
-                if (id_value) |id| self.handleHover(&writer, id, params_value) catch {};
+                if (id_value) |id| self.handleHover(&writer, id, params_value) catch |err| {
+                    log.err("hover failed: {s}", .{@errorName(err)});
+                    self.respondInternalError(&writer, id, "hover failed") catch {};
+                };
             } else if (std.mem.eql(u8, method, "textDocument/definition")) {
-                if (id_value) |id| self.handleDefinition(&writer, id, params_value) catch {};
+                if (id_value) |id| self.handleDefinition(&writer, id, params_value) catch |err| {
+                    log.err("definition failed: {s}", .{@errorName(err)});
+                    self.respondInternalError(&writer, id, "definition failed") catch {};
+                };
             } else if (std.mem.eql(u8, method, "textDocument/references")) {
-                if (id_value) |id| self.handleReferences(&writer, id, params_value) catch {};
+                if (id_value) |id| self.handleReferences(&writer, id, params_value) catch |err| {
+                    log.err("references failed: {s}", .{@errorName(err)});
+                    self.respondInternalError(&writer, id, "references failed") catch {};
+                };
             } else if (std.mem.eql(u8, method, "textDocument/prepareRename")) {
-                if (id_value) |id| self.handlePrepareRename(&writer, id, params_value) catch {};
+                if (id_value) |id| self.handlePrepareRename(&writer, id, params_value) catch |err| {
+                    log.err("prepareRename failed: {s}", .{@errorName(err)});
+                    self.respondInternalError(&writer, id, "prepare rename failed") catch {};
+                };
             } else if (std.mem.eql(u8, method, "textDocument/rename")) {
-                if (id_value) |id| self.handleRename(&writer, id, params_value) catch {};
+                if (id_value) |id| self.handleRename(&writer, id, params_value) catch |err| {
+                    log.err("rename failed: {s}", .{@errorName(err)});
+                    self.respondInternalError(&writer, id, "rename failed") catch {};
+                };
             } else {
                 // Método desconocido -> ignorar
             }
@@ -145,7 +180,9 @@ const LanguageServer = struct {
                 if (getField(&params.object, "rootUri")) |uri_value| {
                     if (uri_value == .string) {
                         if (self.service) |*svc| {
-                            svc.initialize(uri_value.string) catch {};
+                            svc.initialize(uri_value.string) catch |err| {
+                                log.err("service initialize failed: {s}", .{@errorName(err)});
+                            };
                         }
                     }
                 }
@@ -173,11 +210,17 @@ const LanguageServer = struct {
 
         const version: ?i64 = if (version_value) |vv| if (vv == .integer) vv.integer else null else null;
 
-        const path = self.uriToPath(uri_value.string) catch return;
+        const path = self.uriToPath(uri_value.string) catch |err| {
+            log.err("didOpen uriToPath failed: {s}", .{@errorName(err)});
+            return;
+        };
         defer self.allocator.free(path);
 
         if (self.service) |*svc| {
-            var diagnostics = svc.openDocument(uri_value.string, path, version, text_value.string) catch return;
+            var diagnostics = svc.openDocument(uri_value.string, path, version, text_value.string) catch |err| {
+                log.err("openDocument failed: {s}", .{@errorName(err)});
+                return;
+            };
             defer diagnostics.deinit();
             try self.sendPublishDiagnostics(writer, uri_value.string, diagnostics.items);
         }
@@ -207,11 +250,17 @@ const LanguageServer = struct {
 
         const version: ?i64 = if (version_value) |vv| if (vv == .integer) vv.integer else null else null;
 
-        const path = self.uriToPath(uri_value.string) catch return;
+        const path = self.uriToPath(uri_value.string) catch |err| {
+            log.err("didChange uriToPath failed: {s}", .{@errorName(err)});
+            return;
+        };
         defer self.allocator.free(path);
 
         if (self.service) |*svc| {
-            var diagnostics = svc.changeDocument(uri_value.string, path, version, text_value.string) catch return;
+            var diagnostics = svc.changeDocument(uri_value.string, path, version, text_value.string) catch |err| {
+                log.err("changeDocument failed: {s}", .{@errorName(err)});
+                return;
+            };
             defer diagnostics.deinit();
             try self.sendPublishDiagnostics(writer, uri_value.string, diagnostics.items);
         }
@@ -334,6 +383,34 @@ const LanguageServer = struct {
         try stream.write(id_value);
         try stream.objectField("result");
         try stream.write(null);
+        try stream.endObject();
+
+        try self.sendMessage(writer, payload.writer.buffered());
+    }
+
+    fn respondInternalError(
+        self: *LanguageServer,
+        writer: anytype,
+        id_value: json.Value,
+        message: []const u8,
+    ) !void {
+        var payload = std.Io.Writer.Allocating.init(self.allocator);
+        defer payload.deinit();
+
+        var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
+
+        try stream.beginObject();
+        try stream.objectField("jsonrpc");
+        try stream.write("2.0");
+        try stream.objectField("id");
+        try stream.write(id_value);
+        try stream.objectField("error");
+        try stream.beginObject();
+        try stream.objectField("code");
+        try stream.write(@as(i32, -32603));
+        try stream.objectField("message");
+        try stream.write(message);
+        try stream.endObject();
         try stream.endObject();
 
         try self.sendMessage(writer, payload.writer.buffered());
