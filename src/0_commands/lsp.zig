@@ -93,6 +93,8 @@ const LanguageServer = struct {
                 if (id_value) |id| self.handleDefinition(&writer, id, params_value) catch {};
             } else if (std.mem.eql(u8, method, "textDocument/references")) {
                 if (id_value) |id| self.handleReferences(&writer, id, params_value) catch {};
+            } else if (std.mem.eql(u8, method, "textDocument/prepareRename")) {
+                if (id_value) |id| self.handlePrepareRename(&writer, id, params_value) catch {};
             } else if (std.mem.eql(u8, method, "textDocument/rename")) {
                 if (id_value) |id| self.handleRename(&writer, id, params_value) catch {};
             } else {
@@ -299,6 +301,8 @@ const LanguageServer = struct {
         try stream.objectField("definitionProvider");
         try stream.write(true);
         try stream.objectField("referencesProvider");
+        try stream.write(true);
+        try stream.objectField("prepareProvider");
         try stream.write(true);
         try stream.objectField("renameProvider");
         try stream.write(true);
@@ -676,6 +680,54 @@ const LanguageServer = struct {
             try stream.write(id_value);
             try stream.objectField("result");
             try writeWorkspaceEdit(&stream, self.allocator, edits.items);
+            try stream.endObject();
+
+            try self.sendMessage(writer, payload.writer.buffered());
+        }
+    }
+
+    fn handlePrepareRename(
+        self: *LanguageServer,
+        writer: anytype,
+        id_value: json.Value,
+        params_value: ?json.Value,
+    ) !void {
+        if (self.service == null) return;
+        const params = params_value orelse return;
+        if (params != .object) return;
+
+        const text_document_value = getField(&params.object, "textDocument") orelse return;
+        if (text_document_value != .object) return;
+        const uri_value = getField(&text_document_value.object, "uri") orelse return;
+        if (uri_value != .string) return;
+
+        const position_value = getField(&params.object, "position") orelse return;
+        const position = parsePosition(position_value) orelse return;
+
+        if (self.service) |*svc| {
+            const prep_opt = try svc.prepareRename(uri_value.string, position);
+            defer if (prep_opt) |prep| prep.deinit(self.allocator);
+
+            var payload = std.Io.Writer.Allocating.init(self.allocator);
+            defer payload.deinit();
+            var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
+
+            try stream.beginObject();
+            try stream.objectField("jsonrpc");
+            try stream.write("2.0");
+            try stream.objectField("id");
+            try stream.write(id_value);
+            try stream.objectField("result");
+            if (prep_opt) |prep| {
+                try stream.beginObject();
+                try stream.objectField("range");
+                try writeRange(&stream, prep.range);
+                try stream.objectField("placeholder");
+                try stream.write(prep.placeholder);
+                try stream.endObject();
+            } else {
+                try stream.write(null);
+            }
             try stream.endObject();
 
             try self.sendMessage(writer, payload.writer.buffered());

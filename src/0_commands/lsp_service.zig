@@ -73,6 +73,15 @@ pub const Definition = struct {
     }
 };
 
+pub const PrepareRename = struct {
+    range: Range,
+    placeholder: []u8,
+
+    pub fn deinit(self: PrepareRename, allocator: std.mem.Allocator) void {
+        allocator.free(self.placeholder);
+    }
+};
+
 pub const Location = struct {
     path: []u8,
     range: Range,
@@ -1287,6 +1296,128 @@ pub const LanguageService = struct {
             .allocator = self.allocator,
             .items = slice,
             .owned = true,
+        };
+    }
+
+    pub fn prepareRename(
+        self: *LanguageService,
+        uri: []const u8,
+        position: Position,
+    ) !?PrepareRename {
+        const doc = try self.getDoc(uri);
+
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        var analysis_allocator = arena.allocator();
+        const core_dir = try self.preferredCoreDir(analysis_allocator);
+
+        const files_list = sf.collectWithEntrySource(&analysis_allocator, core_dir, doc.path, doc.text) catch {
+            return null;
+        };
+        const files = files_list.items;
+
+        for (files_list.items) |*source_file| {
+            for (self.documents.items) |open_doc| {
+                if (std.mem.eql(u8, source_file.path, open_doc.path)) {
+                    source_file.code = open_doc.text;
+                    break;
+                }
+            }
+        }
+
+        const one_primary = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
+        var diagnostics = diag.Diagnostics.init(&analysis_allocator, &one_primary);
+        defer diagnostics.deinit();
+
+        var tokens = std.array_list.Managed(token.Token).init(analysis_allocator);
+        defer tokens.deinit();
+
+        for (files, 0..) |source_file, idx| {
+            var tokenizer_ctx = tokenizer.Tokenizer.init(
+                &analysis_allocator,
+                &diagnostics,
+                source_file.code,
+                source_file.path,
+            );
+            const token_slice = tokenizer_ctx.tokenize() catch {
+                return null;
+            };
+
+            const slice = if (idx == files.len - 1)
+                token_slice
+            else
+                token_slice[0 .. token_slice.len - 1];
+            try tokens.appendSlice(slice);
+        }
+
+        var syntax_ctx = syntaxer.Syntaxer.init(&analysis_allocator, tokens.items, &diagnostics);
+        const st_nodes = syntax_ctx.parse() catch {
+            return null;
+        };
+
+        var sem_ctx = semantizer.Semantizer.init(&analysis_allocator, st_nodes, &diagnostics);
+        const sg_nodes = sem_ctx.analyze() catch {
+            return null;
+        };
+
+        var syntax_functions = std.array_list.Managed(SyntaxFunctionDeclRef).init(analysis_allocator);
+        defer syntax_functions.deinit();
+        var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
+        defer syntax_calls.deinit();
+        var syntax_type_decls = std.array_list.Managed(SyntaxTypeDeclRef).init(analysis_allocator);
+        defer syntax_type_decls.deinit();
+        var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
+        defer syntax_type_refs.deinit();
+        var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator);
+        defer syntax_binding_decls.deinit();
+        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
+
+        var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator);
+        defer semantic_functions.deinit();
+        var semantic_calls = std.array_list.Managed(SemanticFunctionCallRef).init(analysis_allocator);
+        defer semantic_calls.deinit();
+        var semantic_type_inits = std.array_list.Managed(SemanticTypeInitializerRef).init(analysis_allocator);
+        defer semantic_type_inits.deinit();
+        var semantic_types = std.array_list.Managed(SemanticTypeDeclRef).init(analysis_allocator);
+        defer semantic_types.deinit();
+        var semantic_binding_decls = std.array_list.Managed(SemanticBindingDeclRef).init(analysis_allocator);
+        defer semantic_binding_decls.deinit();
+        var semantic_binding_uses = std.array_list.Managed(SemanticBindingUseRef).init(analysis_allocator);
+        defer semantic_binding_uses.deinit();
+        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses);
+
+        const target = resolveSymbolTarget(
+            doc.path,
+            position,
+            syntax_functions.items,
+            syntax_calls.items,
+            syntax_type_decls.items,
+            syntax_type_refs.items,
+            syntax_binding_decls.items,
+            semantic_functions.items,
+            semantic_calls.items,
+            semantic_type_inits.items,
+            semantic_types.items,
+            semantic_binding_decls.items,
+            semantic_binding_uses.items,
+        ) orelse return null;
+
+        return switch (target) {
+            .function_decl => |fn_decl| .{
+                .range = nameRange(fn_decl.location, fn_decl.name.len),
+                .placeholder = try self.allocator.dupe(u8, fn_decl.name),
+            },
+            .binding_decl => |binding_decl| .{
+                .range = nameRange(binding_decl.location, binding_decl.name.len),
+                .placeholder = try self.allocator.dupe(u8, binding_decl.name),
+            },
+            .type_decl => |type_decl| .{
+                .range = blk: {
+                    const syntax_decl = findSyntaxTypeDeclByName(syntax_type_decls.items, type_decl.name) orelse return null;
+                    break :blk nameRange(syntax_decl.name.location, type_decl.name.len);
+                },
+                .placeholder = try self.allocator.dupe(u8, type_decl.name),
+            },
         };
     }
 
@@ -3158,4 +3289,37 @@ test "close document removes open state" {
 
     svc.closeDocument(uri);
     try std.testing.expectError(error.DocumentNotOpen, svc.getDoc(uri));
+}
+
+test "prepare rename returns binding range and placeholder" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value :: Int32 = 1
+        \\    copy := value
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+
+    const diags = try svc.openDocument(uri, abs_path, 1, code);
+    defer diags.deinit();
+
+    const prep = try svc.prepareRename(uri, .{ .line = 2, .character = 13 });
+    try std.testing.expect(prep != null);
+    defer if (prep) |p| p.deinit(std.testing.allocator);
+    try std.testing.expectEqualStrings("value", prep.?.placeholder);
+    try std.testing.expectEqual(@as(u32, 1), prep.?.range.start.line);
+    try std.testing.expectEqual(@as(u32, 4), prep.?.range.start.character);
 }
