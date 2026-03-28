@@ -1490,6 +1490,9 @@ pub const Semantizer = struct {
             },
 
             .if_statement => |ifs| self.handleIf(ifs, s) catch |err| blk: {
+                if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
+                    break :blk err;
+                }
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -1500,6 +1503,9 @@ pub const Semantizer = struct {
             },
 
             .for_statement => |f| self.handleFor(f, s, n.location) catch |err| blk: {
+                if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
+                    break :blk err;
+                }
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -1510,6 +1516,9 @@ pub const Semantizer = struct {
             },
 
             .while_statement => |w| self.handleWhile(w, s) catch |err| blk: {
+                if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
+                    break :blk err;
+                }
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -1520,6 +1529,9 @@ pub const Semantizer = struct {
             },
 
             .match_statement => |m| self.handleMatch(m, s) catch |err| blk: {
+                if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
+                    break :blk err;
+                }
                 if (err != error.Reported) {
                     try self.diags.add(
                         n.location,

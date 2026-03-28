@@ -1037,6 +1037,18 @@ test "feature_tests/control_flow/15_logical_and_or" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/control_flow/16_forward_call_in_if" {
+    const test_path = "tests/feature_tests/control_flow/16_forward_call_in_if";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/control_flow/17_forward_call_output_field_access_in_if" {
+    const test_path = "tests/feature_tests/control_flow/17_forward_call_output_field_access_in_if";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/text/04_string_buffer_helpers" {
     const test_path = "tests/feature_tests/text/04_string_buffer_helpers";
     try expectSuccessfulBuild(test_path);
