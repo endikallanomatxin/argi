@@ -3026,3 +3026,136 @@ test "rename rewrites binding declaration and uses" {
     try std.testing.expectEqual(@as(u32, 1), edits.items[0].range.start.line);
     try std.testing.expectEqual(@as(u32, 2), edits.items[1].range.start.line);
 }
+
+test "hover returns information for local binding use" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value :: Int32 = 1
+        \\    copy := value
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+
+    const diags = try svc.openDocument(uri, abs_path, 1, code);
+    defer diags.deinit();
+
+    const hover_opt = try svc.hover(uri, .{ .line = 2, .character = 13 });
+    try std.testing.expect(hover_opt != null);
+    defer if (hover_opt) |hover| std.testing.allocator.free(hover.contents);
+    try std.testing.expect(std.mem.indexOf(u8, hover_opt.?.contents, "value") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hover_opt.?.contents, "Int32") != null);
+}
+
+test "semantic tokens include string literal and function call" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const code =
+        \\helper(.value: Int32) -> (.out: Int32) := {
+        \\    out = value
+        \\}
+        \\
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    print("hello")
+        \\    status_code = helper(1)
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+
+    const diags = try svc.openDocument(uri, abs_path, 1, code);
+    defer diags.deinit();
+
+    var tokens = try svc.semanticTokensFull(uri);
+    defer tokens.deinit();
+
+    try std.testing.expect(tokens.items.len > 0);
+    try std.testing.expect(tokens.items.len % 5 == 0);
+}
+
+test "change document updates diagnostics" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const broken_code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    broken :: Int32 =
+        \\}
+        \\
+    ;
+    const fixed_code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    fixed :: Int32 = 1
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = broken_code });
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+
+    var diags = try svc.openDocument(uri, abs_path, 1, broken_code);
+    defer diags.deinit();
+    try std.testing.expect(diags.items.len > 0);
+
+    var changed = try svc.changeDocument(uri, abs_path, 2, fixed_code);
+    defer changed.deinit();
+    try std.testing.expectEqual(@as(usize, 0), changed.items.len);
+}
+
+test "close document removes open state" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    status_code = 0
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+
+    const diags = try svc.openDocument(uri, abs_path, 1, code);
+    defer diags.deinit();
+    _ = try svc.getDoc(uri);
+
+    svc.closeDocument(uri);
+    try std.testing.expectError(error.DocumentNotOpen, svc.getDoc(uri));
+}
