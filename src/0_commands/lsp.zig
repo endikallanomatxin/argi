@@ -91,6 +91,10 @@ const LanguageServer = struct {
                 if (id_value) |id| self.handleHover(&writer, id, params_value) catch {};
             } else if (std.mem.eql(u8, method, "textDocument/definition")) {
                 if (id_value) |id| self.handleDefinition(&writer, id, params_value) catch {};
+            } else if (std.mem.eql(u8, method, "textDocument/references")) {
+                if (id_value) |id| self.handleReferences(&writer, id, params_value) catch {};
+            } else if (std.mem.eql(u8, method, "textDocument/rename")) {
+                if (id_value) |id| self.handleRename(&writer, id, params_value) catch {};
             } else {
                 // Método desconocido -> ignorar
             }
@@ -293,6 +297,10 @@ const LanguageServer = struct {
         try stream.objectField("hoverProvider");
         try stream.write(true);
         try stream.objectField("definitionProvider");
+        try stream.write(true);
+        try stream.objectField("referencesProvider");
+        try stream.write(true);
+        try stream.objectField("renameProvider");
         try stream.write(true);
         try stream.endObject();
 
@@ -581,6 +589,99 @@ const LanguageServer = struct {
         }
     }
 
+    fn handleReferences(
+        self: *LanguageServer,
+        writer: anytype,
+        id_value: json.Value,
+        params_value: ?json.Value,
+    ) !void {
+        if (self.service == null) return;
+        const params = params_value orelse return;
+        if (params != .object) return;
+
+        const text_document_value = getField(&params.object, "textDocument") orelse return;
+        if (text_document_value != .object) return;
+        const uri_value = getField(&text_document_value.object, "uri") orelse return;
+        if (uri_value != .string) return;
+
+        const position_value = getField(&params.object, "position") orelse return;
+        const position = parsePosition(position_value) orelse return;
+
+        var include_declaration = true;
+        if (getField(&params.object, "context")) |context_value| {
+            if (context_value == .object) {
+                if (getField(&context_value.object, "includeDeclaration")) |inc_value| {
+                    if (inc_value == .bool) include_declaration = inc_value.bool;
+                }
+            }
+        }
+
+        if (self.service) |*svc| {
+            var refs = try svc.references(uri_value.string, position, include_declaration);
+            defer refs.deinit();
+
+            var payload = std.Io.Writer.Allocating.init(self.allocator);
+            defer payload.deinit();
+            var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
+
+            try stream.beginObject();
+            try stream.objectField("jsonrpc");
+            try stream.write("2.0");
+            try stream.objectField("id");
+            try stream.write(id_value);
+            try stream.objectField("result");
+            try stream.beginArray();
+            for (refs.items) |ref| {
+                try writeLocation(&stream, self.allocator, ref);
+            }
+            try stream.endArray();
+            try stream.endObject();
+
+            try self.sendMessage(writer, payload.writer.buffered());
+        }
+    }
+
+    fn handleRename(
+        self: *LanguageServer,
+        writer: anytype,
+        id_value: json.Value,
+        params_value: ?json.Value,
+    ) !void {
+        if (self.service == null) return;
+        const params = params_value orelse return;
+        if (params != .object) return;
+
+        const text_document_value = getField(&params.object, "textDocument") orelse return;
+        if (text_document_value != .object) return;
+        const uri_value = getField(&text_document_value.object, "uri") orelse return;
+        if (uri_value != .string) return;
+
+        const position_value = getField(&params.object, "position") orelse return;
+        const position = parsePosition(position_value) orelse return;
+        const new_name_value = getField(&params.object, "newName") orelse return;
+        if (new_name_value != .string) return;
+
+        if (self.service) |*svc| {
+            var edits = try svc.rename(uri_value.string, position, new_name_value.string);
+            defer edits.deinit();
+
+            var payload = std.Io.Writer.Allocating.init(self.allocator);
+            defer payload.deinit();
+            var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
+
+            try stream.beginObject();
+            try stream.objectField("jsonrpc");
+            try stream.write("2.0");
+            try stream.objectField("id");
+            try stream.write(id_value);
+            try stream.objectField("result");
+            try writeWorkspaceEdit(&stream, self.allocator, edits.items);
+            try stream.endObject();
+
+            try self.sendMessage(writer, payload.writer.buffered());
+        }
+    }
+
     fn sendMessage(self: *LanguageServer, writer: anytype, payload: []const u8) !void {
         _ = self;
         try writer.print("Content-Length: {d}\r\n\r\n", .{payload.len});
@@ -628,6 +729,56 @@ fn writeRange(stream: *json.Stringify, range: service.Range) !void {
     try stream.write(range.end.line);
     try stream.objectField("character");
     try stream.write(range.end.character);
+    try stream.endObject();
+    try stream.endObject();
+}
+
+fn writeLocation(stream: *json.Stringify, allocator: std.mem.Allocator, loc: service.Location) !void {
+    try stream.beginObject();
+    try stream.objectField("uri");
+    const target_uri = try pathToFileUri(allocator, loc.path);
+    defer allocator.free(target_uri);
+    try stream.write(target_uri);
+    try stream.objectField("range");
+    try writeRange(stream, loc.range);
+    try stream.endObject();
+}
+
+fn writeWorkspaceEdit(stream: *json.Stringify, allocator: std.mem.Allocator, edits: []const service.TextEdit) !void {
+    try stream.beginObject();
+    try stream.objectField("changes");
+    try stream.beginObject();
+
+    var seen = std.array_list.Managed([]const u8).init(allocator);
+    defer seen.deinit();
+
+    for (edits) |edit| {
+        var already_written = false;
+        for (seen.items) |seen_path| {
+            if (std.mem.eql(u8, seen_path, edit.path)) {
+                already_written = true;
+                break;
+            }
+        }
+        if (already_written) continue;
+
+        try seen.append(edit.path);
+        const uri = try pathToFileUri(allocator, edit.path);
+        defer allocator.free(uri);
+        try stream.objectField(uri);
+        try stream.beginArray();
+        for (edits) |candidate| {
+            if (!std.mem.eql(u8, candidate.path, edit.path)) continue;
+            try stream.beginObject();
+            try stream.objectField("range");
+            try writeRange(stream, candidate.range);
+            try stream.objectField("newText");
+            try stream.write(candidate.new_text);
+            try stream.endObject();
+        }
+        try stream.endArray();
+    }
+
     try stream.endObject();
     try stream.endObject();
 }
