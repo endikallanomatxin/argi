@@ -155,6 +155,40 @@ has_space(.self: &String) -> (.ok: Bool) := {
     ok = self&.length < capacity(.self = self).value
 }
 
+ensure_capacity(
+    .self: $&String,
+    .capacity: UIntNative,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> () := {
+    current_capacity ::= capacity(.self = self).value
+    if current_capacity >= capacity {
+        return
+    }
+
+    new_allocation_size ::= capacity + 1
+    new_data ::= allocate(.self = allocator, .size = new_allocation_size)
+
+    if self&.length > 0 {
+        memcpy(
+            .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = new_data)),
+            .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = self&.allocation.data)),
+            .n = self&.length,
+        )
+    }
+
+    nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = new_data) + self&.length)
+    nul_ptr& = 0
+
+    deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
+    self& = (
+        .allocation = (
+            .data = new_data,
+            .size = new_allocation_size,
+        ),
+        .length = self&.length,
+    )
+}
+
 push_byte(.self: $&String, .byte: UInt8) -> () := {
     if has_space(.self = self).ok {
     } else {

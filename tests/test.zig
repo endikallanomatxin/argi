@@ -1097,6 +1097,18 @@ test "feature_tests/io/09_print_c_string_literal" {
     try runExpectStdout(test_path, 0, "literal output");
 }
 
+test "feature_tests/io/10_read_line" {
+    const test_path = "tests/feature_tests/io/10_read_line";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/io/11_read_line_grows" {
+    const test_path = "tests/feature_tests/io/11_read_line_grows";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/system/07_arguments_access" {
     const test_path = "tests/feature_tests/system/07_arguments_access";
     try expectSuccessfulBuild(test_path);
