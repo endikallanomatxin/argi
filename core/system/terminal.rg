@@ -67,29 +67,36 @@ read_line_into_buffer(
 read_line(
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .stdin: $&Reader = #reach stdin, terminal.stdin_buffered_reader, system.terminal.stdin_buffered_reader,
-) -> (.text: String) := {
+) -> (.result: ReadLine) := {
     initial_capacity :: UIntNative = 16
-    text = String(.allocator = allocator, .capacity = initial_capacity)
+    line ::= String(.allocator = allocator, .capacity = initial_capacity)
 
     while 1 == 1 {
         next ::= read_byte(.self = stdin)
         if is(.value = next, .variant = ..end) {
+            if line.length == 0 {
+                result = ..end
+                return
+            }
+
+            result = ..ok(.text = line)
             return
         }
 
         payload ::= next..ok
         if payload.byte == 10 {
+            result = ..ok(.text = line)
             return
         }
 
-        if has_space(.self = &text).ok {
+        if has_space(.self = &line).ok {
         } else {
-            current_capacity ::= capacity(.self = &text).value
+            current_capacity ::= capacity(.self = &line).value
             next_capacity ::= current_capacity * 2
-            ensure_capacity(.self = $&text, .capacity = next_capacity, .allocator = allocator)
+            ensure_capacity(.self = $&line, .capacity = next_capacity, .allocator = allocator)
         }
 
-        push_byte(.self = $&text, .byte = payload.byte)
+        push_byte(.self = $&line, .byte = payload.byte)
     }
 }
 

@@ -25,25 +25,33 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     stdin :: DummyInput = (
         .index = 0
     )
-    line ::= read_line(.allocator = system.allocator, .stdin = $&stdin)
+    result ::= read_line(.allocator = system.allocator, .stdin = $&stdin)
 
-    if line.length != 20 {
+    if is(.value = result, .variant = ..ok) {
+    } else {
         status_code = 1
         return
     }
 
-    if capacity(.self = &line).value < 20 {
+    line ::= result..ok.text
+
+    if line.length != 20 {
         status_code = 2
         return
     }
 
-    if bytes_get(.string = &line, .index = 0).byte != 65 {
+    if capacity(.self = &line).value < 20 {
         status_code = 3
         return
     }
 
-    if bytes_get(.string = &line, .index = 19).byte != 65 {
+    if bytes_get(.string = &line, .index = 0).byte != 65 {
         status_code = 4
+        return
+    }
+
+    if bytes_get(.string = &line, .index = 19).byte != 65 {
+        status_code = 5
         return
     }
 

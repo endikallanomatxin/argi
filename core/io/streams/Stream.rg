@@ -3,6 +3,11 @@ ReadByte : Type = (
     ..end
 )
 
+ReadLine : Type = (
+    ..ok(.text: String)
+    ..end
+)
+
 Reader : Abstract = (
     read_byte(.self: $&Self) -> (.result: ReadByte)
 )

@@ -1109,6 +1109,12 @@ test "feature_tests/io/11_read_line_grows" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/io/12_read_line_end" {
+    const test_path = "tests/feature_tests/io/12_read_line_end";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/system/07_arguments_access" {
     const test_path = "tests/feature_tests/system/07_arguments_access";
     try expectSuccessfulBuild(test_path);

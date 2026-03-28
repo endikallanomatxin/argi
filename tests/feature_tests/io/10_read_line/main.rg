@@ -30,20 +30,28 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     stdin :: DummyInput = (
         .index = 0
     )
-    line ::= read_line(.allocator = system.allocator, .stdin = $&stdin)
+    result ::= read_line(.allocator = system.allocator, .stdin = $&stdin)
 
-    if line.length != 2 {
+    if is(.value = result, .variant = ..ok) {
+    } else {
         status_code = 1
         return
     }
 
-    if bytes_get(.string = &line, .index = 0).byte != 79 {
+    line ::= result..ok.text
+
+    if line.length != 2 {
         status_code = 2
         return
     }
 
-    if bytes_get(.string = &line, .index = 1).byte != 75 {
+    if bytes_get(.string = &line, .index = 0).byte != 79 {
         status_code = 3
+        return
+    }
+
+    if bytes_get(.string = &line, .index = 1).byte != 75 {
+        status_code = 4
         return
     }
 
