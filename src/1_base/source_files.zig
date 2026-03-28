@@ -556,6 +556,15 @@ pub fn collectWithEntrySource(
     }
 
     // ─── entrypoint del usuario al final ─────────────────────────────────
+    for (list.items) |*source_file| {
+        if (!std.mem.eql(u8, source_file.path, user_path)) continue;
+
+        alloc.free(source_file.code);
+        source_file.code = entry_source.code;
+        alloc.free(entry_source.path);
+        return list;
+    }
+
     if (!seen_files.contains(user_path)) {
         try seen_files.put(try alloc.dupe(u8, user_path), {});
     }

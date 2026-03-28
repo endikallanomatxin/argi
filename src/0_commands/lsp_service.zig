@@ -236,6 +236,13 @@ pub const LanguageService = struct {
         return try self.allocator.dupe(u8, raw_path);
     }
 
+    fn preferredCoreDir(self: *LanguageService, allocator: std.mem.Allocator) ![]u8 {
+        if (self.root_path) |root_path| {
+            return try std.fs.path.join(allocator, &.{ root_path, "core" });
+        }
+        return try allocator.dupe(u8, "core");
+    }
+
     pub fn openDocument(
         self: *LanguageService,
         uri: []const u8,
@@ -304,8 +311,9 @@ pub const LanguageService = struct {
         defer arena.deinit();
 
         var analysis_allocator = arena.allocator();
+        const core_dir = try self.preferredCoreDir(analysis_allocator);
 
-        const files_list = sf.collectWithEntrySource(&analysis_allocator, "core", doc.path, doc.text) catch |err| {
+        const files_list = sf.collectWithEntrySource(&analysis_allocator, core_dir, doc.path, doc.text) catch |err| {
             return try self.collectLoadFailureDiagnostics(doc, err);
         };
         const files = files_list.items;
@@ -701,8 +709,9 @@ pub const LanguageService = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         var analysis_allocator = arena.allocator();
+        const core_dir = try self.preferredCoreDir(analysis_allocator);
 
-        const files_list = sf.collectWithEntrySource(&analysis_allocator, "core", doc.path, doc.text) catch {
+        const files_list = sf.collectWithEntrySource(&analysis_allocator, core_dir, doc.path, doc.text) catch {
             return null;
         };
         const files = files_list.items;
@@ -864,8 +873,9 @@ pub const LanguageService = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         var analysis_allocator = arena.allocator();
+        const core_dir = try self.preferredCoreDir(analysis_allocator);
 
-        const files_list = sf.collectWithEntrySource(&analysis_allocator, "core", doc.path, doc.text) catch {
+        const files_list = sf.collectWithEntrySource(&analysis_allocator, core_dir, doc.path, doc.text) catch {
             return null;
         };
         const files = files_list.items;
@@ -1020,8 +1030,9 @@ pub const LanguageService = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         var analysis_allocator = arena.allocator();
+        const core_dir = try self.preferredCoreDir(analysis_allocator);
 
-        const files_list = sf.collectWithEntrySource(&analysis_allocator, "core", doc.path, doc.text) catch {
+        const files_list = sf.collectWithEntrySource(&analysis_allocator, core_dir, doc.path, doc.text) catch {
             return InlayHintsResult.empty(self.allocator);
         };
         const files = files_list.items;
@@ -2468,4 +2479,101 @@ test "definition resolves function parameter use" {
     defer def.?.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u32, 0), def.?.range.start.line);
     try std.testing.expectEqual(@as(u32, 10), def.?.range.start.character);
+}
+
+test "definition works for open core document" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("core");
+    try tmp.dir.writeFile(.{
+        .sub_path = "core/sample.rg",
+        .data =
+            \\main() -> (.status_code: Int32 = 0) := {
+            \\    broken :: Int32 =
+            \\}
+            \\
+        ,
+    });
+
+    const root_path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root_path);
+    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
+    defer std.testing.allocator.free(root_uri);
+
+    const rel_path = "core/sample.rg";
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    const code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value :: Int32 = 1
+        \\    copy := value
+        \\}
+        \\
+    ;
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+    try svc.initialize(root_uri);
+
+    const diags = try svc.openDocument(uri, abs_path, 1, code);
+    defer diags.deinit();
+
+    const def = try svc.definition(uri, .{ .line = 2, .character = 13 });
+    try std.testing.expect(def != null);
+    defer def.?.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u32, 1), def.?.range.start.line);
+    try std.testing.expectEqual(@as(u32, 4), def.?.range.start.character);
+}
+
+test "definition resolves core function from project document" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("core");
+    try tmp.dir.makePath("app");
+    try tmp.dir.writeFile(.{
+        .sub_path = "core/util.rg",
+        .data =
+            \\helper() -> (.value: Int32) := {
+            \\    value = 42
+            \\}
+            \\
+        ,
+    });
+
+    const code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    status_code = helper()
+        \\}
+        \\
+    ;
+    try tmp.dir.writeFile(.{ .sub_path = "app/main.rg", .data = code });
+
+    const root_path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root_path);
+    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
+    defer std.testing.allocator.free(root_uri);
+
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, "app/main.rg");
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+    try svc.initialize(root_uri);
+
+    const diags = try svc.openDocument(uri, abs_path, 1, code);
+    defer diags.deinit();
+
+    const def = try svc.definition(uri, .{ .line = 1, .character = 18 });
+    try std.testing.expect(def != null);
+    defer def.?.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.endsWith(u8, def.?.path, "core/util.rg"));
+    try std.testing.expectEqual(@as(u32, 0), def.?.range.start.line);
+    try std.testing.expectEqual(@as(u32, 0), def.?.range.start.character);
 }
