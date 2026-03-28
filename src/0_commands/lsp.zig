@@ -783,6 +783,134 @@ fn writeWorkspaceEdit(stream: *json.Stringify, allocator: std.mem.Allocator, edi
     try stream.endObject();
 }
 
+fn payloadFromLspMessage(message: []const u8) ![]const u8 {
+    const sep = std.mem.indexOf(u8, message, "\r\n\r\n") orelse return error.InvalidLspMessage;
+    return message[sep + 4 ..];
+}
+
+test "initialize response advertises hover definition references and rename" {
+    var server = LanguageServer.init(std.testing.allocator);
+    defer server.deinit();
+
+    var parsed = try json.parseFromSlice(
+        json.Value,
+        std.testing.allocator,
+        \\{
+        \\  "rootUri": "file:///tmp/argi"
+        \\}
+    ,
+        .{},
+    );
+    defer parsed.deinit();
+
+    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer out.deinit();
+
+    try server.handleInitialize(&out.writer, .{ .integer = 1 }, parsed.value);
+
+    const payload = try payloadFromLspMessage(out.writer.buffered());
+    var response = try json.parseFromSlice(json.Value, std.testing.allocator, payload, .{});
+    defer response.deinit();
+
+    try std.testing.expect(response.value == .object);
+    const root = response.value.object;
+    try std.testing.expectEqualStrings("2.0", root.get("jsonrpc").?.string);
+    try std.testing.expect(root.get("result").? == .object);
+
+    const capabilities = root.get("result").?.object.get("capabilities").?.object;
+    try std.testing.expect(capabilities.get("hoverProvider").?.bool);
+    try std.testing.expect(capabilities.get("definitionProvider").?.bool);
+    try std.testing.expect(capabilities.get("referencesProvider").?.bool);
+    try std.testing.expect(capabilities.get("renameProvider").?.bool);
+}
+
+test "didOpen publishes diagnostics and hover responds with payload" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value :: Int32 = 1
+        \\    copy := value
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var server = LanguageServer.init(std.testing.allocator);
+    defer server.deinit();
+
+    var init_params = try json.parseFromSlice(
+        json.Value,
+        std.testing.allocator,
+        \\{}
+    ,
+        .{},
+    );
+    defer init_params.deinit();
+
+    var init_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer init_out.deinit();
+    try server.handleInitialize(&init_out.writer, .{ .integer = 1 }, init_params.value);
+
+    const open_json = try std.fmt.allocPrint(
+        std.testing.allocator,
+        \\{{
+        \\  "textDocument": {{
+        \\    "uri": "{s}",
+        \\    "version": 1,
+        \\    "text": "main() -> (.status_code: Int32 = 0) := {{\n    value :: Int32 = 1\n    copy := value\n}}\n"
+        \\  }}
+        \\}}
+    ,
+        .{uri},
+    );
+    defer std.testing.allocator.free(open_json);
+
+    var open_params = try json.parseFromSlice(json.Value, std.testing.allocator, open_json, .{});
+    defer open_params.deinit();
+
+    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer out.deinit();
+    try server.handleDidOpen(&out.writer, open_params.value);
+
+    const open_payload = try payloadFromLspMessage(out.writer.buffered());
+    var publish = try json.parseFromSlice(json.Value, std.testing.allocator, open_payload, .{});
+    defer publish.deinit();
+    try std.testing.expectEqualStrings("textDocument/publishDiagnostics", publish.value.object.get("method").?.string);
+
+    const hover_json = try std.fmt.allocPrint(
+        std.testing.allocator,
+        \\{{
+        \\  "textDocument": {{ "uri": "{s}" }},
+        \\  "position": {{ "line": 2, "character": 13 }}
+        \\}}
+    ,
+        .{uri},
+    );
+    defer std.testing.allocator.free(hover_json);
+
+    var hover_params = try json.parseFromSlice(json.Value, std.testing.allocator, hover_json, .{});
+    defer hover_params.deinit();
+
+    var hover_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer hover_out.deinit();
+    try server.handleHover(&hover_out.writer, .{ .integer = 2 }, hover_params.value);
+
+    const hover_payload = try payloadFromLspMessage(hover_out.writer.buffered());
+    var hover_response = try json.parseFromSlice(json.Value, std.testing.allocator, hover_payload, .{});
+    defer hover_response.deinit();
+    try std.testing.expect(hover_response.value.object.get("result").? == .object);
+    const contents = hover_response.value.object.get("result").?.object.get("contents").?.object.get("value").?.string;
+    try std.testing.expect(std.mem.indexOf(u8, contents, "value") != null);
+}
+
 fn pathToFileUri(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     return std.fmt.allocPrint(allocator, "file://{s}", .{path});
 }
