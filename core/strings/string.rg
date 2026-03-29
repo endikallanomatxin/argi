@@ -241,14 +241,13 @@ push_view(
     }
 }
 
-operator +(
-    .left: &String,
-    .right: &Char,
-) -> (.out: String) := {
-    allocator : $&Allocator = #reach allocator, system.allocator
+c_string_length(
+    .text: &Char,
+) -> (.length: UIntNative) := {
+    length = 0
     c_length :: UIntNative = 0
     while 1 == 1 {
-        addr :: UIntNative = cast#(.to: UIntNative)(.value = right) + c_length
+        addr :: UIntNative = cast#(.to: UIntNative)(.value = text) + c_length
         ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
         if ptr& == 0 {
             break
@@ -256,15 +255,26 @@ operator +(
         c_length = c_length + 1
     }
 
-    left_view ::= as_view(.self = left)
-    right_view : StringView = (
-        .data = cast#(.to: UIntNative)(.value = right),
-        .length = c_length,
-    )
+    length = c_length
+}
 
-    temp :: String = String(.allocator = allocator, .capacity = left_view.length + right_view.length)
-    push_view(.self = $&temp, .view = &left_view)
-    push_view(.self = $&temp, .view = &right_view)
+c_string_as_view(
+    .text: &Char,
+) -> (.view: StringView) := {
+    view = (
+        .data = cast#(.to: UIntNative)(.value = text),
+        .length = c_string_length(.text = text).length,
+    )
+}
+
+concat_views(
+    .left: &StringView,
+    .right: &StringView,
+) -> (.out: String) := {
+    allocator : $&Allocator = #reach allocator, system.allocator
+    temp :: String = String(.allocator = allocator, .capacity = left&.length + right&.length)
+    push_view(.self = $&temp, .view = left)
+    push_view(.self = $&temp, .view = right)
     out = temp
 }
 
@@ -324,4 +334,38 @@ operator !=(
     } else {
         ok = true
     }
+}
+
+operator +(
+    .left: &String,
+    .right: &Char,
+) -> (.out: String) := {
+    left_view ::= as_view(.self = left)
+    right_view ::= c_string_as_view(.text = right)
+    out = concat_views(.left = &left_view, .right = &right_view)
+}
+
+operator +(
+    .left: &String,
+    .right: &StringView,
+) -> (.out: String) := {
+    left_view ::= as_view(.self = left)
+    out = concat_views(.left = &left_view, .right = right)
+}
+
+operator +(
+    .left: &String,
+    .right: &String,
+) -> (.out: String) := {
+    left_view ::= as_view(.self = left)
+    right_view ::= as_view(.self = right)
+    out = concat_views(.left = &left_view, .right = &right_view)
+}
+
+operator +(
+    .left: &StringView,
+    .right: &Char,
+) -> (.out: String) := {
+    right_view ::= c_string_as_view(.text = right)
+    out = concat_views(.left = left, .right = &right_view)
 }
