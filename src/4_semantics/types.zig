@@ -1109,6 +1109,11 @@ pub fn coerceStructLiteral(
             continue;
         }
 
+        if (try synthesizeImplicitFieldValue(exp_field, expr_node.location, allocator)) |synthetic_value| {
+            coerced_fields[i] = .{ .name = exp_field.name, .value = synthetic_value };
+            continue;
+        }
+
         allocator.free(coerced_fields);
         return expr;
     }
@@ -1133,6 +1138,94 @@ pub fn findStructValueFieldByName(lit: *const sg.StructValueLiteral, name: []con
         if (std.mem.eql(u8, field.name, name)) return field;
     }
     return null;
+}
+
+fn synthesizeImplicitFieldValue(
+    field: sg.StructTypeField,
+    loc: tok.Location,
+    allocator: *const std.mem.Allocator,
+) !?*const sg.SGNode {
+    if (!std.mem.eql(u8, field.name, "trace")) return null;
+    const trace_struct = switch (field.ty) {
+        .struct_type => |st| st,
+        else => return null,
+    };
+    const entries_field = findFieldByName(trace_struct, "entries") orelse return null;
+    const entries_struct = switch (entries_field.ty) {
+        .struct_type => |st| st,
+        else => return null,
+    };
+
+    const allocation_field = findFieldByName(entries_struct, "allocation") orelse return null;
+    const length_field = findFieldByName(entries_struct, "length") orelse return null;
+    const capacity_field = findFieldByName(entries_struct, "capacity") orelse return null;
+    const allocation_struct = switch (allocation_field.ty) {
+        .struct_type => |st| st,
+        else => return null,
+    };
+
+    const data_field = findFieldByName(allocation_struct, "data") orelse return null;
+    const size_field = findFieldByName(allocation_struct, "size") orelse return null;
+
+    const zero_native = try makeIntLiteral(allocator, loc, 0, .{ .builtin = .UIntNative });
+    const null_data = try allocator.create(sg.SGNode);
+    null_data.* = .{
+        .location = loc,
+        .sem_type = data_field.ty,
+        .content = .{ .explicit_cast = .{
+            .value = zero_native.node,
+            .target_type = data_field.ty,
+        } },
+    };
+
+    const allocation_fields = try allocator.alloc(sg.StructValueLiteralField, 2);
+    allocation_fields[0] = .{ .name = data_field.name, .value = null_data };
+    allocation_fields[1] = .{ .name = size_field.name, .value = zero_native.node };
+    const allocation_lit = try allocator.create(sg.StructValueLiteral);
+    allocation_lit.* = .{
+        .fields = allocation_fields,
+        .ty = allocation_field.ty,
+        .dispatch_prefix_positional_count = 0,
+    };
+    const allocation_node = try allocator.create(sg.SGNode);
+    allocation_node.* = .{
+        .location = loc,
+        .sem_type = allocation_field.ty,
+        .content = .{ .struct_value_literal = allocation_lit },
+    };
+
+    const entries_fields = try allocator.alloc(sg.StructValueLiteralField, 3);
+    entries_fields[0] = .{ .name = allocation_field.name, .value = allocation_node };
+    entries_fields[1] = .{ .name = length_field.name, .value = zero_native.node };
+    entries_fields[2] = .{ .name = capacity_field.name, .value = zero_native.node };
+    const entries_lit = try allocator.create(sg.StructValueLiteral);
+    entries_lit.* = .{
+        .fields = entries_fields,
+        .ty = entries_field.ty,
+        .dispatch_prefix_positional_count = 0,
+    };
+    const entries_node = try allocator.create(sg.SGNode);
+    entries_node.* = .{
+        .location = loc,
+        .sem_type = entries_field.ty,
+        .content = .{ .struct_value_literal = entries_lit },
+    };
+
+    const trace_fields = try allocator.alloc(sg.StructValueLiteralField, 1);
+    trace_fields[0] = .{ .name = entries_field.name, .value = entries_node };
+    const trace_lit = try allocator.create(sg.StructValueLiteral);
+    trace_lit.* = .{
+        .fields = trace_fields,
+        .ty = field.ty,
+        .dispatch_prefix_positional_count = 0,
+    };
+    const trace_node = try allocator.create(sg.SGNode);
+    trace_node.* = .{
+        .location = loc,
+        .sem_type = field.ty,
+        .content = .{ .struct_value_literal = trace_lit },
+    };
+    return trace_node;
 }
 
 pub fn ensureReadOnlyPointer(expr_node: *const syn.STNode, te: TypedExpr, allocator: *const std.mem.Allocator, diags: *diagnostics.Diagnostics) err.SemErr!TypedExpr {

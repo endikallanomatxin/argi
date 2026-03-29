@@ -855,6 +855,30 @@ pub const Syntaxer = struct {
                 continue;
             }
 
+            if (self.tokenIs(.bang)) {
+                const bang_loc = self.tokenLocation();
+                self.advanceOne();
+                node = try self.makeNode(
+                    .{ .error_propagation = .{ .value = node } },
+                    bang_loc,
+                );
+                continue;
+            }
+
+            if (self.tokenIs(.double_bang)) {
+                const bang_loc = self.tokenLocation();
+                self.advanceOne();
+                const context = try self.parseExpression();
+                node = try self.makeNode(
+                    .{ .error_context = .{
+                        .value = node,
+                        .context = context,
+                    } },
+                    bang_loc,
+                );
+                continue;
+            }
+
             break;
         }
         return node;

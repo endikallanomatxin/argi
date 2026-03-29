@@ -143,6 +143,21 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             std.debug.print("Choice:\n", .{});
             printNode(acc.choice_value, lvl + 2);
         },
+        .error_propagation => |prop| {
+            std.debug.print("ErrorPropagation ! at {d}:{d}\n", .{ prop.line, prop.column });
+            indent(lvl + 1);
+            std.debug.print("Errable:\n", .{});
+            printNode(prop.errable_value, lvl + 2);
+        },
+        .error_context => |ctx| {
+            std.debug.print("ErrorContext !! at {d}:{d}\n", .{ ctx.line, ctx.column });
+            indent(lvl + 1);
+            std.debug.print("Errable:\n", .{});
+            printNode(ctx.errable_value, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("Context:\n", .{});
+            printNode(ctx.context, lvl + 2);
+        },
 
         .list_literal => |ll| {
             indent(lvl);

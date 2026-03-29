@@ -273,6 +273,19 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             std.debug.print("ChoicePayloadAccess ..{s}\n", .{acc.variant_name.string});
             printNode(acc.choice_value.*, lvl + 1);
         },
+        .error_propagation => |prop| {
+            std.debug.print("ErrorPropagation !\n", .{});
+            printNode(prop.value.*, lvl + 1);
+        },
+        .error_context => |ctx| {
+            std.debug.print("ErrorContext !!\n", .{});
+            indent(lvl + 1);
+            std.debug.print("Value:\n", .{});
+            printNode(ctx.value.*, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("Context:\n", .{});
+            printNode(ctx.context.*, lvl + 2);
+        },
 
         // ── STRUCT VALUE LITERAL ─────────────────────────────────────────
         .struct_value_literal => |sv| {

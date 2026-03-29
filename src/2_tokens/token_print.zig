@@ -177,6 +177,12 @@ pub fn printToken(token: tok.Token) void {
         .tilde => {
             std.debug.print("tilde\n", .{});
         },
+        .bang => {
+            std.debug.print("bang\n", .{});
+        },
+        .double_bang => {
+            std.debug.print("double_bang\n", .{});
+        },
     }
 }
 

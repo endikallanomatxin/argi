@@ -49,6 +49,8 @@ pub const Content = union(enum) {
 
     struct_field_access: StructFieldAccess,
     choice_payload_access: ChoicePayloadAccess,
+    error_propagation: ErrorPropagation,
+    error_context: ErrorContext,
     index_access: IndexAccess,
 
     return_statement: ReturnStatement,
@@ -246,6 +248,15 @@ pub const ReachAlternative = struct {
 pub const ChoicePayloadAccess = struct {
     choice_value: *STNode,
     variant_name: Name,
+};
+
+pub const ErrorPropagation = struct {
+    value: *STNode,
+};
+
+pub const ErrorContext = struct {
+    value: *STNode,
+    context: *STNode,
 };
 
 pub const IndexAccess = struct {

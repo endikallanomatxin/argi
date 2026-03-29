@@ -663,6 +663,13 @@ pub const Semantizer = struct {
             .choice_payload_access => |access| {
                 try self.walkNodeOnceReachability(current_fn, access.choice_value, state);
             },
+            .error_propagation => |prop| {
+                try self.walkNodeOnceReachability(current_fn, prop.errable_value, state);
+            },
+            .error_context => |ctx| {
+                try self.walkNodeOnceReachability(current_fn, ctx.errable_value, state);
+                try self.walkNodeOnceReachability(current_fn, ctx.context, state);
+            },
             .array_literal => |arr| {
                 for (arr.elements) |elem| {
                     try self.walkNodeOnceReachability(current_fn, elem, state);
@@ -811,6 +818,8 @@ pub const Semantizer = struct {
             .pipe_placeholder => true,
             .struct_field_access => |sfa| syntaxNodeContainsPipePlaceholder(sfa.struct_value),
             .choice_payload_access => |acc| syntaxNodeContainsPipePlaceholder(acc.choice_value),
+            .error_propagation => |prop| syntaxNodeContainsPipePlaceholder(prop.value),
+            .error_context => |ctx| syntaxNodeContainsPipePlaceholder(ctx.value) or syntaxNodeContainsPipePlaceholder(ctx.context),
             .address_of => |addr| syntaxNodeContainsPipePlaceholder(addr.value),
             .binary_operation => |bo| syntaxNodeContainsPipePlaceholder(bo.left) or syntaxNodeContainsPipePlaceholder(bo.right),
             .comparison => |cmp| syntaxNodeContainsPipePlaceholder(cmp.left) or syntaxNodeContainsPipePlaceholder(cmp.right),
@@ -1335,6 +1344,28 @@ pub const Semantizer = struct {
                     .semantic,
                     "error in choice payload access '..{s}': {s}",
                     .{ acc.variant_name.string, @errorName(err) },
+                );
+                break :blk err;
+            },
+
+            .error_propagation => |prop| self.handleErrorPropagation(prop, s, n.location) catch |err| blk: {
+                if (err == error.Reported) break :blk err;
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in error propagation operator '!': {s}",
+                    .{@errorName(err)},
+                );
+                break :blk err;
+            },
+
+            .error_context => |ctx| self.handleErrorContext(ctx, s, n.location) catch |err| blk: {
+                if (err == error.Reported) break :blk err;
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in contextual error propagation operator '!!': {s}",
+                    .{@errorName(err)},
                 );
                 break :blk err;
             },
@@ -2538,7 +2569,7 @@ pub const Semantizer = struct {
         blk: syn.CodeBlock,
         parent: *Scope,
     ) SemErr!typ.TypedExpr {
-        var child = try Scope.init(self.allocator, parent, null);
+        var child = try Scope.init(self.allocator, parent, parent.current_fn);
 
         for (blk.items) |st| {
             const te = try self.visitNode(st.*, &child);
@@ -2946,6 +2977,8 @@ pub const Semantizer = struct {
             if (p.parent == null) try self.root_list.append(n);
             break :blk created;
         };
+
+        child.current_fn = fn_ptr;
 
         // ── cuerpo
         var body_cb: ?*sg.CodeBlock = null;
@@ -6449,7 +6482,7 @@ pub const Semantizer = struct {
             }
         }
 
-        var child = try Scope.init(self.allocator, s, null);
+        var child = try Scope.init(self.allocator, s, s.current_fn);
         var it = subst.types.iterator();
         while (it.next()) |entry| {
             const td = try self.allocator.create(sg.TypeDeclaration);
@@ -6846,6 +6879,276 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
+    fn handleErrorPropagation(
+        self: *Semantizer,
+        prop: syn.ErrorPropagation,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        const value_te = try self.visitNode(prop.value.*, s);
+        return self.lowerErrorPropagation(value_te, null, s, loc);
+    }
+
+    fn handleErrorContext(
+        self: *Semantizer,
+        ctx: syn.ErrorContext,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        const value_te = try self.visitNode(ctx.value.*, s);
+        var context_te = try self.visitNode(ctx.context.*, s);
+        context_te = try self.ensureValuePositionAllowed(context_te, ctx.context.location, s);
+        return self.lowerErrorPropagation(value_te, context_te, s, loc);
+    }
+
+    const ErrableInfo = struct {
+        ok_variant_index: u32,
+        ok_payload_type: sg.Type,
+        ok_value_field_index: u32,
+        error_variant_index: u32,
+        error_payload_type: sg.Type,
+    };
+
+    fn lowerErrorPropagation(
+        self: *Semantizer,
+        value_te: typ.TypedExpr,
+        context_te: ?typ.TypedExpr,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        const operand_info = try self.errableInfoOf(value_te.ty, loc, "expression", s);
+
+        const current_fn = s.current_fn orelse {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "error propagation is only valid inside a function body",
+                .{},
+            );
+            return error.Reported;
+        };
+
+        const return_info = try self.errableInfoOf(typ.functionReturnType(current_fn), loc, "current function return type", s);
+
+        if (!typ.typesStructurallyEqual(operand_info.error_payload_type, return_info.error_payload_type)) {
+            const pair = try self.formatTypePairText(return_info.error_payload_type, operand_info.error_payload_type, s);
+            defer pair.deinit();
+            try self.diags.add(
+                loc,
+                .semantic,
+                "cannot propagate error payload '{s}' into function return payload '{s}'",
+                .{ pair.actual.bytes, pair.expected.bytes },
+            );
+            return error.Reported;
+        }
+
+        if (context_te) |ctx| {
+            if (ctx.ty != .pointer_type or ctx.ty.pointer_type.mutability != .read_only) {
+                const desc = try self.formatTypeText(ctx.ty, s);
+                defer desc.deinit();
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "operator '!!' expects a context of type '&Char', found '{s}'",
+                    .{desc.bytes},
+                );
+                return error.Reported;
+            }
+
+            const child_ty = ctx.ty.pointer_type.child.*;
+            if (child_ty != .builtin or child_ty.builtin != .Char) {
+                const desc = try self.formatTypeText(ctx.ty, s);
+                defer desc.deinit();
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "operator '!!' expects a context of type '&Char', found '{s}'",
+                    .{desc.bytes},
+                );
+                return error.Reported;
+            }
+        }
+
+        const node = if (context_te) |ctx| blk: {
+            const err_ctx = try self.allocator.create(sg.ErrorContext);
+            err_ctx.* = .{
+                .errable_value = value_te.node,
+                .context = ctx.node,
+                .ok_variant_index = operand_info.ok_variant_index,
+                .ok_value_field_index = operand_info.ok_value_field_index,
+                .error_variant_index = operand_info.error_variant_index,
+                .ok_payload_type = operand_info.ok_payload_type,
+                .error_payload_type = operand_info.error_payload_type,
+                .line = loc.line,
+                .column = loc.column,
+            };
+            break :blk try sg.makeSGNode(.{ .error_context = err_ctx }, loc, self.allocator);
+        } else blk: {
+            const err_prop = try self.allocator.create(sg.ErrorPropagation);
+            err_prop.* = .{
+                .errable_value = value_te.node,
+                .ok_variant_index = operand_info.ok_variant_index,
+                .ok_value_field_index = operand_info.ok_value_field_index,
+                .error_variant_index = operand_info.error_variant_index,
+                .ok_payload_type = operand_info.ok_payload_type,
+                .error_payload_type = operand_info.error_payload_type,
+                .line = loc.line,
+                .column = loc.column,
+            };
+            break :blk try sg.makeSGNode(.{ .error_propagation = err_prop }, loc, self.allocator);
+        };
+
+        try s.nodes.append(node);
+        return .{ .node = node, .ty = operand_info.ok_payload_type };
+    }
+
+    fn errableInfoOf(
+        self: *Semantizer,
+        ty: sg.Type,
+        loc: tok.Location,
+        comptime what: []const u8,
+        s: *Scope,
+    ) SemErr!ErrableInfo {
+        if (ty != .choice_type) {
+            const desc = try self.formatTypeText(ty, s);
+            defer desc.deinit();
+            try self.diags.add(
+                loc,
+                .semantic,
+                "{s} for error propagation must be an Errable-like choice, found '{s}'",
+                .{ what, desc.bytes },
+            );
+            return error.Reported;
+        }
+
+        var ok_payload_struct: ?*const sg.StructType = null;
+        var ok_value_ty: ?sg.Type = null;
+        var ok_value_field_index: u32 = 0;
+        var error_payload: ?sg.Type = null;
+        var ok_variant_index: u32 = 0;
+        var error_variant_index: u32 = 0;
+
+        for (ty.choice_type.variants, 0..) |variant, idx| {
+            if (std.mem.eql(u8, variant.name, "ok")) {
+                const payload_ty = variant.payload_type orelse {
+                    try self.diags.add(loc, .semantic, "Errable '..ok' must carry a payload", .{});
+                    return error.Reported;
+                };
+                const payload_struct = switch (payload_ty) {
+                    .struct_type => |st| st,
+                    else => {
+                        const desc = try self.formatTypeText(payload_ty, s);
+                        defer desc.deinit();
+                        try self.diags.add(
+                            loc,
+                            .semantic,
+                            "Errable '..ok' payload must be a struct containing '.value', found '{s}'",
+                            .{desc.bytes},
+                        );
+                        return error.Reported;
+                    },
+                };
+                const value_field = typ.findFieldByName(payload_struct, "value") orelse {
+                    try self.diags.add(loc, .semantic, "Errable '..ok' payload must contain '.value'", .{});
+                    return error.Reported;
+                };
+                ok_payload_struct = payload_struct;
+                ok_value_ty = value_field.ty;
+                ok_value_field_index = fieldIndexInStruct(payload_struct, "value") orelse 0;
+                ok_variant_index = @intCast(idx);
+            } else if (std.mem.eql(u8, variant.name, "error")) {
+                error_payload = variant.payload_type;
+                error_variant_index = @intCast(idx);
+            }
+        }
+
+        if (ok_payload_struct == null or ok_value_ty == null or error_payload == null) {
+            const desc = try self.formatTypeText(ty, s);
+            defer desc.deinit();
+            try self.diags.add(
+                loc,
+                .semantic,
+                "{s} for error propagation must have '..ok' and '..error' payload variants, found '{s}'",
+                .{ what, desc.bytes },
+            );
+            return error.Reported;
+        }
+
+        try self.validateErrorPayloadShape(error_payload.?, loc, s);
+
+        return .{
+            .ok_variant_index = ok_variant_index,
+            .ok_payload_type = ok_value_ty.?,
+            .ok_value_field_index = ok_value_field_index,
+            .error_variant_index = error_variant_index,
+            .error_payload_type = error_payload.?,
+        };
+    }
+
+    fn fieldIndexInStruct(st: *const sg.StructType, name: []const u8) ?u32 {
+        for (st.fields, 0..) |field, idx| {
+            if (std.mem.eql(u8, field.name, name)) return @intCast(idx);
+        }
+        return null;
+    }
+
+    fn validateErrorPayloadShape(
+        self: *Semantizer,
+        error_payload_ty: sg.Type,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!void {
+        const error_struct = switch (error_payload_ty) {
+            .struct_type => |st| st,
+            else => {
+                const desc = try self.formatTypeText(error_payload_ty, s);
+                defer desc.deinit();
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "Errable '..error' payload must be a struct with '.reason' and '.trace', found '{s}'",
+                    .{desc.bytes},
+                );
+                return error.Reported;
+            },
+        };
+
+        const reason_field = typ.findFieldByName(error_struct, "reason");
+        const trace_field = typ.findFieldByName(error_struct, "trace");
+        if (reason_field == null or trace_field == null) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "Errable '..error' payload must contain '.reason' and '.trace'",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const trace_struct = switch (trace_field.?.ty) {
+            .struct_type => |st| st,
+            else => {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "Errable '.trace' field must be a struct containing '.entries'",
+                    .{},
+                );
+                return error.Reported;
+            },
+        };
+
+        if (typ.findFieldByName(trace_struct, "entries") == null) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "Errable '.trace' field must contain '.entries'",
+                .{},
+            );
+            return error.Reported;
+        }
+    }
+
     //──────────────────────────────────────────────────── IF
     fn handleIf(
         self: *Semantizer,
@@ -6998,7 +7301,7 @@ pub const Semantizer = struct {
         defer if (iterator_check_scope_storage) |*tmp_scope| self.clearDeferred(tmp_scope);
 
         if (iterable_copyable and f.iterable.*.content != .identifier) {
-            iterator_check_scope_storage = try Scope.init(self.allocator, s, null);
+            iterator_check_scope_storage = try Scope.init(self.allocator, s, s.current_fn);
             const tmp_binding = try self.allocator.create(sg.BindingDeclaration);
             tmp_binding.* = .{
                 .name = iterable_name,
@@ -7200,7 +7503,7 @@ pub const Semantizer = struct {
         case_syn: syn.MatchCase,
         parent: *Scope,
     ) SemErr!*const sg.CodeBlock {
-        var child = try Scope.init(self.allocator, parent, null);
+        var child = try Scope.init(self.allocator, parent, parent.current_fn);
 
         if (case_syn.payload_binding) |binding_name| {
             const resolved_payload_ty = payload_ty orelse {

@@ -50,6 +50,8 @@ pub const Content = union(enum) {
     struct_value_literal: *const StructValueLiteral,
     struct_field_access: *const StructFieldAccess,
     choice_payload_access: *const ChoicePayloadAccess,
+    error_propagation: *const ErrorPropagation,
+    error_context: *const ErrorContext,
     array_literal: *const ArrayLiteral,
     array_index: ArrayIndex,
     array_store: ArrayStore,
@@ -239,6 +241,29 @@ pub const StructFieldStore = struct {
     field_index: u32,
     field_type: Type,
     value: *const SGNode,
+};
+
+pub const ErrorPropagation = struct {
+    errable_value: *const SGNode,
+    ok_variant_index: u32,
+    ok_value_field_index: u32,
+    error_variant_index: u32,
+    ok_payload_type: Type,
+    error_payload_type: Type,
+    line: u32,
+    column: u32,
+};
+
+pub const ErrorContext = struct {
+    errable_value: *const SGNode,
+    context: *const SGNode,
+    ok_variant_index: u32,
+    ok_value_field_index: u32,
+    error_variant_index: u32,
+    ok_payload_type: Type,
+    error_payload_type: Type,
+    line: u32,
+    column: u32,
 };
 
 //

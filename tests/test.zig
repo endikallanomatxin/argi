@@ -983,6 +983,18 @@ test "feature_tests/types/14X_errable_match_unknown_variant" {
     );
 }
 
+test "feature_tests/types/22_error_propagation_trace" {
+    const test_path = "tests/feature_tests/types/22_error_propagation_trace";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/types/23_error_context_trace" {
+    const test_path = "tests/feature_tests/types/23_error_context_trace";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
 test "feature_tests/system/02_reached_arguments" {
     const test_path = "tests/feature_tests/system/02_reached_arguments";
     try expectSuccessfulBuild(test_path);

@@ -290,10 +290,11 @@ pub const Tokenizer = struct {
                 if (try self.next() == '=') {
                     try self.addToken(tok.Content{ .comparison_operator = .not_equal }, loc);
                     try self.advanceOne(); // Avanzar el segundo '!'
+                } else if (try self.next() == '!') {
+                    try self.addToken(tok.Content{ .double_bang = .{} }, loc);
+                    try self.advanceOne(); // Avanzar el segundo '!'
                 } else {
-                    try self.diagnostics.add(loc, .syntax, "unrecognized character: '{c}'", .{self.this()});
-                    try self.advanceOne(); // saltamos y seguimos
-                    return;
+                    try self.addToken(tok.Content{ .bang = .{} }, loc);
                 }
             },
             '<' => {
