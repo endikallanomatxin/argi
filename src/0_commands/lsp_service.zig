@@ -2444,7 +2444,7 @@ fn findSemanticTypeDeclByType(
     ty: sg.Type,
 ) ?SemanticTypeDeclRef {
     for (refs) |ref| {
-        if (typ.typesExactlyEqual(ref.decl.ty, ty)) return ref;
+        if (typ.declaredTypeMatches(ref.decl.ty, ty)) return ref;
     }
     return null;
 }

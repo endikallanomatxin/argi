@@ -428,10 +428,18 @@ pub fn typeNameFor(s: *Scope, t: sg.Type) ?[]const u8 {
         var it = sc.types.iterator();
         while (it.next()) |entry| {
             const td = entry.value_ptr.*;
-            if (typesExactlyEqual(td.ty, t)) return td.name;
+            if (declaredTypeMatches(td.ty, t)) return td.name;
         }
     }
     return null;
+}
+
+pub fn declaredTypeMatches(declared: sg.Type, actual: sg.Type) bool {
+    return switch (declared) {
+        .builtin, .abstract_type => typesExactlyEqual(declared, actual),
+        .struct_type, .choice_type, .array_type => typesExactlyEqual(declared, actual),
+        .pointer_type => false,
+    };
 }
 
 fn appendGenericIdentityArgPretty(

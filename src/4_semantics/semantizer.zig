@@ -1658,7 +1658,7 @@ pub const Semantizer = struct {
             var it = sc.types.iterator();
             while (it.next()) |entry| {
                 const td = entry.value_ptr.*;
-                if (typ.typesExactlyEqual(td.ty, ty)) return td;
+                if (typ.declaredTypeMatches(td.ty, ty)) return td;
             }
         }
         return null;
