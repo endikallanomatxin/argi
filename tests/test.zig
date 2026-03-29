@@ -1354,6 +1354,22 @@ test "feature_tests/ownership/23_named_struct_auto_deinit" {
     try runExpect(test_path, 11);
 }
 
+test "feature_tests/ownership/24X_mutable_and_read_field_alias_same_call" {
+    const test_path = "tests/feature_tests/ownership/24X_mutable_and_read_field_alias_same_call";
+    try buildExpectFail(test_path, "cannot be passed as '$&' and '&'");
+}
+
+test "feature_tests/ownership/25X_mutable_and_value_field_alias_same_call" {
+    const test_path = "tests/feature_tests/ownership/25X_mutable_and_value_field_alias_same_call";
+    try buildExpectFail(test_path, "cannot be passed as '$&' and 'value'");
+}
+
+test "feature_tests/ownership/26_distinct_fields_do_not_alias_same_call" {
+    const test_path = "tests/feature_tests/ownership/26_distinct_fields_do_not_alias_same_call";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 7);
+}
+
 test "feature_tests/polymorphism/23_abstract_requirement_reached_default" {
     const test_path = "tests/feature_tests/polymorphism/23_abstract_requirement_reached_default";
     try expectSuccessfulBuild(test_path);
