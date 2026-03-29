@@ -40,8 +40,8 @@ Error : Type = (
 )
 ```
 
-La forma concreta de `ErrorTrace` sigue abierta. Abajo se recogen las dos
-direcciones principales.
+La forma concreta de `ErrorTrace` sigue abierta, pero la dirección aceptada es
+que la traza viva dentro del propio valor `Error`.
 
 
 ## Error unions
@@ -100,41 +100,43 @@ If you are inside a function that returns an Errable and you are calling a funct
 > ! hace short-circuit con ejecución de defers
 
 
-## Open problem: tracing strategy
+## Tracing strategy
 
-Queremos soportar trazas/contexto legibles, pero sin fijar todavía si ese coste
-debe estar siempre dentro del valor `Error` o si debe depender de una
-estrategia.
+La dirección aceptada es que la traza viva dentro de `Error`.
 
-### Opción A: `system.error_tracer` reached
-
-Tener en `System` una estrategia reached, por ejemplo `system.error_tracer`,
-que decide cómo se construye, amplía o ignora la traza.
+`Error` debe ser autocontenido: además de la identidad del error en `.reason`,
+lleva su `.trace`, que se puede ir ampliando al propagar el error o al añadir
+contexto con operadores como `!!`.
 
 Ventajas:
-- Permite una estrategia sin overhead casi nulo.
-- Permite sobreescribir el mecanismo de traceado.
-- Separa la identidad del error de la política de observabilidad.
+- Es la opción más natural y directa.
+- El error se puede imprimir, pasar y devolver sin depender de capacidades
+  adicionales.
+- Encaja mejor con la idea de tratar el error como un valor normal del
+  lenguaje.
+- Hace más fácil definir un cast a string útil para humanos.
 
-Inconvenientes:
-- Menos natural, porque la traza no vive simplemente “dentro” del error.
-- Hace depender parte de la experiencia de errores de una capability reached.
+Coste asumido:
+- Existe un overhead base incluso cuando no se quiere una traza rica.
+- La representación concreta de `ErrorTrace` debe diseñarse para que ese coste
+  siga siendo razonable.
 
-### Opción B: la traza vive dentro de `Error`
-
-Hacer que `Error` tenga siempre algo como `.trace: ErrorTrace`, y que esa traza
-se vaya ampliando al propagar o añadir contexto.
-
-Ventajas:
-- Más natural y directa.
-- El error es autocontenido.
-- Más fácil de pensar, imprimir y pasar alrededor.
-
-Inconvenientes:
-- Overhead inevitable incluso si no quieres traza rica.
-- Menos espacio para estrategias alternativas.
-
-Este punto queda abierto por ahora.
+> [!IDEA]
+> Alternativa futura: `system.error_tracer` reached
+>
+> Se podría explorar una estrategia reached, por ejemplo
+> `system.error_tracer`, que decida cómo se construye, amplía o ignora la
+> traza.
+>
+> Posibles ventajas:
+> - Permitir una estrategia con overhead casi nulo.
+> - Permitir sobreescribir el mecanismo de traceado.
+> - Separar la identidad del error de la política de observabilidad.
+>
+> Inconvenientes:
+> - Es menos natural, porque la traza no vive simplemente dentro del error.
+> - Hace depender parte de la experiencia de errores de una capability
+>   reached.
 
 
 ## Errable as a monad
