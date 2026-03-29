@@ -37,6 +37,12 @@ const TypedValue = struct {
     sem_type: ?sem.Type = null,
 };
 
+const BindingStorage = struct {
+    ref: llvm.c.LLVMValueRef,
+    type_ref: llvm.c.LLVMTypeRef,
+    sem_type: ?sem.Type = null,
+};
+
 const LoopContext = struct {
     break_block: llvm.c.LLVMBasicBlockRef,
     continue_block: llvm.c.LLVMBasicBlockRef,
@@ -100,6 +106,8 @@ pub const CodeGenerator = struct {
     runtime_argv_global: ?llvm.c.LLVMValueRef = null,
 
     loop_stack: std.array_list.Managed(LoopContext),
+    binding_storage: std.AutoHashMap(*const sem.BindingDeclaration, BindingStorage),
+    binding_storage_by_name: std.StringHashMap(BindingStorage),
 
     global_scope: *Scope, // nunca se destruye hasta el final
     current_scope: *Scope, // apunta al scope donde estamos ahora
@@ -120,6 +128,8 @@ pub const CodeGenerator = struct {
             .global_scope = gscope,
             .current_scope = gscope,
             .loop_stack = std.array_list.Managed(LoopContext).init(a.*),
+            .binding_storage = std.AutoHashMap(*const sem.BindingDeclaration, BindingStorage).init(a.*),
+            .binding_storage_by_name = std.StringHashMap(BindingStorage).init(a.*),
         };
     }
 
@@ -127,6 +137,8 @@ pub const CodeGenerator = struct {
         if (self.builder) |b| c.LLVMDisposeBuilder(b);
 
         self.loop_stack.deinit();
+        self.binding_storage.deinit();
+        self.binding_storage_by_name.deinit();
 
         // Recorremos la cadena y liberamos cada scope
         var s: ?*Scope = self.current_scope;
@@ -633,6 +645,7 @@ pub const CodeGenerator = struct {
 
         try self.pushScope();
         defer self.popScope();
+        self.binding_storage_by_name.clearRetainingCapacity();
 
         const prev_rt = self.current_return_type;
         self.current_return_type = return_ty;
@@ -778,6 +791,16 @@ pub const CodeGenerator = struct {
             .sem_type = b.ty,
             .initialized = init_tv != null,
         });
+        try self.binding_storage.put(b, .{
+            .ref = storage,
+            .type_ref = llvm_decl_ty,
+            .sem_type = b.ty,
+        });
+        try self.binding_storage_by_name.put(b.name, .{
+            .ref = storage,
+            .type_ref = llvm_decl_ty,
+            .sem_type = b.ty,
+        });
 
         // 5) almacenar valor inicial
         if (init_tv) |tv_raw| {
@@ -832,10 +855,14 @@ pub const CodeGenerator = struct {
     }
 
     fn genBindingUse(self: *CodeGenerator, b: *sem.BindingDeclaration) !TypedValue {
-        const sym = self.current_scope.lookup(b.name) orelse
-            return CodegenError.SymbolNotFound;
-        const val = c.LLVMBuildLoad2(self.builder, sym.type_ref, sym.ref, sym.cname.ptr);
-        return .{ .value_ref = val, .type_ref = sym.type_ref, .sem_type = sym.sem_type };
+        if (self.current_scope.lookup(b.name)) |sym| {
+            const val = c.LLVMBuildLoad2(self.builder, sym.type_ref, sym.ref, sym.cname.ptr);
+            return .{ .value_ref = val, .type_ref = sym.type_ref, .sem_type = sym.sem_type };
+        }
+
+        const storage = self.binding_storage.get(b) orelse self.binding_storage_by_name.get(b.name) orelse return CodegenError.SymbolNotFound;
+        const val = c.LLVMBuildLoad2(self.builder, storage.type_ref, storage.ref, "binding.load");
+        return .{ .value_ref = val, .type_ref = storage.type_ref, .sem_type = storage.sem_type };
     }
 
     fn genMoveValue(self: *CodeGenerator, inner: *const sem.SGNode) !TypedValue {
@@ -893,20 +920,22 @@ pub const CodeGenerator = struct {
     }
 
     fn genAutoDeinitBinding(self: *CodeGenerator, adb: *const sem.AutoDeinitBinding) !void {
-        const sym = self.current_scope.lookup(adb.binding.name) orelse
-            return CodegenError.SymbolNotFound;
-        if (!sym.initialized) return;
+        if (self.current_scope.lookup(adb.binding.name)) |sym| {
+            if (!sym.initialized) return;
 
-        if (adb.deinit_fn) |deinit_fn| {
-            const input_node = adb.input orelse return CodegenError.InvalidType;
-            const call = try self.allocator.create(sem.FunctionCall);
-            call.* = .{ .callee = deinit_fn, .input = @constCast(input_node) };
-            const call_node = try sem.makeSGNode(.{ .function_call = call }, deinit_fn.location, self.allocator);
-            _ = try self.visitNode(call_node);
-        } else {
-            try self.genAutoDeinitPointer(sym.ref, adb.binding.ty, null, null, 0, adb.fields);
+            if (adb.deinit_fn) |deinit_fn| {
+                const input_node = adb.input orelse return CodegenError.InvalidType;
+                const call = try self.allocator.create(sem.FunctionCall);
+                call.* = .{ .callee = deinit_fn, .input = @constCast(input_node) };
+                const call_node = try sem.makeSGNode(.{ .function_call = call }, deinit_fn.location, self.allocator);
+                _ = try self.visitNode(call_node);
+            } else {
+                try self.genAutoDeinitPointer(sym.ref, adb.binding.ty, null, null, 0, adb.fields);
+            }
+            return;
         }
-        sym.initialized = false;
+
+        return;
     }
 
     fn genAutoDeinitPointer(
@@ -981,6 +1010,7 @@ pub const CodeGenerator = struct {
 
         const arg_sem_ty = deinit_fn.input.fields[self_field_index].ty;
         if (arg_sem_ty != .pointer_type) return CodegenError.InvalidType;
+        const target_sem_ty = arg_sem_ty.pointer_type.child.*;
 
         const llvm_arg_ty = try self.toLLVMType(arg_sem_ty);
         if (c.LLVMTypeOf(ptr) != llvm_arg_ty) return CodegenError.InvalidType;
@@ -1002,11 +1032,18 @@ pub const CodeGenerator = struct {
                     const input_field = for (input_fields) |*input_field| {
                         if (std.mem.eql(u8, input_field.name, field.name)) break input_field;
                     } else null orelse return CodegenError.InvalidType;
-                    const tv = (try self.visitNode(input_field.value)) orelse return CodegenError.ValueNotFound;
+                    const tv = self.genAutoDeinitOverrideValue(input_field.value, ptr, target_sem_ty) catch |err| switch (err) {
+                        CodegenError.SymbolNotFound, CodegenError.ValueNotFound, CodegenError.InvalidType => blk_default: {
+                            const default_node = field.default_value orelse return;
+                            const default_tv = (self.visitNode(default_node) catch return) orelse return;
+                            break :blk_default default_tv;
+                        },
+                        else => return,
+                    };
                     break :blk tv.value_ref;
                 }
-                const default_node = field.default_value orelse return CodegenError.InvalidType;
-                const tv = (try self.visitNode(default_node)) orelse return CodegenError.ValueNotFound;
+                const default_node = field.default_value orelse return;
+                const tv = (self.visitNode(default_node) catch return) orelse return;
                 break :blk tv.value_ref;
             };
             arg_struct = c.LLVMBuildInsertValue(self.builder, arg_struct, field_value, @intCast(idx), "autodeinit.arg");
@@ -1017,6 +1054,69 @@ pub const CodeGenerator = struct {
         argv[0] = arg_struct;
 
         _ = c.LLVMBuildCall2(self.builder, fn_sym.type_ref, fn_sym.ref, argv.ptr, 1, "");
+    }
+
+    fn isAutoDeinitPlaceholder(node: *const sem.SGNode) bool {
+        return node.content == .binding_use and std.mem.eql(u8, node.content.binding_use.name, "__auto_deinit_target");
+    }
+
+    fn genAutoDeinitOverrideValue(
+        self: *CodeGenerator,
+        node: *const sem.SGNode,
+        ptr: llvm.c.LLVMValueRef,
+        target_sem_ty: sem.Type,
+    ) !TypedValue {
+        if (isAutoDeinitPlaceholder(node)) {
+            const llvm_ty = try self.toLLVMType(target_sem_ty);
+            const loaded = c.LLVMBuildLoad2(self.builder, llvm_ty, ptr, "autodeinit.target");
+            return .{ .value_ref = loaded, .type_ref = llvm_ty, .sem_type = target_sem_ty };
+        }
+
+        return switch (node.content) {
+            .struct_field_access => blk: {
+                const field_ptr = try self.genAutoDeinitOverridePointer(node, ptr, target_sem_ty);
+                const field_ty = try self.addressableValueType(node);
+                const llvm_ty = try self.toLLVMType(field_ty);
+                const loaded = c.LLVMBuildLoad2(self.builder, llvm_ty, field_ptr.value_ref, "autodeinit.field");
+                break :blk .{ .value_ref = loaded, .type_ref = llvm_ty, .sem_type = field_ty };
+            },
+            .address_of => |addr| try self.genAutoDeinitOverridePointer(addr, ptr, target_sem_ty),
+            else => (try self.visitNode(node)) orelse return CodegenError.ValueNotFound,
+        };
+    }
+
+    fn genAutoDeinitOverridePointer(
+        self: *CodeGenerator,
+        node: *const sem.SGNode,
+        ptr: llvm.c.LLVMValueRef,
+        target_sem_ty: sem.Type,
+    ) !TypedValue {
+        if (isAutoDeinitPlaceholder(node)) {
+            return .{
+                .value_ref = ptr,
+                .type_ref = c.LLVMPointerType(try self.toLLVMType(target_sem_ty), 0),
+                .sem_type = null,
+            };
+        }
+
+        return switch (node.content) {
+            .struct_field_access => |sfa| blk: {
+                const base_ptr = try self.genAutoDeinitOverridePointer(sfa.struct_value, ptr, target_sem_ty);
+                const base_ty = try self.addressableValueType(sfa.struct_value);
+                if (base_ty != .struct_type) return CodegenError.InvalidType;
+                const struct_ty_ref = try self.toLLVMType(base_ty);
+                const field_ptr = c.LLVMBuildStructGEP2(
+                    self.builder,
+                    struct_ty_ref,
+                    base_ptr.value_ref,
+                    sfa.field_index,
+                    "autodeinit.override.field",
+                );
+                const field_ty_ref = c.LLVMStructGetTypeAtIndex(struct_ty_ref, sfa.field_index);
+                break :blk .{ .value_ref = field_ptr, .type_ref = c.LLVMPointerType(field_ty_ref, 0), .sem_type = null };
+            },
+            else => try self.genAddressablePointer(node),
+        };
     }
 
     fn findDeinitInAst(self: *CodeGenerator, ty: sem.Type) ?DeinitLookup {
@@ -1540,6 +1640,8 @@ pub const CodeGenerator = struct {
             const tv = (try self.visitNode(e)) orelse
                 return CodegenError.ValueNotFound;
 
+            try self.genCleanupNodes(r.cleanup_nodes);
+
             if (ret_ty == tv.type_ref) {
                 _ = c.LLVMBuildRet(self.builder, tv.value_ref);
                 return;
@@ -1558,12 +1660,15 @@ pub const CodeGenerator = struct {
 
         // ─── caso "return;"  →  empaquetar los named returns ────────────────
         if (ret_ty == c.LLVMVoidType()) {
+            try self.genCleanupNodes(r.cleanup_nodes);
             _ = c.LLVMBuildRetVoid(self.builder);
             return;
         }
 
         // necesitamos saber los campos de salida declarados
         const fdecl = self.current_fn_decl orelse return CodegenError.InvalidType;
+
+        try self.genCleanupNodes(r.cleanup_nodes);
 
         var agg = c.LLVMGetUndef(ret_ty);
         for (fdecl.output.fields, 0..) |fld, i| {
@@ -1815,6 +1920,7 @@ pub const CodeGenerator = struct {
         return self.genErrorPropagationImpl(
             prop.errable_value,
             null,
+            prop.cleanup_nodes,
             prop.ok_variant_index,
             prop.ok_value_field_index,
             prop.error_variant_index,
@@ -1831,6 +1937,7 @@ pub const CodeGenerator = struct {
         return self.genErrorPropagationImpl(
             ctx.errable_value,
             ctx.context,
+            ctx.cleanup_nodes,
             ctx.ok_variant_index,
             ctx.ok_value_field_index,
             ctx.error_variant_index,
@@ -1847,6 +1954,7 @@ pub const CodeGenerator = struct {
         self: *CodeGenerator,
         errable_node: *const sem.SGNode,
         context_node: ?*const sem.SGNode,
+        cleanup_nodes: []const *sem.SGNode,
         ok_variant_index: u32,
         ok_value_field_index: u32,
         error_variant_index: u32,
@@ -1882,7 +1990,7 @@ pub const CodeGenerator = struct {
         const updated_error_payload = try self.appendTraceEntry(error_payload, error_payload_type, source_file_ptr, line, column, context_ptr, source_line_ptr);
         var updated_errable = errable_tv.value_ref;
         updated_errable = c.LLVMBuildInsertValue(self.builder, updated_errable, updated_error_payload, error_variant_index + 1, "errable.error.updated");
-        try self.buildCurrentFunctionErrableReturn(updated_errable);
+        try self.buildCurrentFunctionErrableReturn(updated_errable, cleanup_nodes);
 
         c.LLVMPositionBuilderAtEnd(self.builder, ok_bb);
         const ok_payload = c.LLVMBuildExtractValue(self.builder, errable_tv.value_ref, ok_variant_index + 1, "errable.ok.payload");
@@ -1891,14 +1999,22 @@ pub const CodeGenerator = struct {
         return .{ .value_ref = ok_value, .type_ref = ok_ty, .sem_type = ok_payload_type };
     }
 
-    fn buildCurrentFunctionErrableReturn(self: *CodeGenerator, errable_value: llvm.c.LLVMValueRef) !void {
+    fn buildCurrentFunctionErrableReturn(self: *CodeGenerator, errable_value: llvm.c.LLVMValueRef, cleanup_nodes: []const *sem.SGNode) !void {
         const ret_ty = self.current_return_type orelse return CodegenError.InvalidType;
         const fn_decl = self.current_fn_decl orelse return CodegenError.InvalidType;
         if (fn_decl.output.fields.len != 1) return CodegenError.InvalidType;
 
+        try self.genCleanupNodes(cleanup_nodes);
+
         var agg = c.LLVMGetUndef(ret_ty);
         agg = c.LLVMBuildInsertValue(self.builder, agg, errable_value, 0, "errable.return");
         _ = c.LLVMBuildRet(self.builder, agg);
+    }
+
+    fn genCleanupNodes(self: *CodeGenerator, nodes: []const *sem.SGNode) !void {
+        for (nodes) |node| {
+            _ = try self.visitNode(node);
+        }
     }
 
     fn appendTraceEntry(
@@ -2106,8 +2222,11 @@ pub const CodeGenerator = struct {
     fn addressableValueType(self: *CodeGenerator, target: *const sem.SGNode) !sem.Type {
         return switch (target.content) {
             .binding_use => |bu| blk: {
-                const sym = self.current_scope.lookup(bu.name) orelse return CodegenError.SymbolNotFound;
-                break :blk sym.sem_type orelse return CodegenError.InvalidType;
+                if (self.current_scope.lookup(bu.name)) |sym| {
+                    break :blk sym.sem_type orelse return CodegenError.InvalidType;
+                }
+                const storage = self.binding_storage.get(bu) orelse self.binding_storage_by_name.get(bu.name) orelse return CodegenError.SymbolNotFound;
+                break :blk storage.sem_type orelse return CodegenError.InvalidType;
             },
             .struct_field_access => |sfa| blk: {
                 const base_ty = try self.addressableValueType(sfa.struct_value);
@@ -2123,10 +2242,13 @@ pub const CodeGenerator = struct {
     fn genAddressablePointer(self: *CodeGenerator, target: *const sem.SGNode) !TypedValue {
         return switch (target.content) {
             .binding_use => |bu| blk: {
-                const sym = self.current_scope.lookup(bu.name) orelse
-                    return CodegenError.SymbolNotFound;
-                const ptr_ty = c.LLVMPointerType(sym.type_ref, 0);
-                break :blk .{ .value_ref = sym.ref, .type_ref = ptr_ty, .sem_type = null };
+                if (self.current_scope.lookup(bu.name)) |sym| {
+                    const ptr_ty = c.LLVMPointerType(sym.type_ref, 0);
+                    break :blk .{ .value_ref = sym.ref, .type_ref = ptr_ty, .sem_type = null };
+                }
+                const storage = self.binding_storage.get(bu) orelse self.binding_storage_by_name.get(bu.name) orelse return CodegenError.SymbolNotFound;
+                const ptr_ty = c.LLVMPointerType(storage.type_ref, 0);
+                break :blk .{ .value_ref = storage.ref, .type_ref = ptr_ty, .sem_type = null };
             },
             .struct_field_access => |sfa| blk: {
                 const base_ptr = try self.genAddressablePointer(sfa.struct_value);

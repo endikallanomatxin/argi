@@ -245,6 +245,7 @@ pub const StructFieldStore = struct {
 
 pub const ErrorPropagation = struct {
     errable_value: *const SGNode,
+    cleanup_nodes: []const *SGNode,
     ok_variant_index: u32,
     ok_value_field_index: u32,
     error_variant_index: u32,
@@ -259,6 +260,7 @@ pub const ErrorPropagation = struct {
 pub const ErrorContext = struct {
     errable_value: *const SGNode,
     context: *const SGNode,
+    cleanup_nodes: []const *SGNode,
     ok_variant_index: u32,
     ok_value_field_index: u32,
     error_variant_index: u32,
@@ -373,6 +375,7 @@ pub const LogicalOperation = struct {
 
 pub const ReturnStatement = struct {
     expression: ?*const SGNode,
+    cleanup_nodes: []const *SGNode,
 };
 
 pub const IfStatement = struct {

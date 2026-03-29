@@ -238,6 +238,47 @@ pub const Semantizer = struct {
         return "";
     }
 
+    fn collectActiveDeferredNodes(self: *Semantizer, s: *Scope) ![]const *sg.SGNode {
+        var collected = std.array_list.Managed(*sg.SGNode).init(self.allocator.*);
+        errdefer collected.deinit();
+
+        var cur: ?*Scope = s;
+        const current_fn = s.current_fn;
+        while (cur) |scope_ptr| : (cur = scope_ptr.parent) {
+            if (scope_ptr.current_fn != current_fn) break;
+
+            var d_idx: usize = scope_ptr.deferred.items.len;
+            while (d_idx > 0) : (d_idx -= 1) {
+                const group = scope_ptr.deferred.items[d_idx - 1];
+                try collected.appendSlice(group.nodes);
+            }
+        }
+
+        return try collected.toOwnedSlice();
+    }
+
+    fn collectActiveEarlyCleanupNodes(self: *Semantizer, s: *Scope) ![]const *sg.SGNode {
+        var collected = std.array_list.Managed(*sg.SGNode).init(self.allocator.*);
+        errdefer collected.deinit();
+
+        var cur: ?*Scope = s;
+        const current_fn = s.current_fn;
+        while (cur) |scope_ptr| : (cur = scope_ptr.parent) {
+            if (scope_ptr.current_fn != current_fn) break;
+
+            var d_idx: usize = scope_ptr.deferred.items.len;
+            while (d_idx > 0) : (d_idx -= 1) {
+                const group = scope_ptr.deferred.items[d_idx - 1];
+                for (group.nodes) |node| {
+                    if (node.content == .auto_deinit_binding and node.content.auto_deinit_binding.deinit_fn == null) continue;
+                    try collected.append(node);
+                }
+            }
+        }
+
+        return try collected.toOwnedSlice();
+    }
+
     fn tryResolveAutoDeinitWithInput(
         self: *Semantizer,
         binding: *sg.BindingDeclaration,
@@ -6886,7 +6927,10 @@ pub const Semantizer = struct {
         }
 
         const rs = try self.allocator.create(sg.ReturnStatement);
-        rs.* = .{ .expression = if (e) |te| te.node else null };
+        rs.* = .{
+            .expression = if (e) |te| te.node else null,
+            .cleanup_nodes = try self.collectActiveEarlyCleanupNodes(s),
+        };
 
         const n = try sg.makeSGNode(.{ .return_statement = rs }, undefined, self.allocator);
         try s.nodes.append(n);
@@ -6989,6 +7033,7 @@ pub const Semantizer = struct {
             err_ctx.* = .{
                 .errable_value = value_te.node,
                 .context = ctx.node,
+                .cleanup_nodes = try self.collectActiveEarlyCleanupNodes(s),
                 .ok_variant_index = operand_info.ok_variant_index,
                 .ok_value_field_index = operand_info.ok_value_field_index,
                 .error_variant_index = operand_info.error_variant_index,
@@ -7005,6 +7050,7 @@ pub const Semantizer = struct {
             const source_line = self.sourceLineText(loc);
             err_prop.* = .{
                 .errable_value = value_te.node,
+                .cleanup_nodes = try self.collectActiveEarlyCleanupNodes(s),
                 .ok_variant_index = operand_info.ok_variant_index,
                 .ok_value_field_index = operand_info.ok_value_field_index,
                 .error_variant_index = operand_info.error_variant_index,

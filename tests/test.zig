@@ -1453,6 +1453,18 @@ test "feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable" {
     try buildExpectFail(test_path, "type '[2]Resource' is not copyable");
 }
 
+test "feature_tests/ownership/33_return_runs_defer" {
+    const test_path = "tests/feature_tests/ownership/33_return_runs_defer";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/34_error_propagation_runs_auto_deinit" {
+    const test_path = "tests/feature_tests/ownership/34_error_propagation_runs_auto_deinit";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
 test "feature_tests/polymorphism/23_abstract_requirement_reached_default" {
     const test_path = "tests/feature_tests/polymorphism/23_abstract_requirement_reached_default";
     try expectSuccessfulBuild(test_path);
