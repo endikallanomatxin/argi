@@ -18,6 +18,9 @@ pub fn main() !void {
         std.debug.print("  --on-build-error-show-syntax-tree      Print the syntax tree\n", .{});
         std.debug.print("  --on-build-error-show-semantic-graph   Print the semantic graph\n", .{});
         std.debug.print("  --on-build-error-show-token-list      Print the token list\n", .{});
+        std.debug.print("  --output <path>                       Write the final binary there\n", .{});
+        std.debug.print("  --emit-llvm <path>                    Write the emitted LLVM IR there\n", .{});
+        std.debug.print("  --emit-obj <path>                     Write the object file there\n", .{});
         return;
     }
 

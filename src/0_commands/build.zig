@@ -18,11 +18,16 @@ const BuildFlags = struct {
     show_syntax_tree: bool = false,
     show_semantic_graph: bool = false,
     show_token_list: bool = false,
+    output_path: ?[]const u8 = null,
+    llvm_ir_path: ?[]const u8 = null,
+    object_path: ?[]const u8 = null,
 };
 
-fn parseFlags(args: []const []const u8) BuildFlags {
+fn parseFlags(args: []const []const u8) !BuildFlags {
     var flags: BuildFlags = .{};
-    for (args) |a| {
+    var idx: usize = 0;
+    while (idx < args.len) : (idx += 1) {
+        const a = args[idx];
         if (std.mem.eql(u8, a, "--on-build-error-show-cascade")) {
             flags.show_cascade = true;
         } else if (std.mem.eql(u8, a, "--on-build-error-show-syntax-tree")) {
@@ -31,6 +36,18 @@ fn parseFlags(args: []const []const u8) BuildFlags {
             flags.show_semantic_graph = true;
         } else if (std.mem.eql(u8, a, "--on-build-error-show-token-list")) {
             flags.show_token_list = true;
+        } else if (std.mem.eql(u8, a, "--output")) {
+            idx += 1;
+            if (idx >= args.len) return error.MissingFlagValue;
+            flags.output_path = args[idx];
+        } else if (std.mem.eql(u8, a, "--emit-llvm")) {
+            idx += 1;
+            if (idx >= args.len) return error.MissingFlagValue;
+            flags.llvm_ir_path = args[idx];
+        } else if (std.mem.eql(u8, a, "--emit-obj")) {
+            idx += 1;
+            if (idx >= args.len) return error.MissingFlagValue;
+            flags.object_path = args[idx];
         }
     }
     return flags;
@@ -83,25 +100,22 @@ pub fn compile(args: []const []const u8) !void {
     const allocator = arena.allocator();
 
     const target_path = args[0];
-    const flags = parseFlags(args[1..]);
+    const flags = try parseFlags(args[1..]);
     const module_dir = try resolveBuildModuleDir(allocator, target_path);
 
     // Salidas finales por defecto dentro del módulo compilado.
-    const final_output_path = try std.fmt.allocPrint(
-        allocator,
-        "{s}/build/output",
-        .{module_dir},
-    );
-    const final_ir_path = try std.fmt.allocPrint(
-        allocator,
-        "{s}.ll",
-        .{final_output_path},
-    );
-    const final_obj_path = try std.fmt.allocPrint(
-        allocator,
-        "{s}.o",
-        .{final_output_path},
-    );
+    const final_output_path = if (flags.output_path) |path|
+        try std.fs.path.resolve(allocator, &.{path})
+    else
+        try std.fmt.allocPrint(allocator, "{s}/build/output", .{module_dir});
+    const final_ir_path = if (flags.llvm_ir_path) |path|
+        try std.fs.path.resolve(allocator, &.{path})
+    else
+        try std.fmt.allocPrint(allocator, "{s}.ll", .{final_output_path});
+    const final_obj_path = if (flags.object_path) |path|
+        try std.fs.path.resolve(allocator, &.{path})
+    else
+        try std.fmt.allocPrint(allocator, "{s}.o", .{final_output_path});
 
     try ensureParentDir(final_output_path);
     try ensureParentDir(final_ir_path);
@@ -249,4 +263,27 @@ pub fn compile(args: []const []const u8) !void {
     try replaceFile(temp_obj_path, final_obj_path);
 
     std.debug.print("✔ Build completed\n", .{});
+}
+
+test "parse build flags keeps diagnostics toggles and output paths" {
+    const flags = try parseFlags(&.{
+        "--on-build-error-show-cascade",
+        "--on-build-error-show-token-list",
+        "--output",
+        "bin/app",
+        "--emit-llvm",
+        "ir/app.ll",
+        "--emit-obj",
+        "obj/app.o",
+    });
+
+    try std.testing.expect(flags.show_cascade);
+    try std.testing.expect(flags.show_token_list);
+    try std.testing.expectEqualStrings("bin/app", flags.output_path.?);
+    try std.testing.expectEqualStrings("ir/app.ll", flags.llvm_ir_path.?);
+    try std.testing.expectEqualStrings("obj/app.o", flags.object_path.?);
+}
+
+test "parse build flags rejects missing path value" {
+    try std.testing.expectError(error.MissingFlagValue, parseFlags(&.{"--output"}));
 }
