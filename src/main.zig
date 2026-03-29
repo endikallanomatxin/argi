@@ -1,5 +1,6 @@
 const std = @import("std");
 const build_cmd = @import("0_commands/build.zig");
+const init_cmd = @import("0_commands/init.zig");
 const lsp_cmd = @import("0_commands/lsp.zig");
 
 pub fn main() !void {
@@ -10,6 +11,7 @@ pub fn main() !void {
         std.debug.print("Usage: argi <command> [module-directory] [options]\n", .{});
         std.debug.print("Available commands:\n", .{});
         std.debug.print("  build <directory> [flags] - Compile a folder module to a binary\n", .{});
+        std.debug.print("  init <project|module> <directory> - Create a starter scaffold\n", .{});
         std.debug.print("  lsp                       - Start LSP server\n", .{});
         std.debug.print("\nBuild flags (on build error):\n", .{});
         std.debug.print("  --on-build-error-show-cascade          Print all cascading diagnostics\n", .{});
@@ -29,6 +31,15 @@ pub fn main() !void {
         const build_args = args[2..];
         build_cmd.compile(build_args) catch |err| {
             std.debug.print("Build error: {any}\n", .{err});
+            return err;
+        };
+    } else if (std.mem.eql(u8, command, "init")) {
+        if (args.len < 4) {
+            std.debug.print("Error: init requires <project|module> and <directory>\n", .{});
+            return;
+        }
+        init_cmd.run(args[2..4]) catch |err| {
+            std.debug.print("Init error: {any}\n", .{err});
             return err;
         };
     } else if (std.mem.eql(u8, command, "lsp")) {
