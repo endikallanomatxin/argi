@@ -244,8 +244,8 @@ push_view(
 operator +(
     .left: &String,
     .right: &Char,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.out: String) := {
+    allocator : $&Allocator = #reach allocator, system.allocator
     c_length :: UIntNative = 0
     while 1 == 1 {
         addr :: UIntNative = cast#(.to: UIntNative)(.value = right) + c_length
@@ -262,7 +262,7 @@ operator +(
         .length = c_length,
     )
 
-    temp :: String = String(.capacity = left_view.length + right_view.length)
+    temp :: String = String(.allocator = allocator, .capacity = left_view.length + right_view.length)
     push_view(.self = $&temp, .view = &left_view)
     push_view(.self = $&temp, .view = &right_view)
     out = temp

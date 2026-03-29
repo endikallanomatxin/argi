@@ -2135,6 +2135,16 @@ pub const Semantizer = struct {
         reach: syn.ReachDirective,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
+        const reach_ptr = try self.semanticReachDirectiveFromSyntax(reach);
+        const node = try sg.makeSGNode(.{ .reach_directive = reach_ptr }, loc, self.allocator);
+        node.sem_type = .{ .builtin = .Any };
+        return .{ .node = node, .ty = .{ .builtin = .Any } };
+    }
+
+    fn semanticReachDirectiveFromSyntax(
+        self: *Semantizer,
+        reach: syn.ReachDirective,
+    ) !*sg.ReachDirective {
         var alternatives = try self.allocator.alloc(sg.ReachAlternative, reach.alternatives.len);
         for (reach.alternatives, 0..) |alt, idx| {
             var segments = try self.allocator.alloc([]const u8, alt.segments.len);
@@ -2146,9 +2156,7 @@ pub const Semantizer = struct {
 
         const reach_ptr = try self.allocator.create(sg.ReachDirective);
         reach_ptr.* = .{ .alternatives = alternatives };
-        const node = try sg.makeSGNode(.{ .reach_directive = reach_ptr }, loc, self.allocator);
-        node.sem_type = .{ .builtin = .Any };
-        return .{ .node = node, .ty = .{ .builtin = .Any } };
+        return reach_ptr;
     }
 
     fn buildStructFieldAccessFromTypedExpr(
@@ -2337,6 +2345,18 @@ pub const Semantizer = struct {
             for (alt.segments, 0..) |segment, seg_idx| {
                 if (seg_idx != 0) try buf.append('.');
                 try buf.appendSlice(segment);
+            }
+        }
+        return buf.toOwnedSlice();
+    }
+
+    fn formatReachDirectiveForSyntax(self: *Semantizer, reach: syn.ReachDirective) ![]u8 {
+        var buf = std.array_list.Managed(u8).init(self.allocator.*);
+        for (reach.alternatives, 0..) |alt, alt_idx| {
+            if (alt_idx != 0) try buf.appendSlice(", ");
+            for (alt.segments, 0..) |segment, seg_idx| {
+                if (seg_idx != 0) try buf.append('.');
+                try buf.appendSlice(segment.string);
             }
         }
         return buf.toOwnedSlice();
@@ -2534,7 +2554,50 @@ pub const Semantizer = struct {
         var init_te_opt: ?typ.TypedExpr = null;
         if (d.value) |v| {
             init_node = v;
-            init_te_opt = try self.visitNode(v.*, s);
+            if (v.*.content == .reach_directive) {
+                const reach_syntax = v.*.content.reach_directive;
+                const reach = try self.semanticReachDirectiveFromSyntax(reach_syntax);
+                if (d.type) |t| {
+                    const expected_ty = try self.resolveType(t, s);
+                    if (expected_ty == .abstract_type) return error.AbstractNeedsDefault;
+                    const resolved = try self.resolveReachedArgument(
+                        d.name.string,
+                        expected_ty,
+                        reach,
+                        s,
+                        v.*.location,
+                    );
+                    init_te_opt = resolved;
+                } else {
+                    const inferred = try self.resolveReachedArgumentForInference(
+                        d.name.string,
+                        reach,
+                        s,
+                        v.*.location,
+                    ) orelse {
+                        const reach_text = try self.formatReachDirectiveForSyntax(reach_syntax);
+                        defer self.allocator.free(reach_text);
+                        try self.diags.add(
+                            v.*.location,
+                            .semantic,
+                            "cannot infer type for '.{s}' from #reach [{s}]",
+                            .{ d.name.string, reach_text },
+                        );
+                        return error.Reported;
+                    };
+
+                    const resolved = try self.resolveReachedArgument(
+                        d.name.string,
+                        inferred.ty,
+                        reach,
+                        s,
+                        v.*.location,
+                    );
+                    init_te_opt = resolved;
+                }
+            } else {
+                init_te_opt = try self.visitNode(v.*, s);
+            }
         }
         var ty: sg.Type = .{ .builtin = .Int32 };
         if (d.type) |t| {

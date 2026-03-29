@@ -1305,6 +1305,12 @@ test "feature_tests/system/24_arguments_length_pipe_positional" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/system/25_local_typed_reach_binding" {
+    const test_path = "tests/feature_tests/system/25_local_typed_reach_binding";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/polymorphism/20_generic_abstract_bound_syntax" {
     const test_path = "tests/feature_tests/polymorphism/20_generic_abstract_bound_syntax";
     try expectSuccessfulBuild(test_path);
