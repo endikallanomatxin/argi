@@ -216,6 +216,11 @@ const SemanticBindingUseRef = struct {
     binding: *const sg.BindingDeclaration,
 };
 
+const SemanticFieldAccessRef = struct {
+    node: *const sg.SGNode,
+    access: *const sg.StructFieldAccess,
+};
+
 const SyntaxTypeDeclRef = struct {
     node: *const st.STNode,
     name: st.Name,
@@ -865,7 +870,9 @@ pub const LanguageService = struct {
         defer semantic_binding_decls.deinit();
         var semantic_binding_uses = std.array_list.Managed(SemanticBindingUseRef).init(analysis_allocator);
         defer semantic_binding_uses.deinit();
-        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses);
+        var semantic_field_accesses = std.array_list.Managed(SemanticFieldAccessRef).init(analysis_allocator);
+        defer semantic_field_accesses.deinit();
+        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses, &semantic_field_accesses);
 
         for (syntax_functions.items) |syntax_fn| {
             if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc.path)) continue;
@@ -1051,7 +1058,9 @@ pub const LanguageService = struct {
         defer semantic_binding_decls.deinit();
         var semantic_binding_uses = std.array_list.Managed(SemanticBindingUseRef).init(analysis_allocator);
         defer semantic_binding_uses.deinit();
-        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses);
+        var semantic_field_accesses = std.array_list.Managed(SemanticFieldAccessRef).init(analysis_allocator);
+        defer semantic_field_accesses.deinit();
+        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses, &semantic_field_accesses);
 
         for (syntax_functions.items) |syntax_fn| {
             if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc.path)) continue;
@@ -1104,6 +1113,16 @@ pub const LanguageService = struct {
             return .{
                 .path = try self.ownedDefinitionPath(target.name.location.file),
                 .range = nameRange(target.name.location, target.name.string.len),
+            };
+        }
+
+        for (semantic_field_accesses.items) |field_access| {
+            if (!std.mem.eql(u8, field_access.node.location.file, doc.path)) continue;
+            if (!positionWithinName(position, field_access.node.location, field_access.access.field_name.len)) continue;
+            const target = findFieldDefinition(field_access, semantic_types.items, syntax_type_decls.items) orelse continue;
+            return .{
+                .path = try self.ownedDefinitionPath(target.location.file),
+                .range = nameRange(target.location, target.string.len),
             };
         }
 
@@ -1225,7 +1244,9 @@ pub const LanguageService = struct {
         defer semantic_binding_decls.deinit();
         var semantic_binding_uses = std.array_list.Managed(SemanticBindingUseRef).init(analysis_allocator);
         defer semantic_binding_uses.deinit();
-        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses);
+        var semantic_field_accesses = std.array_list.Managed(SemanticFieldAccessRef).init(analysis_allocator);
+        defer semantic_field_accesses.deinit();
+        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses, &semantic_field_accesses);
 
         const target = resolveSymbolTarget(
             doc.path,
@@ -1429,7 +1450,9 @@ pub const LanguageService = struct {
         defer semantic_binding_decls.deinit();
         var semantic_binding_uses = std.array_list.Managed(SemanticBindingUseRef).init(analysis_allocator);
         defer semantic_binding_uses.deinit();
-        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses);
+        var semantic_field_accesses = std.array_list.Managed(SemanticFieldAccessRef).init(analysis_allocator);
+        defer semantic_field_accesses.deinit();
+        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses, &semantic_field_accesses);
 
         const target = resolveSymbolTarget(
             doc.path,
@@ -1760,6 +1783,7 @@ fn collectSemanticRefs(
     type_refs: *std.array_list.Managed(SemanticTypeDeclRef),
     binding_decl_refs: *std.array_list.Managed(SemanticBindingDeclRef),
     binding_use_refs: *std.array_list.Managed(SemanticBindingUseRef),
+    field_access_refs: *std.array_list.Managed(SemanticFieldAccessRef),
 ) !void {
     var stack = std.array_list.Managed(*const sg.SGNode).init(function_refs.allocator);
     defer stack.deinit();
@@ -1785,6 +1809,10 @@ fn collectSemanticRefs(
                 try appendSgChildren(&stack, node);
             },
             .binding_use => |binding| try binding_use_refs.append(.{ .node = node, .binding = binding }),
+            .struct_field_access => |access| {
+                try field_access_refs.append(.{ .node = node, .access = access });
+                try appendSgChildren(&stack, node);
+            },
             else => try appendSgChildren(&stack, node),
         }
     }
@@ -2326,6 +2354,19 @@ fn findSyntaxTypeDeclByName(
     return null;
 }
 
+fn findSyntaxTypeDecl(
+    refs: []const SyntaxTypeDeclRef,
+    file_path: []const u8,
+    name: []const u8,
+) ?SyntaxTypeDeclRef {
+    for (refs) |ref| {
+        if (!std.mem.eql(u8, ref.name.location.file, file_path)) continue;
+        if (!std.mem.eql(u8, ref.name.string, name)) continue;
+        return ref;
+    }
+    return null;
+}
+
 fn findSyntaxFunctionCall(
     refs: []const SyntaxFunctionCallRef,
     loc: token.Location,
@@ -2393,6 +2434,36 @@ fn findSemanticTypeDeclByName(
         if (std.mem.eql(u8, ref.decl.name, name)) return ref;
     }
     return null;
+}
+
+fn findSemanticTypeDeclByType(
+    refs: []const SemanticTypeDeclRef,
+    ty: sg.Type,
+) ?SemanticTypeDeclRef {
+    for (refs) |ref| {
+        if (typ.typesExactlyEqual(ref.decl.ty, ty)) return ref;
+    }
+    return null;
+}
+
+fn findFieldDefinition(
+    field_access: SemanticFieldAccessRef,
+    semantic_types: []const SemanticTypeDeclRef,
+    syntax_type_decls: []const SyntaxTypeDeclRef,
+) ?st.Name {
+    const base_ty = field_access.access.struct_value.sem_type orelse return null;
+    if (base_ty != .struct_type) return null;
+
+    const semantic_decl = findSemanticTypeDeclByType(semantic_types, base_ty) orelse return null;
+    const syntax_decl = findSyntaxTypeDecl(syntax_type_decls, semantic_decl.decl.origin_file, semantic_decl.decl.name) orelse return null;
+    if (syntax_decl.node.content != .type_declaration) return null;
+    if (syntax_decl.node.content.type_declaration.value.content != .struct_type_literal) return null;
+
+    const field = findSyntaxStructField(
+        syntax_decl.node.content.type_declaration.value.content.struct_type_literal,
+        field_access.access.field_name,
+    ) orelse return null;
+    return field.name;
 }
 
 fn binaryOperatorName(op: token.BinaryOperator) []const u8 {
@@ -3185,6 +3256,111 @@ test "definition resolves core function from project document" {
     try std.testing.expect(std.mem.endsWith(u8, def.?.path, "core/util.rg"));
     try std.testing.expectEqual(@as(u32, 0), def.?.range.start.line);
     try std.testing.expectEqual(@as(u32, 0), def.?.range.start.character);
+}
+
+test "definition resolves imported module function" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("app/dep");
+    try tmp.dir.writeFile(.{
+        .sub_path = "app/dep/math.rg",
+        .data =
+            \\answer() -> (.value: Int32) := {
+            \\    value = 42
+            \\}
+            \\
+        ,
+    });
+
+    const code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    dep := #import("./dep")
+        \\    status_code = dep.answer()
+        \\}
+        \\
+    ;
+    try tmp.dir.writeFile(.{ .sub_path = "app/main.rg", .data = code });
+
+    const root_path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root_path);
+    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
+    defer std.testing.allocator.free(root_uri);
+
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, "app/main.rg");
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+    try svc.initialize(root_uri);
+
+    const diags = try svc.openDocument(uri, abs_path, 1, code);
+    defer diags.deinit();
+
+    const def = try svc.definition(uri, .{ .line = 2, .character = 24 });
+    try std.testing.expect(def != null);
+    defer def.?.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.endsWith(u8, def.?.path, "app/dep/math.rg"));
+    try std.testing.expectEqual(@as(u32, 0), def.?.range.start.line);
+    try std.testing.expectEqual(@as(u32, 0), def.?.range.start.character);
+}
+
+test "definition resolves imported module struct field" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("app/dep");
+    try tmp.dir.writeFile(.{
+        .sub_path = "app/dep/point.rg",
+        .data =
+            \\Point : Type = (
+            \\    .value: Int32
+            \\)
+            \\
+            \\make() -> (.point: Point) := {
+            \\    point = (
+            \\        .value = 7,
+            \\    )
+            \\}
+            \\
+        ,
+    });
+
+    const code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    dep := #import("./dep")
+        \\    point := dep.make()
+        \\    status_code = point.value
+        \\}
+        \\
+    ;
+    try tmp.dir.writeFile(.{ .sub_path = "app/main.rg", .data = code });
+
+    const root_path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root_path);
+    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
+    defer std.testing.allocator.free(root_uri);
+
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, "app/main.rg");
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+    try svc.initialize(root_uri);
+
+    const diags = try svc.openDocument(uri, abs_path, 1, code);
+    defer diags.deinit();
+
+    const def = try svc.definition(uri, .{ .line = 3, .character = 24 });
+    try std.testing.expect(def != null);
+    defer def.?.deinit(std.testing.allocator);
+    try std.testing.expect(std.mem.endsWith(u8, def.?.path, "app/dep/point.rg"));
+    try std.testing.expectEqual(@as(u32, 1), def.?.range.start.line);
+    try std.testing.expectEqual(@as(u32, 5), def.?.range.start.character);
 }
 
 test "references include binding declaration and uses" {
