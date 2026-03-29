@@ -1651,6 +1651,19 @@ pub const Semantizer = struct {
         return try self.isSameModule(requester_file, binding.origin_file);
     }
 
+    fn lookupTypeDeclarationForType(self: *Semantizer, ty: sg.Type, s: *Scope) ?*const sg.TypeDeclaration {
+        _ = self;
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            var it = sc.types.iterator();
+            while (it.next()) |entry| {
+                const td = entry.value_ptr.*;
+                if (typ.typesExactlyEqual(td.ty, ty)) return td;
+            }
+        }
+        return null;
+    }
+
     fn typeIsVisible(self: *Semantizer, td: *const sg.TypeDeclaration, requester_file: []const u8) !bool {
         if (!isPrivateName(td.name)) return true;
         return try self.isSameModule(requester_file, td.origin_file);
@@ -2222,6 +2235,15 @@ pub const Semantizer = struct {
             }
         }
         if (idx == null) return error.FieldsNotFound;
+
+        if (isPrivateName(field_name)) {
+            if (self.lookupTypeDeclarationForType(base.ty, s)) |td| {
+                if (!(try self.isSameModule(field_loc.file, td.origin_file))) {
+                    try self.addPrivateMemberDiag(field_loc, "field", field_name);
+                    return error.Reported;
+                }
+            }
+        }
 
         const fa = try self.allocator.create(sg.StructFieldAccess);
         fa.* = .{

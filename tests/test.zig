@@ -1593,6 +1593,19 @@ test "feature_tests/modules/17_multi_file_module_forward_calls" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/modules/18_private_struct_field_same_module" {
+    const test_path = "tests/feature_tests/modules/18_private_struct_field_same_module";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
+test "feature_tests/modules/19X_private_struct_field_imported" {
+    try buildExpectFail(
+        "tests/feature_tests/modules/19X_private_struct_field_imported",
+        "field '_hidden' is private to its module",
+    );
+}
+
 test "feature_tests/control_flow/03_for_array" {
     const test_path = "tests/feature_tests/control_flow/03_for_array";
     try expectSuccessfulBuild(test_path);
