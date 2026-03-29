@@ -207,6 +207,18 @@ pub const Syntaxer = struct {
                 self.advanceOne();
                 return name;
             },
+            .binary_operator => |op| {
+                const name = switch (op) {
+                    .addition => "operator +",
+                    else => blk: {
+                        try self.diags.add(self.tokenLocation(), .syntax, "unsupported binary operator after 'operator'", .{});
+                        break :blk "";
+                    },
+                };
+                if (name.len == 0) return SyntaxerError.ExpectedIdentifier;
+                self.advanceOne();
+                return name;
+            },
             else => {
                 try self.diags.add(self.tokenLocation(), .syntax, "expected operator name after 'operator'", .{});
                 return SyntaxerError.ExpectedIdentifier;

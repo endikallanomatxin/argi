@@ -573,19 +573,26 @@ pub const CodeGenerator = struct {
 
         // ─── creación / tabla de símbolos ────────────────────────────────
         const key_name = try self.functionSymbolKey(f);
-        const cname = try self.dupZ(key_name);
-        const fn_ref = c.LLVMAddFunction(self.module, cname.ptr, fn_ty);
+        const fn_ref = blk: {
+            if (self.global_scope.lookup(key_name)) |existing| {
+                break :blk existing.ref;
+            }
 
-        if (is_extern and uses_sret) {
-            const kind = c.LLVMGetEnumAttributeKindForName("sret", 4);
-            const attr = c.LLVMCreateEnumAttribute(c.LLVMGetGlobalContext(), kind, 0);
-            c.LLVMAddAttributeAtIndex(fn_ref, 1, attr); // 1-based
-        }
+            const cname = try self.dupZ(key_name);
+            const created = c.LLVMAddFunction(self.module, cname.ptr, fn_ty);
 
-        try self.current_scope.symbols.put(
-            key_name,
-            .{ .cname = cname, .mutability = .constant, .type_ref = fn_ty, .ref = fn_ref, .sem_type = null },
-        );
+            if (is_extern and uses_sret) {
+                const kind = c.LLVMGetEnumAttributeKindForName("sret", 4);
+                const attr = c.LLVMCreateEnumAttribute(c.LLVMGetGlobalContext(), kind, 0);
+                c.LLVMAddAttributeAtIndex(created, 1, attr); // 1-based
+            }
+
+            try self.global_scope.symbols.put(
+                key_name,
+                .{ .cname = cname, .mutability = .constant, .type_ref = fn_ty, .ref = created, .sem_type = null },
+            );
+            break :blk created;
+        };
 
         if (is_extern and std.mem.eql(u8, f.name, "__argi_runtime_argc")) {
             try self.ensureRuntimeArgGlobals();
@@ -766,12 +773,16 @@ pub const CodeGenerator = struct {
 
         // 5) almacenar valor inicial
         if (init_tv) |tv_raw| {
-            const tv = tv_raw;
+            var tv = tv_raw;
             // Global initializers must be constant; for now, only allow none
             if (self.current_scope.parent == null) {
                 // Non-constant global init not supported yet; ignore for now
                 // (could enhance by constant-folding later)
                 return;
+            }
+
+            if (tv.type_ref != llvm_decl_ty) {
+                tv = try self.coerceValueForStorage(tv, b.ty, llvm_decl_ty);
             }
 
             if (tv.type_ref == llvm_decl_ty) {
@@ -780,6 +791,36 @@ pub const CodeGenerator = struct {
                 return CodegenError.InvalidType;
             }
         }
+    }
+
+    fn coerceValueForStorage(
+        self: *CodeGenerator,
+        tv: TypedValue,
+        dest_sem_ty: sem.Type,
+        dest_ty_ref: llvm.c.LLVMTypeRef,
+    ) !TypedValue {
+        const src_sem_ty = tv.sem_type orelse return tv;
+        if (!sem_types.typesStructurallyEqual(src_sem_ty, dest_sem_ty)) return tv;
+
+        if (src_sem_ty == .struct_type and dest_sem_ty == .struct_type) {
+            const src_fields = src_sem_ty.struct_type.fields;
+            const dest_fields = dest_sem_ty.struct_type.fields;
+            if (src_fields.len != dest_fields.len) return tv;
+
+            var agg = c.LLVMGetUndef(dest_ty_ref);
+            for (src_fields, 0..) |_, idx| {
+                const extracted = c.LLVMBuildExtractValue(self.builder, tv.value_ref, @intCast(idx), "coerce.struct.extract");
+                agg = c.LLVMBuildInsertValue(self.builder, agg, extracted, @intCast(idx), "coerce.struct.insert");
+            }
+
+            return .{
+                .value_ref = agg,
+                .type_ref = dest_ty_ref,
+                .sem_type = dest_sem_ty,
+            };
+        }
+
+        return tv;
     }
 
     fn genBindingUse(self: *CodeGenerator, b: *sem.BindingDeclaration) !TypedValue {
@@ -850,11 +891,6 @@ pub const CodeGenerator = struct {
 
         if (adb.deinit_fn) |deinit_fn| {
             const input_node = adb.input orelse return CodegenError.InvalidType;
-            const deinit_fn_name = try self.mangledNameFor(deinit_fn);
-            _ = self.current_scope.lookup(deinit_fn_name) orelse
-                self.current_scope.lookup(deinit_fn.name) orelse
-                return CodegenError.SymbolNotFound;
-
             const call = try self.allocator.create(sem.FunctionCall);
             call.* = .{ .callee = deinit_fn, .input = @constCast(input_node) };
             const call_node = try sem.makeSGNode(.{ .function_call = call }, deinit_fn.location, self.allocator);
@@ -915,7 +951,7 @@ pub const CodeGenerator = struct {
         self_field_index: u32,
     ) !void {
         const key_name = try self.functionSymbolKey(deinit_fn);
-        var fn_sym_opt = self.current_scope.lookup(key_name);
+        var fn_sym_opt = self.global_scope.lookup(key_name);
         if (fn_sym_opt == null) {
             const in_ty = try self.toLLVMType(.{ .struct_type = &deinit_fn.input });
             const out_ty = try self.toLLVMType(.{ .struct_type = &deinit_fn.output });
@@ -925,14 +961,14 @@ pub const CodeGenerator = struct {
             const fn_ty = c.LLVMFunctionType(out_ty, params.ptr, 1, 0);
             const cname = try self.dupZ(key_name);
             const fn_ref = c.LLVMAddFunction(self.module, cname.ptr, fn_ty);
-            try self.current_scope.symbols.put(key_name, .{
+            try self.global_scope.symbols.put(key_name, .{
                 .cname = cname,
                 .mutability = .constant,
                 .type_ref = fn_ty,
                 .ref = fn_ref,
                 .sem_type = null,
             });
-            fn_sym_opt = self.current_scope.lookup(key_name);
+            fn_sym_opt = self.global_scope.lookup(key_name);
         }
         const fn_sym = fn_sym_opt.?;
 
@@ -1473,7 +1509,8 @@ pub const CodeGenerator = struct {
         for (sw.cases, 0..) |case_item, idx| {
             c.LLVMPositionBuilderAtEnd(self.builder, case_blocks[idx]);
             _ = try self.genCodeBlock(case_item.body);
-            if (c.LLVMGetBasicBlockTerminator(case_blocks[idx]) == null)
+            const case_end = c.LLVMGetInsertBlock(self.builder);
+            if (c.LLVMGetBasicBlockTerminator(case_end) == null)
                 _ = c.LLVMBuildBr(self.builder, endB);
         }
 
@@ -1533,14 +1570,12 @@ pub const CodeGenerator = struct {
     // ────────────────────────────────────────── call ──
     fn genFunctionCall(self: *CodeGenerator, fc: *const sem.FunctionCall) CodegenError!?TypedValue {
         const key_name = try self.functionSymbolKey(fc.callee);
-        const sym = self.current_scope.lookup(key_name) orelse
-            return CodegenError.SymbolNotFound;
         const callee_decl = fc.callee;
         const is_extern = (callee_decl.body == null);
+        var sym_opt = self.global_scope.lookup(key_name);
 
         // ─────── llamadas INTERNAS (idénticas a antes) ───────────────────
         if (!is_extern) {
-            var sym_opt = self.current_scope.lookup(key_name);
             if (sym_opt == null) {
                 // Create a forward declaration for internal function not yet emitted (e.g., monomorphized later)
                 const in_ty = try self.toLLVMType(.{ .struct_type = &callee_decl.input });
@@ -1552,8 +1587,8 @@ pub const CodeGenerator = struct {
                 }, 1, 0);
                 const cname = try self.dupZ(key_name);
                 const fn_ref = c.LLVMAddFunction(self.module, cname.ptr, fnty);
-                try self.current_scope.symbols.put(key_name, .{ .cname = cname, .mutability = .constant, .type_ref = fnty, .ref = fn_ref, .sem_type = null });
-                sym_opt = self.current_scope.lookup(key_name);
+                try self.global_scope.symbols.put(key_name, .{ .cname = cname, .mutability = .constant, .type_ref = fnty, .ref = fn_ref, .sem_type = null });
+                sym_opt = self.global_scope.lookup(key_name);
             }
 
             const fn_ty = sym_opt.?.type_ref;
@@ -1590,6 +1625,7 @@ pub const CodeGenerator = struct {
         }
 
         // ─────── llamadas EXTERN ─────────────────────────────────────────
+        const sym = sym_opt orelse return CodegenError.SymbolNotFound;
         const in_tv = (try self.visitNode(fc.input)).?;
         const in_val = in_tv.value_ref;
 
@@ -1686,13 +1722,10 @@ pub const CodeGenerator = struct {
         }
 
         const key_name = try self.functionSymbolKey(ti.init_fn);
-        var sym_opt = self.current_scope.lookup(key_name);
+        var sym_opt = self.global_scope.lookup(key_name);
         if (sym_opt == null) {
             const in_ty_ref = init_input_ty_ref;
-            const out_ty_ref = if (ti.init_fn.output.fields.len == 0)
-                c.LLVMVoidType()
-            else
-                try self.toLLVMType(.{ .struct_type = &ti.init_fn.output });
+            const out_ty_ref = try self.toLLVMType(.{ .struct_type = &ti.init_fn.output });
             const fnty = c.LLVMFunctionType(
                 out_ty_ref,
                 blk: {
@@ -1705,8 +1738,8 @@ pub const CodeGenerator = struct {
             );
             const cname = try self.dupZ(key_name);
             const fn_ref = c.LLVMAddFunction(self.module, cname.ptr, fnty);
-            try self.current_scope.symbols.put(key_name, .{ .cname = cname, .mutability = .constant, .type_ref = fnty, .ref = fn_ref, .sem_type = null });
-            sym_opt = self.current_scope.lookup(key_name);
+            try self.global_scope.symbols.put(key_name, .{ .cname = cname, .mutability = .constant, .type_ref = fnty, .ref = fn_ref, .sem_type = null });
+            sym_opt = self.global_scope.lookup(key_name);
         }
 
         const fn_sym = sym_opt.?;
@@ -1718,7 +1751,7 @@ pub const CodeGenerator = struct {
         _ = c.LLVMBuildCall2(self.builder, fn_sym.type_ref, fn_sym.ref, argv.ptr, 1, call_name);
 
         const result_val = c.LLVMBuildLoad2(self.builder, result_ty_ref, storage, "type.init.result");
-        return .{ .value_ref = result_val, .type_ref = result_ty_ref };
+        return .{ .value_ref = result_val, .type_ref = result_ty_ref, .sem_type = ti.type_decl.ty };
     }
 
     // ────────────────────────────────────────── struct literal ──
@@ -2045,7 +2078,7 @@ pub const CodeGenerator = struct {
         agg = c.LLVMBuildInsertValue(self.builder, agg, storage, 0, "main.ctor.arg.p");
 
         const key_name = try self.functionSymbolKey(init_fn);
-        const fn_sym = self.current_scope.lookup(key_name) orelse return CodegenError.SymbolNotFound;
+        const fn_sym = self.global_scope.lookup(key_name) orelse return CodegenError.SymbolNotFound;
 
         var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, 1);
         defer self.allocator.free(argv);

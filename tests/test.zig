@@ -1360,6 +1360,12 @@ test "feature_tests/text/11_string_view_equals" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/text/12_string_concat" {
+    const test_path = "tests/feature_tests/text/12_string_concat";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/modules/01_folder_module_namespace" {
     const test_path = "tests/feature_tests/modules/01_folder_module_namespace";
     try expectSuccessfulBuild(test_path);

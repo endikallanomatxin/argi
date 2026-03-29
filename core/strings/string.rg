@@ -225,6 +225,49 @@ push_c_string(
     }
 }
 
+push_view(
+    .self: $&String,
+    .view: &StringView,
+) -> () := {
+    i :: UIntNative = 0
+    while i < view&.length {
+        if has_space(.self = self).ok {
+        } else {
+            break
+        }
+
+        push_byte(.self = self, .byte = bytes_get(.view = view, .index = i).byte)
+        i = i + 1
+    }
+}
+
+operator +(
+    .left: &String,
+    .right: &Char,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.out: String) := {
+    c_length :: UIntNative = 0
+    while 1 == 1 {
+        addr :: UIntNative = cast#(.to: UIntNative)(.value = right) + c_length
+        ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
+        if ptr& == 0 {
+            break
+        }
+        c_length = c_length + 1
+    }
+
+    left_view ::= as_view(.self = left)
+    right_view : StringView = (
+        .data = cast#(.to: UIntNative)(.value = right),
+        .length = c_length,
+    )
+
+    temp :: String = String(.capacity = left_view.length + right_view.length)
+    push_view(.self = $&temp, .view = &left_view)
+    push_view(.self = $&temp, .view = &right_view)
+    out = temp
+}
+
 operator ==(
     .left: &String,
     .right: &String,

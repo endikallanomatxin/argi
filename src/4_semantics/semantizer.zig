@@ -1402,7 +1402,7 @@ pub const Semantizer = struct {
                 break :blk_ret err;
             },
 
-            .binary_operation => |bo| self.handleBinOp(bo, s) catch |err| blk: {
+            .binary_operation => |bo| self.handleBinOp(bo, n.location, s) catch |err| blk: {
                 if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
                     break :blk err;
                 }
@@ -2743,9 +2743,9 @@ pub const Semantizer = struct {
         // ── entrada
         var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         for (f.input.fields) |fld| {
-            const ty = try self.resolveTypePreservingAbstracts(fld.type.?, &child);
+            const ty = self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| return err;
             const dvp = if (fld.default_value) |n|
-                (try self.visitNode(n.*, &child)).node
+                ((self.visitNode(n.*, &child) catch |err| return err)).node
             else
                 null;
 
@@ -2773,9 +2773,9 @@ pub const Semantizer = struct {
         // ── salida
         var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         for (f.output.fields) |fld| {
-            const ty = try self.resolveTypePreservingAbstracts(fld.type.?, &child);
+            const ty = self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| return err;
             const dvp = if (fld.default_value) |n|
-                (try self.visitNode(n.*, &child)).node
+                ((self.visitNode(n.*, &child) catch |err| return err)).node
             else
                 null;
 
@@ -2799,6 +2799,48 @@ pub const Semantizer = struct {
         const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
         out_fields.deinit();
 
+        var existing_fn: ?*sg.FunctionDeclaration = null;
+        if (p.functions.getPtr(f.name.string)) |list_ptr| {
+            for (list_ptr.items) |cand| {
+                if (std.mem.eql(u8, cand.location.file, loc.file) and cand.location.offset == loc.offset) {
+                    existing_fn = cand;
+                    break;
+                }
+            }
+        }
+
+        const fn_ptr = blk: {
+            if (existing_fn) |cand| {
+                cand.input = in_struct_ptr.*;
+                cand.output = out_struct;
+                break :blk cand;
+            }
+
+            const created = try self.allocator.create(sg.FunctionDeclaration);
+            created.* = .{
+                .name = f.name.string,
+                .location = loc,
+                .is_once = f.is_once,
+                .input = in_struct_ptr.*,
+                .output = out_struct,
+                .body = null,
+            };
+
+            if (p.functions.getPtr(f.name.string)) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = &created.input })) {
+                        return error.SymbolAlreadyDefined;
+                    }
+                }
+            }
+            try p.appendFunction(f.name.string, created);
+
+            const n = try sg.makeSGNode(.{ .function_declaration = created }, loc, self.allocator);
+            try p.nodes.append(n);
+            if (p.parent == null) try self.root_list.append(n);
+            break :blk created;
+        };
+
         // ── cuerpo
         var body_cb: ?*sg.CodeBlock = null;
         if (f.body) |body_node| {
@@ -2813,30 +2855,11 @@ pub const Semantizer = struct {
             body_cb = body_te.node.content.code_block;
         }
 
-        const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
-        fn_ptr.* = .{
-            .name = f.name.string,
-            .location = loc,
-            .is_once = f.is_once,
-            .input = in_struct_ptr.*,
-            .output = out_struct,
-            .body = body_cb,
-        };
-
-        // Register function into overload set for the name
-        if (p.functions.getPtr(f.name.string)) |list_ptr| {
-            // prevent exact duplicate signature (same input structure, strict equality)
-            for (list_ptr.items) |existing| {
-                if (typ.typesExactlyEqual(.{ .struct_type = &existing.input }, .{ .struct_type = &fn_ptr.input }))
-                    return error.SymbolAlreadyDefined;
-            }
-        }
-        try p.appendFunction(f.name.string, fn_ptr);
+        fn_ptr.input = in_struct_ptr.*;
+        fn_ptr.body = body_cb;
         self.clearDeferred(&child);
-        const n = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, loc, self.allocator);
-        try p.nodes.append(n);
-        if (p.parent == null) try self.root_list.append(n);
-        return .{ .node = n, .ty = .{ .builtin = .Any } };
+        const noop = try self.makeNoopNode(loc);
+        return .{ .node = noop, .ty = .{ .builtin = .Any } };
     }
 
     fn genericParamsStructOrNames(
@@ -6063,7 +6086,23 @@ pub const Semantizer = struct {
                 reach_te.node.content.reach_directive,
                 s,
                 field.default_value.?.location,
-            ) orelse continue;
+            ) orelse blk: {
+                if (self.currentReachFunctionContext()) |ctx| {
+                    if (!std.mem.eql(u8, ctx.function_name, "main")) {
+                        const placeholder = try sg.makeSGNode(
+                            .{ .reach_directive = reach_te.node.content.reach_directive },
+                            field.default_value.?.location,
+                            self.allocator,
+                        );
+                        placeholder.sem_type = dispatch_ty;
+                        break :blk typ.TypedExpr{
+                            .node = placeholder,
+                            .ty = dispatch_ty,
+                        };
+                    }
+                }
+                continue;
+            };
             try args.append(.{
                 .name = field.name.string,
                 .expr = resolved,
@@ -6297,10 +6336,59 @@ pub const Semantizer = struct {
     fn handleBinOp(
         self: *Semantizer,
         bo: syn.BinaryOperation,
+        loc: tok.Location,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         var lhs = try self.visitNode(bo.left.*, s);
         var rhs = try self.visitNode(bo.right.*, s);
+
+        const operator_name = switch (bo.operator) {
+            .addition => "operator +",
+            else => null,
+        };
+
+        if (operator_name) |name| {
+            var input_te = try self.buildCallInput(&[_]CallArg{
+                .{ .name = "left", .expr = lhs },
+                .{ .name = "right", .expr = rhs },
+            });
+            const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+
+            var chosen: ?*sg.FunctionDeclaration = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
+                error.SymbolNotFound => null,
+                else => return err,
+            };
+
+            if (chosen == null) {
+                chosen = self.resolveVisibleOverload(name, input_te, s, bo.left.*.location) catch |err| switch (err) {
+                    error.SymbolNotFound => null,
+                    error.AmbiguousOverload => {
+                        try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, bo.left.*.location);
+                        return error.Reported;
+                    },
+                    else => return err,
+                };
+            }
+
+            if (chosen == null) {
+                chosen = self.instantiateGenericNamed(name, empty_args, input_te, s, .abstract_contract) catch |err| switch (err) {
+                    error.SymbolNotFound => null,
+                    else => return err,
+                };
+            }
+
+            if (chosen) |chosen_fn| {
+                input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, bo.left, s);
+
+                const result_ty = typ.functionReturnType(chosen_fn);
+                const fc_ptr = try self.allocator.create(sg.FunctionCall);
+                fc_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
+
+                const node = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
+                try s.nodes.append(node);
+                return .{ .node = node, .ty = result_ty };
+            }
+        }
 
         const lhs_is_ptr = lhs.ty == .pointer_type;
         const rhs_is_ptr = rhs.ty == .pointer_type;
