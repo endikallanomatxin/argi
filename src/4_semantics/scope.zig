@@ -259,7 +259,21 @@ pub const Scope = struct {
     }
 
     pub fn findCopyInfo(s: *Scope, ty: sg.Type) ?CopyInfo {
+        return switch (s.lookupCopyInfo(ty)) {
+            .unique => |info| info,
+            else => null,
+        };
+    }
+
+    pub const CopyLookup = union(enum) {
+        none,
+        unique: CopyInfo,
+        ambiguous,
+    };
+
+    pub fn lookupCopyInfo(s: *Scope, ty: sg.Type) CopyLookup {
         var cur: ?*Scope = s;
+        var found: ?CopyInfo = null;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.functions.getPtr("copy")) |list_ptr| {
                 for (list_ptr.items) |cand| {
@@ -280,15 +294,18 @@ pub const Scope = struct {
                         }
                         if (!other_fields_have_defaults) continue;
 
-                        return .{
+                        const info: CopyInfo = .{
                             .function = cand,
                             .self_field_index = @intCast(idx),
                         };
+                        if (found != null) return .ambiguous;
+                        found = info;
                     }
                 }
             }
         }
-        return null;
+        if (found) |info| return .{ .unique = info };
+        return .none;
     }
 
     pub fn findCopy(s: *Scope, ty: sg.Type) ?*sg.FunctionDeclaration {

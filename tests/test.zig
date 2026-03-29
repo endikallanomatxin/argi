@@ -1370,6 +1370,16 @@ test "feature_tests/ownership/26_distinct_fields_do_not_alias_same_call" {
     try runExpect(test_path, 7);
 }
 
+test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
+    const test_path = "tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal";
+    try buildExpectFail(test_path, "copy() for type 'Resource' is ambiguous in value position");
+}
+
+test "feature_tests/ownership/28X_ambiguous_copy_assignment" {
+    const test_path = "tests/feature_tests/ownership/28X_ambiguous_copy_assignment";
+    try buildExpectFail(test_path, "ambiguous call to 'copy'");
+}
+
 test "feature_tests/polymorphism/23_abstract_requirement_reached_default" {
     const test_path = "tests/feature_tests/polymorphism/23_abstract_requirement_reached_default";
     try expectSuccessfulBuild(test_path);

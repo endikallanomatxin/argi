@@ -116,7 +116,10 @@ pub fn isTypeTriviallyCopyable(ty: sg.Type, s: *Scope) bool {
 }
 
 pub fn isTypeCopyable(ty: sg.Type, s: *Scope) bool {
-    return isTypeTriviallyCopyable(ty, s) or s.findCopy(ty) != null;
+    return isTypeTriviallyCopyable(ty, s) or switch (s.lookupCopyInfo(ty)) {
+        .unique => true,
+        else => false,
+    };
 }
 
 pub fn expressionNeedsCopyForValuePosition(node: *const sg.SGNode) bool {
@@ -141,33 +144,47 @@ pub fn ensureValuePositionAllowed(
     if (!expressionNeedsCopyForValuePosition(expr.node)) return expr;
     if (isTypeTriviallyCopyable(expr.ty, s)) return expr;
 
-    if (s.findCopyInfo(expr.ty)) |copy_info| {
-        const copy_fn = copy_info.function;
-        const arg_fields = try allocator.alloc(sg.StructValueLiteralField, copy_fn.input.fields.len);
-        for (copy_fn.input.fields, 0..) |field, idx| {
-            arg_fields[idx] = .{
-                .name = field.name,
-                .value = if (idx == copy_info.self_field_index)
-                    expr.node
-                else
-                    field.default_value orelse return error.Reported,
+    switch (s.lookupCopyInfo(expr.ty)) {
+        .unique => |copy_info| {
+            const copy_fn = copy_info.function;
+            const arg_fields = try allocator.alloc(sg.StructValueLiteralField, copy_fn.input.fields.len);
+            for (copy_fn.input.fields, 0..) |field, idx| {
+                arg_fields[idx] = .{
+                    .name = field.name,
+                    .value = if (idx == copy_info.self_field_index)
+                        expr.node
+                    else
+                        field.default_value orelse return error.Reported,
+                };
+            }
+
+            const args_struct = try allocator.create(sg.StructValueLiteral);
+            args_struct.* = .{
+                .fields = arg_fields,
+                .ty = .{ .struct_type = &copy_fn.input },
+                .dispatch_prefix_positional_count = 0,
             };
-        }
 
-        const args_struct = try allocator.create(sg.StructValueLiteral);
-        args_struct.* = .{
-            .fields = arg_fields,
-            .ty = .{ .struct_type = &copy_fn.input },
-            .dispatch_prefix_positional_count = 0,
-        };
+            const args_node = try sg.makeSGNode(.{ .struct_value_literal = args_struct }, loc, allocator);
 
-        const args_node = try sg.makeSGNode(.{ .struct_value_literal = args_struct }, loc, allocator);
+            const fc_ptr = try allocator.create(sg.FunctionCall);
+            fc_ptr.* = .{ .callee = copy_fn, .input = args_node };
 
-        const fc_ptr = try allocator.create(sg.FunctionCall);
-        fc_ptr.* = .{ .callee = copy_fn, .input = args_node };
-
-        const call_node = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, allocator);
-        return .{ .node = call_node, .ty = functionReturnType(copy_fn) };
+            const call_node = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, allocator);
+            return .{ .node = call_node, .ty = functionReturnType(copy_fn) };
+        },
+        .ambiguous => {
+            const ty_text = try formatTypeText(expr.ty, s, allocator);
+            defer ty_text.deinit();
+            try diags.add(
+                loc,
+                .semantic,
+                "copy() for type '{s}' is ambiguous in value position",
+                .{ty_text.bytes},
+            );
+            return error.Reported;
+        },
+        .none => {},
     }
 
     const ty_text = try formatTypeText(expr.ty, s, allocator);

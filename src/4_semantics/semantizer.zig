@@ -388,7 +388,7 @@ pub const Semantizer = struct {
         input_te: typ.TypedExpr,
         loc: tok.Location,
         s: *Scope,
-    ) ?typ.TypedExpr {
+    ) SemErr!?typ.TypedExpr {
         const synthetic_call = syn.FunctionCall{
             .callee = "copy",
             .callee_loc = loc,
@@ -398,11 +398,17 @@ pub const Semantizer = struct {
             .input = undefined,
         };
 
-        const chosen = self.tryResolveRegularCallCallee(synthetic_call, input_te, s, loc) catch return null;
+        const chosen = self.tryResolveRegularCallCallee(synthetic_call, input_te, s, loc) catch |err| switch (err) {
+            error.SymbolNotFound => return null,
+            else => return err,
+        };
         const coerced_input = self.coerceCallInputToExpected(&chosen.input, input_te, &syn.STNode{
             .location = loc,
             .content = .{ .identifier = "copy" },
-        }, s) catch return null;
+        }, s) catch |err| switch (err) {
+            error.SymbolNotFound => return null,
+            else => return err,
+        };
 
         const fc_ptr = self.allocator.create(sg.FunctionCall) catch return null;
         fc_ptr.* = .{ .callee = chosen, .input = coerced_input.node };
@@ -422,15 +428,29 @@ pub const Semantizer = struct {
         const named_input = try self.buildNamedCallInput(&[_]CallArg{
             .{ .name = "self", .expr = expr },
         });
-        if (self.tryResolveCopyCallWithInput(named_input, loc, s)) |copy_expr| {
-            return copy_expr;
+        if (self.tryResolveCopyCallWithInput(named_input, loc, s)) |copy_expr_opt| {
+            if (copy_expr_opt) |copy_expr| return copy_expr;
+        } else |err| switch (err) {
+            error.AmbiguousOverload => {
+                try self.addAmbiguousFunctionDiagnostic("copy", named_input.ty, s, loc);
+                return error.Reported;
+            },
+            error.Reported => return err,
+            else => return err,
         }
 
         const positional_input = try self.buildCallInputWithPositionalPrefix(&[_]CallArg{
             .{ .name = "__arg0", .expr = expr },
         }, 1);
-        if (self.tryResolveCopyCallWithInput(positional_input, loc, s)) |copy_expr| {
-            return copy_expr;
+        if (self.tryResolveCopyCallWithInput(positional_input, loc, s)) |copy_expr_opt| {
+            if (copy_expr_opt) |copy_expr| return copy_expr;
+        } else |err| switch (err) {
+            error.AmbiguousOverload => {
+                try self.addAmbiguousFunctionDiagnostic("copy", positional_input.ty, s, loc);
+                return error.Reported;
+            },
+            error.Reported => return err,
+            else => return err,
         }
 
         const ty_text = try self.formatTypeText(expr.ty, s);
