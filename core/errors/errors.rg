@@ -101,7 +101,7 @@ report_trace(
     .trace: &ErrorTrace,
     .stderr: $&Writer = #reach stderr, terminal.stderr_buffered_writer, system.terminal.stderr_buffered_writer,
 ) -> () := {
-    write_trace_text(.text = "error trace (origin first):\n", .stderr = stderr)
+    write_trace_text(.text = "error trace (most recent first):\n", .stderr = stderr)
 
     if trace&.entries.length == 0 {
         write_trace_text(.text = "  <empty>\n", .stderr = stderr)
@@ -109,9 +109,9 @@ report_trace(
         return
     }
 
-    i :: UIntNative = 0
-    while i < trace&.entries.length {
-        entry := trace&.entries[i]
+    i ::= trace&.entries.length
+    while i > 0 {
+        entry := trace&.entries[i - 1]
         write_trace_text(.text = "  at ", .stderr = stderr)
         write_trace_text(.text = entry.source_file, .stderr = stderr)
         write_byte(.self = stderr, .byte = 58)
@@ -140,7 +140,7 @@ report_trace(
             write_byte(.self = stderr, .byte = 10)
         }
 
-        i = i + 1
+        i = i - 1
     }
 
     flush(.self = stderr)
