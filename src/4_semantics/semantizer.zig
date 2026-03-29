@@ -136,6 +136,7 @@ pub const Semantizer = struct {
     current_top_node: ?*const syn.STNode = null,
     max_retry_rounds: u32 = 8,
     synthetic_name_counter: u32 = 0,
+    next_choice_option_id: u32 = 1,
     function_reach_stack: std.array_list.Managed(ReachFunctionContext),
 
     pub fn init(
@@ -666,6 +667,7 @@ pub const Semantizer = struct {
         state: *OnceTraversalState,
     ) SemErr!void {
         switch (node.content) {
+            .choice_option_declaration => {},
             .binding_declaration => |binding| {
                 if (binding.initialization) |init_node| {
                     try self.walkNodeOnceReachability(current_fn, init_node, state);
@@ -976,7 +978,7 @@ pub const Semantizer = struct {
                 loc,
                 .semantic,
                 "cannot access choice payload '..{s}' on value of type '{s}'",
-                .{ desc.bytes, variant_name.string },
+                .{ variant_name.string, desc.bytes },
             );
             return error.Reported;
         }
@@ -1114,6 +1116,16 @@ pub const Semantizer = struct {
     //────────────────────────────────────────────────────────────────── visitors
     pub fn visitNode(self: *Semantizer, n: syn.STNode, s: *Scope) SemErr!typ.TypedExpr {
         return switch (n.content) {
+            .choice_option_declaration => |decl| self.handleChoiceOptionDecl(decl, s, n.location) catch |err| blk: {
+                if (err == error.Reported) break :blk err;
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in choice option declaration '..{s}': {s}",
+                    .{ decl.name.string, @errorName(err) },
+                );
+                break :blk err;
+            },
             .symbol_declaration => |d| self.handleSymbolDecl(d, s, n.location) catch |err| blk: {
                 switch (err) {
                     error.Reported => break :blk err,
@@ -1362,7 +1374,7 @@ pub const Semantizer = struct {
                 try self.diags.add(
                     n.location,
                     .semantic,
-                    "choice type literals are only valid inside type declarations",
+                    "choice type literals are only valid inside type declarations or type annotations",
                     .{},
                 );
                 break :blk error.Reported;
@@ -2195,12 +2207,57 @@ pub const Semantizer = struct {
         const node = try self.allocator.create(sg.ChoiceLiteral);
         node.* = .{
             .variant_name = lit.name.string,
+            .module_qualifier = if (lit.module_qualifier) |qualifier| qualifier.string else null,
             .choice_type = undefined,
             .variant_index = 0,
             .payload = payload,
         };
         const n = try sg.makeSGNode(.{ .choice_literal = node }, lit.name.location, self.allocator);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn resolveChoiceOptionReference(
+        self: *Semantizer,
+        module_qualifier: ?[]const u8,
+        name: []const u8,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!*const sg.ChoiceOptionDeclaration {
+        _ = self;
+        _ = loc;
+        if (module_qualifier) |module_name| {
+            const module_dir = s.lookupModuleAlias(module_name) orelse return error.SymbolNotFound;
+            if (s.lookupChoiceOptionInModule(module_dir, name)) |decl| return decl;
+            return error.SymbolNotFound;
+        }
+        return s.lookupChoiceOption(name) orelse error.SymbolNotFound;
+    }
+
+    fn handleChoiceOptionDecl(
+        self: *Semantizer,
+        decl: syn.ChoiceOptionDeclaration,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        if (s.parent != null) {
+            try self.diags.add(loc, .semantic, "choice options can only be declared at module scope", .{});
+            return error.Reported;
+        }
+        if (s.choice_options.contains(decl.name.string)) return error.SymbolAlreadyDefined;
+
+        const option_decl = try self.allocator.create(sg.ChoiceOptionDeclaration);
+        option_decl.* = .{
+            .name = decl.name.string,
+            .origin_file = loc.file,
+            .id = self.next_choice_option_id,
+        };
+        self.next_choice_option_id += 1;
+
+        try s.choice_options.put(decl.name.string, option_decl);
+        const node = try sg.makeSGNode(.{ .choice_option_declaration = option_decl }, loc, self.allocator);
+        try s.nodes.append(node);
+        if (s.parent == null) try self.root_list.append(node);
+        return .{ .node = node, .ty = .{ .builtin = .Any } };
     }
 
     //─────────────────────────────────────────────────────────  IDENTIFIER
@@ -2837,10 +2894,20 @@ pub const Semantizer = struct {
                     var variants = std.array_list.Managed(sg.ChoiceVariant).init(self.allocator.*);
                     for (ct_lit.variants, 0..) |variant, idx| {
                         const payload_type = if (variant.payload_type) |pt| sg.Type{ .struct_type = try self.structTypeFromLiteral(pt, s) } else null;
+                        const option_decl = if (payload_type == null)
+                            self.resolveChoiceOptionReference(
+                                if (variant.module_qualifier) |qualifier| qualifier.string else null,
+                                variant.name.string,
+                                variant.name.location,
+                                s,
+                            ) catch null
+                        else
+                            null;
                         try variants.append(.{
                             .name = variant.name.string,
-                            .value = @intCast(idx),
+                            .value = if (option_decl) |decl| @intCast(decl.id) else @intCast(idx),
                             .payload_type = payload_type,
+                            .option_decl = option_decl,
                         });
                     }
 
@@ -3191,6 +3258,20 @@ pub const Semantizer = struct {
                     }
                     if (field.default_value) |value_expr| {
                         try self.collectHiddenComptimeParamsFromValueExpr(value_expr, params, s);
+                    }
+                }
+            },
+            .choice_type_literal => |ct| {
+                for (ct.variants) |variant| {
+                    if (variant.payload_type) |payload_ty| {
+                        for (payload_ty.fields) |field| {
+                            if (field.type) |field_ty| {
+                                try self.collectHiddenImplementsParamsFromType(field_ty, params, s);
+                            }
+                            if (field.default_value) |value_expr| {
+                                try self.collectHiddenComptimeParamsFromValueExpr(value_expr, params, s);
+                            }
+                        }
                     }
                 }
             },
@@ -3615,6 +3696,7 @@ pub const Semantizer = struct {
                 }
                 break :blk .{ .struct_type_literal = .{ .fields = fields } };
             },
+            .choice_type_literal => ty,
         };
     }
 
@@ -3634,6 +3716,18 @@ pub const Semantizer = struct {
                 for (st.fields) |field| {
                     if (field.type) |field_ty| {
                         if (self.outputUsesAbstractWithoutDefault(field_ty, s)) break :blk true;
+                    }
+                }
+                break :blk false;
+            },
+            .choice_type_literal => |ct| blk: {
+                for (ct.variants) |variant| {
+                    if (variant.payload_type) |payload_ty| {
+                        for (payload_ty.fields) |field| {
+                            if (field.type) |field_ty| {
+                                if (self.outputUsesAbstractWithoutDefault(field_ty, s)) break :blk true;
+                            }
+                        }
                     }
                 }
                 break :blk false;
@@ -3894,6 +3988,18 @@ pub const Semantizer = struct {
         acc: syn.ChoicePayloadAccess,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
+        if (acc.choice_value.*.content == .identifier) {
+            const base_name = acc.choice_value.*.content.identifier;
+            if (s.lookupModuleAlias(base_name) != null) {
+                const lit = syn.ChoiceLiteral{
+                    .name = acc.variant_name,
+                    .module_qualifier = .{ .string = base_name, .location = acc.choice_value.*.location },
+                    .payload = null,
+                };
+                return self.handleChoiceLiteral(lit, s);
+            }
+        }
+
         const base = try self.visitNode(acc.choice_value.*, s);
         if (base.ty != .choice_type) {
             const desc = try self.formatTypeText(base.ty, s);
@@ -3902,7 +4008,7 @@ pub const Semantizer = struct {
                 acc.choice_value.*.location,
                 .semantic,
                 "cannot access choice payload '..{s}' on value of type '{s}'",
-                .{ desc.bytes, acc.variant_name.string },
+                .{ acc.variant_name.string, desc.bytes },
             );
             return error.Reported;
         }
@@ -4346,6 +4452,16 @@ pub const Semantizer = struct {
         return ptr;
     }
 
+    pub fn choiceTypeFromLiteral(
+        self: *Semantizer,
+        ct: syn.ChoiceTypeLiteral,
+        s: *Scope,
+    ) SemErr!*sg.ChoiceType {
+        var subst = GenericSubst.init(self.allocator);
+        defer subst.deinit();
+        return self.choiceTypeFromLiteralWithSubst(ct, s, &subst);
+    }
+
     pub fn choiceTypeFromLiteralWithSubst(
         self: *Semantizer,
         ct: syn.ChoiceTypeLiteral,
@@ -4358,10 +4474,20 @@ pub const Semantizer = struct {
                 sg.Type{ .struct_type = try self.structTypeFromLiteralWithSubst(pt, s, subst) }
             else
                 null;
+            const option_decl = if (payload_type == null)
+                self.resolveChoiceOptionReference(
+                    if (variant.module_qualifier) |qualifier| qualifier.string else null,
+                    variant.name.string,
+                    variant.name.location,
+                    s,
+                ) catch null
+            else
+                null;
             try variants.append(.{
                 .name = variant.name.string,
-                .value = @intCast(idx),
+                .value = if (option_decl) |decl| @intCast(decl.id) else @intCast(idx),
                 .payload_type = payload_type,
+                .option_decl = option_decl,
             });
         }
 
@@ -5952,6 +6078,18 @@ pub const Semantizer = struct {
                 }
                 break :blk_struct false;
             },
+            .choice_type_literal => |ct| blk_choice: {
+                for (ct.variants) |variant| {
+                    if (variant.payload_type) |payload_ty| {
+                        for (payload_ty.fields) |field| {
+                            if (field.type) |sub_ty| {
+                                if (self.typeUsesParam(sub_ty, param)) break :blk_choice true;
+                            }
+                        }
+                    }
+                }
+                break :blk_choice false;
+            },
         };
     }
 
@@ -5996,6 +6134,7 @@ pub const Semantizer = struct {
                     }
                 }
             },
+            .choice_type_literal => return null,
             .generic_type_instantiation => |g| return self.extractTypeArgumentFromGenericInstantiation(g, actual_ty, param_name, s),
         }
         return null;
@@ -6967,6 +7106,28 @@ pub const Semantizer = struct {
         error_payload_type: sg.Type,
     };
 
+    fn errorPayloadCanPropagate(self: *Semantizer, source: sg.Type, target: sg.Type) bool {
+        _ = self;
+        if (typ.typesExactlyEqual(source, target)) return true;
+        const source_struct = switch (source) {
+            .struct_type => |st| st,
+            else => return false,
+        };
+        const target_struct = switch (target) {
+            .struct_type => |st| st,
+            else => return false,
+        };
+
+        const source_reason = typ.findFieldByName(source_struct, "reason") orelse return false;
+        const target_reason = typ.findFieldByName(target_struct, "reason") orelse return false;
+        const source_trace = typ.findFieldByName(source_struct, "trace") orelse return false;
+        const target_trace = typ.findFieldByName(target_struct, "trace") orelse return false;
+
+        if (!typ.typesExactlyEqual(source_trace.ty, target_trace.ty)) return false;
+        if (source_reason.ty != .choice_type or target_reason.ty != .choice_type) return false;
+        return typ.choiceTypeIsSupersetOf(target_reason.ty.choice_type, source_reason.ty.choice_type);
+    }
+
     fn lowerErrorPropagation(
         self: *Semantizer,
         value_te: typ.TypedExpr,
@@ -6988,7 +7149,7 @@ pub const Semantizer = struct {
 
         const return_info = try self.errableInfoOf(typ.functionReturnType(current_fn), loc, "current function return type", s);
 
-        if (!typ.typesStructurallyEqual(operand_info.error_payload_type, return_info.error_payload_type)) {
+        if (!self.errorPayloadCanPropagate(operand_info.error_payload_type, return_info.error_payload_type)) {
             const pair = try self.formatTypePairText(return_info.error_payload_type, operand_info.error_payload_type, s);
             defer pair.deinit();
             try self.diags.add(
@@ -7037,8 +7198,11 @@ pub const Semantizer = struct {
                 .ok_variant_index = operand_info.ok_variant_index,
                 .ok_value_field_index = operand_info.ok_value_field_index,
                 .error_variant_index = operand_info.error_variant_index,
+                .propagated_errable_type = typ.functionReturnType(current_fn),
+                .propagated_error_variant_index = return_info.error_variant_index,
                 .ok_payload_type = operand_info.ok_payload_type,
                 .error_payload_type = operand_info.error_payload_type,
+                .propagated_error_payload_type = return_info.error_payload_type,
                 .line = loc.line,
                 .column = loc.column,
                 .source_file = loc.file,
@@ -7054,8 +7218,11 @@ pub const Semantizer = struct {
                 .ok_variant_index = operand_info.ok_variant_index,
                 .ok_value_field_index = operand_info.ok_value_field_index,
                 .error_variant_index = operand_info.error_variant_index,
+                .propagated_errable_type = typ.functionReturnType(current_fn),
+                .propagated_error_variant_index = return_info.error_variant_index,
                 .ok_payload_type = operand_info.ok_payload_type,
                 .error_payload_type = operand_info.error_payload_type,
+                .propagated_error_payload_type = return_info.error_payload_type,
                 .line = loc.line,
                 .column = loc.column,
                 .source_file = loc.file,
@@ -7189,6 +7356,27 @@ pub const Semantizer = struct {
                 .{},
             );
             return error.Reported;
+        }
+
+        if (reason_field.?.ty != .choice_type) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "Errable '.reason' field must be a choice of declared options",
+                .{},
+            );
+            return error.Reported;
+        }
+        for (reason_field.?.ty.choice_type.variants) |variant| {
+            if (variant.payload_type != null) {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "Errable '.reason' choices cannot carry payloads",
+                    .{},
+                );
+                return error.Reported;
+            }
         }
 
         const trace_struct = switch (trace_field.?.ty) {
@@ -8249,6 +8437,7 @@ pub const Semantizer = struct {
                 break :blk_g ty;
             },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
+            .choice_type_literal => |ct| .{ .choice_type = try self.choiceTypeFromLiteral(ct, s) },
             .pointer_type => |ptr_info| blk: {
                 const inner_ty = try self.resolveType(ptr_info.child.*, s);
                 const child = try self.allocator.create(sg.Type);
@@ -8317,6 +8506,7 @@ pub const Semantizer = struct {
                 break :blk_g ty;
             },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
+            .choice_type_literal => |ct| .{ .choice_type = try self.choiceTypeFromLiteral(ct, s) },
             .pointer_type => |ptr_info| blk: {
                 const inner_ty = try self.resolveTypePreservingAbstracts(ptr_info.child.*, s);
                 const child = try self.allocator.create(sg.Type);
@@ -8375,6 +8565,7 @@ pub const Semantizer = struct {
                 break :blk_g ty;
             },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteralWithSubst(st, s, subst) },
+            .choice_type_literal => |ct| .{ .choice_type = try self.choiceTypeFromLiteralWithSubst(ct, s, subst) },
             .pointer_type => |ptr_info| blk: {
                 const inner_ty = try self.resolveTypeWithSubst(ptr_info.child.*, s, subst);
                 const child = try self.allocator.create(sg.Type);
@@ -8422,6 +8613,7 @@ pub const Semantizer = struct {
                 break :blk_g ty;
             },
             .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteralWithSubst(st, s, subst) },
+            .choice_type_literal => |ct| .{ .choice_type = try self.choiceTypeFromLiteralWithSubst(ct, s, subst) },
             .pointer_type => |ptr_info| blk: {
                 const inner_ty = try self.resolveTypeWithSubstPreservingAbstracts(ptr_info.child.*, s, subst);
                 const child = try self.allocator.create(sg.Type);

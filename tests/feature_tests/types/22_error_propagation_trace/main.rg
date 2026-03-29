@@ -1,8 +1,10 @@
-fail() -> (.result: Errable#(.t: Int32, .reason: Char)) := {
-    result = ..error(.reason = 'x')
+..test_error
+
+fail() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
+    result = ..error(.reason = ..test_error)
 }
 
-propagate() -> (.result: Errable#(.t: Int32, .reason: Char)) := {
+propagate() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
     value := fail()!
     result = ..ok(.value = value)
 }
@@ -20,7 +22,7 @@ main() -> (.status_code: Int32) := {
         }
 
         entry := err.trace.entries[zero]
-        if entry.line != 6 {
+        if entry.line != 8 {
             status_code = 2
             return
         }

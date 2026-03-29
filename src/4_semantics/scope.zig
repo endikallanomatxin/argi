@@ -31,6 +31,7 @@ pub const Scope = struct {
     moved_bindings: std.StringHashMap(tok.Location),
     functions: std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)),
     types: std.StringHashMap(*sg.TypeDeclaration),
+    choice_options: std.StringHashMap(*sg.ChoiceOptionDeclaration),
     abstracts: std.StringHashMap(*abs.AbstractInfo),
     abstract_impls: std.StringHashMap(std.array_list.Managed(abs.AbstractImplEntry)),
     abstract_impl_templates: std.StringHashMap(std.array_list.Managed(abs.AbstractImplTemplate)),
@@ -56,6 +57,7 @@ pub const Scope = struct {
             .moved_bindings = std.StringHashMap(tok.Location).init(a.*),
             .functions = std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)).init(a.*),
             .types = std.StringHashMap(*sg.TypeDeclaration).init(a.*),
+            .choice_options = std.StringHashMap(*sg.ChoiceOptionDeclaration).init(a.*),
             .abstracts = std.StringHashMap(*abs.AbstractInfo).init(a.*),
             .abstract_impls = std.StringHashMap(std.array_list.Managed(abs.AbstractImplEntry)).init(a.*),
             .abstract_impl_templates = std.StringHashMap(std.array_list.Managed(abs.AbstractImplTemplate)).init(a.*),
@@ -178,11 +180,27 @@ pub const Scope = struct {
         return null;
     }
 
+    pub fn lookupChoiceOption(self: *Scope, n: []const u8) ?*sg.ChoiceOptionDeclaration {
+        if (self.choice_options.get(n)) |opt| return opt;
+        if (self.parent) |p| return p.lookupChoiceOption(n);
+        return null;
+    }
+
     pub fn lookupTypeInModule(self: *Scope, module_dir: []const u8, n: []const u8) ?*sg.TypeDeclaration {
         var cur: ?*Scope = self;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.types.get(n)) |t| {
                 if (std.mem.startsWith(u8, t.origin_file, module_dir)) return t;
+            }
+        }
+        return null;
+    }
+
+    pub fn lookupChoiceOptionInModule(self: *Scope, module_dir: []const u8, n: []const u8) ?*sg.ChoiceOptionDeclaration {
+        var cur: ?*Scope = self;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.choice_options.get(n)) |opt| {
+                if (std.mem.startsWith(u8, opt.origin_file, module_dir)) return opt;
             }
         }
         return null;

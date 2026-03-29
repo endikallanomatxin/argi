@@ -20,6 +20,7 @@ pub const Name = struct {
 };
 
 pub const Content = union(enum) {
+    choice_option_declaration: ChoiceOptionDeclaration,
     symbol_declaration: SymbolDeclaration,
     type_declaration: TypeDeclaration,
 
@@ -80,6 +81,7 @@ pub const PointerMutability = enum {
 pub const Type = union(enum) {
     type_name: Name,
     struct_type_literal: StructTypeLiteral,
+    choice_type_literal: ChoiceTypeLiteral,
     pointer_type: *PointerType,
     generic_type_instantiation: struct {
         base_name: Name,
@@ -115,6 +117,10 @@ pub const TypeDeclaration = struct {
     generic_params: []const []const u8,
     generic_params_struct: ?StructTypeLiteral,
     value: *STNode,
+};
+
+pub const ChoiceOptionDeclaration = struct {
+    name: Name,
 };
 
 // Abstract type declarations (interface-like)
@@ -218,12 +224,14 @@ pub const ChoiceTypeLiteral = struct {
 
 pub const ChoiceTypeLiteralVariant = struct {
     name: Name,
+    module_qualifier: ?Name = null,
     is_default: bool,
     payload_type: ?StructTypeLiteral = null,
 };
 
 pub const ChoiceLiteral = struct {
     name: Name,
+    module_qualifier: ?Name = null,
     payload: ?*STNode,
 };
 

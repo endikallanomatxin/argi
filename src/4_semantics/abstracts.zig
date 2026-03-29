@@ -171,6 +171,7 @@ fn matchTemplateType(pattern: syn.Type, actual: sg.Type, params: []const gen.Gen
             break :blk matchTemplateType(arr_info.element.*, actual.array_type.element_type.*, params, bindings);
         },
         .struct_type_literal => false,
+        .choice_type_literal => false,
         .generic_type_instantiation => |g| matchGenericInstantiationType(g, actual, params, bindings),
     };
 }

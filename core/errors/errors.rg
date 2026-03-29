@@ -10,8 +10,8 @@ ErrorTrace : Type = (
     .entries: DynamicArray#(.t: ErrorTraceEntry)
 )
 
-Error#(.reason: Type) : Type = (
-    .reason: reason
+Error#(.reasons: Type) : Type = (
+    .reason: reasons
     .trace: ErrorTrace
 )
 
@@ -146,10 +146,10 @@ report_trace(
     flush(.self = stderr)
 }
 
-Errable #(.t: Type, .reason: Type) : Type = (
+Errable #(.t: Type, .reasons: Type) : Type = (
     ..ok(.value: t)
     ..error(
-        .reason: reason
+        .reason: reasons
         .trace: ErrorTrace
     )
 )

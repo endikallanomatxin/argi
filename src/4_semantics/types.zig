@@ -90,6 +90,36 @@ pub fn genericIdentityArgByName(identity: *const sg.GenericTypeIdentity, name: [
     return null;
 }
 
+fn choiceVariantsEqual(a: sg.ChoiceVariant, b: sg.ChoiceVariant) bool {
+    if (a.option_decl != b.option_decl) return false;
+    if (a.option_decl == null and !std.mem.eql(u8, a.name, b.name)) return false;
+    if (a.payload_type == null and b.payload_type == null) return true;
+    if (a.payload_type == null or b.payload_type == null) return false;
+    return typesExactlyEqual(a.payload_type.?, b.payload_type.?);
+}
+
+fn choiceTypesEqualByVariants(a: *const sg.ChoiceType, b: *const sg.ChoiceType) bool {
+    if (a.variants.len != b.variants.len) return false;
+    for (a.variants, b.variants) |av, bv| {
+        if (!choiceVariantsEqual(av, bv)) return false;
+    }
+    return true;
+}
+
+pub fn choiceTypeContainsVariant(choice_ty: *const sg.ChoiceType, variant: sg.ChoiceVariant) ?u32 {
+    for (choice_ty.variants, 0..) |candidate, idx| {
+        if (choiceVariantsEqual(candidate, variant)) return @intCast(idx);
+    }
+    return null;
+}
+
+pub fn choiceTypeIsSupersetOf(expected: *const sg.ChoiceType, actual: *const sg.ChoiceType) bool {
+    for (actual.variants) |variant| {
+        if (choiceTypeContainsVariant(expected, variant) == null) return false;
+    }
+    return true;
+}
+
 pub fn isTypeTriviallyCopyable(ty: sg.Type, s: *Scope) bool {
     if (s.findDeinit(ty) != null) return false;
 
@@ -211,6 +241,7 @@ pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
         .choice_type => |act| switch (b) {
             .choice_type => |bct| blk: {
                 if (act == bct) break :blk true;
+                if (choiceTypesEqualByVariants(act, bct)) break :blk true;
                 const a_identity = genericIdentityOf(a) orelse break :blk false;
                 const b_identity = genericIdentityOf(b) orelse break :blk false;
                 break :blk genericIdentitiesEqual(a_identity, b_identity);
@@ -282,7 +313,13 @@ pub fn typesExactlyEqual(a: sg.Type, b: sg.Type) bool {
             else => false,
         },
         .choice_type => |act| switch (b) {
-            .choice_type => |bct| act == bct,
+            .choice_type => |bct| blk: {
+                if (act == bct) break :blk true;
+                if (choiceTypesEqualByVariants(act, bct)) break :blk true;
+                const a_identity = genericIdentityOf(a) orelse break :blk false;
+                const b_identity = genericIdentityOf(b) orelse break :blk false;
+                break :blk genericIdentitiesEqual(a_identity, b_identity);
+            },
             else => false,
         },
         .struct_type => |ast| switch (b) {
@@ -881,14 +918,36 @@ fn coerceChoiceLiteral(
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
 ) err.SemErr!TypedExpr {
+    if (expr.ty == .choice_type and choiceTypeIsSupersetOf(expected, expr.ty.choice_type)) {
+        return coerceChoiceValue(expected, expr, expr_node, allocator, diags);
+    }
+
     if (expr.node.content != .choice_literal) return expr;
 
     const choice_lit = expr.node.content.choice_literal;
     const variant_name = choice_lit.variant_name;
     const loc = expr_node.location;
 
+    var qualified_option: ?*const sg.ChoiceOptionDeclaration = null;
+    if (choice_lit.module_qualifier) |module_name| {
+        const module_dir = s.lookupModuleAlias(module_name) orelse {
+            try diags.add(loc, .semantic, "unknown module alias '{s}' in choice literal", .{module_name});
+            return error.Reported;
+        };
+        qualified_option = s.lookupChoiceOptionInModule(module_dir, variant_name) orelse {
+            try diags.add(loc, .semantic, "module '{s}' has no choice option '..{s}'", .{ module_name, variant_name });
+            return error.Reported;
+        };
+    }
+
     for (expected.variants, 0..) |variant, idx| {
-        if (std.mem.eql(u8, variant.name, variant_name)) {
+        const variant_matches = if (qualified_option) |opt|
+            variant.option_decl == opt
+        else if (variant.option_decl) |opt|
+            opt == s.lookupChoiceOption(variant_name)
+        else
+            std.mem.eql(u8, variant.name, variant_name);
+        if (variant_matches) {
             const coerced_payload = if (variant.payload_type) |payload_ty| blk: {
                 if (choice_lit.payload == null) {
                     try diags.add(
@@ -944,6 +1003,38 @@ fn coerceChoiceLiteral(
         .{ expected_text.bytes, variant_name },
     );
     return error.Reported;
+}
+
+fn coerceChoiceValue(
+    expected: *const sg.ChoiceType,
+    expr: TypedExpr,
+    expr_node: *const syn.STNode,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    const actual_choice = expr.ty.choice_type;
+    if (!choiceTypeIsSupersetOf(expected, actual_choice)) return expr;
+    if (expr.node.content != .choice_literal) return expr;
+
+    const lit = expr.node.content.choice_literal;
+    const actual_variant = actual_choice.variants[lit.variant_index];
+    const expected_index = choiceTypeContainsVariant(expected, actual_variant) orelse {
+        try diags.add(expr_node.location, .semantic, "choice coercion failed: variant is not part of the destination choice", .{});
+        return error.Reported;
+    };
+
+    const typed = try allocator.create(sg.ChoiceLiteral);
+    typed.* = .{
+        .variant_name = lit.variant_name,
+        .module_qualifier = lit.module_qualifier,
+        .choice_type = expected,
+        .variant_index = expected_index,
+        .payload = lit.payload,
+    };
+
+    const node = try sg.makeSGNode(.{ .choice_literal = typed }, expr_node.location, allocator);
+    node.sem_type = .{ .choice_type = expected };
+    return .{ .node = node, .ty = .{ .choice_type = expected } };
 }
 
 pub fn convertListLiteralToArray(

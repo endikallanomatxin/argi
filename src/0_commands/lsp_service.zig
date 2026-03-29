@@ -610,6 +610,17 @@ pub const LanguageService = struct {
                             if (f.type) |child_t| try this.colorType(child_t, decl_mods);
                         }
                     },
+                    .choice_type_literal => |ctl| {
+                        for (ctl.variants) |variant| {
+                            try this.identAt(variant.name.location, TOKEN_INDEX.property, decl_mods);
+                            if (variant.payload_type) |payload_ty| {
+                                for (payload_ty.fields) |field| {
+                                    try this.identAt(field.name.location, TOKEN_INDEX.property, decl_mods);
+                                    if (field.type) |child_t| try this.colorType(child_t, decl_mods);
+                                }
+                            }
+                        }
+                    },
                     .array_type => |arr_ptr| {
                         try this.colorType(arr_ptr.element.*, decl_mods);
                     },
@@ -1771,6 +1782,15 @@ fn collectTypeRefsFromType(ty: st.Type, type_refs: *std.array_list.Managed(Synta
         .struct_type_literal => |stl| {
             for (stl.fields) |field| {
                 if (field.type) |child_ty| try collectTypeRefsFromType(child_ty, type_refs);
+            }
+        },
+        .choice_type_literal => |ctl| {
+            for (ctl.variants) |variant| {
+                if (variant.payload_type) |payload_ty| {
+                    for (payload_ty.fields) |field| {
+                        if (field.type) |child_ty| try collectTypeRefsFromType(child_ty, type_refs);
+                    }
+                }
             }
         },
         .pointer_type => |ptr| try collectTypeRefsFromType(ptr.child.*, type_refs),

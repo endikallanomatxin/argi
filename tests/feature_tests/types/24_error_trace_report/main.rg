@@ -1,13 +1,15 @@
-fail() -> (.result: Errable#(.t: Int32, .reason: Char)) := {
-    result = ..error(.reason = 'x')
+..test_error
+
+fail() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
+    result = ..error(.reason = ..test_error)
 }
 
-middle() -> (.result: Errable#(.t: Int32, .reason: Char)) := {
+middle() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
     value := fail()!
     result = ..ok(.value = value)
 }
 
-top() -> (.result: Errable#(.t: Int32, .reason: Char)) := {
+top() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
     value := middle() !! "reading config"
     result = ..ok(.value = value)
 }

@@ -358,6 +358,10 @@ pub const Syntaxer = struct {
 
             return syn.Type{ .pointer_type = ptr_ty };
         } else if (self.tokenIs(.open_parenthesis)) {
+            if (self.parenthesizedTypeIsChoiceLiteral()) {
+                const lit = try self.parseChoiceTypeLiteral();
+                return syn.Type{ .choice_type_literal = lit };
+            }
             const lit = try self.parseStructTypeLiteral();
             return syn.Type{ .struct_type_literal = lit };
         }
@@ -569,7 +573,16 @@ pub const Syntaxer = struct {
                 self.skipNewLinesAndComments();
             }
 
-            if (!self.tokenIs(.double_dot)) {
+            var module_qualifier: ?syn.Name = null;
+            if (std.meta.activeTag(self.current().content) == .identifier) {
+                const qualifier = try self.parseName();
+                self.skipNewLinesAndComments();
+                if (!self.tokenIs(.double_dot)) {
+                    try self.diags.add(qualifier.location, .syntax, "expected '..' after choice option module qualifier", .{});
+                    return SyntaxerError.ExpectedIdentifier;
+                }
+                module_qualifier = qualifier;
+            } else if (!self.tokenIs(.double_dot)) {
                 try self.diags.add(self.tokenLocation(), .syntax, "expected choice variant '..name'", .{});
                 return SyntaxerError.ExpectedIdentifier;
             }
@@ -579,7 +592,12 @@ pub const Syntaxer = struct {
             if (self.tokenIs(.open_parenthesis)) {
                 payload_type = try self.parseStructTypeLiteral();
             }
-            try variants.append(.{ .name = vname, .is_default = is_default, .payload_type = payload_type });
+            try variants.append(.{
+                .name = vname,
+                .module_qualifier = module_qualifier,
+                .is_default = is_default,
+                .payload_type = payload_type,
+            });
 
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
@@ -591,6 +609,76 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
         self.advanceOne();
         return .{ .variants = variants.items };
+    }
+
+    fn parenthesizedTypeIsChoiceLiteral(self: *Syntaxer) bool {
+        if (!self.tokenIs(.open_parenthesis)) return false;
+
+        var idx = self.index + 1;
+        while (idx < self.tokens.len) : (idx += 1) {
+            const tag = std.meta.activeTag(self.tokens[idx].content);
+            switch (tag) {
+                .new_line, .comment => continue,
+                .double_dot => return true,
+                .equal => {
+                    idx += 1;
+                    while (idx < self.tokens.len) : (idx += 1) {
+                        const inner_tag = std.meta.activeTag(self.tokens[idx].content);
+                        switch (inner_tag) {
+                            .new_line, .comment => continue,
+                            .double_dot => return true,
+                            .identifier => {
+                                var j = idx + 1;
+                                while (j < self.tokens.len) : (j += 1) {
+                                    const next_tag = std.meta.activeTag(self.tokens[j].content);
+                                    switch (next_tag) {
+                                        .new_line, .comment => continue,
+                                        .double_dot => return true,
+                                        else => return false,
+                                    }
+                                }
+                                return false;
+                            },
+                            else => return false,
+                        }
+                    }
+                    return false;
+                },
+                .identifier => {
+                    var j = idx + 1;
+                    while (j < self.tokens.len) : (j += 1) {
+                        const next_tag = std.meta.activeTag(self.tokens[j].content);
+                        switch (next_tag) {
+                            .new_line, .comment => continue,
+                            .double_dot => return true,
+                            else => return false,
+                        }
+                    }
+                    return false;
+                },
+                else => return false,
+            }
+        }
+
+        return false;
+    }
+
+    fn currentSentenceStartsChoiceOptionDeclaration(self: *Syntaxer) bool {
+        if (!self.tokenIs(.double_dot)) return false;
+        if (self.index + 1 >= self.tokens.len) return false;
+        if (std.meta.activeTag(self.tokens[self.index + 1].content) != .identifier) return false;
+
+        var idx = self.index + 2;
+        while (idx < self.tokens.len) : (idx += 1) {
+            const tag = std.meta.activeTag(self.tokens[idx].content);
+            switch (tag) {
+                .comment => continue,
+                .new_line, .eof, .close_brace => return true,
+                else => return false,
+            }
+        }
+
+        return true;
     }
 
     fn commaStartsReachAlternative(self: *Syntaxer) bool {
@@ -1182,6 +1270,13 @@ pub const Syntaxer = struct {
             return SyntaxerError.ExpectedDeclarationOrAssignment;
         }
 
+        if (self.currentSentenceStartsChoiceOptionDeclaration()) {
+            const decl_loc = self.tokenLocation();
+            self.advanceOne();
+            const option_name = try self.parseName();
+            return try self.makeNode(.{ .choice_option_declaration = .{ .name = option_name } }, decl_loc);
+        }
+
         const id_loc = self.tokenLocation();
         var name = try self.parseName();
 
@@ -1331,7 +1426,7 @@ pub const Syntaxer = struct {
         }
 
         // Declarations: ":" or "::"
-        if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) {
+            if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) {
             var mut: syn.Mutability = .constant;
             if (self.tokenIs(.double_colon)) mut = .variable;
             self.advanceOne();
@@ -1343,30 +1438,7 @@ pub const Syntaxer = struct {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                     self.advanceOne();
                     if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
-                    var idx = self.index + 1;
-                    var parse_choice = false;
-                    while (idx < self.tokens.len) : (idx += 1) {
-                        const tag = std.meta.activeTag(self.tokens[idx].content);
-                        switch (tag) {
-                            .new_line, .comment => continue,
-                            .double_dot => parse_choice = true,
-                            .equal => {
-                                var j = idx + 1;
-                                while (j < self.tokens.len) : (j += 1) {
-                                    const next_tag = std.meta.activeTag(self.tokens[j].content);
-                                    switch (next_tag) {
-                                        .new_line, .comment => continue,
-                                        .double_dot => parse_choice = true,
-                                        else => {},
-                                    }
-                                    break;
-                                }
-                            },
-                            else => {},
-                        }
-                        break;
-                    }
-                    const lit_node = if (parse_choice) blk: {
+                    const lit_node = if (self.parenthesizedTypeIsChoiceLiteral()) blk: {
                         const chlit = try self.parseChoiceTypeLiteral();
                         break :blk try self.makeNode(.{ .choice_type_literal = chlit }, id_loc);
                     } else blk: {

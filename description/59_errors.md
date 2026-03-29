@@ -1,149 +1,125 @@
 # Errors
 
-Dirección general:
-- Semántica de propagación y ergonomía en la línea de Zig.
-- Posibilidad de añadir contexto útil al estilo anyhow de Rust.
+Dirección aceptada:
+- Propagación y ergonomía en la línea de Zig.
+- Contexto y traza humana acumulable al propagar, en la línea de `anyhow`.
+- La identidad del error ya no es un `Type` arbitrario: es una `choice option`
+  nominal.
 
->[!QUOTE]
->The ptimeagen dice que cree que como lo hace zig le gusta más.
-> https://www.youtube.com/watch?v=Epwlk4B90vk
+## Choice options
 
+Una `choice option` se declara suelta:
 
-## Fundamento aceptado: errors as types
-
-El fundamento aceptado es que la identidad del error sea su tipo.
-
-- Un `ErrorReason` es un `Type` nominal.
-- En principio será un tipo vacío.
-- El `type id` hace el papel de identificador global del error, en la línea del
-  efecto que tiene Zig con sus errors ligeros y fácilmente comparables.
-
-Ejemplos conceptuales:
-
-```
-NotFound : Type = ()
-PermissionDenied : Type = ()
-InvalidNumber : Type = ()
+```rg
+..file_not_found
+..permission_denied
+..invalid_format
 ```
 
-Esto separa dos cosas:
-- La identidad del error: el tipo.
-- La traza y el contexto humano: información adicional opcional.
+Semántica:
+- Cada declaración define un símbolo nominal.
+- El compilador asigna a cada opción un id numérico único durante la
+  compilación.
+- Ese id es la identidad real de la opción.
+- El texto `..name` solo es la forma de referirse a ella.
 
+No hay autodeclaración por uso:
+- `..file_not_found` en posición de valor referencia una opción existente.
+- Si no existe, es error.
+
+## Open choices
+
+Las opciones se agrupan en `choices` cerrados cuando hace falta tipado o
+exhaustividad.
+
+```rg
+reason : (..file_not_found, ..permission_denied) = ..permission_denied
+```
+
+Un `choice` puede ser:
+- anónimo, como en el ejemplo anterior
+- nombrado, usando un alias o tipo del lenguaje
+
+Los `choices` usados para errores son cerrados y finitos.
 
 ## Error values
 
-```
-Error : Type = (
-	.reason: Type
-	.trace: ErrorTrace
+La traza sigue viviendo dentro del propio error.
+
+```rg
+Error#(.reasons: Type) : Type = (
+    .reason: reasons
+    .trace: ErrorTrace
 )
 ```
 
-La forma concreta de `ErrorTrace` sigue abierta, pero la dirección aceptada es
-que la traza viva dentro del propio valor `Error`.
-
+Restricciones:
+- `.reason` debe ser un `choice` sin payloads
+- `.trace` mantiene el mecanismo actual de entradas de traza
 
 ## Error unions
 
-```
-Errable#(.t: Type, .reason: Type) : Type = (
-	..ok(.value: t)    -- Success
-	..error(.reason: e) -- Fail
+`Errable` queda definido sobre un conjunto de razones:
+
+```rg
+Errable#(.t: Type, .reasons: Type) : Type = (
+    ..ok(.value: t)
+    ..error(
+        .reason: reasons
+        .trace: ErrorTrace
+    )
 )
 ```
 
-An error set type and normal type can be combined with the ! binary operator to
-form an error union type. You are likely to use an error union type more often
-than an error set type by itself.
+Consecuencias:
+- una función declara el conjunto de razones que puede devolver
+- `!` permite propagar un subconjunto hacia un superset compatible
+- el remapeo de tags entre conjuntos distintos lo hace el compilador/codegen
 
-`!Int` se convierte en `AnyErrorSet!Int`.
+Ejemplo:
 
-Esto seguramente habrá que revisarlo para alinearlo con `errors as types`, pero
-la idea general sigue siendo válida: `!T` representa “`T` o error”.
+```rg
+..file_not_found
+..permission_denied
 
+read_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found))) := {
+    result = ..error(.reason = ..file_not_found)
+}
 
-### Unwrapping
-
-As with Nullables, you can match or check the union regularly, but there are
-builtin operators for unwrapping:
-
-```
-foo = errable_foo unwrap_or 0
-
-foo = errable_foo unwrap_or_do {
-    system.terminal | print ($&, errable_foo..error | cast)
+load_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found, ..permission_denied))) := {
+    value := read_file()!
+    result = ..ok(.value = value)
 }
 ```
 
-Cuando un error se castea a string, se debería imprimir de forma útil para
-humanos, incluyendo razón y traza si existe.
+## Propagation
 
-> [!IDEA]
-> Estaría bien que pudiera incluir también valores relevantes del contexto
-> (inputs, path, token, etc.) si eso ayuda a entender qué está pasando.
+`!` y `!!`:
+- hacen short-circuit
+- ejecutan `defer`s
+- añaden una entrada a la traza
+- exigen que el `Errable` actual pueda representar todas las razones
+  propagadas
 
+`!!` además adjunta contexto textual a la entrada de traza.
 
-### Return err if errs
+## Exhaustividad
 
-If you are inside a function that returns an Errable and you are calling a function that returns an Errable.
+La exhaustividad se chequea contra un `choice` cerrado, no contra una opción
+suelta.
 
-- If you do:`my_func () !`
-	- If it doesn't err, it continues.
-	- If it errs, it immediately returns the error. (like Rust, y como try en zig)
-- If you do:`my_func () !! "Something"` you can add some context. (like anyhow rust crate)
+Eso permite:
+- `match` sobre `Errable`
+- chequeos sobre `.reason`
+- futuras mejoras de narrowing/resto de casos sin depender de strings ni tipos
+  arbitrarios
 
-> Se permite en cualquier subexpresión (no solo en instrucción); ejemplo: line_len := read_line_into_buffer(.stdin = fd, .buffer = $&line)!.len.
+## Runtime
 
-> En funciones cuyo tipo de salida no es Errable, usar ! es error del compilador.
+En runtime:
+- la razón de error viaja como tag de `choice`
+- la identidad de cada opción viene de su id de compilación
+- la traza sigue siendo un valor autocontenido dentro del error
 
-> ! hace short-circuit con ejecución de defers
-
-
-## Tracing strategy
-
-La dirección aceptada es que la traza viva dentro de `Error`.
-
-`Error` debe ser autocontenido: además de la identidad del error en `.reason`,
-lleva su `.trace`, que se puede ir ampliando al propagar el error o al añadir
-contexto con operadores como `!!`.
-
-Ventajas:
-- Es la opción más natural y directa.
-- El error se puede imprimir, pasar y devolver sin depender de capacidades
-  adicionales.
-- Encaja mejor con la idea de tratar el error como un valor normal del
-  lenguaje.
-- Hace más fácil definir un cast a string útil para humanos.
-
-Coste asumido:
-- Existe un overhead base incluso cuando no se quiere una traza rica.
-- La representación concreta de `ErrorTrace` debe diseñarse para que ese coste
-  siga siendo razonable.
-
-> [!IDEA]
-> Alternativa futura: `system.error_tracer` reached
->
-> Se podría explorar una estrategia reached, por ejemplo
-> `system.error_tracer`, que decida cómo se construye, amplía o ignora la
-> traza.
->
-> Posibles ventajas:
-> - Permitir una estrategia con overhead casi nulo.
-> - Permitir sobreescribir el mecanismo de traceado.
-> - Separar la identidad del error de la política de observabilidad.
->
-> Inconvenientes:
-> - Es menos natural, porque la traza no vive simplemente dentro del error.
-> - Hace depender parte de la experiencia de errores de una capability
->   reached.
-
-
-## Errable as a monad
-
-pensar en concatenar operaciones sobre errables (andthen, orelse…)
-podria ser
-and then: “|>”
-or else: “|<“ o “|!”
-
-Darle una vuelta.
+La representación sigue siendo ligera, pero el tipado conserva el conjunto
+exacto de razones disponible en cada frontera.

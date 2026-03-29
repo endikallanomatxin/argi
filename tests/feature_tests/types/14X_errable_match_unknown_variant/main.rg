@@ -1,5 +1,7 @@
+..test_error
+
 main := {
-    value : Errable#(.t: Int32, .reason: Char) = ..ok(.value = 7)
+    value : Errable#(.t: Int32, .reasons: (..test_error)) = ..ok(.value = 7)
 
     match value {
         ..none {

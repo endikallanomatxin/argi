@@ -16,6 +16,7 @@ fn printType(t: syn.Type, lvl: usize) void {
     switch (t) {
         .type_name => |id| std.debug.print("{s}", .{id.string}),
         .struct_type_literal => |st| printStructTypeLiteral(st, lvl),
+        .choice_type_literal => |ct| printChoiceTypeLiteral(ct, lvl),
         .pointer_type => |pt_ptr| {
             const pt = pt_ptr.*;
             const prefix = switch (pt.mutability) {
@@ -63,6 +64,9 @@ fn printChoiceTypeLiteral(ct: syn.ChoiceTypeLiteral, lvl: usize) void {
     for (ct.variants) |v| {
         indent(lvl + 1);
         if (v.is_default) std.debug.print("=", .{});
+        if (v.module_qualifier) |qualifier| {
+            std.debug.print("{s}", .{qualifier.string});
+        }
         std.debug.print("..{s}", .{v.name.string});
         if (v.payload_type) |pt| {
             std.debug.print(" ", .{});
@@ -120,6 +124,9 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
     indent(lvl);
 
     switch (node.content) {
+        .choice_option_declaration => |decl| {
+            std.debug.print("ChoiceOptionDecl ..{s}\n", .{decl.name.string});
+        },
         // ── ABSTRACTS (minimal printing) ─────────────────────────────────
         .abstract_declaration => |ad| {
             std.debug.print("AbstractDecl \"{s}\"\n", .{ad.name.string});
@@ -260,7 +267,11 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             std.debug.print("\n", .{});
         },
         .choice_literal => |lit| {
-            std.debug.print("ChoiceLiteral ..{s}", .{lit.name.string});
+            if (lit.module_qualifier) |qualifier| {
+                std.debug.print("ChoiceLiteral {s}..{s}", .{ qualifier.string, lit.name.string });
+            } else {
+                std.debug.print("ChoiceLiteral ..{s}", .{lit.name.string});
+            }
             if (lit.payload) |p| {
                 std.debug.print("(\n", .{});
                 printNode(p.*, lvl + 1);

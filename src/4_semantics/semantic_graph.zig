@@ -32,6 +32,7 @@ pub inline fn makeSGNode(content: Content, location: tok.Location, allocator: *c
 }
 
 pub const Content = union(enum) {
+    choice_option_declaration: *ChoiceOptionDeclaration,
     type_declaration: *TypeDeclaration,
     function_declaration: *FunctionDeclaration,
 
@@ -97,14 +98,22 @@ pub const ChoiceType = struct {
     identity: ?TypeIdentity = null,
 };
 
+pub const ChoiceOptionDeclaration = struct {
+    name: []const u8,
+    origin_file: []const u8,
+    id: u32,
+};
+
 pub const ChoiceVariant = struct {
     name: []const u8,
     value: i32,
     payload_type: ?Type = null,
+    option_decl: ?*const ChoiceOptionDeclaration = null,
 };
 
 pub const ChoiceLiteral = struct {
     variant_name: []const u8,
+    module_qualifier: ?[]const u8 = null,
     choice_type: *const ChoiceType,
     variant_index: u32,
     payload: ?*const SGNode,
@@ -249,8 +258,11 @@ pub const ErrorPropagation = struct {
     ok_variant_index: u32,
     ok_value_field_index: u32,
     error_variant_index: u32,
+    propagated_errable_type: Type,
+    propagated_error_variant_index: u32,
     ok_payload_type: Type,
     error_payload_type: Type,
+    propagated_error_payload_type: Type,
     line: u32,
     column: u32,
     source_file: []const u8,
@@ -264,8 +276,11 @@ pub const ErrorContext = struct {
     ok_variant_index: u32,
     ok_value_field_index: u32,
     error_variant_index: u32,
+    propagated_errable_type: Type,
+    propagated_error_variant_index: u32,
     ok_payload_type: Type,
     error_payload_type: Type,
+    propagated_error_payload_type: Type,
     line: u32,
     column: u32,
     source_file: []const u8,

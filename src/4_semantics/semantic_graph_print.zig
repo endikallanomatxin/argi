@@ -43,6 +43,9 @@ fn printListLiteral(ll: *const sem.ListLiteral, lvl: usize) void {
 pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
     indent(lvl);
     switch (node.content) {
+        .choice_option_declaration => |decl| {
+            std.debug.print("ChoiceOption ..{s} (id={d})\n", .{ decl.name, decl.id });
+        },
         .binding_declaration => |b| {
             const mut = if (b.mutability == .variable) "var" else "const";
             std.debug.print("Decl \"{s}\" {s} : {s}\n", .{ b.name, mut, typeToString(b.ty) });
@@ -130,7 +133,11 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
 
         .value_literal => |v| printValueLiteral(&v, lvl),
         .choice_literal => |lit| {
-            std.debug.print("ChoiceLiteral tag={d}\n", .{lit.variant_index});
+            if (lit.module_qualifier) |qualifier| {
+                std.debug.print("ChoiceLiteral {s}..{s} tag={d}\n", .{ qualifier, lit.variant_name, lit.variant_index });
+            } else {
+                std.debug.print("ChoiceLiteral ..{s} tag={d}\n", .{ lit.variant_name, lit.variant_index });
+            }
             if (lit.payload) |payload| {
                 indent(lvl + 1);
                 std.debug.print("Payload:\n", .{});

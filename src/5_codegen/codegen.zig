@@ -194,6 +194,9 @@ pub const CodeGenerator = struct {
     // ────────────────────────────────────────── visitor dispatch ──
     fn visitNode(self: *CodeGenerator, n: *const sem.SGNode) CodegenError!?TypedValue {
         return switch (n.content) {
+            .choice_option_declaration => |_| {
+                return null;
+            },
             .function_declaration => |f| {
                 self.genFunction(f) catch |e| {
                     try self.diags.add(n.location, .codegen, "error generating function {s}: {s}", .{ f.name, @errorName(e) });
@@ -1924,8 +1927,11 @@ pub const CodeGenerator = struct {
             prop.ok_variant_index,
             prop.ok_value_field_index,
             prop.error_variant_index,
+            prop.propagated_errable_type,
+            prop.propagated_error_variant_index,
             prop.ok_payload_type,
             prop.error_payload_type,
+            prop.propagated_error_payload_type,
             prop.line,
             prop.column,
             prop.source_file,
@@ -1941,8 +1947,11 @@ pub const CodeGenerator = struct {
             ctx.ok_variant_index,
             ctx.ok_value_field_index,
             ctx.error_variant_index,
+            ctx.propagated_errable_type,
+            ctx.propagated_error_variant_index,
             ctx.ok_payload_type,
             ctx.error_payload_type,
+            ctx.propagated_error_payload_type,
             ctx.line,
             ctx.column,
             ctx.source_file,
@@ -1958,8 +1967,11 @@ pub const CodeGenerator = struct {
         ok_variant_index: u32,
         ok_value_field_index: u32,
         error_variant_index: u32,
+        propagated_errable_type: sem.Type,
+        propagated_error_variant_index: u32,
         ok_payload_type: sem.Type,
         error_payload_type: sem.Type,
+        propagated_error_payload_type: sem.Type,
         line: u32,
         column: u32,
         source_file: []const u8,
@@ -1987,9 +1999,23 @@ pub const CodeGenerator = struct {
             (try self.visitNode(ctx_node) orelse return CodegenError.ValueNotFound).value_ref
         else
             c.LLVMConstNull(c.LLVMPointerType(c.LLVMInt8Type(), 0));
-        const updated_error_payload = try self.appendTraceEntry(error_payload, error_payload_type, source_file_ptr, line, column, context_ptr, source_line_ptr);
-        var updated_errable = errable_tv.value_ref;
-        updated_errable = c.LLVMBuildInsertValue(self.builder, updated_errable, updated_error_payload, error_variant_index + 1, "errable.error.updated");
+        const traced_error_payload = try self.appendTraceEntry(error_payload, error_payload_type, source_file_ptr, line, column, context_ptr, source_line_ptr);
+        const updated_error_payload = try self.coerceErrorPayload(traced_error_payload, error_payload_type, propagated_error_payload_type);
+        var updated_errable = c.LLVMGetUndef(try self.toLLVMType(propagated_errable_type));
+        updated_errable = c.LLVMBuildInsertValue(
+            self.builder,
+            updated_errable,
+            c.LLVMConstInt(c.LLVMInt32Type(), propagated_error_variant_index, 0),
+            0,
+            "errable.error.tag",
+        );
+        updated_errable = c.LLVMBuildInsertValue(
+            self.builder,
+            updated_errable,
+            updated_error_payload,
+            propagated_error_variant_index + 1,
+            "errable.error.updated",
+        );
         try self.buildCurrentFunctionErrableReturn(updated_errable, cleanup_nodes);
 
         c.LLVMPositionBuilderAtEnd(self.builder, ok_bb);
@@ -2009,6 +2035,78 @@ pub const CodeGenerator = struct {
         var agg = c.LLVMGetUndef(ret_ty);
         agg = c.LLVMBuildInsertValue(self.builder, agg, errable_value, 0, "errable.return");
         _ = c.LLVMBuildRet(self.builder, agg);
+    }
+
+    fn coerceErrorPayload(
+        self: *CodeGenerator,
+        value: llvm.c.LLVMValueRef,
+        source_ty: sem.Type,
+        target_ty: sem.Type,
+    ) !llvm.c.LLVMValueRef {
+        if (sem_types.typesExactlyEqual(source_ty, target_ty)) return value;
+
+        const source_struct = switch (source_ty) {
+            .struct_type => |st| st,
+            else => return CodegenError.InvalidType,
+        };
+        const target_struct = switch (target_ty) {
+            .struct_type => |st| st,
+            else => return CodegenError.InvalidType,
+        };
+
+        const source_reason_index = fieldIndexByName(source_struct, "reason") orelse return CodegenError.InvalidType;
+        const source_trace_index = fieldIndexByName(source_struct, "trace") orelse return CodegenError.InvalidType;
+        const target_reason_index = fieldIndexByName(target_struct, "reason") orelse return CodegenError.InvalidType;
+        const target_trace_index = fieldIndexByName(target_struct, "trace") orelse return CodegenError.InvalidType;
+        const source_reason_ty = source_struct.fields[source_reason_index].ty;
+        const target_reason_ty = target_struct.fields[target_reason_index].ty;
+        if (source_reason_ty != .choice_type or target_reason_ty != .choice_type) return CodegenError.InvalidType;
+
+        const source_reason = c.LLVMBuildExtractValue(self.builder, value, source_reason_index, "error.reason");
+        const coerced_reason = try self.coerceChoiceValue(source_reason, source_reason_ty.choice_type, target_reason_ty.choice_type);
+        const trace_value = c.LLVMBuildExtractValue(self.builder, value, source_trace_index, "error.trace");
+
+        var result = c.LLVMGetUndef(try self.toLLVMType(target_ty));
+        result = c.LLVMBuildInsertValue(self.builder, result, coerced_reason, target_reason_index, "error.reason.coerced");
+        result = c.LLVMBuildInsertValue(self.builder, result, trace_value, target_trace_index, "error.trace.coerced");
+        return result;
+    }
+
+    fn coerceChoiceValue(
+        self: *CodeGenerator,
+        value: llvm.c.LLVMValueRef,
+        source_ty: *const sem.ChoiceType,
+        target_ty: *const sem.ChoiceType,
+    ) !llvm.c.LLVMValueRef {
+        if (source_ty == target_ty or sem_types.typesExactlyEqual(.{ .choice_type = source_ty }, .{ .choice_type = target_ty })) {
+            return value;
+        }
+
+        const target_llvm_ty = try self.toLLVMType(.{ .choice_type = target_ty });
+        const tag_val = c.LLVMBuildExtractValue(self.builder, value, 0, "choice.coerce.tag");
+        var remapped_tag = c.LLVMConstInt(c.LLVMInt32Type(), 0, 0);
+        var first = true;
+        for (source_ty.variants, 0..) |variant, idx| {
+            if (variant.payload_type != null) return CodegenError.InvalidType;
+            const target_idx = sem_types.choiceTypeContainsVariant(target_ty, variant) orelse return CodegenError.InvalidType;
+            const is_match = c.LLVMBuildICmp(
+                self.builder,
+                c.LLVMIntEQ,
+                tag_val,
+                c.LLVMConstInt(c.LLVMInt32Type(), @intCast(idx), 0),
+                "choice.coerce.is_match",
+            );
+            const mapped = c.LLVMConstInt(c.LLVMInt32Type(), target_idx, 0);
+            remapped_tag = if (first)
+                c.LLVMBuildSelect(self.builder, is_match, mapped, remapped_tag, "choice.coerce.select")
+            else
+                c.LLVMBuildSelect(self.builder, is_match, mapped, remapped_tag, "choice.coerce.select");
+            first = false;
+        }
+
+        var result = c.LLVMGetUndef(target_llvm_ty);
+        result = c.LLVMBuildInsertValue(self.builder, result, remapped_tag, 0, "choice.coerce.tag");
+        return result;
     }
 
     fn genCleanupNodes(self: *CodeGenerator, nodes: []const *sem.SGNode) !void {
