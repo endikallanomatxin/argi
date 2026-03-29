@@ -52,7 +52,7 @@ Multiplyier : Type = (
 Like a tagged union.
 
 ```
-Errable#(.t: Type, .e: Type) : Type = (
+Errable#(.t: Type, .reason: Type) : Type = (
 	..ok(.value: t)
 	..error(.reason: e)
 )

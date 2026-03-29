@@ -1,5 +1,5 @@
 main := {
-    value : Errable#(.t: Int32, .e: Char) = ..ok(.value = 7)
+    value : Errable#(.t: Int32, .reason: Char) = ..ok(.value = 7)
 
     match value {
         ..none {

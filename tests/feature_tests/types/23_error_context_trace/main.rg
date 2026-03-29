@@ -1,8 +1,8 @@
-fail() -> (.result: Errable#(.t: Int32, .e: Char)) := {
+fail() -> (.result: Errable#(.t: Int32, .reason: Char)) := {
     result = ..error(.reason = 'x')
 }
 
-propagate() -> (.result: Errable#(.t: Int32, .e: Char)) := {
+propagate() -> (.result: Errable#(.t: Int32, .reason: Char)) := {
     value := fail() !! "while reading foo"
     result = ..ok(.value = value)
 }

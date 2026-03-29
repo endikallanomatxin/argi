@@ -991,7 +991,7 @@ test "feature_tests/control_flow/12X_for_nullable_not_iterable" {
 test "feature_tests/types/14X_errable_match_unknown_variant" {
     try buildExpectFail(
         "tests/feature_tests/types/14X_errable_match_unknown_variant",
-        "choice type 'Errable#(.t: Int32, .e: Char)' has no variant '..none'",
+        "choice type 'Errable#(.t: Int32, .reason: Char)' has no variant '..none'",
     );
 }
 

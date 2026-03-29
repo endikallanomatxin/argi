@@ -146,10 +146,10 @@ report_trace(
     flush(.self = stderr)
 }
 
-Errable #(.t: Type, .e: Type) : Type = (
+Errable #(.t: Type, .reason: Type) : Type = (
     ..ok(.value: t)
     ..error(
-        .reason: e
+        .reason: reason
         .trace: ErrorTrace
     )
 )

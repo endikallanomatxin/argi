@@ -47,7 +47,7 @@ que la traza viva dentro del propio valor `Error`.
 ## Error unions
 
 ```
-Errable#(.t: Type, .e: Type) : Type = (
+Errable#(.t: Type, .reason: Type) : Type = (
 	..ok(.value: t)    -- Success
 	..error(.reason: e) -- Fail
 )
