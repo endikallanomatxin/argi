@@ -347,6 +347,9 @@ pub const LanguageService = struct {
         text: []const u8,
     ) !DiagnosticsResult {
         const idx = self.findDocument(uri) orelse return DiagnosticsResult.empty(self.allocator);
+        if (!documentShouldAcceptVersion(self.documents.items[idx], version)) {
+            return try self.analyzeDocument(&self.documents.items[idx]);
+        }
         try self.documents.items[idx].updatePath(self.allocator, path);
         try self.documents.items[idx].update(self.allocator, text, version);
         return try self.analyzeDocument(&self.documents.items[idx]);
@@ -2740,6 +2743,12 @@ fn positionLessOrEqual(lhs: Position, rhs: Position) bool {
         lhs.line < rhs.line;
 }
 
+fn documentShouldAcceptVersion(doc: Document, incoming_version: ?i64) bool {
+    const current = doc.version orelse return true;
+    const incoming = incoming_version orelse return true;
+    return incoming >= current;
+}
+
 fn locationToRange(loc: token.Location) Range {
     const start_line = if (loc.line == 0) 0 else loc.line - 1;
     const start_char = if (loc.column == 0) 0 else loc.column - 1;
@@ -3610,6 +3619,110 @@ test "change document updates diagnostics" {
     var changed = try svc.changeDocument(uri, abs_path, 2, fixed_code);
     defer changed.deinit();
     try std.testing.expectEqual(@as(usize, 0), changed.items.len);
+}
+
+test "change document ignores stale version" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const broken_code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    broken :: Int32 =
+        \\}
+        \\
+    ;
+    const fixed_code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    fixed :: Int32 = 1
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = broken_code });
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+
+    var diags = try svc.openDocument(uri, abs_path, 2, fixed_code);
+    defer diags.deinit();
+    try std.testing.expectEqual(@as(usize, 0), diags.items.len);
+
+    var stale = try svc.changeDocument(uri, abs_path, 1, broken_code);
+    defer stale.deinit();
+    try std.testing.expectEqual(@as(usize, 0), stale.items.len);
+
+    const doc = try svc.getDoc(uri);
+    try std.testing.expectEqual(@as(?i64, 2), doc.version);
+    try std.testing.expectEqualStrings(fixed_code, doc.text);
+}
+
+test "analysis uses open overlay for imported sibling document" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makePath("app/dep");
+    const dep_code =
+        \\helper() -> (.value: Int32) := {
+        \\    value = 42
+        \\}
+        \\
+    ;
+    const broken_dep_code =
+        \\helper() -> (.value: Int32) := {
+        \\    value =
+        \\}
+        \\
+    ;
+    const main_code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    dep := #import("./dep")
+        \\    status_code = dep.helper()
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = "app/dep/helper.rg", .data = dep_code });
+    try tmp.dir.writeFile(.{ .sub_path = "app/main.rg", .data = main_code });
+
+    const root_path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(root_path);
+
+    const dep_path = try tmp.dir.realpathAlloc(std.testing.allocator, "app/dep/helper.rg");
+    defer std.testing.allocator.free(dep_path);
+    const dep_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{dep_path});
+    defer std.testing.allocator.free(dep_uri);
+
+    const main_path = try tmp.dir.realpathAlloc(std.testing.allocator, "app/main.rg");
+    defer std.testing.allocator.free(main_path);
+    const main_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{main_path});
+    defer std.testing.allocator.free(main_uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
+    defer std.testing.allocator.free(root_uri);
+    try svc.initialize(root_uri);
+
+    var dep_diags = try svc.openDocument(dep_uri, dep_path, 1, dep_code);
+    defer dep_diags.deinit();
+    try std.testing.expectEqual(@as(usize, 0), dep_diags.items.len);
+
+    var main_diags = try svc.openDocument(main_uri, main_path, 1, main_code);
+    defer main_diags.deinit();
+    try std.testing.expectEqual(@as(usize, 0), main_diags.items.len);
+
+    var broken = try svc.changeDocument(dep_uri, dep_path, 2, broken_dep_code);
+    defer broken.deinit();
+    try std.testing.expect(broken.items.len > 0);
+
+    var refreshed_main = try svc.changeDocument(main_uri, main_path, 2, main_code);
+    defer refreshed_main.deinit();
+    try std.testing.expect(refreshed_main.items.len > 0);
 }
 
 test "close document removes open state" {
