@@ -61,7 +61,7 @@ fn printTokenList(all: []const token.Token) void {
     }
 }
 
-fn resolveBuildModuleDir(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+pub fn resolveBuildModuleDir(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     if (std.fs.cwd().openDir(path, .{})) |opened_dir| {
         var dir = opened_dir;
         dir.close();
@@ -80,6 +80,14 @@ fn ensureParentDir(path: []const u8) !void {
     const parent = std.fs.path.dirname(path) orelse return;
     if (parent.len == 0 or std.mem.eql(u8, parent, ".")) return;
     try std.fs.cwd().makePath(parent);
+}
+
+pub fn defaultOutputPathForModuleDir(allocator: std.mem.Allocator, module_dir: []const u8) ![]u8 {
+    return std.fmt.allocPrint(
+        allocator,
+        "{s}/build/output",
+        .{module_dir},
+    );
 }
 
 fn replaceFile(src: []const u8, dst: []const u8) !void {
@@ -107,7 +115,7 @@ pub fn compile(args: []const []const u8) !void {
     const final_output_path = if (flags.output_path) |path|
         try std.fs.path.resolve(allocator, &.{path})
     else
-        try std.fmt.allocPrint(allocator, "{s}/build/output", .{module_dir});
+        try defaultOutputPathForModuleDir(allocator, module_dir);
     const final_ir_path = if (flags.llvm_ir_path) |path|
         try std.fs.path.resolve(allocator, &.{path})
     else
