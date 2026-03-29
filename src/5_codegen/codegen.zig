@@ -1936,6 +1936,10 @@ pub const CodeGenerator = struct {
             .type => |ty| ty,
             else => return CodegenError.InvalidType,
         };
+        const trace_entry_struct = switch (trace_entry_ty) {
+            .struct_type => |st| st,
+            else => return CodegenError.InvalidType,
+        };
 
         const error_llvm_ty = try self.toLLVMType(error_payload_type);
         const trace_llvm_ty = try self.toLLVMType(trace_ty);
@@ -2004,8 +2008,8 @@ pub const CodeGenerator = struct {
         const entry_ptr = c.LLVMBuildIntToPtr(self.builder, entry_addr, entry_ptr_ty, "trace.entry.ptr");
 
         var entry_value = c.LLVMGetUndef(trace_entry_llvm_ty);
-        entry_value = c.LLVMBuildInsertValue(self.builder, entry_value, c.LLVMConstInt(c.LLVMInt32Type(), line, 0), 0, "trace.entry.line");
-        entry_value = c.LLVMBuildInsertValue(self.builder, entry_value, c.LLVMConstInt(c.LLVMInt32Type(), column, 0), 1, "trace.entry.column");
+        entry_value = c.LLVMBuildInsertValue(self.builder, entry_value, c.LLVMConstInt(try self.toLLVMType(trace_entry_struct.fields[0].ty), line, 0), 0, "trace.entry.line");
+        entry_value = c.LLVMBuildInsertValue(self.builder, entry_value, c.LLVMConstInt(try self.toLLVMType(trace_entry_struct.fields[1].ty), column, 0), 1, "trace.entry.column");
         entry_value = c.LLVMBuildInsertValue(self.builder, entry_value, context_ptr, 2, "trace.entry.context");
         _ = c.LLVMBuildStore(self.builder, entry_value, entry_ptr);
 

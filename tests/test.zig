@@ -147,6 +147,18 @@ fn runExpectStdout(name: []const u8, expected_code: u8, expected_stdout: []const
     try runExpectStdoutWithArgs(name, &[_][]const u8{}, expected_code, expected_stdout);
 }
 
+fn runExpectStderr(name: []const u8, expected_code: u8, expected_stderr: []const u8) !void {
+    const output_path = try outputPathFor(name);
+    defer std.testing.allocator.free(output_path);
+
+    const result = try runChild(&[_][]const u8{output_path});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = expected_code }, result.term);
+    try expectEqualStrings(expected_stderr, result.stderr);
+}
+
 fn runExpectStdoutWithArgsAndStdin(
     name: []const u8,
     args: []const []const u8,
@@ -993,6 +1005,17 @@ test "feature_tests/types/23_error_context_trace" {
     const test_path = "tests/feature_tests/types/23_error_context_trace";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
+}
+
+test "feature_tests/types/24_error_trace_report" {
+    const test_path = "tests/feature_tests/types/24_error_trace_report";
+    try expectSuccessfulBuild(test_path);
+    try runExpectStderr(test_path, 0,
+        \\error trace:
+        \\  at 6:20
+        \\  at 11:23: reading config
+        \\
+    );
 }
 
 test "feature_tests/system/02_reached_arguments" {
