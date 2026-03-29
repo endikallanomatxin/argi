@@ -1415,7 +1415,7 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
-            .comparison => |c| self.handleComparison(c, s) catch |err| blk: {
+            .comparison => |c| self.handleComparison(c, n.location, s) catch |err| blk: {
                 if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
                     break :blk err;
                 }
@@ -6342,6 +6342,7 @@ pub const Semantizer = struct {
     fn handleComparison(
         self: *Semantizer,
         c: syn.Comparison,
+        loc: tok.Location,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         var lhs = try self.visitNode(c.left.*, s);
@@ -6395,7 +6396,7 @@ pub const Semantizer = struct {
                 const fc_ptr = try self.allocator.create(sg.FunctionCall);
                 fc_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
 
-                const node = try sg.makeSGNode(.{ .function_call = fc_ptr }, c.left.*.location, self.allocator);
+                const node = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
                 try s.nodes.append(node);
                 return .{ .node = node, .ty = result_ty };
             }

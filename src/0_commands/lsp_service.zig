@@ -176,6 +176,12 @@ const SyntaxFunctionCallRef = struct {
     call: st.FunctionCall,
 };
 
+const SyntaxOperatorRef = struct {
+    location: token.Location,
+    name: []const u8,
+    len: usize,
+};
+
 const SemanticFunctionDeclRef = struct {
     node: *const sg.SGNode,
     decl: *const sg.FunctionDeclaration,
@@ -837,13 +843,15 @@ pub const LanguageService = struct {
         defer syntax_functions.deinit();
         var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
         defer syntax_calls.deinit();
+        var syntax_operators = std.array_list.Managed(SyntaxOperatorRef).init(analysis_allocator);
+        defer syntax_operators.deinit();
         var syntax_type_decls = std.array_list.Managed(SyntaxTypeDeclRef).init(analysis_allocator);
         defer syntax_type_decls.deinit();
         var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
         defer syntax_type_refs.deinit();
         var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator);
         defer syntax_binding_decls.deinit();
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
+        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
 
         var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator);
         defer semantic_functions.deinit();
@@ -914,6 +922,26 @@ pub const LanguageService = struct {
             );
             return .{
                 .range = nameRange(syntax_call.call.callee_loc, syntax_call.call.callee.len),
+                .contents = contents,
+            };
+        }
+
+        for (syntax_operators.items) |syntax_op| {
+            if (!std.mem.eql(u8, syntax_op.location.file, doc.path)) continue;
+            if (!positionWithinName(position, syntax_op.location, syntax_op.len)) continue;
+            const semantic_call = findSemanticFunctionCallAtLocation(semantic_calls.items, syntax_op.location) orelse continue;
+            const syntax_decl = findSyntaxFunctionDecl(syntax_functions.items, semantic_call.call.callee.location, semantic_call.call.callee.name);
+            const contents = try buildFunctionHoverMarkdown(
+                self.allocator,
+                semantic_call.call.callee,
+                if (syntax_decl) |decl_ref| decl_ref.decl else null,
+                semantic_types.items,
+                doc.path,
+                doc.text,
+                tokens.items,
+            );
+            return .{
+                .range = nameRange(syntax_op.location, syntax_op.len),
                 .contents = contents,
             };
         }
@@ -1001,13 +1029,15 @@ pub const LanguageService = struct {
         defer syntax_functions.deinit();
         var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
         defer syntax_calls.deinit();
+        var syntax_operators = std.array_list.Managed(SyntaxOperatorRef).init(analysis_allocator);
+        defer syntax_operators.deinit();
         var syntax_type_decls = std.array_list.Managed(SyntaxTypeDeclRef).init(analysis_allocator);
         defer syntax_type_decls.deinit();
         var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
         defer syntax_type_refs.deinit();
         var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator);
         defer syntax_binding_decls.deinit();
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
+        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
 
         var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator);
         defer semantic_functions.deinit();
@@ -1042,6 +1072,16 @@ pub const LanguageService = struct {
                 };
             }
             const semantic_call = findSemanticFunctionCallAtLocation(semantic_calls.items, syntax_call.call.callee_loc) orelse continue;
+            return .{
+                .path = try self.ownedDefinitionPath(semantic_call.call.callee.location.file),
+                .range = nameRange(semantic_call.call.callee.location, semantic_call.call.callee.name.len),
+            };
+        }
+
+        for (syntax_operators.items) |syntax_op| {
+            if (!std.mem.eql(u8, syntax_op.location.file, doc.path)) continue;
+            if (!positionWithinName(position, syntax_op.location, syntax_op.len)) continue;
+            const semantic_call = findSemanticFunctionCallAtLocation(semantic_calls.items, syntax_op.location) orelse continue;
             return .{
                 .path = try self.ownedDefinitionPath(semantic_call.call.callee.location.file),
                 .range = nameRange(semantic_call.call.callee.location, semantic_call.call.callee.name.len),
@@ -1163,13 +1203,15 @@ pub const LanguageService = struct {
         defer syntax_functions.deinit();
         var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
         defer syntax_calls.deinit();
+        var syntax_operators = std.array_list.Managed(SyntaxOperatorRef).init(analysis_allocator);
+        defer syntax_operators.deinit();
         var syntax_type_decls = std.array_list.Managed(SyntaxTypeDeclRef).init(analysis_allocator);
         defer syntax_type_decls.deinit();
         var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
         defer syntax_type_refs.deinit();
         var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator);
         defer syntax_binding_decls.deinit();
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
+        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
 
         var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator);
         defer semantic_functions.deinit();
@@ -1190,6 +1232,7 @@ pub const LanguageService = struct {
             position,
             syntax_functions.items,
             syntax_calls.items,
+            syntax_operators.items,
             syntax_type_decls.items,
             syntax_type_refs.items,
             syntax_binding_decls.items,
@@ -1364,13 +1407,15 @@ pub const LanguageService = struct {
         defer syntax_functions.deinit();
         var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
         defer syntax_calls.deinit();
+        var syntax_operators = std.array_list.Managed(SyntaxOperatorRef).init(analysis_allocator);
+        defer syntax_operators.deinit();
         var syntax_type_decls = std.array_list.Managed(SyntaxTypeDeclRef).init(analysis_allocator);
         defer syntax_type_decls.deinit();
         var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
         defer syntax_type_refs.deinit();
         var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator);
         defer syntax_binding_decls.deinit();
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
+        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
 
         var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator);
         defer semantic_functions.deinit();
@@ -1391,6 +1436,7 @@ pub const LanguageService = struct {
             position,
             syntax_functions.items,
             syntax_calls.items,
+            syntax_operators.items,
             syntax_type_decls.items,
             syntax_type_refs.items,
             syntax_binding_decls.items,
@@ -1482,6 +1528,8 @@ pub const LanguageService = struct {
         defer syntax_functions.deinit();
         var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
         defer syntax_calls.deinit();
+        var syntax_operators = std.array_list.Managed(SyntaxOperatorRef).init(analysis_allocator);
+        defer syntax_operators.deinit();
         var syntax_type_decls = std.array_list.Managed(SyntaxTypeDeclRef).init(analysis_allocator);
         defer syntax_type_decls.deinit();
         var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
@@ -1489,7 +1537,7 @@ pub const LanguageService = struct {
         var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator);
         defer syntax_binding_decls.deinit();
 
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
+        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
 
         var hints = std.array_list.Managed(InlayHint).init(self.allocator);
         errdefer {
@@ -1538,6 +1586,7 @@ fn collectSyntaxRefs(
     st_nodes: []const *st.STNode,
     function_refs: *std.array_list.Managed(SyntaxFunctionDeclRef),
     call_refs: *std.array_list.Managed(SyntaxFunctionCallRef),
+    operator_refs: *std.array_list.Managed(SyntaxOperatorRef),
     type_decl_refs: *std.array_list.Managed(SyntaxTypeDeclRef),
     type_refs: *std.array_list.Managed(SyntaxTypeRef),
     binding_decl_refs: *std.array_list.Managed(SyntaxBindingDeclRef),
@@ -1624,10 +1673,20 @@ fn collectSyntaxRefs(
                 try stack.append(ia.value);
             },
             .binary_operation => |bo| {
+                try operator_refs.append(.{
+                    .location = node.location,
+                    .name = binaryOperatorName(bo.operator),
+                    .len = binaryOperatorTokenLen(bo.operator),
+                });
                 try stack.append(bo.left);
                 try stack.append(bo.right);
             },
             .comparison => |cmp| {
+                try operator_refs.append(.{
+                    .location = node.location,
+                    .name = comparisonOperatorName(cmp.operator),
+                    .len = comparisonOperatorTokenLen(cmp.operator),
+                });
                 try stack.append(cmp.left);
                 try stack.append(cmp.right);
             },
@@ -2336,11 +2395,45 @@ fn findSemanticTypeDeclByName(
     return null;
 }
 
+fn binaryOperatorName(op: token.BinaryOperator) []const u8 {
+    return switch (op) {
+        .addition => "operator +",
+        .subtraction => "operator -",
+        .multiplication => "operator *",
+        .division => "operator /",
+        .modulo => "operator %",
+    };
+}
+
+fn binaryOperatorTokenLen(op: token.BinaryOperator) usize {
+    _ = op;
+    return 1;
+}
+
+fn comparisonOperatorName(op: token.ComparisonOperator) []const u8 {
+    return switch (op) {
+        .equal => "operator ==",
+        .not_equal => "operator !=",
+        .less_than => "operator <",
+        .greater_than => "operator >",
+        .less_than_or_equal => "operator <=",
+        .greater_than_or_equal => "operator >=",
+    };
+}
+
+fn comparisonOperatorTokenLen(op: token.ComparisonOperator) usize {
+    return switch (op) {
+        .equal, .not_equal, .less_than_or_equal, .greater_than_or_equal => 2,
+        .less_than, .greater_than => 1,
+    };
+}
+
 fn resolveSymbolTarget(
     doc_path: []const u8,
     position: Position,
     syntax_functions: []const SyntaxFunctionDeclRef,
     syntax_calls: []const SyntaxFunctionCallRef,
+    syntax_operators: []const SyntaxOperatorRef,
     syntax_type_decls: []const SyntaxTypeDeclRef,
     syntax_type_refs: []const SyntaxTypeRef,
     syntax_binding_decls: []const SyntaxBindingDeclRef,
@@ -2367,6 +2460,14 @@ fn resolveSymbolTarget(
             return .{ .function_decl = type_init.init.init_fn };
         }
         if (findSemanticFunctionCallAtLocation(semantic_calls, syntax_call.call.callee_loc)) |semantic_call| {
+            return .{ .function_decl = semantic_call.call.callee };
+        }
+    }
+
+    for (syntax_operators) |syntax_op| {
+        if (!std.mem.eql(u8, syntax_op.location.file, doc_path)) continue;
+        if (!positionWithinName(position, syntax_op.location, syntax_op.len)) continue;
+        if (findSemanticFunctionCallAtLocation(semantic_calls, syntax_op.location)) |semantic_call| {
             return .{ .function_decl = semantic_call.call.callee };
         }
     }
@@ -2953,6 +3054,42 @@ test "definition resolves function parameter use" {
     try std.testing.expectEqual(@as(u32, 10), def.?.range.start.character);
 }
 
+test "definition resolves operator use" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const code =
+        \\operator ==(.left: &Int32, .right: &Int32) -> (.ok: Bool) := {
+        \\    ok = true
+        \\}
+        \\
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value :: Int32 = 1
+        \\    if &value == &value {
+        \\    }
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+
+    const diags = try svc.openDocument(uri, abs_path, 1, code);
+    defer diags.deinit();
+
+    const def = try svc.definition(uri, .{ .line = 5, .character = 15 });
+    try std.testing.expect(def != null);
+    defer def.?.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u32, 0), def.?.range.start.line);
+}
+
 test "definition works for open core document" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -3188,6 +3325,43 @@ test "hover returns information for local binding use" {
     defer if (hover_opt) |hover| std.testing.allocator.free(hover.contents);
     try std.testing.expect(std.mem.indexOf(u8, hover_opt.?.contents, "value") != null);
     try std.testing.expect(std.mem.indexOf(u8, hover_opt.?.contents, "Int32") != null);
+}
+
+test "hover returns information for operator use" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const code =
+        \\operator ==(.left: &Int32, .right: &Int32) -> (.ok: Bool) := {
+        \\    ok = true
+        \\}
+        \\
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value :: Int32 = 1
+        \\    if &value == &value {
+        \\    }
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+
+    const diags = try svc.openDocument(uri, abs_path, 1, code);
+    defer diags.deinit();
+
+    const hover_opt = try svc.hover(uri, .{ .line = 5, .character = 15 });
+    try std.testing.expect(hover_opt != null);
+    defer if (hover_opt) |hover| std.testing.allocator.free(hover.contents);
+    try std.testing.expect(std.mem.indexOf(u8, hover_opt.?.contents, "operator ==") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hover_opt.?.contents, "Bool") != null);
 }
 
 test "semantic tokens include string literal and function call" {
