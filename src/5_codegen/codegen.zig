@@ -923,7 +923,6 @@ pub const CodeGenerator = struct {
 
         switch (sem_ty) {
             .struct_type => |st| {
-                if (st.identity != null) return CodegenError.InvalidType;
                 if (fields.len == 0) return;
 
                 const struct_ty_ref = try self.toLLVMType(.{ .struct_type = st });

@@ -8219,8 +8219,6 @@ fn buildStructuralAutoDeinitFields(
 ) ![]const sg.AutoDeinitField {
     return switch (ty) {
         .struct_type => |st| blk: {
-            if (st.identity != null) break :blk &.{};
-
             var fields = std.array_list.Managed(sg.AutoDeinitField).init(allocator.*);
             errdefer fields.deinit();
 
@@ -8244,17 +8242,6 @@ fn buildStructuralAutoDeinitFields(
                         .input = null,
                         .self_field_index = 0,
                         .fields = nested,
-                    });
-                    continue;
-                }
-
-                if (field.ty == .struct_type and field.ty.struct_type.identity != null) {
-                    try fields.append(.{
-                        .field_index = @intCast(idx),
-                        .deinit_fn = null,
-                        .input = null,
-                        .self_field_index = 0,
-                        .fields = &.{},
                     });
                     continue;
                 }
