@@ -369,3 +369,18 @@ operator +(
     right_view ::= c_string_as_view(.text = right)
     out = concat_views(.left = left, .right = &right_view)
 }
+
+operator +(
+    .left: &StringView,
+    .right: &StringView,
+) -> (.out: String) := {
+    out = concat_views(.left = left, .right = right)
+}
+
+operator +(
+    .left: &StringView,
+    .right: &String,
+) -> (.out: String) := {
+    right_view ::= as_view(.self = right)
+    out = concat_views(.left = left, .right = &right_view)
+}
