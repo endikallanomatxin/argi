@@ -1380,6 +1380,29 @@ test "feature_tests/ownership/28X_ambiguous_copy_assignment" {
     try buildExpectFail(test_path, "ambiguous call to 'copy'");
 }
 
+test "feature_tests/ownership/29_string_view_is_copyable" {
+    const test_path = "tests/feature_tests/ownership/29_string_view_is_copyable";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/30_pointer_to_noncopyable_is_copyable" {
+    const test_path = "tests/feature_tests/ownership/30_pointer_to_noncopyable_is_copyable";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/31_array_of_pointers_is_copyable" {
+    const test_path = "tests/feature_tests/ownership/31_array_of_pointers_is_copyable";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable" {
+    const test_path = "tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable";
+    try buildExpectFail(test_path, "type '[2]Resource' is not copyable");
+}
+
 test "feature_tests/polymorphism/23_abstract_requirement_reached_default" {
     const test_path = "tests/feature_tests/polymorphism/23_abstract_requirement_reached_default";
     try expectSuccessfulBuild(test_path);
