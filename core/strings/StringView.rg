@@ -67,6 +67,14 @@ equals(
     ok = terminator_ptr& == 0
 }
 
+equals(
+    .left: &StringView,
+    .right: &String,
+) -> (.ok: Bool) := {
+    right_view ::= as_view(.self = right)
+    ok = equals(.left = left, .right = &right_view).ok
+}
+
 operator ==(
     .left: &StringView,
     .right: &StringView,
@@ -77,6 +85,13 @@ operator ==(
 operator ==(
     .left: &StringView,
     .right: &Char,
+) -> (.ok: Bool) := {
+    ok = equals(.left = left, .right = right).ok
+}
+
+operator ==(
+    .left: &StringView,
+    .right: &String,
 ) -> (.ok: Bool) := {
     ok = equals(.left = left, .right = right).ok
 }
@@ -95,6 +110,17 @@ operator !=(
 operator !=(
     .left: &StringView,
     .right: &Char,
+) -> (.ok: Bool) := {
+    if equals(.left = left, .right = right).ok {
+        ok = false
+    } else {
+        ok = true
+    }
+}
+
+operator !=(
+    .left: &StringView,
+    .right: &String,
 ) -> (.ok: Bool) := {
     if equals(.left = left, .right = right).ok {
         ok = false
