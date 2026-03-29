@@ -1,17 +1,23 @@
 main(.system: System = System()) -> (.status_code: Int32 = 0) := {
     while true {
         next ::= read_line(.allocator = system.allocator)
+        should_stop :: Bool = false
 
-        if next == ..end {
-            return
+        match next {
+            ..end {
+                should_stop = true
+            }
+            ..ok(line) {
+                if &line.text == "" {
+                    should_stop = true
+                } else {
+                    print(&line.text + "\n")
+                }
+            }
         }
 
-        line ::= next..ok.text
-        if line == "" {
-            return
+        if should_stop {
+            break
         }
-
-        print(line)
-        print("\n")
     }
 }
