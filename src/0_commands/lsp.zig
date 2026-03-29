@@ -1040,6 +1040,186 @@ test "didOpen publishes diagnostics and hover responds with payload" {
     try std.testing.expect(std.mem.indexOf(u8, contents, "value") != null);
 }
 
+test "didChange publishes diagnostics and ignores stale versions" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const fixed_code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value :: Int32 = 1
+        \\}
+        \\
+    ;
+    const broken_code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value :: Int32 =
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = fixed_code });
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var server = LanguageServer.init(std.testing.allocator);
+    defer server.deinit();
+
+    var init_params = try json.parseFromSlice(json.Value, std.testing.allocator, "{}", .{});
+    defer init_params.deinit();
+    var init_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer init_out.deinit();
+    try server.handleInitialize(&init_out.writer, .{ .integer = 1 }, init_params.value);
+
+    const open_json = try std.fmt.allocPrint(
+        std.testing.allocator,
+        \\{{
+        \\  "textDocument": {{
+        \\    "uri": "{s}",
+        \\    "version": 2,
+        \\    "text": "main() -> (.status_code: Int32 = 0) := {{\n    value :: Int32 = 1\n}}\n"
+        \\  }}
+        \\}}
+    ,
+        .{uri},
+    );
+    defer std.testing.allocator.free(open_json);
+
+    var open_params = try json.parseFromSlice(json.Value, std.testing.allocator, open_json, .{});
+    defer open_params.deinit();
+    var open_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer open_out.deinit();
+    try server.handleDidOpen(&open_out.writer, open_params.value);
+
+    const change_json = try std.fmt.allocPrint(
+        std.testing.allocator,
+        \\{{
+        \\  "textDocument": {{
+        \\    "uri": "{s}",
+        \\    "version": 3
+        \\  }},
+        \\  "contentChanges": [{{
+        \\    "text": "main() -> (.status_code: Int32 = 0) := {{\n    value :: Int32 =\n}}\n"
+        \\  }}]
+        \\}}
+    ,
+        .{uri},
+    );
+    defer std.testing.allocator.free(change_json);
+
+    var change_params = try json.parseFromSlice(json.Value, std.testing.allocator, change_json, .{});
+    defer change_params.deinit();
+    var change_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer change_out.deinit();
+    try server.handleDidChange(&change_out.writer, change_params.value);
+
+    const change_payload = try payloadFromLspMessage(change_out.writer.buffered());
+    var change_response = try json.parseFromSlice(json.Value, std.testing.allocator, change_payload, .{});
+    defer change_response.deinit();
+    const change_diags = change_response.value.object.get("params").?.object.get("diagnostics").?.array.items;
+    try std.testing.expect(change_diags.len > 0);
+
+    const stale_json = try std.fmt.allocPrint(
+        std.testing.allocator,
+        \\{{
+        \\  "textDocument": {{
+        \\    "uri": "{s}",
+        \\    "version": 2
+        \\  }},
+        \\  "contentChanges": [{{
+        \\    "text": "{s}"
+        \\  }}]
+        \\}}
+    ,
+        .{ uri, broken_code },
+    );
+    defer std.testing.allocator.free(stale_json);
+
+    var stale_params = try json.parseFromSlice(json.Value, std.testing.allocator, stale_json, .{});
+    defer stale_params.deinit();
+    var stale_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer stale_out.deinit();
+    try server.handleDidChange(&stale_out.writer, stale_params.value);
+
+    const stale_payload = try payloadFromLspMessage(stale_out.writer.buffered());
+    var stale_response = try json.parseFromSlice(json.Value, std.testing.allocator, stale_payload, .{});
+    defer stale_response.deinit();
+    const stale_diags = stale_response.value.object.get("params").?.object.get("diagnostics").?.array.items;
+    try std.testing.expect(stale_diags.len > 0);
+}
+
+test "didClose publishes empty diagnostics" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    value :: Int32 = 1
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var server = LanguageServer.init(std.testing.allocator);
+    defer server.deinit();
+
+    var init_params = try json.parseFromSlice(json.Value, std.testing.allocator, "{}", .{});
+    defer init_params.deinit();
+    var init_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer init_out.deinit();
+    try server.handleInitialize(&init_out.writer, .{ .integer = 1 }, init_params.value);
+
+    const open_json = try std.fmt.allocPrint(
+        std.testing.allocator,
+        \\{{
+        \\  "textDocument": {{
+        \\    "uri": "{s}",
+        \\    "version": 1,
+        \\    "text": "main() -> (.status_code: Int32 = 0) := {{\n    value :: Int32 = 1\n}}\n"
+        \\  }}
+        \\}}
+    ,
+        .{uri},
+    );
+    defer std.testing.allocator.free(open_json);
+
+    var open_params = try json.parseFromSlice(json.Value, std.testing.allocator, open_json, .{});
+    defer open_params.deinit();
+    var open_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer open_out.deinit();
+    try server.handleDidOpen(&open_out.writer, open_params.value);
+
+    const close_json = try std.fmt.allocPrint(
+        std.testing.allocator,
+        \\{{
+        \\  "textDocument": {{ "uri": "{s}" }}
+        \\}}
+    ,
+        .{uri},
+    );
+    defer std.testing.allocator.free(close_json);
+
+    var close_params = try json.parseFromSlice(json.Value, std.testing.allocator, close_json, .{});
+    defer close_params.deinit();
+    var close_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    defer close_out.deinit();
+    try server.handleDidClose(&close_out.writer, close_params.value);
+
+    const close_payload = try payloadFromLspMessage(close_out.writer.buffered());
+    var close_response = try json.parseFromSlice(json.Value, std.testing.allocator, close_payload, .{});
+    defer close_response.deinit();
+    const close_diags = close_response.value.object.get("params").?.object.get("diagnostics").?.array.items;
+    try std.testing.expectEqual(@as(usize, 0), close_diags.len);
+}
+
 fn pathToFileUri(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     return std.fmt.allocPrint(allocator, "file://{s}", .{path});
 }
