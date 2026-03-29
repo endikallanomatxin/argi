@@ -252,6 +252,8 @@ pub const ErrorPropagation = struct {
     error_payload_type: Type,
     line: u32,
     column: u32,
+    source_file: []const u8,
+    source_line: []const u8,
 };
 
 pub const ErrorContext = struct {
@@ -264,6 +266,8 @@ pub const ErrorContext = struct {
     error_payload_type: Type,
     line: u32,
     column: u32,
+    source_file: []const u8,
+    source_line: []const u8,
 };
 
 //

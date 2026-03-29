@@ -224,6 +224,20 @@ pub const Semantizer = struct {
         return self.formatOwnedText(try typ.formatType(ty, s, self.allocator));
     }
 
+    fn sourceLineText(self: *Semantizer, loc: tok.Location) []const u8 {
+        for (self.diags.source_files) |f| {
+            if (!std.mem.eql(u8, f.path, loc.file)) continue;
+
+            var lines = std.mem.splitScalar(u8, f.code, '\n');
+            var line_index: u32 = 1;
+            while (lines.next()) |line| : (line_index += 1) {
+                if (line_index != loc.line) continue;
+                return std.mem.trimRight(u8, line, "\r");
+            }
+        }
+        return "";
+    }
+
     fn tryResolveAutoDeinitWithInput(
         self: *Semantizer,
         binding: *sg.BindingDeclaration,
@@ -6971,6 +6985,7 @@ pub const Semantizer = struct {
 
         const node = if (context_te) |ctx| blk: {
             const err_ctx = try self.allocator.create(sg.ErrorContext);
+            const source_line = self.sourceLineText(loc);
             err_ctx.* = .{
                 .errable_value = value_te.node,
                 .context = ctx.node,
@@ -6981,10 +6996,13 @@ pub const Semantizer = struct {
                 .error_payload_type = operand_info.error_payload_type,
                 .line = loc.line,
                 .column = loc.column,
+                .source_file = loc.file,
+                .source_line = source_line,
             };
             break :blk try sg.makeSGNode(.{ .error_context = err_ctx }, loc, self.allocator);
         } else blk: {
             const err_prop = try self.allocator.create(sg.ErrorPropagation);
+            const source_line = self.sourceLineText(loc);
             err_prop.* = .{
                 .errable_value = value_te.node,
                 .ok_variant_index = operand_info.ok_variant_index,
@@ -6994,6 +7012,8 @@ pub const Semantizer = struct {
                 .error_payload_type = operand_info.error_payload_type,
                 .line = loc.line,
                 .column = loc.column,
+                .source_file = loc.file,
+                .source_line = source_line,
             };
             break :blk try sg.makeSGNode(.{ .error_propagation = err_prop }, loc, self.allocator);
         };

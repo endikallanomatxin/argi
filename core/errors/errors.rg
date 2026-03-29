@@ -2,6 +2,8 @@ ErrorTraceEntry : Type = (
     .line: UIntNative
     .column: UIntNative
     .context: &Char
+    .source_line: &Char
+    .source_file: &Char
 )
 
 ErrorTrace : Type = (
@@ -44,9 +46,9 @@ write_trace_uint(
         divisor = divisor * 10
     }
 
-    remaining ::= value
+    remaining :: UIntNative = value
     while divisor > 0 {
-        digit ::= remaining / divisor
+        digit := remaining / divisor
         remaining = remaining % divisor
 
         if digit == 0 {
@@ -84,11 +86,22 @@ write_trace_uint(
     }
 }
 
+write_trace_spaces(
+    .count: UIntNative,
+    .stderr: $&Writer = #reach stderr, terminal.stderr_buffered_writer, system.terminal.stderr_buffered_writer,
+) -> () := {
+    i :: UIntNative = 0
+    while i < count {
+        write_byte(.self = stderr, .byte = 32)
+        i = i + 1
+    }
+}
+
 report_trace(
     .trace: &ErrorTrace,
     .stderr: $&Writer = #reach stderr, terminal.stderr_buffered_writer, system.terminal.stderr_buffered_writer,
 ) -> () := {
-    write_trace_text(.text = "error trace:\n", .stderr = stderr)
+    write_trace_text(.text = "error trace (origin first):\n", .stderr = stderr)
 
     if trace&.entries.length == 0 {
         write_trace_text(.text = "  <empty>\n", .stderr = stderr)
@@ -98,8 +111,10 @@ report_trace(
 
     i :: UIntNative = 0
     while i < trace&.entries.length {
-        entry ::= trace&.entries[i]
+        entry := trace&.entries[i]
         write_trace_text(.text = "  at ", .stderr = stderr)
+        write_trace_text(.text = entry.source_file, .stderr = stderr)
+        write_byte(.self = stderr, .byte = 58)
         write_trace_uint(.value = entry.line, .stderr = stderr)
         write_byte(.self = stderr, .byte = 58)
         write_trace_uint(.value = entry.column, .stderr = stderr)
@@ -110,6 +125,21 @@ report_trace(
         }
 
         write_byte(.self = stderr, .byte = 10)
+
+        if cast#(.to: UIntNative)(.value = entry.source_line) != 0 {
+            write_trace_text(.text = "    ", .stderr = stderr)
+            write_trace_text(.text = entry.source_line, .stderr = stderr)
+            write_byte(.self = stderr, .byte = 10)
+            write_trace_text(.text = "    ", .stderr = stderr)
+
+            if entry.column > 1 {
+                write_trace_spaces(.count = entry.column - 1, .stderr = stderr)
+            }
+
+            write_byte(.self = stderr, .byte = 94)
+            write_byte(.self = stderr, .byte = 10)
+        }
+
         i = i + 1
     }
 

@@ -1822,6 +1822,8 @@ pub const CodeGenerator = struct {
             prop.error_payload_type,
             prop.line,
             prop.column,
+            prop.source_file,
+            prop.source_line,
         );
     }
 
@@ -1836,6 +1838,8 @@ pub const CodeGenerator = struct {
             ctx.error_payload_type,
             ctx.line,
             ctx.column,
+            ctx.source_file,
+            ctx.source_line,
         );
     }
 
@@ -1850,6 +1854,8 @@ pub const CodeGenerator = struct {
         error_payload_type: sem.Type,
         line: u32,
         column: u32,
+        source_file: []const u8,
+        source_line: []const u8,
     ) !TypedValue {
         const errable_tv = (try self.visitNode(errable_node)) orelse return CodegenError.ValueNotFound;
         const tag_val = c.LLVMBuildExtractValue(self.builder, errable_tv.value_ref, 0, "errable.tag");
@@ -1864,11 +1870,16 @@ pub const CodeGenerator = struct {
 
         c.LLVMPositionBuilderAtEnd(self.builder, error_bb);
         const error_payload = c.LLVMBuildExtractValue(self.builder, errable_tv.value_ref, error_variant_index + 1, "errable.error.payload");
+        const source_file_z = try self.dupZ(source_file);
+        const source_file_ptr = c.LLVMBuildGlobalStringPtr(self.builder, source_file_z.ptr, "trace_source_file");
+        const resolved_source_line = if (source_line.len == 0) try self.readSourceLine(source_file, line) else source_line;
+        const source_line_z = try self.dupZ(resolved_source_line);
+        const source_line_ptr = c.LLVMBuildGlobalStringPtr(self.builder, source_line_z.ptr, "trace_source_line");
         const context_ptr = if (context_node) |ctx_node|
             (try self.visitNode(ctx_node) orelse return CodegenError.ValueNotFound).value_ref
         else
             c.LLVMConstNull(c.LLVMPointerType(c.LLVMInt8Type(), 0));
-        const updated_error_payload = try self.appendTraceEntry(error_payload, error_payload_type, line, column, context_ptr);
+        const updated_error_payload = try self.appendTraceEntry(error_payload, error_payload_type, source_file_ptr, line, column, context_ptr, source_line_ptr);
         var updated_errable = errable_tv.value_ref;
         updated_errable = c.LLVMBuildInsertValue(self.builder, updated_errable, updated_error_payload, error_variant_index + 1, "errable.error.updated");
         try self.buildCurrentFunctionErrableReturn(updated_errable);
@@ -1894,9 +1905,11 @@ pub const CodeGenerator = struct {
         self: *CodeGenerator,
         error_payload_value: llvm.c.LLVMValueRef,
         error_payload_type: sem.Type,
+        source_file_ptr: llvm.c.LLVMValueRef,
         line: u32,
         column: u32,
         context_ptr: llvm.c.LLVMValueRef,
+        source_line_ptr: llvm.c.LLVMValueRef,
     ) !llvm.c.LLVMValueRef {
         const error_struct = switch (error_payload_type) {
             .struct_type => |st| st,
@@ -1940,6 +1953,11 @@ pub const CodeGenerator = struct {
             .struct_type => |st| st,
             else => return CodegenError.InvalidType,
         };
+        const source_file_index = fieldIndexByName(trace_entry_struct, "source_file") orelse return CodegenError.InvalidType;
+        const line_index = fieldIndexByName(trace_entry_struct, "line") orelse return CodegenError.InvalidType;
+        const column_index = fieldIndexByName(trace_entry_struct, "column") orelse return CodegenError.InvalidType;
+        const context_index = fieldIndexByName(trace_entry_struct, "context") orelse return CodegenError.InvalidType;
+        const source_line_index = fieldIndexByName(trace_entry_struct, "source_line") orelse return CodegenError.InvalidType;
 
         const error_llvm_ty = try self.toLLVMType(error_payload_type);
         const trace_llvm_ty = try self.toLLVMType(trace_ty);
@@ -2008,9 +2026,11 @@ pub const CodeGenerator = struct {
         const entry_ptr = c.LLVMBuildIntToPtr(self.builder, entry_addr, entry_ptr_ty, "trace.entry.ptr");
 
         var entry_value = c.LLVMGetUndef(trace_entry_llvm_ty);
-        entry_value = c.LLVMBuildInsertValue(self.builder, entry_value, c.LLVMConstInt(try self.toLLVMType(trace_entry_struct.fields[0].ty), line, 0), 0, "trace.entry.line");
-        entry_value = c.LLVMBuildInsertValue(self.builder, entry_value, c.LLVMConstInt(try self.toLLVMType(trace_entry_struct.fields[1].ty), column, 0), 1, "trace.entry.column");
-        entry_value = c.LLVMBuildInsertValue(self.builder, entry_value, context_ptr, 2, "trace.entry.context");
+        entry_value = c.LLVMBuildInsertValue(self.builder, entry_value, source_file_ptr, source_file_index, "trace.entry.source_file");
+        entry_value = c.LLVMBuildInsertValue(self.builder, entry_value, c.LLVMConstInt(try self.toLLVMType(trace_entry_struct.fields[line_index].ty), line, 0), line_index, "trace.entry.line");
+        entry_value = c.LLVMBuildInsertValue(self.builder, entry_value, c.LLVMConstInt(try self.toLLVMType(trace_entry_struct.fields[column_index].ty), column, 0), column_index, "trace.entry.column");
+        entry_value = c.LLVMBuildInsertValue(self.builder, entry_value, context_ptr, context_index, "trace.entry.context");
+        entry_value = c.LLVMBuildInsertValue(self.builder, entry_value, source_line_ptr, source_line_index, "trace.entry.source_line");
         _ = c.LLVMBuildStore(self.builder, entry_value, entry_ptr);
 
         const new_length = c.LLVMBuildAdd(self.builder, old_length, one, "trace.length.next");
@@ -2208,6 +2228,17 @@ pub const CodeGenerator = struct {
         std.mem.copyForwards(u8, buf, s);
         buf[s.len] = 0;
         return buf;
+    }
+
+    fn readSourceLine(self: *CodeGenerator, file_path: []const u8, line_number: u32) ![]const u8 {
+        const file_text = std.fs.cwd().readFileAlloc(self.allocator.*, file_path, 1 << 24) catch return "";
+        var lines = std.mem.splitScalar(u8, file_text, '\n');
+        var current_line: u32 = 1;
+        while (lines.next()) |line| : (current_line += 1) {
+            if (current_line != line_number) continue;
+            return std.mem.trimRight(u8, line, "\r");
+        }
+        return "";
     }
 
     fn genAutoMaterializedValue(self: *CodeGenerator, ty: sem.Type) !TypedValue {
