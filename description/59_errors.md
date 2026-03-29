@@ -92,6 +92,20 @@ load_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found, ..perm
 }
 ```
 
+En `core`, la misma idea ya se usa para fallos de apertura y de sistema de
+ficheros:
+
+```rg
+..file_open_failed
+..path_open_failed
+
+open_read(.p: $&File, .path: CString)
+    -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed)))
+
+read_file(.self: &FileSystem, .path: StringView)
+    -> (.result: Errable#(.t: String, .reasons: (..path_open_failed)))
+```
+
 ## Propagation
 
 `!` y `!!`:

@@ -1,4 +1,7 @@
 FileSystem : Type = ()
+..path_open_failed
+..path_remove_failed
+..path_rename_failed
 
 once init(.p: $&FileSystem) -> () := {
 }
@@ -31,59 +34,54 @@ exists(
 remove(
     .self: &FileSystem,
     .path: CString,
-) -> (.ok: Bool) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..path_remove_failed))) := {
     path_ptr ::= pointer(.self = &path)
-    _ ::= remove(.path = path_ptr)
-    still_exists ::= exists(.self = self, .path = path)
-    if still_exists {
-        ok = 0 == 1
+    if remove(.path = path_ptr).status != 0 {
+        result = ..error(.reason = ..path_remove_failed)
         return
     }
-    ok = 1 == 1
+    result = ..ok(.value = 1 == 1)
 }
 
 remove(
     .self: &FileSystem,
     .path: &String,
-) -> (.ok: Bool) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..path_remove_failed))) := {
     c_path ::= as_c_string(.self = path)
-    ok = remove(.self = self, .path = c_path).ok
+    result = remove(.self = self, .path = c_path)
 }
 
 remove(
     .self: &FileSystem,
     .path: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.ok: Bool) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..path_remove_failed))) := {
     c_path ::= as_c_string(.self = path, .allocator = allocator)
-    ok = remove(.self = self, .path = c_path.text).ok
+    result = remove(.self = self, .path = c_path.text)
 }
 
 rename(
     .self: &FileSystem,
     .from: CString,
     .to: CString,
-) -> (.ok: Bool) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..path_rename_failed))) := {
     from_ptr ::= pointer(.self = &from)
     to_ptr ::= pointer(.self = &to)
-    _ ::= rename(.old_path = from_ptr, .new_path = to_ptr)
-    from_exists ::= exists(.self = self, .path = from)
-    to_exists ::= exists(.self = self, .path = to)
-    if from_exists {
-        ok = 0 == 1
+    if rename(.old_path = from_ptr, .new_path = to_ptr).status != 0 {
+        result = ..error(.reason = ..path_rename_failed)
         return
     }
-    ok = to_exists
+    result = ..ok(.value = 1 == 1)
 }
 
 rename(
     .self: &FileSystem,
     .from: &String,
     .to: &String,
-) -> (.ok: Bool) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..path_rename_failed))) := {
     c_from ::= as_c_string(.self = from)
     c_to ::= as_c_string(.self = to)
-    ok = rename(.self = self, .from = c_from, .to = c_to).ok
+    result = rename(.self = self, .from = c_from, .to = c_to)
 }
 
 rename(
@@ -91,94 +89,114 @@ rename(
     .from: StringView,
     .to: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.ok: Bool) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..path_rename_failed))) := {
     c_from ::= as_c_string(.self = from, .allocator = allocator)
     c_to ::= as_c_string(.self = to, .allocator = allocator)
-    ok = rename(.self = self, .from = c_from.text, .to = c_to.text).ok
+    result = rename(.self = self, .from = c_from.text, .to = c_to.text)
 }
 
 
 open_read(
     .self: &FileSystem,
     .path: CString,
-) -> (.file: File) := {
-    file = File(.handle = 0, .should_close = 0 == 1)
-    open_read(.p = $&file, .path = path)
+) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+    file :: File = File(.handle = 0, .should_close = 0 == 1)
+    opened ::= open_read(.p = $&file, .path = path)
+    if is(.value = opened, .variant = ..ok) {
+        result = ..ok(.value = file)
+        return
+    }
+    result = ..error(.reason = ..path_open_failed)
 }
 
 open_read(
     .self: &FileSystem,
     .path: &String,
-) -> (.file: File) := {
+) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
     c_path ::= as_c_string(.self = path)
-    file = open_read(.self = self, .path = c_path)
+    result = open_read(.self = self, .path = c_path)
 }
 
 open_read(
     .self: &FileSystem,
     .path: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.file: File) := {
+) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
     c_path ::= as_c_string(.self = path, .allocator = allocator)
-    file = open_read(.self = self, .path = c_path.text)
+    result = open_read(.self = self, .path = c_path.text)
 }
 
 open_write(
     .self: &FileSystem,
     .path: CString,
-) -> (.file: File) := {
-    file = File(.handle = 0, .should_close = 0 == 1)
-    open_write(.p = $&file, .path = path)
+) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+    file :: File = File(.handle = 0, .should_close = 0 == 1)
+    opened ::= open_write(.p = $&file, .path = path)
+    if is(.value = opened, .variant = ..ok) {
+        result = ..ok(.value = file)
+        return
+    }
+    result = ..error(.reason = ..path_open_failed)
 }
 
 open_write(
     .self: &FileSystem,
     .path: &String,
-) -> (.file: File) := {
+) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
     c_path ::= as_c_string(.self = path)
-    file = open_write(.self = self, .path = c_path)
+    result = open_write(.self = self, .path = c_path)
 }
 
 open_write(
     .self: &FileSystem,
     .path: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.file: File) := {
+) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
     c_path ::= as_c_string(.self = path, .allocator = allocator)
-    file = open_write(.self = self, .path = c_path.text)
+    result = open_write(.self = self, .path = c_path.text)
 }
 
 open_append(
     .self: &FileSystem,
     .path: CString,
-) -> (.file: File) := {
-    file = File(.handle = 0, .should_close = 0 == 1)
-    open_append(.p = $&file, .path = path)
+) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+    file :: File = File(.handle = 0, .should_close = 0 == 1)
+    opened ::= open_append(.p = $&file, .path = path)
+    if is(.value = opened, .variant = ..ok) {
+        result = ..ok(.value = file)
+        return
+    }
+    result = ..error(.reason = ..path_open_failed)
 }
 
 open_append(
     .self: &FileSystem,
     .path: &String,
-) -> (.file: File) := {
+) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
     c_path ::= as_c_string(.self = path)
-    file = open_append(.self = self, .path = c_path)
+    result = open_append(.self = self, .path = c_path)
 }
 
 open_append(
     .self: &FileSystem,
     .path: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.file: File) := {
+) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
     c_path ::= as_c_string(.self = path, .allocator = allocator)
-    file = open_append(.self = self, .path = c_path.text)
+    result = open_append(.self = self, .path = c_path.text)
 }
 
 read_file(
     .self: &FileSystem,
     .path: CString,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.text: String) := {
-    file ::= open_read(.self = self, .path = path)
+) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed))) := {
+    open_result ::= open_read(.self = self, .path = path)
+    if is(.value = open_result, .variant = ..error) {
+        result = ..error(.reason = ..path_open_failed)
+        return
+    }
+    file ::= open_result..ok.value
 
     initial_capacity :: UIntNative = 16
     zero :: UIntNative = 0
@@ -211,7 +229,7 @@ read_file(
         length = length + 1
     }
 
-    text = String(.allocator = allocator, .length = length)
+    text := String(.allocator = allocator, .length = length)
     if length > 0 {
         memcpy(
             .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = text.allocation.data)),
@@ -222,51 +240,52 @@ read_file(
 
     deallocate(.self = allocator, .data = buffer, .size = capacity)
     close(.self = $&file)
+    result = ..ok(.value = text)
 }
 
 read_file(
     .self: &FileSystem,
     .path: &String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.text: String) := {
+) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed))) := {
     c_path ::= as_c_string(.self = path)
-    text = read_file(.self = self, .path = c_path, .allocator = allocator)
+    result = read_file(.self = self, .path = c_path, .allocator = allocator)
 }
 
 read_file(
     .self: &FileSystem,
     .path: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.text: String) := {
+) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed))) := {
     c_path ::= as_c_string(.self = path, .allocator = allocator)
-    text = read_file(.self = self, .path = c_path.text, .allocator = allocator)
+    result = read_file(.self = self, .path = c_path.text, .allocator = allocator)
 }
 
 write_file(
     .self: &FileSystem,
     .path: CString,
     .text: String,
-) -> (.ok: Bool) := {
-    file ::= open_write(.self = self, .path = path)
-    if is_open(.self = &file).ok {
-    } else {
-        ok = 0 == 1
+) -> (.result: Errable#(.t: Bool, .reasons: (..path_open_failed))) := {
+    open_result ::= open_write(.self = self, .path = path)
+    if is(.value = open_result, .variant = ..error) {
+        result = ..error(.reason = ..path_open_failed)
         return
     }
+    file ::= open_result..ok.value
 
     write(.self = $&file, .text = text)
     flush(.self = $&file)
     close(.self = $&file)
-    ok = 1 == 1
+    result = ..ok(.value = 1 == 1)
 }
 
 write_file(
     .self: &FileSystem,
     .path: &String,
     .text: String,
-) -> (.ok: Bool) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..path_open_failed))) := {
     c_path ::= as_c_string(.self = path)
-    ok = write_file(.self = self, .path = c_path, .text = text).ok
+    result = write_file(.self = self, .path = c_path, .text = text)
 }
 
 write_file(
@@ -274,7 +293,7 @@ write_file(
     .path: StringView,
     .text: String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.ok: Bool) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..path_open_failed))) := {
     c_path ::= as_c_string(.self = path, .allocator = allocator)
-    ok = write_file(.self = self, .path = c_path.text, .text = text).ok
+    result = write_file(.self = self, .path = c_path.text, .text = text)
 }

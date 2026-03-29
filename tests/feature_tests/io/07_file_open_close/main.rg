@@ -1,9 +1,9 @@
 main() -> (.status_code: Int32) := {
     file ::= File(.handle = 0, .should_close = 0 == 1)
     path ::= from_literal(.data = "/dev/null")
-    open(.p = $&file, .path = path, .mode = ..write)
+    open_result ::= open(.p = $&file, .path = path, .mode = ..write)
 
-    if is_open(.self = &file).ok {
+    if is(.value = open_result, .variant = ..ok) {
     } else {
         status_code = 1
         return

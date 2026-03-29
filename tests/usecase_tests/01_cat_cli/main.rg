@@ -16,7 +16,13 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
     i :: UIntNative = 1
     while i < argc {
         path := system.args[i]
-        text ::= read_file(system.file_sys, path)
+        text_result ::= read_file(system.file_sys, path)
+        if is(.value = text_result, .variant = ..ok) {
+        } else {
+            status_code = 1
+            return
+        }
+        text ::= text_result..ok.value
         print(text)
         i = i + 1
     }

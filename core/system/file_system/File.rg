@@ -3,6 +3,7 @@ FileOpenMode : Type = (
     ..write
     ..append
 )
+..file_open_failed
 
 File : Type = (
     .handle       : UIntNative = 0
@@ -48,7 +49,7 @@ open(
     .p: $&File,
     .path: CString,
     .mode: FileOpenMode,
-) -> () := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) := {
     path_ptr ::= pointer(.self = &path)
     mode_text ::= file_open_mode_c_string(.mode = mode)
     mode_ptr ::= pointer(.self = &mode_text)
@@ -57,27 +58,32 @@ open(
         .handle = cast#(.to: UIntNative)(.value = opened),
         .should_close = 1 == 1,
     )
+    if p&.handle == 0 {
+        result = ..error(.reason = ..file_open_failed)
+        return
+    }
+    result = ..ok(.value = 1 == 1)
 }
 
 open_read(
     .p: $&File,
     .path: CString,
-) -> () := {
-    open(.p = p, .path = path, .mode = ..read)
+) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) := {
+    result = open(.p = p, .path = path, .mode = ..read)
 }
 
 open_write(
     .p: $&File,
     .path: CString,
-) -> () := {
-    open(.p = p, .path = path, .mode = ..write)
+) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) := {
+    result = open(.p = p, .path = path, .mode = ..write)
 }
 
 open_append(
     .p: $&File,
     .path: CString,
-) -> () := {
-    open(.p = p, .path = path, .mode = ..append)
+) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) := {
+    result = open(.p = p, .path = path, .mode = ..append)
 }
 
 init_stdin(.p: $&File) -> () := {

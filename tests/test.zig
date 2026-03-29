@@ -1216,6 +1216,12 @@ test "feature_tests/io/08_file_open_modes" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/io/13_file_open_error" {
+    const test_path = "tests/feature_tests/io/13_file_open_error";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/io/09_print_c_string_literal" {
     const test_path = "tests/feature_tests/io/09_print_c_string_literal";
     try expectSuccessfulBuild(test_path);
@@ -1369,6 +1375,12 @@ test "feature_tests/system/24_arguments_length_pipe_positional" {
 
 test "feature_tests/system/25_local_typed_reach_binding" {
     const test_path = "tests/feature_tests/system/25_local_typed_reach_binding";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/system/26_file_system_error_reasons" {
+    const test_path = "tests/feature_tests/system/26_file_system_error_reasons";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }

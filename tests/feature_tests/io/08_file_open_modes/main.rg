@@ -2,8 +2,8 @@ main() -> (.status_code: Int32) := {
     path ::= from_literal(.data = "/dev/null")
 
     read_file ::= File(.handle = 0, .should_close = 0 == 1)
-    open_read(.p = $&read_file, .path = path)
-    if is_open(.self = &read_file).ok {
+    read_result ::= open_read(.p = $&read_file, .path = path)
+    if is(.value = read_result, .variant = ..ok) {
     } else {
         status_code = 1
         return
@@ -11,8 +11,8 @@ main() -> (.status_code: Int32) := {
     close(.self = $&read_file)
 
     write_file ::= File(.handle = 0, .should_close = 0 == 1)
-    open_write(.p = $&write_file, .path = path)
-    if is_open(.self = &write_file).ok {
+    write_result ::= open_write(.p = $&write_file, .path = path)
+    if is(.value = write_result, .variant = ..ok) {
     } else {
         status_code = 2
         return
@@ -20,8 +20,8 @@ main() -> (.status_code: Int32) := {
     close(.self = $&write_file)
 
     append_file ::= File(.handle = 0, .should_close = 0 == 1)
-    open_append(.p = $&append_file, .path = path)
-    if is_open(.self = &append_file).ok {
+    append_result ::= open_append(.p = $&append_file, .path = path)
+    if is(.value = append_result, .variant = ..ok) {
     } else {
         status_code = 3
         return
