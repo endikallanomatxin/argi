@@ -1502,12 +1502,14 @@ pub const Semantizer = struct {
                 if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
                     break :blk err;
                 }
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in if statement: {s}",
-                    .{@errorName(err)},
-                );
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in if statement: {s}",
+                        .{@errorName(err)},
+                    );
+                }
                 break :blk err;
             },
 
@@ -1515,12 +1517,14 @@ pub const Semantizer = struct {
                 if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
                     break :blk err;
                 }
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in for statement: {s}",
-                    .{@errorName(err)},
-                );
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in for statement: {s}",
+                        .{@errorName(err)},
+                    );
+                }
                 break :blk err;
             },
 
@@ -1528,12 +1532,14 @@ pub const Semantizer = struct {
                 if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
                     break :blk err;
                 }
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in while statement: {s}",
-                    .{@errorName(err)},
-                );
+                if (err != error.Reported) {
+                    try self.diags.add(
+                        n.location,
+                        .semantic,
+                        "error in while statement: {s}",
+                        .{@errorName(err)},
+                    );
+                }
                 break :blk err;
             },
 

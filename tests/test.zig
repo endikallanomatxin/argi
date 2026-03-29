@@ -147,6 +147,57 @@ fn runExpectStdout(name: []const u8, expected_code: u8, expected_stdout: []const
     try runExpectStdoutWithArgs(name, &[_][]const u8{}, expected_code, expected_stdout);
 }
 
+fn runExpectStdoutWithArgsAndStdin(
+    name: []const u8,
+    args: []const []const u8,
+    stdin_text: []const u8,
+    expected_code: u8,
+    expected_stdout: []const u8,
+) !void {
+    const output_path = try outputPathFor(name);
+    defer std.testing.allocator.free(output_path);
+
+    const argv = try std.testing.allocator.alloc([]const u8, args.len + 1);
+    defer std.testing.allocator.free(argv);
+
+    argv[0] = output_path;
+    for (args, 0..) |arg, i| {
+        argv[i + 1] = arg;
+    }
+
+    var child = std.process.Child.init(argv, std.testing.allocator);
+    child.cwd = compilerRoot();
+    child.stdin_behavior = .Pipe;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+
+    var stdout: std.ArrayList(u8) = .empty;
+    defer stdout.deinit(std.testing.allocator);
+    var stderr: std.ArrayList(u8) = .empty;
+    defer stderr.deinit(std.testing.allocator);
+
+    try child.spawn();
+    errdefer {
+        _ = child.kill() catch {};
+    }
+
+    if (child.stdin) |stdin_file| {
+        try stdin_file.writeAll(stdin_text);
+        stdin_file.close();
+        child.stdin = null;
+    }
+
+    try child.collectOutput(std.testing.allocator, &stdout, &stderr, 50 * 1024);
+
+    const stdout_owned = try stdout.toOwnedSlice(std.testing.allocator);
+    defer std.testing.allocator.free(stdout_owned);
+    const stderr_owned = try stderr.toOwnedSlice(std.testing.allocator);
+    defer std.testing.allocator.free(stderr_owned);
+
+    try expectEqual(std.process.Child.Term{ .Exited = expected_code }, try child.wait());
+    try expectEqualStrings(expected_stdout, stdout_owned);
+}
+
 fn pathInTest(name: []const u8, leaf: []const u8) ![]u8 {
     return std.fmt.allocPrint(std.testing.allocator, "{s}/{s}", .{ name, leaf });
 }
@@ -191,6 +242,18 @@ test "usecase_tests/01_cat_cli_help_long" {
         &[_][]const u8{"--help"},
         0,
         "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help.\n",
+    );
+}
+
+test "usecase_tests/02_echo_until_empty" {
+    const test_path = "tests/usecase_tests/02_echo_until_empty";
+    try expectSuccessfulBuild(test_path);
+    try runExpectStdoutWithArgsAndStdin(
+        test_path,
+        &[_][]const u8{},
+        "hello\nworld\n\nignored\n",
+        0,
+        "hello\nworld\n",
     );
 }
 
