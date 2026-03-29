@@ -946,6 +946,17 @@ test "feature_tests/types/19_mixed_type_initializer" {
     try runExpect(test_path, 42);
 }
 
+test "feature_tests/types/20_struct_initializer_without_init" {
+    const test_path = "tests/feature_tests/types/20_struct_initializer_without_init";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
+test "feature_tests/types/21X_struct_initializer_must_use_visible_init" {
+    const test_path = "tests/feature_tests/types/21X_struct_initializer_must_use_visible_init";
+    try buildExpectFail(test_path, "failed to initialize type 'Point': no visible 'init' overload accepts arguments");
+}
+
 test "feature_tests/collections/16_dynamic_array_iterator_manual" {
     const test_path = "tests/feature_tests/collections/16_dynamic_array_iterator_manual";
     try expectSuccessfulBuild(test_path);

@@ -5697,29 +5697,30 @@ pub const Semantizer = struct {
 
             break :blk self.tryResolveRegularCallCallee(synthetic_init_call, init_input_te, s, call.input.*.location) catch |err| switch (err) {
                 error.SymbolNotFound => {
-                    if (type_decl.ty == .struct_type) {
+                    if (type_decl.ty == .struct_type and !(try self.hasVisibleTypeInitializerInit(type_decl.ty, call.input.*.location.file, s))) {
                         return try self.coerceCallInputToExpected(type_decl.ty.struct_type, tv_in, call.input, s);
                     }
 
-                    const sigs = try self.collectVisibleSignatureText("init", user_struct, s, call.input.*.location);
-                    defer sigs.deinit();
+                    const actual = self.formatOwnedText(try typ.formatCallInput(user_struct, s, self.allocator));
+                    defer actual.deinit();
+                    const available = self.formatOwnedText(try self.collectVisibleTypeInitializerSignatures(type_decl.ty, call.input.*.location.file, s));
+                    defer available.deinit();
                     try self.diags.add(
                         call.input.*.location,
                         .semantic,
                         "failed to initialize type '{s}': no visible 'init' overload accepts arguments {s}. Available overloads:\n{s}",
-                        .{ call.callee, sigs.actual.bytes, sigs.available.bytes },
+                        .{ call.callee, actual.bytes, available.bytes },
                     );
                     return error.Reported;
                 },
                 error.AmbiguousOverload => {
-                    const candidates_result = self.buildOverloadCandidatesText("init", init_input_ty, s) catch null;
-                    const candidates = if (candidates_result) |owned| owned.bytes else "";
-                    defer if (candidates_result) |owned| owned.deinit();
+                    const candidates = self.formatOwnedText(try self.collectVisibleTypeInitializerSignatures(type_decl.ty, call.input.*.location.file, s));
+                    defer candidates.deinit();
                     try self.diags.add(
                         call.input.*.location,
                         .semantic,
                         "failed to initialize type '{s}': matching 'init' overloads are ambiguous. Candidates:\n{s}",
-                        .{ call.callee, candidates },
+                        .{ call.callee, candidates.bytes },
                     );
                     return error.Reported;
                 },
@@ -5741,6 +5742,80 @@ pub const Semantizer = struct {
 
         const init_node = try sg.makeSGNode(.{ .type_initializer = type_init }, call.callee_loc, self.allocator);
         return .{ .node = init_node, .ty = type_decl.ty };
+    }
+
+    fn hasVisibleTypeInitializerInit(
+        self: *Semantizer,
+        ty: sg.Type,
+        current_file: []const u8,
+        s: *Scope,
+    ) SemErr!bool {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr("init")) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (!(try self.functionIsVisible(cand, current_file))) continue;
+                    if (cand.input.fields.len == 0) continue;
+
+                    const first = cand.input.fields[0];
+                    if (!std.mem.eql(u8, first.name, "p")) continue;
+                    if (first.ty != .pointer_type) continue;
+
+                    const ptr_info = first.ty.pointer_type.*;
+                    if (ptr_info.mutability != .read_write) continue;
+                    if (!typ.typesStructurallyEqual(ptr_info.child.*, ty)) continue;
+
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    fn functionIsTypeInitializerInit(
+        self: *Semantizer,
+        fd: *const sg.FunctionDeclaration,
+        ty: sg.Type,
+        current_file: []const u8,
+    ) SemErr!bool {
+        if (!std.mem.eql(u8, fd.name, "init")) return false;
+        if (!(try self.functionIsVisible(fd, current_file))) return false;
+        if (fd.input.fields.len == 0) return false;
+
+        const first = fd.input.fields[0];
+        if (!std.mem.eql(u8, first.name, "p")) return false;
+        if (first.ty != .pointer_type) return false;
+
+        const ptr_info = first.ty.pointer_type.*;
+        if (ptr_info.mutability != .read_write) return false;
+        return typ.typesStructurallyEqual(ptr_info.child.*, ty);
+    }
+
+    fn collectVisibleTypeInitializerSignatures(
+        self: *Semantizer,
+        ty: sg.Type,
+        current_file: []const u8,
+        s: *Scope,
+    ) ![]u8 {
+        var buf = std.array_list.Managed(u8).init(self.allocator.*);
+        errdefer buf.deinit();
+
+        var cur: ?*Scope = s;
+        var first = true;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr("init")) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (!(try self.functionIsTypeInitializerInit(cand, ty, current_file))) continue;
+                    if (!first) try buf.appendSlice("\n");
+                    first = false;
+                    try buf.appendSlice("  - ");
+                    try abs.appendFunctionSignature(&buf, cand, s);
+                }
+            }
+        }
+
+        if (first) try buf.appendSlice("  (none)");
+        return try buf.toOwnedSlice();
     }
 
     fn typeUsesParam(self: *Semantizer, ty: syn.Type, param: []const u8) bool {
