@@ -2,7 +2,12 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
     while true {
         next ::= read_line()
 
-        match next {
+        if is(.value = next, .variant = ..error) {
+            status_code = 1
+            return
+        }
+
+        match next..ok.value {
             ..end {
                 return
             }
@@ -10,7 +15,9 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
                 if &line.text == "" {
                     return
                 } else {
-                    print(&line.text + "\n")
+                    line_text ::= line.text
+                    print(line_text)
+                    print("\n")
                 }
             }
         }

@@ -47,7 +47,7 @@ Los `choices` usados para errores son cerrados y finitos.
 La traza sigue viviendo dentro del propio error.
 
 ```rg
-Error#(.reasons: Type) : Type = (
+Error#(.reasons: Choice) : Type = (
     .reason: reasons
     .trace: ErrorTrace
 )
@@ -62,7 +62,7 @@ Restricciones:
 `Errable` queda definido sobre un conjunto de razones:
 
 ```rg
-Errable#(.t: Type, .reasons: Type) : Type = (
+Errable#(.t: Type, .reasons: Choice) : Type = (
     ..ok(.value: t)
     ..error(
         .reason: reasons
@@ -92,18 +92,41 @@ load_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found, ..perm
 }
 ```
 
-En `core`, la misma idea ya se usa para fallos de apertura y de sistema de
-ficheros:
+En `core`, la misma idea ya se usa para fallos de apertura, de sistema de
+ficheros y de streams:
 
 ```rg
 ..file_open_failed
 ..path_open_failed
+..stream_read_failed
+..stream_write_failed
+..stream_flush_failed
+..stream_close_failed
+..out_of_memory
 
 open_read(.p: $&File, .path: CString)
     -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed)))
 
 read_file(.self: &FileSystem, .path: StringView)
-    -> (.result: Errable#(.t: String, .reasons: (..path_open_failed)))
+    -> (.result: Errable#(
+        .t: String,
+        .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory),
+    ))
+
+read_byte(.self: $&Reader)
+    -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed)))
+
+write_byte(.self: $&Writer, .byte: UInt8)
+    -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed)))
+```
+
+EOF sigue fuera del canal de error:
+
+```rg
+ReadByte : Choice = (
+    ..ok(.byte: UInt8)
+    ..end
+)
 ```
 
 ## Propagation

@@ -2,36 +2,41 @@ DummyWriter : Type = (
     .flush_count: Int32 = 0
 )
 
-write_byte(.self: $&DummyWriter, .byte: UInt8) -> () := {
-    _ ::= self
+write_byte(.self: $&DummyWriter, .byte: UInt8) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    self&
+    byte
+    result = ..ok(.value = true)
 }
 
-flush(.self: $&DummyWriter) -> () := {
+flush(.self: $&DummyWriter) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     self& = (
         .flush_count = self&.flush_count + 1
     )
+    result = ..ok(.value = true)
 }
 
 DummyWriter implements Writer
 
-Wrapper#(.base_type: Type: Writer) : Type = (
-    .base: $&base_type
+Wrapper : Type = (
+    .base: $&DummyWriter
 )
 
-write_byte#(.base_type: Type: Writer)(
-    .self: $&Wrapper#(.base_type: base_type),
+write_byte(
+    .self: $&Wrapper,
     .byte: UInt8,
-) -> () := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     write_byte(.self = self&.base, .byte = byte)
+    result = ..ok(.value = true)
 }
 
-flush#(.base_type: Type: Writer)(
-    .self: $&Wrapper#(.base_type: base_type),
-) -> () := {
+flush(
+    .self: $&Wrapper,
+) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     flush(.self = self&.base)
+    result = ..ok(.value = true)
 }
 
-Wrapper#(.base_type: Type: Writer) implements Writer
+Wrapper implements Writer
 
 accept(
     .writer: $&Writer,
@@ -44,7 +49,7 @@ main() -> (.status_code: Int32) := {
     base :: DummyWriter = (
         .flush_count = 0
     )
-    wrapper :: Wrapper#(.base_type: DummyWriter) = (
+    wrapper :: Wrapper = (
         .base = $&base
     )
 
