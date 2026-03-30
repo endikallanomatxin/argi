@@ -7817,7 +7817,13 @@ pub const Semantizer = struct {
             try child.nodes.append(decl_node);
             try self.maybeScheduleAutoDeinit(bd, binding_name.location, &child);
         } else if (payload_ty != null) {
-            // payload exists but binding is optional
+            try self.diags.add(
+                case_syn.variant_name.location,
+                .semantic,
+                "choice variant '..{s}' carries a payload and match must bind it explicitly; use '..{s}(_)' to ignore it",
+                .{ case_syn.variant_name.string, case_syn.variant_name.string },
+            );
+            return error.Reported;
         }
 
         const body_cb = case_syn.body.content.code_block;

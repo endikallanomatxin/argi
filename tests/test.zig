@@ -811,6 +811,13 @@ test "feature_tests/types/13X_match_bind_payload_without_payload" {
     );
 }
 
+test "feature_tests/types/28X_match_omit_payload_pattern" {
+    try buildExpectFail(
+        "tests/feature_tests/types/28X_match_omit_payload_pattern",
+        "choice variant '..error' carries a payload and match must bind it explicitly; use '..error(_)' to ignore it",
+    );
+}
+
 test "feature_tests/collections/01_list_literal_length" {
     const test_path = "tests/feature_tests/collections/01_list_literal_length";
     try expectSuccessfulBuild(test_path);
@@ -1030,6 +1037,12 @@ test "feature_tests/types/25_choice_options_open_choices" {
 
 test "feature_tests/types/26_error_reason_superset_propagation" {
     const test_path = "tests/feature_tests/types/26_error_reason_superset_propagation";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/types/27_void_builtin" {
+    const test_path = "tests/feature_tests/types/27_void_builtin";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
