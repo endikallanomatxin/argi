@@ -17,13 +17,30 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
     while i < argc {
         path := system.args[i]
         text_result ::= read_file(system.file_sys, path)
-        if is(.value = text_result, .variant = ..ok) {
-        } else {
-            status_code = 1
-            return
+        match text_result {
+            ..ok(_) {
+                text ::= text_result..ok.value
+                print(text)
+                i = i + 1
+            }
+            ..error(_) {
+                match text_result..error.reason {
+                    ..path_open_failed {
+                        print("cat: failed to open file\n")
+                    }
+                    ..stream_read_failed {
+                        print("cat: failed to read file\n")
+                    }
+                    ..stream_close_failed {
+                        print("cat: failed to close file\n")
+                    }
+                    ..out_of_memory {
+                        print("cat: out of memory\n")
+                    }
+                }
+                status_code = 1
+                return
+            }
         }
-        text ::= text_result..ok.value
-        print(text)
-        i = i + 1
     }
 }

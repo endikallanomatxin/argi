@@ -23,6 +23,23 @@ match value {
 }
 ```
 
+> [!TODO]
+> Sigue abierto el diseño exacto de los bindings de payload en `match` para
+> tipos no copyable.
+>
+> Hoy `..variant(name)` debe entenderse como binding por valor. Si el payload no
+> implementa `copy()`, ese binding no debería usarse como atajo mágico a un
+> préstamo implícito.
+>
+> Mientras no se diseñe una sintaxis y semántica mejores para borrowed payload
+> bindings, el camino estable es:
+> - usar `..variant(_)` para ramificar,
+> - y acceder al payload refinado desde el scrutinee dentro de la rama
+>   (`value..variant...`).
+>
+> Queda pendiente decidir una forma explícita y coherente de inspeccionar
+> payloads no copyable sin introducir magia semántica en `match`.
+
 ## Choice options
 
 Una opción libre se declara a nivel de módulo:
