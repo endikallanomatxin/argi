@@ -190,7 +190,7 @@ read_file(
     .self: &FileSystem,
     .path: CString,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed))) := {
+) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory))) := {
     open_result ::= open_read(.self = self, .path = path)
     if is(.value = open_result, .variant = ..error) {
         result = ..error(.reason = ..path_open_failed)
@@ -201,45 +201,73 @@ read_file(
     initial_capacity :: UIntNative = 16
     zero :: UIntNative = 0
     capacity :: UIntNative = initial_capacity
-    buffer :: $&UInt8 = allocate(.self = allocator, .size = capacity)
+    allocation_size :: UIntNative = capacity + 1
+    buffer :: $&UInt8 = allocate(.self = allocator, .size = allocation_size)
+    if cast#(.to: UIntNative)(.value = buffer) == 0 {
+        _ ::= close(.self = $&file)
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     length :: UIntNative = zero
+    initial_terminator_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = buffer))
+    initial_terminator_ptr& = 0
 
     while 1 == 1 {
         next ::= read_byte(.self = $&file)
-        if is(.value = next, .variant = ..end) {
+        if is(.value = next, .variant = ..error) {
+            deallocate(.self = allocator, .data = buffer, .size = allocation_size)
+            _ ::= close(.self = $&file)
+            result = ..error(.reason = ..stream_read_failed)
+            return
+        }
+
+        next_value ::= next..ok.value
+        if is(.value = next_value, .variant = ..end) {
             break
         }
 
         if length == capacity {
             new_capacity :: UIntNative = capacity * 2
-            new_buffer : $&UInt8 = allocate(.self = allocator, .size = new_capacity)
+            new_allocation_size :: UIntNative = new_capacity + 1
+            new_buffer : $&UInt8 = allocate(.self = allocator, .size = new_allocation_size)
+            if cast#(.to: UIntNative)(.value = new_buffer) == 0 {
+                deallocate(.self = allocator, .data = buffer, .size = allocation_size)
+                _ ::= close(.self = $&file)
+                result = ..error(.reason = ..out_of_memory)
+                return
+            }
             memcpy(
                 .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = new_buffer)),
                 .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = buffer)),
-                .n = length,
+                .n = length + 1,
             )
-            deallocate(.self = allocator, .data = buffer, .size = capacity)
+            deallocate(.self = allocator, .data = buffer, .size = allocation_size)
             buffer = new_buffer
             capacity = new_capacity
+            allocation_size = new_allocation_size
         }
 
-        payload ::= next..ok
+        payload ::= next_value..ok
         byte_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = buffer) + length)
         byte_ptr& = payload.byte
         length = length + 1
+        terminator_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = buffer) + length)
+        terminator_ptr& = 0
     }
 
-    text := String(.allocator = allocator, .length = length)
-    if length > 0 {
-        memcpy(
-            .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = text.allocation.data)),
-            .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = buffer)),
-            .n = length,
-        )
+    close_result ::= close(.self = $&file)
+    if is(.value = close_result, .variant = ..error) {
+        deallocate(.self = allocator, .data = buffer, .size = allocation_size)
+        result = ..error(.reason = ..stream_close_failed)
+        return
     }
-
-    deallocate(.self = allocator, .data = buffer, .size = capacity)
-    close(.self = $&file)
+    text :: String = (
+        .allocation = (
+            .data = buffer,
+            .size = allocation_size,
+        ),
+        .length = length,
+    )
     result = ..ok(.value = text)
 }
 
@@ -247,7 +275,7 @@ read_file(
     .self: &FileSystem,
     .path: &String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed))) := {
+) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory))) := {
     c_path ::= as_c_string(.self = path)
     result = read_file(.self = self, .path = c_path, .allocator = allocator)
 }
@@ -256,7 +284,7 @@ read_file(
     .self: &FileSystem,
     .path: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed))) := {
+) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory))) := {
     c_path ::= as_c_string(.self = path, .allocator = allocator)
     result = read_file(.self = self, .path = c_path.text, .allocator = allocator)
 }
@@ -265,7 +293,7 @@ write_file(
     .self: &FileSystem,
     .path: CString,
     .text: String,
-) -> (.result: Errable#(.t: Bool, .reasons: (..path_open_failed))) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed))) := {
     open_result ::= open_write(.self = self, .path = path)
     if is(.value = open_result, .variant = ..error) {
         result = ..error(.reason = ..path_open_failed)
@@ -273,9 +301,36 @@ write_file(
     }
     file ::= open_result..ok.value
 
-    write(.self = $&file, .text = text)
-    flush(.self = $&file)
-    close(.self = $&file)
+    wrote ::= write(.self = $&file, .text = text)
+    if is(.value = wrote, .variant = ..error) {
+        _ ::= close(.self = $&file)
+        wrote_reason ::= wrote..error.reason
+        if is(.value = wrote_reason, .variant = ..stream_write_failed) {
+            result = ..error(.reason = ..stream_write_failed)
+        } else {
+            result = ..error(.reason = ..stream_flush_failed)
+        }
+        return
+    }
+
+    flushed ::= flush(.self = $&file)
+    if is(.value = flushed, .variant = ..error) {
+        _ ::= close(.self = $&file)
+        flushed_reason ::= flushed..error.reason
+        if is(.value = flushed_reason, .variant = ..stream_write_failed) {
+            result = ..error(.reason = ..stream_write_failed)
+        } else {
+            result = ..error(.reason = ..stream_flush_failed)
+        }
+        return
+    }
+
+    closed ::= close(.self = $&file)
+    if is(.value = closed, .variant = ..error) {
+        result = ..error(.reason = ..stream_close_failed)
+        return
+    }
+
     result = ..ok(.value = 1 == 1)
 }
 
@@ -283,7 +338,7 @@ write_file(
     .self: &FileSystem,
     .path: &String,
     .text: String,
-) -> (.result: Errable#(.t: Bool, .reasons: (..path_open_failed))) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed))) := {
     c_path ::= as_c_string(.self = path)
     result = write_file(.self = self, .path = c_path, .text = text)
 }
@@ -293,7 +348,7 @@ write_file(
     .path: StringView,
     .text: String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: Bool, .reasons: (..path_open_failed))) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed))) := {
     c_path ::= as_c_string(.self = path, .allocator = allocator)
     result = write_file(.self = self, .path = c_path.text, .text = text)
 }

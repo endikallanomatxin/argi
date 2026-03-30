@@ -28,7 +28,7 @@ once init(
 
 deinit(
     .self: $&Terminal,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&CAllocator = #reach allocator, system.allocator,
 ) -> () := {
     deinit(.self = self&.stdin_buffered_reader, .allocator = allocator)
     deinit(.self = self&.stdout_buffered_writer, .allocator = allocator)
@@ -40,8 +40,8 @@ deinit(
 
 read_line_into_buffer(
     .buffer: $&String,
-    .stdin: $&Reader = #reach stdin, terminal.stdin_buffered_reader, system.terminal.stdin_buffered_reader,
-) -> () := {
+    .stdin: $&Reader = #reach stdin, terminal.stdin_file, system.terminal.stdin_file,
+) -> (.result: Errable#(.t: Bool, .reasons: (..stream_read_failed))) := {
     clear(.self = buffer)
 
     while 1 == 1 {
@@ -51,41 +51,70 @@ read_line_into_buffer(
         }
 
         next ::= read_byte(.self = stdin)
-        if is(.value = next, .variant = ..end) {
+        if is(.value = next, .variant = ..error) {
+            result = ..error(.reason = ..stream_read_failed)
+            return
+        }
+
+        next_value ::= next..ok.value
+        if is(.value = next_value, .variant = ..end) {
             break
         }
 
-        payload ::= next..ok
+        payload ::= next_value..ok
         if payload.byte == 10 {
             break
         }
 
         push_byte(.self = buffer, .byte = payload.byte)
     }
+
+    result = ..ok(.value = true)
 }
 
 read_line(
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .stdin: $&Reader = #reach stdin, terminal.stdin_buffered_reader, system.terminal.stdin_buffered_reader,
-) -> (.result: ReadLine) := {
+    .stdin: $&Reader = #reach stdin, terminal.stdin_file, system.terminal.stdin_file,
+) -> (.result: Errable#(.t: ReadLine, .reasons: (..stream_read_failed, ..out_of_memory))) := {
     initial_capacity :: UIntNative = 16
-    line ::= String(.allocator = allocator, .capacity = initial_capacity)
+    allocation_size :: UIntNative = initial_capacity + 1
+    data ::= allocate(.self = allocator, .size = allocation_size)
+    if cast#(.to: UIntNative)(.value = data) == 0 {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
+    line :: String = (
+        .allocation = (
+            .data = data,
+            .size = allocation_size,
+        ),
+        .length = 0,
+    )
+    bytes_set(.string = $&line, .index = 0, .value = 0)
 
     while 1 == 1 {
         next ::= read_byte(.self = stdin)
-        if is(.value = next, .variant = ..end) {
-            if line.length == 0 {
-                result = ..end
-                return
-            }
-
-            result = ..ok(.text = line)
+        if is(.value = next, .variant = ..error) {
+            deinit(.self = $&line, .allocator = allocator)
+            result = ..error(.reason = ..stream_read_failed)
             return
         }
 
-        payload ::= next..ok
+        next_value ::= next..ok.value
+        if is(.value = next_value, .variant = ..end) {
+            if line.length == 0 {
+                deinit(.self = $&line, .allocator = allocator)
+                result = ..ok(.value = ..end)
+                return
+            }
+
+            result = ..ok(.value = ..ok(.text = line))
+            return
+        }
+
+        payload ::= next_value..ok
         if payload.byte == 10 {
-            result = ..ok(.text = line)
+            result = ..ok(.value = ..ok(.text = line))
             return
         }
 
@@ -93,29 +122,66 @@ read_line(
         } else {
             current_capacity ::= capacity(.self = &line).value
             next_capacity ::= current_capacity * 2
-            ensure_capacity(.self = $&line, .capacity = next_capacity, .allocator = allocator)
+            new_allocation_size :: UIntNative = next_capacity + 1
+            new_data ::= allocate(.self = allocator, .size = new_allocation_size)
+            if cast#(.to: UIntNative)(.value = new_data) == 0 {
+                deinit(.self = $&line, .allocator = allocator)
+                result = ..error(.reason = ..out_of_memory)
+                return
+            }
+
+            memcpy(
+                .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = new_data)),
+                .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = line.allocation.data)),
+                .n = line.length + 1,
+            )
+
+            deallocate(.self = allocator, .data = line.allocation.data, .size = line.allocation.size)
+            line = (
+                .allocation = (
+                    .data = new_data,
+                    .size = new_allocation_size,
+                ),
+                .length = line.length,
+            )
         }
 
-        push_byte(.self = $&line, .byte = payload.byte)
+        line_length ::= line.length
+        bytes_set(.string = $&line, .index = line_length, .value = payload.byte)
+        line = (
+            .allocation = line.allocation,
+            .length = line_length + 1,
+        )
+        next_length ::= line.length
+        bytes_set(.string = $&line, .index = next_length, .value = 0)
     }
 }
 
 print(
     .value: String,
-    .stdout: $&Writer = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
-) -> () := {
+    .stdout: $&Writer = #reach stdout, terminal.stdout_file, system.terminal.stdout_file,
+) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
     while i < value.length {
-        write_byte(.self = stdout, .byte = bytes_get(.string = &value, .index = i).byte)
+        wrote ::= write_byte(.self = stdout, .byte = bytes_get(.string = &value, .index = i).byte)
+        if is(.value = wrote, .variant = ..error) {
+            wrote_reason ::= wrote..error.reason
+            if is(.value = wrote_reason, .variant = ..stream_write_failed) {
+                result = ..error(.reason = ..stream_write_failed)
+            } else {
+                result = ..error(.reason = ..stream_flush_failed)
+            }
+            return
+        }
         i = i + 1
     }
-    flush(.self = stdout)
+    result = flush(.self = stdout)
 }
 
 print(
     .value: &Char,
-    .stdout: $&Writer = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
-) -> () := {
+    .stdout: $&Writer = #reach stdout, terminal.stdout_file, system.terminal.stdout_file,
+) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
     while 1 == 1 {
         addr :: UIntNative = cast#(.to: UIntNative)(.value = value) + i
@@ -124,32 +190,52 @@ print(
             break
         }
 
-        write_byte(.self = stdout, .byte = ptr&)
+        wrote ::= write_byte(.self = stdout, .byte = ptr&)
+        if is(.value = wrote, .variant = ..error) {
+            wrote_reason ::= wrote..error.reason
+            if is(.value = wrote_reason, .variant = ..stream_write_failed) {
+                result = ..error(.reason = ..stream_write_failed)
+            } else {
+                result = ..error(.reason = ..stream_flush_failed)
+            }
+            return
+        }
         i = i + 1
     }
 
-    flush(.self = stdout)
+    result = flush(.self = stdout)
 }
 
 flush(
-    .stdout: $&Writer = #reach stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer,
-) -> () := {
-    flush(.self = stdout)
+    .stdout: $&Writer = #reach stdout, terminal.stdout_file, system.terminal.stdout_file,
+) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    result = flush(.self = stdout)
 }
 
 print_error(
     .value: String,
-    .stderr: $&Writer = #reach stderr, terminal.stderr_buffered_writer, system.terminal.stderr_buffered_writer,
-) -> () := {
+    .stderr: $&Writer = #reach stderr, terminal.stderr_file, system.terminal.stderr_file,
+) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
     while i < value.length {
-        write_byte(.self = stderr, .byte = bytes_get(.string = &value, .index = i).byte)
+        wrote ::= write_byte(.self = stderr, .byte = bytes_get(.string = &value, .index = i).byte)
+        if is(.value = wrote, .variant = ..error) {
+            wrote_reason ::= wrote..error.reason
+            if is(.value = wrote_reason, .variant = ..stream_write_failed) {
+                result = ..error(.reason = ..stream_write_failed)
+            } else {
+                result = ..error(.reason = ..stream_flush_failed)
+            }
+            return
+        }
         i = i + 1
     }
+
+    result = ..ok(.value = true)
 }
 
 flush_error(
-    .stderr: $&Writer = #reach stderr, terminal.stderr_buffered_writer, system.terminal.stderr_buffered_writer,
-) -> () := {
-    flush(.self = stderr)
+    .stderr: $&Writer = #reach stderr, terminal.stderr_file, system.terminal.stderr_file,
+) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    result = flush(.self = stderr)
 }

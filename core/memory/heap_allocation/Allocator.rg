@@ -1,3 +1,5 @@
+..out_of_memory
+
 Allocator : Abstract = (
     allocate(.self: $&Self, .size: UIntNative) -> (.data: $&UInt8)
     deallocate(.self: $&Self, .data: $&UInt8, .size: UIntNative) -> ()
@@ -9,7 +11,8 @@ init(.p: $&CAllocator) -> () := {
 }
 
 allocate(.self: $&CAllocator, .size: UIntNative) -> (.data: $&UInt8) := {
-    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = malloc(.size = size))
+    allocation ::= malloc(.size = size)
+    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = allocation)
     data = cast#(.to: $&UInt8)(.value = raw_addr)
 }
 

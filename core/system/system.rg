@@ -81,5 +81,5 @@ once init(.p: $&System) -> () := {
 }
 
 deinit(.self: $&System) -> () := {
-    deinit(.self = self&.terminal, .allocator = self&.allocator)
+    deinit(.self = self&.terminal)
 }

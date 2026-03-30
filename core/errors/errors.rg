@@ -17,7 +17,7 @@ Error#(.reasons: Type) : Type = (
 
 write_trace_text(
     .text: &Char,
-    .stderr: $&Writer = #reach stderr, terminal.stderr_buffered_writer, system.terminal.stderr_buffered_writer,
+    .stderr: $&Writer = #reach stderr, terminal.stderr_file, system.terminal.stderr_file,
 ) -> () := {
     i :: UIntNative = 0
     while 1 == 1 {
@@ -34,7 +34,7 @@ write_trace_text(
 
 write_trace_uint(
     .value: UIntNative,
-    .stderr: $&Writer = #reach stderr, terminal.stderr_buffered_writer, system.terminal.stderr_buffered_writer,
+    .stderr: $&Writer = #reach stderr, terminal.stderr_file, system.terminal.stderr_file,
 ) -> () := {
     if value == 0 {
         write_trace_text(.text = "0", .stderr = stderr)
@@ -88,7 +88,7 @@ write_trace_uint(
 
 write_trace_spaces(
     .count: UIntNative,
-    .stderr: $&Writer = #reach stderr, terminal.stderr_buffered_writer, system.terminal.stderr_buffered_writer,
+    .stderr: $&Writer = #reach stderr, terminal.stderr_file, system.terminal.stderr_file,
 ) -> () := {
     i :: UIntNative = 0
     while i < count {
@@ -99,7 +99,7 @@ write_trace_spaces(
 
 report_trace(
     .trace: &ErrorTrace,
-    .stderr: $&Writer = #reach stderr, terminal.stderr_buffered_writer, system.terminal.stderr_buffered_writer,
+    .stderr: $&Writer = #reach stderr, terminal.stderr_file, system.terminal.stderr_file,
 ) -> () := {
     write_trace_text(.text = "error trace (most recent first):\n", .stderr = stderr)
 

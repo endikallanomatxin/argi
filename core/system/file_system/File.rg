@@ -53,7 +53,7 @@ open(
     path_ptr ::= pointer(.self = &path)
     mode_text ::= file_open_mode_c_string(.mode = mode)
     mode_ptr ::= pointer(.self = &mode_text)
-    opened : $&Any = fopen(.path = path_ptr, .mode = mode_ptr)
+    opened : &Any = fopen(.path = path_ptr, .mode = mode_ptr)
     p& = (
         .handle = cast#(.to: UIntNative)(.value = opened),
         .should_close = 1 == 1,
@@ -89,7 +89,7 @@ open_append(
 init_stdin(.p: $&File) -> () := {
     mode_text ::= file_open_mode_c_string(.mode = ..read)
     mode_ptr ::= pointer(.self = &mode_text)
-    stream : $&Any = fdopen(.fd = 0, .mode = mode_ptr)
+    stream : &Any = fdopen(.fd = 0, .mode = mode_ptr)
     p& = (
         .handle = cast#(.to: UIntNative)(.value = stream),
         .should_close = 0 == 1,
@@ -99,7 +99,7 @@ init_stdin(.p: $&File) -> () := {
 init_stdout(.p: $&File) -> () := {
     mode_text ::= file_open_mode_c_string(.mode = ..write)
     mode_ptr ::= pointer(.self = &mode_text)
-    stream : $&Any = fdopen(.fd = 1, .mode = mode_ptr)
+    stream : &Any = fdopen(.fd = 1, .mode = mode_ptr)
     p& = (
         .handle = cast#(.to: UIntNative)(.value = stream),
         .should_close = 0 == 1,
@@ -109,39 +109,56 @@ init_stdout(.p: $&File) -> () := {
 init_stderr(.p: $&File) -> () := {
     mode_text ::= file_open_mode_c_string(.mode = ..write)
     mode_ptr ::= pointer(.self = &mode_text)
-    stream : $&Any = fdopen(.fd = 2, .mode = mode_ptr)
+    stream : &Any = fdopen(.fd = 2, .mode = mode_ptr)
     p& = (
         .handle = cast#(.to: UIntNative)(.value = stream),
         .should_close = 0 == 1,
     )
 }
 
-close(.self: $&File) -> () := {
+close(.self: $&File) -> (.result: Errable#(.t: Bool, .reasons: (..stream_close_failed))) := {
     if self&.handle == 0 {
+        result = ..ok(.value = true)
         return
     }
 
+    close_failed :: Bool = false
     if self&.should_close {
-        _ ::= fclose(.stream = file_stream_pointer(.self = self).stream)
+        stream ::= file_stream_pointer(.self = self).stream
+        close_status ::= fclose(.stream = stream).status
+        close_failed = close_status != 0
     }
 
     self& = (
         .handle = 0,
         .should_close = 0 == 1,
     )
-}
 
-flush(.self: $&File) -> () := {
-    if self&.handle == 0 {
+    if close_failed {
+        result = ..error(.reason = ..stream_close_failed)
         return
     }
 
-    _ ::= fflush(.stream = file_stream_pointer(.self = self).stream)
+    result = ..ok(.value = true)
 }
 
-read_byte(.self: $&File) -> (.result: ReadByte) := {
+flush(.self: $&File) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     if self&.handle == 0 {
-        result = ..end
+        result = ..error(.reason = ..stream_flush_failed)
+        return
+    }
+
+    if fflush(.stream = file_stream_pointer(.self = self).stream).status != 0 {
+        result = ..error(.reason = ..stream_flush_failed)
+        return
+    }
+
+    result = ..ok(.value = true)
+}
+
+read_byte(.self: $&File) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
+    if self&.handle == 0 {
+        result = ..error(.reason = ..stream_read_failed)
         return
     }
 
@@ -154,25 +171,44 @@ read_byte(.self: $&File) -> (.result: ReadByte) := {
     ).count
 
     if read_count == 0 {
-        result = ..end
+        stream ::= file_stream_pointer(.self = self).stream
+        if ferror(.stream = stream).status != 0 {
+            result = ..error(.reason = ..stream_read_failed)
+            return
+        }
+
+        if feof(.stream = stream).status != 0 {
+            result = ..ok(.value = ..end)
+            return
+        }
+
+        result = ..error(.reason = ..stream_read_failed)
         return
     }
 
-    result = ..ok(.byte = byte)
+    result = ..ok(.value = ..ok(.byte = byte))
 }
 
-write_byte(.self: $&File, .byte: UInt8) -> () := {
+write_byte(.self: $&File, .byte: UInt8) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     if self&.handle == 0 {
+        result = ..error(.reason = ..stream_write_failed)
         return
     }
 
     single_byte :: UInt8 = byte
-    _ ::= fwrite(
+    wrote ::= fwrite(
         .buffer = &single_byte,
         .size = 1,
         .count = 1,
         .stream = file_stream_pointer(.self = self).stream,
-    )
+    ).count
+
+    if wrote != 1 {
+        result = ..error(.reason = ..stream_write_failed)
+        return
+    }
+
+    result = ..ok(.value = true)
 }
 
 File implements Reader
@@ -188,7 +224,7 @@ BufferedReader#(.base_type: Type: Reader) : Type = (
 
 init#(.base_type: Type: Reader)(
     .p: $&BufferedReader#(.base_type: base_type),
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&CAllocator = #reach allocator, system.allocator,
     .base: $&base_type,
     .capacity: UIntNative,
 ) -> () := {
@@ -210,7 +246,7 @@ init#(.base_type: Type: Reader)(
 
 deinit#(.base_type: Type: Reader)(
     .self: $&BufferedReader#(.base_type: base_type),
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&CAllocator = #reach allocator, system.allocator,
 ) -> () := {
     deallocate(.self = allocator, .data = self&.buffer, .size = self&.capacity)
     self& = (
@@ -230,11 +266,11 @@ buffered_reader_byte_address#(.base_type: Type: Reader)(
     address = base + index
 }
 
-read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_type)) -> (.result: ReadByte) := {
+read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_type)) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
     if self&.start < self&.end {
         addr :: UIntNative = buffered_reader_byte_address(.self = self, .index = self&.start).address
         ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
-        result = ..ok(.byte = ptr&)
+        result = ..ok(.value = ..ok(.byte = ptr&))
         self& = (
             .base = self&.base,
             .buffer = self&.buffer,
@@ -251,12 +287,18 @@ read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_t
     }
 
     first ::= read_byte(.self = self&.base)
-    if is(.value = first, .variant = ..end) {
-        result = ..end
+    if is(.value = first, .variant = ..error) {
+        result = ..error(.reason = first..error.reason)
         return
     }
 
-    payload ::= first..ok
+    first_payload ::= first..ok.value
+    if is(.value = first_payload, .variant = ..end) {
+        result = ..ok(.value = ..end)
+        return
+    }
+
+    payload ::= first_payload..ok
     addr :: UIntNative = buffered_reader_byte_address(.self = self, .index = 0).address
     ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
     ptr& = payload.byte
@@ -267,10 +309,8 @@ read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_t
         .start = 1,
         .end = 1,
     )
-    result = ..ok(.byte = payload.byte)
+    result = ..ok(.value = ..ok(.byte = payload.byte))
 }
-
-BufferedReader#(.base_type: Type: Reader) implements Reader
 
 BufferedWriter#(.base_type: Type: Writer) : Type = (
     .base     : $&base_type
@@ -281,7 +321,7 @@ BufferedWriter#(.base_type: Type: Writer) : Type = (
 
 init#(.base_type: Type: Writer)(
     .p: $&BufferedWriter#(.base_type: base_type),
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&CAllocator = #reach allocator, system.allocator,
     .base: $&base_type,
     .capacity: UIntNative,
 ) -> () := {
@@ -302,7 +342,7 @@ init#(.base_type: Type: Writer)(
 
 deinit#(.base_type: Type: Writer)(
     .self: $&BufferedWriter#(.base_type: base_type),
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .allocator: $&CAllocator = #reach allocator, system.allocator,
 ) -> () := {
     buffered_writer_flush(.self = self)
     deallocate(.self = allocator, .data = self&.buffer, .size = self&.capacity)
@@ -322,25 +362,47 @@ buffered_writer_byte_address#(.base_type: Type: Writer)(
     address = base + index
 }
 
-buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> () := {
+buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
     while i < self&.length {
         addr :: UIntNative = buffered_writer_byte_address(.self = self, .index = i).address
         ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
-        write_byte(.self = self&.base, .byte = ptr&)
+        wrote ::= write_byte(.self = self&.base, .byte = ptr&)
+        if is(.value = wrote, .variant = ..error) {
+            self& = (
+                .base = self&.base,
+                .buffer = self&.buffer,
+                .capacity = self&.capacity,
+                .length = 0,
+            )
+            result = ..error(.reason = wrote..error.reason)
+            return
+        }
         i = i + 1
     }
 
-    flush(.self = self&.base)
+    flushed ::= flush(.self = self&.base)
+    if is(.value = flushed, .variant = ..error) {
+        self& = (
+            .base = self&.base,
+            .buffer = self&.buffer,
+            .capacity = self&.capacity,
+            .length = 0,
+        )
+        result = ..error(.reason = flushed..error.reason)
+        return
+    }
+
     self& = (
         .base = self&.base,
         .buffer = self&.buffer,
         .capacity = self&.capacity,
         .length = 0,
     )
+    result = ..ok(.value = true)
 }
 
-write_byte#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type), .byte: UInt8) -> () := {
+write_byte#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type), .byte: UInt8) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     addr :: UIntNative = buffered_writer_byte_address(.self = self, .index = self&.length).address
     ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
     ptr& = byte
@@ -353,12 +415,13 @@ write_byte#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_
     )
 
     if next_length == self&.capacity {
-        buffered_writer_flush(.self = self)
+        result = buffered_writer_flush(.self = self)
+        return
     }
+
+    result = ..ok(.value = true)
 }
 
-flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> () := {
-    buffered_writer_flush(.self = self)
+flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    result = buffered_writer_flush(.self = self)
 }
-
-BufferedWriter#(.base_type: Type: Writer) implements Writer
