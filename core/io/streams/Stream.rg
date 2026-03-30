@@ -29,9 +29,13 @@ write(
     i :: UIntNative = 0
     while i < text.length {
         wrote ::= write_byte(.self = self, .byte = bytes_get(.string = &text, .index = i).byte)
-        if is(.value = wrote, .variant = ..error) {
-            result = ..error(.reason = wrote..error.reason)
-            return
+        match wrote {
+            ..ok(_) {
+            }
+            ..error(& err) {
+                result = ..error(.reason = err&.reason)
+                return
+            }
         }
         i = i + 1
     }

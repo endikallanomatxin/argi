@@ -2334,6 +2334,7 @@ pub const CodeGenerator = struct {
                 if (sfa.field_index >= base_ty.struct_type.fields.len) return CodegenError.InvalidType;
                 break :blk base_ty.struct_type.fields[sfa.field_index].ty;
             },
+            .choice_payload_access => |acc| acc.payload_type,
             .dereference => |d| d.ty,
             else => CodegenError.InvalidType,
         };
@@ -2364,6 +2365,21 @@ pub const CodeGenerator = struct {
                 );
                 const field_ty_ref = c.LLVMStructGetTypeAtIndex(struct_ty_ref, sfa.field_index);
                 break :blk .{ .value_ref = field_ptr, .type_ref = c.LLVMPointerType(field_ty_ref, 0), .sem_type = null };
+            },
+            .choice_payload_access => |acc| blk: {
+                const base_ptr = try self.genAddressablePointer(acc.choice_value);
+                const base_sem_ty = try self.addressableValueType(acc.choice_value);
+                if (base_sem_ty != .choice_type) return CodegenError.InvalidType;
+                const choice_ty_ref = try self.toLLVMType(.{ .choice_type = base_sem_ty.choice_type });
+                const payload_ptr = c.LLVMBuildStructGEP2(
+                    self.builder,
+                    choice_ty_ref,
+                    base_ptr.value_ref,
+                    acc.variant_index + 1,
+                    "choice.payload.addr",
+                );
+                const payload_ty_ref = try self.toLLVMType(acc.payload_type);
+                break :blk .{ .value_ref = payload_ptr, .type_ref = c.LLVMPointerType(payload_ty_ref, 0), .sem_type = null };
             },
             .dereference => |d| blk: {
                 const ptr_tv = (try self.visitNode(d.pointer)) orelse return CodegenError.ValueNotFound;

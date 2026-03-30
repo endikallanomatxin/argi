@@ -151,6 +151,26 @@ Eso permite:
 - futuras mejoras de narrowing/resto de casos sin depender de strings ni tipos
   arbitrarios
 
+Para inspeccionar un `Error` sin copiarlo, `match` puede bindear el payload por
+referencia:
+
+```rg
+match result {
+    ..ok(_) {
+    }
+    ..error(& err) {
+        match err&.reason {
+            ..file_not_found {
+                ...
+            }
+            ..permission_denied {
+                ...
+            }
+        }
+    }
+}
+```
+
 ## Runtime
 
 En runtime:

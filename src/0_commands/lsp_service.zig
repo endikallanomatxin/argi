@@ -752,7 +752,7 @@ pub const LanguageService = struct {
                     try stack.append(m.value);
                     for (m.cases) |c| {
                         try em.identAt(c.variant_name.location, TOKEN_INDEX.property, 0);
-                        if (c.payload_binding) |pb| try em.identAt(pb.location, TOKEN_INDEX.variable, DECL);
+                        if (c.payload_binding) |pb| try em.identAt(pb.name.location, TOKEN_INDEX.variable, DECL);
                         try stack.append(c.body);
                     }
                 },

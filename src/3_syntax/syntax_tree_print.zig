@@ -312,7 +312,12 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             for (m.cases) |c| {
                 indent(lvl + 1);
                 std.debug.print("Case ..{s}", .{c.variant_name.string});
-                if (c.payload_binding) |pb| std.debug.print("({s})", .{pb.string});
+                if (c.payload_binding) |pb| std.debug.print("({s}{s})", .{ switch (pb.mode) {
+                    .by_value => "",
+                    .by_borrow => "& ",
+                    .by_mut_borrow => "$& ",
+                    .by_move => "~ ",
+                }, pb.name.string });
                 std.debug.print("\n", .{});
                 printNode(c.body.*, lvl + 2);
             }

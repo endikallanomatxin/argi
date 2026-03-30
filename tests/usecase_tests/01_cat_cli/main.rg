@@ -18,13 +18,13 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
         path := system.args[i]
         text_result ::= read_file(system.file_sys, path)
         match text_result {
-            ..ok(_) {
-                text ::= text_result..ok.value
+            ..ok(payload) {
+                text ::= payload.value
                 print(text)
                 i = i + 1
             }
-            ..error(_) {
-                match text_result..error.reason {
+            ..error(& err) {
+                match err&.reason {
                     ..path_open_failed {
                         print("cat: failed to open file\n")
                     }

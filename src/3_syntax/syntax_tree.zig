@@ -322,10 +322,22 @@ pub const MatchStatement = struct {
     cases: []const MatchCase,
 };
 
+pub const MatchPayloadBindingMode = enum {
+    by_value,
+    by_borrow,
+    by_mut_borrow,
+    by_move,
+};
+
 pub const MatchCase = struct {
     variant_name: Name,
-    payload_binding: ?Name,
+    payload_binding: ?MatchPayloadBinding,
     body: *STNode,
+};
+
+pub const MatchPayloadBinding = struct {
+    mode: MatchPayloadBindingMode,
+    name: Name,
 };
 
 pub const ReturnStatement = struct {

@@ -818,6 +818,13 @@ test "feature_tests/types/28X_match_omit_payload_pattern" {
     );
 }
 
+test "feature_tests/types/32X_match_value_noncopyable_payload" {
+    try buildExpectFail(
+        "tests/feature_tests/types/32X_match_value_noncopyable_payload",
+        "type '{...}' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'",
+    );
+}
+
 test "feature_tests/collections/01_list_literal_length" {
     const test_path = "tests/feature_tests/collections/01_list_literal_length";
     try expectSuccessfulBuild(test_path);
@@ -1043,6 +1050,24 @@ test "feature_tests/types/26_error_reason_superset_propagation" {
 
 test "feature_tests/types/27_void_builtin" {
     const test_path = "tests/feature_tests/types/27_void_builtin";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/types/29_match_borrowed_payload" {
+    const test_path = "tests/feature_tests/types/29_match_borrowed_payload";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/types/30_match_mut_borrowed_payload" {
+    const test_path = "tests/feature_tests/types/30_match_mut_borrowed_payload";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/types/31_match_move_payload" {
+    const test_path = "tests/feature_tests/types/31_match_move_payload";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }

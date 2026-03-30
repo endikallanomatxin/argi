@@ -1552,10 +1552,29 @@ pub const Syntaxer = struct {
             self.advanceOne();
             const variant_name = try self.parseName();
 
-            var payload_binding: ?syn.Name = null;
+            var payload_binding: ?syn.MatchPayloadBinding = null;
             if (self.tokenIs(.open_parenthesis)) {
                 self.advanceOne();
-                payload_binding = try self.parseName();
+                var mode: syn.MatchPayloadBindingMode = .by_value;
+                if (self.tokenIs(.tilde)) {
+                    mode = .by_move;
+                    self.advanceOne();
+                } else if (self.tokenIs(.dollar)) {
+                    mode = .by_mut_borrow;
+                    self.advanceOne();
+                    if (!self.tokenIs(.ampersand)) {
+                        try self.diags.add(self.tokenLocation(), .syntax, "expected '&' after '$' in match payload binding", .{});
+                        return SyntaxerError.ExpectedAmpersand;
+                    }
+                    self.advanceOne();
+                } else if (self.tokenIs(.ampersand)) {
+                    mode = .by_borrow;
+                    self.advanceOne();
+                }
+                payload_binding = .{
+                    .mode = mode,
+                    .name = try self.parseName(),
+                };
                 if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
                 self.advanceOne();
             }

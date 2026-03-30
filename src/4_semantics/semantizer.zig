@@ -7701,7 +7701,29 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         const start_len = s.nodes.items.len;
-        const value_te = try self.visitNode(m.value.*, s);
+        const match_requires_move = for (m.cases) |case_syn| {
+            if (case_syn.payload_binding) |payload_binding| {
+                if (!std.mem.eql(u8, payload_binding.name.string, "_") and payload_binding.mode == .by_move) break true;
+            }
+        } else false;
+
+        const value_te = if (match_requires_move) blk: {
+            if (m.value.*.content == .identifier) {
+                break :blk try self.handleMove(m.value, s, m.value.location);
+            }
+
+            const te = try self.visitNode(m.value.*, s);
+            if (typ.expressionNeedsCopyForValuePosition(te.node)) {
+                try self.diags.add(
+                    m.value.location,
+                    .semantic,
+                    "match payload move bindings currently only support named bindings or temporary expressions",
+                    .{},
+                );
+                return error.Reported;
+            }
+            break :blk te;
+        } else try self.visitNode(m.value.*, s);
         if (value_te.ty != .choice_type) {
             const desc = try self.formatTypeText(value_te.ty, s);
             defer desc.deinit();
@@ -7740,7 +7762,7 @@ pub const Semantizer = struct {
                 return error.Reported;
             }
 
-            const case_body = try self.handleMatchCaseBody(value_te.node, found_idx.?, payload_ty, case_syn, s);
+            const case_body = try self.handleMatchCaseBody(value_te, found_idx.?, payload_ty, case_syn, s);
 
             const lit_ptr = try self.allocator.create(sg.ChoiceLiteral);
             lit_ptr.* = .{
@@ -7774,7 +7796,7 @@ pub const Semantizer = struct {
 
     fn handleMatchCaseBody(
         self: *Semantizer,
-        choice_value: *const sg.SGNode,
+        choice_value: typ.TypedExpr,
         variant_index: u32,
         payload_ty: ?sg.Type,
         case_syn: syn.MatchCase,
@@ -7782,7 +7804,19 @@ pub const Semantizer = struct {
     ) SemErr!*const sg.CodeBlock {
         var child = try Scope.init(self.allocator, parent, parent.current_fn);
 
-        if (case_syn.payload_binding) |binding_name| {
+        if (case_syn.payload_binding) |payload_binding| {
+            const binding_name = payload_binding.name;
+            if (std.mem.eql(u8, binding_name.string, "_")) {
+                if (payload_ty == null) {
+                    try self.diags.add(
+                        binding_name.location,
+                        .semantic,
+                        "choice variant '..{s}' has no payload to bind",
+                        .{case_syn.variant_name.string},
+                    );
+                    return error.Reported;
+                }
+            } else {
             const resolved_payload_ty = payload_ty orelse {
                 try self.diags.add(
                     binding_name.location,
@@ -7795,12 +7829,39 @@ pub const Semantizer = struct {
 
             const access = try self.allocator.create(sg.ChoicePayloadAccess);
             access.* = .{
-                .choice_value = choice_value,
+                .choice_value = choice_value.node,
                 .variant_index = variant_index,
                 .payload_type = resolved_payload_ty,
             };
             const access_node = try sg.makeSGNode(.{ .choice_payload_access = access }, binding_name.location, self.allocator);
             access_node.sem_type = resolved_payload_ty;
+
+            const init_expr: typ.TypedExpr = switch (payload_binding.mode) {
+                .by_value => try typ.ensureValuePositionAllowed(
+                    .{ .node = access_node, .ty = resolved_payload_ty },
+                    binding_name.location,
+                    parent,
+                    self.allocator,
+                    self.diags,
+                ),
+                .by_move => .{ .node = access_node, .ty = resolved_payload_ty },
+                .by_borrow => try typ.makeAddressablePointer(
+                    access_node,
+                    resolved_payload_ty,
+                    .read_only,
+                    binding_name.location,
+                    self.allocator,
+                    self.diags,
+                ),
+                .by_mut_borrow => try typ.makeAddressablePointer(
+                    access_node,
+                    resolved_payload_ty,
+                    .read_write,
+                    binding_name.location,
+                    self.allocator,
+                    self.diags,
+                ),
+            };
 
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{
@@ -7808,14 +7869,15 @@ pub const Semantizer = struct {
                 .location = binding_name.location,
                 .origin_file = binding_name.location.file,
                 .mutability = .constant,
-                .ty = resolved_payload_ty,
-                .initialization = access_node,
+                .ty = init_expr.ty,
+                .initialization = init_expr.node,
             };
 
             try child.bindings.put(binding_name.string, bd);
             const decl_node = try sg.makeSGNode(.{ .binding_declaration = bd }, binding_name.location, self.allocator);
             try child.nodes.append(decl_node);
             try self.maybeScheduleAutoDeinit(bd, binding_name.location, &child);
+            }
         } else if (payload_ty != null) {
             try self.diags.add(
                 case_syn.variant_name.location,
@@ -7827,8 +7889,12 @@ pub const Semantizer = struct {
         }
 
         const body_cb = case_syn.body.content.code_block;
-        for (body_cb.items) |st|
-            _ = try self.visitNode(st.*, &child);
+        for (body_cb.items) |st| {
+            const te = try self.visitNode(st.*, &child);
+            if (st.*.content == .function_call) {
+                try child.nodes.append(te.node);
+            }
+        }
 
         var d_idx: usize = child.deferred.items.len;
         while (d_idx > 0) : (d_idx -= 1) {

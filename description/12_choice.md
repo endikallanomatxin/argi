@@ -23,22 +23,44 @@ match value {
 }
 ```
 
-> [!TODO]
-> Sigue abierto el diseño exacto de los bindings de payload en `match` para
-> tipos no copyable.
->
-> Hoy `..variant(name)` debe entenderse como binding por valor. Si el payload no
-> implementa `copy()`, ese binding no debería usarse como atajo mágico a un
-> préstamo implícito.
->
-> Mientras no se diseñe una sintaxis y semántica mejores para borrowed payload
-> bindings, el camino estable es:
-> - usar `..variant(_)` para ramificar,
-> - y acceder al payload refinado desde el scrutinee dentro de la rama
->   (`value..variant...`).
->
-> Queda pendiente decidir una forma explícita y coherente de inspeccionar
-> payloads no copyable sin introducir magia semántica en `match`.
+Los payload bindings pueden declarar explícitamente su modo dentro del patrón:
+
+```rg
+match value {
+    ..some(payload) {
+        use payload
+    }
+}
+
+match value {
+    ..some(& payload) {
+        use payload&
+    }
+}
+
+match value {
+    ..some($& payload) {
+        payload& = other_value
+    }
+}
+
+match value {
+    ..some(~ payload) {
+        consume(payload)
+    }
+}
+```
+
+Reglas:
+- `(..payload)` es binding por valor
+- `(..& payload)` es binding por referencia read-only, de tipo `&T`
+- `(..$& payload)` es binding por referencia mutable, de tipo `$&T`
+- `(..~ payload)` mueve el payload; si el scrutinee es un binding existente, el
+  `match` lo consume
+- `(.._)` ignora el payload
+
+Esto evita préstamos implícitos mágicos: cada binding de payload declara
+explícitamente si quiere valor, préstamo o move.
 
 ## Choice options
 

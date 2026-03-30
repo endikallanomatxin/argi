@@ -164,14 +164,17 @@ print(
     i :: UIntNative = 0
     while i < value.length {
         wrote ::= write_byte(.self = stdout, .byte = bytes_get(.string = &value, .index = i).byte)
-        if is(.value = wrote, .variant = ..error) {
-            wrote_reason ::= wrote..error.reason
-            if is(.value = wrote_reason, .variant = ..stream_write_failed) {
-                result = ..error(.reason = ..stream_write_failed)
-            } else {
-                result = ..error(.reason = ..stream_flush_failed)
+        match wrote {
+            ..ok(_) {
             }
-            return
+            ..error(& err) {
+                if is(.value = err&.reason, .variant = ..stream_write_failed) {
+                    result = ..error(.reason = ..stream_write_failed)
+                } else {
+                    result = ..error(.reason = ..stream_flush_failed)
+                }
+                return
+            }
         }
         i = i + 1
     }
@@ -191,14 +194,17 @@ print(
         }
 
         wrote ::= write_byte(.self = stdout, .byte = ptr&)
-        if is(.value = wrote, .variant = ..error) {
-            wrote_reason ::= wrote..error.reason
-            if is(.value = wrote_reason, .variant = ..stream_write_failed) {
-                result = ..error(.reason = ..stream_write_failed)
-            } else {
-                result = ..error(.reason = ..stream_flush_failed)
+        match wrote {
+            ..ok(_) {
             }
-            return
+            ..error(& err) {
+                if is(.value = err&.reason, .variant = ..stream_write_failed) {
+                    result = ..error(.reason = ..stream_write_failed)
+                } else {
+                    result = ..error(.reason = ..stream_flush_failed)
+                }
+                return
+            }
         }
         i = i + 1
     }
@@ -219,14 +225,17 @@ print_error(
     i :: UIntNative = 0
     while i < value.length {
         wrote ::= write_byte(.self = stderr, .byte = bytes_get(.string = &value, .index = i).byte)
-        if is(.value = wrote, .variant = ..error) {
-            wrote_reason ::= wrote..error.reason
-            if is(.value = wrote_reason, .variant = ..stream_write_failed) {
-                result = ..error(.reason = ..stream_write_failed)
-            } else {
-                result = ..error(.reason = ..stream_flush_failed)
+        match wrote {
+            ..ok(_) {
             }
-            return
+            ..error(& err) {
+                if is(.value = err&.reason, .variant = ..stream_write_failed) {
+                    result = ..error(.reason = ..stream_write_failed)
+                } else {
+                    result = ..error(.reason = ..stream_flush_failed)
+                }
+                return
+            }
         }
         i = i + 1
     }

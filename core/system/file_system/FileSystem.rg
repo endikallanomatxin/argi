@@ -302,27 +302,33 @@ write_file(
     file ::= open_result..ok.value
 
     wrote ::= write(.self = $&file, .text = text)
-    if is(.value = wrote, .variant = ..error) {
-        _ ::= close(.self = $&file)
-        wrote_reason ::= wrote..error.reason
-        if is(.value = wrote_reason, .variant = ..stream_write_failed) {
-            result = ..error(.reason = ..stream_write_failed)
-        } else {
-            result = ..error(.reason = ..stream_flush_failed)
+    match wrote {
+        ..ok(_) {
         }
-        return
+        ..error(& err) {
+            _ ::= close(.self = $&file)
+            if is(.value = err&.reason, .variant = ..stream_write_failed) {
+                result = ..error(.reason = ..stream_write_failed)
+            } else {
+                result = ..error(.reason = ..stream_flush_failed)
+            }
+            return
+        }
     }
 
     flushed ::= flush(.self = $&file)
-    if is(.value = flushed, .variant = ..error) {
-        _ ::= close(.self = $&file)
-        flushed_reason ::= flushed..error.reason
-        if is(.value = flushed_reason, .variant = ..stream_write_failed) {
-            result = ..error(.reason = ..stream_write_failed)
-        } else {
-            result = ..error(.reason = ..stream_flush_failed)
+    match flushed {
+        ..ok(_) {
         }
-        return
+        ..error(& err) {
+            _ ::= close(.self = $&file)
+            if is(.value = err&.reason, .variant = ..stream_write_failed) {
+                result = ..error(.reason = ..stream_write_failed)
+            } else {
+                result = ..error(.reason = ..stream_flush_failed)
+            }
+            return
+        }
     }
 
     closed ::= close(.self = $&file)

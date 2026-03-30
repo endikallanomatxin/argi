@@ -1342,6 +1342,31 @@ pub fn ensureReadOnlyPointer(expr_node: *const syn.STNode, te: TypedExpr, alloca
     return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
 }
 
+pub fn makeAddressablePointer(
+    node: *const sg.SGNode,
+    value_ty: sg.Type,
+    mutability: syn.PointerMutability,
+    loc: tok.Location,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    try ensureAddressableNode(node, mutability, loc, diags);
+
+    const child_ty = try allocator.create(sg.Type);
+    child_ty.* = value_ty;
+
+    const ptr_info = try allocator.create(sg.PointerType);
+    ptr_info.* = .{ .mutability = mutability, .child = child_ty };
+
+    const addr_node = try allocator.create(sg.SGNode);
+    addr_node.* = .{
+        .location = loc,
+        .sem_type = .{ .pointer_type = ptr_info },
+        .content = .{ .address_of = node },
+    };
+    return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
+}
+
 pub fn ensureMutablePointer(
     expr_node: *const syn.STNode,
     te: TypedExpr,
@@ -1403,6 +1428,9 @@ fn ensureAddressableNode(
         },
         .struct_field_access => |sfa| {
             return ensureAddressableNode(sfa.struct_value, mutability, loc, diags);
+        },
+        .choice_payload_access => |acc| {
+            return ensureAddressableNode(acc.choice_value, mutability, loc, diags);
         },
         .dereference => |deref| {
             if (mutability == .read_write and deref.pointer_type.mutability != .read_write) {
