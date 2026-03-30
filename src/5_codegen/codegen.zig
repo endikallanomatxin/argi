@@ -397,6 +397,7 @@ pub const CodeGenerator = struct {
     fn toLLVMType(self: *CodeGenerator, t: sem.Type) CodegenError!llvm.c.LLVMTypeRef {
         return switch (t) {
             .builtin => |bt| switch (bt) {
+                .Void => c.LLVMStructType(null, 0, 0),
                 .Int8 => c.LLVMInt8Type(),
                 .Int16 => c.LLVMInt16Type(),
                 .Int32 => c.LLVMInt32Type(),
@@ -478,6 +479,7 @@ pub const CodeGenerator = struct {
         switch (t) {
             .builtin => |bt| {
                 const s = switch (bt) {
+                    .Void => "void",
                     .Int8 => "i8",
                     .Int16 => "i16",
                     .Int32 => "i32",
@@ -2465,6 +2467,11 @@ pub const CodeGenerator = struct {
         const llvm_ty = try self.toLLVMType(ty);
         return switch (ty) {
             .builtin => |bt| switch (bt) {
+                .Void => .{
+                    .value_ref = c.LLVMConstNull(llvm_ty),
+                    .type_ref = llvm_ty,
+                    .sem_type = ty,
+                },
                 .Float16, .Float32, .Float64 => .{
                     .value_ref = c.LLVMConstReal(llvm_ty, 0.0),
                     .type_ref = llvm_ty,

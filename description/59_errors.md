@@ -117,7 +117,7 @@ read_byte(.self: $&Reader)
     -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed)))
 
 write_byte(.self: $&Writer, .byte: UInt8)
-    -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed)))
+    -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
 ```
 
 EOF sigue fuera del canal de error:

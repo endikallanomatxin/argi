@@ -116,9 +116,9 @@ init_stderr(.p: $&File) -> () := {
     )
 }
 
-close(.self: $&File) -> (.result: Errable#(.t: Bool, .reasons: (..stream_close_failed))) := {
+close(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_close_failed))) := {
     if self&.handle == 0 {
-        result = ..ok(.value = true)
+        result = ..ok(.value = Void())
         return
     }
 
@@ -139,10 +139,10 @@ close(.self: $&File) -> (.result: Errable#(.t: Bool, .reasons: (..stream_close_f
         return
     }
 
-    result = ..ok(.value = true)
+    result = ..ok(.value = Void())
 }
 
-flush(.self: $&File) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+flush(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     if self&.handle == 0 {
         result = ..error(.reason = ..stream_flush_failed)
         return
@@ -153,7 +153,7 @@ flush(.self: $&File) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_f
         return
     }
 
-    result = ..ok(.value = true)
+    result = ..ok(.value = Void())
 }
 
 read_byte(.self: $&File) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
@@ -189,7 +189,7 @@ read_byte(.self: $&File) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream
     result = ..ok(.value = ..ok(.byte = byte))
 }
 
-write_byte(.self: $&File, .byte: UInt8) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+write_byte(.self: $&File, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     if self&.handle == 0 {
         result = ..error(.reason = ..stream_write_failed)
         return
@@ -208,7 +208,7 @@ write_byte(.self: $&File, .byte: UInt8) -> (.result: Errable#(.t: Bool, .reasons
         return
     }
 
-    result = ..ok(.value = true)
+    result = ..ok(.value = Void())
 }
 
 File implements Reader
@@ -362,7 +362,7 @@ buffered_writer_byte_address#(.base_type: Type: Writer)(
     address = base + index
 }
 
-buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
     while i < self&.length {
         addr :: UIntNative = buffered_writer_byte_address(.self = self, .index = i).address
@@ -399,10 +399,10 @@ buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_
         .capacity = self&.capacity,
         .length = 0,
     )
-    result = ..ok(.value = true)
+    result = ..ok(.value = Void())
 }
 
-write_byte#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type), .byte: UInt8) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+write_byte#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type), .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     addr :: UIntNative = buffered_writer_byte_address(.self = self, .index = self&.length).address
     ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
     ptr& = byte
@@ -419,9 +419,9 @@ write_byte#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_
         return
     }
 
-    result = ..ok(.value = true)
+    result = ..ok(.value = Void())
 }
 
-flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     result = buffered_writer_flush(.self = self)
 }

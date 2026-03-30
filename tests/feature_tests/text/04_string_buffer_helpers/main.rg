@@ -16,13 +16,13 @@ deinit(
     deinit(.self = $&self&.bytes, .allocator = allocator)
 }
 
-write_byte(.self: $&DummyWriter, .byte: UInt8) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+write_byte(.self: $&DummyWriter, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     push_byte(.self = $&self&.bytes, .byte = byte)
-    result = ..ok(.value = true)
+    result = ..ok(.value = Void())
 }
 
-flush(.self: $&DummyWriter) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    result = ..ok(.value = true)
+flush(.self: $&DummyWriter) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    result = ..ok(.value = Void())
 }
 
 DummyWriter implements Writer

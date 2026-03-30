@@ -4559,6 +4559,29 @@ pub const Semantizer = struct {
 
         const tv_in = try self.visitNode(call.input.*, s);
         try self.checkCallBindingExclusivity(call.callee, tv_in, call.input.*.location);
+        if (typ.builtinFromName(call.callee)) |builtin_ty| {
+            if (builtin_ty == .Void) {
+                if (tv_in.ty != .struct_type or tv_in.ty.struct_type.fields.len != 0) {
+                    try self.diags.add(
+                        call.input.*.location,
+                        .semantic,
+                        "builtin 'Void' does not accept initializer arguments",
+                        .{},
+                    );
+                    return error.Reported;
+                }
+
+                const lit = try self.allocator.create(sg.StructValueLiteral);
+                lit.* = .{
+                    .fields = &.{},
+                    .ty = .{ .builtin = .Void },
+                    .dispatch_prefix_positional_count = 0,
+                };
+                const node = try sg.makeSGNode(.{ .struct_value_literal = lit }, call.callee_loc, self.allocator);
+                node.sem_type = .{ .builtin = .Void };
+                return .{ .node = node, .ty = .{ .builtin = .Void } };
+            }
+        }
         if (s.lookupType(call.callee)) |type_decl| {
             if (!(try self.typeIsVisible(type_decl, call.input.*.location.file))) {
                 try self.addPrivateMemberDiag(call.input.*.location, "type", call.callee);

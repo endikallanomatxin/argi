@@ -18,14 +18,14 @@ Reader : Abstract = (
 )
 
 Writer : Abstract = (
-    write_byte(.self: $&Self, .byte: UInt8) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed)))
-    flush(.self: $&Self) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed)))
+    write_byte(.self: $&Self, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
+    flush(.self: $&Self) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
 )
 
 write(
     .self: $&Writer,
     .text: String,
-) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
     while i < text.length {
         wrote ::= write_byte(.self = self, .byte = bytes_get(.string = &text, .index = i).byte)
@@ -35,5 +35,5 @@ write(
         }
         i = i + 1
     }
-    result = ..ok(.value = true)
+    result = ..ok(.value = Void())
 }

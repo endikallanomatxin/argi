@@ -41,7 +41,7 @@ deinit(
 read_line_into_buffer(
     .buffer: $&String,
     .stdin: $&Reader = #reach stdin, terminal.stdin_file, system.terminal.stdin_file,
-) -> (.result: Errable#(.t: Bool, .reasons: (..stream_read_failed))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..stream_read_failed))) := {
     clear(.self = buffer)
 
     while 1 == 1 {
@@ -69,7 +69,7 @@ read_line_into_buffer(
         push_byte(.self = buffer, .byte = payload.byte)
     }
 
-    result = ..ok(.value = true)
+    result = ..ok(.value = Void())
 }
 
 read_line(
@@ -160,7 +160,7 @@ read_line(
 print(
     .value: String,
     .stdout: $&Writer = #reach stdout, terminal.stdout_file, system.terminal.stdout_file,
-) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
     while i < value.length {
         wrote ::= write_byte(.self = stdout, .byte = bytes_get(.string = &value, .index = i).byte)
@@ -181,7 +181,7 @@ print(
 print(
     .value: &Char,
     .stdout: $&Writer = #reach stdout, terminal.stdout_file, system.terminal.stdout_file,
-) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
     while 1 == 1 {
         addr :: UIntNative = cast#(.to: UIntNative)(.value = value) + i
@@ -208,14 +208,14 @@ print(
 
 flush(
     .stdout: $&Writer = #reach stdout, terminal.stdout_file, system.terminal.stdout_file,
-) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     result = flush(.self = stdout)
 }
 
 print_error(
     .value: String,
     .stderr: $&Writer = #reach stderr, terminal.stderr_file, system.terminal.stderr_file,
-) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
     while i < value.length {
         wrote ::= write_byte(.self = stderr, .byte = bytes_get(.string = &value, .index = i).byte)
@@ -231,11 +231,11 @@ print_error(
         i = i + 1
     }
 
-    result = ..ok(.value = true)
+    result = ..ok(.value = Void())
 }
 
 flush_error(
     .stderr: $&Writer = #reach stderr, terminal.stderr_file, system.terminal.stderr_file,
-) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     result = flush(.self = stderr)
 }

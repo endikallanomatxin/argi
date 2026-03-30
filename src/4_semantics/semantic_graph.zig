@@ -151,6 +151,7 @@ pub const BuiltinType = enum {
     Float64,
     Char,
     Bool,
+    Void,
     Type,
     Any,
 };

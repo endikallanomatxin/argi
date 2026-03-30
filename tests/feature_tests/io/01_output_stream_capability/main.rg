@@ -2,16 +2,16 @@ DummyOutput : Type = (
     .flush_count: Int32 = 0
 )
 
-flush(.self: $&DummyOutput) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+flush(.self: $&DummyOutput) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     self& = (
         .flush_count = self&.flush_count + 1
     )
-    result = ..ok(.value = true)
+    result = ..ok(.value = Void())
 }
 
-write_byte(.self: $&DummyOutput, .byte: UInt8) -> (.result: Errable#(.t: Bool, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+write_byte(.self: $&DummyOutput, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     _ ::= byte
-    result = ..ok(.value = true)
+    result = ..ok(.value = Void())
 }
 
 DummyOutput implements Writer

@@ -518,6 +518,7 @@ fn appendGenericIdentityPretty(
 }
 
 pub fn builtinFromName(name: []const u8) ?sg.BuiltinType {
+    if (std.mem.eql(u8, name, "Void") or std.mem.eql(u8, name, "void")) return .Void;
     return std.meta.stringToEnum(sg.BuiltinType, name);
 }
 
@@ -642,6 +643,7 @@ pub fn formatCallInput(st: *const sg.StructType, s: *Scope, allocator: *const st
 pub fn computeTypeSize(ty: sg.Type) u64 {
     return switch (ty) {
         .builtin => |bt| switch (bt) {
+            .Void => 0,
             .Int8, .UInt8, .Char, .Bool => 1,
             .Int16, .UInt16, .Float16 => 2,
             .Int32, .UInt32, .Float32 => 4,
@@ -689,6 +691,7 @@ pub fn computeTypeSize(ty: sg.Type) u64 {
 pub fn computeTypeAlignment(ty: sg.Type) u64 {
     return switch (ty) {
         .builtin => |bt| switch (bt) {
+            .Void => 1,
             .Int8, .UInt8, .Char, .Bool => 1,
             .Int16, .UInt16, .Float16 => 2,
             .Int32, .UInt32, .Float32 => 4,
