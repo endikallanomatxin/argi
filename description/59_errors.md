@@ -120,6 +120,8 @@ write_byte(.self: $&Writer, .byte: UInt8)
     -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
 ```
 
+`read_line()` y `read_file()` ya propagan `..out_of_memory` de forma explícita.
+
 EOF sigue fuera del canal de error:
 
 ```rg

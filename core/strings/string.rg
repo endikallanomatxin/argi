@@ -155,6 +155,22 @@ has_space(.self: &String) -> (.ok: Bool) := {
     ok = self&.length < capacity(.self = self).value
 }
 
+string_growth_capacity(
+    .self: &String,
+    .min_capacity: UIntNative,
+) -> (.value: UIntNative) := {
+    current_capacity ::= capacity(.self = self).value
+    if current_capacity == 0 {
+        value = min_capacity
+        return
+    }
+
+    value = current_capacity * 2
+    if value < min_capacity {
+        value = min_capacity
+    }
+}
+
 ensure_capacity(
     .self: $&String,
     .capacity: UIntNative,
@@ -189,12 +205,10 @@ ensure_capacity(
     )
 }
 
-push_byte(.self: $&String, .byte: UInt8) -> () := {
-    if has_space(.self = self).ok {
-    } else {
-        return
-    }
-
+string_append_byte(
+    .self: $&String,
+    .byte: UInt8,
+) -> () := {
     bytes_set(.string = self, .index = self&.length, .value = byte)
     self& = (
         .allocation = self&.allocation,
@@ -203,42 +217,68 @@ push_byte(.self: $&String, .byte: UInt8) -> () := {
     bytes_set(.string = self, .index = self&.length, .value = 0)
 }
 
+string_append_bytes(
+    .self: $&String,
+    .source: UIntNative,
+    .length: UIntNative,
+) -> () := {
+    if length > 0 {
+        dest ::= cast#(.to: UIntNative)(.value = self&.allocation.data) + self&.length
+        memcpy(
+            .dst = cast#(.to: $&Any)(.value = dest),
+            .src = cast#(.to: &Any)(.value = source),
+            .n = length,
+        )
+    }
+
+    self& = (
+        .allocation = self&.allocation,
+        .length = self&.length + length,
+    )
+    bytes_set(.string = self, .index = self&.length, .value = 0)
+}
+
+push_byte(.self: $&String, .byte: UInt8) -> () := {
+    if has_space(.self = self).ok {
+    } else {
+        return
+    }
+
+    string_append_byte(.self = self, .byte = byte)
+}
+
 push_c_string(
     .self: $&String,
     .text: &Char,
 ) -> () := {
-    i :: UIntNative = 0
-    while 1 == 1 {
-        addr :: UIntNative = cast#(.to: UIntNative)(.value = text) + i
-        ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
-        if ptr& == 0 {
-            break
-        }
-
-        if has_space(.self = self).ok {
-        } else {
-            break
-        }
-
-        push_byte(.self = self, .byte = ptr&)
-        i = i + 1
+    available ::= capacity(.self = self).value - self&.length
+    append_length ::= c_string_length(.text = text).length
+    if append_length > available {
+        append_length = available
     }
+
+    string_append_bytes(
+        .self = self,
+        .source = cast#(.to: UIntNative)(.value = text),
+        .length = append_length,
+    )
 }
 
 push_view(
     .self: $&String,
     .view: &StringView,
 ) -> () := {
-    i :: UIntNative = 0
-    while i < view&.length {
-        if has_space(.self = self).ok {
-        } else {
-            break
-        }
-
-        push_byte(.self = self, .byte = bytes_get(.view = view, .index = i).byte)
-        i = i + 1
+    available ::= capacity(.self = self).value - self&.length
+    append_length ::= view&.length
+    if append_length > available {
+        append_length = available
     }
+
+    string_append_bytes(
+        .self = self,
+        .source = view&.data,
+        .length = append_length,
+    )
 }
 
 c_string_length(
@@ -273,8 +313,8 @@ concat_views(
 ) -> (.out: String) := {
     allocator : $&Allocator = #reach allocator, system.allocator
     temp :: String = String(.allocator = allocator, .capacity = left&.length + right&.length)
-    push_view(.self = $&temp, .view = left)
-    push_view(.self = $&temp, .view = right)
+    string_append_bytes(.self = $&temp, .source = left&.data, .length = left&.length)
+    string_append_bytes(.self = $&temp, .source = right&.data, .length = right&.length)
     out = temp
 }
 

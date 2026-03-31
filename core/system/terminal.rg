@@ -121,7 +121,7 @@ read_line(
         if has_space(.self = &line).ok {
         } else {
             current_capacity ::= capacity(.self = &line).value
-            next_capacity ::= current_capacity * 2
+            next_capacity ::= string_growth_capacity(.self = &line, .min_capacity = current_capacity + 1).value
             new_allocation_size :: UIntNative = next_capacity + 1
             new_data ::= allocate(.self = allocator, .size = new_allocation_size)
             if cast#(.to: UIntNative)(.value = new_data) == 0 {
@@ -146,14 +146,7 @@ read_line(
             )
         }
 
-        line_length ::= line.length
-        bytes_set(.string = $&line, .index = line_length, .value = payload.byte)
-        line = (
-            .allocation = line.allocation,
-            .length = line_length + 1,
-        )
-        next_length ::= line.length
-        bytes_set(.string = $&line, .index = next_length, .value = 0)
+        string_append_byte(.self = $&line, .byte = payload.byte)
     }
 }
 
