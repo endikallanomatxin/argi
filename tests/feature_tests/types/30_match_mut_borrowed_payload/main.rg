@@ -7,7 +7,7 @@ main () -> (.status_code: Int32) := {
     value :: Result = ..ok(.value = 3)
 
     match value {
-        ..ok($& payload) {
+        ..ok $& payload {
             payload&.value = 7
         }
         ..error {
@@ -17,7 +17,7 @@ main () -> (.status_code: Int32) := {
     }
 
     match value {
-        ..ok(payload) {
+        ..ok payload {
             status_code = payload.value - 7
         }
         ..error {

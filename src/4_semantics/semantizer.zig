@@ -7882,7 +7882,7 @@ pub const Semantizer = struct {
             try self.diags.add(
                 case_syn.variant_name.location,
                 .semantic,
-                "choice variant '..{s}' carries a payload and match must bind it explicitly; use '..{s}(_)' to ignore it",
+                "choice variant '..{s}' carries a payload and match must bind it explicitly; use '..{s} _' to ignore it",
                 .{ case_syn.variant_name.string, case_syn.variant_name.string },
             );
             return error.Reported;

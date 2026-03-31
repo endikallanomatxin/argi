@@ -7,7 +7,7 @@ main () -> (.status_code: Int32) := {
     value : Result = ..error(.code = 'E')
 
     match value {
-        ..ok(payload) {
+        ..ok payload {
             status_code = payload.value
         }
         ..error {

@@ -11,7 +11,7 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
             ..end {
                 return
             }
-            ..ok(line) {
+            ..ok line {
                 if &line.text == "" {
                     return
                 } else {

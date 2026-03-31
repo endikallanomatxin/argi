@@ -30,9 +30,9 @@ write(
     while i < text.length {
         wrote ::= write_byte(.self = self, .byte = bytes_get(.string = &text, .index = i).byte)
         match wrote {
-            ..ok(_) {
+            ..ok _ {
             }
-            ..error(& err) {
+            ..error & err {
                 result = ..error(.reason = err&.reason)
                 return
             }

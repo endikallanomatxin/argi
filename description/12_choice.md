@@ -17,7 +17,7 @@ Nullable#(.t: Type) : Type = (
 match value {
     ..none {
     }
-    ..some(payload) {
+    ..some payload {
         use payload
     }
 }
@@ -27,25 +27,25 @@ Los payload bindings pueden declarar explícitamente su modo dentro del patrón:
 
 ```rg
 match value {
-    ..some(payload) {
+    ..some payload {
         use payload
     }
 }
 
 match value {
-    ..some(& payload) {
+    ..some & payload {
         use payload&
     }
 }
 
 match value {
-    ..some($& payload) {
+    ..some $& payload {
         payload& = other_value
     }
 }
 
 match value {
-    ..some(~ payload) {
+    ..some ~ payload {
         consume(payload)
     }
 }

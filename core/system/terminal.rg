@@ -165,9 +165,9 @@ print(
     while i < value.length {
         wrote ::= write_byte(.self = stdout, .byte = bytes_get(.string = &value, .index = i).byte)
         match wrote {
-            ..ok(_) {
+            ..ok _ {
             }
-            ..error(& err) {
+            ..error & err {
                 if is(.value = err&.reason, .variant = ..stream_write_failed) {
                     result = ..error(.reason = ..stream_write_failed)
                 } else {
@@ -195,9 +195,9 @@ print(
 
         wrote ::= write_byte(.self = stdout, .byte = ptr&)
         match wrote {
-            ..ok(_) {
+            ..ok _ {
             }
-            ..error(& err) {
+            ..error & err {
                 if is(.value = err&.reason, .variant = ..stream_write_failed) {
                     result = ..error(.reason = ..stream_write_failed)
                 } else {
@@ -226,9 +226,9 @@ print_error(
     while i < value.length {
         wrote ::= write_byte(.self = stderr, .byte = bytes_get(.string = &value, .index = i).byte)
         match wrote {
-            ..ok(_) {
+            ..ok _ {
             }
-            ..error(& err) {
+            ..error & err {
                 if is(.value = err&.reason, .variant = ..stream_write_failed) {
                     result = ..error(.reason = ..stream_write_failed)
                 } else {

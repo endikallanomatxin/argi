@@ -7,7 +7,7 @@ main () -> (.status_code: Int32) := {
     value : Direction = ..south
 
     match value {
-        ..north(payload) {
+        ..north payload {
             status_code = 1
         }
         ..south {

@@ -1553,8 +1553,11 @@ pub const Syntaxer = struct {
             const variant_name = try self.parseName();
 
             var payload_binding: ?syn.MatchPayloadBinding = null;
-            if (self.tokenIs(.open_parenthesis)) {
-                self.advanceOne();
+            const case_has_payload_binding = switch (self.current().content) {
+                .identifier, .tilde, .dollar, .ampersand => true,
+                else => false,
+            };
+            if (case_has_payload_binding) {
                 var mode: syn.MatchPayloadBindingMode = .by_value;
                 if (self.tokenIs(.tilde)) {
                     mode = .by_move;
@@ -1575,8 +1578,6 @@ pub const Syntaxer = struct {
                     .mode = mode,
                     .name = try self.parseName(),
                 };
-                if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
-                self.advanceOne();
             }
 
             self.skipNewLinesAndComments();

@@ -814,7 +814,7 @@ test "feature_tests/types/13X_match_bind_payload_without_payload" {
 test "feature_tests/types/28X_match_omit_payload_pattern" {
     try buildExpectFail(
         "tests/feature_tests/types/28X_match_omit_payload_pattern",
-        "choice variant '..error' carries a payload and match must bind it explicitly; use '..error(_)' to ignore it",
+        "choice variant '..error' carries a payload and match must bind it explicitly; use '..error _' to ignore it",
     );
 }
 

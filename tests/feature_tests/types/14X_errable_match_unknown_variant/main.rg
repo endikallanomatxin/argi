@@ -7,10 +7,10 @@ main := {
         ..none {
             return 0
         }
-        ..ok(payload) {
+        ..ok payload {
             return payload
         }
-        ..error(err) {
+        ..error err {
             use err
             return 0
         }

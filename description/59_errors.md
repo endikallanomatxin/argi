@@ -156,9 +156,9 @@ referencia:
 
 ```rg
 match result {
-    ..ok(_) {
+    ..ok _ {
     }
-    ..error(& err) {
+    ..error & err {
         match err&.reason {
             ..file_not_found {
                 ...

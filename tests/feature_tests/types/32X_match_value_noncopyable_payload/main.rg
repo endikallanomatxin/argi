@@ -14,7 +14,7 @@ main () -> (.status_code: Int32) := {
     value : Result = ..ok(.token = Token(.value = 7))
 
     match value {
-        ..ok(payload) {
+        ..ok payload {
             status_code = payload.token.value
         }
         ..error {

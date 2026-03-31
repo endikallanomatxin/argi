@@ -5,7 +5,7 @@ main () -> (.status_code: Int32) := {
         ..none {
             status_code = 1
         }
-        ..some(payload) {
+        ..some payload {
             status_code = payload.value - 5
         }
     }

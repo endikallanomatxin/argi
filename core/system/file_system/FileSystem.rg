@@ -303,9 +303,9 @@ write_file(
 
     wrote ::= write(.self = $&file, .text = text)
     match wrote {
-        ..ok(_) {
+        ..ok _ {
         }
-        ..error(& err) {
+        ..error & err {
             _ ::= close(.self = $&file)
             if is(.value = err&.reason, .variant = ..stream_write_failed) {
                 result = ..error(.reason = ..stream_write_failed)
@@ -318,9 +318,9 @@ write_file(
 
     flushed ::= flush(.self = $&file)
     match flushed {
-        ..ok(_) {
+        ..ok _ {
         }
-        ..error(& err) {
+        ..error & err {
             _ ::= close(.self = $&file)
             if is(.value = err&.reason, .variant = ..stream_write_failed) {
                 result = ..error(.reason = ..stream_write_failed)
