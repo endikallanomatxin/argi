@@ -205,6 +205,46 @@ ensure_capacity(
     )
 }
 
+ensure_capacity_growing(
+    .self: $&String,
+    .capacity: UIntNative,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.ok: Bool) := {
+    current_capacity ::= capacity(.self = self).value
+    if current_capacity >= capacity {
+        ok = true
+        return
+    }
+
+    new_allocation_size ::= capacity + 1
+    new_data ::= allocate(.self = allocator, .size = new_allocation_size)
+    if cast#(.to: UIntNative)(.value = new_data) == 0 {
+        ok = false
+        return
+    }
+
+    if self&.length > 0 {
+        memcpy(
+            .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = new_data)),
+            .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = self&.allocation.data)),
+            .n = self&.length,
+        )
+    }
+
+    nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = new_data) + self&.length)
+    nul_ptr& = 0
+
+    deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
+    self& = (
+        .allocation = (
+            .data = new_data,
+            .size = new_allocation_size,
+        ),
+        .length = self&.length,
+    )
+    ok = true
+}
+
 string_append_byte(
     .self: $&String,
     .byte: UInt8,
@@ -247,6 +287,25 @@ push_byte(.self: $&String, .byte: UInt8) -> () := {
     string_append_byte(.self = self, .byte = byte)
 }
 
+push_byte_growing(
+    .self: $&String,
+    .byte: UInt8,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.ok: Bool) := {
+    if has_space(.self = self).ok {
+    } else {
+        next_capacity ::= string_growth_capacity(.self = self, .min_capacity = self&.length + 1).value
+        if ensure_capacity_growing(.self = self, .capacity = next_capacity, .allocator = allocator).ok {
+        } else {
+            ok = false
+            return
+        }
+    }
+
+    string_append_byte(.self = self, .byte = byte)
+    ok = true
+}
+
 push_c_string(
     .self: $&String,
     .text: &Char,
@@ -264,6 +323,27 @@ push_c_string(
     )
 }
 
+push_c_string_growing(
+    .self: $&String,
+    .text: &Char,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.ok: Bool) := {
+    append_length ::= c_string_length(.text = text).length
+    target_capacity ::= self&.length + append_length
+    if ensure_capacity_growing(.self = self, .capacity = target_capacity, .allocator = allocator).ok {
+    } else {
+        ok = false
+        return
+    }
+
+    string_append_bytes(
+        .self = self,
+        .source = cast#(.to: UIntNative)(.value = text),
+        .length = append_length,
+    )
+    ok = true
+}
+
 push_view(
     .self: $&String,
     .view: &StringView,
@@ -279,6 +359,26 @@ push_view(
         .source = view&.data,
         .length = append_length,
     )
+}
+
+push_view_growing(
+    .self: $&String,
+    .view: &StringView,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.ok: Bool) := {
+    target_capacity ::= self&.length + view&.length
+    if ensure_capacity_growing(.self = self, .capacity = target_capacity, .allocator = allocator).ok {
+    } else {
+        ok = false
+        return
+    }
+
+    string_append_bytes(
+        .self = self,
+        .source = view&.data,
+        .length = view&.length,
+    )
+    ok = true
 }
 
 c_string_length(

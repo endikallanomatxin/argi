@@ -118,35 +118,12 @@ read_line(
             return
         }
 
-        if has_space(.self = &line).ok {
+        if push_byte_growing(.self = $&line, .byte = payload.byte, .allocator = allocator).ok {
         } else {
-            current_capacity ::= capacity(.self = &line).value
-            next_capacity ::= string_growth_capacity(.self = &line, .min_capacity = current_capacity + 1).value
-            new_allocation_size :: UIntNative = next_capacity + 1
-            new_data ::= allocate(.self = allocator, .size = new_allocation_size)
-            if cast#(.to: UIntNative)(.value = new_data) == 0 {
-                deinit(.self = $&line, .allocator = allocator)
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-
-            memcpy(
-                .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = new_data)),
-                .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = line.allocation.data)),
-                .n = line.length + 1,
-            )
-
-            deallocate(.self = allocator, .data = line.allocation.data, .size = line.allocation.size)
-            line = (
-                .allocation = (
-                    .data = new_data,
-                    .size = new_allocation_size,
-                ),
-                .length = line.length,
-            )
+            deinit(.self = $&line, .allocator = allocator)
+            result = ..error(.reason = ..out_of_memory)
+            return
         }
-
-        string_append_byte(.self = $&line, .byte = payload.byte)
     }
 }
 
