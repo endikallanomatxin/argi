@@ -1593,6 +1593,18 @@ test "feature_tests/text/19_string_defer_growing_cleanup" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/types/33_error_propagation_statement_void" {
+    const test_path = "tests/feature_tests/types/33_error_propagation_statement_void";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 7);
+}
+
+test "feature_tests/types/34_error_context_statement_void" {
+    const test_path = "tests/feature_tests/types/34_error_context_statement_void";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/modules/01_folder_module_namespace" {
     const test_path = "tests/feature_tests/modules/01_folder_module_namespace";
     try expectSuccessfulBuild(test_path);

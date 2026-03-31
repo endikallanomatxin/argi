@@ -154,6 +154,8 @@ ReadByte : Choice = (
 - añaden una entrada a la traza
 - exigen que el `Errable` actual pueda representar todas las razones
   propagadas
+- pueden usarse tanto en posición de expresión como como sentencia pura, por
+  ejemplo `step()!`, cuando el valor `..ok` no interesa
 
 `!!` además adjunta contexto textual a la entrada de traza.
 

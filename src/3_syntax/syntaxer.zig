@@ -1384,7 +1384,7 @@ pub const Syntaxer = struct {
                 }
                 // call: Name(...)
                 const input_node = try self.parseCollectionLiteral(true);
-                return try self.makeNode(
+                const call_node = try self.makeNode(
                     .{ .function_call = .{
                         .callee = name.string,
                         .callee_loc = id_loc,
@@ -1395,6 +1395,9 @@ pub const Syntaxer = struct {
                     } },
                     id_loc,
                 );
+                const expr = try self.parsePostfix(call_node);
+                if (expr == call_node) return call_node;
+                return try self.makeNode(.{ .expression_statement = expr }, expr.location);
             }
         }
 
