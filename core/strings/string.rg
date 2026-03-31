@@ -207,16 +207,16 @@ ensure_capacity(
 
 ensure_capacity_growing(
     .self: $&String,
-    .capacity: UIntNative,
+    .target_capacity: UIntNative,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.ok: Bool) := {
     current_capacity ::= capacity(.self = self).value
-    if current_capacity >= capacity {
+    if current_capacity >= target_capacity {
         ok = true
         return
     }
 
-    new_allocation_size ::= capacity + 1
+    new_allocation_size ::= target_capacity + 1
     new_data ::= allocate(.self = allocator, .size = new_allocation_size)
     if cast#(.to: UIntNative)(.value = new_data) == 0 {
         ok = false
@@ -295,7 +295,7 @@ push_byte_growing(
     if has_space(.self = self).ok {
     } else {
         next_capacity ::= string_growth_capacity(.self = self, .min_capacity = self&.length + 1).value
-        if ensure_capacity_growing(.self = self, .capacity = next_capacity, .allocator = allocator).ok {
+        if ensure_capacity_growing(.self = self, .target_capacity = next_capacity, .allocator = allocator).ok {
         } else {
             ok = false
             return
@@ -330,7 +330,7 @@ push_c_string_growing(
 ) -> (.ok: Bool) := {
     append_length ::= c_string_length(.text = text).length
     target_capacity ::= self&.length + append_length
-    if ensure_capacity_growing(.self = self, .capacity = target_capacity, .allocator = allocator).ok {
+    if ensure_capacity_growing(.self = self, .target_capacity = target_capacity, .allocator = allocator).ok {
     } else {
         ok = false
         return
@@ -367,7 +367,7 @@ push_view_growing(
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.ok: Bool) := {
     target_capacity ::= self&.length + view&.length
-    if ensure_capacity_growing(.self = self, .capacity = target_capacity, .allocator = allocator).ok {
+    if ensure_capacity_growing(.self = self, .target_capacity = target_capacity, .allocator = allocator).ok {
     } else {
         ok = false
         return
