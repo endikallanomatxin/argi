@@ -1587,6 +1587,12 @@ test "feature_tests/text/18_string_view_equals_string" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/text/19_string_defer_growing_cleanup" {
+    const test_path = "tests/feature_tests/text/19_string_defer_growing_cleanup";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/modules/01_folder_module_namespace" {
     const test_path = "tests/feature_tests/modules/01_folder_module_namespace";
     try expectSuccessfulBuild(test_path);

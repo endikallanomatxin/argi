@@ -198,24 +198,17 @@ read_file(
     }
     file ::= open_result..ok.value
 
-    initial_capacity :: UIntNative = 16
-    zero :: UIntNative = 0
-    capacity :: UIntNative = initial_capacity
-    allocation_size :: UIntNative = capacity + 1
-    buffer :: $&UInt8 = allocate(.self = allocator, .size = allocation_size)
-    if cast#(.to: UIntNative)(.value = buffer) == 0 {
+    text ::= String(.allocator = allocator, .capacity = 16)
+    if cast#(.to: UIntNative)(.value = text.allocation.data) == 0 {
         _ ::= close(.self = $&file)
         result = ..error(.reason = ..out_of_memory)
         return
     }
-    length :: UIntNative = zero
-    initial_terminator_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = buffer))
-    initial_terminator_ptr& = 0
 
     while 1 == 1 {
         next ::= read_byte(.self = $&file)
         if is(.value = next, .variant = ..error) {
-            deallocate(.self = allocator, .data = buffer, .size = allocation_size)
+            deallocate(.self = allocator, .data = text.allocation.data, .size = text.allocation.size)
             _ ::= close(.self = $&file)
             result = ..error(.reason = ..stream_read_failed)
             return
@@ -226,48 +219,22 @@ read_file(
             break
         }
 
-        if length == capacity {
-            new_capacity :: UIntNative = capacity * 2
-            new_allocation_size :: UIntNative = new_capacity + 1
-            new_buffer : $&UInt8 = allocate(.self = allocator, .size = new_allocation_size)
-            if cast#(.to: UIntNative)(.value = new_buffer) == 0 {
-                deallocate(.self = allocator, .data = buffer, .size = allocation_size)
-                _ ::= close(.self = $&file)
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-            memcpy(
-                .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = new_buffer)),
-                .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = buffer)),
-                .n = length + 1,
-            )
-            deallocate(.self = allocator, .data = buffer, .size = allocation_size)
-            buffer = new_buffer
-            capacity = new_capacity
-            allocation_size = new_allocation_size
-        }
-
         payload ::= next_value..ok
-        byte_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = buffer) + length)
-        byte_ptr& = payload.byte
-        length = length + 1
-        terminator_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = buffer) + length)
-        terminator_ptr& = 0
+        if push_byte_growing(.self = $&text, .byte = payload.byte, .allocator = allocator).ok {
+        } else {
+            deallocate(.self = allocator, .data = text.allocation.data, .size = text.allocation.size)
+            _ ::= close(.self = $&file)
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
     }
 
     close_result ::= close(.self = $&file)
     if is(.value = close_result, .variant = ..error) {
-        deallocate(.self = allocator, .data = buffer, .size = allocation_size)
+        deallocate(.self = allocator, .data = text.allocation.data, .size = text.allocation.size)
         result = ..error(.reason = ..stream_close_failed)
         return
     }
-    text :: String = (
-        .allocation = (
-            .data = buffer,
-            .size = allocation_size,
-        ),
-        .length = length,
-    )
     result = ..ok(.value = text)
 }
 

@@ -6699,7 +6699,18 @@ pub const Semantizer = struct {
             }
         }
 
+        const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
+        fn_ptr.* = .{
+            .name = tmpl.name,
+            .location = tmpl.location,
+            .is_once = false,
+            .input = in_struct_ptr.*,
+            .output = out_struct_ptr.*,
+            .body = null,
+        };
+
         var child = try Scope.init(self.allocator, s, s.current_fn);
+        child.current_fn = fn_ptr;
         var it = subst.types.iterator();
         while (it.next()) |entry| {
             const td = try self.allocator.create(sg.TypeDeclaration);
@@ -6738,15 +6749,8 @@ pub const Semantizer = struct {
             body_cb = body_te.node.content.code_block;
         }
 
-        const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
-        fn_ptr.* = .{
-            .name = tmpl.name,
-            .location = tmpl.location,
-            .is_once = false,
-            .input = in_struct_ptr.*,
-            .output = out_struct_ptr.*,
-            .body = body_cb,
-        };
+        fn_ptr.input = in_struct_ptr.*;
+        fn_ptr.body = body_cb;
 
         try s.appendFunction(name, fn_ptr);
         const node = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, tmpl.location, self.allocator);
@@ -7089,9 +7093,10 @@ pub const Semantizer = struct {
         }
 
         const rs = try self.allocator.create(sg.ReturnStatement);
+        const cleanup_nodes = try self.collectActiveEarlyCleanupNodes(s);
         rs.* = .{
             .expression = if (e) |te| te.node else null,
-            .cleanup_nodes = try self.collectActiveEarlyCleanupNodes(s),
+            .cleanup_nodes = cleanup_nodes,
         };
 
         const n = try sg.makeSGNode(.{ .return_statement = rs }, undefined, self.allocator);

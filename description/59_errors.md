@@ -121,16 +121,7 @@ write_byte(.self: $&Writer, .byte: UInt8)
 ```
 
 `read_line()` y `read_file()` ya propagan `..out_of_memory` de forma explícita.
-
-> [!TODO]
-> `read_line()` ya delega el crecimiento del buffer en `String`, pero
-> `FileSystem.read_file()` todavía mantiene un loop manual de realloc. El paso
-> natural es moverlo también a `String`; ahora mismo eso tropieza con un bug de
-> codegen al materializar un `String` local dentro de ese bucle.
->
-> El mismo frente aparece al intentar exponer y testear directamente helpers de
-> crecimiento más bajos de `String`: hoy el código funciona bien desde
-> `read_line()`, pero el backend todavía falla en algunos usos directos.
+`read_line()` y `read_file()` delegan ya el crecimiento del buffer en `String`.
 
 EOF sigue fuera del canal de error:
 

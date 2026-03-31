@@ -1639,7 +1639,6 @@ pub const CodeGenerator = struct {
     // ────────────────────────────────────────── return ──
     fn genReturn(self: *CodeGenerator, r: *sem.ReturnStatement) !void {
         const ret_ty = self.current_return_type.?;
-
         // ─── caso "return expr;" ────────────────────────────────────────────
         if (r.expression) |e| {
             const tv = (try self.visitNode(e)) orelse
