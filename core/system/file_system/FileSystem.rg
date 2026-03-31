@@ -198,12 +198,13 @@ read_file(
     }
     file ::= open_result..ok.value
 
-    text ::= String(.allocator = allocator, .capacity = 16)
-    if cast#(.to: UIntNative)(.value = text.allocation.data) == 0 {
+    create_result ::= string_with_capacity(.allocator = allocator, .capacity = 16)
+    if is(.value = create_result, .variant = ..error) {
         _ ::= close(.self = $&file)
         result = ..error(.reason = ..out_of_memory)
         return
     }
+    text ::= create_result..ok.value
 
     while 1 == 1 {
         next ::= read_byte(.self = $&file)
@@ -220,12 +221,16 @@ read_file(
         }
 
         payload ::= next_value..ok
-        if push_byte_growing(.self = $&text, .byte = payload.byte, .allocator = allocator).ok {
-        } else {
-            deallocate(.self = allocator, .data = text.allocation.data, .size = text.allocation.size)
-            _ ::= close(.self = $&file)
-            result = ..error(.reason = ..out_of_memory)
-            return
+        grew ::= push_byte_growing(.self = $&text, .byte = payload.byte, .allocator = allocator)
+        match grew {
+            ..ok _ {
+            }
+            ..error _ {
+                deallocate(.self = allocator, .data = text.allocation.data, .size = text.allocation.size)
+                _ ::= close(.self = $&file)
+                result = ..error(.reason = ..out_of_memory)
+                return
+            }
         }
     }
 

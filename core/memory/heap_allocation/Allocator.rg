@@ -5,6 +5,20 @@ Allocator : Abstract = (
     deallocate(.self: $&Self, .data: $&UInt8, .size: UIntNative) -> ()
 )
 
+allocate_fallible(
+    .self: $&Allocator,
+    .size: UIntNative,
+) -> (.result: Errable#(.t: UIntNative, .reasons: (..out_of_memory))) := {
+    data ::= allocate(.self = self, .size = size)
+    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = data)
+    if raw_addr == 0 {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
+
+    result = ..ok(.value = raw_addr)
+}
+
 CAllocator : Type = ()
 
 init(.p: $&CAllocator) -> () := {

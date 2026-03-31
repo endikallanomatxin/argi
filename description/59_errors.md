@@ -121,7 +121,21 @@ write_byte(.self: $&Writer, .byte: UInt8)
 ```
 
 `read_line()` y `read_file()` ya propagan `..out_of_memory` de forma explícita.
-`read_line()` y `read_file()` delegan ya el crecimiento del buffer en `String`.
+`read_line()` y `read_file()` delegan ya la creación y el crecimiento del buffer
+en helpers fallibles de `String`.
+
+En `core`, la dirección idiomática para operaciones de crecimiento o reserva ya
+no es:
+- puntero crudo + comparar con `0`
+- `Bool` para decir si la reserva salió bien
+
+Sino:
+- `allocate_fallible(...) -> Errable#(.t: UIntNative, .reasons: (..out_of_memory))`
+- helpers como `string_with_capacity(...)`
+- operaciones de crecimiento que devuelven `Errable#(.t: Void, .reasons: (..out_of_memory))`
+
+Eso ya se aplica en `String` y en las rutas fallibles de `DynamicArray`
+(`push_growing`, `insert_growing`, `dynamic_array_grow_growing`).
 
 EOF sigue fuera del canal de error:
 

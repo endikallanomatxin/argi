@@ -2,10 +2,13 @@ helper(.allocator: $&Allocator) -> (.ok: Bool) := {
     text ::= String(.allocator = allocator, .capacity = 1)
     #defer deinit(.self = $&text, .allocator = allocator)
 
-    if push_byte_growing(.self = $&text, .byte = 65, .allocator = allocator).ok {
-    } else {
-        ok = false
-        return
+    match push_byte_growing(.self = $&text, .byte = 65, .allocator = allocator) {
+        ..ok _ {
+        }
+        ..error _ {
+            ok = false
+            return
+        }
     }
 
     if text.length != 1 {

@@ -12,6 +12,61 @@ String : Type = (
     .length     : UIntNative
 )
 
+string_with_length(
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .length: UIntNative,
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    allocation_size ::= length + 1
+    allocate_result ::= allocate_fallible(.self = allocator, .size = allocation_size)
+    match allocate_result {
+        ..ok payload {
+            out :: String = (
+                .allocation = (
+                    .data = cast#(.to: $&UInt8)(.value = payload.value),
+                    .size = allocation_size,
+                ),
+                .length = length,
+            )
+            bytes_set(.string = $&out, .index = length, .value = 0)
+            result = ..ok(.value = out)
+        }
+        ..error _ {
+            result = ..error(.reason = ..out_of_memory)
+        }
+    }
+}
+
+string_with_capacity(
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .capacity: UIntNative,
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    actual_capacity ::= capacity
+    one :: UIntNative = 1
+
+    if actual_capacity == 0 {
+        actual_capacity = one
+    }
+
+    allocation_size ::= actual_capacity + 1
+    allocate_result ::= allocate_fallible(.self = allocator, .size = allocation_size)
+    match allocate_result {
+        ..ok payload {
+            out :: String = (
+                .allocation = (
+                    .data = cast#(.to: $&UInt8)(.value = payload.value),
+                    .size = allocation_size,
+                ),
+                .length = 0,
+            )
+            bytes_set(.string = $&out, .index = 0, .value = 0)
+            result = ..ok(.value = out)
+        }
+        ..error _ {
+            result = ..error(.reason = ..out_of_memory)
+        }
+    }
+}
+
 init (
     .p: $&String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
@@ -209,40 +264,44 @@ ensure_capacity_growing(
     .self: $&String,
     .target_capacity: UIntNative,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.ok: Bool) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     current_capacity ::= capacity(.self = self).value
     if current_capacity >= target_capacity {
-        ok = true
+        result = ..ok(.value = Void())
         return
     }
 
     new_allocation_size ::= target_capacity + 1
-    new_data ::= allocate(.self = allocator, .size = new_allocation_size)
-    if cast#(.to: UIntNative)(.value = new_data) == 0 {
-        ok = false
-        return
+    allocate_result ::= allocate_fallible(.self = allocator, .size = new_allocation_size)
+    match allocate_result {
+        ..ok payload {
+            new_data : $&UInt8 = cast#(.to: $&UInt8)(.value = payload.value)
+
+            if self&.length > 0 {
+                memcpy(
+                    .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = new_data)),
+                    .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = self&.allocation.data)),
+                    .n = self&.length,
+                )
+            }
+
+            nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = new_data) + self&.length)
+            nul_ptr& = 0
+
+            deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
+            self& = (
+                .allocation = (
+                    .data = new_data,
+                    .size = new_allocation_size,
+                ),
+                .length = self&.length,
+            )
+            result = ..ok(.value = Void())
+        }
+        ..error _ {
+            result = ..error(.reason = ..out_of_memory)
+        }
     }
-
-    if self&.length > 0 {
-        memcpy(
-            .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = new_data)),
-            .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = self&.allocation.data)),
-            .n = self&.length,
-        )
-    }
-
-    nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = new_data) + self&.length)
-    nul_ptr& = 0
-
-    deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
-    self& = (
-        .allocation = (
-            .data = new_data,
-            .size = new_allocation_size,
-        ),
-        .length = self&.length,
-    )
-    ok = true
 }
 
 string_append_byte(
@@ -291,19 +350,23 @@ push_byte_growing(
     .self: $&String,
     .byte: UInt8,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.ok: Bool) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     if has_space(.self = self).ok {
     } else {
         next_capacity ::= string_growth_capacity(.self = self, .min_capacity = self&.length + 1).value
-        if ensure_capacity_growing(.self = self, .target_capacity = next_capacity, .allocator = allocator).ok {
-        } else {
-            ok = false
-            return
+        growth_result ::= ensure_capacity_growing(.self = self, .target_capacity = next_capacity, .allocator = allocator)
+        match growth_result {
+            ..ok _ {
+            }
+            ..error _ {
+                result = ..error(.reason = ..out_of_memory)
+                return
+            }
         }
     }
 
     string_append_byte(.self = self, .byte = byte)
-    ok = true
+    result = ..ok(.value = Void())
 }
 
 push_c_string(
@@ -327,13 +390,17 @@ push_c_string_growing(
     .self: $&String,
     .text: &Char,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.ok: Bool) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     append_length ::= c_string_length(.text = text).length
     target_capacity ::= self&.length + append_length
-    if ensure_capacity_growing(.self = self, .target_capacity = target_capacity, .allocator = allocator).ok {
-    } else {
-        ok = false
-        return
+    growth_result ::= ensure_capacity_growing(.self = self, .target_capacity = target_capacity, .allocator = allocator)
+    match growth_result {
+        ..ok _ {
+        }
+        ..error _ {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
     }
 
     string_append_bytes(
@@ -341,7 +408,7 @@ push_c_string_growing(
         .source = cast#(.to: UIntNative)(.value = text),
         .length = append_length,
     )
-    ok = true
+    result = ..ok(.value = Void())
 }
 
 push_view(
@@ -365,12 +432,16 @@ push_view_growing(
     .self: $&String,
     .view: &StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.ok: Bool) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     target_capacity ::= self&.length + view&.length
-    if ensure_capacity_growing(.self = self, .target_capacity = target_capacity, .allocator = allocator).ok {
-    } else {
-        ok = false
-        return
+    growth_result ::= ensure_capacity_growing(.self = self, .target_capacity = target_capacity, .allocator = allocator)
+    match growth_result {
+        ..ok _ {
+        }
+        ..error _ {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
     }
 
     string_append_bytes(
@@ -378,7 +449,7 @@ push_view_growing(
         .source = view&.data,
         .length = view&.length,
     )
-    ok = true
+    result = ..ok(.value = Void())
 }
 
 c_string_length(

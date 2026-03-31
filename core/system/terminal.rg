@@ -77,20 +77,12 @@ read_line(
     .stdin: $&Reader = #reach stdin, terminal.stdin_file, system.terminal.stdin_file,
 ) -> (.result: Errable#(.t: ReadLine, .reasons: (..stream_read_failed, ..out_of_memory))) := {
     initial_capacity :: UIntNative = 16
-    allocation_size :: UIntNative = initial_capacity + 1
-    data ::= allocate(.self = allocator, .size = allocation_size)
-    if cast#(.to: UIntNative)(.value = data) == 0 {
+    create_result ::= string_with_capacity(.allocator = allocator, .capacity = initial_capacity)
+    if is(.value = create_result, .variant = ..error) {
         result = ..error(.reason = ..out_of_memory)
         return
     }
-    line :: String = (
-        .allocation = (
-            .data = data,
-            .size = allocation_size,
-        ),
-        .length = 0,
-    )
-    bytes_set(.string = $&line, .index = 0, .value = 0)
+    line ::= create_result..ok.value
 
     while 1 == 1 {
         next ::= read_byte(.self = stdin)
@@ -118,11 +110,15 @@ read_line(
             return
         }
 
-        if push_byte_growing(.self = $&line, .byte = payload.byte, .allocator = allocator).ok {
-        } else {
-            deinit(.self = $&line, .allocator = allocator)
-            result = ..error(.reason = ..out_of_memory)
-            return
+        grew ::= push_byte_growing(.self = $&line, .byte = payload.byte, .allocator = allocator)
+        match grew {
+            ..ok _ {
+            }
+            ..error _ {
+                deinit(.self = $&line, .allocator = allocator)
+                result = ..error(.reason = ..out_of_memory)
+                return
+            }
         }
     }
 }
