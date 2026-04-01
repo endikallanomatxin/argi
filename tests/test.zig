@@ -1659,6 +1659,12 @@ test "feature_tests/modules/20_inferred_errable_imported" {
     try runExpect(test_path, 43);
 }
 
+test "feature_tests/modules/21_inferred_explicit_errable_imported" {
+    const test_path = "tests/feature_tests/modules/21_inferred_explicit_errable_imported";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 44);
+}
+
 
 test "feature_tests/modules/03X_import_missing_module" {
     try buildExpectFail(
