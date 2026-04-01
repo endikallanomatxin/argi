@@ -304,6 +304,8 @@ pub const FunctionDeclaration = struct {
     input: StructType, // Arguments
     output: StructType, // Named return params
     body: ?*const CodeBlock,
+    output_bindings: []const *const BindingDeclaration = &.{},
+    inferred_error_reasons: ?*const ChoiceType = null,
 
     pub fn isExtern(self: *const FunctionDeclaration) bool {
         return self.body == null;

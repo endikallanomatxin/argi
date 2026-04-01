@@ -92,6 +92,11 @@ load_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found, ..perm
 }
 ```
 
+The compiler can also infer a narrower subset of the declared reasons by
+looking at the actual propagation and return sites in the function body. That
+inferred subset is surfaced in tooling hover even when the full declared
+`.reasons` are still written explicitly in source.
+
 En `core`, la misma idea ya se usa para fallos de apertura, de sistema de
 ficheros y de streams:
 
@@ -165,6 +170,15 @@ Hoy ya se usan de forma normal en contextos de expresión comunes:
 - sentencias puras: `flush()!`
 
 `!!` además adjunta contexto textual a la entrada de traza.
+
+Dirección actual de la inferencia de reasons:
+- la firma sigue escribiendo el conjunto completo declarado
+- semántica calcula un subconjunto inferido a partir de `return`, asignaciones a
+  outputs y propagaciones con `!` / `!!`
+- el hover muestra ese subconjunto inferido para que se pueda consultar sin
+  ruido extra en el código
+- el siguiente paso será permitir omitir `.reasons` en más sitios una vez esta
+  inferencia sea suficientemente robusta también entre módulos
 
 ## Exhaustividad
 

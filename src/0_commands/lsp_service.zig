@@ -1862,6 +1862,7 @@ fn buildFunctionHoverMarkdown(
             if (!functionHasInferredReachedFields(decl, syntax_decl)) {
                 if (try extractFunctionHeaderSource(source_text, toks, syntax_decl)) |header| {
                     try out.appendSlice(header);
+                    try appendInferredReasonsHoverText(&out, decl);
                     return try out.toOwnedSlice();
                 }
             }
@@ -1869,6 +1870,7 @@ fn buildFunctionHoverMarkdown(
     }
 
     try appendGeneratedSignatureText(&out, decl, syntax_decl_opt, type_refs);
+    try appendInferredReasonsHoverText(&out, decl);
 
     return try out.toOwnedSlice();
 }
@@ -1962,6 +1964,15 @@ fn appendGeneratedSignatureText(
     try out.appendSlice(")");
 }
 
+fn appendInferredReasonsHoverText(
+    out: *std.array_list.Managed(u8),
+    decl: *const sg.FunctionDeclaration,
+) !void {
+    const reasons = decl.inferred_error_reasons orelse return;
+    try out.appendSlice("\n\ninferred reasons: ");
+    try appendHoverChoiceSet(out, reasons);
+}
+
 fn appendSignatureFieldText(
     out: *std.array_list.Managed(u8),
     field: sg.StructTypeField,
@@ -2032,6 +2043,19 @@ fn appendHoverType(
         .struct_type => |_| try out.appendSlice("{...}"),
         .choice_type => |_| try out.appendSlice("choice"),
     }
+}
+
+fn appendHoverChoiceSet(
+    out: *std.array_list.Managed(u8),
+    choice_ty: *const sg.ChoiceType,
+) !void {
+    try out.appendSlice("(");
+    for (choice_ty.variants, 0..) |variant, idx| {
+        if (idx != 0) try out.appendSlice(", ");
+        try out.appendSlice("..");
+        try out.appendSlice(variant.name);
+    }
+    try out.appendSlice(")");
 }
 
 fn hoverTypeNameFor(ty: sg.Type, type_refs: []const SemanticTypeDeclRef) ?[]const u8 {
@@ -3567,6 +3591,44 @@ test "hover returns information for operator use" {
     defer if (hover_opt) |hover| std.testing.allocator.free(hover.contents);
     try std.testing.expect(std.mem.indexOf(u8, hover_opt.?.contents, "operator ==") != null);
     try std.testing.expect(std.mem.indexOf(u8, hover_opt.?.contents, "Bool") != null);
+}
+
+test "hover shows inferred error reasons" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const code =
+        \\..file_not_found
+        \\..permission_denied
+        \\
+        \\fail() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found))) := {
+        \\    result = ..error(.reason = ..file_not_found)
+        \\}
+        \\
+        \\load() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found, ..permission_denied))) := {
+        \\    value := fail()!
+        \\    result = ..ok(.value = value)
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+
+    const diags = try svc.openDocument(uri, abs_path, 1, code);
+    defer diags.deinit();
+
+    const hover_opt = try svc.hover(uri, .{ .line = 7, .character = 2 });
+    try std.testing.expect(hover_opt != null);
+    defer if (hover_opt) |hover| std.testing.allocator.free(hover.contents);
+    try std.testing.expect(std.mem.indexOf(u8, hover_opt.?.contents, "inferred reasons: (..file_not_found)") != null);
 }
 
 test "semantic tokens include string literal and function call" {

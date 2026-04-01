@@ -205,6 +205,7 @@ pub const Semantizer = struct {
         // Final conformance verification for abstracts (top-level scope)
         try abs.verifyAbstracts(&global, self.allocator, self.diags);
         try self.verifyOnceFunctions(&global);
+        try self.inferFunctionErrorReasons(&global);
 
         self.root_nodes = try self.root_list.toOwnedSlice();
         self.root_list.deinit();
@@ -237,6 +238,422 @@ pub const Semantizer = struct {
             }
         }
         return "";
+    }
+
+    fn inferFunctionErrorReasons(self: *Semantizer, global: *Scope) SemErr!void {
+        var total_functions: usize = 0;
+        var it_count = global.functions.iterator();
+        while (it_count.next()) |entry| {
+            total_functions += entry.value_ptr.items.len;
+        }
+
+        var round: usize = 0;
+        while (round <= total_functions) : (round += 1) {
+            var changed = false;
+            var it = global.functions.iterator();
+            while (it.next()) |entry| {
+                for (entry.value_ptr.items) |fn_decl| {
+                    if (try self.inferSingleFunctionErrorReasons(fn_decl)) {
+                        changed = true;
+                    }
+                }
+            }
+            if (!changed) break;
+        }
+    }
+
+    fn inferSingleFunctionErrorReasons(self: *Semantizer, fn_decl: *sg.FunctionDeclaration) SemErr!bool {
+        const declared_reasons = self.functionDeclaredErrorReasons(fn_decl) orelse {
+            fn_decl.inferred_error_reasons = null;
+            return false;
+        };
+
+        if (fn_decl.body == null) {
+            fn_decl.inferred_error_reasons = declared_reasons;
+            return false;
+        }
+
+        const seen = try self.allocator.alloc(bool, declared_reasons.variants.len);
+        defer self.allocator.free(seen);
+        @memset(seen, false);
+
+        const body = fn_decl.body.?;
+        try self.collectFunctionReasonsFromBlock(fn_decl, body, declared_reasons, seen);
+
+        const inferred = try self.makeReasonSubsetChoice(declared_reasons, seen);
+        const changed = if (fn_decl.inferred_error_reasons) |existing|
+            !self.reasonChoiceTypesEqual(existing, inferred)
+        else
+            true;
+        fn_decl.inferred_error_reasons = inferred;
+        return changed;
+    }
+
+    fn functionDeclaredErrorReasons(self: *Semantizer, fn_decl: *const sg.FunctionDeclaration) ?*const sg.ChoiceType {
+        _ = self;
+        const ret_ty = typ.functionReturnType(@constCast(fn_decl));
+        return errableReasonChoiceFromType(ret_ty);
+    }
+
+    fn errableReasonChoiceFromType(ty: sg.Type) ?*const sg.ChoiceType {
+        const errable_choice = switch (ty) {
+            .choice_type => |choice_ty| choice_ty,
+            else => return null,
+        };
+
+        for (errable_choice.variants) |variant| {
+            if (!std.mem.eql(u8, variant.name, "error")) continue;
+            const payload_ty = variant.payload_type orelse return null;
+            const payload_struct = switch (payload_ty) {
+                .struct_type => |st| st,
+                else => return null,
+            };
+            const reason_field = typ.findFieldByName(payload_struct, "reason") orelse return null;
+            return switch (reason_field.ty) {
+                .choice_type => |reason_choice| reason_choice,
+                else => null,
+            };
+        }
+
+        return null;
+    }
+
+    fn collectFunctionReasonsFromNode(
+        self: *Semantizer,
+        fn_decl: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        declared_reasons: *const sg.ChoiceType,
+        seen: []bool,
+    ) SemErr!void {
+        switch (node.content) {
+            .binding_assignment => |assignment| {
+                if (self.bindingIsFunctionOutput(fn_decl, assignment.sym_id)) {
+                    try self.markReasonsFromReturnedExpr(assignment.value, declared_reasons, seen);
+                }
+                try self.collectFunctionReasonsFromNode(fn_decl, assignment.value, declared_reasons, seen);
+            },
+            .error_propagation => |prop| {
+                try self.markReasonsFromErrableNode(prop.errable_value, declared_reasons, seen);
+                try self.collectFunctionReasonsFromNode(fn_decl, prop.errable_value, declared_reasons, seen);
+            },
+            .error_context => |ctx| {
+                try self.markReasonsFromErrableNode(ctx.errable_value, declared_reasons, seen);
+                try self.collectFunctionReasonsFromNode(fn_decl, ctx.errable_value, declared_reasons, seen);
+                try self.collectFunctionReasonsFromNode(fn_decl, ctx.context, declared_reasons, seen);
+            },
+            .return_statement => |ret| {
+                if (ret.expression) |value| {
+                    try self.markReasonsFromReturnedExpr(value, declared_reasons, seen);
+                    try self.collectFunctionReasonsFromNode(fn_decl, value, declared_reasons, seen);
+                }
+            },
+            .function_call => |call| {
+                try self.collectFunctionReasonsFromNode(fn_decl, call.input, declared_reasons, seen);
+            },
+            .code_block => |block| {
+                for (block.nodes) |child| {
+                    try self.collectFunctionReasonsFromNode(fn_decl, child, declared_reasons, seen);
+                }
+                if (block.ret_val) |ret_node| {
+                    try self.collectFunctionReasonsFromNode(fn_decl, ret_node, declared_reasons, seen);
+                }
+            },
+            .struct_value_literal => |lit| {
+                for (lit.fields) |field| {
+                    try self.collectFunctionReasonsFromNode(fn_decl, field.value, declared_reasons, seen);
+                }
+            },
+            .choice_literal => |lit| {
+                if (lit.payload) |payload| {
+                    try self.collectFunctionReasonsFromNode(fn_decl, payload, declared_reasons, seen);
+                }
+            },
+            .list_literal => |lit| {
+                for (lit.elements) |elem| {
+                    try self.collectFunctionReasonsFromNode(fn_decl, elem, declared_reasons, seen);
+                }
+            },
+            .array_literal => |arr| {
+                for (arr.elements) |elem| {
+                    try self.collectFunctionReasonsFromNode(fn_decl, elem, declared_reasons, seen);
+                }
+            },
+            .array_index => |idx| {
+                try self.collectFunctionReasonsFromNode(fn_decl, idx.array_ptr, declared_reasons, seen);
+                try self.collectFunctionReasonsFromNode(fn_decl, idx.index, declared_reasons, seen);
+            },
+            .array_store => |store| {
+                try self.collectFunctionReasonsFromNode(fn_decl, store.array_ptr, declared_reasons, seen);
+                try self.collectFunctionReasonsFromNode(fn_decl, store.index, declared_reasons, seen);
+                try self.collectFunctionReasonsFromNode(fn_decl, store.value, declared_reasons, seen);
+            },
+            .struct_field_store => |store| {
+                try self.collectFunctionReasonsFromNode(fn_decl, store.struct_ptr, declared_reasons, seen);
+                try self.collectFunctionReasonsFromNode(fn_decl, store.value, declared_reasons, seen);
+            },
+            .struct_field_access => |access| {
+                try self.collectFunctionReasonsFromNode(fn_decl, access.struct_value, declared_reasons, seen);
+            },
+            .choice_payload_access => |access| {
+                try self.collectFunctionReasonsFromNode(fn_decl, access.choice_value, declared_reasons, seen);
+            },
+            .binary_operation => |op| {
+                try self.collectFunctionReasonsFromNode(fn_decl, op.left, declared_reasons, seen);
+                try self.collectFunctionReasonsFromNode(fn_decl, op.right, declared_reasons, seen);
+            },
+            .comparison => |cmp| {
+                try self.collectFunctionReasonsFromNode(fn_decl, cmp.left, declared_reasons, seen);
+                try self.collectFunctionReasonsFromNode(fn_decl, cmp.right, declared_reasons, seen);
+            },
+            .logical_operation => |op| {
+                try self.collectFunctionReasonsFromNode(fn_decl, op.left, declared_reasons, seen);
+                try self.collectFunctionReasonsFromNode(fn_decl, op.right, declared_reasons, seen);
+            },
+            .if_statement => |if_stmt| {
+                try self.collectFunctionReasonsFromNode(fn_decl, if_stmt.condition, declared_reasons, seen);
+                try self.collectFunctionReasonsFromBlock(fn_decl, if_stmt.then_block, declared_reasons, seen);
+                if (if_stmt.else_block) |else_block| {
+                    try self.collectFunctionReasonsFromBlock(fn_decl, else_block, declared_reasons, seen);
+                }
+            },
+            .while_statement => |while_stmt| {
+                try self.collectFunctionReasonsFromNode(fn_decl, while_stmt.condition, declared_reasons, seen);
+                try self.collectFunctionReasonsFromBlock(fn_decl, while_stmt.body, declared_reasons, seen);
+            },
+            .for_statement => |for_stmt| {
+                if (for_stmt.init) |for_init| {
+                    try self.collectFunctionReasonsFromNode(fn_decl, for_init, declared_reasons, seen);
+                }
+                try self.collectFunctionReasonsFromNode(fn_decl, for_stmt.condition, declared_reasons, seen);
+                if (for_stmt.increment) |increment| {
+                    try self.collectFunctionReasonsFromNode(fn_decl, increment, declared_reasons, seen);
+                }
+                try self.collectFunctionReasonsFromBlock(fn_decl, for_stmt.body, declared_reasons, seen);
+            },
+            .switch_statement => |switch_stmt| {
+                try self.collectFunctionReasonsFromNode(fn_decl, switch_stmt.expression, declared_reasons, seen);
+                for (switch_stmt.cases) |case| {
+                    try self.collectFunctionReasonsFromNode(fn_decl, case.value, declared_reasons, seen);
+                    try self.collectFunctionReasonsFromBlock(fn_decl, case.body, declared_reasons, seen);
+                }
+                if (switch_stmt.default_case) |default_case| {
+                    try self.collectFunctionReasonsFromBlock(fn_decl, default_case, declared_reasons, seen);
+                }
+            },
+            .move_value => |inner| try self.collectFunctionReasonsFromNode(fn_decl, inner, declared_reasons, seen),
+            .address_of => |inner| try self.collectFunctionReasonsFromNode(fn_decl, inner, declared_reasons, seen),
+            .dereference => |deref| try self.collectFunctionReasonsFromNode(fn_decl, deref.pointer, declared_reasons, seen),
+            .pointer_assignment => |assignment| {
+                try self.collectFunctionReasonsFromNode(fn_decl, assignment.pointer, declared_reasons, seen);
+                try self.collectFunctionReasonsFromNode(fn_decl, assignment.value, declared_reasons, seen);
+            },
+            .type_initializer => |type_init| {
+                try self.collectFunctionReasonsFromNode(fn_decl, type_init.args, declared_reasons, seen);
+            },
+            .explicit_cast => |cast_expr| try self.collectFunctionReasonsFromNode(fn_decl, cast_expr.value, declared_reasons, seen),
+            .choice_option_declaration,
+            .type_declaration,
+            .function_declaration,
+            .auto_deinit_binding,
+            .binding_declaration,
+            .binding_use,
+            .reach_directive,
+            .value_literal,
+            .type_literal,
+            .break_statement,
+            .continue_statement,
+            => {},
+        }
+    }
+
+    fn collectFunctionReasonsFromBlock(
+        self: *Semantizer,
+        fn_decl: *const sg.FunctionDeclaration,
+        block: *const sg.CodeBlock,
+        declared_reasons: *const sg.ChoiceType,
+        seen: []bool,
+    ) SemErr!void {
+        for (block.nodes) |child| {
+            try self.collectFunctionReasonsFromNode(fn_decl, child, declared_reasons, seen);
+        }
+        if (block.ret_val) |ret_node| {
+            try self.collectFunctionReasonsFromNode(fn_decl, ret_node, declared_reasons, seen);
+        }
+    }
+
+    fn bindingIsFunctionOutput(self: *Semantizer, fn_decl: *const sg.FunctionDeclaration, binding: *const sg.BindingDeclaration) bool {
+        _ = self;
+        for (fn_decl.output_bindings) |candidate| {
+            if (candidate == binding) return true;
+        }
+        return false;
+    }
+
+    fn markReasonsFromReturnedExpr(
+        self: *Semantizer,
+        node: *const sg.SGNode,
+        declared_reasons: *const sg.ChoiceType,
+        seen: []bool,
+    ) SemErr!void {
+        switch (node.content) {
+            .choice_literal => |lit| {
+                if (std.mem.eql(u8, lit.variant_name, "error")) {
+                    if (lit.payload) |payload| {
+                        try self.markReasonsFromErrorPayloadExpr(payload, declared_reasons, seen);
+                        return;
+                    }
+                }
+            },
+            else => {},
+        }
+
+        try self.markReasonsFromErrableNode(node, declared_reasons, seen);
+    }
+
+    fn markReasonsFromErrorPayloadExpr(
+        self: *Semantizer,
+        payload: *const sg.SGNode,
+        declared_reasons: *const sg.ChoiceType,
+        seen: []bool,
+    ) SemErr!void {
+        switch (payload.content) {
+            .struct_value_literal => |lit| {
+                for (lit.fields) |field| {
+                    if (!std.mem.eql(u8, field.name, "reason")) continue;
+                    try self.markReasonsFromReasonExpr(field.value, declared_reasons, seen);
+                    return;
+                }
+            },
+            else => {},
+        }
+
+        const payload_ty = payload.sem_type orelse return;
+        const payload_struct = switch (payload_ty) {
+            .struct_type => |st| st,
+            else => return,
+        };
+        const reason_field = typ.findFieldByName(payload_struct, "reason") orelse return;
+        const reason_choice = switch (reason_field.ty) {
+            .choice_type => |choice_ty| choice_ty,
+            else => return,
+        };
+        self.markReasonsFromChoice(reason_choice, declared_reasons, seen);
+    }
+
+    fn markReasonsFromReasonExpr(
+        self: *Semantizer,
+        node: *const sg.SGNode,
+        declared_reasons: *const sg.ChoiceType,
+        seen: []bool,
+    ) SemErr!void {
+        switch (node.content) {
+            .choice_literal => |lit| {
+                const variant = lit.choice_type.variants[lit.variant_index];
+                self.markReasonVariant(variant, declared_reasons, seen);
+                return;
+            },
+            else => {},
+        }
+
+        const reason_ty = node.sem_type orelse return;
+        const reason_choice = switch (reason_ty) {
+            .choice_type => |choice_ty| choice_ty,
+            else => return,
+        };
+        self.markReasonsFromChoice(reason_choice, declared_reasons, seen);
+    }
+
+    fn markReasonsFromErrableNode(
+        self: *Semantizer,
+        node: *const sg.SGNode,
+        declared_reasons: *const sg.ChoiceType,
+        seen: []bool,
+    ) SemErr!void {
+        switch (node.content) {
+            .function_call => |call| {
+                if (call.callee.inferred_error_reasons) |inferred| {
+                    self.markReasonsFromChoice(inferred, declared_reasons, seen);
+                    return;
+                }
+                if (self.functionDeclaredErrorReasons(call.callee)) |declared| {
+                    self.markReasonsFromChoice(declared, declared_reasons, seen);
+                }
+                return;
+            },
+            .error_propagation => |prop| {
+                const reason_choice = errableReasonChoiceFromType(prop.errable_value.sem_type orelse return) orelse return;
+                self.markReasonsFromChoice(reason_choice, declared_reasons, seen);
+                return;
+            },
+            .error_context => |ctx| {
+                const reason_choice = errableReasonChoiceFromType(ctx.errable_value.sem_type orelse return) orelse return;
+                self.markReasonsFromChoice(reason_choice, declared_reasons, seen);
+                return;
+            },
+            else => {},
+        }
+
+        const node_ty = node.sem_type orelse return;
+        const reason_choice = errableReasonChoiceFromType(node_ty) orelse return;
+        self.markReasonsFromChoice(reason_choice, declared_reasons, seen);
+    }
+
+    fn markReasonsFromChoice(
+        self: *Semantizer,
+        source_reasons: *const sg.ChoiceType,
+        declared_reasons: *const sg.ChoiceType,
+        seen: []bool,
+    ) void {
+        for (source_reasons.variants) |variant| {
+            self.markReasonVariant(variant, declared_reasons, seen);
+        }
+    }
+
+    fn markReasonVariant(
+        self: *Semantizer,
+        variant: sg.ChoiceVariant,
+        declared_reasons: *const sg.ChoiceType,
+        seen: []bool,
+    ) void {
+        _ = self;
+        const idx = typ.choiceTypeContainsVariant(declared_reasons, variant) orelse return;
+        seen[idx] = true;
+    }
+
+    fn makeReasonSubsetChoice(
+        self: *Semantizer,
+        declared_reasons: *const sg.ChoiceType,
+        seen: []const bool,
+    ) SemErr!*const sg.ChoiceType {
+        var count: usize = 0;
+        for (seen) |used| {
+            if (used) count += 1;
+        }
+
+        const variants = try self.allocator.alloc(sg.ChoiceVariant, count);
+        var out_idx: usize = 0;
+        for (declared_reasons.variants, seen) |variant, used| {
+            if (!used) continue;
+            variants[out_idx] = variant;
+            out_idx += 1;
+        }
+
+        const choice = try self.allocator.create(sg.ChoiceType);
+        choice.* = .{
+            .variants = variants,
+            .identity = null,
+        };
+        return choice;
+    }
+
+    fn reasonChoiceTypesEqual(self: *Semantizer, left: *const sg.ChoiceType, right: *const sg.ChoiceType) bool {
+        _ = self;
+        if (left.variants.len != right.variants.len) return false;
+        for (left.variants, right.variants) |lhs, rhs| {
+            if (lhs.option_decl != rhs.option_decl) return false;
+            if (lhs.option_decl == null and !std.mem.eql(u8, lhs.name, rhs.name)) return false;
+        }
+        return true;
     }
 
     fn collectActiveDeferredNodes(self: *Semantizer, s: *Scope) ![]const *sg.SGNode {
@@ -3031,6 +3448,7 @@ pub const Semantizer = struct {
 
         // ── salida
         var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
+        var output_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
         for (f.output.fields) |fld| {
             const ty = self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| return err;
             const dvp = if (fld.default_value) |n|
@@ -3054,9 +3472,12 @@ pub const Semantizer = struct {
                 .initialization = dvp,
             };
             try child.bindings.put(fld.name.string, bd);
+            try output_bindings.append(bd);
         }
         const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
+        const output_binding_slice = try output_bindings.toOwnedSlice();
         out_fields.deinit();
+        output_bindings.deinit();
 
         var existing_fn: ?*sg.FunctionDeclaration = null;
         if (p.functions.getPtr(f.name.string)) |list_ptr| {
@@ -3072,6 +3493,7 @@ pub const Semantizer = struct {
             if (existing_fn) |cand| {
                 cand.input = in_struct_ptr.*;
                 cand.output = out_struct;
+                cand.output_bindings = output_binding_slice;
                 break :blk cand;
             }
 
@@ -3083,6 +3505,7 @@ pub const Semantizer = struct {
                 .input = in_struct_ptr.*,
                 .output = out_struct,
                 .body = null,
+                .output_bindings = output_binding_slice,
             };
 
             if (p.functions.getPtr(f.name.string)) |list_ptr| {
