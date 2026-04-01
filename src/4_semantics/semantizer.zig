@@ -135,6 +135,12 @@ pub const Semantizer = struct {
     defer_unknown_top_level: bool = false,
     current_top_node: ?*const syn.STNode = null,
     max_retry_rounds: u32 = 8,
+    retry_enqueue_attempts: u32 = 0,
+    retry_enqueue_unique: u32 = 0,
+    retry_function_nodes: u32 = 0,
+    retry_type_nodes: u32 = 0,
+    retry_symbol_nodes: u32 = 0,
+    retry_other_nodes: u32 = 0,
     synthetic_name_counter: u32 = 0,
     next_choice_option_id: u32 = 1,
     next_inferred_choice_identity_id: u32 = 1,
@@ -156,18 +162,71 @@ pub const Semantizer = struct {
         };
     }
 
+    pub const AnalyzeTimings = struct {
+        initial_pass_ns: u64 = 0,
+        retry_passes_ns: u64 = 0,
+        final_retry_resolution_ns: u64 = 0,
+        abstract_verify_ns: u64 = 0,
+        once_verify_ns: u64 = 0,
+        error_reason_inference_ns: u64 = 0,
+        initial_retry_count: u32 = 0,
+        retry_round_count: u32 = 0,
+        retry_enqueue_attempts: u32 = 0,
+        retry_enqueue_unique: u32 = 0,
+        retry_function_nodes: u32 = 0,
+        retry_type_nodes: u32 = 0,
+        retry_symbol_nodes: u32 = 0,
+        retry_other_nodes: u32 = 0,
+
+        pub fn total(self: AnalyzeTimings) u64 {
+            return self.initial_pass_ns +
+                self.retry_passes_ns +
+                self.final_retry_resolution_ns +
+                self.abstract_verify_ns +
+                self.once_verify_ns +
+                self.error_reason_inference_ns;
+        }
+    };
+
     pub fn analyze(self: *Semantizer) SemErr![]const *sg.SGNode {
+        return (try self.analyzeWithTimings()).nodes;
+    }
+
+    pub const AnalyzeResult = struct {
+        nodes: []const *sg.SGNode,
+        timings: AnalyzeTimings,
+    };
+
+    pub fn analyzeWithTimings(self: *Semantizer) SemErr!AnalyzeResult {
         var global = try Scope.init(self.allocator, null, null);
+        try self.predeclareTopLevelSymbols(&global);
+        var timings: AnalyzeTimings = .{};
+        self.retry_enqueue_attempts = 0;
+        self.retry_enqueue_unique = 0;
+        self.retry_function_nodes = 0;
+        self.retry_type_nodes = 0;
+        self.retry_symbol_nodes = 0;
+        self.retry_other_nodes = 0;
 
         // 1) Pasada inicial: difiere los UnknownType top-level
+        const initial_start = std.time.nanoTimestamp();
         self.defer_unknown_top_level = true;
         for (self.st_nodes) |n| {
+            if (n.content == .function_declaration) continue;
+            self.current_top_node = n;
+            _ = self.visitNode(n.*, &global) catch {};
+        }
+        for (self.st_nodes) |n| {
+            if (n.content != .function_declaration) continue;
             self.current_top_node = n;
             _ = self.visitNode(n.*, &global) catch {};
         }
         self.current_top_node = null;
+        timings.initial_pass_ns = @intCast(std.time.nanoTimestamp() - initial_start);
+        timings.initial_retry_count = @intCast(self.pending_next.items.len);
 
         // 2) Rondas de reintento: solo lo pendiente
+        const retry_start = std.time.nanoTimestamp();
         var round: u32 = 0;
         while (self.pending_next.items.len > 0 and round < self.max_retry_rounds) {
             // swap pending_next -> pending_now
@@ -178,6 +237,17 @@ pub const Semantizer = struct {
 
             var progressed = false;
             for (self.pending_now.items) |pn| {
+                if (pn.content == .function_declaration) continue;
+                self.current_top_node = pn;
+                if (self.visitNode(pn.*, &global)) |_| {
+                    progressed = true;
+                } else |_| {
+                    // Las causas distintas de UnknownType ya se reportan dentro.
+                    // UnknownType vuelve a entrar en pending_next si procede.
+                }
+            }
+            for (self.pending_now.items) |pn| {
+                if (pn.content != .function_declaration) continue;
                 self.current_top_node = pn;
                 if (self.visitNode(pn.*, &global)) |_| {
                     progressed = true;
@@ -191,8 +261,11 @@ pub const Semantizer = struct {
             if (!progressed) break;
             round += 1;
         }
+        timings.retry_passes_ns = @intCast(std.time.nanoTimestamp() - retry_start);
+        timings.retry_round_count = round;
 
         // 3) Último pase: ya NO diferir => emitir diags de lo que quede
+        const final_retry_start = std.time.nanoTimestamp();
         self.defer_unknown_top_level = false;
         if (self.pending_next.items.len > 0) {
             for (self.pending_next.items) |pn| {
@@ -202,16 +275,240 @@ pub const Semantizer = struct {
             self.current_top_node = null;
             self.pending_next.items.len = 0;
         }
+        timings.final_retry_resolution_ns = @intCast(std.time.nanoTimestamp() - final_retry_start);
 
         // Final conformance verification for abstracts (top-level scope)
+        const abstract_verify_start = std.time.nanoTimestamp();
         try abs.verifyAbstracts(&global, self.allocator, self.diags);
+        timings.abstract_verify_ns = @intCast(std.time.nanoTimestamp() - abstract_verify_start);
+
+        const once_verify_start = std.time.nanoTimestamp();
         try self.verifyOnceFunctions(&global);
+        timings.once_verify_ns = @intCast(std.time.nanoTimestamp() - once_verify_start);
+
+        const reason_inference_start = std.time.nanoTimestamp();
         try self.inferFunctionErrorReasons(&global);
+        timings.error_reason_inference_ns = @intCast(std.time.nanoTimestamp() - reason_inference_start);
+        timings.retry_enqueue_attempts = self.retry_enqueue_attempts;
+        timings.retry_enqueue_unique = self.retry_enqueue_unique;
+        timings.retry_function_nodes = self.retry_function_nodes;
+        timings.retry_type_nodes = self.retry_type_nodes;
+        timings.retry_symbol_nodes = self.retry_symbol_nodes;
+        timings.retry_other_nodes = self.retry_other_nodes;
 
         self.root_nodes = try self.root_list.toOwnedSlice();
         self.root_list.deinit();
         self.clearDeferred(&global);
-        return self.root_nodes;
+        return .{
+            .nodes = self.root_nodes,
+            .timings = timings,
+        };
+    }
+
+    fn predeclareTopLevelSymbols(self: *Semantizer, global: *Scope) SemErr!void {
+        for (self.st_nodes) |node| {
+            switch (node.content) {
+                .symbol_declaration => |decl| try self.predeclareTopLevelImportAlias(decl, global, node.location),
+                .type_declaration => |decl| try self.predeclareTopLevelType(decl, global),
+                .choice_option_declaration => |decl| try self.predeclareTopLevelChoiceOption(decl, global, node.location),
+                .function_declaration => |decl| try self.predeclareTopLevelFunction(decl, global, node.location),
+                else => {},
+            }
+        }
+    }
+
+    fn predeclareTopLevelImportAlias(
+        self: *Semantizer,
+        decl: syn.SymbolDeclaration,
+        global: *Scope,
+        loc: tok.Location,
+    ) SemErr!void {
+        const value = decl.value orelse return;
+        if (value.*.content != .import_statement) return;
+        if (global.module_aliases.contains(decl.name.string)) return;
+
+        const resolved = source_files.resolveImportDir(self.allocator, loc.file, value.*.content.import_statement.path) catch return;
+        try global.module_aliases.put(decl.name.string, resolved);
+    }
+
+    fn predeclareTopLevelType(
+        self: *Semantizer,
+        decl: syn.TypeDeclaration,
+        global: *Scope,
+    ) SemErr!void {
+        if (decl.generic_params.len > 0 or decl.generic_params_struct != null) return;
+        if (global.types.contains(decl.name.string)) return;
+
+        switch (decl.value.*.content) {
+            .struct_type_literal => {
+                const stub = try self.allocator.create(sg.StructType);
+                stub.* = .{ .fields = &.{} };
+
+                const td = try self.allocator.create(sg.TypeDeclaration);
+                td.* = .{
+                    .name = decl.name.string,
+                    .origin_file = decl.value.location.file,
+                    .ty = .{ .struct_type = stub },
+                };
+                try global.types.put(decl.name.string, td);
+            },
+            .choice_type_literal => {
+                const stub = try self.allocator.create(sg.ChoiceType);
+                stub.* = .{ .variants = &.{} };
+
+                const td = try self.allocator.create(sg.TypeDeclaration);
+                td.* = .{
+                    .name = decl.name.string,
+                    .origin_file = decl.value.location.file,
+                    .ty = .{ .choice_type = stub },
+                };
+                try global.types.put(decl.name.string, td);
+            },
+            else => {},
+        }
+    }
+
+    fn predeclareTopLevelChoiceOption(
+        self: *Semantizer,
+        decl: syn.ChoiceOptionDeclaration,
+        global: *Scope,
+        loc: tok.Location,
+    ) SemErr!void {
+        if (global.choice_options.contains(decl.name.string)) return;
+
+        const option_decl = try self.allocator.create(sg.ChoiceOptionDeclaration);
+        option_decl.* = .{
+            .name = decl.name.string,
+            .origin_file = loc.file,
+            .id = self.next_choice_option_id,
+        };
+        self.next_choice_option_id += 1;
+        try global.choice_options.put(decl.name.string, option_decl);
+    }
+
+    fn predeclareTopLevelFunction(
+        self: *Semantizer,
+        decl: syn.FunctionDeclaration,
+        global: *Scope,
+        loc: tok.Location,
+    ) SemErr!void {
+        if (decl.generic_params.len > 0 or decl.generic_params_struct != null) return;
+
+        if (try self.abstractContractNameForFunctionDecl(decl, global) != null) return;
+
+        if (global.functions.getPtr(decl.name.string)) |list_ptr| {
+            for (list_ptr.items) |cand| {
+                if (std.mem.eql(u8, cand.location.file, loc.file) and cand.location.offset == loc.offset) return;
+            }
+        }
+
+        var child = try Scope.init(self.allocator, global, null);
+
+        var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
+        defer in_fields.deinit();
+        for (decl.input.fields) |fld| {
+            const ty = self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| switch (err) {
+                error.UnknownType, error.SymbolNotFound => return,
+                else => return err,
+            };
+
+            try in_fields.append(.{
+                .name = fld.name.string,
+                .ty = ty,
+                .default_value = null,
+            });
+
+            const bd = try self.allocator.create(sg.BindingDeclaration);
+            bd.* = .{
+                .name = fld.name.string,
+                .location = fld.name.location,
+                .origin_file = loc.file,
+                .mutability = .constant,
+                .ty = ty,
+                .initialization = null,
+            };
+            try child.bindings.put(fld.name.string, bd);
+        }
+
+        var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
+        defer out_fields.deinit();
+        var uses_inferred_error_reasons = false;
+        for (decl.output.fields) |fld| {
+            const ty = if (self.inferableErrableInnerTypeFromOutput(fld.type.?)) |inner|
+                blk: {
+                    uses_inferred_error_reasons = true;
+                    break :blk self.makeInferredErrableType(inner, &child, fld.name.location) catch |err| switch (err) {
+                        error.UnknownType, error.SymbolNotFound => return,
+                        else => return err,
+                    };
+                }
+            else
+                self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| switch (err) {
+                    error.UnknownType, error.SymbolNotFound => return,
+                    else => return err,
+                };
+
+            try out_fields.append(.{
+                .name = fld.name.string,
+                .ty = ty,
+                .default_value = null,
+            });
+        }
+
+        const in_struct_ptr = try self.allocator.create(sg.StructType);
+        in_struct_ptr.* = .{ .fields = try in_fields.toOwnedSlice() };
+
+        const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
+        fn_ptr.* = .{
+            .name = decl.name.string,
+            .location = loc,
+            .is_once = decl.is_once,
+            .input = in_struct_ptr.*,
+            .output = .{ .fields = try out_fields.toOwnedSlice() },
+            .body = null,
+            .uses_inferred_error_reasons = uses_inferred_error_reasons,
+            .output_bindings = &.{},
+        };
+
+        if (global.functions.getPtr(decl.name.string)) |list_ptr| {
+            for (list_ptr.items) |cand| {
+                if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = &fn_ptr.input })) {
+                    return;
+                }
+            }
+        }
+
+        try global.appendFunction(decl.name.string, fn_ptr);
+    }
+
+    fn abstractContractNameForFunctionDecl(
+        self: *Semantizer,
+        f: syn.FunctionDeclaration,
+        p: *Scope,
+    ) SemErr!?[]const u8 {
+        _ = self;
+        for (f.input.fields) |field| {
+            const field_ty = field.type orelse continue;
+            switch (field_ty) {
+                .type_name => |tn| {
+                    if (p.lookupAbstractInfo(tn.string) != null) return tn.string;
+                },
+                .generic_type_instantiation => |g| {
+                    if (p.lookupAbstractInfo(g.base_name.string) != null) return g.base_name.string;
+                },
+                .pointer_type => |ptr_info| switch (ptr_info.child.*) {
+                    .type_name => |tn| {
+                        if (p.lookupAbstractInfo(tn.string) != null) return tn.string;
+                    },
+                    .generic_type_instantiation => |g| {
+                        if (p.lookupAbstractInfo(g.base_name.string) != null) return g.base_name.string;
+                    },
+                    else => {},
+                },
+                else => {},
+            }
+        }
+        return null;
     }
 
     pub fn printSG(self: *Semantizer) void {
@@ -2745,20 +3042,21 @@ pub const Semantizer = struct {
             try self.diags.add(loc, .semantic, "choice options can only be declared at module scope", .{});
             return error.Reported;
         }
-        if (s.choice_options.contains(decl.name.string)) return error.SymbolAlreadyDefined;
-
-        const option_decl = try self.allocator.create(sg.ChoiceOptionDeclaration);
-        option_decl.* = .{
-            .name = decl.name.string,
-            .origin_file = loc.file,
-            .id = self.next_choice_option_id,
+        const option_decl = if (s.choice_options.get(decl.name.string)) |existing|
+            existing
+        else blk: {
+            const created = try self.allocator.create(sg.ChoiceOptionDeclaration);
+            created.* = .{
+                .name = decl.name.string,
+                .origin_file = loc.file,
+                .id = self.next_choice_option_id,
+            };
+            self.next_choice_option_id += 1;
+            try s.choice_options.put(decl.name.string, created);
+            break :blk created;
         };
-        self.next_choice_option_id += 1;
 
-        try s.choice_options.put(decl.name.string, option_decl);
-        const node = try sg.makeSGNode(.{ .choice_option_declaration = option_decl }, loc, self.allocator);
-        try s.nodes.append(node);
-        if (s.parent == null) try self.root_list.append(node);
+        const node = try self.appendChoiceOptionDeclarationNodeIfMissing(s, option_decl, loc);
         return .{ .node = node, .ty = .{ .builtin = .Any } };
     }
 
@@ -3231,11 +3529,6 @@ pub const Semantizer = struct {
         s: *Scope,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
-        if (s.bindings.contains(d.name.string))
-            return error.SymbolAlreadyDefined;
-        if (s.lookupModuleAlias(d.name.string) != null)
-            return error.SymbolAlreadyDefined;
-
         if (d.value) |v| {
             if (v.*.content == .import_statement) {
                 const resolved = source_files.resolveImportDir(self.allocator, loc.file, v.*.content.import_statement.path) catch {
@@ -3247,9 +3540,23 @@ pub const Semantizer = struct {
                     );
                     return error.Reported;
                 };
+
+                if (s.lookupModuleAlias(d.name.string)) |existing| {
+                    if (!std.mem.eql(u8, existing, resolved)) return error.SymbolAlreadyDefined;
+                    return try typ.makeTypeLiteral(self.allocator, loc, .{ .builtin = .Any });
+                }
+
+                if (s.bindings.contains(d.name.string)) return error.SymbolAlreadyDefined;
                 try s.module_aliases.put(d.name.string, resolved);
                 return try typ.makeTypeLiteral(self.allocator, loc, .{ .builtin = .Any });
             }
+        }
+
+        if (s.bindings.contains(d.name.string)) {
+            return error.SymbolAlreadyDefined;
+        }
+        if (s.lookupModuleAlias(d.name.string) != null) {
+            return error.SymbolAlreadyDefined;
         }
 
         var init_node: ?*syn.STNode = null;
@@ -3382,9 +3689,7 @@ pub const Semantizer = struct {
                         td = try self.allocator.create(sg.TypeDeclaration);
                         td.* = .{ .name = d.name.string, .origin_file = d.value.location.file, .ty = .{ .struct_type = stub } };
                         try s.types.put(d.name.string, td);
-                        const n0 = try sg.makeSGNode(.{ .type_declaration = td }, d.value.location, self.allocator);
-                        try s.nodes.append(n0);
-                        if (s.parent == null) try self.root_list.append(n0);
+                        try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
                     }
 
                     const st_ptr = try self.structTypeFromLiteral(st_lit, s);
@@ -3400,12 +3705,29 @@ pub const Semantizer = struct {
                         };
                         dst.identity = .{ .generic = identity };
                     }
+                    try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
                     const noop = try self.makeNoopNode(d.value.location);
                     break :blk_struct .{ .node = noop, .ty = .{ .builtin = .Any } };
                 },
                 .choice_type_literal => |ct_lit| blk_choice: {
-                    if (s.types.contains(d.name.string))
-                        return error.SymbolAlreadyDefined;
+                    var td: *sg.TypeDeclaration = undefined;
+                    if (s.types.get(d.name.string)) |existing| {
+                        if (existing.ty != .choice_type) return error.SymbolAlreadyDefined;
+                        td = existing;
+                    } else {
+                        const stub = try self.allocator.create(sg.ChoiceType);
+                        stub.* = .{ .variants = &.{} };
+
+                        td = try self.allocator.create(sg.TypeDeclaration);
+                        td.* = .{
+                            .name = d.name.string,
+                            .origin_file = d.value.location.file,
+                            .ty = .{ .choice_type = stub },
+                        };
+                        try s.types.put(d.name.string, td);
+
+                        try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
+                    }
 
                     var variants = std.array_list.Managed(sg.ChoiceVariant).init(self.allocator.*);
                     for (ct_lit.variants, 0..) |variant, idx| {
@@ -3427,29 +3749,21 @@ pub const Semantizer = struct {
                         });
                     }
 
-                    const choice_ptr = try self.allocator.create(sg.ChoiceType);
-                    choice_ptr.* = .{ .variants = try variants.toOwnedSlice() };
-                    const identity = try self.allocator.create(sg.GenericTypeIdentity);
-                    identity.* = .{
-                        .base_name = d.name.string,
-                        .arg_names = &.{},
-                        .arg_values = &.{},
-                    };
-                    choice_ptr.identity = .{ .generic = identity };
+                    const choice_ptr_const = td.ty.choice_type;
+                    const choice_ptr: *sg.ChoiceType = @constCast(choice_ptr_const);
+                    choice_ptr.variants = try variants.toOwnedSlice();
+                    if (choice_ptr.identity == null) {
+                        const identity = try self.allocator.create(sg.GenericTypeIdentity);
+                        identity.* = .{
+                            .base_name = d.name.string,
+                            .arg_names = &.{},
+                            .arg_values = &.{},
+                        };
+                        choice_ptr.identity = .{ .generic = identity };
+                    }
                     variants.deinit();
 
-                    const td = try self.allocator.create(sg.TypeDeclaration);
-                    td.* = .{
-                        .name = d.name.string,
-                        .origin_file = d.value.location.file,
-                        .ty = .{ .choice_type = choice_ptr },
-                    };
-                    try s.types.put(d.name.string, td);
-
-                    const n0 = try sg.makeSGNode(.{ .type_declaration = td }, d.value.location, self.allocator);
-                    try s.nodes.append(n0);
-                    if (s.parent == null) try self.root_list.append(n0);
-
+                    try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
                     const noop = try self.makeNoopNode(d.value.location);
                     break :blk_choice .{ .node = noop, .ty = .{ .builtin = .Any } };
                 },
@@ -3624,13 +3938,10 @@ pub const Semantizer = struct {
                 }
             }
             try p.appendFunction(f.name.string, created);
-
-            const n = try sg.makeSGNode(.{ .function_declaration = created }, loc, self.allocator);
-            try p.nodes.append(n);
-            if (p.parent == null) try self.root_list.append(n);
             break :blk created;
         };
 
+        try self.appendFunctionDeclarationNodeIfMissing(p, fn_ptr, loc);
         child.current_fn = fn_ptr;
 
         // ── cuerpo
@@ -3652,6 +3963,55 @@ pub const Semantizer = struct {
         self.clearDeferred(&child);
         const noop = try self.makeNoopNode(loc);
         return .{ .node = noop, .ty = .{ .builtin = .Any } };
+    }
+
+    fn appendTypeDeclarationNodeIfMissing(
+        self: *Semantizer,
+        s: *Scope,
+        td: *sg.TypeDeclaration,
+        loc: tok.Location,
+    ) !void {
+        for (s.nodes.items) |node| {
+            if (node.content != .type_declaration) continue;
+            if (node.content.type_declaration == td) return;
+        }
+
+        const node = try sg.makeSGNode(.{ .type_declaration = td }, loc, self.allocator);
+        try s.nodes.append(node);
+        if (s.parent == null) try self.root_list.append(node);
+    }
+
+    fn appendFunctionDeclarationNodeIfMissing(
+        self: *Semantizer,
+        s: *Scope,
+        fd: *sg.FunctionDeclaration,
+        loc: tok.Location,
+    ) !void {
+        for (s.nodes.items) |node| {
+            if (node.content != .function_declaration) continue;
+            if (node.content.function_declaration == fd) return;
+        }
+
+        const node = try sg.makeSGNode(.{ .function_declaration = fd }, loc, self.allocator);
+        try s.nodes.append(node);
+        if (s.parent == null) try self.root_list.append(node);
+    }
+
+    fn appendChoiceOptionDeclarationNodeIfMissing(
+        self: *Semantizer,
+        s: *Scope,
+        option_decl: *sg.ChoiceOptionDeclaration,
+        loc: tok.Location,
+    ) !*sg.SGNode {
+        for (s.nodes.items) |node| {
+            if (node.content != .choice_option_declaration) continue;
+            if (node.content.choice_option_declaration == option_decl) return node;
+        }
+
+        const node = try sg.makeSGNode(.{ .choice_option_declaration = option_decl }, loc, self.allocator);
+        try s.nodes.append(node);
+        if (s.parent == null) try self.root_list.append(node);
+        return node;
     }
 
     fn genericParamsStructOrNames(
@@ -9928,7 +10288,18 @@ pub const Semantizer = struct {
     fn pushTopLevelForRetry(self: *Semantizer) !void {
         if (!self.defer_unknown_top_level) return;
         if (self.current_top_node) |ptr| {
+            self.retry_enqueue_attempts += 1;
+            for (self.pending_next.items) |pending| {
+                if (pending == ptr) return;
+            }
             try self.pending_next.append(ptr);
+            self.retry_enqueue_unique += 1;
+            switch (ptr.content) {
+                .function_declaration => self.retry_function_nodes += 1,
+                .type_declaration => self.retry_type_nodes += 1,
+                .symbol_declaration => self.retry_symbol_nodes += 1,
+                else => self.retry_other_nodes += 1,
+            }
         }
     }
     fn walkAutoDeinitOnceReachability(

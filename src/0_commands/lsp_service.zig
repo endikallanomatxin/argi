@@ -9,6 +9,7 @@ const syntaxer = @import("../3_syntax/syntaxer.zig");
 const sg = @import("../4_semantics/semantic_graph.zig");
 const semantizer = @import("../4_semantics/semantizer.zig");
 const typ = @import("../4_semantics/types.zig");
+const frontend = @import("frontend_pipeline.zig");
 
 // Token types legend indices
 const TOKEN_INDEX = struct {
@@ -426,42 +427,21 @@ pub const LanguageService = struct {
         var diagnostics = diag.Diagnostics.init(analysis_allocator, files);
         defer diagnostics.deinit();
 
-        var tokens = std.array_list.Managed(token.Token).init(analysis_allocator.*);
-        defer tokens.deinit();
-
         var pipeline_failed = false;
+        var pipeline = frontend.FrontendPipeline.init(analysis_allocator, &diagnostics);
+        defer pipeline.deinit();
 
-        for (files, 0..) |source_file, idx| {
-            var tokenizer_ctx = tokenizer.Tokenizer.init(
-                analysis_allocator,
-                &diagnostics,
-                source_file.code,
-                source_file.path,
-            );
-            const token_slice = tokenizer_ctx.tokenize() catch {
-                pipeline_failed = true;
-                break;
-            };
-
-            const slice = if (idx == files.len - 1)
-                token_slice
-            else
-                token_slice[0 .. token_slice.len - 1];
-            tokens.appendSlice(slice) catch {
-                pipeline_failed = true;
-                break;
-            };
-        }
+        pipeline.tokenizeFiles(files) catch {
+            pipeline_failed = true;
+        };
 
         if (!pipeline_failed) analysis: {
-            var syntax_ctx = syntaxer.Syntaxer.init(analysis_allocator, tokens.items, &diagnostics);
-            const st_nodes = syntax_ctx.parse() catch {
+            _ = pipeline.parse() catch {
                 pipeline_failed = true;
                 break :analysis;
             };
 
-            var sem_ctx = semantizer.Semantizer.init(analysis_allocator, st_nodes, &diagnostics);
-            _ = sem_ctx.analyze() catch {
+            _ = pipeline.analyze() catch {
                 pipeline_failed = true;
             };
         }
@@ -830,34 +810,14 @@ pub const LanguageService = struct {
         var diagnostics = diag.Diagnostics.init(&analysis_allocator, &one_primary);
         defer diagnostics.deinit();
 
-        var tokens = std.array_list.Managed(token.Token).init(analysis_allocator);
-        defer tokens.deinit();
+        var pipeline = frontend.FrontendPipeline.init(&analysis_allocator, &diagnostics);
+        defer pipeline.deinit();
 
-        for (files, 0..) |source_file, idx| {
-            var tokenizer_ctx = tokenizer.Tokenizer.init(
-                &analysis_allocator,
-                &diagnostics,
-                source_file.code,
-                source_file.path,
-            );
-            const token_slice = tokenizer_ctx.tokenize() catch {
-                return null;
-            };
-
-            const slice = if (idx == files.len - 1)
-                token_slice
-            else
-                token_slice[0 .. token_slice.len - 1];
-            try tokens.appendSlice(slice);
-        }
-
-        var syntax_ctx = syntaxer.Syntaxer.init(&analysis_allocator, tokens.items, &diagnostics);
-        const st_nodes = syntax_ctx.parse() catch {
+        try pipeline.tokenizeFiles(files);
+        const st_nodes = pipeline.parse() catch {
             return null;
         };
-
-        var sem_ctx = semantizer.Semantizer.init(&analysis_allocator, st_nodes, &diagnostics);
-        const sg_nodes = sem_ctx.analyze() catch {
+        const sg_nodes = pipeline.analyze() catch {
             return null;
         };
 
@@ -902,7 +862,7 @@ pub const LanguageService = struct {
                 semantic_types.items,
                 doc.path,
                 doc.text,
-                tokens.items,
+                pipeline.tokens.items,
             );
             return .{
                 .range = nameRange(syntax_fn.decl.name.location, syntax_fn.decl.name.string.len),
@@ -926,7 +886,7 @@ pub const LanguageService = struct {
                     semantic_types.items,
                     doc.path,
                     doc.text,
-                    tokens.items,
+                    pipeline.tokens.items,
                 );
                 return .{
                     .range = nameRange(syntax_call.call.callee_loc, syntax_call.call.callee.len),
@@ -942,7 +902,7 @@ pub const LanguageService = struct {
                 semantic_types.items,
                 doc.path,
                 doc.text,
-                tokens.items,
+                pipeline.tokens.items,
             );
             return .{
                 .range = nameRange(syntax_call.call.callee_loc, syntax_call.call.callee.len),
@@ -962,7 +922,7 @@ pub const LanguageService = struct {
                 semantic_types.items,
                 doc.path,
                 doc.text,
-                tokens.items,
+                pipeline.tokens.items,
             );
             return .{
                 .range = nameRange(syntax_op.location, syntax_op.len),

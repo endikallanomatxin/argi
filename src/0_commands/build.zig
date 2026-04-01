@@ -6,21 +6,34 @@ const c = llvm.c;
 const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const token = @import("../2_tokens/token.zig");
-const tokzr = @import("../2_tokens/tokenizer.zig");
-const syn = @import("../3_syntax/syntaxer.zig");
-const sem = @import("../4_semantics/semantizer.zig");
 const link = @import("../5_codegen/link.zig");
 const codegen = @import("../5_codegen/codegen.zig");
 const tokp = @import("../2_tokens/token_print.zig");
+const frontend = @import("frontend_pipeline.zig");
+const sem = @import("../4_semantics/semantizer.zig");
 
 const BuildFlags = struct {
     show_cascade: bool = false,
     show_syntax_tree: bool = false,
     show_semantic_graph: bool = false,
     show_token_list: bool = false,
+    time_phases: bool = false,
     output_path: ?[]const u8 = null,
     llvm_ir_path: ?[]const u8 = null,
     object_path: ?[]const u8 = null,
+};
+
+const PhaseTimings = struct {
+    collect_files_ns: u64 = 0,
+    tokenize_ns: u64 = 0,
+    parse_ns: u64 = 0,
+    semantic_ns: u64 = 0,
+    codegen_ns: u64 = 0,
+    link_ns: u64 = 0,
+
+    fn total(self: PhaseTimings) u64 {
+        return self.collect_files_ns + self.tokenize_ns + self.parse_ns + self.semantic_ns + self.codegen_ns + self.link_ns;
+    }
 };
 
 fn parseFlags(args: []const []const u8) !BuildFlags {
@@ -36,6 +49,8 @@ fn parseFlags(args: []const []const u8) !BuildFlags {
             flags.show_semantic_graph = true;
         } else if (std.mem.eql(u8, a, "--on-build-error-show-token-list")) {
             flags.show_token_list = true;
+        } else if (std.mem.eql(u8, a, "--time-phases")) {
+            flags.time_phases = true;
         } else if (std.mem.eql(u8, a, "--output")) {
             idx += 1;
             if (idx >= args.len) return error.MissingFlagValue;
@@ -59,6 +74,41 @@ fn printTokenList(all: []const token.Token) void {
         std.debug.print("{d}: ", .{i});
         tokp.printTokenWithLocation(t, t.location);
     }
+}
+
+fn elapsedSince(start_ns: i128) u64 {
+    return @intCast(std.time.nanoTimestamp() - start_ns);
+}
+
+fn printPhaseTimings(timings: PhaseTimings) void {
+    std.debug.print("phase timings:\n", .{});
+    std.debug.print("  collect files: {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.collect_files_ns)) / 1_000_000.0});
+    std.debug.print("  tokenize:      {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.tokenize_ns)) / 1_000_000.0});
+    std.debug.print("  parse:         {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.parse_ns)) / 1_000_000.0});
+    std.debug.print("  semantic:      {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.semantic_ns)) / 1_000_000.0});
+    std.debug.print("  codegen:       {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.codegen_ns)) / 1_000_000.0});
+    std.debug.print("  link:          {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.link_ns)) / 1_000_000.0});
+    std.debug.print("  total:         {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.total())) / 1_000_000.0});
+}
+
+fn printSemanticTimings(timings: sem.Semantizer.AnalyzeTimings) void {
+    std.debug.print("semantic breakdown:\n", .{});
+    std.debug.print("  initial pass:          {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.initial_pass_ns)) / 1_000_000.0});
+    std.debug.print("  retry passes:          {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.retry_passes_ns)) / 1_000_000.0});
+    std.debug.print("  initial retry nodes:   {d}\n", .{timings.initial_retry_count});
+    std.debug.print("  retry rounds:          {d}\n", .{timings.retry_round_count});
+    std.debug.print("  retry enqueue dedupe:  {d}/{d}\n", .{ timings.retry_enqueue_unique, timings.retry_enqueue_attempts });
+    std.debug.print("  retry node kinds:      fn={d} type={d} symbol={d} other={d}\n", .{
+        timings.retry_function_nodes,
+        timings.retry_type_nodes,
+        timings.retry_symbol_nodes,
+        timings.retry_other_nodes,
+    });
+    std.debug.print("  final retry resolve:   {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.final_retry_resolution_ns)) / 1_000_000.0});
+    std.debug.print("  verify abstracts:      {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.abstract_verify_ns)) / 1_000_000.0});
+    std.debug.print("  verify once:           {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.once_verify_ns)) / 1_000_000.0});
+    std.debug.print("  infer error reasons:   {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.error_reason_inference_ns)) / 1_000_000.0});
+    std.debug.print("  semantic total:        {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.total())) / 1_000_000.0});
 }
 
 pub fn resolveBuildModuleDir(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
@@ -110,6 +160,7 @@ pub fn compile(args: []const []const u8) !void {
     const target_path = args[0];
     const flags = try parseFlags(args[1..]);
     const module_dir = try resolveBuildModuleDir(allocator, target_path);
+    var timings: PhaseTimings = .{};
 
     // Salidas finales por defecto dentro del módulo compilado.
     const final_output_path = if (flags.output_path) |path|
@@ -130,71 +181,81 @@ pub fn compile(args: []const []const u8) !void {
     try ensureParentDir(final_obj_path);
 
     // 1. Reunir ficheros ──────────────────────────────────────────────────
+    const collect_start = std.time.nanoTimestamp();
     const files = try sf.collectModule(&allocator, "core", module_dir);
+    timings.collect_files_ns = elapsedSince(collect_start);
 
     // 2. Diagnósticos globales ────────────────────────────────────────────
     var diagnostics = diag.Diagnostics.init(&allocator, files.items);
 
+    var pipeline = frontend.FrontendPipeline.init(&allocator, &diagnostics);
+    defer pipeline.deinit();
+
     // 3. Tokenizar todos (fusionando EOF) ─────────────────────────────────
-    var all_tokens = std.array_list.Managed(token.Token).init(allocator);
-
-    for (files.items, 0..) |f, idx| {
-        var tokenizer = tokzr.Tokenizer.init(
-            &allocator,
-            &diagnostics,
-            f.code,
-            f.path,
-        );
-        const toks = tokenizer.tokenize() catch {
-            if (flags.show_token_list) tokenizer.printTokens();
-            diagnostics.dumpWithLimit(if (flags.show_cascade) std.math.maxInt(usize) else 1) catch {};
-            return error.CompilationFailed;
-        };
-
-        const slice = if (idx == files.items.len - 1)
-            toks
-        else
-            toks[0 .. toks.len - 1];
-
-        try all_tokens.appendSlice(slice);
-    }
+    const tokenize_start = std.time.nanoTimestamp();
+    pipeline.tokenizeFiles(files.items) catch {
+        timings.tokenize_ns = elapsedSince(tokenize_start);
+        if (flags.show_token_list) printTokenList(pipeline.tokens.items);
+        diagnostics.dumpWithLimit(if (flags.show_cascade) std.math.maxInt(usize) else 1) catch {};
+        return error.CompilationFailed;
+    };
+    timings.tokenize_ns = elapsedSince(tokenize_start);
 
     // 4. Sintaxis ──────────────────────────────────────────────────────────
-    var syntaxer = syn.Syntaxer.init(&allocator, all_tokens.items, &diagnostics);
-    const st_nodes = syntaxer.parse() catch {
-        if (flags.show_token_list) printTokenList(all_tokens.items);
-        if (flags.show_syntax_tree) syntaxer.printST();
+    const parse_start = std.time.nanoTimestamp();
+    _ = pipeline.parse() catch {
+        timings.parse_ns = elapsedSince(parse_start);
+        if (flags.show_token_list) printTokenList(pipeline.tokens.items);
+        if (pipeline.syntax_ctx) |*syntax_ctx| {
+            if (flags.show_syntax_tree) syntax_ctx.printST();
+        }
         diagnostics.dumpWithLimit(if (flags.show_cascade) std.math.maxInt(usize) else 1) catch {};
         return error.CompilationFailed;
     };
+    timings.parse_ns = elapsedSince(parse_start);
 
     // 5. Semántica ────────────────────────────────────────────────────────
-    var semantizer = sem.Semantizer.init(&allocator, st_nodes, &diagnostics);
-    const sg = semantizer.analyze() catch {
-        if (flags.show_token_list) printTokenList(all_tokens.items);
-        if (flags.show_syntax_tree) syntaxer.printST();
-        if (flags.show_semantic_graph) semantizer.printSG();
+    const semantic_start = std.time.nanoTimestamp();
+    const sg = pipeline.analyze() catch {
+        timings.semantic_ns = elapsedSince(semantic_start);
+        if (flags.show_token_list) printTokenList(pipeline.tokens.items);
+        if (pipeline.syntax_ctx) |*syntax_ctx| {
+            if (flags.show_syntax_tree) syntax_ctx.printST();
+        }
+        if (pipeline.sem_ctx) |*semantizer_ctx| {
+            if (flags.show_semantic_graph) semantizer_ctx.printSG();
+        }
         diagnostics.dumpWithLimit(if (flags.show_cascade) std.math.maxInt(usize) else 1) catch {};
         return error.CompilationFailed;
     };
+    timings.semantic_ns = elapsedSince(semantic_start);
 
     // 6. Si hubo errores semánticos, parar antes de codegen ───────────────
     if (diagnostics.hasErrors()) {
-        if (flags.show_token_list) printTokenList(all_tokens.items);
-        if (flags.show_syntax_tree) syntaxer.printST();
-        if (flags.show_semantic_graph) semantizer.printSG();
+        if (flags.show_token_list) printTokenList(pipeline.tokens.items);
+        if (pipeline.syntax_ctx) |*syntax_ctx| {
+            if (flags.show_syntax_tree) syntax_ctx.printST();
+        }
+        if (pipeline.sem_ctx) |*semantizer_ctx| {
+            if (flags.show_semantic_graph) semantizer_ctx.printSG();
+        }
         diagnostics.dumpWithLimit(if (flags.show_cascade) std.math.maxInt(usize) else 1) catch {};
         return error.CompilationFailed;
     }
 
     // 7. Generación de código ──────────────────────────────────────────────
+    const codegen_start = std.time.nanoTimestamp();
     var gen = codegen.CodeGenerator.init(&allocator, sg, &diagnostics) catch return;
     const module = gen.generate() catch {
-        if (flags.show_token_list) printTokenList(all_tokens.items);
-        if (flags.show_semantic_graph) semantizer.printSG();
+        timings.codegen_ns = elapsedSince(codegen_start);
+        if (flags.show_token_list) printTokenList(pipeline.tokens.items);
+        if (pipeline.sem_ctx) |*semantizer_ctx| {
+            if (flags.show_semantic_graph) semantizer_ctx.printSG();
+        }
         diagnostics.dumpWithLimit(if (flags.show_cascade) std.math.maxInt(usize) else 1) catch {};
         return error.CompilationFailed;
     };
+    timings.codegen_ns = elapsedSince(codegen_start);
 
     // Temporales en el mismo directorio final.
     const temp_stem = try std.fmt.allocPrint(
@@ -240,7 +301,9 @@ pub fn compile(args: []const []const u8) !void {
     defer c.LLVMDisposeMessage(triple_cstr);
     const triple = std.mem.span(triple_cstr);
 
+    const link_start = std.time.nanoTimestamp();
     try link.linkWithLibc(module, triple, temp_stem, &allocator);
+    timings.link_ns = elapsedSince(link_start);
 
     // 10. Mover a nombres finales ─────────────────────────────────────────
     if (std.fs.cwd().statFile(temp_ir_path)) |_| {} else |err| switch (err) {
@@ -270,6 +333,11 @@ pub fn compile(args: []const []const u8) !void {
     }
     try replaceFile(temp_obj_path, final_obj_path);
 
+    if (flags.time_phases) {
+        printPhaseTimings(timings);
+        printSemanticTimings(pipeline.sem_timings);
+    }
+
     std.debug.print("✔ Build completed\n", .{});
 }
 
@@ -277,6 +345,7 @@ test "parse build flags keeps diagnostics toggles and output paths" {
     const flags = try parseFlags(&.{
         "--on-build-error-show-cascade",
         "--on-build-error-show-token-list",
+        "--time-phases",
         "--output",
         "bin/app",
         "--emit-llvm",
@@ -287,6 +356,7 @@ test "parse build flags keeps diagnostics toggles and output paths" {
 
     try std.testing.expect(flags.show_cascade);
     try std.testing.expect(flags.show_token_list);
+    try std.testing.expect(flags.time_phases);
     try std.testing.expectEqualStrings("bin/app", flags.output_path.?);
     try std.testing.expectEqualStrings("ir/app.ll", flags.llvm_ir_path.?);
     try std.testing.expectEqualStrings("obj/app.o", flags.object_path.?);
