@@ -503,6 +503,33 @@ pub const Syntaxer = struct {
         return .{ .fields = fields.items };
     }
 
+    fn parseFunctionOutputType(self: *Syntaxer) SyntaxerError!syn.StructTypeLiteral {
+        if (self.tokenIs(.bang)) {
+            const bang_loc = self.tokenLocation();
+            self.advanceOne();
+
+            const inner_ty_opt = try self.parseType();
+            if (inner_ty_opt == null) {
+                try self.diags.add(bang_loc, .syntax, "expected type after '!'", .{});
+                return SyntaxerError.ExpectedIdentifier;
+            }
+
+            const inner_ptr = try self.allocator.create(syn.Type);
+            inner_ptr.* = inner_ty_opt.?;
+
+            const field = syn.StructTypeLiteralField{
+                .name = .{ .string = "result", .location = bang_loc },
+                .type = syn.Type{ .inferred_errable = inner_ptr },
+                .default_value = null,
+            };
+            const fields = try self.allocator.alloc(syn.StructTypeLiteralField, 1);
+            fields[0] = field;
+            return .{ .fields = fields };
+        }
+
+        return self.parseStructTypeLiteral();
+    }
+
     fn parseGenericParamsStruct(self: *Syntaxer) SyntaxerError!syn.StructTypeLiteral {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         self.advanceOne();
@@ -1340,7 +1367,7 @@ pub const Syntaxer = struct {
 
                 if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
                 self.advanceOne();
-                const output = try self.parseStructTypeLiteral();
+                const output = try self.parseFunctionOutputType();
                 if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
                 self.advanceOne();
 

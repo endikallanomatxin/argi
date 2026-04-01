@@ -15,6 +15,10 @@ fn indent(lvl: usize) void {
 fn printType(t: syn.Type, lvl: usize) void {
     switch (t) {
         .type_name => |id| std.debug.print("{s}", .{id.string}),
+        .inferred_errable => |child| {
+            std.debug.print("!", .{});
+            printType(child.*, lvl);
+        },
         .struct_type_literal => |st| printStructTypeLiteral(st, lvl),
         .choice_type_literal => |ct| printChoiceTypeLiteral(ct, lvl),
         .pointer_type => |pt_ptr| {

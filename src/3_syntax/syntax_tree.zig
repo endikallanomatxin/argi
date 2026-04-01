@@ -83,6 +83,7 @@ pub const Type = union(enum) {
     struct_type_literal: StructTypeLiteral,
     choice_type_literal: ChoiceTypeLiteral,
     pointer_type: *PointerType,
+    inferred_errable: *Type,
     generic_type_instantiation: struct {
         base_name: Name,
         args: StructTypeLiteral,

@@ -160,6 +160,7 @@ fn matchTemplateType(pattern: syn.Type, actual: sg.Type, params: []const gen.Gen
             }
             break :blk false;
         },
+        .inferred_errable => false,
         .pointer_type => |ptr_info| blk: {
             if (actual != .pointer_type) break :blk false;
             if (ptr_info.mutability != actual.pointer_type.mutability) break :blk false;

@@ -92,6 +92,19 @@ load_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found, ..perm
 }
 ```
 
+For the common single-result case there is also shorthand syntax:
+
+```rg
+load_file() -> !Int32 := {
+    value := read_file()!
+    result = ..ok(.value = value)
+}
+```
+
+`-> !T` means a single output binding named `result` whose type is an `Errable`
+returning `T`. In this special form, the compiler infers the reasons from the
+body and closes the return `Errable` after semantic analysis.
+
 The compiler can also infer a narrower subset of the declared reasons by
 looking at the actual propagation and return sites in the function body. That
 inferred subset is surfaced in tooling hover even when the full declared
@@ -173,6 +186,8 @@ Hoy ya se usan de forma normal en contextos de expresión comunes:
 
 Dirección actual de la inferencia de reasons:
 - la firma sigue escribiendo el conjunto completo declarado
+- `-> !T` ya permite omitir `.reasons` en el caso especial de un único
+  resultado `result`
 - semántica calcula un subconjunto inferido a partir de `return`, asignaciones a
   outputs y propagaciones con `!` / `!!`
 - el hover muestra ese subconjunto inferido para que se pueda consultar sin

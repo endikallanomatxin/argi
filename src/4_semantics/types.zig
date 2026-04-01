@@ -69,15 +69,44 @@ pub fn genericIdentityOf(ty: sg.Type) ?*const sg.GenericTypeIdentity {
     return switch (ty) {
         .choice_type => |ct| switch (ct.identity orelse return null) {
             .generic => |identity| identity,
+            .inferred_choice => null,
         },
         .struct_type => |st| switch (st.identity orelse return null) {
             .generic => |identity| identity,
+            .inferred_choice => null,
         },
         .array_type => |arr| switch (arr.identity orelse return null) {
             .generic => |identity| identity,
+            .inferred_choice => null,
         },
         else => null,
     };
+}
+
+fn inferredChoiceIdentityOf(choice_ty: *const sg.ChoiceType) ?*const sg.InferredChoiceIdentity {
+    return switch (choice_ty.identity orelse return null) {
+        .inferred_choice => |identity| identity,
+        .generic => null,
+    };
+}
+
+pub fn isOpenInferredReasonsChoice(choice_ty: *const sg.ChoiceType) bool {
+    const identity = inferredChoiceIdentityOf(choice_ty) orelse return false;
+    return identity.kind == .reasons;
+}
+
+pub fn appendChoiceVariant(
+    choice_ty: *sg.ChoiceType,
+    variant: sg.ChoiceVariant,
+    allocator: *const std.mem.Allocator,
+) err.SemErr!u32 {
+    if (choiceTypeContainsVariant(choice_ty, variant)) |idx| return idx;
+
+    const grown = try allocator.alloc(sg.ChoiceVariant, choice_ty.variants.len + 1);
+    @memcpy(grown[0..choice_ty.variants.len], choice_ty.variants);
+    grown[choice_ty.variants.len] = variant;
+    choice_ty.variants = grown;
+    return @intCast(choice_ty.variants.len - 1);
 }
 
 pub fn genericIdentityArgByName(identity: *const sg.GenericTypeIdentity, name: []const u8) ?sg.GenericIdentityArg {
@@ -118,6 +147,29 @@ pub fn choiceTypeIsSupersetOf(expected: *const sg.ChoiceType, actual: *const sg.
         if (choiceTypeContainsVariant(expected, variant) == null) return false;
     }
     return true;
+}
+
+pub fn errableReasonChoiceFromType(ty: sg.Type) ?*const sg.ChoiceType {
+    const errable_choice = switch (ty) {
+        .choice_type => |choice_ty| choice_ty,
+        else => return null,
+    };
+
+    for (errable_choice.variants) |variant| {
+        if (!std.mem.eql(u8, variant.name, "error")) continue;
+        const payload_ty = variant.payload_type orelse return null;
+        const payload_struct = switch (payload_ty) {
+            .struct_type => |st| st,
+            else => return null,
+        };
+        const reason_field = findFieldByName(payload_struct, "reason") orelse return null;
+        return switch (reason_field.ty) {
+            .choice_type => |reason_choice| reason_choice,
+            else => null,
+        };
+    }
+
+    return null;
 }
 
 pub fn isTypeTriviallyCopyable(ty: sg.Type, s: *Scope) bool {
@@ -921,6 +973,12 @@ fn coerceChoiceLiteral(
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
 ) err.SemErr!TypedExpr {
+    if (expr.ty == .choice_type and (isOpenInferredReasonsChoice(expected) or expected.variants.len == 0)) {
+        for (expr.ty.choice_type.variants) |variant| {
+            _ = try appendChoiceVariant(@constCast(expected), variant, allocator);
+        }
+    }
+
     if (expr.ty == .choice_type and choiceTypeIsSupersetOf(expected, expr.ty.choice_type)) {
         return coerceChoiceValue(expected, expr, expr_node, allocator, diags);
     }
@@ -941,6 +999,21 @@ fn coerceChoiceLiteral(
             try diags.add(loc, .semantic, "module '{s}' has no choice option '..{s}'", .{ module_name, variant_name });
             return error.Reported;
         };
+    }
+
+    if (isOpenInferredReasonsChoice(expected) or expected.variants.len == 0) {
+        const option_decl = if (qualified_option) |opt|
+            opt
+        else
+            s.lookupChoiceOption(variant_name);
+        if (option_decl) |decl| {
+            _ = try appendChoiceVariant(@constCast(expected), .{
+                .name = variant_name,
+                .value = @intCast(decl.id),
+                .payload_type = null,
+                .option_decl = decl,
+            }, allocator);
+        }
     }
 
     for (expected.variants, 0..) |variant, idx| {

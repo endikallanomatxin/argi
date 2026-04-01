@@ -597,6 +597,9 @@ pub const LanguageService = struct {
                     .type_name => |tn| {
                         try this.identAt(tn.location, TOKEN_INDEX.type_, 0);
                     },
+                    .inferred_errable => |child| {
+                        try this.colorType(child.*, decl_mods);
+                    },
                     .generic_type_instantiation => |g| {
                         try this.identAt(g.base_name.location, TOKEN_INDEX.type_, 0);
                         for (g.args.fields) |af| {
@@ -1773,6 +1776,7 @@ fn collectTypeRefsFromStructTypeLiteral(
 fn collectTypeRefsFromType(ty: st.Type, type_refs: *std.array_list.Managed(SyntaxTypeRef)) !void {
     switch (ty) {
         .type_name => |name| try type_refs.append(.{ .location = name.location, .name = name.string }),
+        .inferred_errable => |child| try collectTypeRefsFromType(child.*, type_refs),
         .generic_type_instantiation => |inst| {
             try type_refs.append(.{ .location = inst.base_name.location, .name = inst.base_name.string });
             for (inst.args.fields) |field| {

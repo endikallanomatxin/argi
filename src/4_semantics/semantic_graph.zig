@@ -98,6 +98,16 @@ pub const ChoiceType = struct {
     identity: ?TypeIdentity = null,
 };
 
+pub const InferredChoiceKind = enum {
+    errable,
+    reasons,
+};
+
+pub const InferredChoiceIdentity = struct {
+    id: u32,
+    kind: InferredChoiceKind,
+};
+
 pub const ChoiceOptionDeclaration = struct {
     name: []const u8,
     origin_file: []const u8,
@@ -163,6 +173,7 @@ pub const StructType = struct {
 
 pub const TypeIdentity = union(enum) {
     generic: *const GenericTypeIdentity,
+    inferred_choice: *const InferredChoiceIdentity,
 };
 
 pub const GenericTypeIdentity = struct {
@@ -304,6 +315,7 @@ pub const FunctionDeclaration = struct {
     input: StructType, // Arguments
     output: StructType, // Named return params
     body: ?*const CodeBlock,
+    uses_inferred_error_reasons: bool = false,
     output_bindings: []const *const BindingDeclaration = &.{},
     inferred_error_reasons: ?*const ChoiceType = null,
 

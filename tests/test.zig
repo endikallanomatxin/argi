@@ -1623,6 +1623,18 @@ test "feature_tests/types/37_error_propagation_assignment" {
     try runExpect(test_path, 5);
 }
 
+test "feature_tests/types/38_inferred_errable_from_propagation" {
+    const test_path = "tests/feature_tests/types/38_inferred_errable_from_propagation";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 41);
+}
+
+test "feature_tests/types/39_inferred_errable_direct_error" {
+    const test_path = "tests/feature_tests/types/39_inferred_errable_direct_error";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
 test "feature_tests/modules/01_folder_module_namespace" {
     const test_path = "tests/feature_tests/modules/01_folder_module_namespace";
     try expectSuccessfulBuild(test_path);
@@ -1634,6 +1646,7 @@ test "feature_tests/modules/02_import_current_relative" {
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
+
 
 test "feature_tests/modules/03X_import_missing_module" {
     try buildExpectFail(
