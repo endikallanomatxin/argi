@@ -15,7 +15,7 @@ pub const FrontendPipeline = struct {
     tokens: std.array_list.Managed(token.Token),
     syntax_ctx: ?syntaxer.Syntaxer = null,
     sem_ctx: ?semantizer.Semantizer = null,
-    sem_timings: semantizer.Semantizer.AnalyzeTimings = .{},
+    semantize_timings: semantizer.Semantizer.SemantizeTimings = .{},
     st_nodes: []const *st.STNode = &.{},
     sg_nodes: []const *sg.SGNode = &.{},
 
@@ -55,17 +55,17 @@ pub const FrontendPipeline = struct {
         }
     }
 
-    pub fn parse(self: *FrontendPipeline) ![]const *st.STNode {
+    pub fn syntax(self: *FrontendPipeline) ![]const *st.STNode {
         self.syntax_ctx = syntaxer.Syntaxer.init(self.allocator, self.tokens.items, self.diagnostics);
         self.st_nodes = try self.syntax_ctx.?.parse();
         return self.st_nodes;
     }
 
-    pub fn analyze(self: *FrontendPipeline) ![]const *sg.SGNode {
+    pub fn semantize(self: *FrontendPipeline) ![]const *sg.SGNode {
         self.sem_ctx = semantizer.Semantizer.init(self.allocator, self.st_nodes, self.diagnostics);
-        const result = try self.sem_ctx.?.analyzeWithTimings();
+        const result = try self.sem_ctx.?.semantizeWithTimings();
         self.sg_nodes = result.nodes;
-        self.sem_timings = result.timings;
+        self.semantize_timings = result.timings;
         return self.sg_nodes;
     }
 };

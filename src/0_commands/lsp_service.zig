@@ -436,12 +436,12 @@ pub const LanguageService = struct {
         };
 
         if (!pipeline_failed) analysis: {
-            _ = pipeline.parse() catch {
+            _ = pipeline.syntax() catch {
                 pipeline_failed = true;
                 break :analysis;
             };
 
-            _ = pipeline.analyze() catch {
+            _ = pipeline.semantize() catch {
                 pipeline_failed = true;
             };
         }
@@ -814,10 +814,10 @@ pub const LanguageService = struct {
         defer pipeline.deinit();
 
         try pipeline.tokenizeFiles(files);
-        const st_nodes = pipeline.parse() catch {
+        const st_nodes = pipeline.syntax() catch {
             return null;
         };
-        const sg_nodes = pipeline.analyze() catch {
+        const sg_nodes = pipeline.semantize() catch {
             return null;
         };
 
@@ -1005,7 +1005,7 @@ pub const LanguageService = struct {
         };
 
         var sem_ctx = semantizer.Semantizer.init(&analysis_allocator, st_nodes, &diagnostics);
-        const sg_nodes = sem_ctx.analyze() catch {
+        const sg_nodes = sem_ctx.semantize() catch {
             return null;
         };
 
@@ -1191,7 +1191,7 @@ pub const LanguageService = struct {
         };
 
         var sem_ctx = semantizer.Semantizer.init(&analysis_allocator, st_nodes, &diagnostics);
-        const sg_nodes = sem_ctx.analyze() catch {
+        const sg_nodes = sem_ctx.semantize() catch {
             return LocationsResult.empty(self.allocator);
         };
 
@@ -1397,7 +1397,7 @@ pub const LanguageService = struct {
         };
 
         var sem_ctx = semantizer.Semantizer.init(&analysis_allocator, st_nodes, &diagnostics);
-        const sg_nodes = sem_ctx.analyze() catch {
+        const sg_nodes = sem_ctx.semantize() catch {
             return null;
         };
 
@@ -1520,7 +1520,7 @@ pub const LanguageService = struct {
         };
 
         var sem_ctx = semantizer.Semantizer.init(&analysis_allocator, st_nodes, &diagnostics);
-        const sg_nodes = sem_ctx.analyze() catch {
+        const sg_nodes = sem_ctx.semantize() catch {
             return InlayHintsResult.empty(self.allocator);
         };
 

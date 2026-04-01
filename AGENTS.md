@@ -74,6 +74,11 @@ feature first.
   - `./` is current module, `../` is parent, `.../` is project root
   - bare import names resolve under `more/`
 
+- Compiler phase naming is standardized and should stay consistent:
+  - use `tokenizing`, `syntaxing`, `semantizing`, and `codegen` for the four compiler phases
+  - avoid introducing synonyms such as `parsing`, `analysis`, or `semantic` as the primary names for those phases in new APIs, diagnostics, timing output, or docs
+  - umbrella names like `frontend` are fine when referring to the combined pre-codegen pipeline, but phase-specific entrypoints and labels should still use the standardized phase names
+
 - Follow Zig coding style:
     - spaces, snake_case for variables/functions/files, descriptive names.
     - File naming: `snake_case.zig` (e.g., `parser.zig`, `type_checker.zig`).

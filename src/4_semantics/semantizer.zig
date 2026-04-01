@@ -162,7 +162,7 @@ pub const Semantizer = struct {
         };
     }
 
-    pub const AnalyzeTimings = struct {
+    pub const SemantizeTimings = struct {
         initial_pass_ns: u64 = 0,
         retry_passes_ns: u64 = 0,
         final_retry_resolution_ns: u64 = 0,
@@ -178,7 +178,7 @@ pub const Semantizer = struct {
         retry_symbol_nodes: u32 = 0,
         retry_other_nodes: u32 = 0,
 
-        pub fn total(self: AnalyzeTimings) u64 {
+        pub fn total(self: SemantizeTimings) u64 {
             return self.initial_pass_ns +
                 self.retry_passes_ns +
                 self.final_retry_resolution_ns +
@@ -188,19 +188,19 @@ pub const Semantizer = struct {
         }
     };
 
-    pub fn analyze(self: *Semantizer) SemErr![]const *sg.SGNode {
-        return (try self.analyzeWithTimings()).nodes;
+    pub fn semantize(self: *Semantizer) SemErr![]const *sg.SGNode {
+        return (try self.semantizeWithTimings()).nodes;
     }
 
-    pub const AnalyzeResult = struct {
+    pub const SemantizeResult = struct {
         nodes: []const *sg.SGNode,
-        timings: AnalyzeTimings,
+        timings: SemantizeTimings,
     };
 
-    pub fn analyzeWithTimings(self: *Semantizer) SemErr!AnalyzeResult {
+    pub fn semantizeWithTimings(self: *Semantizer) SemErr!SemantizeResult {
         var global = try Scope.init(self.allocator, null, null);
         try self.predeclareTopLevelSymbols(&global);
-        var timings: AnalyzeTimings = .{};
+        var timings: SemantizeTimings = .{};
         self.retry_enqueue_attempts = 0;
         self.retry_enqueue_unique = 0;
         self.retry_function_nodes = 0;

@@ -10,7 +10,7 @@ const link = @import("../5_codegen/link.zig");
 const codegen = @import("../5_codegen/codegen.zig");
 const tokp = @import("../2_tokens/token_print.zig");
 const frontend = @import("frontend_pipeline.zig");
-const sem = @import("../4_semantics/semantizer.zig");
+const semantizer_mod = @import("../4_semantics/semantizer.zig");
 
 const BuildFlags = struct {
     show_cascade: bool = false,
@@ -26,13 +26,13 @@ const BuildFlags = struct {
 const PhaseTimings = struct {
     collect_files_ns: u64 = 0,
     tokenize_ns: u64 = 0,
-    parse_ns: u64 = 0,
-    semantic_ns: u64 = 0,
+    syntax_ns: u64 = 0,
+    semantizing_ns: u64 = 0,
     codegen_ns: u64 = 0,
     link_ns: u64 = 0,
 
     fn total(self: PhaseTimings) u64 {
-        return self.collect_files_ns + self.tokenize_ns + self.parse_ns + self.semantic_ns + self.codegen_ns + self.link_ns;
+        return self.collect_files_ns + self.tokenize_ns + self.syntax_ns + self.semantizing_ns + self.codegen_ns + self.link_ns;
     }
 };
 
@@ -84,15 +84,15 @@ fn printPhaseTimings(timings: PhaseTimings) void {
     std.debug.print("phase timings:\n", .{});
     std.debug.print("  collect files: {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.collect_files_ns)) / 1_000_000.0});
     std.debug.print("  tokenize:      {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.tokenize_ns)) / 1_000_000.0});
-    std.debug.print("  parse:         {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.parse_ns)) / 1_000_000.0});
-    std.debug.print("  semantic:      {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.semantic_ns)) / 1_000_000.0});
+    std.debug.print("  syntax:        {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.syntax_ns)) / 1_000_000.0});
+    std.debug.print("  semantizing:   {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.semantizing_ns)) / 1_000_000.0});
     std.debug.print("  codegen:       {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.codegen_ns)) / 1_000_000.0});
     std.debug.print("  link:          {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.link_ns)) / 1_000_000.0});
     std.debug.print("  total:         {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.total())) / 1_000_000.0});
 }
 
-fn printSemanticTimings(timings: sem.Semantizer.AnalyzeTimings) void {
-    std.debug.print("semantic breakdown:\n", .{});
+fn printSemantizingTimings(timings: semantizer_mod.Semantizer.SemantizeTimings) void {
+    std.debug.print("semantizing breakdown:\n", .{});
     std.debug.print("  initial pass:          {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.initial_pass_ns)) / 1_000_000.0});
     std.debug.print("  retry passes:          {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.retry_passes_ns)) / 1_000_000.0});
     std.debug.print("  initial retry nodes:   {d}\n", .{timings.initial_retry_count});
@@ -108,7 +108,7 @@ fn printSemanticTimings(timings: sem.Semantizer.AnalyzeTimings) void {
     std.debug.print("  verify abstracts:      {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.abstract_verify_ns)) / 1_000_000.0});
     std.debug.print("  verify once:           {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.once_verify_ns)) / 1_000_000.0});
     std.debug.print("  infer error reasons:   {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.error_reason_inference_ns)) / 1_000_000.0});
-    std.debug.print("  semantic total:        {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.total())) / 1_000_000.0});
+    std.debug.print("  semantizing total:     {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.total())) / 1_000_000.0});
 }
 
 pub fn resolveBuildModuleDir(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
@@ -202,9 +202,9 @@ pub fn compile(args: []const []const u8) !void {
     timings.tokenize_ns = elapsedSince(tokenize_start);
 
     // 4. Sintaxis ──────────────────────────────────────────────────────────
-    const parse_start = std.time.nanoTimestamp();
-    _ = pipeline.parse() catch {
-        timings.parse_ns = elapsedSince(parse_start);
+    const syntax_start = std.time.nanoTimestamp();
+    _ = pipeline.syntax() catch {
+        timings.syntax_ns = elapsedSince(syntax_start);
         if (flags.show_token_list) printTokenList(pipeline.tokens.items);
         if (pipeline.syntax_ctx) |*syntax_ctx| {
             if (flags.show_syntax_tree) syntax_ctx.printST();
@@ -212,12 +212,12 @@ pub fn compile(args: []const []const u8) !void {
         diagnostics.dumpWithLimit(if (flags.show_cascade) std.math.maxInt(usize) else 1) catch {};
         return error.CompilationFailed;
     };
-    timings.parse_ns = elapsedSince(parse_start);
+    timings.syntax_ns = elapsedSince(syntax_start);
 
     // 5. Semántica ────────────────────────────────────────────────────────
-    const semantic_start = std.time.nanoTimestamp();
-    const sg = pipeline.analyze() catch {
-        timings.semantic_ns = elapsedSince(semantic_start);
+    const semantizing_start = std.time.nanoTimestamp();
+    const sg = pipeline.semantize() catch {
+        timings.semantizing_ns = elapsedSince(semantizing_start);
         if (flags.show_token_list) printTokenList(pipeline.tokens.items);
         if (pipeline.syntax_ctx) |*syntax_ctx| {
             if (flags.show_syntax_tree) syntax_ctx.printST();
@@ -228,7 +228,7 @@ pub fn compile(args: []const []const u8) !void {
         diagnostics.dumpWithLimit(if (flags.show_cascade) std.math.maxInt(usize) else 1) catch {};
         return error.CompilationFailed;
     };
-    timings.semantic_ns = elapsedSince(semantic_start);
+    timings.semantizing_ns = elapsedSince(semantizing_start);
 
     // 6. Si hubo errores semánticos, parar antes de codegen ───────────────
     if (diagnostics.hasErrors()) {
@@ -335,7 +335,7 @@ pub fn compile(args: []const []const u8) !void {
 
     if (flags.time_phases) {
         printPhaseTimings(timings);
-        printSemanticTimings(pipeline.sem_timings);
+        printSemantizingTimings(pipeline.semantize_timings);
     }
 
     std.debug.print("✔ Build completed\n", .{});
