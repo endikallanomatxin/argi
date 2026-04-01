@@ -998,7 +998,7 @@ test "feature_tests/control_flow/11_range_default_start_with_step" {
 test "feature_tests/control_flow/12X_for_nullable_not_iterable" {
     try buildExpectFail(
         "tests/feature_tests/control_flow/12X_for_nullable_not_iterable",
-        "for expects a type implementing abstract 'Iterable', got 'Nullable#(.t: Int32)'",
+        "for expects a type implementing abstract 'Iterable', got '?Int32'",
     );
 }
 
