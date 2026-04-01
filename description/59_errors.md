@@ -157,6 +157,13 @@ ReadByte : Choice = (
 - pueden usarse tanto en posición de expresión como como sentencia pura, por
   ejemplo `step()!`, cuando el valor `..ok` no interesa
 
+Hoy ya se usan de forma normal en contextos de expresión comunes:
+- bindings: `value := read_file()!`
+- argumentos de llamada: `use(.x = read_int()!)`
+- condiciones: `if ready()! { ... }`
+- asignaciones: `cached = load()!`
+- sentencias puras: `flush()!`
+
 `!!` además adjunta contexto textual a la entrada de traza.
 
 ## Exhaustividad

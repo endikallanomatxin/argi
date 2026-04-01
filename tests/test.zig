@@ -1605,6 +1605,24 @@ test "feature_tests/types/34_error_context_statement_void" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/types/35_error_propagation_call_argument" {
+    const test_path = "tests/feature_tests/types/35_error_propagation_call_argument";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 6);
+}
+
+test "feature_tests/types/36_error_propagation_if_condition" {
+    const test_path = "tests/feature_tests/types/36_error_propagation_if_condition";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 1);
+}
+
+test "feature_tests/types/37_error_propagation_assignment" {
+    const test_path = "tests/feature_tests/types/37_error_propagation_assignment";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 5);
+}
+
 test "feature_tests/modules/01_folder_module_namespace" {
     const test_path = "tests/feature_tests/modules/01_folder_module_namespace";
     try expectSuccessfulBuild(test_path);
