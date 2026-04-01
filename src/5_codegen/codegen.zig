@@ -89,6 +89,10 @@ const Scope = struct {
         if (self.parent) |p| return p.lookup(name);
         return null;
     }
+
+    fn lookupLocal(self: *Scope, name: []const u8) ?*Symbol {
+        return self.symbols.getPtr(name);
+    }
 };
 
 // ────────────────────────────────────────────── CodeGenerator ──
@@ -752,7 +756,7 @@ pub const CodeGenerator = struct {
 
     // ────────────────────────────────────────── bindings ──
     fn genBindingDecl(self: *CodeGenerator, b: *const sem.BindingDeclaration) !void {
-        if (self.current_scope.lookup(b.name) != null)
+        if (self.current_scope.lookupLocal(b.name) != null)
             return CodegenError.SymbolAlreadyDefined;
 
         // 1) posible inicialización
@@ -1927,15 +1931,25 @@ pub const CodeGenerator = struct {
     fn genStructValueLiteral(self: *CodeGenerator, sl: *const sem.StructValueLiteral) !?TypedValue {
         const cnt = sl.fields.len;
         const ty = try self.toLLVMType(sl.ty);
+        const sem_fields = switch (sl.ty) {
+            .struct_type => |st| st.fields,
+            .builtin => |builtin| switch (builtin) {
+                .Void => &.{},
+                else => return CodegenError.InvalidType,
+            },
+            else => return CodegenError.InvalidType,
+        };
         var vals = try self.allocator.alloc(TypedValue, cnt);
         defer self.allocator.free(vals);
 
         for (sl.fields, 0..) |f, i| {
             const field_tv_opt = try self.visitNode(f.value);
-            const field_tv = field_tv_opt orelse return CodegenError.ValueNotFound;
+            var field_tv = field_tv_opt orelse return CodegenError.ValueNotFound;
             const field_ll_ty = c.LLVMStructGetTypeAtIndex(ty, @intCast(i));
-            if (field_tv.type_ref != field_ll_ty)
-                return CodegenError.InvalidType;
+            if (field_tv.type_ref != field_ll_ty) {
+                field_tv = try self.coerceValueForStorage(field_tv, sem_fields[i].ty, field_ll_ty);
+            }
+            if (field_tv.type_ref != field_ll_ty) return CodegenError.InvalidType;
             vals[i] = field_tv;
         }
 

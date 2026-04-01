@@ -21,10 +21,15 @@ Chequeo rápido de presencia:
 
 ```rg
 if value? {
+    use(value)
 }
 ```
 
 `value?` se desazucara a `is(.value = value, .variant = ..some)`.
+
+Dentro del branch `then` de ese `if`, si `T` es copyable, `value` se estrecha
+idiomaticamente a `T`. Para payloads no copyables, hay que seguir usando
+`match` o el acceso explicito al payload.
 
 Se puede hacer matching normal:
 

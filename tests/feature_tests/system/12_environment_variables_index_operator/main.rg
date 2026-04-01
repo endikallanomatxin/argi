@@ -4,14 +4,12 @@ main(.system: System = System()) -> (.status_code: Int32) := {
 
     home ::= system.env_vars[home_key]
     if home? {
+        if home.length < 1 {
+            status_code = 2
+            return
+        }
     } else {
         status_code = 1
-        return
-    }
-
-    home_value ::= home..some
-    if home_value.value.length < 1 {
-        status_code = 2
         return
     }
 

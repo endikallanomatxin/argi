@@ -2799,6 +2799,12 @@ pub const Semantizer = struct {
             return .{ .node = n, .ty = generic_value.ty };
         }
 
+        if (s.lookupRefinedBinding(name)) |b| {
+            const n = try sg.makeSGNode(.{ .binding_use = b }, undefined, self.allocator);
+            n.sem_type = b.ty;
+            return .{ .node = n, .ty = b.ty };
+        }
+
         const b = s.lookupBinding(name) orelse return error.SymbolNotFound;
         if (!(try self.bindingIsVisible(b, loc.file))) {
             try self.addPrivateMemberDiag(loc, "value", name);
@@ -4533,7 +4539,15 @@ pub const Semantizer = struct {
             }
         }
 
-        const base = try self.visitNode(acc.choice_value.*, s);
+        const base = if (acc.choice_value.*.content == .identifier) blk: {
+            const binding_name = acc.choice_value.*.content.identifier;
+            if (s.lookupBinding(binding_name)) |binding| {
+                const node = try sg.makeSGNode(.{ .binding_use = binding }, acc.choice_value.*.location, self.allocator);
+                node.sem_type = binding.ty;
+                break :blk typ.TypedExpr{ .node = node, .ty = binding.ty };
+            }
+            break :blk try self.visitNode(acc.choice_value.*, s);
+        } else try self.visitNode(acc.choice_value.*, s);
         if (base.ty != .choice_type) {
             const desc = try self.formatTypeText(base.ty, s);
             defer desc.deinit();
@@ -7771,9 +7785,17 @@ pub const Semantizer = struct {
 
     const NullableInfo = struct {
         some_variant_index: u32,
+        some_payload_type: sg.Type,
         some_value_type: sg.Type,
         some_value_field_index: u32,
         none_variant_index: u32,
+    };
+
+    const NullableIfRefinement = struct {
+        source_binding: *sg.BindingDeclaration,
+        some_variant_index: u32,
+        some_payload_type: sg.Type,
+        some_value_type: sg.Type,
     };
 
     fn errorPayloadCanPropagate(self: *Semantizer, source: sg.Type, target: sg.Type) bool {
@@ -7927,25 +7949,14 @@ pub const Semantizer = struct {
         return .{ .node = node, .ty = operand_info.ok_payload_type };
     }
 
-    fn nullableInfoOf(
+    fn tryNullableInfoOfType(
         self: *Semantizer,
         ty: sg.Type,
-        loc: tok.Location,
-        comptime what: []const u8,
-        s: *Scope,
-    ) SemErr!NullableInfo {
-        if (ty != .choice_type) {
-            const desc = try self.formatTypeText(ty, s);
-            defer desc.deinit();
-            try self.diags.add(
-                loc,
-                .semantic,
-                "{s} must be a Nullable-like choice, found '{s}'",
-                .{ what, desc.bytes },
-            );
-            return error.Reported;
-        }
+    ) ?NullableInfo {
+        _ = self;
+        if (ty != .choice_type) return null;
 
+        var some_payload_ty: ?sg.Type = null;
         var some_value_ty: ?sg.Type = null;
         var some_value_field_index: u32 = 0;
         var some_variant_index: u32 = 0;
@@ -7954,42 +7965,42 @@ pub const Semantizer = struct {
 
         for (ty.choice_type.variants, 0..) |variant, idx| {
             if (std.mem.eql(u8, variant.name, "some")) {
-                const payload_ty = variant.payload_type orelse {
-                    try self.diags.add(loc, .semantic, "Nullable '..some' must carry a payload", .{});
-                    return error.Reported;
-                };
+                const payload_ty = variant.payload_type orelse return null;
                 const payload_struct = switch (payload_ty) {
                     .struct_type => |st| st,
-                    else => {
-                        const desc = try self.formatTypeText(payload_ty, s);
-                        defer desc.deinit();
-                        try self.diags.add(
-                            loc,
-                            .semantic,
-                            "Nullable '..some' payload must be a struct containing '.value', found '{s}'",
-                            .{desc.bytes},
-                        );
-                        return error.Reported;
-                    },
+                    else => return null,
                 };
-                const value_field = typ.findFieldByName(payload_struct, "value") orelse {
-                    try self.diags.add(loc, .semantic, "Nullable '..some' payload must contain '.value'", .{});
-                    return error.Reported;
-                };
+                const value_field = typ.findFieldByName(payload_struct, "value") orelse return null;
+                some_payload_ty = payload_ty;
                 some_value_ty = value_field.ty;
                 some_value_field_index = fieldIndexInStruct(payload_struct, "value") orelse 0;
                 some_variant_index = @intCast(idx);
             } else if (std.mem.eql(u8, variant.name, "none")) {
-                if (variant.payload_type != null) {
-                    try self.diags.add(loc, .semantic, "Nullable '..none' cannot carry a payload", .{});
-                    return error.Reported;
-                }
+                if (variant.payload_type != null) return null;
                 found_none = true;
                 none_variant_index = @intCast(idx);
             }
         }
 
-        if (some_value_ty == null or !found_none) {
+        if (some_payload_ty == null or some_value_ty == null or !found_none) return null;
+
+        return .{
+            .some_variant_index = some_variant_index,
+            .some_payload_type = some_payload_ty.?,
+            .some_value_type = some_value_ty.?,
+            .some_value_field_index = some_value_field_index,
+            .none_variant_index = none_variant_index,
+        };
+    }
+
+    fn nullableInfoOf(
+        self: *Semantizer,
+        ty: sg.Type,
+        loc: tok.Location,
+        comptime what: []const u8,
+        s: *Scope,
+    ) SemErr!NullableInfo {
+        return self.tryNullableInfoOfType(ty) orelse blk: {
             const desc = try self.formatTypeText(ty, s);
             defer desc.deinit();
             try self.diags.add(
@@ -7998,14 +8009,7 @@ pub const Semantizer = struct {
                 "{s} must have '..some(.value: T)' and '..none', found '{s}'",
                 .{ what, desc.bytes },
             );
-            return error.Reported;
-        }
-
-        return .{
-            .some_variant_index = some_variant_index,
-            .some_value_type = some_value_ty.?,
-            .some_value_field_index = some_value_field_index,
-            .none_variant_index = none_variant_index,
+            break :blk error.Reported;
         };
     }
 
@@ -8186,12 +8190,17 @@ pub const Semantizer = struct {
         const start_len = s.nodes.items.len;
 
         const cond = try self.visitNode(ifs.condition.*, s);
-        const then_te = try self.visitNode(ifs.then_block.*, s);
+        const nullable_refinement = try self.extractNullableIfRefinement(ifs.condition, s);
 
-        const else_cb = if (ifs.else_block) |eb|
-            (try self.visitNode(eb.*, s)).node.content.code_block
-        else
-            null;
+        const then_te = switch (ifs.then_block.*.content) {
+            .code_block => |blk| try self.handleCodeBlockWithNullableRefinement(blk, s, nullable_refinement, ifs.condition.location),
+            else => try self.visitNode(ifs.then_block.*, s),
+        };
+
+        const else_cb = if (ifs.else_block) |eb| blk: {
+            var else_scope = try Scope.init(self.allocator, s, s.current_fn);
+            break :blk (try self.visitNode(eb.*, &else_scope)).node.content.code_block;
+        } else null;
 
         s.nodes.items.len = start_len;
 
@@ -8205,6 +8214,144 @@ pub const Semantizer = struct {
         const n = try sg.makeSGNode(.{ .if_statement = if_ptr }, undefined, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn extractNullableIfRefinement(
+        self: *Semantizer,
+        condition: *const syn.STNode,
+        s: *Scope,
+    ) SemErr!?NullableIfRefinement {
+        if (condition.content != .function_call) return null;
+
+        const call = condition.content.function_call;
+        if (!std.mem.eql(u8, call.callee, "is")) return null;
+        if (call.module_qualifier != null or call.type_arguments != null or call.type_arguments_struct != null) return null;
+        if (call.input.*.content != .struct_value_literal) return null;
+
+        const input = call.input.*.content.struct_value_literal;
+        var value_field: ?syn.StructValueLiteralField = null;
+        var variant_field: ?syn.StructValueLiteralField = null;
+        for (input.fields) |field| {
+            if (std.mem.eql(u8, field.name.string, "value")) {
+                value_field = field;
+            } else if (std.mem.eql(u8, field.name.string, "variant")) {
+                variant_field = field;
+            }
+        }
+
+        const value_node = value_field orelse return null;
+        const variant_node = variant_field orelse return null;
+        if (value_node.value.*.content != .identifier) return null;
+        if (variant_node.value.*.content != .choice_literal) return null;
+
+        const variant_lit = variant_node.value.*.content.choice_literal;
+        if (variant_lit.payload != null) return null;
+
+        const binding_name = value_node.value.*.content.identifier;
+        const binding = s.lookupBinding(binding_name) orelse return null;
+        const nullable_info = self.tryNullableInfoOfType(binding.ty) orelse return null;
+
+        if (!std.mem.eql(u8, variant_lit.name.string, "some")) return null;
+        if (!std.mem.eql(u8, binding.ty.choice_type.variants[nullable_info.some_variant_index].name, variant_lit.name.string)) return null;
+
+        return .{
+            .source_binding = binding,
+            .some_variant_index = nullable_info.some_variant_index,
+            .some_payload_type = nullable_info.some_payload_type,
+            .some_value_type = nullable_info.some_value_type,
+        };
+    }
+
+    fn applyNullableThenRefinement(
+        self: *Semantizer,
+        refinement: NullableIfRefinement,
+        child: *Scope,
+        loc: tok.Location,
+    ) SemErr!void {
+        if (!typ.isTypeCopyable(refinement.some_value_type, child)) return;
+
+        const source_use = try sg.makeSGNode(.{ .binding_use = refinement.source_binding }, loc, self.allocator);
+        source_use.sem_type = refinement.source_binding.ty;
+
+        const payload_access = try self.allocator.create(sg.ChoicePayloadAccess);
+        payload_access.* = .{
+            .choice_value = source_use,
+            .variant_index = refinement.some_variant_index,
+            .payload_type = refinement.some_payload_type,
+        };
+        const payload_node = try sg.makeSGNode(.{ .choice_payload_access = payload_access }, loc, self.allocator);
+        payload_node.sem_type = refinement.some_payload_type;
+
+        var init_expr = try self.buildStructFieldAccessFromTypedExpr(
+            .{ .node = payload_node, .ty = refinement.some_payload_type },
+            "value",
+            loc,
+            child,
+        );
+        init_expr = try typ.ensureValuePositionAllowed(init_expr, loc, child, self.allocator, self.diags);
+
+        const synthetic_name = try self.makeSyntheticName("nullable_some");
+        const binding = try self.allocator.create(sg.BindingDeclaration);
+        binding.* = .{
+            .name = synthetic_name,
+            .location = refinement.source_binding.location,
+            .origin_file = refinement.source_binding.origin_file,
+            .mutability = .constant,
+            .ty = refinement.some_value_type,
+            .initialization = init_expr.node,
+        };
+
+        try child.bindings.put(binding.name, binding);
+        try child.refined_bindings.put(refinement.source_binding.name, binding);
+        const decl_node = try sg.makeSGNode(.{ .binding_declaration = binding }, loc, self.allocator);
+        try child.nodes.append(decl_node);
+        try self.maybeScheduleAutoDeinit(binding, loc, child);
+    }
+
+    fn handleCodeBlockWithNullableRefinement(
+        self: *Semantizer,
+        blk: syn.CodeBlock,
+        parent: *Scope,
+        refinement: ?NullableIfRefinement,
+        refinement_loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        var child = try Scope.init(self.allocator, parent, parent.current_fn);
+        if (refinement) |value| {
+            try self.applyNullableThenRefinement(value, &child, refinement_loc);
+        }
+
+        var ret_val: ?*sg.SGNode = null;
+        var ret_ty: sg.Type = .{ .builtin = .Any };
+
+        for (blk.items, 0..) |st, idx| {
+            const te = try self.visitNode(st.*, &child);
+            const is_last = idx + 1 == blk.items.len;
+            if (is_last and st.*.content == .expression_statement) {
+                ret_val = te.node;
+                ret_ty = te.ty;
+                continue;
+            }
+            if (st.*.content == .function_call) {
+                try child.nodes.append(te.node);
+            }
+        }
+
+        var d_idx: usize = child.deferred.items.len;
+        while (d_idx > 0) : (d_idx -= 1) {
+            const group = child.deferred.items[d_idx - 1];
+            for (group.nodes) |node| try child.nodes.append(node);
+        }
+
+        const slice = try child.nodes.toOwnedSlice();
+        child.nodes.deinit();
+        self.clearDeferred(&child);
+
+        const cb = try self.allocator.create(sg.CodeBlock);
+        cb.* = .{ .nodes = slice, .ret_val = ret_val };
+
+        const n = try sg.makeSGNode(.{ .code_block = cb }, undefined, self.allocator);
+        try parent.nodes.append(n);
+        return .{ .node = n, .ty = ret_ty };
     }
 
     fn handleWhile(

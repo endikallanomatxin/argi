@@ -27,6 +27,7 @@ pub const Scope = struct {
     nodes: std.array_list.Managed(*sg.SGNode),
     module_aliases: std.StringHashMap([]const u8),
     bindings: std.StringHashMap(*sg.BindingDeclaration),
+    refined_bindings: std.StringHashMap(*sg.BindingDeclaration),
     generic_values: std.StringHashMap(gen.GenericValueBinding),
     moved_bindings: std.StringHashMap(tok.Location),
     functions: std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)),
@@ -53,6 +54,7 @@ pub const Scope = struct {
             .nodes = std.array_list.Managed(*sg.SGNode).init(a.*),
             .module_aliases = std.StringHashMap([]const u8).init(a.*),
             .bindings = std.StringHashMap(*sg.BindingDeclaration).init(a.*),
+            .refined_bindings = std.StringHashMap(*sg.BindingDeclaration).init(a.*),
             .generic_values = std.StringHashMap(gen.GenericValueBinding).init(a.*),
             .moved_bindings = std.StringHashMap(tok.Location).init(a.*),
             .functions = std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)).init(a.*),
@@ -127,6 +129,12 @@ pub const Scope = struct {
     pub fn lookupBinding(self: *Scope, n: []const u8) ?*sg.BindingDeclaration {
         if (self.bindings.get(n)) |b| return b;
         if (self.parent) |p| return p.lookupBinding(n);
+        return null;
+    }
+
+    pub fn lookupRefinedBinding(self: *Scope, n: []const u8) ?*sg.BindingDeclaration {
+        if (self.refined_bindings.get(n)) |b| return b;
+        if (self.parent) |p| return p.lookupRefinedBinding(n);
         return null;
     }
 
