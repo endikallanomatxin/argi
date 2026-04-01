@@ -244,6 +244,25 @@ const SymbolTarget = union(SymbolTargetTag) {
     type_decl: *const sg.TypeDeclaration,
 };
 
+const ModuleAnalysis = struct {
+    tokens: []const token.Token,
+    st_nodes: []const *st.STNode,
+    sg_nodes: []const *sg.SGNode,
+    syntax_functions: []const SyntaxFunctionDeclRef,
+    syntax_calls: []const SyntaxFunctionCallRef,
+    syntax_operators: []const SyntaxOperatorRef,
+    syntax_type_decls: []const SyntaxTypeDeclRef,
+    syntax_type_refs: []const SyntaxTypeRef,
+    syntax_binding_decls: []const SyntaxBindingDeclRef,
+    semantic_functions: []const SemanticFunctionDeclRef,
+    semantic_calls: []const SemanticFunctionCallRef,
+    semantic_type_inits: []const SemanticTypeInitializerRef,
+    semantic_types: []const SemanticTypeDeclRef,
+    semantic_binding_decls: []const SemanticBindingDeclRef,
+    semantic_binding_uses: []const SemanticBindingUseRef,
+    semantic_field_accesses: []const SemanticFieldAccessRef,
+};
+
 const Document = struct {
     uri: []u8,
     path: []u8,
@@ -476,6 +495,94 @@ pub const LanguageService = struct {
             .allocator = self.allocator,
             .items = diag_slice,
             .owned = true,
+        };
+    }
+
+    fn collectModuleFilesForDocument(
+        self: *LanguageService,
+        analysis_allocator: *std.mem.Allocator,
+        doc: *Document,
+    ) ![]const sf.SourceFile {
+        const core_dir = try self.preferredCoreDir(analysis_allocator.*);
+        const files_list = try sf.collectWithEntrySource(analysis_allocator, core_dir, doc.path, doc.text);
+
+        for (files_list.items) |*source_file| {
+            for (self.documents.items) |open_doc| {
+                if (std.mem.eql(u8, source_file.path, open_doc.path)) {
+                    source_file.code = open_doc.text;
+                    break;
+                }
+            }
+        }
+
+        return files_list.items;
+    }
+
+    fn collectModuleAnalysis(
+        self: *LanguageService,
+        analysis_allocator: *std.mem.Allocator,
+        doc: *Document,
+    ) !?ModuleAnalysis {
+        const files = self.collectModuleFilesForDocument(analysis_allocator, doc) catch return null;
+
+        const one_primary = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
+        var diagnostics = diag.Diagnostics.init(analysis_allocator, &one_primary);
+        defer diagnostics.deinit();
+
+        var pipeline = frontend.FrontendPipeline.init(analysis_allocator, &diagnostics);
+        defer pipeline.deinit();
+
+        try pipeline.tokenizeFiles(files);
+        const st_nodes = pipeline.syntax() catch return null;
+        const sg_nodes = pipeline.semantize() catch return null;
+
+        var syntax_functions = std.array_list.Managed(SyntaxFunctionDeclRef).init(analysis_allocator.*);
+        defer syntax_functions.deinit();
+        var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator.*);
+        defer syntax_calls.deinit();
+        var syntax_operators = std.array_list.Managed(SyntaxOperatorRef).init(analysis_allocator.*);
+        defer syntax_operators.deinit();
+        var syntax_type_decls = std.array_list.Managed(SyntaxTypeDeclRef).init(analysis_allocator.*);
+        defer syntax_type_decls.deinit();
+        var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator.*);
+        defer syntax_type_refs.deinit();
+        var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator.*);
+        defer syntax_binding_decls.deinit();
+        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
+
+        var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator.*);
+        defer semantic_functions.deinit();
+        var semantic_calls = std.array_list.Managed(SemanticFunctionCallRef).init(analysis_allocator.*);
+        defer semantic_calls.deinit();
+        var semantic_type_inits = std.array_list.Managed(SemanticTypeInitializerRef).init(analysis_allocator.*);
+        defer semantic_type_inits.deinit();
+        var semantic_types = std.array_list.Managed(SemanticTypeDeclRef).init(analysis_allocator.*);
+        defer semantic_types.deinit();
+        var semantic_binding_decls = std.array_list.Managed(SemanticBindingDeclRef).init(analysis_allocator.*);
+        defer semantic_binding_decls.deinit();
+        var semantic_binding_uses = std.array_list.Managed(SemanticBindingUseRef).init(analysis_allocator.*);
+        defer semantic_binding_uses.deinit();
+        var semantic_field_accesses = std.array_list.Managed(SemanticFieldAccessRef).init(analysis_allocator.*);
+        defer semantic_field_accesses.deinit();
+        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses, &semantic_field_accesses);
+
+        return .{
+            .tokens = try analysis_allocator.dupe(token.Token, pipeline.tokens.items),
+            .st_nodes = st_nodes,
+            .sg_nodes = sg_nodes,
+            .syntax_functions = try syntax_functions.toOwnedSlice(),
+            .syntax_calls = try syntax_calls.toOwnedSlice(),
+            .syntax_operators = try syntax_operators.toOwnedSlice(),
+            .syntax_type_decls = try syntax_type_decls.toOwnedSlice(),
+            .syntax_type_refs = try syntax_type_refs.toOwnedSlice(),
+            .syntax_binding_decls = try syntax_binding_decls.toOwnedSlice(),
+            .semantic_functions = try semantic_functions.toOwnedSlice(),
+            .semantic_calls = try semantic_calls.toOwnedSlice(),
+            .semantic_type_inits = try semantic_type_inits.toOwnedSlice(),
+            .semantic_types = try semantic_types.toOwnedSlice(),
+            .semantic_binding_decls = try semantic_binding_decls.toOwnedSlice(),
+            .semantic_binding_uses = try semantic_binding_uses.toOwnedSlice(),
+            .semantic_field_accesses = try semantic_field_accesses.toOwnedSlice(),
         };
     }
 
@@ -790,79 +897,20 @@ pub const LanguageService = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         var analysis_allocator = arena.allocator();
-        const core_dir = try self.preferredCoreDir(analysis_allocator);
+        const analysis = (try self.collectModuleAnalysis(&analysis_allocator, doc)) orelse return null;
 
-        const files_list = sf.collectWithEntrySource(&analysis_allocator, core_dir, doc.path, doc.text) catch {
-            return null;
-        };
-        const files = files_list.items;
-
-        for (files_list.items) |*source_file| {
-            for (self.documents.items) |open_doc| {
-                if (std.mem.eql(u8, source_file.path, open_doc.path)) {
-                    source_file.code = open_doc.text;
-                    break;
-                }
-            }
-        }
-
-        const one_primary = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
-        var diagnostics = diag.Diagnostics.init(&analysis_allocator, &one_primary);
-        defer diagnostics.deinit();
-
-        var pipeline = frontend.FrontendPipeline.init(&analysis_allocator, &diagnostics);
-        defer pipeline.deinit();
-
-        try pipeline.tokenizeFiles(files);
-        const st_nodes = pipeline.syntax() catch {
-            return null;
-        };
-        const sg_nodes = pipeline.semantize() catch {
-            return null;
-        };
-
-        var syntax_functions = std.array_list.Managed(SyntaxFunctionDeclRef).init(analysis_allocator);
-        defer syntax_functions.deinit();
-        var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
-        defer syntax_calls.deinit();
-        var syntax_operators = std.array_list.Managed(SyntaxOperatorRef).init(analysis_allocator);
-        defer syntax_operators.deinit();
-        var syntax_type_decls = std.array_list.Managed(SyntaxTypeDeclRef).init(analysis_allocator);
-        defer syntax_type_decls.deinit();
-        var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
-        defer syntax_type_refs.deinit();
-        var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator);
-        defer syntax_binding_decls.deinit();
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
-
-        var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator);
-        defer semantic_functions.deinit();
-        var semantic_calls = std.array_list.Managed(SemanticFunctionCallRef).init(analysis_allocator);
-        defer semantic_calls.deinit();
-        var semantic_type_inits = std.array_list.Managed(SemanticTypeInitializerRef).init(analysis_allocator);
-        defer semantic_type_inits.deinit();
-        var semantic_types = std.array_list.Managed(SemanticTypeDeclRef).init(analysis_allocator);
-        defer semantic_types.deinit();
-        var semantic_binding_decls = std.array_list.Managed(SemanticBindingDeclRef).init(analysis_allocator);
-        defer semantic_binding_decls.deinit();
-        var semantic_binding_uses = std.array_list.Managed(SemanticBindingUseRef).init(analysis_allocator);
-        defer semantic_binding_uses.deinit();
-        var semantic_field_accesses = std.array_list.Managed(SemanticFieldAccessRef).init(analysis_allocator);
-        defer semantic_field_accesses.deinit();
-        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses, &semantic_field_accesses);
-
-        for (syntax_functions.items) |syntax_fn| {
+        for (analysis.syntax_functions) |syntax_fn| {
             if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc.path)) continue;
             if (!positionWithinName(position, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len)) continue;
-            const semantic_fn = findSemanticFunctionDecl(semantic_functions.items, syntax_fn.decl.name.location, syntax_fn.decl.name.string) orelse continue;
+            const semantic_fn = findSemanticFunctionDecl(analysis.semantic_functions, syntax_fn.decl.name.location, syntax_fn.decl.name.string) orelse continue;
             const contents = try buildFunctionHoverMarkdown(
                 self.allocator,
                 semantic_fn.decl,
                 syntax_fn.decl,
-                semantic_types.items,
+                analysis.semantic_types,
                 doc.path,
                 doc.text,
-                pipeline.tokens.items,
+                analysis.tokens,
             );
             return .{
                 .range = nameRange(syntax_fn.decl.name.location, syntax_fn.decl.name.string.len),
@@ -870,12 +918,12 @@ pub const LanguageService = struct {
             };
         }
 
-        for (syntax_calls.items) |syntax_call| {
+        for (analysis.syntax_calls) |syntax_call| {
             if (!std.mem.eql(u8, syntax_call.call.callee_loc.file, doc.path)) continue;
             if (!positionWithinName(position, syntax_call.call.callee_loc, syntax_call.call.callee.len)) continue;
-            if (findSemanticTypeInitializerAtLocation(semantic_type_inits.items, syntax_call.call.callee_loc)) |type_init| {
+            if (findSemanticTypeInitializerAtLocation(analysis.semantic_type_inits, syntax_call.call.callee_loc)) |type_init| {
                 const syntax_decl = findSyntaxFunctionDecl(
-                    syntax_functions.items,
+                    analysis.syntax_functions,
                     type_init.init.init_fn.location,
                     type_init.init.init_fn.name,
                 );
@@ -883,26 +931,26 @@ pub const LanguageService = struct {
                     self.allocator,
                     type_init.init.init_fn,
                     if (syntax_decl) |decl_ref| decl_ref.decl else null,
-                    semantic_types.items,
+                    analysis.semantic_types,
                     doc.path,
                     doc.text,
-                    pipeline.tokens.items,
+                    analysis.tokens,
                 );
                 return .{
                     .range = nameRange(syntax_call.call.callee_loc, syntax_call.call.callee.len),
                     .contents = contents,
                 };
             }
-            const semantic_call = findSemanticFunctionCall(semantic_calls.items, syntax_call.call.callee_loc, syntax_call.call.callee) orelse continue;
-            const syntax_decl = findSyntaxFunctionDecl(syntax_functions.items, semantic_call.call.callee.location, semantic_call.call.callee.name);
+            const semantic_call = findSemanticFunctionCall(analysis.semantic_calls, syntax_call.call.callee_loc, syntax_call.call.callee) orelse continue;
+            const syntax_decl = findSyntaxFunctionDecl(analysis.syntax_functions, semantic_call.call.callee.location, semantic_call.call.callee.name);
             const contents = try buildFunctionHoverMarkdown(
                 self.allocator,
                 semantic_call.call.callee,
                 if (syntax_decl) |decl_ref| decl_ref.decl else null,
-                semantic_types.items,
+                analysis.semantic_types,
                 doc.path,
                 doc.text,
-                pipeline.tokens.items,
+                analysis.tokens,
             );
             return .{
                 .range = nameRange(syntax_call.call.callee_loc, syntax_call.call.callee.len),
@@ -910,19 +958,19 @@ pub const LanguageService = struct {
             };
         }
 
-        for (syntax_operators.items) |syntax_op| {
+        for (analysis.syntax_operators) |syntax_op| {
             if (!std.mem.eql(u8, syntax_op.location.file, doc.path)) continue;
             if (!positionWithinName(position, syntax_op.location, syntax_op.len)) continue;
-            const semantic_call = findSemanticFunctionCallAtLocation(semantic_calls.items, syntax_op.location) orelse continue;
-            const syntax_decl = findSyntaxFunctionDecl(syntax_functions.items, semantic_call.call.callee.location, semantic_call.call.callee.name);
+            const semantic_call = findSemanticFunctionCallAtLocation(analysis.semantic_calls, syntax_op.location) orelse continue;
+            const syntax_decl = findSyntaxFunctionDecl(analysis.syntax_functions, semantic_call.call.callee.location, semantic_call.call.callee.name);
             const contents = try buildFunctionHoverMarkdown(
                 self.allocator,
                 semantic_call.call.callee,
                 if (syntax_decl) |decl_ref| decl_ref.decl else null,
-                semantic_types.items,
+                analysis.semantic_types,
                 doc.path,
                 doc.text,
-                pipeline.tokens.items,
+                analysis.tokens,
             );
             return .{
                 .range = nameRange(syntax_op.location, syntax_op.len),
@@ -930,16 +978,16 @@ pub const LanguageService = struct {
             };
         }
 
-        for (syntax_type_refs.items) |type_ref| {
+        for (analysis.syntax_type_refs) |type_ref| {
             if (!std.mem.eql(u8, type_ref.location.file, doc.path)) continue;
             if (!positionWithinName(position, type_ref.location, type_ref.name.len)) continue;
-            const semantic_type_decl = findSemanticTypeDeclByName(semantic_types.items, type_ref.name) orelse continue;
-            const syntax_type_decl = findSyntaxTypeDeclByName(syntax_type_decls.items, type_ref.name);
+            const semantic_type_decl = findSemanticTypeDeclByName(analysis.semantic_types, type_ref.name) orelse continue;
+            const syntax_type_decl = findSyntaxTypeDeclByName(analysis.syntax_type_decls, type_ref.name);
             const contents = try buildTypeHoverMarkdown(
                 self.allocator,
                 semantic_type_decl.decl,
                 syntax_type_decl,
-                semantic_types.items,
+                analysis.semantic_types,
                 doc.path,
                 doc.text,
             );
@@ -958,88 +1006,9 @@ pub const LanguageService = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         var analysis_allocator = arena.allocator();
-        const core_dir = try self.preferredCoreDir(analysis_allocator);
+        const analysis = (try self.collectModuleAnalysis(&analysis_allocator, doc)) orelse return null;
 
-        const files_list = sf.collectWithEntrySource(&analysis_allocator, core_dir, doc.path, doc.text) catch {
-            return null;
-        };
-        const files = files_list.items;
-
-        for (files_list.items) |*source_file| {
-            for (self.documents.items) |open_doc| {
-                if (std.mem.eql(u8, source_file.path, open_doc.path)) {
-                    source_file.code = open_doc.text;
-                    break;
-                }
-            }
-        }
-
-        const one_primary = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
-        var diagnostics = diag.Diagnostics.init(&analysis_allocator, &one_primary);
-        defer diagnostics.deinit();
-
-        var tokens = std.array_list.Managed(token.Token).init(analysis_allocator);
-        defer tokens.deinit();
-
-        for (files, 0..) |source_file, idx| {
-            var tokenizer_ctx = tokenizer.Tokenizer.init(
-                &analysis_allocator,
-                &diagnostics,
-                source_file.code,
-                source_file.path,
-            );
-            const token_slice = tokenizer_ctx.tokenize() catch {
-                return null;
-            };
-
-            const slice = if (idx == files.len - 1)
-                token_slice
-            else
-                token_slice[0 .. token_slice.len - 1];
-            try tokens.appendSlice(slice);
-        }
-
-        var syntax_ctx = syntaxer.Syntaxer.init(&analysis_allocator, tokens.items, &diagnostics);
-        const st_nodes = syntax_ctx.parse() catch {
-            return null;
-        };
-
-        var sem_ctx = semantizer.Semantizer.init(&analysis_allocator, st_nodes, &diagnostics);
-        const sg_nodes = sem_ctx.semantize() catch {
-            return null;
-        };
-
-        var syntax_functions = std.array_list.Managed(SyntaxFunctionDeclRef).init(analysis_allocator);
-        defer syntax_functions.deinit();
-        var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
-        defer syntax_calls.deinit();
-        var syntax_operators = std.array_list.Managed(SyntaxOperatorRef).init(analysis_allocator);
-        defer syntax_operators.deinit();
-        var syntax_type_decls = std.array_list.Managed(SyntaxTypeDeclRef).init(analysis_allocator);
-        defer syntax_type_decls.deinit();
-        var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
-        defer syntax_type_refs.deinit();
-        var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator);
-        defer syntax_binding_decls.deinit();
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
-
-        var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator);
-        defer semantic_functions.deinit();
-        var semantic_calls = std.array_list.Managed(SemanticFunctionCallRef).init(analysis_allocator);
-        defer semantic_calls.deinit();
-        var semantic_type_inits = std.array_list.Managed(SemanticTypeInitializerRef).init(analysis_allocator);
-        defer semantic_type_inits.deinit();
-        var semantic_types = std.array_list.Managed(SemanticTypeDeclRef).init(analysis_allocator);
-        defer semantic_types.deinit();
-        var semantic_binding_decls = std.array_list.Managed(SemanticBindingDeclRef).init(analysis_allocator);
-        defer semantic_binding_decls.deinit();
-        var semantic_binding_uses = std.array_list.Managed(SemanticBindingUseRef).init(analysis_allocator);
-        defer semantic_binding_uses.deinit();
-        var semantic_field_accesses = std.array_list.Managed(SemanticFieldAccessRef).init(analysis_allocator);
-        defer semantic_field_accesses.deinit();
-        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses, &semantic_field_accesses);
-
-        for (syntax_functions.items) |syntax_fn| {
+        for (analysis.syntax_functions) |syntax_fn| {
             if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc.path)) continue;
             if (!positionWithinName(position, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len)) continue;
             return .{
@@ -1048,33 +1017,33 @@ pub const LanguageService = struct {
             };
         }
 
-        for (syntax_calls.items) |syntax_call| {
+        for (analysis.syntax_calls) |syntax_call| {
             if (!std.mem.eql(u8, syntax_call.call.callee_loc.file, doc.path)) continue;
             if (!positionWithinName(position, syntax_call.call.callee_loc, syntax_call.call.callee.len)) continue;
-            if (findSemanticTypeInitializerAtLocation(semantic_type_inits.items, syntax_call.call.callee_loc)) |type_init| {
+            if (findSemanticTypeInitializerAtLocation(analysis.semantic_type_inits, syntax_call.call.callee_loc)) |type_init| {
                 return .{
                     .path = try self.ownedDefinitionPath(type_init.init.init_fn.location.file),
                     .range = nameRange(type_init.init.init_fn.location, type_init.init.init_fn.name.len),
                 };
             }
-            const semantic_call = findSemanticFunctionCallAtLocation(semantic_calls.items, syntax_call.call.callee_loc) orelse continue;
+            const semantic_call = findSemanticFunctionCallAtLocation(analysis.semantic_calls, syntax_call.call.callee_loc) orelse continue;
             return .{
                 .path = try self.ownedDefinitionPath(semantic_call.call.callee.location.file),
                 .range = nameRange(semantic_call.call.callee.location, semantic_call.call.callee.name.len),
             };
         }
 
-        for (syntax_operators.items) |syntax_op| {
+        for (analysis.syntax_operators) |syntax_op| {
             if (!std.mem.eql(u8, syntax_op.location.file, doc.path)) continue;
             if (!positionWithinName(position, syntax_op.location, syntax_op.len)) continue;
-            const semantic_call = findSemanticFunctionCallAtLocation(semantic_calls.items, syntax_op.location) orelse continue;
+            const semantic_call = findSemanticFunctionCallAtLocation(analysis.semantic_calls, syntax_op.location) orelse continue;
             return .{
                 .path = try self.ownedDefinitionPath(semantic_call.call.callee.location.file),
                 .range = nameRange(semantic_call.call.callee.location, semantic_call.call.callee.name.len),
             };
         }
 
-        for (syntax_type_decls.items) |syntax_decl| {
+        for (analysis.syntax_type_decls) |syntax_decl| {
             if (!std.mem.eql(u8, syntax_decl.name.location.file, doc.path)) continue;
             if (!positionWithinName(position, syntax_decl.name.location, syntax_decl.name.string.len)) continue;
             return .{
@@ -1083,27 +1052,27 @@ pub const LanguageService = struct {
             };
         }
 
-        for (syntax_type_refs.items) |type_ref| {
+        for (analysis.syntax_type_refs) |type_ref| {
             if (!std.mem.eql(u8, type_ref.location.file, doc.path)) continue;
             if (!positionWithinName(position, type_ref.location, type_ref.name.len)) continue;
-            const target = findSyntaxTypeDeclByName(syntax_type_decls.items, type_ref.name) orelse continue;
+            const target = findSyntaxTypeDeclByName(analysis.syntax_type_decls, type_ref.name) orelse continue;
             return .{
                 .path = try self.ownedDefinitionPath(target.name.location.file),
                 .range = nameRange(target.name.location, target.name.string.len),
             };
         }
 
-        for (semantic_field_accesses.items) |field_access| {
+        for (analysis.semantic_field_accesses) |field_access| {
             if (!std.mem.eql(u8, field_access.node.location.file, doc.path)) continue;
             if (!positionWithinName(position, field_access.node.location, field_access.access.field_name.len)) continue;
-            const target = findFieldDefinition(field_access, semantic_types.items, syntax_type_decls.items) orelse continue;
+            const target = findFieldDefinition(field_access, analysis.semantic_types, analysis.syntax_type_decls) orelse continue;
             return .{
                 .path = try self.ownedDefinitionPath(target.location.file),
                 .range = nameRange(target.location, target.string.len),
             };
         }
 
-        for (syntax_binding_decls.items) |syntax_decl| {
+        for (analysis.syntax_binding_decls) |syntax_decl| {
             if (!std.mem.eql(u8, syntax_decl.location.file, doc.path)) continue;
             if (!positionWithinName(position, syntax_decl.location, syntax_decl.name.len)) continue;
             return .{
@@ -1112,7 +1081,7 @@ pub const LanguageService = struct {
             };
         }
 
-        for (semantic_binding_decls.items) |binding_decl| {
+        for (analysis.semantic_binding_decls) |binding_decl| {
             if (!std.mem.eql(u8, binding_decl.node.location.file, doc.path)) continue;
             if (!positionWithinName(position, binding_decl.node.location, binding_decl.decl.name.len)) continue;
             return .{
@@ -1121,7 +1090,7 @@ pub const LanguageService = struct {
             };
         }
 
-        for (semantic_binding_uses.items) |binding_use| {
+        for (analysis.semantic_binding_uses) |binding_use| {
             if (!std.mem.eql(u8, binding_use.node.location.file, doc.path)) continue;
             if (!positionWithinName(position, binding_use.node.location, binding_use.binding.name.len)) continue;
             return .{
@@ -1144,102 +1113,23 @@ pub const LanguageService = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         var analysis_allocator = arena.allocator();
-        const core_dir = try self.preferredCoreDir(analysis_allocator);
-
-        const files_list = sf.collectWithEntrySource(&analysis_allocator, core_dir, doc.path, doc.text) catch {
-            return LocationsResult.empty(self.allocator);
-        };
-        const files = files_list.items;
-
-        for (files_list.items) |*source_file| {
-            for (self.documents.items) |open_doc| {
-                if (std.mem.eql(u8, source_file.path, open_doc.path)) {
-                    source_file.code = open_doc.text;
-                    break;
-                }
-            }
-        }
-
-        const one_primary = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
-        var diagnostics = diag.Diagnostics.init(&analysis_allocator, &one_primary);
-        defer diagnostics.deinit();
-
-        var tokens = std.array_list.Managed(token.Token).init(analysis_allocator);
-        defer tokens.deinit();
-
-        for (files, 0..) |source_file, idx| {
-            var tokenizer_ctx = tokenizer.Tokenizer.init(
-                &analysis_allocator,
-                &diagnostics,
-                source_file.code,
-                source_file.path,
-            );
-            const token_slice = tokenizer_ctx.tokenize() catch {
-                return LocationsResult.empty(self.allocator);
-            };
-
-            const slice = if (idx == files.len - 1)
-                token_slice
-            else
-                token_slice[0 .. token_slice.len - 1];
-            try tokens.appendSlice(slice);
-        }
-
-        var syntax_ctx = syntaxer.Syntaxer.init(&analysis_allocator, tokens.items, &diagnostics);
-        const st_nodes = syntax_ctx.parse() catch {
-            return LocationsResult.empty(self.allocator);
-        };
-
-        var sem_ctx = semantizer.Semantizer.init(&analysis_allocator, st_nodes, &diagnostics);
-        const sg_nodes = sem_ctx.semantize() catch {
-            return LocationsResult.empty(self.allocator);
-        };
-
-        var syntax_functions = std.array_list.Managed(SyntaxFunctionDeclRef).init(analysis_allocator);
-        defer syntax_functions.deinit();
-        var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
-        defer syntax_calls.deinit();
-        var syntax_operators = std.array_list.Managed(SyntaxOperatorRef).init(analysis_allocator);
-        defer syntax_operators.deinit();
-        var syntax_type_decls = std.array_list.Managed(SyntaxTypeDeclRef).init(analysis_allocator);
-        defer syntax_type_decls.deinit();
-        var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
-        defer syntax_type_refs.deinit();
-        var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator);
-        defer syntax_binding_decls.deinit();
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
-
-        var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator);
-        defer semantic_functions.deinit();
-        var semantic_calls = std.array_list.Managed(SemanticFunctionCallRef).init(analysis_allocator);
-        defer semantic_calls.deinit();
-        var semantic_type_inits = std.array_list.Managed(SemanticTypeInitializerRef).init(analysis_allocator);
-        defer semantic_type_inits.deinit();
-        var semantic_types = std.array_list.Managed(SemanticTypeDeclRef).init(analysis_allocator);
-        defer semantic_types.deinit();
-        var semantic_binding_decls = std.array_list.Managed(SemanticBindingDeclRef).init(analysis_allocator);
-        defer semantic_binding_decls.deinit();
-        var semantic_binding_uses = std.array_list.Managed(SemanticBindingUseRef).init(analysis_allocator);
-        defer semantic_binding_uses.deinit();
-        var semantic_field_accesses = std.array_list.Managed(SemanticFieldAccessRef).init(analysis_allocator);
-        defer semantic_field_accesses.deinit();
-        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses, &semantic_field_accesses);
+        const analysis = (try self.collectModuleAnalysis(&analysis_allocator, doc)) orelse return LocationsResult.empty(self.allocator);
 
         const target = resolveSymbolTarget(
             doc.path,
             position,
-            syntax_functions.items,
-            syntax_calls.items,
-            syntax_operators.items,
-            syntax_type_decls.items,
-            syntax_type_refs.items,
-            syntax_binding_decls.items,
-            semantic_functions.items,
-            semantic_calls.items,
-            semantic_type_inits.items,
-            semantic_types.items,
-            semantic_binding_decls.items,
-            semantic_binding_uses.items,
+            analysis.syntax_functions,
+            analysis.syntax_calls,
+            analysis.syntax_operators,
+            analysis.syntax_type_decls,
+            analysis.syntax_type_refs,
+            analysis.syntax_binding_decls,
+            analysis.semantic_functions,
+            analysis.semantic_calls,
+            analysis.semantic_type_inits,
+            analysis.semantic_types,
+            analysis.semantic_binding_decls,
+            analysis.semantic_binding_uses,
         ) orelse return LocationsResult.empty(self.allocator);
 
         var out = std.array_list.Managed(Location).init(self.allocator);
@@ -1256,7 +1146,7 @@ pub const LanguageService = struct {
                         .range = nameRange(fn_decl.location, fn_decl.name.len),
                     });
                 }
-                for (semantic_calls.items) |call_ref| {
+                for (analysis.semantic_calls) |call_ref| {
                     if (call_ref.call.callee != fn_decl) continue;
                     try out.append(.{
                         .path = try self.ownedDefinitionPath(call_ref.node.location.file),
@@ -1271,7 +1161,7 @@ pub const LanguageService = struct {
                         .range = nameRange(binding_decl.location, binding_decl.name.len),
                     });
                 }
-                for (semantic_binding_uses.items) |use_ref| {
+                for (analysis.semantic_binding_uses) |use_ref| {
                     if (use_ref.binding != binding_decl) continue;
                     try out.append(.{
                         .path = try self.ownedDefinitionPath(use_ref.node.location.file),
@@ -1281,13 +1171,13 @@ pub const LanguageService = struct {
             },
             .type_decl => |type_decl| {
                 if (include_declaration) {
-                    const syntax_decl = findSyntaxTypeDeclByName(syntax_type_decls.items, type_decl.name) orelse return LocationsResult.empty(self.allocator);
+                    const syntax_decl = findSyntaxTypeDeclByName(analysis.syntax_type_decls, type_decl.name) orelse return LocationsResult.empty(self.allocator);
                     try out.append(.{
                         .path = try self.ownedDefinitionPath(syntax_decl.name.location.file),
                         .range = nameRange(syntax_decl.name.location, type_decl.name.len),
                     });
                 }
-                for (syntax_type_refs.items) |type_ref| {
+                for (analysis.syntax_type_refs) |type_ref| {
                     if (!std.mem.eql(u8, type_ref.name, type_decl.name)) continue;
                     try out.append(.{
                         .path = try self.ownedDefinitionPath(type_ref.location.file),
@@ -1350,102 +1240,23 @@ pub const LanguageService = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         var analysis_allocator = arena.allocator();
-        const core_dir = try self.preferredCoreDir(analysis_allocator);
-
-        const files_list = sf.collectWithEntrySource(&analysis_allocator, core_dir, doc.path, doc.text) catch {
-            return null;
-        };
-        const files = files_list.items;
-
-        for (files_list.items) |*source_file| {
-            for (self.documents.items) |open_doc| {
-                if (std.mem.eql(u8, source_file.path, open_doc.path)) {
-                    source_file.code = open_doc.text;
-                    break;
-                }
-            }
-        }
-
-        const one_primary = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
-        var diagnostics = diag.Diagnostics.init(&analysis_allocator, &one_primary);
-        defer diagnostics.deinit();
-
-        var tokens = std.array_list.Managed(token.Token).init(analysis_allocator);
-        defer tokens.deinit();
-
-        for (files, 0..) |source_file, idx| {
-            var tokenizer_ctx = tokenizer.Tokenizer.init(
-                &analysis_allocator,
-                &diagnostics,
-                source_file.code,
-                source_file.path,
-            );
-            const token_slice = tokenizer_ctx.tokenize() catch {
-                return null;
-            };
-
-            const slice = if (idx == files.len - 1)
-                token_slice
-            else
-                token_slice[0 .. token_slice.len - 1];
-            try tokens.appendSlice(slice);
-        }
-
-        var syntax_ctx = syntaxer.Syntaxer.init(&analysis_allocator, tokens.items, &diagnostics);
-        const st_nodes = syntax_ctx.parse() catch {
-            return null;
-        };
-
-        var sem_ctx = semantizer.Semantizer.init(&analysis_allocator, st_nodes, &diagnostics);
-        const sg_nodes = sem_ctx.semantize() catch {
-            return null;
-        };
-
-        var syntax_functions = std.array_list.Managed(SyntaxFunctionDeclRef).init(analysis_allocator);
-        defer syntax_functions.deinit();
-        var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
-        defer syntax_calls.deinit();
-        var syntax_operators = std.array_list.Managed(SyntaxOperatorRef).init(analysis_allocator);
-        defer syntax_operators.deinit();
-        var syntax_type_decls = std.array_list.Managed(SyntaxTypeDeclRef).init(analysis_allocator);
-        defer syntax_type_decls.deinit();
-        var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
-        defer syntax_type_refs.deinit();
-        var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator);
-        defer syntax_binding_decls.deinit();
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
-
-        var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator);
-        defer semantic_functions.deinit();
-        var semantic_calls = std.array_list.Managed(SemanticFunctionCallRef).init(analysis_allocator);
-        defer semantic_calls.deinit();
-        var semantic_type_inits = std.array_list.Managed(SemanticTypeInitializerRef).init(analysis_allocator);
-        defer semantic_type_inits.deinit();
-        var semantic_types = std.array_list.Managed(SemanticTypeDeclRef).init(analysis_allocator);
-        defer semantic_types.deinit();
-        var semantic_binding_decls = std.array_list.Managed(SemanticBindingDeclRef).init(analysis_allocator);
-        defer semantic_binding_decls.deinit();
-        var semantic_binding_uses = std.array_list.Managed(SemanticBindingUseRef).init(analysis_allocator);
-        defer semantic_binding_uses.deinit();
-        var semantic_field_accesses = std.array_list.Managed(SemanticFieldAccessRef).init(analysis_allocator);
-        defer semantic_field_accesses.deinit();
-        try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses, &semantic_field_accesses);
+        const analysis = (try self.collectModuleAnalysis(&analysis_allocator, doc)) orelse return null;
 
         const target = resolveSymbolTarget(
             doc.path,
             position,
-            syntax_functions.items,
-            syntax_calls.items,
-            syntax_operators.items,
-            syntax_type_decls.items,
-            syntax_type_refs.items,
-            syntax_binding_decls.items,
-            semantic_functions.items,
-            semantic_calls.items,
-            semantic_type_inits.items,
-            semantic_types.items,
-            semantic_binding_decls.items,
-            semantic_binding_uses.items,
+            analysis.syntax_functions,
+            analysis.syntax_calls,
+            analysis.syntax_operators,
+            analysis.syntax_type_decls,
+            analysis.syntax_type_refs,
+            analysis.syntax_binding_decls,
+            analysis.semantic_functions,
+            analysis.semantic_calls,
+            analysis.semantic_type_inits,
+            analysis.semantic_types,
+            analysis.semantic_binding_decls,
+            analysis.semantic_binding_uses,
         ) orelse return null;
 
         return switch (target) {
@@ -1459,7 +1270,7 @@ pub const LanguageService = struct {
             },
             .type_decl => |type_decl| .{
                 .range = blk: {
-                    const syntax_decl = findSyntaxTypeDeclByName(syntax_type_decls.items, type_decl.name) orelse return null;
+                    const syntax_decl = findSyntaxTypeDeclByName(analysis.syntax_type_decls, type_decl.name) orelse return null;
                     break :blk nameRange(syntax_decl.name.location, type_decl.name.len);
                 },
                 .placeholder = try self.allocator.dupe(u8, type_decl.name),
@@ -1473,71 +1284,7 @@ pub const LanguageService = struct {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
         defer arena.deinit();
         var analysis_allocator = arena.allocator();
-        const core_dir = try self.preferredCoreDir(analysis_allocator);
-
-        const files_list = sf.collectWithEntrySource(&analysis_allocator, core_dir, doc.path, doc.text) catch {
-            return InlayHintsResult.empty(self.allocator);
-        };
-        const files = files_list.items;
-
-        for (files_list.items) |*source_file| {
-            for (self.documents.items) |open_doc| {
-                if (std.mem.eql(u8, source_file.path, open_doc.path)) {
-                    source_file.code = open_doc.text;
-                    break;
-                }
-            }
-        }
-
-        const one_primary = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
-        var diagnostics = diag.Diagnostics.init(&analysis_allocator, &one_primary);
-        defer diagnostics.deinit();
-
-        var tokens = std.array_list.Managed(token.Token).init(analysis_allocator);
-        defer tokens.deinit();
-
-        for (files, 0..) |source_file, idx| {
-            var tokenizer_ctx = tokenizer.Tokenizer.init(
-                &analysis_allocator,
-                &diagnostics,
-                source_file.code,
-                source_file.path,
-            );
-            const token_slice = tokenizer_ctx.tokenize() catch {
-                return InlayHintsResult.empty(self.allocator);
-            };
-
-            const slice = if (idx == files.len - 1)
-                token_slice
-            else
-                token_slice[0 .. token_slice.len - 1];
-            try tokens.appendSlice(slice);
-        }
-
-        var syntax_ctx = syntaxer.Syntaxer.init(&analysis_allocator, tokens.items, &diagnostics);
-        const st_nodes = syntax_ctx.parse() catch {
-            return InlayHintsResult.empty(self.allocator);
-        };
-
-        var sem_ctx = semantizer.Semantizer.init(&analysis_allocator, st_nodes, &diagnostics);
-        const sg_nodes = sem_ctx.semantize() catch {
-            return InlayHintsResult.empty(self.allocator);
-        };
-
-        var syntax_functions = std.array_list.Managed(SyntaxFunctionDeclRef).init(analysis_allocator);
-        defer syntax_functions.deinit();
-        var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator);
-        defer syntax_calls.deinit();
-        var syntax_operators = std.array_list.Managed(SyntaxOperatorRef).init(analysis_allocator);
-        defer syntax_operators.deinit();
-        var syntax_type_decls = std.array_list.Managed(SyntaxTypeDeclRef).init(analysis_allocator);
-        defer syntax_type_decls.deinit();
-        var syntax_type_refs = std.array_list.Managed(SyntaxTypeRef).init(analysis_allocator);
-        defer syntax_type_refs.deinit();
-        var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator);
-        defer syntax_binding_decls.deinit();
-
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
+        const analysis = (try self.collectModuleAnalysis(&analysis_allocator, doc)) orelse return InlayHintsResult.empty(self.allocator);
 
         var hints = std.array_list.Managed(InlayHint).init(self.allocator);
         errdefer {
@@ -1549,17 +1296,17 @@ pub const LanguageService = struct {
             self,
             doc.path,
             range,
-            sg_nodes,
-            syntax_functions.items,
+            analysis.sg_nodes,
+            analysis.syntax_functions,
             &hints,
         );
         try collectCallInlayHints(
             self,
             doc.path,
             range,
-            sg_nodes,
-            syntax_calls.items,
-            tokens.items,
+            analysis.sg_nodes,
+            analysis.syntax_calls,
+            analysis.tokens,
             &hints,
         );
 

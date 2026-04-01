@@ -407,7 +407,7 @@ pub const Semantizer = struct {
         var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         defer in_fields.deinit();
         for (decl.input.fields) |fld| {
-            const ty = self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| switch (err) {
+            const ty = self.resolveTypeForSignaturePredeclaration(fld.type.?, &child) catch |err| switch (err) {
                 error.UnknownType, error.SymbolNotFound => return,
                 else => return err,
             };
@@ -437,13 +437,13 @@ pub const Semantizer = struct {
             const ty = if (self.inferableErrableInnerTypeFromOutput(fld.type.?)) |inner|
                 blk: {
                     uses_inferred_error_reasons = true;
-                    break :blk self.makeInferredErrableType(inner, &child, fld.name.location) catch |err| switch (err) {
+                    break :blk self.makeInferredErrableTypeForSignaturePredeclaration(inner, &child, fld.name.location) catch |err| switch (err) {
                         error.UnknownType, error.SymbolNotFound => return,
                         else => return err,
                     };
                 }
             else
-                self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| switch (err) {
+                self.resolveTypeForSignaturePredeclaration(fld.type.?, &child) catch |err| switch (err) {
                     error.UnknownType, error.SymbolNotFound => return,
                     else => return err,
                 };
@@ -571,6 +571,42 @@ pub const Semantizer = struct {
         } };
 
         const resolved = try self.resolveTypePreservingAbstracts(errable_ast, s);
+        const errable_choice = switch (resolved) {
+            .choice_type => |choice_ty| choice_ty,
+            else => return error.InvalidType,
+        };
+
+        const reason_choice = typ.errableReasonChoiceFromType(resolved) orelse return error.InvalidType;
+        @constCast(errable_choice).identity = .{ .inferred_choice = try self.nextInferredChoiceIdentity(.errable) };
+        @constCast(reason_choice).identity = .{ .inferred_choice = try self.nextInferredChoiceIdentity(.reasons) };
+        return resolved;
+    }
+
+    fn makeInferredErrableTypeForSignaturePredeclaration(
+        self: *Semantizer,
+        inner: syn.Type,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!sg.Type {
+        const empty_choice = syn.ChoiceTypeLiteral{ .variants = &.{} };
+        const reason_fields = try self.allocator.alloc(syn.StructTypeLiteralField, 2);
+        reason_fields[0] = .{
+            .name = .{ .string = "t", .location = loc },
+            .type = inner,
+            .default_value = null,
+        };
+        reason_fields[1] = .{
+            .name = .{ .string = "reasons", .location = loc },
+            .type = syn.Type{ .choice_type_literal = empty_choice },
+            .default_value = null,
+        };
+
+        const errable_ast = syn.Type{ .generic_type_instantiation = .{
+            .base_name = .{ .string = "Errable", .location = loc },
+            .args = .{ .fields = reason_fields },
+        } };
+
+        const resolved = try self.resolveTypeForSignaturePredeclaration(errable_ast, s);
         const errable_choice = switch (resolved) {
             .choice_type => |choice_ty| choice_ty,
             else => return error.InvalidType,
@@ -9877,6 +9913,74 @@ pub const Semantizer = struct {
             },
             .array_type => |arr_info| blk_arr: {
                 const elem_ty = try self.resolveTypePreservingAbstracts(arr_info.element.*, s);
+                break :blk_arr try self.makeArrayType(arr_info.length, elem_ty);
+            },
+        };
+    }
+
+    fn resolveTypeForSignaturePredeclaration(self: *Semantizer, t: syn.Type, s: *Scope) SemErr!sg.Type {
+        return switch (t) {
+            .type_name => |tn| blk: {
+                const id = tn.string;
+                if (std.mem.indexOfScalar(u8, id, '.')) |dot_idx| {
+                    const module_name = id[0..dot_idx];
+                    const type_name = id[dot_idx + 1 ..];
+                    const module_dir = s.lookupModuleAlias(module_name) orelse break :blk error.UnknownType;
+                    if (s.lookupTypeInModule(module_dir, type_name)) |td| {
+                        if (!(try self.typeIsVisible(td, tn.location.file))) {
+                            try self.addPrivateMemberDiag(tn.location, "type", type_name);
+                            return error.Reported;
+                        }
+                        break :blk td.ty;
+                    }
+                    break :blk error.UnknownType;
+                }
+                if (typ.builtinFromName(id)) |bt| break :blk .{ .builtin = bt };
+                if (s.lookupAbstractInfo(id)) |_| {
+                    if (s.lookupType(id)) |td| break :blk td.ty;
+                    break :blk error.UnknownType;
+                }
+                if (s.lookupType(id)) |td| {
+                    if (!(try self.typeIsVisible(td, tn.location.file))) {
+                        try self.addPrivateMemberDiag(tn.location, "type", id);
+                        return error.Reported;
+                    }
+                    break :blk td.ty;
+                }
+                break :blk error.UnknownType;
+            },
+            .generic_type_instantiation => |g| blk_g: {
+                const base_name = g.base_name.string;
+                if (try self.resolveSpecialGenericType(g, s, null)) |special_ty| break :blk_g special_ty;
+                if (s.lookupAbstractInfo(base_name)) |_| {
+                    if (s.lookupType(base_name)) |td| break :blk_g td.ty;
+                    break :blk_g error.UnknownType;
+                }
+
+                const ty = self.instantiateGenericTypeNamed(base_name, g.args, s, null) catch |err| switch (err) {
+                    error.SymbolNotFound => break :blk_g error.UnknownType,
+                    else => return err,
+                };
+                break :blk_g ty;
+            },
+            .inferred_errable => error.InvalidType,
+            .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
+            .choice_type_literal => |ct| .{ .choice_type = try self.choiceTypeFromLiteral(ct, s) },
+            .pointer_type => |ptr_info| blk: {
+                const inner_ty = try self.resolveTypeForSignaturePredeclaration(ptr_info.child.*, s);
+                const child = try self.allocator.create(sg.Type);
+                child.* = inner_ty;
+
+                const sem_ptr = try self.allocator.create(sg.PointerType);
+                sem_ptr.* = .{
+                    .mutability = ptr_info.mutability,
+                    .child = child,
+                };
+
+                break :blk .{ .pointer_type = sem_ptr };
+            },
+            .array_type => |arr_info| blk_arr: {
+                const elem_ty = try self.resolveTypeForSignaturePredeclaration(arr_info.element.*, s);
                 break :blk_arr try self.makeArrayType(arr_info.length, elem_ty);
             },
         };
