@@ -84,6 +84,13 @@ pub const Syntaxer = struct {
         return std.meta.activeTag(self.current().content) == std.meta.activeTag(tag);
     }
 
+    fn currentIdentifierEquals(self: *Syntaxer, expected: []const u8) bool {
+        return switch (self.current().content) {
+            .identifier => |name| std.mem.eql(u8, name, expected),
+            else => false,
+        };
+    }
+
     fn lookaheadIsTypeArgument(self: *Syntaxer) bool {
         if (!self.tokenIs(.open_bracket)) return false;
 
@@ -273,7 +280,28 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.equal) or self.tokenIs(.comma) or self.tokenIs(.close_parenthesis))
             return null;
 
-        if (self.tokenIs(.open_bracket)) {
+        if (self.tokenIs(.question_mark)) {
+            const question_loc = self.tokenLocation();
+            self.advanceOne();
+
+            const inner_ty_opt = try self.parseType();
+            if (inner_ty_opt == null) {
+                try self.diags.add(question_loc, .syntax, "expected type after '?'", .{});
+                return SyntaxerError.ExpectedIdentifier;
+            }
+
+            const nullable_fields = try self.allocator.alloc(syn.StructTypeLiteralField, 1);
+            nullable_fields[0] = .{
+                .name = .{ .string = "t", .location = question_loc },
+                .type = inner_ty_opt.?,
+                .default_value = null,
+            };
+
+            return syn.Type{ .generic_type_instantiation = .{
+                .base_name = .{ .string = "Nullable", .location = question_loc },
+                .args = .{ .fields = nullable_fields },
+            } };
+        } else if (self.tokenIs(.open_bracket)) {
             const len_loc = self.tokenLocation();
             self.advanceOne();
             self.skipNewLinesAndComments();
@@ -994,6 +1022,40 @@ pub const Syntaxer = struct {
                 continue;
             }
 
+            if (self.tokenIs(.question_mark)) {
+                const question_loc = self.tokenLocation();
+                self.advanceOne();
+
+                const variant_node = try self.makeNode(.{ .choice_literal = .{
+                    .name = .{ .string = "some", .location = question_loc },
+                    .payload = null,
+                } }, question_loc);
+
+                const fields = try self.allocator.alloc(syn.StructValueLiteralField, 2);
+                fields[0] = .{
+                    .name = .{ .string = "value", .location = question_loc },
+                    .value = node,
+                };
+                fields[1] = .{
+                    .name = .{ .string = "variant", .location = question_loc },
+                    .value = variant_node,
+                };
+                const input = try self.makeNode(.{ .struct_value_literal = .{
+                    .fields = fields,
+                    .positional_prefix_count = 0,
+                } }, question_loc);
+
+                node = try self.makeNode(.{ .function_call = .{
+                    .callee = "is",
+                    .callee_loc = question_loc,
+                    .module_qualifier = null,
+                    .type_arguments = null,
+                    .type_arguments_struct = null,
+                    .input = input,
+                } }, question_loc);
+                continue;
+            }
+
             break;
         }
         return node;
@@ -1238,8 +1300,43 @@ pub const Syntaxer = struct {
         return lhs;
     }
 
+    fn parseUnwrapExpr(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        var lhs = try self.parseOrExpr();
+
+        while (self.currentIdentifierEquals("unwrap_or")) {
+            const op_loc = self.tokenLocation();
+            self.advanceOne();
+            const rhs = try self.parseOrExpr();
+
+            const fields = try self.allocator.alloc(syn.StructValueLiteralField, 2);
+            fields[0] = .{
+                .name = .{ .string = "value", .location = op_loc },
+                .value = lhs,
+            };
+            fields[1] = .{
+                .name = .{ .string = "default", .location = op_loc },
+                .value = rhs,
+            };
+            const input = try self.makeNode(.{ .struct_value_literal = .{
+                .fields = fields,
+                .positional_prefix_count = 0,
+            } }, op_loc);
+
+            lhs = try self.makeNode(.{ .function_call = .{
+                .callee = "unwrap_or",
+                .callee_loc = op_loc,
+                .module_qualifier = null,
+                .type_arguments = null,
+                .type_arguments_struct = null,
+                .input = input,
+            } }, op_loc);
+        }
+
+        return lhs;
+    }
+
     fn parseExpression(self: *Syntaxer) SyntaxerError!*syn.STNode {
-        return self.parseOrExpr();
+        return self.parseUnwrapExpr();
     }
 
     // (old parseStatement removed; unified version with generics is below)

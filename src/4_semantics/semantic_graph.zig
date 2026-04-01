@@ -51,6 +51,7 @@ pub const Content = union(enum) {
     struct_value_literal: *const StructValueLiteral,
     struct_field_access: *const StructFieldAccess,
     choice_payload_access: *const ChoicePayloadAccess,
+    nullable_unwrap_or: *const NullableUnwrapOr,
     error_propagation: *const ErrorPropagation,
     error_context: *const ErrorContext,
     array_literal: *const ArrayLiteral,
@@ -133,6 +134,14 @@ pub const ChoicePayloadAccess = struct {
     choice_value: *const SGNode,
     variant_index: u32,
     payload_type: Type,
+};
+
+pub const NullableUnwrapOr = struct {
+    nullable_value: *const SGNode,
+    default_value: *const SGNode,
+    some_variant_index: u32,
+    some_value_field_index: u32,
+    result_type: Type,
 };
 
 pub const PointerType = struct {

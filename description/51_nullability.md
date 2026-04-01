@@ -1,46 +1,53 @@
 ## Nullability. Optional types
 
-Los tipos no pueden ser nulos. En su lugar, se utilizan enums.
+La nullabilidad se modela sobre `Nullable#(.t: T)`:
 
-```
-Nullable#(.t: Type) : Type = choice (
-	..null
-	..some T
+```rg
+Nullable#(.t: Type) : Type = (
+    =..none
+    ..some(.value: t)
 )
 ```
 
+Hay azúcar superficial para la forma común:
+
 ```rg
-my_nullable? -- Returns true or false
+value : ?Int32 = ..some(.value = 5)
 ```
 
-Se puede hacer matching:
+`?T` se desazucara a `Nullable#(.t: T)`.
+
+Chequeo rápido de presencia:
 
 ```rg
-match my_nullable {
-  ..some v => {
-	// `v` es un Int
-	use v;
-  }
-  ..null => {
-	// gestionar el caso nulo
-  }
+if value? {
 }
 ```
 
-También se puede unwrapear:
+`value?` se desazucara a `is(.value = value, .variant = ..some)`.
+
+Se puede hacer matching normal:
 
 ```rg
-my_value = my_nullable unwrap_or 0
-```
-
-```rg
-my_value = my_nullable unwrap_or_do {
-	// gestionar el caso nulo
-	return 0
+match value {
+    ..none {
+    }
+    ..some payload {
+        use(payload.value)
+    }
 }
 ```
 
-(Como el orelse de Zig)
+Y también `unwrap_or`:
 
-Son operadores, porque si se plantean como funciones, el piping queda muy tedioso.
+```rg
+answer ::= maybe_answer unwrap_or 0
+```
 
+`unwrap_or` es un operador del lenguaje sobre `Nullable`: devuelve el valor de
+`..some`, o el fallback cuando el valor es `..none`.
+
+> [!TODO]
+> `unwrap_or_do` sigue abierto. Para hacerlo limpio hacen falta bloques
+> expresión o una forma equivalente de expresar el branch lazily sin meter una
+> semántica especial ad hoc solo para nullables.

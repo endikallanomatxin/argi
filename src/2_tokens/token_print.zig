@@ -183,6 +183,9 @@ pub fn printToken(token: tok.Token) void {
         .double_bang => {
             std.debug.print("double_bang\n", .{});
         },
+        .question_mark => {
+            std.debug.print("question_mark\n", .{});
+        },
     }
 }
 

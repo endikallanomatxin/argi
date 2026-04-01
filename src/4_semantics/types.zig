@@ -639,6 +639,18 @@ pub fn appendTypePretty(buf: *std.array_list.Managed(u8), t: sg.Type, s: *Scope)
         return;
     }
     if (genericIdentityOf(t)) |identity| {
+        if (std.mem.eql(u8, identity.base_name, "Nullable")) {
+            if (genericIdentityArgByName(identity, "t")) |arg| {
+                switch (arg) {
+                    .type => |inner_ty| {
+                        try buf.appendSlice("?");
+                        try appendTypePretty(buf, inner_ty, s);
+                        return;
+                    },
+                    else => {},
+                }
+            }
+        }
         if (!std.mem.eql(u8, identity.base_name, "Array")) {
             try appendGenericIdentityPretty(buf, identity, s);
             return;

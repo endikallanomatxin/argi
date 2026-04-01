@@ -63,6 +63,7 @@ pub const Content = union(enum) {
     tilde: struct {}, // ~
     bang: struct {}, // !
     double_bang: struct {}, // !!
+    question_mark: struct {}, // ?
 
     // Arithmetic operators
     binary_operator: BinaryOperator,

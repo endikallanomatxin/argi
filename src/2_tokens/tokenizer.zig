@@ -348,6 +348,9 @@ pub const Tokenizer = struct {
             '~' => {
                 try self.addToken(tok.Content{ .tilde = .{} }, loc);
             },
+            '?' => {
+                try self.addToken(tok.Content{ .question_mark = .{} }, loc);
+            },
             '\'' => {
                 // Salta la comilla de apertura
                 try self.advanceOne();

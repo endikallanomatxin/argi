@@ -16,7 +16,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     }
 
     home ::= get(.self = system.env_vars, .key = home_key)
-    if is(.value = home, .variant = ..some) {
+    if home? {
     } else {
         status_code = 3
         return
@@ -29,8 +29,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     }
 
     missing ::= get(.self = system.env_vars, .key = missing_key)
-    if is(.value = missing, .variant = ..none) {
-    } else {
+    if missing? {
         status_code = 5
         return
     }

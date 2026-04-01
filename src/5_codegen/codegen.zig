@@ -344,6 +344,10 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "error generating choice payload access: {s}", .{@errorName(e)});
                 return e;
             },
+            .nullable_unwrap_or => |unwrap| self.genNullableUnwrapOr(unwrap) catch |e| {
+                try self.diags.add(n.location, .codegen, "error generating nullable unwrap_or: {s}", .{@errorName(e)});
+                return e;
+            },
             .error_propagation => |prop| self.genErrorPropagation(prop) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating error propagation: {s}", .{@errorName(e)});
                 return e;
@@ -1512,6 +1516,55 @@ pub const CodeGenerator = struct {
         c.LLVMAddIncoming(phi, &incoming_values, &incoming_blocks, 2);
 
         return .{ .value_ref = phi, .type_ref = c.LLVMInt1Type(), .sem_type = .{ .builtin = .Bool } };
+    }
+
+    fn genNullableUnwrapOr(self: *CodeGenerator, unwrap: *const sem.NullableUnwrapOr) !TypedValue {
+        const nullable_tv = (try self.visitNode(unwrap.nullable_value)) orelse return CodegenError.ValueNotFound;
+        const default_tv = (try self.visitNode(unwrap.default_value)) orelse return CodegenError.ValueNotFound;
+        const result_ty_ref = try self.toLLVMType(unwrap.result_type);
+
+        const tag_val = c.LLVMBuildExtractValue(self.builder, nullable_tv.value_ref, 0, "nullable.tag");
+        const cur_bb = c.LLVMGetInsertBlock(self.builder);
+        const fnc = c.LLVMGetBasicBlockParent(cur_bb);
+        const some_bb = c.LLVMAppendBasicBlock(fnc, "nullable.some");
+        const none_bb = c.LLVMAppendBasicBlock(fnc, "nullable.none");
+        const merge_bb = c.LLVMAppendBasicBlock(fnc, "nullable.merge");
+
+        const some_tag = c.LLVMConstInt(c.LLVMInt32Type(), unwrap.some_variant_index, 0);
+        const is_some = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, tag_val, some_tag, "nullable.is_some");
+        _ = c.LLVMBuildCondBr(self.builder, is_some, some_bb, none_bb);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, some_bb);
+        const payload_val = c.LLVMBuildExtractValue(
+            self.builder,
+            nullable_tv.value_ref,
+            unwrap.some_variant_index + 1,
+            "nullable.payload",
+        );
+        const some_val = c.LLVMBuildExtractValue(
+            self.builder,
+            payload_val,
+            unwrap.some_value_field_index,
+            "nullable.value",
+        );
+        _ = c.LLVMBuildBr(self.builder, merge_bb);
+        const some_end_bb = c.LLVMGetInsertBlock(self.builder);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, none_bb);
+        _ = c.LLVMBuildBr(self.builder, merge_bb);
+        const none_end_bb = c.LLVMGetInsertBlock(self.builder);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, merge_bb);
+        const phi = c.LLVMBuildPhi(self.builder, result_ty_ref, "nullable.unwrap_or");
+        var incoming_values = [_]llvm.c.LLVMValueRef{ some_val, default_tv.value_ref };
+        var incoming_blocks = [_]llvm.c.LLVMBasicBlockRef{ some_end_bb, none_end_bb };
+        c.LLVMAddIncoming(phi, &incoming_values, &incoming_blocks, 2);
+
+        return .{
+            .value_ref = phi,
+            .type_ref = result_ty_ref,
+            .sem_type = unwrap.result_type,
+        };
     }
 
     // ────────────────────────────────────────── if ──

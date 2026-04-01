@@ -402,6 +402,10 @@ pub const Semantizer = struct {
             .function_call => |call| {
                 try self.collectFunctionReasonsFromNode(fn_decl, call.input, collected);
             },
+            .nullable_unwrap_or => |unwrap| {
+                try self.collectFunctionReasonsFromNode(fn_decl, unwrap.nullable_value, collected);
+                try self.collectFunctionReasonsFromNode(fn_decl, unwrap.default_value, collected);
+            },
             .code_block => |block| {
                 for (block.nodes) |child| {
                     try self.collectFunctionReasonsFromNode(fn_decl, child, collected);
@@ -1182,6 +1186,10 @@ pub const Semantizer = struct {
             => {},
             .move_value => |inner| {
                 try self.walkNodeOnceReachability(current_fn, inner, state);
+            },
+            .nullable_unwrap_or => |unwrap| {
+                try self.walkNodeOnceReachability(current_fn, unwrap.nullable_value, state);
+                try self.walkNodeOnceReachability(current_fn, unwrap.default_value, state);
             },
             .function_call => |call| {
                 try self.walkNodeOnceReachability(current_fn, call.input, state);
@@ -5073,6 +5081,14 @@ pub const Semantizer = struct {
             };
             return len_res;
         }
+        if (std.mem.eql(u8, call.callee, "unwrap_or") and call.module_qualifier == null and call.type_arguments == null and call.type_arguments_struct == null) {
+            const unwrap_res = self.handleUnwrapOrCall(call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                error.SymbolNotFound => null,
+                else => return err,
+            };
+            if (unwrap_res) |te| return te;
+        }
 
         const tv_in = try self.visitNode(call.input.*, s);
         try self.checkCallBindingExclusivity(call.callee, tv_in, call.input.*.location);
@@ -5169,6 +5185,43 @@ pub const Semantizer = struct {
         const result_ty = typ.functionReturnType(chosen);
 
         return .{ .node = n, .ty = result_ty };
+    }
+
+    fn handleUnwrapOrCall(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (call.input.*.content != .struct_value_literal) return error.SymbolNotFound;
+
+        const input_syn = call.input.*.content.struct_value_literal;
+        var value_node: ?*const syn.STNode = null;
+        var default_node: ?*const syn.STNode = null;
+        for (input_syn.fields) |field| {
+            if (std.mem.eql(u8, field.name.string, "value")) {
+                value_node = field.value;
+            } else if (std.mem.eql(u8, field.name.string, "default")) {
+                default_node = field.value;
+            }
+        }
+        if (value_node == null or default_node == null) return error.SymbolNotFound;
+
+        const value_te = try self.visitNode(value_node.?.*, s);
+        const nullable_info = try self.nullableInfoOf(value_te.ty, value_node.?.location, "unwrap_or left operand", s);
+        var default_te = try self.visitNode(default_node.?.*, s);
+        default_te = try typ.coerceExprToType(nullable_info.some_value_type, default_te, default_node.?, s, self.allocator, self.diags);
+        const unwrap_ptr = try self.allocator.create(sg.NullableUnwrapOr);
+        unwrap_ptr.* = .{
+            .nullable_value = value_te.node,
+            .default_value = default_te.node,
+            .some_variant_index = nullable_info.some_variant_index,
+            .some_value_field_index = nullable_info.some_value_field_index,
+            .result_type = nullable_info.some_value_type,
+        };
+
+        const n = try sg.makeSGNode(.{ .nullable_unwrap_or = unwrap_ptr }, call.callee_loc, self.allocator);
+        n.sem_type = nullable_info.some_value_type;
+        return .{ .node = n, .ty = nullable_info.some_value_type };
     }
 
     fn cancelExplicitDeinitAutoCleanup(
@@ -7044,6 +7097,56 @@ pub const Semantizer = struct {
         return error.SymbolNotFound;
     }
 
+    fn instantiateGenericNamedWithBoundTypeArg(
+        self: *Semantizer,
+        name: []const u8,
+        bound_param_name: []const u8,
+        bound_type: sg.Type,
+        call_input: typ.TypedExpr,
+        s: *Scope,
+        allowed_kind: gen.GenericDispatchKind,
+    ) SemErr!*sg.FunctionDeclaration {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.generic_functions.getPtr(name)) |list_ptr| {
+                for (list_ptr.items) |tmpl| {
+                    if (tmpl.dispatch_kind != allowed_kind) continue;
+
+                    var subst = GenericSubst.init(self.allocator);
+                    defer subst.deinit();
+                    const dispatch_input = try self.materializeTemplateReachDefaultsForDispatch(tmpl, call_input, s);
+
+                    var ok = false;
+                    for (tmpl.params) |param| {
+                        if (!std.mem.eql(u8, param.name, bound_param_name)) continue;
+                        if (param.kind != .type) break;
+                        try subst.types.put(param.name, bound_type);
+                        ok = true;
+                        break;
+                    }
+                    if (!ok) continue;
+
+                    ok = true;
+                    for (tmpl.params) |param| {
+                        if (std.mem.eql(u8, param.name, bound_param_name)) continue;
+                        if (self.inferGenericArgFromCall(tmpl, param, dispatch_input.ty, s, &subst)) |inferred| {
+                            try self.putGenericArg(&subst, param, inferred);
+                            continue;
+                        }
+                        ok = false;
+                        break;
+                    }
+                    if (!ok) continue;
+                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) continue;
+                    if (try self.instantiateGenericTemplate(name, tmpl, dispatch_input, s, &subst)) |instantiated| {
+                        return instantiated;
+                    }
+                }
+            }
+        }
+        return error.SymbolNotFound;
+    }
+
     fn resolveTemplateReachDispatchType(
         self: *Semantizer,
         tmpl: gen.GenericTemplate,
@@ -7658,6 +7761,13 @@ pub const Semantizer = struct {
         error_payload_type: sg.Type,
     };
 
+    const NullableInfo = struct {
+        some_variant_index: u32,
+        some_value_type: sg.Type,
+        some_value_field_index: u32,
+        none_variant_index: u32,
+    };
+
     fn errorPayloadCanPropagate(self: *Semantizer, source: sg.Type, target: sg.Type) bool {
         _ = self;
         if (typ.typesExactlyEqual(source, target)) return true;
@@ -7807,6 +7917,88 @@ pub const Semantizer = struct {
 
         try s.nodes.append(node);
         return .{ .node = node, .ty = operand_info.ok_payload_type };
+    }
+
+    fn nullableInfoOf(
+        self: *Semantizer,
+        ty: sg.Type,
+        loc: tok.Location,
+        comptime what: []const u8,
+        s: *Scope,
+    ) SemErr!NullableInfo {
+        if (ty != .choice_type) {
+            const desc = try self.formatTypeText(ty, s);
+            defer desc.deinit();
+            try self.diags.add(
+                loc,
+                .semantic,
+                "{s} must be a Nullable-like choice, found '{s}'",
+                .{ what, desc.bytes },
+            );
+            return error.Reported;
+        }
+
+        var some_value_ty: ?sg.Type = null;
+        var some_value_field_index: u32 = 0;
+        var some_variant_index: u32 = 0;
+        var found_none = false;
+        var none_variant_index: u32 = 0;
+
+        for (ty.choice_type.variants, 0..) |variant, idx| {
+            if (std.mem.eql(u8, variant.name, "some")) {
+                const payload_ty = variant.payload_type orelse {
+                    try self.diags.add(loc, .semantic, "Nullable '..some' must carry a payload", .{});
+                    return error.Reported;
+                };
+                const payload_struct = switch (payload_ty) {
+                    .struct_type => |st| st,
+                    else => {
+                        const desc = try self.formatTypeText(payload_ty, s);
+                        defer desc.deinit();
+                        try self.diags.add(
+                            loc,
+                            .semantic,
+                            "Nullable '..some' payload must be a struct containing '.value', found '{s}'",
+                            .{desc.bytes},
+                        );
+                        return error.Reported;
+                    },
+                };
+                const value_field = typ.findFieldByName(payload_struct, "value") orelse {
+                    try self.diags.add(loc, .semantic, "Nullable '..some' payload must contain '.value'", .{});
+                    return error.Reported;
+                };
+                some_value_ty = value_field.ty;
+                some_value_field_index = fieldIndexInStruct(payload_struct, "value") orelse 0;
+                some_variant_index = @intCast(idx);
+            } else if (std.mem.eql(u8, variant.name, "none")) {
+                if (variant.payload_type != null) {
+                    try self.diags.add(loc, .semantic, "Nullable '..none' cannot carry a payload", .{});
+                    return error.Reported;
+                }
+                found_none = true;
+                none_variant_index = @intCast(idx);
+            }
+        }
+
+        if (some_value_ty == null or !found_none) {
+            const desc = try self.formatTypeText(ty, s);
+            defer desc.deinit();
+            try self.diags.add(
+                loc,
+                .semantic,
+                "{s} must have '..some(.value: T)' and '..none', found '{s}'",
+                .{ what, desc.bytes },
+            );
+            return error.Reported;
+        }
+
+        return .{
+            .some_variant_index = some_variant_index,
+            .some_value_type = some_value_ty.?,
+            .some_value_field_index = some_value_field_index,
+            .none_variant_index = none_variant_index,
+        };
     }
 
     fn errableInfoOf(

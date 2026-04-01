@@ -3,7 +3,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     missing_key ::= from_literal(.data = "ARGI_ENV_SHOULD_NOT_EXIST_476")
 
     home ::= system.env_vars[home_key]
-    if is(.value = home, .variant = ..some) {
+    if home? {
     } else {
         status_code = 1
         return
@@ -16,8 +16,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     }
 
     missing ::= system.env_vars[missing_key]
-    if is(.value = missing, .variant = ..none) {
-    } else {
+    if missing? {
         status_code = 3
         return
     }

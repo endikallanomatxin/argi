@@ -6,3 +6,8 @@ Nullable #(.t: Type) : Type = (
     ..some(.value: t)
 )
 ```
+
+Current surface sugar:
+- `?T` lowers to `Nullable#(.t: T)`
+- `value?` lowers to `is(.value = value, .variant = ..some)`
+- `value unwrap_or fallback` unwraps `..some(.value)` or yields the fallback
