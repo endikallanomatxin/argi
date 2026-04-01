@@ -1635,6 +1635,12 @@ test "feature_tests/types/39_inferred_errable_direct_error" {
     try runExpect(test_path, 42);
 }
 
+test "feature_tests/types/40_inferred_errable_explicit_output" {
+    const test_path = "tests/feature_tests/types/40_inferred_errable_explicit_output";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 40);
+}
+
 test "feature_tests/modules/01_folder_module_namespace" {
     const test_path = "tests/feature_tests/modules/01_folder_module_namespace";
     try expectSuccessfulBuild(test_path);

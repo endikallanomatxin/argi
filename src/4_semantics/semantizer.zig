@@ -285,6 +285,29 @@ pub const Semantizer = struct {
         return resolved;
     }
 
+    fn inferableErrableInnerTypeFromOutput(self: *Semantizer, ty: syn.Type) ?syn.Type {
+        _ = self;
+        return switch (ty) {
+            .inferred_errable => |inner| inner.*,
+            .generic_type_instantiation => |g| blk: {
+                if (!std.mem.eql(u8, g.base_name.string, "Errable")) break :blk null;
+
+                var inner_ty: ?syn.Type = null;
+                var has_reasons = false;
+                for (g.args.fields) |field| {
+                    if (std.mem.eql(u8, field.name.string, "t")) {
+                        if (field.type) |field_ty| inner_ty = field_ty;
+                    } else if (std.mem.eql(u8, field.name.string, "reasons")) {
+                        has_reasons = true;
+                    }
+                }
+                if (has_reasons) break :blk null;
+                break :blk inner_ty;
+            },
+            else => null,
+        };
+    }
+
     fn inferFunctionErrorReasons(self: *Semantizer, global: *Scope) SemErr!void {
         var total_functions: usize = 0;
         var it_count = global.functions.iterator();
@@ -3505,13 +3528,13 @@ pub const Semantizer = struct {
         var output_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
         var uses_inferred_error_reasons = false;
         for (f.output.fields) |fld| {
-            const ty = switch (fld.type.?) {
-                .inferred_errable => |inner| blk: {
+            const ty = if (self.inferableErrableInnerTypeFromOutput(fld.type.?)) |inner|
+                blk: {
                     uses_inferred_error_reasons = true;
-                    break :blk self.makeInferredErrableType(inner.*, &child, fld.name.location) catch |err| return err;
-                },
-                else => self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| return err,
-            };
+                    break :blk self.makeInferredErrableType(inner, &child, fld.name.location) catch |err| return err;
+                }
+            else
+                self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| return err;
             const dvp = if (fld.default_value) |n|
                 ((self.visitNode(n.*, &child) catch |err| return err)).node
             else

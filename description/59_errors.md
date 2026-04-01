@@ -105,6 +105,19 @@ load_file() -> !Int32 := {
 returning `T`. In this special form, the compiler infers the reasons from the
 body and closes the return `Errable` after semantic analysis.
 
+The same inference path is also available when the output is written
+explicitly as `Errable#(.t: T)` and omits `.reasons`:
+
+```rg
+load_file() -> (.result: Errable#(.t: Int32)) := {
+    value := read_file()!
+    result = ..ok(.value = value)
+}
+```
+
+This is currently accepted only in function outputs. Outside function output
+positions, `Errable#(.t: T)` still requires an explicit `.reasons`.
+
 The compiler can also infer a narrower subset of the declared reasons by
 looking at the actual propagation and return sites in the function body. That
 inferred subset is surfaced in tooling hover even when the full declared
@@ -188,6 +201,8 @@ Dirección actual de la inferencia de reasons:
 - la firma sigue escribiendo el conjunto completo declarado
 - `-> !T` ya permite omitir `.reasons` en el caso especial de un único
   resultado `result`
+- `Errable#(.t: T)` sin `.reasons` también se acepta ya en outputs de función
+  explícitos
 - semántica calcula un subconjunto inferido a partir de `return`, asignaciones a
   outputs y propagaciones con `!` / `!!`
 - el hover muestra ese subconjunto inferido para que se pueda consultar sin
