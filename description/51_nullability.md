@@ -47,7 +47,13 @@ answer ::= maybe_answer unwrap_or 0
 `unwrap_or` es un operador del lenguaje sobre `Nullable`: devuelve el valor de
 `..some`, o el fallback cuando el valor es `..none`.
 
-> [!TODO]
-> `unwrap_or_do` sigue abierto. Para hacerlo limpio hacen falta bloques
-> expresión o una forma equivalente de expresar el branch lazily sin meter una
-> semántica especial ad hoc solo para nullables.
+Para el caso lazy existe `unwrap_or_do`:
+
+```rg
+answer ::= maybe_answer unwrap_or_do {
+    0
+}
+```
+
+Aquí el bloque solo se evalúa si el valor es `..none`. La última expresión del
+bloque determina el valor producido.

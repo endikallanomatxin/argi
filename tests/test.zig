@@ -1653,6 +1653,12 @@ test "feature_tests/types/42_nullable_unwrap_or" {
     try run(test_path);
 }
 
+test "feature_tests/types/43_nullable_unwrap_or_do" {
+    const test_path = "tests/feature_tests/types/43_nullable_unwrap_or_do";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
 test "feature_tests/modules/01_folder_module_namespace" {
     const test_path = "tests/feature_tests/modules/01_folder_module_namespace";
     try expectSuccessfulBuild(test_path);

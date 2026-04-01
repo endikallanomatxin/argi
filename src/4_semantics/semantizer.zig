@@ -404,7 +404,7 @@ pub const Semantizer = struct {
             },
             .nullable_unwrap_or => |unwrap| {
                 try self.collectFunctionReasonsFromNode(fn_decl, unwrap.nullable_value, collected);
-                try self.collectFunctionReasonsFromNode(fn_decl, unwrap.default_value, collected);
+                try self.collectFunctionReasonsFromNode(fn_decl, unwrap.fallback_value, collected);
             },
             .code_block => |block| {
                 for (block.nodes) |child| {
@@ -1189,7 +1189,7 @@ pub const Semantizer = struct {
             },
             .nullable_unwrap_or => |unwrap| {
                 try self.walkNodeOnceReachability(current_fn, unwrap.nullable_value, state);
-                try self.walkNodeOnceReachability(current_fn, unwrap.default_value, state);
+                try self.walkNodeOnceReachability(current_fn, unwrap.fallback_value, state);
             },
             .function_call => |call| {
                 try self.walkNodeOnceReachability(current_fn, call.input, state);
@@ -3184,9 +3184,17 @@ pub const Semantizer = struct {
         parent: *Scope,
     ) SemErr!typ.TypedExpr {
         var child = try Scope.init(self.allocator, parent, parent.current_fn);
+        var ret_val: ?*sg.SGNode = null;
+        var ret_ty: sg.Type = .{ .builtin = .Any };
 
-        for (blk.items) |st| {
+        for (blk.items, 0..) |st, idx| {
             const te = try self.visitNode(st.*, &child);
+            const is_last = idx + 1 == blk.items.len;
+            if (is_last and st.*.content == .expression_statement) {
+                ret_val = te.node;
+                ret_ty = te.ty;
+                continue;
+            }
             if (st.*.content == .function_call) {
                 try child.nodes.append(te.node);
             }
@@ -3203,11 +3211,11 @@ pub const Semantizer = struct {
         self.clearDeferred(&child);
 
         const cb = try self.allocator.create(sg.CodeBlock);
-        cb.* = .{ .nodes = slice, .ret_val = null };
+        cb.* = .{ .nodes = slice, .ret_val = ret_val };
 
         const n = try sg.makeSGNode(.{ .code_block = cb }, undefined, self.allocator);
         try parent.nodes.append(n);
-        return .{ .node = n, .ty = .{ .builtin = .Any } };
+        return .{ .node = n, .ty = ret_ty };
     }
 
     //──────────────────────────────────────────────────── SYMBOL DECLARATION
@@ -5081,8 +5089,8 @@ pub const Semantizer = struct {
             };
             return len_res;
         }
-        if (std.mem.eql(u8, call.callee, "unwrap_or") and call.module_qualifier == null and call.type_arguments == null and call.type_arguments_struct == null) {
-            const unwrap_res = self.handleUnwrapOrCall(call, s) catch |err| switch (err) {
+        if ((std.mem.eql(u8, call.callee, "unwrap_or") or std.mem.eql(u8, call.callee, "unwrap_or_do")) and call.module_qualifier == null and call.type_arguments == null and call.type_arguments_struct == null) {
+            const unwrap_res = self.handleNullableUnwrapCall(call, s) catch |err| switch (err) {
                 error.Reported => return err,
                 error.SymbolNotFound => null,
                 else => return err,
@@ -5187,7 +5195,7 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = result_ty };
     }
 
-    fn handleUnwrapOrCall(
+    fn handleNullableUnwrapCall(
         self: *Semantizer,
         call: syn.FunctionCall,
         s: *Scope,
@@ -5208,12 +5216,12 @@ pub const Semantizer = struct {
 
         const value_te = try self.visitNode(value_node.?.*, s);
         const nullable_info = try self.nullableInfoOf(value_te.ty, value_node.?.location, "unwrap_or left operand", s);
-        var default_te = try self.visitNode(default_node.?.*, s);
-        default_te = try typ.coerceExprToType(nullable_info.some_value_type, default_te, default_node.?, s, self.allocator, self.diags);
+        var fallback_te = try self.visitNode(default_node.?.*, s);
+        fallback_te = try typ.coerceExprToType(nullable_info.some_value_type, fallback_te, default_node.?, s, self.allocator, self.diags);
         const unwrap_ptr = try self.allocator.create(sg.NullableUnwrapOr);
         unwrap_ptr.* = .{
             .nullable_value = value_te.node,
-            .default_value = default_te.node,
+            .fallback_value = fallback_te.node,
             .some_variant_index = nullable_info.some_variant_index,
             .some_value_field_index = nullable_info.some_value_field_index,
             .result_type = nullable_info.some_value_type,

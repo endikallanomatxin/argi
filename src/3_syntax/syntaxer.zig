@@ -91,6 +91,20 @@ pub const Syntaxer = struct {
         };
     }
 
+    fn currentCanStartBareExpressionStatement(self: *Syntaxer) bool {
+        return switch (self.current().content) {
+            .literal,
+            .open_parenthesis,
+            .open_brace,
+            .double_dot,
+            .ampersand,
+            .dollar,
+            .tilde,
+            => true,
+            else => false,
+        };
+    }
+
     fn lookaheadIsTypeArgument(self: *Syntaxer) bool {
         if (!self.tokenIs(.open_bracket)) return false;
 
@@ -1303,10 +1317,14 @@ pub const Syntaxer = struct {
     fn parseUnwrapExpr(self: *Syntaxer) SyntaxerError!*syn.STNode {
         var lhs = try self.parseOrExpr();
 
-        while (self.currentIdentifierEquals("unwrap_or")) {
+        while (self.currentIdentifierEquals("unwrap_or") or self.currentIdentifierEquals("unwrap_or_do")) {
             const op_loc = self.tokenLocation();
+            const is_do = self.currentIdentifierEquals("unwrap_or_do");
             self.advanceOne();
-            const rhs = try self.parseOrExpr();
+            const rhs = if (is_do)
+                try self.parsePrimary()
+            else
+                try self.parseOrExpr();
 
             const fields = try self.allocator.alloc(syn.StructValueLiteralField, 2);
             fields[0] = .{
@@ -1323,7 +1341,7 @@ pub const Syntaxer = struct {
             } }, op_loc);
 
             lhs = try self.makeNode(.{ .function_call = .{
-                .callee = "unwrap_or",
+                .callee = if (is_do) "unwrap_or_do" else "unwrap_or",
                 .callee_loc = op_loc,
                 .module_qualifier = null,
                 .type_arguments = null,
@@ -1399,6 +1417,11 @@ pub const Syntaxer = struct {
             self.advanceOne();
             const option_name = try self.parseName();
             return try self.makeNode(.{ .choice_option_declaration = .{ .name = option_name } }, decl_loc);
+        }
+
+        if (self.current().content != .identifier and self.currentCanStartBareExpressionStatement()) {
+            const expr = try self.parseExpression();
+            return try self.makeNode(.{ .expression_statement = expr }, expr.location);
         }
 
         const id_loc = self.tokenLocation();

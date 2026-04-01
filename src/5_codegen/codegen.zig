@@ -1520,7 +1520,6 @@ pub const CodeGenerator = struct {
 
     fn genNullableUnwrapOr(self: *CodeGenerator, unwrap: *const sem.NullableUnwrapOr) !TypedValue {
         const nullable_tv = (try self.visitNode(unwrap.nullable_value)) orelse return CodegenError.ValueNotFound;
-        const default_tv = (try self.visitNode(unwrap.default_value)) orelse return CodegenError.ValueNotFound;
         const result_ty_ref = try self.toLLVMType(unwrap.result_type);
 
         const tag_val = c.LLVMBuildExtractValue(self.builder, nullable_tv.value_ref, 0, "nullable.tag");
@@ -1551,12 +1550,13 @@ pub const CodeGenerator = struct {
         const some_end_bb = c.LLVMGetInsertBlock(self.builder);
 
         c.LLVMPositionBuilderAtEnd(self.builder, none_bb);
+        const fallback_tv = (try self.visitNode(unwrap.fallback_value)) orelse return CodegenError.ValueNotFound;
         _ = c.LLVMBuildBr(self.builder, merge_bb);
         const none_end_bb = c.LLVMGetInsertBlock(self.builder);
 
         c.LLVMPositionBuilderAtEnd(self.builder, merge_bb);
         const phi = c.LLVMBuildPhi(self.builder, result_ty_ref, "nullable.unwrap_or");
-        var incoming_values = [_]llvm.c.LLVMValueRef{ some_val, default_tv.value_ref };
+        var incoming_values = [_]llvm.c.LLVMValueRef{ some_val, fallback_tv.value_ref };
         var incoming_blocks = [_]llvm.c.LLVMBasicBlockRef{ some_end_bb, none_end_bb };
         c.LLVMAddIncoming(phi, &incoming_values, &incoming_blocks, 2);
 

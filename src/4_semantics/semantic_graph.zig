@@ -138,7 +138,7 @@ pub const ChoicePayloadAccess = struct {
 
 pub const NullableUnwrapOr = struct {
     nullable_value: *const SGNode,
-    default_value: *const SGNode,
+    fallback_value: *const SGNode,
     some_variant_index: u32,
     some_value_field_index: u32,
     result_type: Type,
