@@ -6054,6 +6054,9 @@ pub const Semantizer = struct {
         }
 
         if (best == null) {
+            if (self.defer_unknown_top_level and self.current_top_node != null) {
+                return error.SymbolNotFound;
+            }
             try self.addMissingModuleFunctionDiagnostic(module_name, module_dir, fn_name, input_te.ty, s, loc);
             return error.Reported;
         }
