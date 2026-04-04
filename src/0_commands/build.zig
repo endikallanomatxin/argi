@@ -21,6 +21,7 @@ const BuildFlags = struct {
     output_path: ?[]const u8 = null,
     llvm_ir_path: ?[]const u8 = null,
     object_path: ?[]const u8 = null,
+    just_object_path: ?[]const u8 = null,
 };
 
 const PhaseTimings = struct {
@@ -63,8 +64,13 @@ fn parseFlags(args: []const []const u8) !BuildFlags {
             idx += 1;
             if (idx >= args.len) return error.MissingFlagValue;
             flags.object_path = args[idx];
+        } else if (std.mem.eql(u8, a, "--just-emit-obj")) {
+            idx += 1;
+            if (idx >= args.len) return error.MissingFlagValue;
+            flags.just_object_path = args[idx];
         }
     }
+    if (flags.object_path != null and flags.just_object_path != null) return error.ConflictingObjectEmissionModes;
     return flags;
 }
 
@@ -176,15 +182,17 @@ pub fn compile(args: []const []const u8) !void {
         try std.fs.path.resolve(allocator, &.{path})
     else
         null;
-    const final_obj_path = if (flags.object_path) |path|
+    const final_obj_path = if (flags.just_object_path) |path|
+        try std.fs.path.resolve(allocator, &.{path})
+    else if (flags.object_path) |path|
         try std.fs.path.resolve(allocator, &.{path})
     else
-        try std.fmt.allocPrint(allocator, "{s}.o", .{final_output_path});
-    const emit_object_only = flags.object_path != null;
+        null;
+    const emit_object_only = flags.just_object_path != null;
 
     if (!emit_object_only) try ensureParentDir(final_output_path);
     if (final_ir_path) |path| try ensureParentDir(path);
-    try ensureParentDir(final_obj_path);
+    if (final_obj_path) |path| try ensureParentDir(path);
 
     // 1. Reunir ficheros ──────────────────────────────────────────────────
     const collect_start = std.time.nanoTimestamp();
@@ -264,7 +272,7 @@ pub fn compile(args: []const []const u8) !void {
     timings.codegen_ns = elapsedSince(codegen_start);
 
     // Temporales en el mismo directorio final.
-    const temp_stem_base = if (emit_object_only) final_obj_path else final_output_path;
+    const temp_stem_base = if (emit_object_only) final_obj_path.? else final_output_path;
     const temp_stem = try std.fmt.allocPrint(
         allocator,
         "{s}.tmp.{d}",
@@ -346,14 +354,20 @@ pub fn compile(args: []const []const u8) !void {
         try replaceFile(temp_stem, final_output_path);
     }
 
-    if (std.fs.cwd().statFile(temp_obj_path)) |_| {} else |err| switch (err) {
-        error.FileNotFound => {
-            std.debug.print("missing temp obj before rename: {s}\n", .{temp_obj_path});
-            return err;
-        },
-        else => return err,
+    if (final_obj_path) |obj_dst| {
+        if (std.fs.cwd().statFile(temp_obj_path)) |_| {} else |err| switch (err) {
+            error.FileNotFound => {
+                std.debug.print("missing temp obj before rename: {s}\n", .{temp_obj_path});
+                return err;
+            },
+            else => return err,
+        }
+        try replaceFile(temp_obj_path, obj_dst);
+    } else {
+        std.fs.cwd().deleteFile(temp_obj_path) catch |err| {
+            if (err != error.FileNotFound) return err;
+        };
     }
-    try replaceFile(temp_obj_path, final_obj_path);
 
     if (flags.time_phases) {
         printPhaseTimings(timings);
@@ -382,8 +396,28 @@ test "parse build flags keeps diagnostics toggles and output paths" {
     try std.testing.expectEqualStrings("bin/app", flags.output_path.?);
     try std.testing.expectEqualStrings("ir/app.ll", flags.llvm_ir_path.?);
     try std.testing.expectEqualStrings("obj/app.o", flags.object_path.?);
+    try std.testing.expect(flags.just_object_path == null);
 }
 
 test "parse build flags rejects missing path value" {
     try std.testing.expectError(error.MissingFlagValue, parseFlags(&.{"--output"}));
+}
+
+test "parse build flags keeps just emit obj path" {
+    const flags = try parseFlags(&.{
+        "--just-emit-obj",
+        "obj-only/app.o",
+    });
+
+    try std.testing.expectEqualStrings("obj-only/app.o", flags.just_object_path.?);
+    try std.testing.expect(flags.object_path == null);
+}
+
+test "parse build flags rejects conflicting object emission modes" {
+    try std.testing.expectError(error.ConflictingObjectEmissionModes, parseFlags(&.{
+        "--emit-obj",
+        "obj/app.o",
+        "--just-emit-obj",
+        "obj-only/app.o",
+    }));
 }
