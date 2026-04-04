@@ -907,7 +907,7 @@ test "feature_tests/collections/13X_iterator_abstract_missing_implements" {
 test "feature_tests/control_flow/05X_for_requires_iterator_contract" {
     try buildExpectFail(
         "tests/feature_tests/control_flow/05X_for_requires_iterator_contract",
-        "for expects 'to_iterator(.value = &...)' to return a type implementing abstract 'Iterator'",
+        "type does not implement abstract 'Iterable'",
     );
 }
 

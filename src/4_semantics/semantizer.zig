@@ -61,6 +61,7 @@ const ReachFunctionContext = struct {
 };
 
 const PendingFunctionBody = struct {
+    top_node: *const syn.STNode,
     decl: syn.FunctionDeclaration,
     location: tok.Location,
     function: *sg.FunctionDeclaration,
@@ -398,6 +399,7 @@ pub const Semantizer = struct {
 
     fn enqueuePendingFunctionBody(
         self: *Semantizer,
+        top_node: *const syn.STNode,
         decl: syn.FunctionDeclaration,
         loc: tok.Location,
         function: *sg.FunctionDeclaration,
@@ -407,6 +409,7 @@ pub const Semantizer = struct {
         }
 
         try self.pending_function_bodies.append(.{
+            .top_node = top_node,
             .decl = decl,
             .location = loc,
             .function = function,
@@ -414,16 +417,35 @@ pub const Semantizer = struct {
     }
 
     fn semantizePendingFunctionBodies(self: *Semantizer, global: *Scope) SemErr!void {
+        const deferred = try self.allocator.alloc(bool, self.pending_function_bodies.items.len);
+        @memset(deferred, false);
+
         // Defaults must be materialized for every pending function before any
         // body is semantized, otherwise overload resolution between bodies can
         // still observe placeholder signatures.
-        for (self.pending_function_bodies.items) |pending| {
-            try self.semantizeRegularFunctionDefaults(pending.decl, global, pending.location, pending.function);
+        for (self.pending_function_bodies.items, 0..) |pending, idx| {
+            self.current_top_node = pending.top_node;
+            self.semantizeRegularFunctionDefaults(pending.decl, global, pending.location, pending.function) catch |err| switch (err) {
+                error.UnknownType, error.SymbolNotFound => {
+                    try self.pushTopLevelForRetry();
+                    deferred[idx] = true;
+                },
+                else => return err,
+            };
         }
 
-        for (self.pending_function_bodies.items) |pending| {
-            try self.semantizeRegularFunctionBody(pending.decl, global, pending.location, pending.function);
+        for (self.pending_function_bodies.items, 0..) |pending, idx| {
+            if (deferred[idx]) continue;
+            self.current_top_node = pending.top_node;
+            self.semantizeRegularFunctionBody(pending.decl, global, pending.location, pending.function) catch |err| switch (err) {
+                error.UnknownType, error.SymbolNotFound => {
+                    try self.pushTopLevelForRetry();
+                    deferred[idx] = true;
+                },
+                else => return err,
+            };
         }
+        self.current_top_node = null;
     }
 
     fn predeclareTopLevelSymbols(self: *Semantizer, global: *Scope) SemErr!void {
@@ -4193,7 +4215,11 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         const fn_ptr = try self.registerFunctionInterface(f, p, loc);
         if (fn_ptr) |resolved_fn| {
-            try self.enqueuePendingFunctionBody(f, loc, resolved_fn);
+            const top_node = self.current_top_node orelse {
+                try self.diags.add(loc, .semantic, "internal error: missing top-level function node during staged semantizing", .{});
+                return error.Reported;
+            };
+            try self.enqueuePendingFunctionBody(top_node, f, loc, resolved_fn);
         }
         const noop = try self.makeNoopNode(loc);
         return .{ .node = noop, .ty = .{ .builtin = .Any } };
