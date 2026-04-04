@@ -110,8 +110,9 @@ faster.
 - Compiler architecture and performance findings should not live only in commit
   messages or temporary notes. When a round of compiler work changes the shape
   of `tokenizing` / `syntaxing` / `semantizing` / `codegen`, or produces a
-  useful measured conclusion, update the relevant `description/*.md` document
-  in the same line of work if practical.
+  useful measured conclusion, document it close to the implementation with
+  comments in the relevant compiler source files. Use `description/*.md` for
+  language design, not compiler-internal architecture notes.
 
 - Treat `plan/*.md` as active planning documents. If you notice they are
   outdated while doing relevant work, update them so they remain useful as

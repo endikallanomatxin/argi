@@ -9,6 +9,10 @@ const syntaxer = @import("../3_syntax/syntaxer.zig");
 const sg = @import("../4_semantics/semantic_graph.zig");
 const semantizer = @import("../4_semantics/semantizer.zig");
 
+// FrontendPipeline is the shared orchestration layer for the pre-codegen
+// compiler phases. The intent is to keep `build` and `lsp` on exactly the same
+// tokenizing/syntaxing/semantizing path so architectural changes in the
+// compiler do not fork into subtly different command-specific pipelines.
 pub const FrontendPipeline = struct {
     allocator: *const std.mem.Allocator,
     diagnostics: *diag.Diagnostics,

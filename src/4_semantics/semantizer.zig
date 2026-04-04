@@ -142,6 +142,16 @@ const GenericSubst = struct {
 //  SEMANTIZER
 //──────────────────────────────────────────────────────────────────────────────
 pub const Semantizer = struct {
+    // Semantizing is staged explicitly instead of relying on retries as the
+    // normal path:
+    // 1. predeclare top-level symbols
+    // 2. stabilize support top-level declarations
+    // 3. semantize callable function interfaces
+    // 4. verify abstracts over that declaration-only world
+    // 5. semantize deferred function defaults and bodies
+    //
+    // The split keeps top-level nominal work separated from executable body
+    // work and makes the remaining retries residual rather than fundamental.
     allocator: *const std.mem.Allocator,
     st_nodes: []const *syn.STNode, // entrada
     root_list: std.array_list.Managed(*sg.SGNode), // buffer mut
@@ -252,7 +262,9 @@ pub const Semantizer = struct {
         self.function_semantize_mode = .full;
         self.pending_function_bodies.items.len = 0;
 
-        // 1) Pasada inicial: estabiliza primero top-level no-función y luego analiza funciones.
+        // 1) Pasada inicial: estabiliza primero top-level de soporte y sólo
+        // después entra en funciones. Esto evita que los cuerpos se conviertan
+        // en la fuente principal de dependencias top-level pendientes.
         const initial_start = std.time.nanoTimestamp();
         self.defer_unknown_top_level = true;
         const support_top_level_start = std.time.nanoTimestamp();
@@ -289,10 +301,11 @@ pub const Semantizer = struct {
         }
         timings.support_top_level_ns = @intCast(std.time.nanoTimestamp() - support_top_level_start);
 
-        // Functions are semantized in two late stages:
-        // first their callable interface, so overloads and abstract checks can
-        // stabilize on a declaration-only world, and only afterwards their
-        // defaults and bodies.
+        // Functions are semantized in two late stages: first their callable
+        // interface, so overloads and abstract checks can stabilize on a
+        // declaration-only world, and only afterwards their defaults and
+        // bodies. Requiring explicit signature types is what keeps this split
+        // practical without depending on body-semantic inference.
         const function_interface_start = std.time.nanoTimestamp();
         self.function_semantize_mode = .interface_only;
         for (self.st_nodes) |n| {
@@ -11143,6 +11156,10 @@ fn buildStructuralAutoDeinitFields(
 }
 
 fn typeCanHaveVisibleAutoDeinit(ty: sg.Type) bool {
+    // Anonymous types do not own a nominal `deinit`; their cleanup is purely
+    // structural. Restricting visible deinit lookup to nominal identities keeps
+    // the semantics aligned with the language model and avoids repeating
+    // expensive nominal lookup work for anonymous locals inside function bodies.
     return switch (ty) {
         .struct_type => |st| st.identity != null,
         .choice_type => |ct| ct.identity != null,
