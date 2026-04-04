@@ -175,14 +175,14 @@ pub fn compile(args: []const []const u8) !void {
     const final_ir_path = if (flags.llvm_ir_path) |path|
         try std.fs.path.resolve(allocator, &.{path})
     else
-        try std.fmt.allocPrint(allocator, "{s}.ll", .{final_output_path});
+        null;
     const final_obj_path = if (flags.object_path) |path|
         try std.fs.path.resolve(allocator, &.{path})
     else
         try std.fmt.allocPrint(allocator, "{s}.o", .{final_output_path});
 
     try ensureParentDir(final_output_path);
-    try ensureParentDir(final_ir_path);
+    if (final_ir_path) |path| try ensureParentDir(path);
     try ensureParentDir(final_obj_path);
 
     // 1. Reunir ficheros ──────────────────────────────────────────────────
@@ -268,11 +268,14 @@ pub fn compile(args: []const []const u8) !void {
         "{s}.tmp.{d}",
         .{ final_output_path, std.time.nanoTimestamp() },
     );
-    const temp_ir_path = try std.fmt.allocPrint(
-        allocator,
-        "{s}.ll",
-        .{temp_stem},
-    );
+    const temp_ir_path = if (final_ir_path != null)
+        try std.fmt.allocPrint(
+            allocator,
+            "{s}.ll",
+            .{temp_stem},
+        )
+    else
+        null;
     const temp_obj_path = try std.fmt.allocPrint(
         allocator,
         "{s}.o",
@@ -280,12 +283,14 @@ pub fn compile(args: []const []const u8) !void {
     );
 
     try ensureParentDir(temp_stem);
-    try ensureParentDir(temp_ir_path);
+    if (temp_ir_path) |path| try ensureParentDir(path);
     try ensureParentDir(temp_obj_path);
 
-    std.fs.cwd().deleteFile(temp_ir_path) catch |err| {
-        if (err != error.FileNotFound) return err;
-    };
+    if (temp_ir_path) |path| {
+        std.fs.cwd().deleteFile(path) catch |err| {
+            if (err != error.FileNotFound) return err;
+        };
+    }
     std.fs.cwd().deleteFile(temp_stem) catch |err| {
         if (err != error.FileNotFound) return err;
     };
@@ -294,11 +299,13 @@ pub fn compile(args: []const []const u8) !void {
     };
 
     // 8. Escribir el módulo LLVM a un fichero .ll ─────────────────────────
-    var err_msg: [*c]u8 = null;
-    const temp_ir_path_c = try allocator.dupeZ(u8, temp_ir_path);
-    if (c.LLVMPrintModuleToFile(module, temp_ir_path_c.ptr, &err_msg) != 0) {
-        std.debug.print("Failed to write LLVM module: {s}\n", .{err_msg});
-        return error.WriteFailed;
+    if (temp_ir_path) |path| {
+        var err_msg: [*c]u8 = null;
+        const temp_ir_path_c = try allocator.dupeZ(u8, path);
+        if (c.LLVMPrintModuleToFile(module, temp_ir_path_c.ptr, &err_msg) != 0) {
+            std.debug.print("Failed to write LLVM module: {s}\n", .{err_msg});
+            return error.WriteFailed;
+        }
     }
 
     // 9. Enlazar con libc y generar el binario temporal ───────────────────
@@ -311,14 +318,17 @@ pub fn compile(args: []const []const u8) !void {
     timings.link_ns = elapsedSince(link_start);
 
     // 10. Mover a nombres finales ─────────────────────────────────────────
-    if (std.fs.cwd().statFile(temp_ir_path)) |_| {} else |err| switch (err) {
-        error.FileNotFound => {
-            std.debug.print("missing temp ir before rename: {s}\n", .{temp_ir_path});
-            return err;
-        },
-        else => return err,
+    if (temp_ir_path) |src| {
+        const dst = final_ir_path.?;
+        if (std.fs.cwd().statFile(src)) |_| {} else |err| switch (err) {
+            error.FileNotFound => {
+                std.debug.print("missing temp ir before rename: {s}\n", .{src});
+                return err;
+            },
+            else => return err,
+        }
+        try replaceFile(src, dst);
     }
-    try replaceFile(temp_ir_path, final_ir_path);
 
     if (std.fs.cwd().statFile(temp_stem)) |_| {} else |err| switch (err) {
         error.FileNotFound => {
