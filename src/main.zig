@@ -23,7 +23,7 @@ pub fn main() !void {
         std.debug.print("  --time-phases                         Print compilation timings by phase\n", .{});
         std.debug.print("  --output <path>                       Write the final binary there\n", .{});
         std.debug.print("  --emit-llvm <path>                    Write the emitted LLVM IR there\n", .{});
-        std.debug.print("  --emit-obj <path>                     Write the object file there\n", .{});
+        std.debug.print("  --emit-obj <path>                     Emit an object file there and skip final linking\n", .{});
         return;
     }
 

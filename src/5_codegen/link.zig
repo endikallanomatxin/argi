@@ -8,23 +8,16 @@ const LinkError = error{
     LinkFailed,
 };
 
-/// Compila el `LLVMModuleRef` que llega de `codegen.generate` a objeto
-/// y lo enlaza con la libc del sistema produciendo `output_path`.
-pub fn linkWithLibc(
+fn createTargetMachine(
     module: llvm.c.LLVMModuleRef,
     triple: []const u8,
-    output_path: []const u8,
-    allocator: *const std.mem.Allocator,
-) !void {
+) !llvm.c.LLVMTargetMachineRef {
     const c = @import("llvm.zig").c;
 
-    // ─── inicializar back-end nativo ───────────────────────────────────────
     if (c.LLVMInitializeNativeTarget() != 0 or c.LLVMInitializeNativeAsmPrinter() != 0)
         return error.LLVMTargetInitFailed;
 
-    // ─── crear TargetMachine ───────────────────────────────────────────────
     var err_ptr: [*c]u8 = null;
-    // LLVM devuelve el target por referencia:
     var target_ref: llvm.c.LLVMTargetRef = null;
 
     if (c.LLVMGetTargetFromTriple(triple.ptr, &target_ref, &err_ptr) != 0) {
@@ -33,11 +26,10 @@ pub fn linkWithLibc(
         return LinkError.TargetLookupFailed;
     }
 
-    const target = target_ref;
     defer if (err_ptr) |p| c.LLVMDisposeMessage(p);
 
     const tm = c.LLVMCreateTargetMachine(
-        target,
+        target_ref,
         triple.ptr,
         "", // CPU
         "", // features
@@ -45,31 +37,54 @@ pub fn linkWithLibc(
         c.LLVMRelocPIC,
         c.LLVMCodeModelDefault,
     ) orelse return error.TargetMachineFailed;
-    defer c.LLVMDisposeTargetMachine(tm);
 
     c.LLVMSetTarget(module, triple.ptr);
+    return tm;
+}
 
-    // ─── volcar a objeto intermedio ────────────────────────────────────────
-    var obj_path_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const obj_path =
-        (try std.fmt.bufPrintZ(&obj_path_buf, "{s}.o", .{output_path})).ptr;
-    err_ptr = null;
+pub fn emitObjectFile(
+    module: llvm.c.LLVMModuleRef,
+    triple: []const u8,
+    obj_output_path: []const u8,
+) !void {
+    const c = @import("llvm.zig").c;
+    const tm = try createTargetMachine(module, triple);
+    defer c.LLVMDisposeTargetMachine(tm);
 
+    var err_ptr: [*c]u8 = null;
+    const obj_path_z = try std.heap.c_allocator.dupeZ(u8, obj_output_path);
+    defer std.heap.c_allocator.free(obj_path_z);
     if (c.LLVMTargetMachineEmitToFile(
         tm,
         module,
-        @ptrCast(obj_path),
+        @ptrCast(obj_path_z.ptr),
         c.LLVMObjectFile,
         &err_ptr,
     ) != 0) {
-        // const msg = std.mem.span(err_ptr);
-        return error.EmitFailedWithMessage; // pásala hacia arriba
+        if (err_ptr) |msg| {
+            std.debug.print("LLVMTargetMachineEmitToFile failed: {s}\n", .{msg});
+            c.LLVMDisposeMessage(msg);
+        }
+        return error.EmitFailedWithMessage;
     }
+}
+
+/// Compila el `LLVMModuleRef` que llega de `codegen.generate` a objeto
+/// y lo enlaza con la libc del sistema produciendo `output_path`.
+pub fn linkWithLibc(
+    module: llvm.c.LLVMModuleRef,
+    triple: []const u8,
+    output_path: []const u8,
+    allocator: *const std.mem.Allocator,
+) !void {
+    var obj_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}.o", .{output_path});
+    try emitObjectFile(module, triple, obj_path);
 
     // ─── enlazamos con la libc usando el cc por defecto ───────────────────
     const args_array = [_][]const u8{
         "cc",
-        std.mem.span(obj_path),
+        obj_path,
         "-o",
         output_path,
         "-lc",

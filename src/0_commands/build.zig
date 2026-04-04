@@ -180,8 +180,9 @@ pub fn compile(args: []const []const u8) !void {
         try std.fs.path.resolve(allocator, &.{path})
     else
         try std.fmt.allocPrint(allocator, "{s}.o", .{final_output_path});
+    const emit_object_only = flags.object_path != null;
 
-    try ensureParentDir(final_output_path);
+    if (!emit_object_only) try ensureParentDir(final_output_path);
     if (final_ir_path) |path| try ensureParentDir(path);
     try ensureParentDir(final_obj_path);
 
@@ -263,10 +264,11 @@ pub fn compile(args: []const []const u8) !void {
     timings.codegen_ns = elapsedSince(codegen_start);
 
     // Temporales en el mismo directorio final.
+    const temp_stem_base = if (emit_object_only) final_obj_path else final_output_path;
     const temp_stem = try std.fmt.allocPrint(
         allocator,
         "{s}.tmp.{d}",
-        .{ final_output_path, std.time.nanoTimestamp() },
+        .{ temp_stem_base, std.time.nanoTimestamp() },
     );
     const temp_ir_path = if (final_ir_path != null)
         try std.fmt.allocPrint(
@@ -308,13 +310,16 @@ pub fn compile(args: []const []const u8) !void {
         }
     }
 
-    // 9. Enlazar con libc y generar el binario temporal ───────────────────
+    // 9. Emitir objeto y, si hace falta, enlazar con libc ─────────────────
     const triple_cstr = c.LLVMGetDefaultTargetTriple();
     defer c.LLVMDisposeMessage(triple_cstr);
     const triple = std.mem.span(triple_cstr);
 
     const link_start = std.time.nanoTimestamp();
-    try link.linkWithLibc(module, triple, temp_stem, &allocator);
+    if (emit_object_only)
+        try link.emitObjectFile(module, triple, temp_obj_path)
+    else
+        try link.linkWithLibc(module, triple, temp_stem, &allocator);
     timings.link_ns = elapsedSince(link_start);
 
     // 10. Mover a nombres finales ─────────────────────────────────────────
@@ -330,14 +335,16 @@ pub fn compile(args: []const []const u8) !void {
         try replaceFile(src, dst);
     }
 
-    if (std.fs.cwd().statFile(temp_stem)) |_| {} else |err| switch (err) {
-        error.FileNotFound => {
-            std.debug.print("missing temp output before rename: {s}\n", .{temp_stem});
-            return err;
-        },
-        else => return err,
+    if (!emit_object_only) {
+        if (std.fs.cwd().statFile(temp_stem)) |_| {} else |err| switch (err) {
+            error.FileNotFound => {
+                std.debug.print("missing temp output before rename: {s}\n", .{temp_stem});
+                return err;
+            },
+            else => return err,
+        }
+        try replaceFile(temp_stem, final_output_path);
     }
-    try replaceFile(temp_stem, final_output_path);
 
     if (std.fs.cwd().statFile(temp_obj_path)) |_| {} else |err| switch (err) {
         error.FileNotFound => {
