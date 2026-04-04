@@ -60,6 +60,16 @@ const ReachFunctionContext = struct {
     body_scope: *Scope,
 };
 
+const SignatureTypeCacheMode = enum {
+    preserving_abstracts,
+    signature_predeclaration,
+};
+
+const SignatureTypeCacheKey = struct {
+    node: *const syn.Type,
+    mode: SignatureTypeCacheMode,
+};
+
 const PendingFunctionBody = struct {
     top_node: *const syn.STNode,
     decl: syn.FunctionDeclaration,
@@ -152,6 +162,7 @@ pub const Semantizer = struct {
     retry_other_nodes: u32 = 0,
     function_semantize_mode: FunctionSemantizeMode = .full,
     pending_function_bodies: std.array_list.Managed(PendingFunctionBody),
+    signature_type_cache: std.AutoHashMap(SignatureTypeCacheKey, sg.Type),
     synthetic_name_counter: u32 = 0,
     next_choice_option_id: u32 = 1,
     next_inferred_choice_identity_id: u32 = 1,
@@ -170,6 +181,7 @@ pub const Semantizer = struct {
             .pending_now = std.array_list.Managed(*const syn.STNode).init(alloc.*),
             .pending_next = std.array_list.Managed(*const syn.STNode).init(alloc.*),
             .pending_function_bodies = std.array_list.Managed(PendingFunctionBody).init(alloc.*),
+            .signature_type_cache = std.AutoHashMap(SignatureTypeCacheKey, sg.Type).init(alloc.*),
             .function_reach_stack = std.array_list.Managed(ReachFunctionContext).init(alloc.*),
         };
     }
@@ -216,6 +228,7 @@ pub const Semantizer = struct {
     };
 
     pub fn semantizeWithTimings(self: *Semantizer) SemErr!SemantizeResult {
+        self.signature_type_cache.clearRetainingCapacity();
         var global = try Scope.init(self.allocator, null, null);
         try self.predeclareTopLevelSymbols(&global);
         var timings: SemantizeTimings = .{};
@@ -581,8 +594,9 @@ pub const Semantizer = struct {
 
         var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         defer in_fields.deinit();
-        for (decl.input.fields) |fld| {
-            const ty = self.resolveTypeForSignaturePredeclaration(fld.type.?, &child) catch |err| switch (err) {
+        for (decl.input.fields) |*fld| {
+            const field_ty = if (fld.type) |*ty| ty else continue;
+            const ty = self.resolveCachedSignatureType(field_ty, .signature_predeclaration, &child) catch |err| switch (err) {
                 error.UnknownType, error.SymbolNotFound => return,
                 else => return err,
             };
@@ -608,8 +622,9 @@ pub const Semantizer = struct {
         var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         defer out_fields.deinit();
         var uses_inferred_error_reasons = false;
-        for (decl.output.fields) |fld| {
-            const ty = if (self.inferableErrableInnerTypeFromOutput(fld.type.?)) |inner|
+        for (decl.output.fields) |*fld| {
+            const field_ty = if (fld.type) |*ty| ty else continue;
+            const ty = if (self.inferableErrableInnerTypeFromOutput(field_ty.*)) |inner|
                 blk: {
                     uses_inferred_error_reasons = true;
                     break :blk self.makeInferredErrableTypeForSignaturePredeclaration(inner, &child, fld.name.location) catch |err| switch (err) {
@@ -618,7 +633,7 @@ pub const Semantizer = struct {
                     };
                 }
             else
-                self.resolveTypeForSignaturePredeclaration(fld.type.?, &child) catch |err| switch (err) {
+                self.resolveCachedSignatureType(field_ty, .signature_predeclaration, &child) catch |err| switch (err) {
                     error.UnknownType, error.SymbolNotFound => return,
                     else => return err,
                 };
@@ -684,6 +699,26 @@ pub const Semantizer = struct {
             }
         }
         return null;
+    }
+
+    fn resolveCachedSignatureType(
+        self: *Semantizer,
+        type_node: *const syn.Type,
+        mode: SignatureTypeCacheMode,
+        s: *Scope,
+    ) SemErr!sg.Type {
+        const key: SignatureTypeCacheKey = .{
+            .node = type_node,
+            .mode = mode,
+        };
+        if (self.signature_type_cache.get(key)) |cached| return cached;
+
+        const resolved = switch (mode) {
+            .preserving_abstracts => try self.resolveTypePreservingAbstracts(type_node.*, s),
+            .signature_predeclaration => try self.resolveTypeForSignaturePredeclaration(type_node.*, s),
+        };
+        try self.signature_type_cache.put(key, resolved);
+        return resolved;
     }
 
     pub fn printSG(self: *Semantizer) void {
@@ -4289,8 +4324,9 @@ pub const Semantizer = struct {
         var child = try Scope.init(self.allocator, p, null);
         var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         defer in_fields.deinit();
-        for (f.input.fields) |fld| {
-            const ty = try self.resolveTypePreservingAbstracts(fld.type.?, &child);
+        for (f.input.fields) |*fld| {
+            const field_ty = if (fld.type) |*ty| ty else continue;
+            const ty = try self.resolveCachedSignatureType(field_ty, .preserving_abstracts, &child);
 
             try in_fields.append(.{
                 .name = fld.name.string,
@@ -4317,14 +4353,15 @@ pub const Semantizer = struct {
         var output_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
         defer output_bindings.deinit();
         var uses_inferred_error_reasons = false;
-        for (f.output.fields) |fld| {
-            const ty = if (self.inferableErrableInnerTypeFromOutput(fld.type.?)) |inner|
+        for (f.output.fields) |*fld| {
+            const field_ty = if (fld.type) |*ty| ty else continue;
+            const ty = if (self.inferableErrableInnerTypeFromOutput(field_ty.*)) |inner|
                 blk: {
                     uses_inferred_error_reasons = true;
                     break :blk try self.makeInferredErrableType(inner, &child, fld.name.location);
                 }
             else
-                try self.resolveTypePreservingAbstracts(fld.type.?, &child);
+                try self.resolveCachedSignatureType(field_ty, .preserving_abstracts, &child);
 
             try out_fields.append(.{
                 .name = fld.name.string,
@@ -5845,8 +5882,9 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!*sg.StructType {
         var buf = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
-        for (st.fields) |f| {
-            const ty = try self.resolveTypePreservingAbstracts(f.type.?, s);
+        for (st.fields) |*f| {
+            const field_ty = if (f.type) |*ty| ty else continue;
+            const ty = try self.resolveCachedSignatureType(field_ty, .preserving_abstracts, s);
             const dvp = if (f.default_value) |n|
                 (try self.visitNode(n.*, s)).node
             else
