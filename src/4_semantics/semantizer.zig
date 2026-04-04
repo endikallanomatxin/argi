@@ -609,7 +609,7 @@ pub const Semantizer = struct {
         var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         defer in_fields.deinit();
         for (decl.input.fields) |*fld| {
-            const field_ty = if (fld.type) |*ty| ty else continue;
+            const field_ty = &fld.type.?;
             const ty = self.resolveCachedSignatureType(field_ty, .signature_predeclaration, &child) catch |err| switch (err) {
                 error.UnknownType, error.SymbolNotFound => return,
                 else => return err,
@@ -637,7 +637,7 @@ pub const Semantizer = struct {
         defer out_fields.deinit();
         var uses_inferred_error_reasons = false;
         for (decl.output.fields) |*fld| {
-            const field_ty = if (fld.type) |*ty| ty else continue;
+            const field_ty = &fld.type.?;
             const ty = if (self.inferableErrableInnerTypeFromOutput(field_ty.*)) |inner|
                 blk: {
                     uses_inferred_error_reasons = true;
@@ -692,7 +692,7 @@ pub const Semantizer = struct {
     ) SemErr!?[]const u8 {
         _ = self;
         for (f.input.fields) |field| {
-            const field_ty = field.type orelse continue;
+            const field_ty = field.type.?;
             switch (field_ty) {
                 .type_name => |tn| {
                     if (p.lookupAbstractInfo(tn.string) != null) return tn.string;
@@ -1465,7 +1465,7 @@ pub const Semantizer = struct {
             if (sc.generic_functions.getPtr("deinit")) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
                     for (tmpl.input.fields) |field| {
-                        const field_ty = field.type orelse continue;
+                        const field_ty = field.type.?;
                         if (field_ty != .pointer_type) continue;
                         if (field_ty.pointer_type.mutability != .read_write) continue;
                         try candidate_names.put(field.name.string, {});
@@ -4369,7 +4369,7 @@ pub const Semantizer = struct {
         var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         defer in_fields.deinit();
         for (f.input.fields) |*fld| {
-            const field_ty = if (fld.type) |*ty| ty else continue;
+            const field_ty = &fld.type.?;
             const ty = try self.resolveCachedSignatureType(field_ty, .preserving_abstracts, &child);
 
             try in_fields.append(.{
@@ -4398,7 +4398,7 @@ pub const Semantizer = struct {
         defer output_bindings.deinit();
         var uses_inferred_error_reasons = false;
         for (f.output.fields) |*fld| {
-            const field_ty = if (fld.type) |*ty| ty else continue;
+            const field_ty = &fld.type.?;
             const ty = if (self.inferableErrableInnerTypeFromOutput(field_ty.*)) |inner|
                 blk: {
                     uses_inferred_error_reasons = true;
@@ -7370,9 +7370,8 @@ pub const Semantizer = struct {
         param_name: []const u8,
     ) ?[]const u8 {
         for (tmpl.input.fields) |fld| {
-            if (fld.type) |ty_node| {
-                if (self.typeUsesParam(ty_node, param_name)) return fld.name.string;
-            }
+            const ty_node = fld.type.?;
+            if (self.typeUsesParam(ty_node, param_name)) return fld.name.string;
         }
         return null;
     }
@@ -7890,18 +7889,17 @@ pub const Semantizer = struct {
         if (call_input_ty != .struct_type) return null;
         const actual = call_input_ty.struct_type;
         for (tmpl.input.fields) |fld| {
-            if (fld.type) |ty_node| {
-                if (!self.typeUsesParam(ty_node, param.name)) continue;
-                if (typ.findFieldByName(actual, fld.name.string)) |actual_field| {
-                    switch (param.kind) {
-                        .type => {
-                            if (self.extractTypeArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
-                                return .{ .type = res };
-                        },
-                        .comptime_int => {
-                            if (self.extractComptimeIntArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
-                                return .{ .comptime_int = res };
-                        },
+            const ty_node = fld.type.?;
+            if (!self.typeUsesParam(ty_node, param.name)) continue;
+            if (typ.findFieldByName(actual, fld.name.string)) |actual_field| {
+                switch (param.kind) {
+                    .type => {
+                        if (self.extractTypeArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
+                            return .{ .type = res };
+                    },
+                    .comptime_int => {
+                        if (self.extractComptimeIntArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
+                            return .{ .comptime_int = res };
                     }
                 }
             }
@@ -7929,18 +7927,17 @@ pub const Semantizer = struct {
         if (tmpl.input.fields.len == 0) return null;
 
         for (tmpl.input.fields[1..]) |fld| {
-            if (fld.type) |ty_node| {
-                if (!self.typeUsesParam(ty_node, param.name)) continue;
-                if (typ.findFieldByName(actual, fld.name.string)) |actual_field| {
-                    switch (param.kind) {
-                        .type => {
-                            if (self.extractTypeArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
-                                return .{ .type = res };
-                        },
-                        .comptime_int => {
-                            if (self.extractComptimeIntArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
-                                return .{ .comptime_int = res };
-                        },
+            const ty_node = fld.type.?;
+            if (!self.typeUsesParam(ty_node, param.name)) continue;
+            if (typ.findFieldByName(actual, fld.name.string)) |actual_field| {
+                switch (param.kind) {
+                    .type => {
+                        if (self.extractTypeArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
+                            return .{ .type = res };
+                    },
+                    .comptime_int => {
+                        if (self.extractComptimeIntArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
+                            return .{ .comptime_int = res };
                     }
                 }
             }
@@ -7970,10 +7967,7 @@ pub const Semantizer = struct {
             }
             if (idx == null or idx.? == 0) return false;
             const expected_field = tmpl.input.fields[idx.?];
-            const expected_field_ty = if (expected_field.type) |ty_node|
-                try self.resolveTypeWithSubst(ty_node, s, subst)
-            else
-                return false;
+            const expected_field_ty = try self.resolveTypeWithSubst(expected_field.type.?, s, subst);
             if (fld_matches: {
                 if (typ.typesExactlyEqual(expected_field_ty, actual_field.ty)) break :fld_matches true;
                 if (typ.typesStructurallyEqual(expected_field_ty, actual_field.ty)) break :fld_matches true;
@@ -8002,7 +7996,7 @@ pub const Semantizer = struct {
                     if (tmpl.input.fields.len == 0) continue;
 
                     const first_field = tmpl.input.fields[0];
-                    const first_ptr = switch (first_field.type orelse continue) {
+                    const first_ptr = switch (first_field.type.?) {
                         .pointer_type => |ptr| ptr,
                         else => continue,
                     };
