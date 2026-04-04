@@ -435,10 +435,23 @@ pub const Semantizer = struct {
         const deferred = try self.allocator.alloc(bool, self.pending_function_bodies.items.len);
         @memset(deferred, false);
 
-        // Defaults must be materialized for every pending function before any
-        // body is semantized, otherwise overload resolution between bodies can
-        // still observe placeholder signatures.
+        // Input defaults are part of the callable interface because omitted
+        // call arguments need them before any function body is semantized.
         for (self.pending_function_bodies.items, 0..) |*pending, idx| {
+            self.current_top_node = pending.top_node;
+            self.prepareFunctionInputDefaults(pending, global) catch |err| switch (err) {
+                error.UnknownType, error.SymbolNotFound => {
+                    try self.pushTopLevelForRetry();
+                    deferred[idx] = true;
+                },
+                else => return err,
+            };
+        }
+
+        // Output defaults belong to the body-facing execution state, so only
+        // stage them once every callable interface is complete.
+        for (self.pending_function_bodies.items, 0..) |*pending, idx| {
+            if (deferred[idx]) continue;
             self.current_top_node = pending.top_node;
             self.prepareRegularFunctionBodyScope(pending, global) catch |err| switch (err) {
                 error.UnknownType, error.SymbolNotFound => {
@@ -4431,7 +4444,7 @@ pub const Semantizer = struct {
         return fn_ptr;
     }
 
-    fn prepareRegularFunctionBodyScope(
+    fn prepareFunctionInputDefaults(
         self: *Semantizer,
         pending: *PendingFunctionBody,
         p: *Scope,
@@ -4444,9 +4457,29 @@ pub const Semantizer = struct {
         child.* = try Scope.init(self.allocator, p, null);
         child.current_fn = fn_ptr;
 
+        const input_struct_ptr = try self.allocator.create(sg.StructType);
+        if (!functionHasAnyDefaults(f.input.fields)) {
+            input_struct_ptr.* = .{ .fields = fn_ptr.input.fields };
+            for (f.input.fields, 0..) |fld, idx| {
+                const bd = try self.allocator.create(sg.BindingDeclaration);
+                bd.* = .{
+                    .name = fld.name.string,
+                    .location = fld.name.location,
+                    .origin_file = loc.file,
+                    .mutability = .constant,
+                    .ty = fn_ptr.input.fields[idx].ty,
+                    .initialization = null,
+                };
+                try child.bindings.put(fld.name.string, bd);
+            }
+            fn_ptr.input = input_struct_ptr.*;
+            pending.prepared_scope = child;
+            pending.prepared_input_struct = input_struct_ptr;
+            return;
+        }
+
         const input_fields = try self.allocator.alloc(sg.StructTypeField, fn_ptr.input.fields.len);
         @memcpy(input_fields, fn_ptr.input.fields);
-        const input_struct_ptr = try self.allocator.create(sg.StructType);
         input_struct_ptr.* = .{ .fields = input_fields };
 
         for (f.input.fields, 0..) |fld, idx| {
@@ -4471,6 +4504,36 @@ pub const Semantizer = struct {
         }
 
         fn_ptr.input = input_struct_ptr.*;
+        pending.prepared_scope = child;
+        pending.prepared_input_struct = input_struct_ptr;
+    }
+
+    fn prepareRegularFunctionBodyScope(
+        self: *Semantizer,
+        pending: *PendingFunctionBody,
+        p: *Scope,
+    ) SemErr!void {
+        _ = p;
+        const f = pending.decl;
+        const fn_ptr = pending.function;
+        const child = pending.prepared_scope orelse {
+            try self.diags.add(pending.location, .semantic, "internal error: missing prepared input scope during staged semantizing", .{});
+            return error.Reported;
+        };
+        const input_struct_ptr = pending.prepared_input_struct orelse {
+            try self.diags.add(pending.location, .semantic, "internal error: missing prepared function input during staged semantizing", .{});
+            return error.Reported;
+        };
+
+        if (!functionHasAnyDefaults(f.output.fields)) {
+            for (f.output.fields, 0..) |fld, idx| {
+                const bd = @constCast(fn_ptr.output_bindings[idx]);
+                bd.initialization = null;
+                try child.bindings.put(fld.name.string, bd);
+            }
+            fn_ptr.input = input_struct_ptr.*;
+            return;
+        }
 
         const output_fields = try self.allocator.alloc(sg.StructTypeField, fn_ptr.output.fields.len);
         @memcpy(output_fields, fn_ptr.output.fields);
@@ -4489,8 +4552,14 @@ pub const Semantizer = struct {
         }
 
         fn_ptr.output = .{ .fields = output_fields };
-        pending.prepared_scope = child;
-        pending.prepared_input_struct = input_struct_ptr;
+        fn_ptr.input = input_struct_ptr.*;
+    }
+
+    fn functionHasAnyDefaults(fields: []const syn.StructTypeLiteralField) bool {
+        for (fields) |field| {
+            if (field.default_value != null) return true;
+        }
+        return false;
     }
 
     fn semantizePreparedFunctionBody(
