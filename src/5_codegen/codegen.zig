@@ -111,6 +111,7 @@ pub const CodeGenerator = struct {
     current_return_type: ?llvm.c.LLVMTypeRef = null,
     current_fn_decl: ?*sem.FunctionDeclaration = null,
     main_candidate: ?*sem.FunctionDeclaration = null,
+    selected_test_candidate: ?*sem.FunctionDeclaration = null,
     runtime_argc_global: ?llvm.c.LLVMValueRef = null,
     runtime_argv_global: ?llvm.c.LLVMValueRef = null,
 
@@ -181,7 +182,11 @@ pub const CodeGenerator = struct {
             };
         }
 
-        if (self.main_candidate) |f| {
+        if (self.options.selected_test_name) |_| {
+            if (self.selected_test_candidate) |f| {
+                try self.genCTestWrapper(f);
+            }
+        } else if (self.main_candidate) |f| {
             try self.genCMainWrapper(f);
         }
 
@@ -586,7 +591,11 @@ pub const CodeGenerator = struct {
         self.current_fn_decl = f;
         defer self.current_fn_decl = prev_fn;
 
-        if (isWrappableMainCandidate(f)) {
+        if (self.options.selected_test_name) |test_name| {
+            if (f.is_test and std.mem.eql(u8, f.name, test_name)) {
+                self.selected_test_candidate = f;
+            }
+        } else if (isWrappableMainCandidate(f)) {
             self.main_candidate = f;
         }
 
@@ -2689,7 +2698,7 @@ pub const CodeGenerator = struct {
         return .{ .value_ref = value, .type_ref = result_ty_ref, .sem_type = ty };
     }
 
-    fn genMainInputFieldValue(self: *CodeGenerator, field: sem.StructTypeField) !TypedValue {
+    fn genEntryInputFieldValue(self: *CodeGenerator, field: sem.StructTypeField) !TypedValue {
         if (field.default_value) |default_node| {
             const field_tv_opt = try self.visitNode(default_node);
             return field_tv_opt orelse return CodegenError.ValueNotFound;
@@ -2700,6 +2709,25 @@ pub const CodeGenerator = struct {
         }
 
         return CodegenError.ValueNotFound;
+    }
+
+    fn findTopLevelFunctionByName(self: *CodeGenerator, name: []const u8) ?*const sem.FunctionDeclaration {
+        for (self.ast) |node| {
+            switch (node.content) {
+                .function_declaration => |decl| {
+                    if (std.mem.eql(u8, decl.name, name)) return decl;
+                },
+                else => {},
+            }
+        }
+        return null;
+    }
+
+    fn findChoiceVariantIndexByName(choice_ty: *const sem.ChoiceType, name: []const u8) ?u32 {
+        for (choice_ty.variants, 0..) |variant, idx| {
+            if (std.mem.eql(u8, variant.name, name)) return @intCast(idx);
+        }
+        return null;
     }
 
     fn genCMainWrapper(self: *CodeGenerator, user_main: *const sem.FunctionDeclaration) !void {
@@ -2732,7 +2760,7 @@ pub const CodeGenerator = struct {
 
         var input_agg = c.LLVMGetUndef(try self.toLLVMType(.{ .struct_type = &user_main.input }));
         for (user_main.input.fields, 0..) |field, idx| {
-            const field_tv = try self.genMainInputFieldValue(field);
+            const field_tv = try self.genEntryInputFieldValue(field);
             input_agg = c.LLVMBuildInsertValue(
                 self.builder,
                 input_agg,
@@ -2752,5 +2780,109 @@ pub const CodeGenerator = struct {
         else
             result;
         _ = c.LLVMBuildRet(self.builder, status);
+    }
+
+    fn genCTestWrapper(self: *CodeGenerator, user_test: *const sem.FunctionDeclaration) !void {
+        try self.ensureRuntimeArgGlobals();
+        try self.ensureRuntimeArgFunctions();
+
+        const user_key = try self.functionSymbolKey(user_test);
+        const user_sym = self.global_scope.lookup(user_key) orelse return CodegenError.SymbolNotFound;
+
+        const int32_ty = c.LLVMInt32Type();
+        const i8_ptr_ty = c.LLVMPointerType(c.LLVMInt8Type(), 0);
+        const argv_ptr_ty = c.LLVMPointerType(i8_ptr_ty, 0);
+        var param_tys = [_]llvm.c.LLVMTypeRef{ int32_ty, argv_ptr_ty };
+        const wrapper_fn_ty = c.LLVMFunctionType(int32_ty, &param_tys, 2, 0);
+
+        const cname = try self.dupZ("main");
+        const fn_ref = c.LLVMAddFunction(self.module, cname.ptr, wrapper_fn_ty);
+        const entry = c.LLVMAppendBasicBlock(fn_ref, "entry");
+        c.LLVMPositionBuilderAtEnd(self.builder, entry);
+
+        const argc_param = c.LLVMGetParam(fn_ref, 0);
+        const argv_param = c.LLVMGetParam(fn_ref, 1);
+        const native_uint_ty = try self.toLLVMType(.{ .builtin = .UIntNative });
+
+        const argc_native = c.LLVMBuildZExt(self.builder, argc_param, native_uint_ty, "argc.native");
+        _ = c.LLVMBuildStore(self.builder, argc_native, self.runtime_argc_global.?);
+
+        const argv_native = c.LLVMBuildPtrToInt(self.builder, argv_param, native_uint_ty, "argv.native");
+        _ = c.LLVMBuildStore(self.builder, argv_native, self.runtime_argv_global.?);
+
+        var input_agg = c.LLVMGetUndef(try self.toLLVMType(.{ .struct_type = &user_test.input }));
+        for (user_test.input.fields, 0..) |field, idx| {
+            const field_tv = try self.genEntryInputFieldValue(field);
+            input_agg = c.LLVMBuildInsertValue(self.builder, input_agg, field_tv.value_ref, @intCast(idx), "test.default");
+        }
+
+        var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, 1);
+        defer self.allocator.free(argv);
+        argv[0] = input_agg;
+
+        const call_result = c.LLVMBuildCall2(self.builder, user_sym.type_ref, user_sym.ref, argv.ptr, 1, "test.call");
+        const result_ty = sem_types.functionReturnType(@constCast(user_test));
+        const errable_choice = switch (result_ty) {
+            .choice_type => |choice_ty| choice_ty,
+            else => return CodegenError.InvalidType,
+        };
+        const result = if (c.LLVMGetTypeKind(c.LLVMTypeOf(call_result)) == c.LLVMStructTypeKind)
+            c.LLVMBuildExtractValue(self.builder, call_result, 0, "test.result")
+        else
+            call_result;
+        const error_variant_index = findChoiceVariantIndexByName(errable_choice, "error") orelse return CodegenError.InvalidType;
+        const error_tag = c.LLVMConstInt(c.LLVMInt32Type(), error_variant_index, 0);
+        const tag_val = c.LLVMBuildExtractValue(self.builder, result, 0, "test.tag");
+        const is_error = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, tag_val, error_tag, "test.is_error");
+
+        const error_bb = c.LLVMAppendBasicBlock(fn_ref, "test.error");
+        const ok_bb = c.LLVMAppendBasicBlock(fn_ref, "test.ok");
+        _ = c.LLVMBuildCondBr(self.builder, is_error, error_bb, ok_bb);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, ok_bb);
+        _ = c.LLVMBuildRet(self.builder, c.LLVMConstInt(int32_ty, 0, 0));
+
+        c.LLVMPositionBuilderAtEnd(self.builder, error_bb);
+        const error_payload = c.LLVMBuildExtractValue(self.builder, result, error_variant_index + 1, "test.error.payload");
+        const error_struct = switch (errable_choice.variants[error_variant_index].payload_type.?) {
+            .struct_type => |struct_ty| struct_ty,
+            else => return CodegenError.InvalidType,
+        };
+        const reason_index = fieldIndexByName(error_struct, "reason") orelse return CodegenError.InvalidType;
+        const trace_index = fieldIndexByName(error_struct, "trace") orelse return CodegenError.InvalidType;
+        const reason_value = c.LLVMBuildExtractValue(self.builder, error_payload, reason_index, "test.error.reason");
+        const trace_value = c.LLVMBuildExtractValue(self.builder, error_payload, trace_index, "test.error.trace");
+
+        if (self.findTopLevelFunctionByName("report_trace")) |report_trace_fn| {
+            const report_key = try self.functionSymbolKey(report_trace_fn);
+            if (self.global_scope.lookup(report_key)) |report_sym| {
+                const trace_ty = error_struct.fields[trace_index].ty;
+                const trace_alloca = c.LLVMBuildAlloca(self.builder, try self.toLLVMType(trace_ty), "test.trace.addr");
+                _ = c.LLVMBuildStore(self.builder, trace_value, trace_alloca);
+
+                var report_input = c.LLVMGetUndef(try self.toLLVMType(.{ .struct_type = &report_trace_fn.input }));
+                report_input = c.LLVMBuildInsertValue(self.builder, report_input, trace_alloca, 0, "test.report.trace");
+
+                var report_args = [_]llvm.c.LLVMValueRef{report_input};
+                _ = c.LLVMBuildCall2(self.builder, report_sym.type_ref, report_sym.ref, &report_args, 1, "");
+            }
+        }
+
+        const reason_choice = switch (error_struct.fields[reason_index].ty) {
+            .choice_type => |choice_ty| choice_ty,
+            else => return CodegenError.InvalidType,
+        };
+        const reason_tag = c.LLVMBuildExtractValue(self.builder, reason_value, 0, "test.error.reason.tag");
+        const skip_code = c.LLVMConstInt(int32_ty, 77, 0);
+        const fail_code = c.LLVMConstInt(int32_ty, 1, 0);
+        if (findChoiceVariantIndexByName(reason_choice, "test_skipped")) |skipped_index| {
+            const skipped_tag = c.LLVMConstInt(c.LLVMInt32Type(), skipped_index, 0);
+            const is_skipped = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, reason_tag, skipped_tag, "test.is_skipped");
+            const exit_code = c.LLVMBuildSelect(self.builder, is_skipped, skip_code, fail_code, "test.exit");
+            _ = c.LLVMBuildRet(self.builder, exit_code);
+            return;
+        }
+
+        _ = c.LLVMBuildRet(self.builder, fail_code);
     }
 };

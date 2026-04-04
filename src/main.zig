@@ -3,6 +3,7 @@ const build_cmd = @import("0_commands/build.zig");
 const init_cmd = @import("0_commands/init.zig");
 const lsp_cmd = @import("0_commands/lsp.zig");
 const run_cmd = @import("0_commands/run.zig");
+const test_cmd = @import("0_commands/test.zig");
 
 pub fn main() !void {
     const args = std.process.argsAlloc(std.heap.page_allocator) catch return;
@@ -15,6 +16,7 @@ pub fn main() !void {
         std.debug.print("  init <project|module> <directory> - Create a starter scaffold\n", .{});
         std.debug.print("  lsp                       - Start LSP server\n", .{});
         std.debug.print("  run <directory> [build flags] - Build a folder module and run it\n", .{});
+        std.debug.print("  test <directory> [--filter <name>] - Build and run native Argi tests\n", .{});
         std.debug.print("\nBuild flags (on build error):\n", .{});
         std.debug.print("  --on-build-error-show-cascade          Print all cascading diagnostics\n", .{});
         std.debug.print("  --on-build-error-show-syntax-tree      Print the syntax tree\n", .{});
@@ -58,6 +60,16 @@ pub fn main() !void {
         }
         const exit_code = run_cmd.run(args[2..]) catch |err| {
             std.debug.print("Run error: {any}\n", .{err});
+            return err;
+        };
+        std.process.exit(exit_code);
+    } else if (std.mem.eql(u8, command, "test")) {
+        if (args.len < 3) {
+            std.debug.print("Error: module directory required\n", .{});
+            return;
+        }
+        const exit_code = test_cmd.run(args[2..]) catch |err| {
+            std.debug.print("Test error: {any}\n", .{err});
             return err;
         };
         std.process.exit(exit_code);

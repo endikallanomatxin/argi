@@ -315,6 +315,8 @@ pub const Syntaxer = struct {
                 .base_name = .{ .string = "Nullable", .location = question_loc },
                 .args = .{ .fields = nullable_fields },
             } };
+        } else if (self.tokenIs(.open_parenthesis) and self.next() != null and self.next().?.content == .close_parenthesis) {
+            return syn.Type{ .struct_type_literal = try self.parseStructTypeLiteral() };
         } else if (self.tokenIs(.open_bracket)) {
             const len_loc = self.tokenLocation();
             self.advanceOne();

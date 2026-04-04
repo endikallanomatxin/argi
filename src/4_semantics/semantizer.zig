@@ -83,6 +83,7 @@ const PendingFunctionBody = struct {
 pub const SemantizerOptions = struct {
     include_tests: bool = false,
     selected_test_name: ?[]const u8 = null,
+    implicit_testing_module_dir: ?[]const u8 = null,
 };
 
 const OnceConsumption = struct {
@@ -282,6 +283,9 @@ pub const Semantizer = struct {
     pub fn semantizeWithTimings(self: *Semantizer) SemErr!SemantizeResult {
         self.signature_type_cache.clearRetainingCapacity();
         var global = try Scope.init(self.allocator, null, null);
+        if (self.options.implicit_testing_module_dir) |testing_module_dir| {
+            try global.module_aliases.put("testing", testing_module_dir);
+        }
         try self.predeclareTopLevelSymbols(&global);
         var timings: SemantizeTimings = .{};
         self.retry_enqueue_attempts = 0;
@@ -6840,14 +6844,18 @@ pub const Semantizer = struct {
         s: *Scope,
         loc: tok.Location,
     ) SemErr!*sg.FunctionDeclaration {
+        const qualified_module_dir = if (call.module_qualifier) |module_name|
+            s.lookupModuleAlias(module_name)
+        else
+            null;
         var chosen: *sg.FunctionDeclaration = undefined;
         if (call.type_arguments_struct) |stargs| {
-            chosen = try self.instantiateGenericNamed(call.callee, stargs, input_te, s, .regular);
+            chosen = try self.instantiateGenericNamedVisible(call.callee, stargs, input_te, s, .regular, qualified_module_dir, loc.file);
         } else if (call.type_arguments) |targs| {
-            chosen = try self.instantiateGeneric(call.callee, targs, input_te, s, .regular);
+            chosen = try self.instantiateGenericVisible(call.callee, targs, input_te, s, .regular, qualified_module_dir, loc.file);
         } else {
             const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-            const inferred = self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .regular) catch |err| switch (err) {
+            const inferred = self.instantiateGenericNamedVisible(call.callee, empty_args, input_te, s, .regular, qualified_module_dir, loc.file) catch |err| switch (err) {
                 error.SymbolNotFound => null,
                 else => return err,
             };
@@ -8061,7 +8069,7 @@ pub const Semantizer = struct {
         param_name: []const u8,
         s: *Scope,
     ) ?sg.Type {
-        _ = s.lookupGenericTypeTemplate(g.base_name.string, g.args.fields.len) orelse if (!std.mem.eql(u8, g.base_name.string, "Array")) return null;
+        _ = s;
         const identity = typ.genericIdentityOf(actual_ty) orelse return null;
         if (!std.mem.eql(u8, identity.base_name, g.base_name.string)) return null;
 
@@ -8086,7 +8094,7 @@ pub const Semantizer = struct {
         param_name: []const u8,
         s: *Scope,
     ) ?i64 {
-        _ = s.lookupGenericTypeTemplate(g.base_name.string, g.args.fields.len) orelse if (!std.mem.eql(u8, g.base_name.string, "Array")) return null;
+        _ = s;
         const identity = typ.genericIdentityOf(actual_ty) orelse return null;
         if (!std.mem.eql(u8, identity.base_name, g.base_name.string)) return null;
 
@@ -8329,11 +8337,33 @@ pub const Semantizer = struct {
         s: *Scope,
         allowed_kind: gen.GenericDispatchKind,
     ) SemErr!*sg.FunctionDeclaration {
+        return self.instantiateGenericNamedVisible(name, stargs, call_input, s, allowed_kind, null, null);
+    }
+
+    fn instantiateGenericNamedVisible(
+        self: *Semantizer,
+        name: []const u8,
+        stargs: syn.StructTypeLiteral,
+        call_input: typ.TypedExpr,
+        s: *Scope,
+        allowed_kind: gen.GenericDispatchKind,
+        module_dir_filter: ?[]const u8,
+        requester_file: ?[]const u8,
+    ) SemErr!*sg.FunctionDeclaration {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.generic_functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
                     if (tmpl.dispatch_kind != allowed_kind) continue;
+                    if (module_dir_filter) |module_dir| {
+                        if (!std.mem.startsWith(u8, tmpl.location.file, module_dir)) continue;
+                        if (requester_file) |requester| {
+                            if (isPrivateName(name)) {
+                                const requester_dir = self.moduleDirForFile(requester);
+                                if (!std.mem.eql(u8, requester_dir, module_dir)) continue;
+                            }
+                        }
+                    }
                     var subst = GenericSubst.init(self.allocator);
                     defer subst.deinit();
                     const dispatch_input = try self.materializeTemplateReachDefaultsForDispatch(tmpl, call_input, s);
@@ -8535,11 +8565,33 @@ pub const Semantizer = struct {
         s: *Scope,
         allowed_kind: gen.GenericDispatchKind,
     ) SemErr!*sg.FunctionDeclaration {
+        return self.instantiateGenericVisible(name, type_args_syn, call_input, s, allowed_kind, null, null);
+    }
+
+    fn instantiateGenericVisible(
+        self: *Semantizer,
+        name: []const u8,
+        type_args_syn: []const syn.Type,
+        call_input: typ.TypedExpr,
+        s: *Scope,
+        allowed_kind: gen.GenericDispatchKind,
+        module_dir_filter: ?[]const u8,
+        requester_file: ?[]const u8,
+    ) SemErr!*sg.FunctionDeclaration {
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.generic_functions.getPtr(name)) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
                     if (tmpl.dispatch_kind != allowed_kind) continue;
+                    if (module_dir_filter) |module_dir| {
+                        if (!std.mem.startsWith(u8, tmpl.location.file, module_dir)) continue;
+                        if (requester_file) |requester| {
+                            if (isPrivateName(name)) {
+                                const requester_dir = self.moduleDirForFile(requester);
+                                if (!std.mem.eql(u8, requester_dir, module_dir)) continue;
+                            }
+                        }
+                    }
                     if (tmpl.params.len != type_args_syn.len) continue;
 
                     var subst = GenericSubst.init(self.allocator);

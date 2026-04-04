@@ -12,7 +12,7 @@ const tokp = @import("../2_tokens/token_print.zig");
 const frontend = @import("frontend_pipeline.zig");
 const semantizer_mod = @import("../4_semantics/semantizer.zig");
 
-const BuildFlags = struct {
+pub const BuildFlags = struct {
     show_cascade: bool = false,
     show_syntax_tree: bool = false,
     show_semantic_graph: bool = false,
@@ -22,6 +22,12 @@ const BuildFlags = struct {
     llvm_ir_path: ?[]const u8 = null,
     object_path: ?[]const u8 = null,
     just_object_path: ?[]const u8 = null,
+};
+
+pub const CompileOptions = struct {
+    frontend_options: frontend.FrontendPipeline.Options = .{},
+    codegen_options: codegen.CodeGenerator.Options = .{},
+    success_message: ?[]const u8 = "✔ Build completed\n",
 };
 
 const PhaseTimings = struct {
@@ -161,15 +167,11 @@ fn replaceFile(src: []const u8, dst: []const u8) !void {
     };
 }
 
-pub fn compile(args: []const []const u8) !void {
-    if (args.len == 0) return error.MissingBuildTarget;
-
+pub fn compileTarget(target_path: []const u8, flags: BuildFlags, options: CompileOptions) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const target_path = args[0];
-    const flags = try parseFlags(args[1..]);
     const module_dir = try resolveBuildModuleDir(allocator, target_path);
     var timings: PhaseTimings = .{};
 
@@ -202,7 +204,7 @@ pub fn compile(args: []const []const u8) !void {
     // 2. Diagnósticos globales ────────────────────────────────────────────
     var diagnostics = diag.Diagnostics.init(&allocator, files.items);
 
-    var pipeline = frontend.FrontendPipeline.init(&allocator, &diagnostics, .{});
+    var pipeline = frontend.FrontendPipeline.init(&allocator, &diagnostics, options.frontend_options);
     defer pipeline.deinit();
 
     // 3. Tokenizar todos (fusionando EOF) ─────────────────────────────────
@@ -259,7 +261,7 @@ pub fn compile(args: []const []const u8) !void {
 
     // 7. Generación de código ──────────────────────────────────────────────
     const codegen_start = std.time.nanoTimestamp();
-    var gen = codegen.CodeGenerator.init(&allocator, sg, &diagnostics, .{}) catch return;
+    var gen = codegen.CodeGenerator.init(&allocator, sg, &diagnostics, options.codegen_options) catch return;
     const module = gen.generate() catch {
         timings.codegen_ns = elapsedSince(codegen_start);
         if (flags.show_token_list) printTokenList(pipeline.tokens.items);
@@ -374,7 +376,15 @@ pub fn compile(args: []const []const u8) !void {
         printSemantizingTimings(pipeline.semantize_timings);
     }
 
-    std.debug.print("✔ Build completed\n", .{});
+    if (options.success_message) |message| {
+        std.debug.print("{s}", .{message});
+    }
+}
+
+pub fn compile(args: []const []const u8) !void {
+    if (args.len == 0) return error.MissingBuildTarget;
+    const flags = try parseFlags(args[1..]);
+    try compileTarget(args[0], flags, .{});
 }
 
 test "parse build flags keeps diagnostics toggles and output paths" {
