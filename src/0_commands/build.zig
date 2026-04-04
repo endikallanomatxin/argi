@@ -94,6 +94,11 @@ fn printPhaseTimings(timings: PhaseTimings) void {
 fn printSemantizingTimings(timings: semantizer_mod.Semantizer.SemantizeTimings) void {
     std.debug.print("semantizing breakdown:\n", .{});
     std.debug.print("  initial pass:          {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.initial_pass_ns)) / 1_000_000.0});
+    std.debug.print("    support top-level:   {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.support_top_level_ns)) / 1_000_000.0});
+    std.debug.print("    function interface:  {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.function_interface_ns)) / 1_000_000.0});
+    std.debug.print("    function in defaults:{d:.3} ms\n", .{@as(f64, @floatFromInt(timings.function_input_defaults_ns)) / 1_000_000.0});
+    std.debug.print("    function out defs:   {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.function_output_defaults_ns)) / 1_000_000.0});
+    std.debug.print("    function bodies:     {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.function_body_ns)) / 1_000_000.0});
     std.debug.print("  retry passes:          {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.retry_passes_ns)) / 1_000_000.0});
     std.debug.print("  initial retry nodes:   {d}\n", .{timings.initial_retry_count});
     std.debug.print("  retry rounds:          {d}\n", .{timings.retry_round_count});

@@ -188,6 +188,11 @@ pub const Semantizer = struct {
 
     pub const SemantizeTimings = struct {
         initial_pass_ns: u64 = 0,
+        support_top_level_ns: u64 = 0,
+        function_interface_ns: u64 = 0,
+        function_input_defaults_ns: u64 = 0,
+        function_output_defaults_ns: u64 = 0,
+        function_body_ns: u64 = 0,
         retry_passes_ns: u64 = 0,
         final_retry_resolution_ns: u64 = 0,
         abstract_verify_ns: u64 = 0,
@@ -227,6 +232,12 @@ pub const Semantizer = struct {
         body_only,
     };
 
+    const PendingFunctionBodyTimings = struct {
+        input_defaults_ns: u64 = 0,
+        output_defaults_ns: u64 = 0,
+        body_ns: u64 = 0,
+    };
+
     pub fn semantizeWithTimings(self: *Semantizer) SemErr!SemantizeResult {
         self.signature_type_cache.clearRetainingCapacity();
         var global = try Scope.init(self.allocator, null, null);
@@ -244,6 +255,7 @@ pub const Semantizer = struct {
         // 1) Pasada inicial: estabiliza primero top-level no-función y luego analiza funciones.
         const initial_start = std.time.nanoTimestamp();
         self.defer_unknown_top_level = true;
+        const support_top_level_start = std.time.nanoTimestamp();
         for (self.st_nodes) |n| {
             if (n.content == .function_declaration) continue;
             self.current_top_node = n;
@@ -275,11 +287,13 @@ pub const Semantizer = struct {
             if (!progressed) break;
             support_round += 1;
         }
+        timings.support_top_level_ns = @intCast(std.time.nanoTimestamp() - support_top_level_start);
 
         // Functions are semantized in two late stages:
         // first their callable interface, so overloads and abstract checks can
         // stabilize on a declaration-only world, and only afterwards their
         // defaults and bodies.
+        const function_interface_start = std.time.nanoTimestamp();
         self.function_semantize_mode = .interface_only;
         for (self.st_nodes) |n| {
             if (n.content != .function_declaration) continue;
@@ -313,14 +327,18 @@ pub const Semantizer = struct {
             if (!progressed) break;
             interface_round += 1;
         }
+        timings.function_interface_ns = @intCast(std.time.nanoTimestamp() - function_interface_start);
 
         const abstract_verify_start = std.time.nanoTimestamp();
         try abs.verifyAbstracts(&global, self.allocator, self.diags);
         timings.abstract_verify_ns = @intCast(std.time.nanoTimestamp() - abstract_verify_start);
 
         self.function_semantize_mode = .body_only;
-        try self.semantizePendingFunctionBodies(&global);
+        const pending_fn_timings = try self.semantizePendingFunctionBodies(&global);
         self.function_semantize_mode = .full;
+        timings.function_input_defaults_ns = pending_fn_timings.input_defaults_ns;
+        timings.function_output_defaults_ns = pending_fn_timings.output_defaults_ns;
+        timings.function_body_ns = pending_fn_timings.body_ns;
         timings.initial_pass_ns = @intCast(std.time.nanoTimestamp() - initial_start);
         timings.initial_retry_count = @intCast(self.pending_next.items.len);
         // 2) Rondas de reintento: solo lo pendiente
@@ -431,12 +449,14 @@ pub const Semantizer = struct {
         });
     }
 
-    fn semantizePendingFunctionBodies(self: *Semantizer, global: *Scope) SemErr!void {
+    fn semantizePendingFunctionBodies(self: *Semantizer, global: *Scope) SemErr!PendingFunctionBodyTimings {
         const deferred = try self.allocator.alloc(bool, self.pending_function_bodies.items.len);
         @memset(deferred, false);
+        var timings: PendingFunctionBodyTimings = .{};
 
         // Input defaults are part of the callable interface because omitted
         // call arguments need them before any function body is semantized.
+        const input_defaults_start = std.time.nanoTimestamp();
         for (self.pending_function_bodies.items, 0..) |*pending, idx| {
             self.current_top_node = pending.top_node;
             self.prepareFunctionInputDefaults(pending, global) catch |err| switch (err) {
@@ -447,9 +467,11 @@ pub const Semantizer = struct {
                 else => return err,
             };
         }
+        timings.input_defaults_ns = @intCast(std.time.nanoTimestamp() - input_defaults_start);
 
         // Output defaults belong to the body-facing execution state, so only
         // stage them once every callable interface is complete.
+        const output_defaults_start = std.time.nanoTimestamp();
         for (self.pending_function_bodies.items, 0..) |*pending, idx| {
             if (deferred[idx]) continue;
             self.current_top_node = pending.top_node;
@@ -461,7 +483,9 @@ pub const Semantizer = struct {
                 else => return err,
             };
         }
+        timings.output_defaults_ns = @intCast(std.time.nanoTimestamp() - output_defaults_start);
 
+        const body_start = std.time.nanoTimestamp();
         for (self.pending_function_bodies.items, 0..) |*pending, idx| {
             if (deferred[idx]) continue;
             self.current_top_node = pending.top_node;
@@ -473,7 +497,9 @@ pub const Semantizer = struct {
                 else => return err,
             };
         }
+        timings.body_ns = @intCast(std.time.nanoTimestamp() - body_start);
         self.current_top_node = null;
+        return timings;
     }
 
     fn predeclareTopLevelSymbols(self: *Semantizer, global: *Scope) SemErr!void {
