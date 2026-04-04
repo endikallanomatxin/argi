@@ -65,6 +65,8 @@ const PendingFunctionBody = struct {
     decl: syn.FunctionDeclaration,
     location: tok.Location,
     function: *sg.FunctionDeclaration,
+    prepared_scope: ?*Scope = null,
+    prepared_input_struct: ?*sg.StructType = null,
 };
 
 const OnceConsumption = struct {
@@ -423,9 +425,9 @@ pub const Semantizer = struct {
         // Defaults must be materialized for every pending function before any
         // body is semantized, otherwise overload resolution between bodies can
         // still observe placeholder signatures.
-        for (self.pending_function_bodies.items, 0..) |pending, idx| {
+        for (self.pending_function_bodies.items, 0..) |*pending, idx| {
             self.current_top_node = pending.top_node;
-            self.semantizeRegularFunctionDefaults(pending.decl, global, pending.location, pending.function) catch |err| switch (err) {
+            self.prepareRegularFunctionBodyScope(pending, global) catch |err| switch (err) {
                 error.UnknownType, error.SymbolNotFound => {
                     try self.pushTopLevelForRetry();
                     deferred[idx] = true;
@@ -434,10 +436,10 @@ pub const Semantizer = struct {
             };
         }
 
-        for (self.pending_function_bodies.items, 0..) |pending, idx| {
+        for (self.pending_function_bodies.items, 0..) |*pending, idx| {
             if (deferred[idx]) continue;
             self.current_top_node = pending.top_node;
-            self.semantizeRegularFunctionBody(pending.decl, global, pending.location, pending.function) catch |err| switch (err) {
+            self.semantizePreparedFunctionBody(pending) catch |err| switch (err) {
                 error.UnknownType, error.SymbolNotFound => {
                     try self.pushTopLevelForRetry();
                     deferred[idx] = true;
@@ -4392,23 +4394,28 @@ pub const Semantizer = struct {
         return fn_ptr;
     }
 
-    fn semantizeRegularFunctionDefaults(
+    fn prepareRegularFunctionBodyScope(
         self: *Semantizer,
-        f: syn.FunctionDeclaration,
+        pending: *PendingFunctionBody,
         p: *Scope,
-        loc: tok.Location,
-        fn_ptr: *sg.FunctionDeclaration,
     ) SemErr!void {
-        var child = try Scope.init(self.allocator, p, null);
+        const f = pending.decl;
+        const loc = pending.location;
+        const fn_ptr = pending.function;
+
+        const child = try self.allocator.create(Scope);
+        child.* = try Scope.init(self.allocator, p, null);
         child.current_fn = fn_ptr;
 
         const input_fields = try self.allocator.alloc(sg.StructTypeField, fn_ptr.input.fields.len);
         @memcpy(input_fields, fn_ptr.input.fields);
+        const input_struct_ptr = try self.allocator.create(sg.StructType);
+        input_struct_ptr.* = .{ .fields = input_fields };
 
         for (f.input.fields, 0..) |fld, idx| {
-            const ty = input_fields[idx].ty;
+            const ty = input_struct_ptr.fields[idx].ty;
             const dvp = if (fld.default_value) |n|
-                (try self.visitNode(n.*, &child)).node
+                (try self.visitNode(n.*, child)).node
             else
                 null;
 
@@ -4426,14 +4433,14 @@ pub const Semantizer = struct {
             try child.bindings.put(fld.name.string, bd);
         }
 
-        fn_ptr.input = .{ .fields = input_fields };
+        fn_ptr.input = input_struct_ptr.*;
 
         const output_fields = try self.allocator.alloc(sg.StructTypeField, fn_ptr.output.fields.len);
         @memcpy(output_fields, fn_ptr.output.fields);
 
         for (f.output.fields, 0..) |fld, idx| {
             const dvp = if (fld.default_value) |n|
-                (try self.visitNode(n.*, &child)).node
+                (try self.visitNode(n.*, child)).node
             else
                 null;
 
@@ -4445,38 +4452,25 @@ pub const Semantizer = struct {
         }
 
         fn_ptr.output = .{ .fields = output_fields };
-        self.clearDeferred(&child);
+        pending.prepared_scope = child;
+        pending.prepared_input_struct = input_struct_ptr;
     }
 
-    fn semantizeRegularFunctionBody(
+    fn semantizePreparedFunctionBody(
         self: *Semantizer,
-        f: syn.FunctionDeclaration,
-        p: *Scope,
-        loc: tok.Location,
-        fn_ptr: *sg.FunctionDeclaration,
+        pending: *PendingFunctionBody,
     ) SemErr!void {
-        var child = try Scope.init(self.allocator, p, null);
-        child.current_fn = fn_ptr;
-        const input_struct_ptr = try self.allocator.create(sg.StructType);
-        input_struct_ptr.* = fn_ptr.input;
-
-        for (f.input.fields, 0..) |fld, idx| {
-            const bd = try self.allocator.create(sg.BindingDeclaration);
-            bd.* = .{
-                .name = fld.name.string,
-                .location = fld.name.location,
-                .origin_file = loc.file,
-                .mutability = .constant,
-                .ty = input_struct_ptr.fields[idx].ty,
-                .initialization = input_struct_ptr.fields[idx].default_value,
-            };
-            try child.bindings.put(fld.name.string, bd);
-        }
-
-        for (f.output.fields, 0..) |fld, idx| {
-            const bd = @constCast(fn_ptr.output_bindings[idx]);
-            try child.bindings.put(fld.name.string, bd);
-        }
+        const child = pending.prepared_scope orelse {
+            try self.diags.add(pending.location, .semantic, "internal error: missing prepared function scope during staged semantizing", .{});
+            return error.Reported;
+        };
+        const input_struct_ptr = pending.prepared_input_struct orelse {
+            try self.diags.add(pending.location, .semantic, "internal error: missing prepared function input during staged semantizing", .{});
+            return error.Reported;
+        };
+        const f = pending.decl;
+        const loc = pending.location;
+        const fn_ptr = pending.function;
 
         var body_cb: ?*sg.CodeBlock = null;
         if (f.body) |body_node| {
@@ -4484,16 +4478,16 @@ pub const Semantizer = struct {
                 .function_name = f.name.string,
                 .location = loc,
                 .input_struct = input_struct_ptr,
-                .body_scope = &child,
+                .body_scope = child,
             });
             defer _ = self.function_reach_stack.pop();
-            const body_te = try self.visitNode(body_node.*, &child);
+            const body_te = try self.visitNode(body_node.*, child);
             body_cb = body_te.node.content.code_block;
         }
 
         fn_ptr.input = input_struct_ptr.*;
         fn_ptr.body = body_cb;
-        self.clearDeferred(&child);
+        self.clearDeferred(child);
     }
 
     fn appendTypeDeclarationNodeIfMissing(
