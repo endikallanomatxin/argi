@@ -73,6 +73,18 @@ fn runChild(argv: []const []const u8) !std.process.Child.RunResult {
     });
 }
 
+fn runArgiCommand(args: []const []const u8) !std.process.Child.RunResult {
+    const argv = try std.testing.allocator.alloc([]const u8, args.len + 1);
+    defer std.testing.allocator.free(argv);
+
+    argv[0] = argi_bin;
+    for (args, 0..) |arg, idx| {
+        argv[idx + 1] = arg;
+    }
+
+    return runChild(argv);
+}
+
 fn buildResult(name: []const u8) !std.process.Child.RunResult {
     try clean(name);
     return runChild(&[_][]const u8{
@@ -116,6 +128,52 @@ fn runExpect(name: []const u8, expected_code: u8) !void {
 
 fn run(name: []const u8) !void {
     try runExpect(name, 0);
+}
+
+fn argiTestExpectStderr(
+    name: []const u8,
+    args: []const []const u8,
+    expected_code: u8,
+    expected_stderr: []const u8,
+) !void {
+    const argv = try std.testing.allocator.alloc([]const u8, args.len + 2);
+    defer std.testing.allocator.free(argv);
+
+    argv[0] = "test";
+    argv[1] = name;
+    for (args, 0..) |arg, idx| {
+        argv[idx + 2] = arg;
+    }
+
+    const result = try runArgiCommand(argv);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = expected_code }, result.term);
+    try expectEqualStrings(expected_stderr, result.stderr);
+}
+
+fn argiTestExpectStderrContains(
+    name: []const u8,
+    args: []const []const u8,
+    expected_code: u8,
+    expected_stderr_fragment: []const u8,
+) !void {
+    const argv = try std.testing.allocator.alloc([]const u8, args.len + 2);
+    defer std.testing.allocator.free(argv);
+
+    argv[0] = "test";
+    argv[1] = name;
+    for (args, 0..) |arg, idx| {
+        argv[idx + 2] = arg;
+    }
+
+    const result = try runArgiCommand(argv);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = expected_code }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, expected_stderr_fragment) != null);
 }
 
 fn runExpectStdoutWithArgs(
@@ -1827,4 +1885,82 @@ test "feature_tests/control_flow/04_for_dynamic_array" {
     const test_path = "tests/feature_tests/control_flow/04_for_dynamic_array";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
+}
+
+test "feature_tests/testing/01_simple_pass" {
+    try argiTestExpectStderr(
+        "tests/feature_tests/testing/01_simple_pass",
+        &.{},
+        0,
+        "PASS simple_pass\n",
+    );
+}
+
+test "feature_tests/testing/02_skip" {
+    try argiTestExpectStderrContains(
+        "tests/feature_tests/testing/02_skip",
+        &.{},
+        0,
+        "SKIP skipped_case\n",
+    );
+}
+
+test "feature_tests/testing/03_once_isolated_per_test" {
+    try argiTestExpectStderr(
+        "tests/feature_tests/testing/03_once_isolated_per_test",
+        &.{},
+        0,
+        "PASS first\nPASS second\n",
+    );
+}
+
+test "feature_tests/testing/03_once_isolated_per_test_filter" {
+    try argiTestExpectStderr(
+        "tests/feature_tests/testing/03_once_isolated_per_test",
+        &.{ "--filter", "second" },
+        0,
+        "PASS second\n",
+    );
+}
+
+test "feature_tests/testing/04_expect_equal" {
+    try argiTestExpectStderr(
+        "tests/feature_tests/testing/04_expect_equal",
+        &.{},
+        0,
+        "PASS equality\n",
+    );
+}
+
+test "feature_tests/testing/05_assertion_failure" {
+    try argiTestExpectStderr(
+        "tests/feature_tests/testing/05_assertion_failure",
+        &.{},
+        1,
+        "FAIL assertion_failure\n",
+    );
+}
+
+test "feature_tests/testing/06_direct_propagated_error" {
+    try argiTestExpectStderr(
+        "tests/feature_tests/testing/06_direct_propagated_error",
+        &.{},
+        1,
+        "FAIL direct_propagation\n",
+    );
+}
+
+test "feature_tests/testing/07_build_ignores_tests" {
+    const test_path = "tests/feature_tests/testing/07_build_ignores_tests";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/testing/08X_test_signature_requires_v1_shape" {
+    try argiTestExpectStderrContains(
+        "tests/feature_tests/testing/08X_test_signature_requires_v1_shape",
+        &.{},
+        1,
+        "tests must declare exactly one input: '.system: System = System()'",
+    );
 }
