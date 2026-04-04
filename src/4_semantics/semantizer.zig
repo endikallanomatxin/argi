@@ -594,6 +594,7 @@ pub const Semantizer = struct {
         loc: tok.Location,
     ) SemErr!void {
         if (decl.generic_params.len > 0 or decl.generic_params_struct != null) return;
+        try self.requireExplicitFunctionFieldTypes(decl, loc);
 
         if (try self.abstractContractNameForFunctionDecl(decl, global) != null) return;
 
@@ -712,6 +713,34 @@ pub const Semantizer = struct {
             }
         }
         return null;
+    }
+
+    fn requireExplicitFunctionFieldTypes(
+        self: *Semantizer,
+        f: syn.FunctionDeclaration,
+        loc: tok.Location,
+    ) SemErr!void {
+        _ = loc;
+        for (f.input.fields) |field| {
+            if (field.type != null) continue;
+            try self.diags.add(
+                field.name.location,
+                .semantic,
+                "function input field '.{s}' requires an explicit type",
+                .{field.name.string},
+            );
+            return error.Reported;
+        }
+        for (f.output.fields) |field| {
+            if (field.type != null) continue;
+            try self.diags.add(
+                field.name.location,
+                .semantic,
+                "function output field '.{s}' requires an explicit type",
+                .{field.name.string},
+            );
+            return error.Reported;
+        }
     }
 
     fn resolveCachedSignatureType(
@@ -4071,6 +4100,7 @@ pub const Semantizer = struct {
         p: *Scope,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
+        try self.requireExplicitFunctionFieldTypes(f, loc);
         // Register generic template and skip direct emission
         if (f.generic_params.len > 0 or f.generic_params_struct != null) {
             if (f.is_once) {
@@ -4293,6 +4323,7 @@ pub const Semantizer = struct {
         p: *Scope,
         loc: tok.Location,
     ) SemErr!?*sg.FunctionDeclaration {
+        try self.requireExplicitFunctionFieldTypes(f, loc);
         if (f.generic_params.len > 0 or f.generic_params_struct != null) {
             if (f.is_once) {
                 try self.diags.add(

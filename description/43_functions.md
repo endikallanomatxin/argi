@@ -354,6 +354,11 @@ una forma más flexible.
 Da error cuando hay ambigüedad en especificidad, pero se encarga el compilador
 de evitarlo.
 
+> [!NOTE]
+> Function signatures are part of the callable interface, so every input and
+> output field in a function declaration must spell out its type explicitly.
+> Defaults may provide fallback values, but they do not infer signature types.
+
 En go, no se puede definir métodos de struct de otros paquetes. Eso es una
 mierda!
 

@@ -432,6 +432,13 @@ test "feature_tests/functions/15_output_default_implicit_return" {
     try runExpect(test_path, 42);
 }
 
+test "feature_tests/functions/16X_function_signature_requires_explicit_types" {
+    try buildExpectFail(
+        "tests/feature_tests/functions/16X_function_signature_requires_explicit_types",
+        "function output field '.result' requires an explicit type",
+    );
+}
+
 test "feature_tests/polymorphism/01_multiple_dispatch" {
     const test_path = "tests/feature_tests/polymorphism/01_multiple_dispatch";
     try expectSuccessfulBuild(test_path);
