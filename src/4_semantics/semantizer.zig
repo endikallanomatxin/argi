@@ -208,7 +208,7 @@ pub const Semantizer = struct {
         self.retry_symbol_nodes = 0;
         self.retry_other_nodes = 0;
 
-        // 1) Pasada inicial: difiere los UnknownType top-level
+        // 1) Pasada inicial: estabiliza primero top-level no-función y luego analiza funciones.
         const initial_start = std.time.nanoTimestamp();
         self.defer_unknown_top_level = true;
         for (self.st_nodes) |n| {
@@ -216,6 +216,33 @@ pub const Semantizer = struct {
             self.current_top_node = n;
             _ = self.visitNode(n.*, &global) catch {};
         }
+
+        var support_round: u32 = 0;
+        while (self.hasPendingNonFunctionNodes() and support_round < self.max_retry_rounds) {
+            const tmp = self.pending_now;
+            self.pending_now = self.pending_next;
+            self.pending_next = tmp;
+            self.pending_next.items.len = 0;
+
+            var progressed = false;
+            for (self.pending_now.items) |pn| {
+                if (pn.content == .function_declaration) {
+                    try self.pending_next.append(pn);
+                    continue;
+                }
+
+                self.current_top_node = pn;
+                if (self.visitNode(pn.*, &global)) |_| {
+                    progressed = true;
+                } else |_| {}
+            }
+
+            self.current_top_node = null;
+            self.pending_now.items.len = 0;
+            if (!progressed) break;
+            support_round += 1;
+        }
+
         for (self.st_nodes) |n| {
             if (n.content != .function_declaration) continue;
             self.current_top_node = n;
@@ -224,7 +251,6 @@ pub const Semantizer = struct {
         self.current_top_node = null;
         timings.initial_pass_ns = @intCast(std.time.nanoTimestamp() - initial_start);
         timings.initial_retry_count = @intCast(self.pending_next.items.len);
-
         // 2) Rondas de reintento: solo lo pendiente
         const retry_start = std.time.nanoTimestamp();
         var round: u32 = 0;
@@ -305,16 +331,53 @@ pub const Semantizer = struct {
         };
     }
 
+    fn hasPendingNonFunctionNodes(self: *Semantizer) bool {
+        for (self.pending_next.items) |pending| {
+            if (pending.content != .function_declaration) return true;
+        }
+        return false;
+    }
+
     fn predeclareTopLevelSymbols(self: *Semantizer, global: *Scope) SemErr!void {
         for (self.st_nodes) |node| {
             switch (node.content) {
                 .symbol_declaration => |decl| try self.predeclareTopLevelImportAlias(decl, global, node.location),
+                .abstract_declaration => |decl| try self.predeclareTopLevelAbstract(decl, global),
                 .type_declaration => |decl| try self.predeclareTopLevelType(decl, global),
                 .choice_option_declaration => |decl| try self.predeclareTopLevelChoiceOption(decl, global, node.location),
                 .function_declaration => |decl| try self.predeclareTopLevelFunction(decl, global, node.location),
                 else => {},
             }
         }
+    }
+
+    fn predeclareTopLevelAbstract(
+        self: *Semantizer,
+        decl: syn.AbstractDeclaration,
+        global: *Scope,
+    ) SemErr!void {
+        if (global.abstracts.contains(decl.name.string)) return;
+        if (global.types.contains(decl.name.string)) return;
+
+        const info = try self.allocator.create(abs.AbstractInfo);
+        info.* = .{
+            .name = decl.name.string,
+            .requirements = &.{},
+            .param_names = decl.generic_params,
+        };
+
+        const abs_ty = try self.allocator.create(sg.AbstractType);
+        abs_ty.* = .{ .name = decl.name.string };
+
+        const td = try self.allocator.create(sg.TypeDeclaration);
+        td.* = .{
+            .name = decl.name.string,
+            .origin_file = decl.name.location.file,
+            .ty = .{ .abstract_type = abs_ty },
+        };
+
+        try global.abstracts.put(decl.name.string, info);
+        try global.types.put(decl.name.string, td);
     }
 
     fn predeclareTopLevelImportAlias(
@@ -2045,6 +2108,10 @@ pub const Semantizer = struct {
             },
 
             .abstract_implements => |rel| self.handleAbstractImplements(rel, s, n.location) catch |err| blk: {
+                if ((err == error.UnknownType or err == error.SymbolNotFound) and s.parent == null and self.defer_unknown_top_level) {
+                    try self.pushTopLevelForRetry();
+                    break :blk error.Reported;
+                }
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -2055,6 +2122,10 @@ pub const Semantizer = struct {
             },
 
             .abstract_defaultsto => |rel| self.handleAbstractDefault(rel, s, n.location) catch |err| blk: {
+                if ((err == error.UnknownType or err == error.SymbolNotFound) and s.parent == null and self.defer_unknown_top_level) {
+                    try self.pushTopLevelForRetry();
+                    break :blk error.Reported;
+                }
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -2634,9 +2705,6 @@ pub const Semantizer = struct {
         ad: syn.AbstractDeclaration,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        // Register abstract as a nominal semantic type.
-        if (s.types.contains(ad.name.string)) return error.SymbolAlreadyDefined;
-
         // Store abstract info (resolved requirements) in scope
         var reqs = std.array_list.Managed(abs.AbstractFunctionReqSem).init(self.allocator.*);
         const generic_params = ad.generic_params;
@@ -2838,24 +2906,39 @@ pub const Semantizer = struct {
             output_pointer_self_idxs.deinit();
         }
 
-        const info = try self.allocator.create(abs.AbstractInfo);
-        info.* = .{
-            .name = ad.name.string,
-            .requirements = try reqs.toOwnedSlice(),
-            .param_names = generic_params,
-        };
+        const requirements = try reqs.toOwnedSlice();
         reqs.deinit();
 
-        const abs_ty = try self.allocator.create(sg.AbstractType);
-        abs_ty.* = .{ .name = ad.name.string };
-        const td = try self.allocator.create(sg.TypeDeclaration);
-        td.* = .{ .name = ad.name.string, .origin_file = ad.name.location.file, .ty = .{ .abstract_type = abs_ty } };
-        try s.types.put(ad.name.string, td);
-        try s.abstracts.put(ad.name.string, info);
+        const info = if (s.abstracts.get(ad.name.string)) |existing|
+            existing
+        else blk: {
+            const created = try self.allocator.create(abs.AbstractInfo);
+            created.* = .{
+                .name = ad.name.string,
+                .requirements = &.{},
+                .param_names = generic_params,
+            };
+            try s.abstracts.put(ad.name.string, created);
+            break :blk created;
+        };
+        info.requirements = requirements;
+        info.param_names = generic_params;
 
-        const n = try sg.makeSGNode(.{ .type_declaration = td }, undefined, self.allocator);
-        try s.nodes.append(n);
-        if (s.parent == null) try self.root_list.append(n);
+        const td = if (s.types.get(ad.name.string)) |existing|
+            blk: {
+                if (existing.ty != .abstract_type) return error.SymbolAlreadyDefined;
+                break :blk existing;
+            }
+        else blk: {
+            const abs_ty = try self.allocator.create(sg.AbstractType);
+            abs_ty.* = .{ .name = ad.name.string };
+            const created = try self.allocator.create(sg.TypeDeclaration);
+            created.* = .{ .name = ad.name.string, .origin_file = ad.name.location.file, .ty = .{ .abstract_type = abs_ty } };
+            try s.types.put(ad.name.string, created);
+            break :blk created;
+        };
+
+        const n = try self.appendTypeDeclarationNodeIfMissing(s, td, ad.name.location);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
@@ -3725,7 +3808,7 @@ pub const Semantizer = struct {
                         td = try self.allocator.create(sg.TypeDeclaration);
                         td.* = .{ .name = d.name.string, .origin_file = d.value.location.file, .ty = .{ .struct_type = stub } };
                         try s.types.put(d.name.string, td);
-                        try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
+                        _ = try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
                     }
 
                     const st_ptr = try self.structTypeFromLiteral(st_lit, s);
@@ -3741,7 +3824,7 @@ pub const Semantizer = struct {
                         };
                         dst.identity = .{ .generic = identity };
                     }
-                    try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
+                    _ = try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
                     const noop = try self.makeNoopNode(d.value.location);
                     break :blk_struct .{ .node = noop, .ty = .{ .builtin = .Any } };
                 },
@@ -3762,7 +3845,7 @@ pub const Semantizer = struct {
                         };
                         try s.types.put(d.name.string, td);
 
-                        try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
+                        _ = try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
                     }
 
                     var variants = std.array_list.Managed(sg.ChoiceVariant).init(self.allocator.*);
@@ -3799,7 +3882,7 @@ pub const Semantizer = struct {
                     }
                     variants.deinit();
 
-                    try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
+                    _ = try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
                     const noop = try self.makeNoopNode(d.value.location);
                     break :blk_choice .{ .node = noop, .ty = .{ .builtin = .Any } };
                 },
@@ -4006,15 +4089,16 @@ pub const Semantizer = struct {
         s: *Scope,
         td: *sg.TypeDeclaration,
         loc: tok.Location,
-    ) !void {
+    ) !*sg.SGNode {
         for (s.nodes.items) |node| {
             if (node.content != .type_declaration) continue;
-            if (node.content.type_declaration == td) return;
+            if (node.content.type_declaration == td) return node;
         }
 
         const node = try sg.makeSGNode(.{ .type_declaration = td }, loc, self.allocator);
         try s.nodes.append(node);
         if (s.parent == null) try self.root_list.append(node);
+        return node;
     }
 
     fn appendFunctionDeclarationNodeIfMissing(
