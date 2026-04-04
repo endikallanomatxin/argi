@@ -1452,6 +1452,7 @@ pub const Semantizer = struct {
         loc: tok.Location,
         s: *Scope,
     ) SemErr!?AutoDeinitResolution {
+        if (!typeCanHaveVisibleAutoDeinit(ty)) return null;
         const fake_binding = try self.allocator.create(sg.BindingDeclaration);
         fake_binding.* = .{
             .name = "__auto_deinit_target",
@@ -11009,18 +11010,20 @@ pub const Semantizer = struct {
         s: *Scope,
     ) !void {
         if (s.parent == null) return;
-        if (try self.findVisibleAutoDeinit(binding, loc, s)) |resolved| {
-            const auto_ptr = try self.allocator.create(sg.AutoDeinitBinding);
-            auto_ptr.* = .{
-                .binding = binding,
-                .deinit_fn = resolved.function,
-                .input = resolved.input.node,
-                .fields = &.{},
-            };
+        if (typeCanHaveVisibleAutoDeinit(binding.ty)) {
+            if (try self.findVisibleAutoDeinit(binding, loc, s)) |resolved| {
+                const auto_ptr = try self.allocator.create(sg.AutoDeinitBinding);
+                auto_ptr.* = .{
+                    .binding = binding,
+                    .deinit_fn = resolved.function,
+                    .input = resolved.input.node,
+                    .fields = &.{},
+                };
 
-            const call_node = try sg.makeSGNode(.{ .auto_deinit_binding = auto_ptr }, loc, self.allocator);
-            try self.registerDefer(s, &[_]*sg.SGNode{call_node});
-            return;
+                const call_node = try sg.makeSGNode(.{ .auto_deinit_binding = auto_ptr }, loc, self.allocator);
+                try self.registerDefer(s, &[_]*sg.SGNode{call_node});
+                return;
+            }
         }
 
         const fields = try buildStructuralAutoDeinitFields(self, binding.ty, loc, s, self.allocator);
@@ -11136,6 +11139,15 @@ fn buildStructuralAutoDeinitFields(
             break :blk try fields.toOwnedSlice();
         },
         else => &.{},
+    };
+}
+
+fn typeCanHaveVisibleAutoDeinit(ty: sg.Type) bool {
+    return switch (ty) {
+        .struct_type => |st| st.identity != null,
+        .choice_type => |ct| ct.identity != null,
+        .array_type => |arr| arr.identity != null,
+        else => false,
     };
 }
 
