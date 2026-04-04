@@ -8326,7 +8326,6 @@ pub const Semantizer = struct {
         subst: *GenericSubst,
     ) SemErr!?*sg.FunctionDeclaration {
         var in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, subst);
-        const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, subst);
 
         if (try self.refinedStructTypeWithActual(in_struct_ptr, call_input.ty, s)) |refined| {
             in_struct_ptr = refined;
@@ -8340,6 +8339,8 @@ pub const Semantizer = struct {
                 }
             }
         }
+
+        const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, subst);
 
         const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
         fn_ptr.* = .{
