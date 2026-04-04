@@ -370,6 +370,10 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "error generating nullable unwrap_or: {s}", .{@errorName(e)});
                 return e;
             },
+            .testing_expect_error => |expect_err| self.genTestingExpectError(expect_err) catch |e| {
+                try self.diags.add(n.location, .codegen, "error generating testing.expect_error: {s}", .{@errorName(e)});
+                return e;
+            },
             .error_propagation => |prop| self.genErrorPropagation(prop) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating error propagation: {s}", .{@errorName(e)});
                 return e;
@@ -2709,6 +2713,219 @@ pub const CodeGenerator = struct {
         }
 
         return CodegenError.ValueNotFound;
+    }
+
+    fn buildTestingExpectErrorMismatchContext(
+        self: *CodeGenerator,
+        reason_tag: llvm.c.LLVMValueRef,
+        reason_choice: *const sem.ChoiceType,
+        expected_reason_name: ?[]const u8,
+    ) !llvm.c.LLVMValueRef {
+        if (expected_reason_name == null) {
+            const msg_z = try self.dupZ("expect_error failed: error reason mismatch");
+            return c.LLVMBuildGlobalStringPtr(self.builder, msg_z.ptr, "test_expect_error_mismatch");
+        }
+
+        var result_ptr: ?llvm.c.LLVMValueRef = null;
+        for (reason_choice.variants, 0..) |variant, idx| {
+            const msg = try std.fmt.allocPrint(self.allocator.*, "expect_error failed: expected ..{s} but got ..{s}", .{
+                expected_reason_name.?,
+                variant.name,
+            });
+            const msg_z = try self.dupZ(msg);
+            const msg_ptr = c.LLVMBuildGlobalStringPtr(self.builder, msg_z.ptr, "test_expect_error_reason");
+            if (result_ptr == null) {
+                result_ptr = msg_ptr;
+                continue;
+            }
+
+            const is_match = c.LLVMBuildICmp(
+                self.builder,
+                c.LLVMIntEQ,
+                reason_tag,
+                c.LLVMConstInt(c.LLVMInt32Type(), @intCast(idx), 0),
+                "test_expect_error_reason_match",
+            );
+            result_ptr = c.LLVMBuildSelect(self.builder, is_match, msg_ptr, result_ptr.?, "test_expect_error_reason_select");
+        }
+
+        return result_ptr.?;
+    }
+
+    fn buildTestingFailureErrable(
+        self: *CodeGenerator,
+        result_type: sem.Type,
+        context_ptr: llvm.c.LLVMValueRef,
+        line: u32,
+        column: u32,
+        source_file: []const u8,
+        source_line: []const u8,
+    ) !llvm.c.LLVMValueRef {
+        const result_choice = switch (result_type) {
+            .choice_type => |choice_ty| choice_ty,
+            else => return CodegenError.InvalidType,
+        };
+        const error_variant_index = findChoiceVariantIndexByName(result_choice, "error") orelse return CodegenError.InvalidType;
+        const error_payload_type = result_choice.variants[error_variant_index].payload_type orelse return CodegenError.InvalidType;
+        const error_payload_struct = switch (error_payload_type) {
+            .struct_type => |st| st,
+            else => return CodegenError.InvalidType,
+        };
+        const reason_index = fieldIndexByName(error_payload_struct, "reason") orelse return CodegenError.InvalidType;
+        const reason_choice = switch (error_payload_struct.fields[reason_index].ty) {
+            .choice_type => |choice_ty| choice_ty,
+            else => return CodegenError.InvalidType,
+        };
+        const test_failed_variant_index = findChoiceVariantIndexByName(reason_choice, "test_failed") orelse return CodegenError.InvalidType;
+
+        var reason_value = c.LLVMGetUndef(try self.toLLVMType(.{ .choice_type = reason_choice }));
+        reason_value = c.LLVMBuildInsertValue(
+            self.builder,
+            reason_value,
+            c.LLVMConstInt(c.LLVMInt32Type(), test_failed_variant_index, 0),
+            0,
+            "test_expect_error.fail.reason.tag",
+        );
+
+        var error_payload = c.LLVMConstNull(try self.toLLVMType(error_payload_type));
+        error_payload = c.LLVMBuildInsertValue(self.builder, error_payload, reason_value, reason_index, "test_expect_error.fail.reason");
+
+        const source_file_z = try self.dupZ(source_file);
+        const source_file_ptr = c.LLVMBuildGlobalStringPtr(self.builder, source_file_z.ptr, "test_expect_error_source_file");
+        const source_line_z = try self.dupZ(source_line);
+        const source_line_ptr = c.LLVMBuildGlobalStringPtr(self.builder, source_line_z.ptr, "test_expect_error_source_line");
+        const traced_payload = try self.appendTraceEntry(error_payload, error_payload_type, source_file_ptr, line, column, context_ptr, source_line_ptr);
+
+        var result = c.LLVMGetUndef(try self.toLLVMType(result_type));
+        result = c.LLVMBuildInsertValue(self.builder, result, c.LLVMConstInt(c.LLVMInt32Type(), error_variant_index, 0), 0, "test_expect_error.fail.tag");
+        result = c.LLVMBuildInsertValue(self.builder, result, traced_payload, error_variant_index + 1, "test_expect_error.fail.errable");
+        return result;
+    }
+
+    fn buildErrableOkVoid(
+        self: *CodeGenerator,
+        result_type: sem.Type,
+        ok_variant_index: u32,
+    ) !llvm.c.LLVMValueRef {
+        const result_choice = switch (result_type) {
+            .choice_type => |choice_ty| choice_ty,
+            else => return CodegenError.InvalidType,
+        };
+        const ok_payload_type = result_choice.variants[ok_variant_index].payload_type orelse return CodegenError.InvalidType;
+        const ok_payload_struct = switch (ok_payload_type) {
+            .struct_type => |st| st,
+            else => return CodegenError.InvalidType,
+        };
+        const value_index = fieldIndexByName(ok_payload_struct, "value") orelse return CodegenError.InvalidType;
+
+        var ok_payload = c.LLVMConstNull(try self.toLLVMType(ok_payload_type));
+        ok_payload = c.LLVMBuildInsertValue(
+            self.builder,
+            ok_payload,
+            c.LLVMConstNull(try self.toLLVMType(ok_payload_struct.fields[value_index].ty)),
+            value_index,
+            "test_expect_error.ok.payload",
+        );
+
+        var result = c.LLVMConstNull(try self.toLLVMType(result_type));
+        result = c.LLVMBuildInsertValue(self.builder, result, c.LLVMConstInt(c.LLVMInt32Type(), ok_variant_index, 0), 0, "test_expect_error.ok.tag");
+        result = c.LLVMBuildInsertValue(self.builder, result, ok_payload, ok_variant_index + 1, "test_expect_error.ok.value");
+        return result;
+    }
+
+    fn genTestingExpectError(self: *CodeGenerator, expect_err: *const sem.TestingExpectError) !TypedValue {
+        const actual_tv = (try self.visitNode(expect_err.actual_result)) orelse return CodegenError.ValueNotFound;
+        const actual_tag = c.LLVMBuildExtractValue(self.builder, actual_tv.value_ref, 0, "test_expect_error.actual.tag");
+        const error_tag = c.LLVMConstInt(c.LLVMInt32Type(), expect_err.actual_error_variant_index, 0);
+        const is_error = c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, actual_tag, error_tag, "test_expect_error.is_error");
+
+        const current_bb = c.LLVMGetInsertBlock(self.builder);
+        const parent_fn = c.LLVMGetBasicBlockParent(current_bb);
+        const actual_ok_bb = c.LLVMAppendBasicBlock(parent_fn, "test_expect_error.ok");
+        const actual_error_bb = c.LLVMAppendBasicBlock(parent_fn, "test_expect_error.error");
+        const reason_mismatch_bb = c.LLVMAppendBasicBlock(parent_fn, "test_expect_error.reason_mismatch");
+        const success_bb = c.LLVMAppendBasicBlock(parent_fn, "test_expect_error.success");
+        const merge_bb = c.LLVMAppendBasicBlock(parent_fn, "test_expect_error.merge");
+        _ = c.LLVMBuildCondBr(self.builder, is_error, actual_error_bb, actual_ok_bb);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, actual_ok_bb);
+        const unexpected_ok_context_z = try self.dupZ("expect_error failed: expression succeeded unexpectedly");
+        const unexpected_ok_context_ptr = c.LLVMBuildGlobalStringPtr(self.builder, unexpected_ok_context_z.ptr, "test_expect_error_unexpected_ok");
+        const unexpected_ok_result = try self.buildTestingFailureErrable(
+            expect_err.result_type,
+            unexpected_ok_context_ptr,
+            expect_err.line,
+            expect_err.column,
+            expect_err.source_file,
+            expect_err.source_line,
+        );
+        _ = c.LLVMBuildBr(self.builder, merge_bb);
+        const actual_ok_end_bb = c.LLVMGetInsertBlock(self.builder);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, actual_error_bb);
+        const actual_error_payload = c.LLVMBuildExtractValue(
+            self.builder,
+            actual_tv.value_ref,
+            expect_err.actual_error_variant_index + 1,
+            "test_expect_error.error.payload",
+        );
+        const actual_reason = c.LLVMBuildExtractValue(
+            self.builder,
+            actual_error_payload,
+            expect_err.actual_reason_field_index,
+            "test_expect_error.error.reason",
+        );
+        const actual_reason_tag = c.LLVMBuildExtractValue(self.builder, actual_reason, 0, "test_expect_error.error.reason.tag");
+        const expected_reason_tv = (try self.visitNode(expect_err.expected_reason)) orelse return CodegenError.ValueNotFound;
+        const expected_reason_tag = c.LLVMBuildExtractValue(self.builder, expected_reason_tv.value_ref, 0, "test_expect_error.expected.reason.tag");
+        const reason_matches = c.LLVMBuildICmp(
+            self.builder,
+            c.LLVMIntEQ,
+            actual_reason_tag,
+            expected_reason_tag,
+            "test_expect_error.reason_matches",
+        );
+        _ = c.LLVMBuildCondBr(self.builder, reason_matches, success_bb, reason_mismatch_bb);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, reason_mismatch_bb);
+        const actual_reason_choice = switch (expect_err.actual_error_payload_type) {
+            .struct_type => |payload_struct| switch (payload_struct.fields[expect_err.actual_reason_field_index].ty) {
+                .choice_type => |choice_ty| choice_ty,
+                else => return CodegenError.InvalidType,
+            },
+            else => return CodegenError.InvalidType,
+        };
+        const mismatch_context_ptr = try self.buildTestingExpectErrorMismatchContext(
+            actual_reason_tag,
+            actual_reason_choice,
+            expect_err.expected_reason_name,
+        );
+        const mismatch_result = try self.buildTestingFailureErrable(
+            expect_err.result_type,
+            mismatch_context_ptr,
+            expect_err.line,
+            expect_err.column,
+            expect_err.source_file,
+            expect_err.source_line,
+        );
+        _ = c.LLVMBuildBr(self.builder, merge_bb);
+        const reason_mismatch_end_bb = c.LLVMGetInsertBlock(self.builder);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, success_bb);
+        const success_result = try self.buildErrableOkVoid(
+            expect_err.result_type,
+            expect_err.result_ok_variant_index,
+        );
+        _ = c.LLVMBuildBr(self.builder, merge_bb);
+        const success_end_bb = c.LLVMGetInsertBlock(self.builder);
+
+        c.LLVMPositionBuilderAtEnd(self.builder, merge_bb);
+        const result_ty = try self.toLLVMType(expect_err.result_type);
+        const phi = c.LLVMBuildPhi(self.builder, result_ty, "test_expect_error.result");
+        var incoming_values = [_]llvm.c.LLVMValueRef{ unexpected_ok_result, mismatch_result, success_result };
+        var incoming_blocks = [_]llvm.c.LLVMBasicBlockRef{ actual_ok_end_bb, reason_mismatch_end_bb, success_end_bb };
+        c.LLVMAddIncoming(phi, &incoming_values, &incoming_blocks, incoming_values.len);
+        return .{ .value_ref = phi, .type_ref = result_ty, .sem_type = expect_err.result_type };
     }
 
     fn findTopLevelFunctionByName(self: *CodeGenerator, name: []const u8) ?*const sem.FunctionDeclaration {

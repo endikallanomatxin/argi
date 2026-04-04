@@ -155,6 +155,15 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             std.debug.print("Choice:\n", .{});
             printNode(acc.choice_value, lvl + 2);
         },
+        .testing_expect_error => |expect_err| {
+            std.debug.print("TestingExpectError at {d}:{d}\n", .{ expect_err.line, expect_err.column });
+            indent(lvl + 1);
+            std.debug.print("ExpectedReason:\n", .{});
+            printNode(expect_err.expected_reason, lvl + 2);
+            indent(lvl + 1);
+            std.debug.print("ActualResult:\n", .{});
+            printNode(expect_err.actual_result, lvl + 2);
+        },
         .error_propagation => |prop| {
             std.debug.print("ErrorPropagation ! at {d}:{d}\n", .{ prop.line, prop.column });
             indent(lvl + 1);

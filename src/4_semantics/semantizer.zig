@@ -1121,6 +1121,9 @@ pub const Semantizer = struct {
     ) SemErr!void {
         switch (node.content) {
             .test_declaration => {},
+            .testing_expect_error => |expect_err| {
+                try self.collectFunctionReasonsFromNode(fn_decl, expect_err.actual_result, collected);
+            },
             .binding_assignment => |assignment| {
                 if (self.bindingIsFunctionOutput(fn_decl, assignment.sym_id)) {
                     try self.markReasonsFromReturnedExpr(assignment.value, collected);
@@ -1923,6 +1926,10 @@ pub const Semantizer = struct {
         switch (node.content) {
             .choice_option_declaration => {},
             .test_declaration => {},
+            .testing_expect_error => |expect_err| {
+                try self.walkNodeOnceReachability(current_fn, expect_err.expected_reason, state);
+                try self.walkNodeOnceReachability(current_fn, expect_err.actual_result, state);
+            },
             .binding_declaration => |binding| {
                 if (binding.initialization) |init_node| {
                     try self.walkNodeOnceReachability(current_fn, init_node, state);
@@ -6376,6 +6383,9 @@ pub const Semantizer = struct {
 
         const tv_in = try self.visitNode(call.input.*, s);
         try self.checkCallBindingExclusivity(call.callee, tv_in, call.input.*.location);
+        if (call.module_qualifier != null and std.mem.eql(u8, call.module_qualifier.?, "testing") and std.mem.eql(u8, call.callee, "expect_error")) {
+            return try self.handleTestingExpectErrorBuiltin(call, tv_in, s);
+        }
         if (typ.builtinFromName(call.callee)) |builtin_ty| {
             if (builtin_ty == .Void) {
                 if (tv_in.ty != .struct_type or tv_in.ty.struct_type.fields.len != 0) {
@@ -7366,6 +7376,144 @@ pub const Semantizer = struct {
         }
 
         return self.evalPipeArg(pipe.right, left_te, s);
+    }
+
+    fn makeEmptyStructValueExpr(
+        self: *Semantizer,
+        loc: tok.Location,
+    ) !typ.TypedExpr {
+        const struct_ty = try self.allocator.create(sg.StructType);
+        struct_ty.* = .{ .fields = &.{} };
+
+        const struct_lit = try self.allocator.create(sg.StructValueLiteral);
+        struct_lit.* = .{
+            .fields = &.{},
+            .ty = .{ .struct_type = struct_ty },
+            .dispatch_prefix_positional_count = 0,
+        };
+
+        const node = try sg.makeSGNode(.{ .struct_value_literal = struct_lit }, loc, self.allocator);
+        node.sem_type = .{ .struct_type = struct_ty };
+        return .{ .node = node, .ty = .{ .struct_type = struct_ty } };
+    }
+
+    fn resolveTestingFailImpl(
+        self: *Semantizer,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!*sg.FunctionDeclaration {
+        const empty_input = try self.makeEmptyStructValueExpr(loc);
+        return try self.resolveQualifiedOverload("testing", "test_fail_impl", empty_input, s, loc);
+    }
+
+    fn handleTestingExpectErrorBuiltin(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        input_te: typ.TypedExpr,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        if (input_te.ty != .struct_type or input_te.node.content != .struct_value_literal) {
+            try self.diags.add(
+                call.input.*.location,
+                .semantic,
+                "testing.expect_error expects '.expected_reason' and '.actual_result' arguments",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const input_struct = input_te.ty.struct_type;
+        const input_value = input_te.node.content.struct_value_literal;
+        if (input_struct.fields.len != 2 or input_value.fields.len != 2) {
+            try self.diags.add(
+                call.input.*.location,
+                .semantic,
+                "testing.expect_error expects '.expected_reason' and '.actual_result' arguments",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        const expected_idx = fieldIndexInStruct(input_struct, "expected_reason") orelse {
+            try self.diags.add(
+                call.input.*.location,
+                .semantic,
+                "testing.expect_error expects '.expected_reason' and '.actual_result' arguments",
+                .{},
+            );
+            return error.Reported;
+        };
+        const actual_idx = fieldIndexInStruct(input_struct, "actual_result") orelse {
+            try self.diags.add(
+                call.input.*.location,
+                .semantic,
+                "testing.expect_error expects '.expected_reason' and '.actual_result' arguments",
+                .{},
+            );
+            return error.Reported;
+        };
+
+        const actual_info = try self.errableInfoOf(input_struct.fields[actual_idx].ty, call.input.*.location, "'.actual_result'", s);
+        const error_payload_struct = switch (actual_info.error_payload_type) {
+            .struct_type => |st| st,
+            else => return error.Reported,
+        };
+        const reason_field = typ.findFieldByName(error_payload_struct, "reason") orelse {
+            try self.diags.add(
+                call.input.*.location,
+                .semantic,
+                "Errable '..error' payload must contain '.reason'",
+                .{},
+            );
+            return error.Reported;
+        };
+        const reason_field_index = fieldIndexInStruct(error_payload_struct, "reason") orelse unreachable;
+
+        var expected_reason_te = typ.TypedExpr{
+            .node = @constCast(input_value.fields[expected_idx].value),
+            .ty = input_struct.fields[expected_idx].ty,
+        };
+        expected_reason_te = try typ.coerceExprToType(reason_field.ty, expected_reason_te, call.input, s, self.allocator, self.diags);
+        if (!typ.typesCompatible(reason_field.ty, expected_reason_te.ty)) {
+            const pair = try self.formatTypePairText(reason_field.ty, expected_reason_te.ty, s);
+            defer pair.deinit();
+            try self.diags.add(
+                call.input.*.location,
+                .semantic,
+                "testing.expect_error expects '.expected_reason' compatible with '{s}', found '{s}'",
+                .{ pair.expected.bytes, pair.actual.bytes },
+            );
+            return error.Reported;
+        }
+
+        const test_fail_fn = try self.resolveTestingFailImpl(s, call.callee_loc);
+        const result_type = typ.functionReturnType(test_fail_fn);
+        const result_info = try self.errableInfoOf(result_type, call.callee_loc, "testing.expect_error result", s);
+
+        const expect_err = try self.allocator.create(sg.TestingExpectError);
+        expect_err.* = .{
+            .expected_reason = expected_reason_te.node,
+            .actual_result = input_value.fields[actual_idx].value,
+            .actual_error_variant_index = actual_info.error_variant_index,
+            .actual_error_payload_type = actual_info.error_payload_type,
+            .actual_reason_field_index = reason_field_index,
+            .result_type = result_type,
+            .result_ok_variant_index = result_info.ok_variant_index,
+            .test_fail_function = test_fail_fn,
+            .expected_reason_name = switch (expected_reason_te.node.content) {
+                .choice_literal => |lit| lit.variant_name,
+                else => null,
+            },
+            .line = call.callee_loc.line,
+            .column = call.callee_loc.column,
+            .source_file = call.callee_loc.file,
+            .source_line = self.sourceLineText(call.callee_loc),
+        };
+
+        const node = try sg.makeSGNode(.{ .testing_expect_error = expect_err }, call.callee_loc, self.allocator);
+        node.sem_type = result_type;
+        try s.nodes.append(node);
+        return .{ .node = node, .ty = result_type };
     }
 
     fn resolveQualifiedOverload(

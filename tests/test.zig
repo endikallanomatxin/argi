@@ -1964,3 +1964,30 @@ test "feature_tests/testing/08X_test_signature_requires_v1_shape" {
         "tests must declare exactly one input: '.system: System = System()'",
     );
 }
+
+test "feature_tests/testing/09_expected_error" {
+    try argiTestExpectStderr(
+        "tests/feature_tests/testing/09_expected_error",
+        &.{},
+        0,
+        "PASS expected_error\n",
+    );
+}
+
+test "feature_tests/testing/10_expected_error_mismatch" {
+    try argiTestExpectStderr(
+        "tests/feature_tests/testing/10_expected_error_mismatch",
+        &.{},
+        1,
+        "FAIL expected_error_mismatch\n",
+    );
+}
+
+test "feature_tests/testing/11_expected_error_unexpected_ok" {
+    try argiTestExpectStderr(
+        "tests/feature_tests/testing/11_expected_error_unexpected_ok",
+        &.{},
+        1,
+        "FAIL expected_error_unexpected_ok\n",
+    );
+}

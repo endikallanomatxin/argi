@@ -39,3 +39,10 @@ expect_equal #(.t: Type) (
 
     fail(.message = "expect_equal failed: expected and actual differ")!
 }
+
+expect_error #(.t: Type, .reasons: Type) (
+    .expected_reason: reasons,
+    .actual_result: Errable#(.t: t, .reasons: reasons),
+) -> (.result: Errable#(.t: Void, .reasons: (..test_failed))) := {
+    fail(.message = "testing.expect_error must be lowered by the compiler")!
+}

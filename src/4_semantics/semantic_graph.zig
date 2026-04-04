@@ -53,6 +53,7 @@ pub const Content = union(enum) {
     struct_field_access: *const StructFieldAccess,
     choice_payload_access: *const ChoicePayloadAccess,
     nullable_unwrap_or: *const NullableUnwrapOr,
+    testing_expect_error: *const TestingExpectError,
     error_propagation: *const ErrorPropagation,
     error_context: *const ErrorContext,
     array_literal: *const ArrayLiteral,
@@ -143,6 +144,22 @@ pub const NullableUnwrapOr = struct {
     some_variant_index: u32,
     some_value_field_index: u32,
     result_type: Type,
+};
+
+pub const TestingExpectError = struct {
+    expected_reason: *const SGNode,
+    actual_result: *const SGNode,
+    actual_error_variant_index: u32,
+    actual_error_payload_type: Type,
+    actual_reason_field_index: u32,
+    result_type: Type,
+    result_ok_variant_index: u32,
+    test_fail_function: *const FunctionDeclaration,
+    expected_reason_name: ?[]const u8,
+    line: u32,
+    column: u32,
+    source_file: []const u8,
+    source_line: []const u8,
 };
 
 pub const PointerType = struct {
