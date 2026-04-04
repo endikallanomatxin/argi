@@ -108,17 +108,30 @@ zig build run -- <arguments>
 
 ## Testing
 
-You can run the tests in `test/` by doing:
+Argi has native language-level tests.
+
+Use:
+
+```bash
+./zig-out/bin/argi test tests/some_module
+```
+
+Tests are declared explicitly in source:
+
+```rg
+test my_test(.system: System = System()) -> !() := {
+    testing.expect(true)!
+}
+```
+
+Normal builds ignore `test` declarations:
+
+```bash
+./zig-out/bin/argi build tests/some_module
+```
+
+Compiler regression tests for Argi itself still run through Zig:
 
 ```bash
 zig build test --summary all
 ```
-
-If testing doesn't work, the same can be checked by compiling the files
-independently:
-
-```bash
-zig build
-./zig-out/bin/argi build tests/00_minimal_main
-```
-
