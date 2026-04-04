@@ -71,9 +71,12 @@ fn sanitizeTestName(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
 }
 
 fn outputPathForTest(allocator: std.mem.Allocator, module_dir: []const u8, test_name: []const u8) ![]u8 {
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(module_dir);
+    const module_hash = hasher.final();
     const safe_name = try sanitizeTestName(allocator, test_name);
     defer allocator.free(safe_name);
-    return try std.fmt.allocPrint(allocator, "{s}/build/tests/{s}", .{ module_dir, safe_name });
+    return try std.fmt.allocPrint(allocator, "build/tests/{x}/{s}", .{ module_hash, safe_name });
 }
 
 fn printResultLine(status: []const u8, test_name: []const u8) void {
