@@ -60,6 +60,12 @@ const ReachFunctionContext = struct {
     body_scope: *Scope,
 };
 
+const PendingFunctionBody = struct {
+    decl: syn.FunctionDeclaration,
+    location: tok.Location,
+    function: *sg.FunctionDeclaration,
+};
+
 const OnceConsumption = struct {
     first_location: tok.Location,
     first_consumer: *const sg.FunctionDeclaration,
@@ -141,6 +147,8 @@ pub const Semantizer = struct {
     retry_type_nodes: u32 = 0,
     retry_symbol_nodes: u32 = 0,
     retry_other_nodes: u32 = 0,
+    function_semantize_mode: FunctionSemantizeMode = .full,
+    pending_function_bodies: std.array_list.Managed(PendingFunctionBody),
     synthetic_name_counter: u32 = 0,
     next_choice_option_id: u32 = 1,
     next_inferred_choice_identity_id: u32 = 1,
@@ -158,6 +166,7 @@ pub const Semantizer = struct {
             .diags = diags,
             .pending_now = std.array_list.Managed(*const syn.STNode).init(alloc.*),
             .pending_next = std.array_list.Managed(*const syn.STNode).init(alloc.*),
+            .pending_function_bodies = std.array_list.Managed(PendingFunctionBody).init(alloc.*),
             .function_reach_stack = std.array_list.Managed(ReachFunctionContext).init(alloc.*),
         };
     }
@@ -197,6 +206,12 @@ pub const Semantizer = struct {
         timings: SemantizeTimings,
     };
 
+    const FunctionSemantizeMode = enum {
+        full,
+        interface_only,
+        body_only,
+    };
+
     pub fn semantizeWithTimings(self: *Semantizer) SemErr!SemantizeResult {
         var global = try Scope.init(self.allocator, null, null);
         try self.predeclareTopLevelSymbols(&global);
@@ -207,6 +222,8 @@ pub const Semantizer = struct {
         self.retry_type_nodes = 0;
         self.retry_symbol_nodes = 0;
         self.retry_other_nodes = 0;
+        self.function_semantize_mode = .full;
+        self.pending_function_bodies.items.len = 0;
 
         // 1) Pasada inicial: estabiliza primero top-level no-función y luego analiza funciones.
         const initial_start = std.time.nanoTimestamp();
@@ -243,12 +260,51 @@ pub const Semantizer = struct {
             support_round += 1;
         }
 
+        // Functions are semantized in two late stages:
+        // first their callable interface, so overloads and abstract checks can
+        // stabilize on a declaration-only world, and only afterwards their
+        // defaults and bodies.
+        self.function_semantize_mode = .interface_only;
         for (self.st_nodes) |n| {
             if (n.content != .function_declaration) continue;
             self.current_top_node = n;
             _ = self.visitNode(n.*, &global) catch {};
         }
         self.current_top_node = null;
+
+        var interface_round: u32 = 0;
+        while (self.hasPendingFunctionNodes() and interface_round < self.max_retry_rounds) {
+            const tmp = self.pending_now;
+            self.pending_now = self.pending_next;
+            self.pending_next = tmp;
+            self.pending_next.items.len = 0;
+
+            var progressed = false;
+            for (self.pending_now.items) |pn| {
+                if (pn.content != .function_declaration) {
+                    try self.pending_next.append(pn);
+                    continue;
+                }
+
+                self.current_top_node = pn;
+                if (self.visitNode(pn.*, &global)) |_| {
+                    progressed = true;
+                } else |_| {}
+            }
+
+            self.current_top_node = null;
+            self.pending_now.items.len = 0;
+            if (!progressed) break;
+            interface_round += 1;
+        }
+
+        const abstract_verify_start = std.time.nanoTimestamp();
+        try abs.verifyAbstracts(&global, self.allocator, self.diags);
+        timings.abstract_verify_ns = @intCast(std.time.nanoTimestamp() - abstract_verify_start);
+
+        self.function_semantize_mode = .body_only;
+        try self.semantizePendingFunctionBodies(&global);
+        self.function_semantize_mode = .full;
         timings.initial_pass_ns = @intCast(std.time.nanoTimestamp() - initial_start);
         timings.initial_retry_count = @intCast(self.pending_next.items.len);
         // 2) Rondas de reintento: solo lo pendiente
@@ -303,11 +359,6 @@ pub const Semantizer = struct {
         }
         timings.final_retry_resolution_ns = @intCast(std.time.nanoTimestamp() - final_retry_start);
 
-        // Final conformance verification for abstracts (top-level scope)
-        const abstract_verify_start = std.time.nanoTimestamp();
-        try abs.verifyAbstracts(&global, self.allocator, self.diags);
-        timings.abstract_verify_ns = @intCast(std.time.nanoTimestamp() - abstract_verify_start);
-
         const once_verify_start = std.time.nanoTimestamp();
         try self.verifyOnceFunctions(&global);
         timings.once_verify_ns = @intCast(std.time.nanoTimestamp() - once_verify_start);
@@ -336,6 +387,43 @@ pub const Semantizer = struct {
             if (pending.content != .function_declaration) return true;
         }
         return false;
+    }
+
+    fn hasPendingFunctionNodes(self: *Semantizer) bool {
+        for (self.pending_next.items) |pending| {
+            if (pending.content == .function_declaration) return true;
+        }
+        return false;
+    }
+
+    fn enqueuePendingFunctionBody(
+        self: *Semantizer,
+        decl: syn.FunctionDeclaration,
+        loc: tok.Location,
+        function: *sg.FunctionDeclaration,
+    ) !void {
+        for (self.pending_function_bodies.items) |pending| {
+            if (std.mem.eql(u8, pending.location.file, loc.file) and pending.location.offset == loc.offset) return;
+        }
+
+        try self.pending_function_bodies.append(.{
+            .decl = decl,
+            .location = loc,
+            .function = function,
+        });
+    }
+
+    fn semantizePendingFunctionBodies(self: *Semantizer, global: *Scope) SemErr!void {
+        // Defaults must be materialized for every pending function before any
+        // body is semantized, otherwise overload resolution between bodies can
+        // still observe placeholder signatures.
+        for (self.pending_function_bodies.items) |pending| {
+            try self.semantizeRegularFunctionDefaults(pending.decl, global, pending.location, pending.function);
+        }
+
+        for (self.pending_function_bodies.items) |pending| {
+            try self.semantizeRegularFunctionBody(pending.decl, global, pending.location, pending.function);
+        }
     }
 
     fn predeclareTopLevelSymbols(self: *Semantizer, global: *Scope) SemErr!void {
@@ -478,7 +566,7 @@ pub const Semantizer = struct {
             try in_fields.append(.{
                 .name = fld.name.string,
                 .ty = ty,
-                .default_value = null,
+                .default_value = if (fld.default_value != null) try self.makeNoopNode(fld.name.location) else null,
             });
 
             const bd = try self.allocator.create(sg.BindingDeclaration);
@@ -514,7 +602,7 @@ pub const Semantizer = struct {
             try out_fields.append(.{
                 .name = fld.name.string,
                 .ty = ty,
-                .default_value = null,
+                .default_value = if (fld.default_value != null) try self.makeNoopNode(fld.name.location) else null,
             });
         }
 
@@ -3898,6 +3986,19 @@ pub const Semantizer = struct {
         p: *Scope,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
+        return switch (self.function_semantize_mode) {
+            .full => self.handleFuncDeclFull(f, p, loc),
+            .interface_only => self.handleFuncDeclInterface(f, p, loc),
+            .body_only => self.handleFuncDeclBody(f, p, loc),
+        };
+    }
+
+    fn handleFuncDeclFull(
+        self: *Semantizer,
+        f: syn.FunctionDeclaration,
+        p: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
         // Register generic template and skip direct emission
         if (f.generic_params.len > 0 or f.generic_params_struct != null) {
             if (f.is_once) {
@@ -4082,6 +4183,291 @@ pub const Semantizer = struct {
         self.clearDeferred(&child);
         const noop = try self.makeNoopNode(loc);
         return .{ .node = noop, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleFuncDeclInterface(
+        self: *Semantizer,
+        f: syn.FunctionDeclaration,
+        p: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        const fn_ptr = try self.registerFunctionInterface(f, p, loc);
+        if (fn_ptr) |resolved_fn| {
+            try self.enqueuePendingFunctionBody(f, loc, resolved_fn);
+        }
+        const noop = try self.makeNoopNode(loc);
+        return .{ .node = noop, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleFuncDeclBody(
+        self: *Semantizer,
+        f: syn.FunctionDeclaration,
+        p: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        _ = f;
+        _ = p;
+        const noop = try self.makeNoopNode(loc);
+        return .{ .node = noop, .ty = .{ .builtin = .Any } };
+    }
+
+    fn registerFunctionInterface(
+        self: *Semantizer,
+        f: syn.FunctionDeclaration,
+        p: *Scope,
+        loc: tok.Location,
+    ) SemErr!?*sg.FunctionDeclaration {
+        if (f.generic_params.len > 0 or f.generic_params_struct != null) {
+            if (f.is_once) {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "once is not supported on generic functions yet",
+                    .{},
+                );
+                return error.Reported;
+            }
+            const params_struct = try self.genericParamsStructOrNames(
+                f.generic_params_struct,
+                f.generic_params,
+                f.name.location,
+            );
+            const generic_info = try self.genericParamDefsAndConstraintsFromSyntax(params_struct, p);
+            try p.appendGenericFunctionTemplate(f.name.string, .{
+                .name = f.name.string,
+                .location = loc,
+                .params = generic_info.params,
+                .param_abstract_constraints = generic_info.abstract_constraints,
+                .dispatch_kind = .regular,
+                .input = f.input,
+                .output = f.output,
+                .body = f.body,
+            });
+            return null;
+        }
+
+        if (try self.registerAbstractContractTemplateIfNeeded(f, p, loc)) return null;
+
+        if (f.is_once and f.body == null) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "once is not supported on extern functions",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        var child = try Scope.init(self.allocator, p, null);
+        var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
+        defer in_fields.deinit();
+        for (f.input.fields) |fld| {
+            const ty = try self.resolveTypePreservingAbstracts(fld.type.?, &child);
+
+            try in_fields.append(.{
+                .name = fld.name.string,
+                .ty = ty,
+                .default_value = null,
+            });
+
+            const bd = try self.allocator.create(sg.BindingDeclaration);
+            bd.* = .{
+                .name = fld.name.string,
+                .location = fld.name.location,
+                .origin_file = loc.file,
+                .mutability = .constant,
+                .ty = ty,
+                .initialization = null,
+            };
+            try child.bindings.put(fld.name.string, bd);
+        }
+        const in_struct_ptr = try self.allocator.create(sg.StructType);
+        in_struct_ptr.* = .{ .fields = try in_fields.toOwnedSlice() };
+
+        var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
+        defer out_fields.deinit();
+        var output_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
+        defer output_bindings.deinit();
+        var uses_inferred_error_reasons = false;
+        for (f.output.fields) |fld| {
+            const ty = if (self.inferableErrableInnerTypeFromOutput(fld.type.?)) |inner|
+                blk: {
+                    uses_inferred_error_reasons = true;
+                    break :blk try self.makeInferredErrableType(inner, &child, fld.name.location);
+                }
+            else
+                try self.resolveTypePreservingAbstracts(fld.type.?, &child);
+
+            try out_fields.append(.{
+                .name = fld.name.string,
+                .ty = ty,
+                .default_value = null,
+            });
+
+            const bd = try self.allocator.create(sg.BindingDeclaration);
+            bd.* = .{
+                .name = fld.name.string,
+                .location = fld.name.location,
+                .origin_file = loc.file,
+                .mutability = .variable,
+                .ty = ty,
+                .initialization = null,
+            };
+            try output_bindings.append(bd);
+        }
+
+        var existing_fn: ?*sg.FunctionDeclaration = null;
+        if (p.functions.getPtr(f.name.string)) |list_ptr| {
+            for (list_ptr.items) |cand| {
+                if (std.mem.eql(u8, cand.location.file, loc.file) and cand.location.offset == loc.offset) {
+                    existing_fn = cand;
+                    break;
+                }
+            }
+        }
+
+        const output_binding_slice = try output_bindings.toOwnedSlice();
+        const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
+
+        const fn_ptr = blk: {
+            if (existing_fn) |cand| {
+                cand.input = in_struct_ptr.*;
+                cand.output = out_struct;
+                cand.uses_inferred_error_reasons = uses_inferred_error_reasons;
+                cand.output_bindings = output_binding_slice;
+                break :blk cand;
+            }
+
+            const created = try self.allocator.create(sg.FunctionDeclaration);
+            created.* = .{
+                .name = f.name.string,
+                .location = loc,
+                .is_once = f.is_once,
+                .input = in_struct_ptr.*,
+                .output = out_struct,
+                .body = null,
+                .uses_inferred_error_reasons = uses_inferred_error_reasons,
+                .output_bindings = output_binding_slice,
+            };
+
+            if (p.functions.getPtr(f.name.string)) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = &created.input })) {
+                        return null;
+                    }
+                }
+            }
+            try p.appendFunction(f.name.string, created);
+            break :blk created;
+        };
+
+        try self.appendFunctionDeclarationNodeIfMissing(p, fn_ptr, loc);
+        self.clearDeferred(&child);
+        return fn_ptr;
+    }
+
+    fn semantizeRegularFunctionDefaults(
+        self: *Semantizer,
+        f: syn.FunctionDeclaration,
+        p: *Scope,
+        loc: tok.Location,
+        fn_ptr: *sg.FunctionDeclaration,
+    ) SemErr!void {
+        var child = try Scope.init(self.allocator, p, null);
+        child.current_fn = fn_ptr;
+
+        const input_fields = try self.allocator.alloc(sg.StructTypeField, fn_ptr.input.fields.len);
+        @memcpy(input_fields, fn_ptr.input.fields);
+
+        for (f.input.fields, 0..) |fld, idx| {
+            const ty = input_fields[idx].ty;
+            const dvp = if (fld.default_value) |n|
+                (try self.visitNode(n.*, &child)).node
+            else
+                null;
+
+            input_fields[idx].default_value = dvp;
+
+            const bd = try self.allocator.create(sg.BindingDeclaration);
+            bd.* = .{
+                .name = fld.name.string,
+                .location = fld.name.location,
+                .origin_file = loc.file,
+                .mutability = .constant,
+                .ty = ty,
+                .initialization = dvp,
+            };
+            try child.bindings.put(fld.name.string, bd);
+        }
+
+        fn_ptr.input = .{ .fields = input_fields };
+
+        const output_fields = try self.allocator.alloc(sg.StructTypeField, fn_ptr.output.fields.len);
+        @memcpy(output_fields, fn_ptr.output.fields);
+
+        for (f.output.fields, 0..) |fld, idx| {
+            const dvp = if (fld.default_value) |n|
+                (try self.visitNode(n.*, &child)).node
+            else
+                null;
+
+            output_fields[idx].default_value = dvp;
+
+            const bd = @constCast(fn_ptr.output_bindings[idx]);
+            bd.initialization = dvp;
+            try child.bindings.put(fld.name.string, bd);
+        }
+
+        fn_ptr.output = .{ .fields = output_fields };
+        self.clearDeferred(&child);
+    }
+
+    fn semantizeRegularFunctionBody(
+        self: *Semantizer,
+        f: syn.FunctionDeclaration,
+        p: *Scope,
+        loc: tok.Location,
+        fn_ptr: *sg.FunctionDeclaration,
+    ) SemErr!void {
+        var child = try Scope.init(self.allocator, p, null);
+        child.current_fn = fn_ptr;
+        const input_struct_ptr = try self.allocator.create(sg.StructType);
+        input_struct_ptr.* = fn_ptr.input;
+
+        for (f.input.fields, 0..) |fld, idx| {
+            const bd = try self.allocator.create(sg.BindingDeclaration);
+            bd.* = .{
+                .name = fld.name.string,
+                .location = fld.name.location,
+                .origin_file = loc.file,
+                .mutability = .constant,
+                .ty = input_struct_ptr.fields[idx].ty,
+                .initialization = input_struct_ptr.fields[idx].default_value,
+            };
+            try child.bindings.put(fld.name.string, bd);
+        }
+
+        for (f.output.fields, 0..) |fld, idx| {
+            const bd = @constCast(fn_ptr.output_bindings[idx]);
+            try child.bindings.put(fld.name.string, bd);
+        }
+
+        var body_cb: ?*sg.CodeBlock = null;
+        if (f.body) |body_node| {
+            try self.function_reach_stack.append(.{
+                .function_name = f.name.string,
+                .location = loc,
+                .input_struct = input_struct_ptr,
+                .body_scope = &child,
+            });
+            defer _ = self.function_reach_stack.pop();
+            const body_te = try self.visitNode(body_node.*, &child);
+            body_cb = body_te.node.content.code_block;
+        }
+
+        fn_ptr.input = input_struct_ptr.*;
+        fn_ptr.body = body_cb;
+        self.clearDeferred(&child);
     }
 
     fn appendTypeDeclarationNodeIfMissing(
