@@ -202,7 +202,7 @@ pub fn compile(args: []const []const u8) !void {
     // 2. Diagnósticos globales ────────────────────────────────────────────
     var diagnostics = diag.Diagnostics.init(&allocator, files.items);
 
-    var pipeline = frontend.FrontendPipeline.init(&allocator, &diagnostics);
+    var pipeline = frontend.FrontendPipeline.init(&allocator, &diagnostics, .{});
     defer pipeline.deinit();
 
     // 3. Tokenizar todos (fusionando EOF) ─────────────────────────────────
@@ -259,7 +259,7 @@ pub fn compile(args: []const []const u8) !void {
 
     // 7. Generación de código ──────────────────────────────────────────────
     const codegen_start = std.time.nanoTimestamp();
-    var gen = codegen.CodeGenerator.init(&allocator, sg, &diagnostics) catch return;
+    var gen = codegen.CodeGenerator.init(&allocator, sg, &diagnostics, .{}) catch return;
     const module = gen.generate() catch {
         timings.codegen_ns = elapsedSince(codegen_start);
         if (flags.show_token_list) printTokenList(pipeline.tokens.items);

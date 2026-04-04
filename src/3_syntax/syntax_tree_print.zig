@@ -214,6 +214,28 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
                 std.debug.print("  (extern function)\n", .{});
             }
         },
+        .test_declaration => |td| {
+            const fd = td.decl;
+            std.debug.print("TestDecl \"{s}\"\n", .{fd.name.string});
+
+            indent(lvl + 1);
+            std.debug.print("input : ", .{});
+            printStructTypeLiteral(fd.input, lvl + 1);
+            std.debug.print("\n", .{});
+
+            indent(lvl + 1);
+            std.debug.print("output: ", .{});
+            printStructTypeLiteral(fd.output, lvl + 1);
+            std.debug.print("\n", .{});
+
+            indent(lvl + 1);
+            std.debug.print("body  :\n", .{});
+            if (fd.body) |body| {
+                printNode(body.*, lvl + 2);
+            } else {
+                std.debug.print("  (invalid test without body)\n", .{});
+            }
+        },
 
         // ── ASSIGNMENT ────────────────────────────────────────────────────
         .assignment => |a| {

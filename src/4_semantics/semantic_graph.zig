@@ -35,6 +35,7 @@ pub const Content = union(enum) {
     choice_option_declaration: *ChoiceOptionDeclaration,
     type_declaration: *TypeDeclaration,
     function_declaration: *FunctionDeclaration,
+    test_declaration: *TestDeclaration,
 
     binding_declaration: *BindingDeclaration,
     binding_use: *BindingDeclaration,
@@ -321,6 +322,7 @@ pub const FunctionDeclaration = struct {
     name: []const u8,
     location: tok.Location,
     is_once: bool,
+    is_test: bool = false,
     input: StructType, // Arguments
     output: StructType, // Named return params
     body: ?*const CodeBlock,
@@ -331,6 +333,12 @@ pub const FunctionDeclaration = struct {
     pub fn isExtern(self: *const FunctionDeclaration) bool {
         return self.body == null;
     }
+};
+
+pub const TestDeclaration = struct {
+    name: []const u8,
+    location: tok.Location,
+    function: *const FunctionDeclaration,
 };
 
 pub const BindingDeclaration = struct {

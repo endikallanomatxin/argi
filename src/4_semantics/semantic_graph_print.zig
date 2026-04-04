@@ -82,6 +82,11 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
                 std.debug.print("(extern function)\n", .{});
             }
         },
+        .test_declaration => |t| {
+            std.debug.print("Test \"{s}\"\n", .{t.name});
+            const tmp: sem.SGNode = .{ .location = node.location, .content = .{ .function_declaration = @constCast(t.function) } };
+            printNode(&tmp, lvl + 1);
+        },
 
         .binding_assignment => |a| {
             std.debug.print("Assign \"{s}\" ({s}) =\n", .{ a.sym_id.name, typeToString(a.sym_id.ty) });

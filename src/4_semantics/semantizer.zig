@@ -75,8 +75,14 @@ const PendingFunctionBody = struct {
     decl: syn.FunctionDeclaration,
     location: tok.Location,
     function: *sg.FunctionDeclaration,
+    is_test: bool = false,
     prepared_scope: ?*Scope = null,
     prepared_input_struct: ?*sg.StructType = null,
+};
+
+pub const SemantizerOptions = struct {
+    include_tests: bool = false,
+    selected_test_name: ?[]const u8 = null,
 };
 
 const OnceConsumption = struct {
@@ -157,6 +163,7 @@ pub const Semantizer = struct {
     root_list: std.array_list.Managed(*sg.SGNode), // buffer mut
     root_nodes: []const *sg.SGNode = &.{}, // slice final
     diags: *diagnostic.Diagnostics,
+    options: SemantizerOptions,
 
     // ── Reintentos top-level
     pending_now: std.array_list.Managed(*const syn.STNode),
@@ -182,17 +189,41 @@ pub const Semantizer = struct {
         alloc: *const std.mem.Allocator,
         st: []const *syn.STNode,
         diags: *diagnostic.Diagnostics,
+        options: SemantizerOptions,
     ) Semantizer {
         return .{
             .allocator = alloc,
             .st_nodes = st,
             .root_list = std.array_list.Managed(*sg.SGNode).init(alloc.*),
             .diags = diags,
+            .options = options,
             .pending_now = std.array_list.Managed(*const syn.STNode).init(alloc.*),
             .pending_next = std.array_list.Managed(*const syn.STNode).init(alloc.*),
             .pending_function_bodies = std.array_list.Managed(PendingFunctionBody).init(alloc.*),
             .signature_type_cache = std.AutoHashMap(SignatureTypeCacheKey, sg.Type).init(alloc.*),
             .function_reach_stack = std.array_list.Managed(ReachFunctionContext).init(alloc.*),
+        };
+    }
+
+    fn topLevelNodeIsTest(self: *Semantizer, n: *const syn.STNode) bool {
+        _ = self;
+        return n.content == .test_declaration;
+    }
+
+    fn topLevelNodeIsCallable(self: *Semantizer, n: *const syn.STNode) bool {
+        return switch (n.content) {
+            .function_declaration => true,
+            .test_declaration => self.options.include_tests,
+            else => false,
+        };
+    }
+
+    fn functionDeclFromTopLevelNode(self: *Semantizer, n: *const syn.STNode) syn.FunctionDeclaration {
+        _ = self;
+        return switch (n.content) {
+            .function_declaration => |decl| decl,
+            .test_declaration => |decl| decl.decl,
+            else => unreachable,
         };
     }
 
@@ -269,7 +300,8 @@ pub const Semantizer = struct {
         self.defer_unknown_top_level = true;
         const support_top_level_start = std.time.nanoTimestamp();
         for (self.st_nodes) |n| {
-            if (n.content == .function_declaration) continue;
+            if (self.topLevelNodeIsCallable(n)) continue;
+            if (n.content == .test_declaration and !self.options.include_tests) continue;
             self.current_top_node = n;
             _ = self.visitNode(n.*, &global) catch {};
         }
@@ -283,7 +315,7 @@ pub const Semantizer = struct {
 
             var progressed = false;
             for (self.pending_now.items) |pn| {
-                if (pn.content == .function_declaration) {
+                if (self.topLevelNodeIsCallable(pn)) {
                     try self.pending_next.append(pn);
                     continue;
                 }
@@ -309,7 +341,7 @@ pub const Semantizer = struct {
         const function_interface_start = std.time.nanoTimestamp();
         self.function_semantize_mode = .interface_only;
         for (self.st_nodes) |n| {
-            if (n.content != .function_declaration) continue;
+            if (!self.topLevelNodeIsCallable(n)) continue;
             self.current_top_node = n;
             _ = self.visitNode(n.*, &global) catch {};
         }
@@ -324,7 +356,7 @@ pub const Semantizer = struct {
 
             var progressed = false;
             for (self.pending_now.items) |pn| {
-                if (pn.content != .function_declaration) {
+                if (!self.topLevelNodeIsCallable(pn)) {
                     try self.pending_next.append(pn);
                     continue;
                 }
@@ -431,14 +463,14 @@ pub const Semantizer = struct {
 
     fn hasPendingNonFunctionNodes(self: *Semantizer) bool {
         for (self.pending_next.items) |pending| {
-            if (pending.content != .function_declaration) return true;
+            if (!self.topLevelNodeIsCallable(pending)) return true;
         }
         return false;
     }
 
     fn hasPendingFunctionNodes(self: *Semantizer) bool {
         for (self.pending_next.items) |pending| {
-            if (pending.content == .function_declaration) return true;
+            if (self.topLevelNodeIsCallable(pending)) return true;
         }
         return false;
     }
@@ -449,6 +481,7 @@ pub const Semantizer = struct {
         decl: syn.FunctionDeclaration,
         loc: tok.Location,
         function: *sg.FunctionDeclaration,
+        is_test: bool,
     ) !void {
         for (self.pending_function_bodies.items) |pending| {
             if (std.mem.eql(u8, pending.location.file, loc.file) and pending.location.offset == loc.offset) return;
@@ -459,6 +492,7 @@ pub const Semantizer = struct {
             .decl = decl,
             .location = loc,
             .function = function,
+            .is_test = is_test,
         });
     }
 
@@ -522,7 +556,8 @@ pub const Semantizer = struct {
                 .abstract_declaration => |decl| try self.predeclareTopLevelAbstract(decl, global),
                 .type_declaration => |decl| try self.predeclareTopLevelType(decl, global),
                 .choice_option_declaration => |decl| try self.predeclareTopLevelChoiceOption(decl, global, node.location),
-                .function_declaration => |decl| try self.predeclareTopLevelFunction(decl, global, node.location),
+                .function_declaration => |decl| try self.predeclareTopLevelFunction(decl, global, node.location, false),
+                .test_declaration => |decl| if (self.options.include_tests) try self.predeclareTopLevelFunction(decl.decl, global, node.location, true),
                 else => {},
             }
         }
@@ -631,6 +666,7 @@ pub const Semantizer = struct {
         decl: syn.FunctionDeclaration,
         global: *Scope,
         loc: tok.Location,
+        is_test: bool,
     ) SemErr!void {
         if (decl.generic_params.len > 0 or decl.generic_params_struct != null) return;
         try self.requireExplicitFunctionFieldTypes(decl, loc);
@@ -706,6 +742,7 @@ pub const Semantizer = struct {
             .name = decl.name.string,
             .location = loc,
             .is_once = decl.is_once,
+            .is_test = is_test,
             .input = in_struct_ptr.*,
             .output = .{ .fields = try out_fields.toOwnedSlice() },
             .body = null,
@@ -779,6 +816,83 @@ pub const Semantizer = struct {
                 .{field.name.string},
             );
             return error.Reported;
+        }
+    }
+
+    fn validateTestSignature(
+        self: *Semantizer,
+        f: syn.FunctionDeclaration,
+        loc: tok.Location,
+        p: *Scope,
+    ) SemErr!void {
+        _ = p;
+        if (f.is_once) {
+            try self.diags.add(loc, .semantic, "tests cannot be marked once", .{});
+            return error.Reported;
+        }
+        if (f.generic_params.len > 0 or f.generic_params_struct != null) {
+            try self.diags.add(loc, .semantic, "tests do not support generic parameters in v1", .{});
+            return error.Reported;
+        }
+        if (f.body == null) {
+            try self.diags.add(loc, .semantic, "tests must define a body", .{});
+            return error.Reported;
+        }
+        if (f.input.fields.len != 1) {
+            try self.diags.add(loc, .semantic, "tests must declare exactly one input: '.system: System = System()'", .{});
+            return error.Reported;
+        }
+        const system_field = f.input.fields[0];
+        if (!std.mem.eql(u8, system_field.name.string, "system")) {
+            try self.diags.add(system_field.name.location, .semantic, "tests must declare '.system: System = System()' as their only input", .{});
+            return error.Reported;
+        }
+        const system_type = system_field.type orelse {
+            try self.diags.add(system_field.name.location, .semantic, "tests must declare '.system: System = System()' as their only input", .{});
+            return error.Reported;
+        };
+        if (system_type != .type_name or !std.mem.eql(u8, system_type.type_name.string, "System")) {
+            try self.diags.add(system_field.name.location, .semantic, "tests must declare '.system: System = System()' as their only input", .{});
+            return error.Reported;
+        }
+        const system_default = system_field.default_value orelse {
+            try self.diags.add(system_field.name.location, .semantic, "tests must declare '.system: System = System()' as their only input", .{});
+            return error.Reported;
+        };
+        if (system_default.content != .function_call or !std.mem.eql(u8, system_default.content.function_call.callee, "System")) {
+            try self.diags.add(system_default.location, .semantic, "tests must declare '.system: System = System()' as their only input", .{});
+            return error.Reported;
+        }
+        if (f.output.fields.len != 1) {
+            try self.diags.add(loc, .semantic, "tests must return exactly '-> !()' in v1", .{});
+            return error.Reported;
+        }
+        const result_field = f.output.fields[0];
+        if (!std.mem.eql(u8, result_field.name.string, "result")) {
+            try self.diags.add(result_field.name.location, .semantic, "tests must return exactly '-> !()' in v1", .{});
+            return error.Reported;
+        }
+        const result_type = result_field.type orelse {
+            try self.diags.add(result_field.name.location, .semantic, "tests must return exactly '-> !()' in v1", .{});
+            return error.Reported;
+        };
+        switch (result_type) {
+            .inferred_errable => |inner| switch (inner.*) {
+                .struct_type_literal => |st| {
+                    if (st.fields.len != 0) {
+                        try self.diags.add(result_field.name.location, .semantic, "tests must return exactly '-> !()' in v1", .{});
+                        return error.Reported;
+                    }
+                },
+                else => {
+                    try self.diags.add(result_field.name.location, .semantic, "tests must return exactly '-> !()' in v1", .{});
+                    return error.Reported;
+                },
+            },
+            else => {
+                try self.diags.add(result_field.name.location, .semantic, "tests must return exactly '-> !()' in v1", .{});
+                return error.Reported;
+            },
         }
     }
 
@@ -1002,6 +1116,7 @@ pub const Semantizer = struct {
         collected: *std.array_list.Managed(sg.ChoiceVariant),
     ) SemErr!void {
         switch (node.content) {
+            .test_declaration => {},
             .binding_assignment => |assignment| {
                 if (self.bindingIsFunctionOutput(fn_decl, assignment.sym_id)) {
                     try self.markReasonsFromReturnedExpr(assignment.value, collected);
@@ -1690,6 +1805,18 @@ pub const Semantizer = struct {
     }
 
     fn verifyOnceFunctions(self: *Semantizer, global: *Scope) SemErr!void {
+        if (self.options.selected_test_name) |test_name| {
+            if (global.functions.getPtr(test_name)) |test_list| {
+                for (test_list.items) |test_fn| {
+                    if (!test_fn.is_test) continue;
+                    var state = OnceTraversalState.init(self.allocator);
+                    defer state.deinit();
+                    try self.walkFunctionOnceReachability(test_fn, test_fn.location, &state);
+                }
+            }
+            return;
+        }
+
         if (global.functions.getPtr("main")) |main_list| {
             for (main_list.items) |main_fn| {
                 if (!self.isWrappableMainCandidate(main_fn)) continue;
@@ -1791,6 +1918,7 @@ pub const Semantizer = struct {
     ) SemErr!void {
         switch (node.content) {
             .choice_option_declaration => {},
+            .test_declaration => {},
             .binding_declaration => |binding| {
                 if (binding.initialization) |init_node| {
                     try self.walkNodeOnceReachability(current_fn, init_node, state);
@@ -2379,7 +2507,7 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
-            .function_declaration => |d| self.handleFuncDecl(d, s, n.location) catch |err| blk: {
+            .function_declaration => |d| self.handleFuncDecl(d, s, n.location, false) catch |err| blk: {
                 if (err == error.Reported) break :blk err;
                 if (err == error.AbstractNeedsDefault) {
                     try self.diags.add(
@@ -2399,6 +2527,20 @@ pub const Semantizer = struct {
                     .semantic,
                     "error in function declaration '{s}': {s}",
                     .{ d.name.string, @errorName(err) },
+                );
+                break :blk err;
+            },
+            .test_declaration => |d| self.handleTestDecl(d, s, n.location) catch |err| blk: {
+                if (err == error.Reported) break :blk err;
+                if ((err == error.UnknownType or err == error.SymbolNotFound) and s.parent == null and self.defer_unknown_top_level) {
+                    try self.pushTopLevelForRetry();
+                    break :blk error.Reported;
+                }
+                try self.diags.add(
+                    n.location,
+                    .semantic,
+                    "error in test declaration '{s}': {s}",
+                    .{ d.decl.name.string, @errorName(err) },
                 );
                 break :blk err;
             },
@@ -4126,12 +4268,27 @@ pub const Semantizer = struct {
         f: syn.FunctionDeclaration,
         p: *Scope,
         loc: tok.Location,
+        is_test: bool,
     ) SemErr!typ.TypedExpr {
         return switch (self.function_semantize_mode) {
-            .full => self.handleFuncDeclFull(f, p, loc),
-            .interface_only => self.handleFuncDeclInterface(f, p, loc),
-            .body_only => self.handleFuncDeclBody(f, p, loc),
+            .full => self.handleFuncDeclFull(f, p, loc, is_test),
+            .interface_only => self.handleFuncDeclInterface(f, p, loc, is_test),
+            .body_only => self.handleFuncDeclBody(f, p, loc, is_test),
         };
+    }
+
+    fn handleTestDecl(
+        self: *Semantizer,
+        td: syn.TestDeclaration,
+        p: *Scope,
+        loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        if (p.parent != null) {
+            try self.diags.add(loc, .semantic, "tests are only supported at top level", .{});
+            return error.Reported;
+        }
+        try self.validateTestSignature(td.decl, loc, p);
+        return self.handleFuncDecl(td.decl, p, loc, true);
     }
 
     fn handleFuncDeclFull(
@@ -4139,6 +4296,7 @@ pub const Semantizer = struct {
         f: syn.FunctionDeclaration,
         p: *Scope,
         loc: tok.Location,
+        is_test: bool,
     ) SemErr!typ.TypedExpr {
         try self.requireExplicitFunctionFieldTypes(f, loc);
         // Register generic template and skip direct emission
@@ -4275,6 +4433,7 @@ pub const Semantizer = struct {
             if (existing_fn) |cand| {
                 cand.input = in_struct_ptr.*;
                 cand.output = out_struct;
+                cand.is_test = is_test;
                 cand.uses_inferred_error_reasons = uses_inferred_error_reasons;
                 cand.output_bindings = output_binding_slice;
                 break :blk cand;
@@ -4285,6 +4444,7 @@ pub const Semantizer = struct {
                 .name = f.name.string,
                 .location = loc,
                 .is_once = f.is_once,
+                .is_test = is_test,
                 .input = in_struct_ptr.*,
                 .output = out_struct,
                 .body = null,
@@ -4303,7 +4463,10 @@ pub const Semantizer = struct {
             break :blk created;
         };
 
-        try self.appendFunctionDeclarationNodeIfMissing(p, fn_ptr, loc);
+        if (is_test)
+            try self.appendTestDeclarationNodeIfMissing(p, fn_ptr, loc)
+        else
+            try self.appendFunctionDeclarationNodeIfMissing(p, fn_ptr, loc);
         child.current_fn = fn_ptr;
 
         // ── cuerpo
@@ -4332,14 +4495,15 @@ pub const Semantizer = struct {
         f: syn.FunctionDeclaration,
         p: *Scope,
         loc: tok.Location,
+        is_test: bool,
     ) SemErr!typ.TypedExpr {
-        const fn_ptr = try self.registerFunctionInterface(f, p, loc);
+        const fn_ptr = try self.registerFunctionInterface(f, p, loc, is_test);
         if (fn_ptr) |resolved_fn| {
             const top_node = self.current_top_node orelse {
                 try self.diags.add(loc, .semantic, "internal error: missing top-level function node during staged semantizing", .{});
                 return error.Reported;
             };
-            try self.enqueuePendingFunctionBody(top_node, f, loc, resolved_fn);
+            try self.enqueuePendingFunctionBody(top_node, f, loc, resolved_fn, is_test);
         }
         const noop = try self.makeNoopNode(loc);
         return .{ .node = noop, .ty = .{ .builtin = .Any } };
@@ -4350,9 +4514,11 @@ pub const Semantizer = struct {
         f: syn.FunctionDeclaration,
         p: *Scope,
         loc: tok.Location,
+        is_test: bool,
     ) SemErr!typ.TypedExpr {
         _ = f;
         _ = p;
+        _ = is_test;
         const noop = try self.makeNoopNode(loc);
         return .{ .node = noop, .ty = .{ .builtin = .Any } };
     }
@@ -4362,6 +4528,7 @@ pub const Semantizer = struct {
         f: syn.FunctionDeclaration,
         p: *Scope,
         loc: tok.Location,
+        is_test: bool,
     ) SemErr!?*sg.FunctionDeclaration {
         try self.requireExplicitFunctionFieldTypes(f, loc);
         if (f.generic_params.len > 0 or f.generic_params_struct != null) {
@@ -4482,6 +4649,7 @@ pub const Semantizer = struct {
             if (existing_fn) |cand| {
                 cand.input = in_struct_ptr.*;
                 cand.output = out_struct;
+                cand.is_test = is_test;
                 cand.uses_inferred_error_reasons = uses_inferred_error_reasons;
                 cand.output_bindings = output_binding_slice;
                 break :blk cand;
@@ -4492,6 +4660,7 @@ pub const Semantizer = struct {
                 .name = f.name.string,
                 .location = loc,
                 .is_once = f.is_once,
+                .is_test = is_test,
                 .input = in_struct_ptr.*,
                 .output = out_struct,
                 .body = null,
@@ -4510,7 +4679,10 @@ pub const Semantizer = struct {
             break :blk created;
         };
 
-        try self.appendFunctionDeclarationNodeIfMissing(p, fn_ptr, loc);
+        if (is_test)
+            try self.appendTestDeclarationNodeIfMissing(p, fn_ptr, loc)
+        else
+            try self.appendFunctionDeclarationNodeIfMissing(p, fn_ptr, loc);
         self.clearDeferred(&child);
         return fn_ptr;
     }
@@ -4696,6 +4868,28 @@ pub const Semantizer = struct {
         }
 
         const node = try sg.makeSGNode(.{ .function_declaration = fd }, loc, self.allocator);
+        try s.nodes.append(node);
+        if (s.parent == null) try self.root_list.append(node);
+    }
+
+    fn appendTestDeclarationNodeIfMissing(
+        self: *Semantizer,
+        s: *Scope,
+        fd: *sg.FunctionDeclaration,
+        loc: tok.Location,
+    ) !void {
+        for (s.nodes.items) |node| {
+            if (node.content != .test_declaration) continue;
+            if (node.content.test_declaration.function == fd) return;
+        }
+
+        const test_decl = try self.allocator.create(sg.TestDeclaration);
+        test_decl.* = .{
+            .name = fd.name,
+            .location = loc,
+            .function = fd,
+        };
+        const node = try sg.makeSGNode(.{ .test_declaration = test_decl }, loc, self.allocator);
         try s.nodes.append(node);
         if (s.parent == null) try self.root_list.append(node);
     }
@@ -11064,7 +11258,7 @@ pub const Semantizer = struct {
             try self.pending_next.append(ptr);
             self.retry_enqueue_unique += 1;
             switch (ptr.content) {
-                .function_declaration => self.retry_function_nodes += 1,
+                .function_declaration, .test_declaration => self.retry_function_nodes += 1,
                 .type_declaration => self.retry_type_nodes += 1,
                 .symbol_declaration => self.retry_symbol_nodes += 1,
                 else => self.retry_other_nodes += 1,

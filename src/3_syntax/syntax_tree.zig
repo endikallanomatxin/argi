@@ -29,6 +29,7 @@ pub const Content = union(enum) {
     abstract_implements: AbstractImplements,
     abstract_defaultsto: AbstractDefault,
     function_declaration: FunctionDeclaration,
+    test_declaration: TestDeclaration,
     assignment: Assignment,
     expression_statement: *STNode,
     identifier: []const u8,
@@ -166,6 +167,10 @@ pub const FunctionDeclaration = struct {
     output: StructTypeLiteral, // Named return params
     body: ?*STNode, // CodeBlock
     // If it has no body, it is an extern function.
+};
+
+pub const TestDeclaration = struct {
+    decl: FunctionDeclaration,
 };
 
 pub const Assignment = struct {

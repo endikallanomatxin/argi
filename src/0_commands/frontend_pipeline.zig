@@ -14,8 +14,13 @@ const semantizer = @import("../4_semantics/semantizer.zig");
 // tokenizing/syntaxing/semantizing path so architectural changes in the
 // compiler do not fork into subtly different command-specific pipelines.
 pub const FrontendPipeline = struct {
+    pub const Options = struct {
+        semantizer: semantizer.SemantizerOptions = .{},
+    };
+
     allocator: *const std.mem.Allocator,
     diagnostics: *diag.Diagnostics,
+    options: Options,
     tokens: std.array_list.Managed(token.Token),
     syntax_ctx: ?syntaxer.Syntaxer = null,
     sem_ctx: ?semantizer.Semantizer = null,
@@ -26,10 +31,12 @@ pub const FrontendPipeline = struct {
     pub fn init(
         allocator: *const std.mem.Allocator,
         diagnostics: *diag.Diagnostics,
+        options: Options,
     ) FrontendPipeline {
         return .{
             .allocator = allocator,
             .diagnostics = diagnostics,
+            .options = options,
             .tokens = std.array_list.Managed(token.Token).init(allocator.*),
         };
     }
@@ -66,7 +73,7 @@ pub const FrontendPipeline = struct {
     }
 
     pub fn semantize(self: *FrontendPipeline) ![]const *sg.SGNode {
-        self.sem_ctx = semantizer.Semantizer.init(self.allocator, self.st_nodes, self.diagnostics);
+        self.sem_ctx = semantizer.Semantizer.init(self.allocator, self.st_nodes, self.diagnostics, self.options.semantizer);
         const result = try self.sem_ctx.?.semantizeWithTimings();
         self.sg_nodes = result.nodes;
         self.semantize_timings = result.timings;

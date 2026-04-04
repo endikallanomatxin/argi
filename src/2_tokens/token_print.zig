@@ -75,6 +75,9 @@ pub fn printToken(token: tok.Token) void {
         .keyword_once => {
             std.debug.print("keyword_once\n", .{});
         },
+        .keyword_test => {
+            std.debug.print("keyword_test\n", .{});
+        },
         .keyword_and => {
             std.debug.print("keyword_and\n", .{});
         },

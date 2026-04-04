@@ -1357,6 +1357,79 @@ pub const Syntaxer = struct {
         return self.parseUnwrapExpr();
     }
 
+    fn parseNamedFunctionLikeDeclaration(
+        self: *Syntaxer,
+        name: syn.Name,
+        is_once: bool,
+        generic_params: []const []const u8,
+        generic_params_struct: ?syn.StructTypeLiteral,
+        id_loc: tok.Location,
+    ) SyntaxerError!*syn.STNode {
+        const input = try self.parseStructTypeLiteral();
+
+        if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
+        self.advanceOne();
+        const output = try self.parseFunctionOutputType();
+        if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
+        self.advanceOne();
+
+        switch (self.current().content) {
+            .identifier => |ident_name| {
+                if (std.mem.eql(u8, ident_name, "ExternFunction")) {
+                    self.advanceOne();
+                    const ef = syn.FunctionDeclaration{
+                        .name = name,
+                        .is_once = is_once,
+                        .generic_params = generic_params,
+                        .generic_params_struct = generic_params_struct,
+                        .input = input,
+                        .output = output,
+                        .body = null,
+                    };
+                    return try self.makeNode(.{ .function_declaration = ef }, id_loc);
+                }
+            },
+            else => {},
+        }
+
+        if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
+        self.advanceOne();
+        const body = try self.parseCodeBlock();
+
+        const fn_decl = syn.FunctionDeclaration{
+            .name = name,
+            .is_once = is_once,
+            .generic_params = generic_params,
+            .generic_params_struct = generic_params_struct,
+            .input = input,
+            .output = output,
+            .body = body,
+        };
+        return try self.makeNode(.{ .function_declaration = fn_decl }, id_loc);
+    }
+
+    fn parseTestDeclaration(self: *Syntaxer) SyntaxerError!*syn.STNode {
+        const test_loc = self.tokenLocation();
+        self.advanceOne();
+        self.skipNewLinesAndComments();
+
+        const name = try self.parseName();
+        if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+
+        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, &.{}, null, name.location);
+        const fn_decl = switch (decl_node.content) {
+            .function_declaration => |fd| fd,
+            else => unreachable,
+        };
+
+        if (fn_decl.body == null) {
+            try self.diags.add(test_loc, .syntax, "tests must define a body", .{});
+            return SyntaxerError.ExpectedAssignment;
+        }
+
+        return try self.makeNode(.{ .test_declaration = .{ .decl = fn_decl } }, test_loc);
+    }
+
     // (old parseStatement removed; unified version with generics is below)
 
     // Override parseStatement to support generics on function declarations
@@ -1370,6 +1443,7 @@ pub const Syntaxer = struct {
             .keyword_for => return self.parseFor(),
             .keyword_match => return self.parseMatch(),
             .keyword_while => return self.parseWhile(),
+            .keyword_test => return self.parseTestDeclaration(),
             .keyword_break => {
                 const loc = self.tokenLocation();
                 self.advanceOne();
@@ -1483,47 +1557,13 @@ pub const Syntaxer = struct {
 
         if (self.tokenIs(.open_parenthesis)) {
             if (self.looksLikeFunctionDeclarationInput(self.index)) {
-                const input = try self.parseStructTypeLiteral();
-
-                if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
-                self.advanceOne();
-                const output = try self.parseFunctionOutputType();
-                if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
-                self.advanceOne();
-
-                switch (self.current().content) {
-                    .identifier => |ident_name| {
-                        if (std.mem.eql(u8, ident_name, "ExternFunction")) {
-                            self.advanceOne();
-                            const ef = syn.FunctionDeclaration{
-                                .name = name,
-                                .is_once = is_once,
-                                .generic_params = generic_params,
-                                .generic_params_struct = generic_params_struct,
-                                .input = input,
-                                .output = output,
-                                .body = null,
-                            };
-                            return try self.makeNode(.{ .function_declaration = ef }, id_loc);
-                        }
-                    },
-                    else => {},
-                }
-
-                if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
-                self.advanceOne();
-                const body = try self.parseCodeBlock();
-
-                const fn_decl = syn.FunctionDeclaration{
-                    .name = name,
-                    .is_once = is_once,
-                    .generic_params = generic_params,
-                    .generic_params_struct = generic_params_struct,
-                    .input = input,
-                    .output = output,
-                    .body = body,
-                };
-                return try self.makeNode(.{ .function_declaration = fn_decl }, id_loc);
+                return try self.parseNamedFunctionLikeDeclaration(
+                    name,
+                    is_once,
+                    generic_params,
+                    generic_params_struct,
+                    id_loc,
+                );
             } else {
                 if (is_once) {
                     try self.diags.add(id_loc, .syntax, "once can only be used on function declarations", .{});

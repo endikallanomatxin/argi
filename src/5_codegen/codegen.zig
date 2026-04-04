@@ -97,9 +97,14 @@ const Scope = struct {
 
 // ────────────────────────────────────────────── CodeGenerator ──
 pub const CodeGenerator = struct {
+    pub const Options = struct {
+        selected_test_name: ?[]const u8 = null,
+    };
+
     allocator: *const std.mem.Allocator,
     ast: []const *sem.SGNode,
     diags: *diagnostic.Diagnostics,
+    options: Options,
 
     module: llvm.c.LLVMModuleRef,
     builder: llvm.c.LLVMBuilderRef,
@@ -116,7 +121,7 @@ pub const CodeGenerator = struct {
     global_scope: *Scope, // nunca se destruye hasta el final
     current_scope: *Scope, // apunta al scope donde estamos ahora
 
-    pub fn init(a: *const std.mem.Allocator, ast: []const *sem.SGNode, diags: *diagnostic.Diagnostics) !CodeGenerator {
+    pub fn init(a: *const std.mem.Allocator, ast: []const *sem.SGNode, diags: *diagnostic.Diagnostics, options: Options) !CodeGenerator {
         const m = c.LLVMModuleCreateWithName("argi_module");
         if (m == null) return CodegenError.ModuleCreationFailed;
 
@@ -127,6 +132,7 @@ pub const CodeGenerator = struct {
             .allocator = a,
             .ast = ast,
             .diags = diags,
+            .options = options,
             .module = m,
             .builder = b,
             .global_scope = gscope,
@@ -204,6 +210,13 @@ pub const CodeGenerator = struct {
             .function_declaration => |f| {
                 self.genFunction(f) catch |e| {
                     try self.diags.add(n.location, .codegen, "error generating function {s}: {s}", .{ f.name, @errorName(e) });
+                    return e;
+                };
+                return null;
+            },
+            .test_declaration => |t| {
+                self.genFunction(@constCast(t.function)) catch |e| {
+                    try self.diags.add(n.location, .codegen, "error generating test {s}: {s}", .{ t.name, @errorName(e) });
                     return e;
                 };
                 return null;
