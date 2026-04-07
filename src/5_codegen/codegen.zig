@@ -568,6 +568,10 @@ pub const CodeGenerator = struct {
     fn mangledNameFor(self: *CodeGenerator, f: *const sem.FunctionDeclaration) ![]u8 {
         var buf = std.array_list.Managed(u8).init(self.allocator.*);
         try buf.appendSlice(f.name);
+        // Include the semantic declaration identity before the structural
+        // signature. Input/output types are still useful in the symbol for
+        // readability, but generic specializations are not always recoverable
+        // from the lowered callable shape alone.
         try buf.writer().print("__f{d}", .{f.id});
         try buf.appendSlice("__in_");
         try self.encodeType(&buf, .{ .struct_type = &f.input });

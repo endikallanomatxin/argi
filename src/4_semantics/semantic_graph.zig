@@ -336,6 +336,12 @@ pub const TypeDeclaration = struct {
 };
 
 pub const FunctionDeclaration = struct {
+    // Stable semantic identity for this concrete declaration.
+    //
+    // Generic instantiations can erase key information from their callable
+    // input/output shape (for example DynamicArray helpers whose `self` layout
+    // is the same across element types). Codegen therefore cannot rely on the
+    // structural signature alone to produce unique internal symbols.
     id: u32,
     name: []const u8,
     location: tok.Location,
