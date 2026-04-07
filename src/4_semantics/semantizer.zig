@@ -8625,6 +8625,15 @@ pub const Semantizer = struct {
         const actual = actual_ty.struct_type;
 
         const expected_fields = expected_ptr.fields;
+        // These refined structs are an internal dispatch artifact, not user-visible
+        // nominal types. We tried caching/canonicalizing them by
+        // `(expected_ptr, actual_ty)` to reduce allocations, but the measured
+        // `semantizing` times regressed on representative cases:
+        // `01_cat_cli` 243.9 ms -> 263.3 ms,
+        // `23_file_system_read_write` 191.1 ms -> 204.7 ms,
+        // `01_minimal_main` 128.5 ms -> 184.9 ms.
+        // Keep this path simple unless a more targeted representation proves
+        // faster with data.
         const refined = try self.allocator.alloc(sg.StructTypeField, expected_fields.len);
         var changed = false;
 
