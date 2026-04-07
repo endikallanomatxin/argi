@@ -1918,6 +1918,12 @@ test "feature_tests/modules/22_imported_abstract_input_dispatch" {
     try runExpect(test_path, 45);
 }
 
+test "feature_tests/modules/23_imported_abstract_monomorphization" {
+    const test_path = "tests/feature_tests/modules/23_imported_abstract_monomorphization";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 3);
+}
+
 test "feature_tests/control_flow/03_for_array" {
     const test_path = "tests/feature_tests/control_flow/03_for_array";
     try expectSuccessfulBuild(test_path);
