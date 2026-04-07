@@ -3531,11 +3531,18 @@ pub const Semantizer = struct {
         loc: tok.Location,
         s: *Scope,
     ) SemErr!*const sg.ChoiceOptionDeclaration {
-        _ = self;
-        _ = loc;
         if (module_qualifier) |module_name| {
             const module_dir = s.lookupModuleAlias(module_name) orelse return error.SymbolNotFound;
-            if (s.lookupChoiceOptionInModule(module_dir, name)) |decl| return decl;
+            if (s.lookupChoiceOptionInModule(module_dir, name)) |decl| {
+                if (isPrivateName(name)) {
+                    const requester_dir = self.moduleDirForFile(loc.file);
+                    if (!std.mem.eql(u8, requester_dir, module_dir)) {
+                        try self.addPrivateMemberDiag(loc, "choice option", name);
+                        return error.Reported;
+                    }
+                }
+                return decl;
+            }
             return error.SymbolNotFound;
         }
         return s.lookupChoiceOption(name) orelse error.SymbolNotFound;
@@ -4241,15 +4248,25 @@ pub const Semantizer = struct {
                     var variants = std.array_list.Managed(sg.ChoiceVariant).init(self.allocator.*);
                     for (ct_lit.variants, 0..) |variant, idx| {
                         const payload_type = if (variant.payload_type) |pt| sg.Type{ .struct_type = try self.structTypeFromLiteral(pt, s) } else null;
-                        const option_decl = if (payload_type == null)
-                            self.resolveChoiceOptionReference(
-                                if (variant.module_qualifier) |qualifier| qualifier.string else null,
+                        const option_decl = if (payload_type == null) blk_option: {
+                            if (variant.module_qualifier) |qualifier| {
+                                break :blk_option try self.resolveChoiceOptionReference(
+                                    qualifier.string,
+                                    variant.name.string,
+                                    variant.name.location,
+                                    s,
+                                );
+                            }
+                            break :blk_option self.resolveChoiceOptionReference(
+                                null,
                                 variant.name.string,
                                 variant.name.location,
                                 s,
-                            ) catch null
-                        else
-                            null;
+                            ) catch |err| switch (err) {
+                                error.SymbolNotFound => null,
+                                else => return err,
+                            };
+                        } else null;
                         try variants.append(.{
                             .name = variant.name.string,
                             .value = if (option_decl) |decl| @intCast(decl.id) else @intCast(idx),
@@ -6299,15 +6316,25 @@ pub const Semantizer = struct {
                 sg.Type{ .struct_type = try self.structTypeFromLiteralWithSubst(pt, s, subst) }
             else
                 null;
-            const option_decl = if (payload_type == null)
-                self.resolveChoiceOptionReference(
-                    if (variant.module_qualifier) |qualifier| qualifier.string else null,
+            const option_decl = if (payload_type == null) blk_option: {
+                if (variant.module_qualifier) |qualifier| {
+                    break :blk_option try self.resolveChoiceOptionReference(
+                        qualifier.string,
+                        variant.name.string,
+                        variant.name.location,
+                        s,
+                    );
+                }
+                break :blk_option self.resolveChoiceOptionReference(
+                    null,
                     variant.name.string,
                     variant.name.location,
                     s,
-                ) catch null
-            else
-                null;
+                ) catch |err| switch (err) {
+                    error.SymbolNotFound => null,
+                    else => return err,
+                };
+            } else null;
             try variants.append(.{
                 .name = variant.name.string,
                 .value = if (option_decl) |decl| @intCast(decl.id) else @intCast(idx),

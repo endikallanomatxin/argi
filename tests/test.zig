@@ -1930,6 +1930,13 @@ test "feature_tests/modules/24_imported_generic_abstract_dispatch_prefers_concre
     try runExpect(test_path, 2);
 }
 
+test "feature_tests/modules/25X_private_choice_option_imported" {
+    try buildExpectFail(
+        "tests/feature_tests/modules/25X_private_choice_option_imported",
+        "choice option '_hidden_reason' is private to its module",
+    );
+}
+
 test "feature_tests/control_flow/03_for_array" {
     const test_path = "tests/feature_tests/control_flow/03_for_array";
     try expectSuccessfulBuild(test_path);
