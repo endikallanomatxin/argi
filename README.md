@@ -116,6 +116,11 @@ Use:
 ./zig-out/bin/argi test tests/some_module
 ```
 
+Generated test binaries and other transient testing artifacts live under the
+project-local `.argi-cache/` directory. Normal build outputs stay explicit:
+`argi build` still writes the final binary to `build/output` by default, or to
+the path given with `--output`.
+
 Tests are declared explicitly in source:
 
 ```rg

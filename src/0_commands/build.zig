@@ -30,6 +30,14 @@ pub const CompileOptions = struct {
     success_message: ?[]const u8 = "✔ Build completed\n",
 };
 
+/// Argi keeps project-local transient artifacts under `.argi-cache/`.
+/// This stays separate from explicit user outputs like `build/output` or
+/// `--output <path>`, and gives `argi test` a stable place to put generated
+/// binaries without polluting source fixtures.
+pub fn localCacheRoot(allocator: std.mem.Allocator) ![]u8 {
+    return std.fs.path.resolve(allocator, &.{".argi-cache"});
+}
+
 const PhaseTimings = struct {
     collect_files_ns: u64 = 0,
     tokenize_ns: u64 = 0,
@@ -442,4 +450,11 @@ test "parse build flags rejects conflicting object emission modes" {
         "--just-emit-obj",
         "obj-only/app.o",
     }));
+}
+
+test "local cache root resolves to dot argi cache" {
+    const cache_root = try localCacheRoot(std.testing.allocator);
+    defer std.testing.allocator.free(cache_root);
+
+    try std.testing.expect(std.mem.endsWith(u8, cache_root, "/.argi-cache") or std.mem.eql(u8, cache_root, ".argi-cache"));
 }

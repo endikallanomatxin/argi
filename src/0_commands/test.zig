@@ -76,7 +76,8 @@ fn outputPathForTest(allocator: std.mem.Allocator, module_dir: []const u8, test_
     const module_hash = hasher.final();
     const safe_name = try sanitizeTestName(allocator, test_name);
     defer allocator.free(safe_name);
-    return try std.fmt.allocPrint(allocator, "build/tests/{x}/{s}", .{ module_hash, safe_name });
+    const cache_root = try build_cmd.localCacheRoot(allocator);
+    return try std.fmt.allocPrint(allocator, "{s}/tests/{x}/{s}", .{ cache_root, module_hash, safe_name });
 }
 
 fn printResultLine(status: []const u8, test_name: []const u8) void {
@@ -165,4 +166,12 @@ pub fn run(args: []const []const u8) !u8 {
     }
 
     return if (had_failure) 1 else 0;
+}
+
+test "test output path lives under local argi cache" {
+    const output_path = try outputPathForTest(std.testing.allocator, "/tmp/module", "my test");
+    defer std.testing.allocator.free(output_path);
+
+    try std.testing.expect(std.mem.indexOf(u8, output_path, "/.argi-cache/tests/") != null);
+    try std.testing.expect(std.mem.endsWith(u8, output_path, "/my_test"));
 }

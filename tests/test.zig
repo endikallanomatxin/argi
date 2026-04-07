@@ -1945,6 +1945,31 @@ test "feature_tests/testing/01_simple_pass" {
     );
 }
 
+test "feature_tests/testing/01_simple_pass_uses_local_cache" {
+    var root = try std.fs.cwd().openDir(compilerRoot(), .{});
+    defer root.close();
+
+    root.deleteTree(".argi-cache/tests") catch |err| {
+        if (err != error.FileNotFound) return err;
+    };
+    root.deleteTree("build/tests") catch |err| {
+        if (err != error.FileNotFound) return err;
+    };
+
+    try argiTestExpectStderr(
+        "tests/feature_tests/testing/01_simple_pass",
+        &.{},
+        0,
+        "PASS simple_pass\n",
+    );
+
+    try root.access(".argi-cache/tests", .{});
+    root.access("build/tests", .{}) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    };
+}
+
 test "feature_tests/testing/02_skip" {
     try argiTestExpectStderrContains(
         "tests/feature_tests/testing/02_skip",
