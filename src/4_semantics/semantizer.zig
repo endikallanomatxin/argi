@@ -5638,7 +5638,6 @@ pub const Semantizer = struct {
             .output = f.output,
             .body = f.body,
         };
-
         try p.appendGenericFunctionTemplate(f.name.string, template);
 
         return true;
@@ -6860,9 +6859,15 @@ pub const Semantizer = struct {
             null;
         var chosen: *sg.FunctionDeclaration = undefined;
         if (call.type_arguments_struct) |stargs| {
-            chosen = try self.instantiateGenericNamedVisible(call.callee, stargs, input_te, s, .regular, qualified_module_dir, loc.file);
+            chosen = self.instantiateGenericNamedVisible(call.callee, stargs, input_te, s, .regular, qualified_module_dir, loc.file) catch |err| switch (err) {
+                error.SymbolNotFound => try self.instantiateGenericNamedVisible(call.callee, stargs, input_te, s, .abstract_contract, qualified_module_dir, loc.file),
+                else => return err,
+            };
         } else if (call.type_arguments) |targs| {
-            chosen = try self.instantiateGenericVisible(call.callee, targs, input_te, s, .regular, qualified_module_dir, loc.file);
+            chosen = self.instantiateGenericVisible(call.callee, targs, input_te, s, .regular, qualified_module_dir, loc.file) catch |err| switch (err) {
+                error.SymbolNotFound => try self.instantiateGenericVisible(call.callee, targs, input_te, s, .abstract_contract, qualified_module_dir, loc.file),
+                else => return err,
+            };
         } else {
             const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
             const inferred = self.instantiateGenericNamedVisible(call.callee, empty_args, input_te, s, .regular, qualified_module_dir, loc.file) catch |err| switch (err) {
@@ -6874,7 +6879,25 @@ pub const Semantizer = struct {
                 chosen = instantiated;
             } else {
                 if (call.module_qualifier) |module_name| {
-                    chosen = try self.resolveQualifiedOverload(module_name, call.callee, input_te, s, loc);
+                    chosen = self.resolveQualifiedOverload(module_name, call.callee, input_te, s, loc) catch |err| switch (err) {
+                        error.SymbolNotFound => {
+                            const abstract_inferred = self.instantiateGenericNamedVisible(
+                                call.callee,
+                                empty_args,
+                                input_te,
+                                s,
+                                .abstract_contract,
+                                qualified_module_dir,
+                                loc.file,
+                            ) catch |inner_err| switch (inner_err) {
+                                error.SymbolNotFound => null,
+                                else => return inner_err,
+                            };
+                            if (abstract_inferred) |instantiated_abstract| return instantiated_abstract;
+                            return error.SymbolNotFound;
+                        },
+                        else => return err,
+                    };
                 } else {
                     chosen = self.resolveVisibleOverload(call.callee, input_te, s, loc) catch |err| switch (err) {
                         error.SymbolNotFound => {
