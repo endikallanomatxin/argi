@@ -56,6 +56,60 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
+    removed_beta ::= delete#(.value: Int32)(.self = $&map, .key = "beta").value
+    match removed_beta {
+        ..some payload {
+            if payload.value != 2 {
+                status_code = 9
+                return
+            }
+        }
+        ..none {
+            status_code = 10
+            return
+        }
+    }
+
+    if has#(.value: Int32)(.self = &map, .key = "beta").ok {
+        status_code = 11
+        return
+    }
+
+    alpha_after_delete ::= get#(.value: Int32)(.self = &map, .key = "alpha").value
+    match alpha_after_delete {
+        ..some payload {
+            if payload.value != 7 {
+                status_code = 12
+                return
+            }
+        }
+        ..none {
+            status_code = 13
+            return
+        }
+    }
+
+    put#(.value: Int32)(.self = $&map, .key = "gamma", .value = 9)
+    removed_gamma ::= delete#(.value: Int32)(.self = $&map, .key = "gamma").value
+    match removed_gamma {
+        ..some payload {
+            if payload.value != 9 {
+                status_code = 14
+                return
+            }
+        }
+        ..none {
+            status_code = 15
+            return
+        }
+    }
+
+    removed_missing ::= delete#(.value: Int32)(.self = $&map, .key = "missing").value
+    if removed_missing? {
+        status_code = 16
+        return
+    }
+
     deinit#(.value: Int32)(.self = $&map)
     status_code = 0
 }

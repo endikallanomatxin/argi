@@ -12,8 +12,8 @@ StringHashMap#(.value: Type) : Type = (
     -- alive for as long as the map stores the entry.
     --
     -- This baseline intentionally targets copyable values and compiler/runtime
-    -- lookup tables. It supports insert/update/get/has and internal rehashing,
-    -- but not deletion yet.
+    -- lookup tables. It supports insert/update/get/has/delete and internal
+    -- rehashing.
     --
     .buckets : DynamicArray#(.t: UIntNative)
     .entries : DynamicArray#(.t: StringHashMapEntry#(.value: value))
@@ -309,4 +309,106 @@ has#(.value: Type) (
 ) -> (.ok: Bool) := {
     key_view ::= string_hash_map_key_view(.key = key)
     ok = has#(.value: value)(.self = self, .key = &key_view)
+}
+
+string_hash_map_retarget_entry_index#(.value: Type) (
+    .self: $&StringHashMap#(.value: value),
+    .entry: &StringHashMapEntry#(.value: value),
+    .old_index: UIntNative,
+    .new_index: UIntNative,
+) -> () := {
+    entry_key : StringView = entry&.key
+    bucket_index ::= string_hash_map_bucket_index(.bucket_count = self&.buckets.length, .key = &entry_key).index
+    target_old ::= old_index + 1
+    target_new ::= new_index + 1
+    current ::= self&.buckets[bucket_index]
+
+    if current == target_old {
+        self&.buckets[bucket_index] = target_new
+        return
+    }
+
+    while current != 0 {
+        current_index ::= current - 1
+        current_entry ::= self&.entries[current_index]
+        if current_entry.next == target_old {
+            self&.entries[current_index] = (
+                .key = current_entry.key,
+                .value = current_entry.value,
+                .next = target_new,
+            )
+            return
+        }
+        current = current_entry.next
+    }
+}
+
+delete#(.value: Type) (
+    .self: $&StringHashMap#(.value: value),
+    .key: &StringView,
+) -> (.value: ?value) := {
+    if self&.buckets.length == 0 {
+        value = ..none
+        return
+    }
+
+    bucket_index ::= string_hash_map_bucket_index(.bucket_count = self&.buckets.length, .key = key).index
+    current ::= self&.buckets[bucket_index]
+    previous :: UIntNative = 0
+
+    while current != 0 {
+        current_index ::= current - 1
+        entry ::= self&.entries[current_index]
+        if equals(.left = &entry.key, .right = key).ok {
+            if previous == 0 {
+                self&.buckets[bucket_index] = entry.next
+            } else {
+                previous_index ::= previous - 1
+                previous_entry ::= self&.entries[previous_index]
+                self&.entries[previous_index] = (
+                    .key = previous_entry.key,
+                    .value = previous_entry.value,
+                    .next = entry.next,
+                )
+            }
+
+            deleted_value ::= entry.value
+            last_index ::= self&.entries.length - 1
+            last_entry ::= pop#(.t: StringHashMapEntry#(.value: value))(.self = $&self&.entries)
+
+            if current_index != last_index {
+                self&.entries[current_index] = last_entry
+                string_hash_map_retarget_entry_index#(.value: value)(
+                    .self = self,
+                    .entry = &last_entry,
+                    .old_index = last_index,
+                    .new_index = current_index,
+                )
+            }
+
+            value = ..some(.value = deleted_value)
+            return
+        }
+
+        previous = current
+        current = entry.next
+    }
+
+    value = ..none
+}
+
+delete#(.value: Type) (
+    .self: $&StringHashMap#(.value: value),
+    .key: &Char,
+) -> (.value: ?value) := {
+    key_view ::= string_hash_map_key_view(.key = key)
+    value = delete#(.value: value)(.self = self, .key = &key_view)
+}
+
+delete#(.value: Type) (
+    .self: $&StringHashMap#(.value: value),
+    .key: &String,
+) -> (.value: ?value) := {
+    key_view ::= string_hash_map_key_view(.key = key)
+    value = delete#(.value: value)(.self = self, .key = &key_view)
 }
