@@ -54,7 +54,7 @@ pub const Diagnostics = struct {
             var lines_it = std.mem.splitAny(u8, f.code, "\n");
             var lines = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
             defer lines.deinit();
-            while (lines_it.next()) |l| lines.append(l) catch {};
+            while (lines_it.next()) |l| try lines.append(l);
 
             var shown: usize = 0;
             for (self.list.items) |d| {

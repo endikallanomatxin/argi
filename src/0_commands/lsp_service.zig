@@ -1955,7 +1955,7 @@ fn collectFunctionInlayHints(
                     if (default_case.ret_val) |ret_val| try stack.append(ret_val);
                 }
             },
-            else => appendSgChildren(&stack, node) catch {},
+            else => try appendSgChildren(&stack, node),
         }
     }
 }
