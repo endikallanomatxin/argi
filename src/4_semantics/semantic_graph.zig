@@ -345,6 +345,7 @@ pub const FunctionDeclaration = struct {
     id: u32,
     name: []const u8,
     location: tok.Location,
+    origin_kind: OriginKind = .declared,
     is_once: bool,
     is_test: bool = false,
     input: StructType, // Arguments
@@ -357,6 +358,11 @@ pub const FunctionDeclaration = struct {
     pub fn isExtern(self: *const FunctionDeclaration) bool {
         return self.body == null;
     }
+
+    pub const OriginKind = enum {
+        declared,
+        generic_instantiation,
+    };
 };
 
 pub const TestDeclaration = struct {

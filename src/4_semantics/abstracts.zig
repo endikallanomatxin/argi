@@ -484,8 +484,12 @@ pub fn resolveOverload(name: []const u8, in_ty: sg.Type, s: *Scope) SemErr!*sg.F
                     best_score = score;
                     ambiguous = false;
                 } else if (score == best_score) {
-                    // ambiguous with same specificity
-                    ambiguous = true;
+                    if (best.?.origin_kind == .generic_instantiation and cand.origin_kind == .declared) {
+                        best = cand;
+                        ambiguous = false;
+                    } else if (!(cand.origin_kind == .generic_instantiation and best.?.origin_kind == .declared)) {
+                        ambiguous = true;
+                    }
                 }
             }
         }

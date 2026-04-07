@@ -6885,45 +6885,167 @@ pub const Semantizer = struct {
                 else => return err,
             };
 
+            const visible_declared = if (call.module_qualifier) |module_name|
+                try self.resolveQualifiedDeclaredOverloadMaybe(module_name, call.callee, input_te, s, loc)
+            else
+                try self.resolveVisibleDeclaredOverloadMaybe(call.callee, input_te, s, loc);
+
             if (inferred) |instantiated| {
-                chosen = instantiated;
-            } else {
-                if (call.module_qualifier) |module_name| {
-                    chosen = self.resolveQualifiedOverload(module_name, call.callee, input_te, s, loc) catch |err| switch (err) {
-                        error.SymbolNotFound => {
-                            const abstract_inferred = self.instantiateGenericNamedVisible(
-                                call.callee,
-                                empty_args,
-                                input_te,
-                                s,
-                                .abstract_contract,
-                                qualified_module_dir,
-                                loc.file,
-                            ) catch |inner_err| switch (inner_err) {
-                                error.SymbolNotFound => null,
-                                else => return inner_err,
-                            };
-                            if (abstract_inferred) |instantiated_abstract| return instantiated_abstract;
-                            return error.SymbolNotFound;
-                        },
-                        else => return err,
-                    };
+                if (visible_declared) |resolved_visible| {
+                    chosen = try self.chooseBetterCallCandidate(instantiated, resolved_visible, input_te, s);
                 } else {
-                    chosen = self.resolveVisibleOverload(call.callee, input_te, s, loc) catch |err| switch (err) {
-                        error.SymbolNotFound => {
-                            const abstract_inferred = self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .abstract_contract) catch |inner_err| switch (inner_err) {
-                                error.SymbolNotFound => null,
-                                else => return inner_err,
-                            };
-                            if (abstract_inferred) |instantiated_abstract| return instantiated_abstract;
-                            return error.SymbolNotFound;
-                        },
-                        else => return err,
+                    chosen = instantiated;
+                }
+            } else if (visible_declared) |resolved_visible| {
+                chosen = resolved_visible;
+            } else {
+                const abstract_inferred = if (call.module_qualifier != null)
+                    self.instantiateGenericNamedVisible(
+                        call.callee,
+                        empty_args,
+                        input_te,
+                        s,
+                        .abstract_contract,
+                        qualified_module_dir,
+                        loc.file,
+                    ) catch |inner_err| switch (inner_err) {
+                        error.SymbolNotFound => null,
+                        else => return inner_err,
+                    }
+                else
+                    self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .abstract_contract) catch |inner_err| switch (inner_err) {
+                        error.SymbolNotFound => null,
+                        else => return inner_err,
                     };
+                if (abstract_inferred) |instantiated_abstract| {
+                    chosen = instantiated_abstract;
+                } else {
+                    return error.SymbolNotFound;
                 }
             }
         }
         return chosen;
+    }
+
+    fn preferCandidateOnEqualSpecificity(
+        self: *Semantizer,
+        current: *sg.FunctionDeclaration,
+        candidate: *sg.FunctionDeclaration,
+    ) bool {
+        _ = self;
+        return current.origin_kind == .generic_instantiation and candidate.origin_kind == .declared;
+    }
+
+    fn chooseBetterCallCandidate(
+        self: *Semantizer,
+        current: *sg.FunctionDeclaration,
+        candidate: *sg.FunctionDeclaration,
+        input_te: typ.TypedExpr,
+        s: *Scope,
+    ) SemErr!*sg.FunctionDeclaration {
+        const current_score = self.callInputSpecificityScore(&current.input, input_te, s);
+        const candidate_score = self.callInputSpecificityScore(&candidate.input, input_te, s);
+
+        if (candidate_score < current_score) return candidate;
+        if (candidate_score > current_score) return current;
+        if (self.preferCandidateOnEqualSpecificity(current, candidate)) return candidate;
+        if (self.preferCandidateOnEqualSpecificity(candidate, current)) return current;
+        return error.AmbiguousOverload;
+    }
+
+    fn resolveQualifiedDeclaredOverloadMaybe(
+        self: *Semantizer,
+        module_name: []const u8,
+        fn_name: []const u8,
+        input_te: typ.TypedExpr,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!?*sg.FunctionDeclaration {
+        const module_dir = s.lookupModuleAlias(module_name) orelse {
+            try self.diags.add(loc, .semantic, "unknown module alias '{s}'", .{module_name});
+            return error.Reported;
+        };
+        if (isPrivateName(fn_name)) {
+            const requester_dir = self.moduleDirForFile(loc.file);
+            if (!std.mem.eql(u8, requester_dir, module_dir)) {
+                try self.addPrivateMemberDiag(loc, "function", fn_name);
+                return error.Reported;
+            }
+        }
+
+        var best: ?*sg.FunctionDeclaration = null;
+        var best_score: u32 = std.math.maxInt(u32);
+        var ambiguous = false;
+
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr(fn_name)) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (cand.origin_kind != .declared) continue;
+                    if (!std.mem.startsWith(u8, cand.location.file, module_dir)) continue;
+                    if (!(try self.functionIsVisible(cand, loc.file))) continue;
+                    if (!self.callInputMatchesDispatch(&cand.input, input_te, s)) continue;
+
+                    const score = self.callInputSpecificityScore(&cand.input, input_te, s);
+                    if (best == null or score < best_score) {
+                        best = cand;
+                        best_score = score;
+                        ambiguous = false;
+                    } else if (score == best_score) {
+                        ambiguous = true;
+                    }
+                }
+            }
+        }
+
+        if (ambiguous) {
+            try self.diags.add(loc, .semantic, "module-qualified call '{s}.{s}' is ambiguous", .{ module_name, fn_name });
+            return error.Reported;
+        }
+        return best;
+    }
+
+    fn resolveVisibleDeclaredOverloadMaybe(
+        self: *Semantizer,
+        fn_name: []const u8,
+        input_te: typ.TypedExpr,
+        s: *Scope,
+        loc: tok.Location,
+    ) SemErr!?*sg.FunctionDeclaration {
+        var best: ?*sg.FunctionDeclaration = null;
+        var best_score: u32 = std.math.maxInt(u32);
+        var ambiguous = false;
+        var hidden_private_match = false;
+
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr(fn_name)) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (cand.origin_kind != .declared) continue;
+                    if (!self.callInputMatchesDispatch(&cand.input, input_te, s)) continue;
+                    if (!(try self.functionMatchesVisibilityFilter(cand, loc.file, null))) {
+                        hidden_private_match = true;
+                        continue;
+                    }
+
+                    const score = self.callInputSpecificityScore(&cand.input, input_te, s);
+                    if (best == null or score < best_score) {
+                        best = cand;
+                        best_score = score;
+                        ambiguous = false;
+                    } else if (score == best_score) {
+                        ambiguous = true;
+                    }
+                }
+            }
+        }
+
+        if (best == null and hidden_private_match and isPrivateName(fn_name)) {
+            try self.addPrivateMemberDiag(loc, "function", fn_name);
+            return error.Reported;
+        }
+        if (ambiguous) return error.AmbiguousOverload;
+        return best;
     }
 
     fn buildNamedPipeInput(
@@ -7592,7 +7714,12 @@ pub const Semantizer = struct {
                         best_score = score;
                         ambiguous = false;
                     } else if (score == best_score) {
-                        ambiguous = true;
+                        if (self.preferCandidateOnEqualSpecificity(best.?, cand)) {
+                            best = cand;
+                            ambiguous = false;
+                        } else if (!self.preferCandidateOnEqualSpecificity(cand, best.?)) {
+                            ambiguous = true;
+                        }
                     }
                 }
             }
@@ -7645,7 +7772,12 @@ pub const Semantizer = struct {
                         best_score = score;
                         ambiguous = false;
                     } else if (score == best_score) {
-                        ambiguous = true;
+                        if (self.preferCandidateOnEqualSpecificity(best.?, cand)) {
+                            best = cand;
+                            ambiguous = false;
+                        } else if (!self.preferCandidateOnEqualSpecificity(cand, best.?)) {
+                            ambiguous = true;
+                        }
                     }
                 }
             }
@@ -8824,12 +8956,8 @@ pub const Semantizer = struct {
         }
         if (!self.callInputMatchesDispatch(in_struct_ptr, call_input, s)) return null;
 
-        if (s.functions.getPtr(name)) |fns| {
-            for (fns.items) |cand| {
-                if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = in_struct_ptr })) {
-                    return cand;
-                }
-            }
+        if (try self.findExistingFunctionExactInputInModule(name, in_struct_ptr, tmpl.location.file, s)) |existing| {
+            return existing;
         }
 
         const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, subst);
@@ -8839,6 +8967,7 @@ pub const Semantizer = struct {
             .id = self.freshFunctionId(),
             .name = tmpl.name,
             .location = tmpl.location,
+            .origin_kind = .generic_instantiation,
             .is_once = false,
             .input = in_struct_ptr.*,
             .output = out_struct_ptr.*,
@@ -8893,6 +9022,31 @@ pub const Semantizer = struct {
         try self.root_list.append(node);
         self.clearDeferred(&child);
         return fn_ptr;
+    }
+
+    fn findExistingFunctionExactInputInModule(
+        self: *Semantizer,
+        name: []const u8,
+        input: *const sg.StructType,
+        module_file: []const u8,
+        s: *Scope,
+    ) !?*sg.FunctionDeclaration {
+        _ = self;
+        const module_dir = std.fs.path.dirname(module_file) orelse ".";
+
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr(name)) |fns| {
+                for (fns.items) |cand| {
+                    if (!std.mem.startsWith(u8, cand.location.file, module_dir)) continue;
+                    if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = input })) {
+                        return cand;
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     pub fn instantiateGenericTypeNamed(

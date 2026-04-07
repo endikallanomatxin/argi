@@ -1924,6 +1924,12 @@ test "feature_tests/modules/23_imported_abstract_monomorphization" {
     try runExpect(test_path, 3);
 }
 
+test "feature_tests/modules/24_imported_generic_abstract_dispatch_prefers_concrete" {
+    const test_path = "tests/feature_tests/modules/24_imported_generic_abstract_dispatch_prefers_concrete";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 2);
+}
+
 test "feature_tests/control_flow/03_for_array" {
     const test_path = "tests/feature_tests/control_flow/03_for_array";
     try expectSuccessfulBuild(test_path);
