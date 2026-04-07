@@ -128,6 +128,15 @@ fn printSemantizingTimings(timings: semantizer_mod.Semantizer.SemantizeTimings) 
     std.debug.print("  semantizing total:     {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.total())) / 1_000_000.0});
 }
 
+fn dumpDiagnosticsOrWarn(
+    diagnostics: *diag.Diagnostics,
+    limit: usize,
+) void {
+    diagnostics.dumpWithLimit(limit) catch |err| {
+        std.debug.print("failed to print diagnostics: {s}\n", .{@errorName(err)});
+    };
+}
+
 pub fn resolveBuildModuleDir(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     if (std.fs.cwd().openDir(path, .{})) |opened_dir| {
         var dir = opened_dir;
@@ -212,7 +221,7 @@ pub fn compileTarget(target_path: []const u8, flags: BuildFlags, options: Compil
     pipeline.tokenizeFiles(files.items) catch {
         timings.tokenize_ns = elapsedSince(tokenize_start);
         if (flags.show_token_list) printTokenList(pipeline.tokens.items);
-        diagnostics.dumpWithLimit(if (flags.show_cascade) std.math.maxInt(usize) else 1) catch {};
+        dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
         return error.CompilationFailed;
     };
     timings.tokenize_ns = elapsedSince(tokenize_start);
@@ -225,7 +234,7 @@ pub fn compileTarget(target_path: []const u8, flags: BuildFlags, options: Compil
         if (pipeline.syntax_ctx) |*syntax_ctx| {
             if (flags.show_syntax_tree) syntax_ctx.printST();
         }
-        diagnostics.dumpWithLimit(if (flags.show_cascade) std.math.maxInt(usize) else 1) catch {};
+        dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
         return error.CompilationFailed;
     };
     timings.syntax_ns = elapsedSince(syntax_start);
@@ -241,7 +250,7 @@ pub fn compileTarget(target_path: []const u8, flags: BuildFlags, options: Compil
         if (pipeline.sem_ctx) |*semantizer_ctx| {
             if (flags.show_semantic_graph) semantizer_ctx.printSG();
         }
-        diagnostics.dumpWithLimit(if (flags.show_cascade) std.math.maxInt(usize) else 1) catch {};
+        dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
         return error.CompilationFailed;
     };
     timings.semantizing_ns = elapsedSince(semantizing_start);
@@ -255,20 +264,23 @@ pub fn compileTarget(target_path: []const u8, flags: BuildFlags, options: Compil
         if (pipeline.sem_ctx) |*semantizer_ctx| {
             if (flags.show_semantic_graph) semantizer_ctx.printSG();
         }
-        diagnostics.dumpWithLimit(if (flags.show_cascade) std.math.maxInt(usize) else 1) catch {};
+        dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
         return error.CompilationFailed;
     }
 
     // 7. Generación de código ──────────────────────────────────────────────
     const codegen_start = std.time.nanoTimestamp();
-    var gen = codegen.CodeGenerator.init(&allocator, sg, &diagnostics, options.codegen_options) catch return;
+    var gen = codegen.CodeGenerator.init(&allocator, sg, &diagnostics, options.codegen_options) catch |err| {
+        std.debug.print("failed to initialize codegen: {s}\n", .{@errorName(err)});
+        return err;
+    };
     const module = gen.generate() catch {
         timings.codegen_ns = elapsedSince(codegen_start);
         if (flags.show_token_list) printTokenList(pipeline.tokens.items);
         if (pipeline.sem_ctx) |*semantizer_ctx| {
             if (flags.show_semantic_graph) semantizer_ctx.printSG();
         }
-        diagnostics.dumpWithLimit(if (flags.show_cascade) std.math.maxInt(usize) else 1) catch {};
+        dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
         return error.CompilationFailed;
     };
     timings.codegen_ns = elapsedSince(codegen_start);
