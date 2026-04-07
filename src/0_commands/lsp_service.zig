@@ -11,6 +11,8 @@ const semantizer = @import("../4_semantics/semantizer.zig");
 const typ = @import("../4_semantics/types.zig");
 const frontend = @import("frontend_pipeline.zig");
 
+const log = std.log.scoped(.lsp_service);
+
 // Token types legend indices
 const TOKEN_INDEX = struct {
     pub const namespace: u32 = 0;
@@ -523,7 +525,10 @@ pub const LanguageService = struct {
         analysis_allocator: *std.mem.Allocator,
         doc: *Document,
     ) !?ModuleAnalysis {
-        const files = self.collectModuleFilesForDocument(analysis_allocator, doc) catch return null;
+        const files = self.collectModuleFilesForDocument(analysis_allocator, doc) catch |err| {
+            log.err("collectModuleFilesForDocument failed for '{s}': {s}", .{ doc.path, @errorName(err) });
+            return null;
+        };
 
         const one_primary = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
         var diagnostics = diag.Diagnostics.init(analysis_allocator, &one_primary);
@@ -533,8 +538,14 @@ pub const LanguageService = struct {
         defer pipeline.deinit();
 
         try pipeline.tokenizeFiles(files);
-        const st_nodes = pipeline.syntax() catch return null;
-        const sg_nodes = pipeline.semantize() catch return null;
+        const st_nodes = pipeline.syntax() catch |err| {
+            log.err("syntaxing failed for '{s}': {s}", .{ doc.path, @errorName(err) });
+            return null;
+        };
+        const sg_nodes = pipeline.semantize() catch |err| {
+            log.err("semantizing failed for '{s}': {s}", .{ doc.path, @errorName(err) });
+            return null;
+        };
 
         var syntax_functions = std.array_list.Managed(SyntaxFunctionDeclRef).init(analysis_allocator.*);
         defer syntax_functions.deinit();
