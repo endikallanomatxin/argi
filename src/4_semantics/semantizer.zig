@@ -5,6 +5,7 @@ const sg = @import("semantic_graph.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 const source_files = @import("../1_base/source_files.zig");
+const log = std.log.scoped(.semantizer);
 
 const typ = @import("types.zig");
 const abs = @import("abstracts.zig");
@@ -275,6 +276,25 @@ pub const Semantizer = struct {
         timings: SemantizeTimings,
     };
 
+    fn ignoreOrLogStagedTopLevelError(self: *Semantizer, n: *const syn.STNode, err: anyerror) void {
+        _ = self;
+        switch (err) {
+            error.Reported, error.UnknownType, error.SymbolNotFound => return,
+            else => {},
+        }
+
+        log.warn(
+            "staged top-level semantizing of '{s}' failed at {s}:{d}:{d} with {s}",
+            .{
+                @tagName(std.meta.activeTag(n.content)),
+                n.location.file,
+                n.location.line,
+                n.location.column,
+                @errorName(err),
+            },
+        );
+    }
+
     const FunctionSemantizeMode = enum {
         full,
         interface_only,
@@ -314,7 +334,9 @@ pub const Semantizer = struct {
             if (self.topLevelNodeIsCallable(n)) continue;
             if (n.content == .test_declaration and !self.options.include_tests) continue;
             self.current_top_node = n;
-            _ = self.visitNode(n.*, &global) catch {};
+            _ = self.visitNode(n.*, &global) catch |err| {
+                self.ignoreOrLogStagedTopLevelError(n, err);
+            };
         }
 
         var support_round: u32 = 0;
@@ -354,7 +376,9 @@ pub const Semantizer = struct {
         for (self.st_nodes) |n| {
             if (!self.topLevelNodeIsCallable(n)) continue;
             self.current_top_node = n;
-            _ = self.visitNode(n.*, &global) catch {};
+            _ = self.visitNode(n.*, &global) catch |err| {
+                self.ignoreOrLogStagedTopLevelError(n, err);
+            };
         }
         self.current_top_node = null;
 
@@ -442,7 +466,9 @@ pub const Semantizer = struct {
         if (self.pending_next.items.len > 0) {
             for (self.pending_next.items) |pn| {
                 self.current_top_node = pn;
-                _ = self.visitNode(pn.*, &global) catch {};
+                _ = self.visitNode(pn.*, &global) catch |err| {
+                    self.ignoreOrLogStagedTopLevelError(pn, err);
+                };
             }
             self.current_top_node = null;
             self.pending_next.items.len = 0;
