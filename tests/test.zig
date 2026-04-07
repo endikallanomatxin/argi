@@ -129,6 +129,19 @@ fn buildExpectFailWithoutNoise(name: []const u8, expected_stderr: []const u8, fo
     try expect(std.mem.indexOf(u8, result.stderr, forbidden_stderr) == null);
 }
 
+fn buildExpectFailExact(name: []const u8, expected_stderr: []const u8) !void {
+    const result = try buildResult(name);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    switch (result.term) {
+        .Exited => |code| try expect(code != 0),
+        else => return error.UnexpectedProcessTermination,
+    }
+
+    try expectEqualStrings(expected_stderr, result.stderr);
+}
+
 fn runExpect(name: []const u8, expected_code: u8) !void {
     const output_path = try outputPathFor(name);
     defer std.testing.allocator.free(output_path);
@@ -1958,10 +1971,14 @@ test "feature_tests/modules/25X_private_choice_option_imported" {
 }
 
 test "feature_tests/modules/26X_module_qualified_ambiguous_overload" {
-    try buildExpectFailWithoutNoise(
+    try buildExpectFailExact(
         "tests/feature_tests/modules/26X_module_qualified_ambiguous_overload",
-        "Possible overloads:\n  - pick (.value: Int32, .left: Int32) -> (.result: Int32)",
-        "CompilationFailed",
+        \\tests/feature_tests/modules/26X_module_qualified_ambiguous_overload/main.rg:4:19: error: module-qualified call 'dep.pick' is ambiguous for arguments (.value: Int32). Possible overloads:
+        \\  - pick (.value: Int32, .left: Int32) -> (.result: Int32)
+        \\  - pick (.value: Int32, .right: Int32) -> (.result: Int32)
+        \\      _ ::= dep.pick(.value = 1)
+        \\                    ^
+        \\
     );
 }
 
