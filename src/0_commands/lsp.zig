@@ -192,7 +192,7 @@ const LanguageServer = struct {
                     if (uri_value == .string) {
                         if (self.service) |*svc| {
                             svc.initialize(uri_value.string) catch |err| {
-                                log.err("service initialize failed: {s}", .{@errorName(err)});
+                                log.err("service initialize failed for root '{s}': {s}", .{ uri_value.string, @errorName(err) });
                             };
                         }
                     }
@@ -229,7 +229,7 @@ const LanguageServer = struct {
 
         if (self.service) |*svc| {
             var diagnostics = svc.openDocument(uri_value.string, path, version, text_value.string) catch |err| {
-                log.err("openDocument failed: {s}", .{@errorName(err)});
+                log.err("openDocument failed for '{s}' ({s}): {s}", .{ uri_value.string, path, @errorName(err) });
                 return;
             };
             defer diagnostics.deinit();
@@ -269,7 +269,7 @@ const LanguageServer = struct {
 
         if (self.service) |*svc| {
             var diagnostics = svc.changeDocument(uri_value.string, path, version, text_value.string) catch |err| {
-                log.err("changeDocument failed: {s}", .{@errorName(err)});
+                log.err("changeDocument failed for '{s}' ({s}): {s}", .{ uri_value.string, path, @errorName(err) });
                 return;
             };
             defer diagnostics.deinit();
