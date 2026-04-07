@@ -568,9 +568,11 @@ pub const CodeGenerator = struct {
     fn mangledNameFor(self: *CodeGenerator, f: *const sem.FunctionDeclaration) ![]u8 {
         var buf = std.array_list.Managed(u8).init(self.allocator.*);
         try buf.appendSlice(f.name);
+        try buf.writer().print("__f{d}", .{f.id});
         try buf.appendSlice("__in_");
         try self.encodeType(&buf, .{ .struct_type = &f.input });
-        // not including output in the mangle for now
+        try buf.appendSlice("__out_");
+        try self.encodeType(&buf, .{ .struct_type = &f.output });
         return try buf.toOwnedSlice();
     }
 
@@ -842,12 +844,17 @@ pub const CodeGenerator = struct {
         });
 
         // 5) almacenar valor inicial
-        if (init_tv) |tv| {
+        if (init_tv) |tv_raw| {
+            var tv = tv_raw;
             // Global initializers must be constant; for now, only allow none
             if (self.current_scope.parent == null) {
                 // Non-constant global init not supported yet; ignore for now
                 // (could enhance by constant-folding later)
                 return;
+            }
+
+            if (tv.type_ref != llvm_decl_ty) {
+                tv = try self.coerceValueForStorage(tv, b.ty, llvm_decl_ty);
             }
 
             if (tv.type_ref == llvm_decl_ty) {
@@ -856,6 +863,40 @@ pub const CodeGenerator = struct {
                 return CodegenError.InvalidType;
             }
         }
+    }
+
+    fn coerceValueForStorage(
+        self: *CodeGenerator,
+        tv: TypedValue,
+        dest_sem_ty: sem.Type,
+        dest_ty_ref: llvm.c.LLVMTypeRef,
+    ) !TypedValue {
+        const src_sem_ty = tv.sem_type orelse return tv;
+        if (!sem_types.typesStructurallyEqual(src_sem_ty, dest_sem_ty)) return tv;
+
+        if (src_sem_ty == .struct_type and dest_sem_ty == .struct_type) {
+            const src_fields = src_sem_ty.struct_type.fields;
+            const dest_fields = dest_sem_ty.struct_type.fields;
+            if (src_fields.len != dest_fields.len) return tv;
+
+            // Semantizing already decided these types are structurally equal.
+            // Rebuild the aggregate under the destination LLVM type so stores
+            // and struct literals do not depend on nominally identical layouts
+            // sharing the exact same LLVM struct handle.
+            var agg = c.LLVMGetUndef(dest_ty_ref);
+            for (src_fields, 0..) |_, idx| {
+                const extracted = c.LLVMBuildExtractValue(self.builder, tv.value_ref, @intCast(idx), "coerce.struct.extract");
+                agg = c.LLVMBuildInsertValue(self.builder, agg, extracted, @intCast(idx), "coerce.struct.insert");
+            }
+
+            return .{
+                .value_ref = agg,
+                .type_ref = dest_ty_ref,
+                .sem_type = dest_sem_ty,
+            };
+        }
+
+        return tv;
     }
 
     fn genBindingUse(self: *CodeGenerator, b: *sem.BindingDeclaration) !TypedValue {
@@ -1919,10 +1960,22 @@ pub const CodeGenerator = struct {
         var vals = try self.allocator.alloc(TypedValue, cnt);
         defer self.allocator.free(vals);
 
+        const sem_fields = switch (sl.ty) {
+            .struct_type => |st| st.fields,
+            .builtin => |builtin| switch (builtin) {
+                .Void => &.{},
+                else => return CodegenError.InvalidType,
+            },
+            else => return CodegenError.InvalidType,
+        };
+
         for (sl.fields, 0..) |f, i| {
             const field_tv_opt = try self.visitNode(f.value);
-            const field_tv = field_tv_opt orelse return CodegenError.ValueNotFound;
+            var field_tv = field_tv_opt orelse return CodegenError.ValueNotFound;
             const field_ll_ty = c.LLVMStructGetTypeAtIndex(ty, @intCast(i));
+            if (field_tv.type_ref != field_ll_ty) {
+                field_tv = try self.coerceValueForStorage(field_tv, sem_fields[i].ty, field_ll_ty);
+            }
             if (field_tv.type_ref != field_ll_ty) return CodegenError.InvalidType;
             vals[i] = field_tv;
         }

@@ -182,6 +182,7 @@ pub const Semantizer = struct {
     pending_function_bodies: std.array_list.Managed(PendingFunctionBody),
     signature_type_cache: std.AutoHashMap(SignatureTypeCacheKey, sg.Type),
     synthetic_name_counter: u32 = 0,
+    next_function_id: u32 = 1,
     next_choice_option_id: u32 = 1,
     next_inferred_choice_identity_id: u32 = 1,
     function_reach_stack: std.array_list.Managed(ReachFunctionContext),
@@ -204,6 +205,12 @@ pub const Semantizer = struct {
             .signature_type_cache = std.AutoHashMap(SignatureTypeCacheKey, sg.Type).init(alloc.*),
             .function_reach_stack = std.array_list.Managed(ReachFunctionContext).init(alloc.*),
         };
+    }
+
+    fn freshFunctionId(self: *Semantizer) u32 {
+        const id = self.next_function_id;
+        self.next_function_id += 1;
+        return id;
     }
 
     fn topLevelNodeIsTest(self: *Semantizer, n: *const syn.STNode) bool {
@@ -743,6 +750,7 @@ pub const Semantizer = struct {
 
         const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
         fn_ptr.* = .{
+            .id = self.freshFunctionId(),
             .name = decl.name.string,
             .location = loc,
             .is_once = decl.is_once,
@@ -4452,6 +4460,7 @@ pub const Semantizer = struct {
 
             const created = try self.allocator.create(sg.FunctionDeclaration);
             created.* = .{
+                .id = self.freshFunctionId(),
                 .name = f.name.string,
                 .location = loc,
                 .is_once = f.is_once,
@@ -4668,6 +4677,7 @@ pub const Semantizer = struct {
 
             const created = try self.allocator.create(sg.FunctionDeclaration);
             created.* = .{
+                .id = self.freshFunctionId(),
                 .name = f.name.string,
                 .location = loc,
                 .is_once = f.is_once,
@@ -8826,6 +8836,7 @@ pub const Semantizer = struct {
 
         const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
         fn_ptr.* = .{
+            .id = self.freshFunctionId(),
             .name = tmpl.name,
             .location = tmpl.location,
             .is_once = false,

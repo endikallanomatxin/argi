@@ -336,6 +336,7 @@ pub const TypeDeclaration = struct {
 };
 
 pub const FunctionDeclaration = struct {
+    id: u32,
     name: []const u8,
     location: tok.Location,
     is_once: bool,
