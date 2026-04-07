@@ -6419,6 +6419,10 @@ pub const Semantizer = struct {
 
         const tv_in = try self.visitNode(call.input.*, s);
         try self.checkCallBindingExclusivity(call.callee, tv_in, call.input.*.location);
+        // `testing.expect_error(...)` is a dedicated builtin in v1 instead of a
+        // generic helper over arbitrary `Errable` values. That keeps native
+        // testing independent from the generic/choice-heavy call paths that
+        // previously made this helper brittle.
         if (call.module_qualifier != null and std.mem.eql(u8, call.module_qualifier.?, "testing") and std.mem.eql(u8, call.callee, "expect_error")) {
             return try self.handleTestingExpectErrorBuiltin(call, tv_in, s);
         }
@@ -11778,6 +11782,9 @@ fn typeCanHaveVisibleAutoDeinit(ty: sg.Type) bool {
     // structural. Restricting visible deinit lookup to nominal identities keeps
     // the semantics aligned with the language model and avoids repeating
     // expensive nominal lookup work for anonymous locals inside function bodies.
+    // Current timing data still shows most `semantizing` cost concentrated in
+    // function bodies, especially local declarations and cleanup-sensitive work,
+    // so this remains a hot path worth keeping cheap and explicit.
     return switch (ty) {
         .struct_type => |st| st.identity != null,
         .choice_type => |ct| ct.identity != null,
