@@ -575,6 +575,13 @@ test "feature_tests/basics/13_core_and_libc" {
     try run(test_path);
 }
 
+test "feature_tests/basics/17X_extern_call_requires_exact_argument_types" {
+    try buildExpectFail(
+        "tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types",
+        "no overload of 'putchar' accepts arguments (.character: UInt16)",
+    );
+}
+
 test "feature_tests/polymorphism/03_generic_functions" {
     const test_path = "tests/feature_tests/polymorphism/03_generic_functions";
     try expectSuccessfulBuild(test_path);
