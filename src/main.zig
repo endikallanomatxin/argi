@@ -5,6 +5,13 @@ const lsp_cmd = @import("0_commands/lsp.zig");
 const run_cmd = @import("0_commands/run.zig");
 const test_cmd = @import("0_commands/test.zig");
 
+fn exitCommandError(prefix: []const u8, err: anyerror) noreturn {
+    if (err != error.CompilationFailed) {
+        std.debug.print("{s}: {s}\n", .{ prefix, @errorName(err) });
+    }
+    std.process.exit(1);
+}
+
 pub fn main() !void {
     const args = std.process.argsAlloc(std.heap.page_allocator) catch return;
     defer std.process.argsFree(std.heap.page_allocator, args);
@@ -39,8 +46,7 @@ pub fn main() !void {
         }
         const build_args = args[2..];
         build_cmd.compile(build_args) catch |err| {
-            std.debug.print("Build error: {any}\n", .{err});
-            return err;
+            exitCommandError("Build error", err);
         };
     } else if (std.mem.eql(u8, command, "init")) {
         if (args.len < 4) {
@@ -48,19 +54,19 @@ pub fn main() !void {
             return;
         }
         init_cmd.run(args[2..4]) catch |err| {
-            std.debug.print("Init error: {any}\n", .{err});
-            return err;
+            exitCommandError("Init error", err);
         };
     } else if (std.mem.eql(u8, command, "lsp")) {
-        try lsp_cmd.start();
+        lsp_cmd.start() catch |err| {
+            exitCommandError("LSP error", err);
+        };
     } else if (std.mem.eql(u8, command, "run")) {
         if (args.len < 3) {
             std.debug.print("Error: module directory required\n", .{});
             return;
         }
         const exit_code = run_cmd.run(args[2..]) catch |err| {
-            std.debug.print("Run error: {any}\n", .{err});
-            return err;
+            exitCommandError("Run error", err);
         };
         std.process.exit(exit_code);
     } else if (std.mem.eql(u8, command, "test")) {
@@ -69,8 +75,7 @@ pub fn main() !void {
             return;
         }
         const exit_code = test_cmd.run(args[2..]) catch |err| {
-            std.debug.print("Test error: {any}\n", .{err});
-            return err;
+            exitCommandError("Test error", err);
         };
         std.process.exit(exit_code);
     } else {

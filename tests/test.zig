@@ -115,6 +115,20 @@ fn buildExpectFail(name: []const u8, expected_stderr: []const u8) !void {
     try expect(std.mem.indexOf(u8, result.stderr, expected_stderr) != null);
 }
 
+fn buildExpectFailWithoutNoise(name: []const u8, expected_stderr: []const u8, forbidden_stderr: []const u8) !void {
+    const result = try buildResult(name);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    switch (result.term) {
+        .Exited => |code| try expect(code != 0),
+        else => return error.UnexpectedProcessTermination,
+    }
+
+    try expect(std.mem.indexOf(u8, result.stderr, expected_stderr) != null);
+    try expect(std.mem.indexOf(u8, result.stderr, forbidden_stderr) == null);
+}
+
 fn runExpect(name: []const u8, expected_code: u8) !void {
     const output_path = try outputPathFor(name);
     defer std.testing.allocator.free(output_path);
@@ -1944,9 +1958,10 @@ test "feature_tests/modules/25X_private_choice_option_imported" {
 }
 
 test "feature_tests/modules/26X_module_qualified_ambiguous_overload" {
-    try buildExpectFail(
+    try buildExpectFailWithoutNoise(
         "tests/feature_tests/modules/26X_module_qualified_ambiguous_overload",
         "Possible overloads:\n  - pick (.value: Int32, .left: Int32) -> (.result: Int32)",
+        "CompilationFailed",
     );
 }
 
