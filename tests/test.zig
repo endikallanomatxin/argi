@@ -1671,6 +1671,12 @@ test "feature_tests/text/19_string_defer_growing_cleanup" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/text/21_format_baseline" {
+    const test_path = "tests/feature_tests/text/21_format_baseline";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/types/33_error_propagation_statement_void" {
     const test_path = "tests/feature_tests/types/33_error_propagation_statement_void";
     try expectSuccessfulBuild(test_path);
