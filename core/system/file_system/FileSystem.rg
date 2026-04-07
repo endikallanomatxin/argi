@@ -31,6 +31,13 @@ exists(
     ok = exists(.self = self, .path = c_path.text).ok
 }
 
+exists(
+    .self: &FileSystem,
+    .path: &Path,
+) -> (.ok: Bool) := {
+    ok = exists(.self = self, .path = &path&.text).ok
+}
+
 remove(
     .self: &FileSystem,
     .path: CString,
@@ -58,6 +65,14 @@ remove(
 ) -> (.result: Errable#(.t: Bool, .reasons: (..path_remove_failed))) := {
     c_path ::= as_c_string(.self = path, .allocator = allocator)
     result = remove(.self = self, .path = c_path.text)
+}
+
+remove(
+    .self: &FileSystem,
+    .path: &Path,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.result: Errable#(.t: Bool, .reasons: (..path_remove_failed))) := {
+    result = remove(.self = self, .path = &path&.text)
 }
 
 rename(
@@ -95,6 +110,15 @@ rename(
     result = rename(.self = self, .from = c_from.text, .to = c_to.text)
 }
 
+rename(
+    .self: &FileSystem,
+    .from: &Path,
+    .to: &Path,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.result: Errable#(.t: Bool, .reasons: (..path_rename_failed))) := {
+    result = rename(.self = self, .from = &from&.text, .to = &to&.text)
+}
+
 
 open_read(
     .self: &FileSystem,
@@ -124,6 +148,14 @@ open_read(
 ) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
     c_path ::= as_c_string(.self = path, .allocator = allocator)
     result = open_read(.self = self, .path = c_path.text)
+}
+
+open_read(
+    .self: &FileSystem,
+    .path: &Path,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+    result = open_read(.self = self, .path = &path&.text)
 }
 
 open_write(
@@ -156,6 +188,14 @@ open_write(
     result = open_write(.self = self, .path = c_path.text)
 }
 
+open_write(
+    .self: &FileSystem,
+    .path: &Path,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+    result = open_write(.self = self, .path = &path&.text)
+}
+
 open_append(
     .self: &FileSystem,
     .path: CString,
@@ -184,6 +224,14 @@ open_append(
 ) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
     c_path ::= as_c_string(.self = path, .allocator = allocator)
     result = open_append(.self = self, .path = c_path.text)
+}
+
+open_append(
+    .self: &FileSystem,
+    .path: &Path,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
+    result = open_append(.self = self, .path = &path&.text)
 }
 
 read_file(
@@ -261,6 +309,14 @@ read_file(
     result = read_file(.self = self, .path = c_path.text, .allocator = allocator)
 }
 
+read_file(
+    .self: &FileSystem,
+    .path: &Path,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory))) := {
+    result = read_file(.self = self, .path = &path&.text, .allocator = allocator)
+}
+
 write_file(
     .self: &FileSystem,
     .path: CString,
@@ -329,4 +385,13 @@ write_file(
 ) -> (.result: Errable#(.t: Void, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed))) := {
     c_path ::= as_c_string(.self = path, .allocator = allocator)
     result = write_file(.self = self, .path = c_path.text, .text = text)
+}
+
+write_file(
+    .self: &FileSystem,
+    .path: &Path,
+    .text: String,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.result: Errable#(.t: Void, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed))) := {
+    result = write_file(.self = self, .path = &path&.text, .text = text)
 }

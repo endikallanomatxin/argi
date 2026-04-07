@@ -1495,6 +1495,12 @@ test "feature_tests/system/26_file_system_error_reasons" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/system/27_path_basics" {
+    const test_path = "tests/feature_tests/system/27_path_basics";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/polymorphism/20_generic_abstract_bound_syntax" {
     const test_path = "tests/feature_tests/polymorphism/20_generic_abstract_bound_syntax";
     try expectSuccessfulBuild(test_path);
