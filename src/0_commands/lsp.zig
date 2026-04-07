@@ -41,6 +41,17 @@ const LanguageServer = struct {
         if (self.service) |*svc| svc.deinit();
     }
 
+    fn respondInternalErrorOrLog(
+        self: *LanguageServer,
+        writer: anytype,
+        id: json.Value,
+        message: []const u8,
+    ) void {
+        self.respondInternalError(writer, id, message) catch |err| {
+            log.err("failed to send internal error response '{s}': {s}", .{ message, @errorName(err) });
+        };
+    }
+
     pub fn run(self: *LanguageServer) !void {
         var reader = std.fs.File.stdin().deprecatedReader();
         var writer = std.fs.File.stdout().deprecatedWriter();
@@ -73,7 +84,7 @@ const LanguageServer = struct {
                 if (id_value) |id| {
                     self.handleInitialize(&writer, id, params_value) catch |err| {
                         log.err("initialize failed: {s}", .{@errorName(err)});
-                        self.respondInternalError(&writer, id, "initialize failed") catch {};
+                        self.respondInternalErrorOrLog(&writer, id, "initialize failed");
                     };
                 }
             } else if (std.mem.eql(u8, method, "initialized")) {
@@ -93,44 +104,44 @@ const LanguageServer = struct {
             } else if (std.mem.eql(u8, method, "shutdown")) {
                 if (id_value) |id| self.handleShutdown(&writer, id) catch |err| {
                     log.err("shutdown failed: {s}", .{@errorName(err)});
-                    self.respondInternalError(&writer, id, "shutdown failed") catch {};
+                    self.respondInternalErrorOrLog(&writer, id, "shutdown failed");
                 };
             } else if (std.mem.eql(u8, method, "exit")) {
                 break;
             } else if (std.mem.eql(u8, method, "textDocument/semanticTokens/full")) {
                 if (id_value) |id| self.handleSemanticTokensFull(&writer, id, params_value) catch |err| {
                     log.err("semanticTokens/full failed: {s}", .{@errorName(err)});
-                    self.respondInternalError(&writer, id, "semantic tokens failed") catch {};
+                    self.respondInternalErrorOrLog(&writer, id, "semantic tokens failed");
                 };
             } else if (std.mem.eql(u8, method, "textDocument/semanticTokens/range")) {
                 if (id_value) |id| self.handleSemanticTokensRange(&writer, id, params_value) catch |err| {
                     log.err("semanticTokens/range failed: {s}", .{@errorName(err)});
-                    self.respondInternalError(&writer, id, "semantic tokens failed") catch {};
+                    self.respondInternalErrorOrLog(&writer, id, "semantic tokens failed");
                 };
             } else if (std.mem.eql(u8, method, "textDocument/hover")) {
                 if (id_value) |id| self.handleHover(&writer, id, params_value) catch |err| {
                     log.err("hover failed: {s}", .{@errorName(err)});
-                    self.respondInternalError(&writer, id, "hover failed") catch {};
+                    self.respondInternalErrorOrLog(&writer, id, "hover failed");
                 };
             } else if (std.mem.eql(u8, method, "textDocument/definition")) {
                 if (id_value) |id| self.handleDefinition(&writer, id, params_value) catch |err| {
                     log.err("definition failed: {s}", .{@errorName(err)});
-                    self.respondInternalError(&writer, id, "definition failed") catch {};
+                    self.respondInternalErrorOrLog(&writer, id, "definition failed");
                 };
             } else if (std.mem.eql(u8, method, "textDocument/references")) {
                 if (id_value) |id| self.handleReferences(&writer, id, params_value) catch |err| {
                     log.err("references failed: {s}", .{@errorName(err)});
-                    self.respondInternalError(&writer, id, "references failed") catch {};
+                    self.respondInternalErrorOrLog(&writer, id, "references failed");
                 };
             } else if (std.mem.eql(u8, method, "textDocument/prepareRename")) {
                 if (id_value) |id| self.handlePrepareRename(&writer, id, params_value) catch |err| {
                     log.err("prepareRename failed: {s}", .{@errorName(err)});
-                    self.respondInternalError(&writer, id, "prepare rename failed") catch {};
+                    self.respondInternalErrorOrLog(&writer, id, "prepare rename failed");
                 };
             } else if (std.mem.eql(u8, method, "textDocument/rename")) {
                 if (id_value) |id| self.handleRename(&writer, id, params_value) catch |err| {
                     log.err("rename failed: {s}", .{@errorName(err)});
-                    self.respondInternalError(&writer, id, "rename failed") catch {};
+                    self.respondInternalErrorOrLog(&writer, id, "rename failed");
                 };
             } else {
                 // Método desconocido -> ignorar
