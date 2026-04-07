@@ -1061,6 +1061,12 @@ test "feature_tests/collections/16_dynamic_array_iterator_manual" {
     try run(test_path);
 }
 
+test "feature_tests/collections/17_string_hash_map_baseline" {
+    const test_path = "tests/feature_tests/collections/17_string_hash_map_baseline";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/control_flow/11_range_default_start_with_step" {
     const test_path = "tests/feature_tests/control_flow/11_range_default_start_with_step";
     try expectSuccessfulBuild(test_path);
