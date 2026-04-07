@@ -1943,6 +1943,13 @@ test "feature_tests/modules/25X_private_choice_option_imported" {
     );
 }
 
+test "feature_tests/modules/26X_module_qualified_ambiguous_overload" {
+    try buildExpectFail(
+        "tests/feature_tests/modules/26X_module_qualified_ambiguous_overload",
+        "Possible overloads:\n  - pick (.value: Int32, .left: Int32) -> (.result: Int32)",
+    );
+}
+
 test "feature_tests/control_flow/03_for_array" {
     const test_path = "tests/feature_tests/control_flow/03_for_array";
     try expectSuccessfulBuild(test_path);

@@ -7030,7 +7030,7 @@ pub const Semantizer = struct {
         }
 
         if (ambiguous) {
-            try self.diags.add(loc, .semantic, "module-qualified call '{s}.{s}' is ambiguous", .{ module_name, fn_name });
+            try self.addAmbiguousModuleFunctionDiagnostic(module_name, module_dir, fn_name, input_te.ty, s, loc);
             return error.Reported;
         }
         return best;
@@ -7764,12 +7764,7 @@ pub const Semantizer = struct {
             return error.Reported;
         }
         if (ambiguous) {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "module-qualified call '{s}.{s}' is ambiguous",
-                .{ module_name, fn_name },
-            );
+            try self.addAmbiguousModuleFunctionDiagnostic(module_name, module_dir, fn_name, input_te.ty, s, loc);
             return error.Reported;
         }
         return best.?;
@@ -8092,6 +8087,37 @@ pub const Semantizer = struct {
             loc,
             .semantic,
             "module '{s}' has function '{s}', but no overload matches the provided arguments",
+            .{ module_name, fn_name },
+        );
+    }
+
+    fn addAmbiguousModuleFunctionDiagnostic(
+        self: *Semantizer,
+        module_name: []const u8,
+        module_dir: []const u8,
+        fn_name: []const u8,
+        maybe_input_ty: ?sg.Type,
+        s: *Scope,
+        loc: tok.Location,
+    ) !void {
+        if (maybe_input_ty) |input_ty| {
+            if (input_ty == .struct_type) {
+                const sigs = try self.collectModuleSignatureText(module_dir, fn_name, input_ty.struct_type, s, loc);
+                defer sigs.deinit();
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "module-qualified call '{s}.{s}' is ambiguous for arguments {s}. Possible overloads:\n{s}",
+                    .{ module_name, fn_name, sigs.actual.bytes, sigs.available.bytes },
+                );
+                return;
+            }
+        }
+
+        try self.diags.add(
+            loc,
+            .semantic,
+            "module-qualified call '{s}.{s}' is ambiguous",
             .{ module_name, fn_name },
         );
     }
