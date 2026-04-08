@@ -19,6 +19,7 @@ pub const CodegenError = error{
     CompilationFailed,
     ExpressionNotFound,
     InvalidType,
+    Reported,
 };
 
 // ────────────────────────────────────────────── helpers ──
@@ -188,6 +189,7 @@ pub const CodeGenerator = struct {
 
         for (self.ast) |n| {
             _ = self.visitNode(n) catch |err| {
+                if (err == CodegenError.Reported) return CodegenError.CompilationFailed;
                 try self.diags.add(n.location, .codegen, "code generation error: {s}", .{@errorName(err)});
                 return CodegenError.CompilationFailed;
             };
@@ -281,10 +283,12 @@ pub const CodeGenerator = struct {
             .binding_declaration => |b| {
                 if (self.current_scope.parent != null and self.current_scope.lookupLocal(b.name) != null)
                     return self.genBindingUse(b) catch |e| {
+                        if (e == CodegenError.Reported) return e;
                         try self.diags.add(n.location, .codegen, "error generating binding {s}: {s}", .{ b.name, @errorName(e) });
                         return e;
                     };
                 self.genBindingDecl(b) catch |e| {
+                    if (e == CodegenError.Reported) return e;
                     try self.diags.add(n.location, .codegen, "error generating binding declaration {s}: {s}", .{ b.name, @errorName(e) });
                     return e;
                 };
@@ -927,9 +931,35 @@ pub const CodeGenerator = struct {
 
         const storage = self.binding_storage.get(b) orelse return CodegenError.SymbolNotFound;
         if (b.initialization) |init_node| {
-            var init_tv = try self.genGlobalConstant(init_node);
+            var init_tv = self.genGlobalConstant(init_node) catch |err| switch (err) {
+                CodegenError.InvalidType,
+                CodegenError.ValueNotFound,
+                CodegenError.ExpressionNotFound,
+                CodegenError.SymbolNotFound,
+                => {
+                    try self.diags.add(
+                        b.location,
+                        .codegen,
+                        "module-level binding '{s}' must use a constant initializer for now",
+                        .{b.name},
+                    );
+                    return CodegenError.Reported;
+                },
+                else => return err,
+            };
             if (init_tv.type_ref != storage.type_ref) {
-                init_tv = try self.coerceGlobalConstant(init_tv, storage.type_ref);
+                init_tv = self.coerceGlobalConstant(init_tv, storage.type_ref) catch |err| switch (err) {
+                    CodegenError.InvalidType => {
+                        try self.diags.add(
+                            b.location,
+                            .codegen,
+                            "module-level binding '{s}' must use a constant initializer for now",
+                            .{b.name},
+                        );
+                        return CodegenError.Reported;
+                    },
+                    else => return err,
+                };
             }
             c.LLVMSetInitializer(storage.ref, init_tv.value_ref);
             if (self.global_scope.lookupLocal(b.name)) |sym| sym.initialized = true;

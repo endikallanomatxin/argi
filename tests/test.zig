@@ -2227,6 +2227,16 @@ test "feature_tests/modules/29X_imported_abstract_ambiguous_overload" {
     );
 }
 
+test "feature_tests/modules/30X_nonconstant_module_binding_initialization" {
+    try buildExpectFailExact(
+        "tests/feature_tests/modules/30X_nonconstant_module_binding_initialization",
+        \\tests/feature_tests/modules/30X_nonconstant_module_binding_initialization/main.rg:5:1: error: module-level binding 'computed' must use a constant initializer for now
+        \\  computed : Int32 = make_value().value
+        \\  ^
+        \\
+    );
+}
+
 test "feature_tests/control_flow/03_for_array" {
     const test_path = "tests/feature_tests/control_flow/03_for_array";
     try expectSuccessfulBuild(test_path);
