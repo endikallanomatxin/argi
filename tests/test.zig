@@ -1993,6 +1993,13 @@ test "feature_tests/modules/26X_module_qualified_ambiguous_overload" {
     );
 }
 
+test "feature_tests/modules/28X_imported_abstract_input_requires_implementation" {
+    try buildExpectFail(
+        "tests/feature_tests/modules/28X_imported_abstract_input_requires_implementation",
+        "type 'Int32' does not implement abstract 'ExampleAbstract' required by parameter '.value' of 'use_value'",
+    );
+}
+
 test "feature_tests/control_flow/03_for_array" {
     const test_path = "tests/feature_tests/control_flow/03_for_array";
     try expectSuccessfulBuild(test_path);

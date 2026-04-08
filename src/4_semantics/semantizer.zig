@@ -6908,6 +6908,9 @@ pub const Semantizer = struct {
                         try self.diags.add(loc, .semantic, "unknown module alias '{s}'", .{module_name});
                         return error.Reported;
                     };
+                    if (try self.addMissingAbstractImplementationDiagnosticMaybeFiltered(call.callee, input_te.ty, s, loc, module_dir)) {
+                        return error.Reported;
+                    }
                     try self.addMissingModuleFunctionDiagnostic(module_name, module_dir, call.callee, input_te.ty, s, loc);
                     return error.Reported;
                 }
@@ -8076,6 +8079,17 @@ pub const Semantizer = struct {
         s: *Scope,
         loc: tok.Location,
     ) !bool {
+        return self.addMissingAbstractImplementationDiagnosticMaybeFiltered(fn_name, input_ty, s, loc, null);
+    }
+
+    fn addMissingAbstractImplementationDiagnosticMaybeFiltered(
+        self: *Semantizer,
+        fn_name: []const u8,
+        input_ty: sg.Type,
+        s: *Scope,
+        loc: tok.Location,
+        module_dir_filter: ?[]const u8,
+    ) !bool {
         if (input_ty != .struct_type) return false;
 
         var cur: ?*Scope = s;
@@ -8083,6 +8097,9 @@ pub const Semantizer = struct {
             if (sc.generic_functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
                     if (tmpl.dispatch_kind != .abstract_contract) continue;
+                    if (module_dir_filter) |module_dir| {
+                        if (!std.mem.startsWith(u8, tmpl.location.file, module_dir)) continue;
+                    }
 
                     var subst = GenericSubst.init(self.allocator);
                     defer subst.deinit();
