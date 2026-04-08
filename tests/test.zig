@@ -1099,8 +1099,14 @@ test "feature_tests/types/20_struct_initializer_without_init" {
 }
 
 test "feature_tests/types/21X_struct_initializer_must_use_visible_init" {
-    const test_path = "tests/feature_tests/types/21X_struct_initializer_must_use_visible_init";
-    try buildExpectFail(test_path, "failed to initialize type 'Point': no visible 'init' overload accepts arguments");
+    try buildExpectFailExact(
+        "tests/feature_tests/types/21X_struct_initializer_must_use_visible_init",
+        \\tests/feature_tests/types/21X_struct_initializer_must_use_visible_init/main.rg:14:19: error: failed to initialize type 'Point': no visible 'init' overload accepts arguments (.x: Int32, .y: Int32). Available overloads:
+        \\  - init (.p: $&Point, .sum: Int32) -> ()
+        \\      point := Point(.x = 1, .y = 2)
+        \\                    ^
+        \\
+    );
 }
 
 test "feature_tests/collections/16_dynamic_array_iterator_manual" {
