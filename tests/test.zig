@@ -719,9 +719,12 @@ test "feature_tests/polymorphism/19_abstract_monomorphization_isolation" {
 }
 
 test "feature_tests/polymorphism/13X_abstract_function_input_requires_implementation" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/polymorphism/13X_abstract_function_input_requires_implementation",
-        "type 'Int32' does not implement abstract 'ExampleAbstract' required by parameter '.value' of 'use_value'",
+        \\tests/feature_tests/polymorphism/13X_abstract_function_input_requires_implementation/main.rg:8:28: error: type 'Int32' does not implement abstract 'ExampleAbstract' required by parameter '.value' of 'use_value'
+        \\      status_code = use_value(.value = 7)
+        \\                             ^
+        \\
     );
 }
 
@@ -1987,9 +1990,12 @@ test "feature_tests/modules/18_private_struct_field_same_module" {
 }
 
 test "feature_tests/modules/19X_private_struct_field_imported" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/modules/19X_private_struct_field_imported",
-        "field '_hidden' is private to its module",
+        \\tests/feature_tests/modules/19X_private_struct_field_imported/main.rg:4:32: error: field '_hidden' is private to its module
+        \\      status_code = point._hidden
+        \\                                 ^
+        \\
     );
 }
 
@@ -2012,9 +2018,12 @@ test "feature_tests/modules/24_imported_generic_abstract_dispatch_prefers_concre
 }
 
 test "feature_tests/modules/25X_private_choice_option_imported" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/modules/25X_private_choice_option_imported",
-        "choice option '_hidden_reason' is private to its module",
+        \\tests/feature_tests/modules/25X_private_choice_option_imported/main.rg:4:10: error: choice option '_hidden_reason' is private to its module
+        \\      dep.._hidden_reason
+        \\           ^
+        \\
     );
 }
 
