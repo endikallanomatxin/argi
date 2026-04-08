@@ -1479,9 +1479,12 @@ test "feature_tests/system/15_once_single_use" {
 }
 
 test "feature_tests/system/16X_once_duplicate_direct" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/system/16X_once_duplicate_direct",
-        "once function 'setup' is consumed more than once from the reachable entrypoint graph",
+        \\tests/feature_tests/system/16X_once_duplicate_direct/main.rg:6:5: error: once function 'setup' is consumed more than once from the reachable entrypoint graph (first use at tests/feature_tests/system/16X_once_duplicate_direct/main.rg:5:5 via 'main')
+        \\      setup()
+        \\      ^
+        \\
     );
 }
 
@@ -1492,9 +1495,12 @@ test "feature_tests/system/17_once_unreached_duplicate_allowed" {
 }
 
 test "feature_tests/system/18X_once_duplicate_indirect" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/system/18X_once_duplicate_indirect",
-        "once function 'setup' is consumed more than once from the reachable entrypoint graph",
+        \\tests/feature_tests/system/18X_once_duplicate_indirect/main.rg:9:5: error: once function 'setup' is consumed more than once from the reachable entrypoint graph (first use at tests/feature_tests/system/18X_once_duplicate_indirect/main.rg:5:5 via 'path_a')
+        \\      setup()
+        \\      ^
+        \\
     );
 }
 
