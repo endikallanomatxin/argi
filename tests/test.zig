@@ -614,6 +614,16 @@ test "feature_tests/basics/17X_extern_call_requires_exact_argument_types" {
     );
 }
 
+test "feature_tests/basics/18X_constant_reassignment" {
+    try buildExpectFailExact(
+        "tests/feature_tests/basics/18X_constant_reassignment",
+        \\tests/feature_tests/basics/18X_constant_reassignment/main.rg:3:5: error: binding 'answer' is constant and cannot be reassigned after initialization
+        \\      answer = 2
+        \\      ^
+        \\
+    );
+}
+
 test "feature_tests/polymorphism/03_generic_functions" {
     const test_path = "tests/feature_tests/polymorphism/03_generic_functions";
     try expectSuccessfulBuild(test_path);

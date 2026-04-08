@@ -5707,8 +5707,15 @@ pub const Semantizer = struct {
             try self.addPrivateMemberDiag(a.name.location, "value", a.name.string);
             return error.Reported;
         }
-        if (b.mutability == .constant and b.initialization != null)
-            return error.ConstantReassignment;
+        if (b.mutability == .constant and b.initialization != null) {
+            try self.diags.add(
+                a.name.location,
+                .semantic,
+                "binding '{s}' is constant and cannot be reassigned after initialization",
+                .{b.name},
+            );
+            return error.Reported;
+        }
 
         var rhs = try self.visitNode(a.value.*, s);
         rhs = try typ.coerceExprToType(b.ty, rhs, a.value, s, self.allocator, self.diags);
