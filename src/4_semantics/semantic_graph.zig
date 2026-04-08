@@ -346,6 +346,12 @@ pub const FunctionDeclaration = struct {
     name: []const u8,
     location: tok.Location,
     origin_kind: OriginKind = .declared,
+    // Generic instantiations from abstract-contract templates must stay
+    // distinct from regular generic instantiations even when they collapse to
+    // the same concrete callable shape. Call resolution and reuse of existing
+    // monomorphizations need that distinction to rank abstract-driven dispatch
+    // correctly against broader regular generics.
+    generic_dispatch_kind: ?GenericDispatchKind = null,
     is_once: bool,
     is_test: bool = false,
     input: StructType, // Arguments
@@ -362,6 +368,11 @@ pub const FunctionDeclaration = struct {
     pub const OriginKind = enum {
         declared,
         generic_instantiation,
+    };
+
+    pub const GenericDispatchKind = enum {
+        regular,
+        abstract_contract,
     };
 };
 

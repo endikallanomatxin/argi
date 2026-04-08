@@ -1656,6 +1656,12 @@ test "feature_tests/polymorphism/23_abstract_requirement_reached_default" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/polymorphism/24_abstract_dispatch_beats_regular_generic_with_defaults" {
+    const test_path = "tests/feature_tests/polymorphism/24_abstract_dispatch_beats_regular_generic_with_defaults";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 1);
+}
+
 test "feature_tests/text/10_string_view_c_string_storage" {
     const test_path = "tests/feature_tests/text/10_string_view_c_string_storage";
     try expectSuccessfulBuild(test_path);

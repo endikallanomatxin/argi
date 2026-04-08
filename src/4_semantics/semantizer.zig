@@ -6955,56 +6955,134 @@ pub const Semantizer = struct {
             else
                 try self.resolveVisibleDeclaredOverloadMaybe(call.callee, input_te, s, loc);
 
-            if (inferred) |instantiated| {
-                if (visible_declared) |resolved_visible| {
-                    chosen = try self.chooseBetterCallCandidate(instantiated, resolved_visible, input_te, s);
-                } else {
-                    chosen = instantiated;
+            const abstract_inferred = if (call.module_qualifier != null)
+                self.instantiateGenericNamedVisible(
+                    call.callee,
+                    empty_args,
+                    input_te,
+                    s,
+                    .abstract_contract,
+                    qualified_module_dir,
+                    loc.file,
+                ) catch |inner_err| switch (inner_err) {
+                    error.SymbolNotFound => null,
+                    else => return inner_err,
                 }
-            } else if (visible_declared) |resolved_visible| {
-                chosen = resolved_visible;
-            } else {
-                const abstract_inferred = if (call.module_qualifier != null)
-                    self.instantiateGenericNamedVisible(
-                        call.callee,
-                        empty_args,
+            else
+                self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .abstract_contract) catch |inner_err| switch (inner_err) {
+                    error.SymbolNotFound => null,
+                    else => return inner_err,
+                };
+
+            var best: ?*sg.FunctionDeclaration = null;
+            var best_kind: CallCandidateKind = .declared;
+
+            if (visible_declared) |resolved_visible| {
+                best = resolved_visible;
+                best_kind = .declared;
+            }
+            if (abstract_inferred) |instantiated_abstract| {
+                if (best) |current_best| {
+                    const better = try self.chooseBetterCallCandidateWithKind(
+                        current_best,
+                        best_kind,
+                        instantiated_abstract,
+                        .abstract_contract,
                         input_te,
                         s,
-                        .abstract_contract,
-                        qualified_module_dir,
-                        loc.file,
-                    ) catch |inner_err| switch (inner_err) {
-                        error.SymbolNotFound => null,
-                        else => return inner_err,
-                    }
-                else
-                    self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .abstract_contract) catch |inner_err| switch (inner_err) {
-                        error.SymbolNotFound => null,
-                        else => return inner_err,
-                    };
-                if (abstract_inferred) |instantiated_abstract| {
-                    chosen = instantiated_abstract;
+                    );
+                    best = better.function;
+                    best_kind = better.kind;
                 } else {
-                    return error.SymbolNotFound;
+                    best = instantiated_abstract;
+                    best_kind = .abstract_contract;
                 }
+            }
+            if (inferred) |instantiated| {
+                if (best) |current_best| {
+                    const better = try self.chooseBetterCallCandidateWithKind(
+                        current_best,
+                        best_kind,
+                        instantiated,
+                        .generic_regular,
+                        input_te,
+                        s,
+                    );
+                    best = better.function;
+                    best_kind = better.kind;
+                } else {
+                    best = instantiated;
+                    best_kind = .generic_regular;
+                }
+            }
+
+            if (best) |resolved_best| {
+                chosen = resolved_best;
+            } else {
+                return error.SymbolNotFound;
             }
         }
         return chosen;
     }
 
+    const CallCandidateKind = enum {
+        declared,
+        abstract_contract,
+        generic_regular,
+    };
+
+    fn candidateKindPriority(kind: CallCandidateKind) u8 {
+        return switch (kind) {
+            .declared => 0,
+            .abstract_contract => 1,
+            .generic_regular => 2,
+        };
+    }
+
     fn preferCandidateOnEqualSpecificity(
         self: *Semantizer,
-        current: *sg.FunctionDeclaration,
-        candidate: *sg.FunctionDeclaration,
+        current_kind: CallCandidateKind,
+        candidate_kind: CallCandidateKind,
     ) bool {
         _ = self;
-        return current.origin_kind == .generic_instantiation and candidate.origin_kind == .declared;
+        return candidateKindPriority(candidate_kind) < candidateKindPriority(current_kind);
+    }
+
+    const RankedCallCandidate = struct {
+        function: *sg.FunctionDeclaration,
+        kind: CallCandidateKind,
+    };
+
+    fn kindForResolvedFunction(function: *sg.FunctionDeclaration) CallCandidateKind {
+        return switch (function.origin_kind) {
+            .declared => .declared,
+            .generic_instantiation => switch (function.generic_dispatch_kind orelse .regular) {
+                .regular => .generic_regular,
+                .abstract_contract => .abstract_contract,
+            },
+        };
+    }
+
+    fn chooseBetterCallCandidateWithKind(
+        self: *Semantizer,
+        current: *sg.FunctionDeclaration,
+        current_kind: CallCandidateKind,
+        candidate: *sg.FunctionDeclaration,
+        candidate_kind: CallCandidateKind,
+        input_te: typ.TypedExpr,
+        s: *Scope,
+    ) SemErr!RankedCallCandidate {
+        const chosen = try self.chooseBetterCallCandidate(current, current_kind, candidate, candidate_kind, input_te, s);
+        if (chosen == current) return .{ .function = current, .kind = current_kind };
+        return .{ .function = candidate, .kind = candidate_kind };
     }
 
     fn chooseBetterCallCandidate(
         self: *Semantizer,
         current: *sg.FunctionDeclaration,
+        current_kind: CallCandidateKind,
         candidate: *sg.FunctionDeclaration,
+        candidate_kind: CallCandidateKind,
         input_te: typ.TypedExpr,
         s: *Scope,
     ) SemErr!*sg.FunctionDeclaration {
@@ -7013,8 +7091,8 @@ pub const Semantizer = struct {
 
         if (candidate_score < current_score) return candidate;
         if (candidate_score > current_score) return current;
-        if (self.preferCandidateOnEqualSpecificity(current, candidate)) return candidate;
-        if (self.preferCandidateOnEqualSpecificity(candidate, current)) return current;
+        if (self.preferCandidateOnEqualSpecificity(current_kind, candidate_kind)) return candidate;
+        if (self.preferCandidateOnEqualSpecificity(candidate_kind, current_kind)) return current;
         return error.AmbiguousOverload;
     }
 
@@ -7779,10 +7857,10 @@ pub const Semantizer = struct {
                         best_score = score;
                         ambiguous = false;
                     } else if (score == best_score) {
-                        if (self.preferCandidateOnEqualSpecificity(best.?, cand)) {
+                        if (self.preferCandidateOnEqualSpecificity(kindForResolvedFunction(best.?), kindForResolvedFunction(cand))) {
                             best = cand;
                             ambiguous = false;
-                        } else if (!self.preferCandidateOnEqualSpecificity(cand, best.?)) {
+                        } else if (!self.preferCandidateOnEqualSpecificity(kindForResolvedFunction(cand), kindForResolvedFunction(best.?))) {
                             ambiguous = true;
                         }
                     }
@@ -7832,10 +7910,10 @@ pub const Semantizer = struct {
                         best_score = score;
                         ambiguous = false;
                     } else if (score == best_score) {
-                        if (self.preferCandidateOnEqualSpecificity(best.?, cand)) {
+                        if (self.preferCandidateOnEqualSpecificity(kindForResolvedFunction(best.?), kindForResolvedFunction(cand))) {
                             best = cand;
                             ambiguous = false;
-                        } else if (!self.preferCandidateOnEqualSpecificity(cand, best.?)) {
+                        } else if (!self.preferCandidateOnEqualSpecificity(kindForResolvedFunction(cand), kindForResolvedFunction(best.?))) {
                             ambiguous = true;
                         }
                     }
@@ -9056,7 +9134,7 @@ pub const Semantizer = struct {
         }
         if (!self.callInputMatchesDispatch(in_struct_ptr, call_input, s)) return null;
 
-        if (try self.findExistingFunctionExactInputInModule(name, in_struct_ptr, tmpl.location.file, s)) |existing| {
+        if (try self.findExistingFunctionExactInputInModule(name, in_struct_ptr, tmpl.location.file, tmpl.dispatch_kind, s)) |existing| {
             return existing;
         }
 
@@ -9068,6 +9146,10 @@ pub const Semantizer = struct {
             .name = tmpl.name,
             .location = tmpl.location,
             .origin_kind = .generic_instantiation,
+            .generic_dispatch_kind = switch (tmpl.dispatch_kind) {
+                .regular => .regular,
+                .abstract_contract => .abstract_contract,
+            },
             .is_once = false,
             .input = in_struct_ptr.*,
             .output = out_struct_ptr.*,
@@ -9129,6 +9211,7 @@ pub const Semantizer = struct {
         name: []const u8,
         input: *const sg.StructType,
         module_file: []const u8,
+        dispatch_kind: gen.GenericDispatchKind,
         s: *Scope,
     ) !?*sg.FunctionDeclaration {
         _ = self;
@@ -9139,6 +9222,13 @@ pub const Semantizer = struct {
             if (sc.functions.getPtr(name)) |fns| {
                 for (fns.items) |cand| {
                     if (!std.mem.startsWith(u8, cand.location.file, module_dir)) continue;
+                    if (cand.origin_kind != .generic_instantiation) continue;
+                    const cand_dispatch_kind = cand.generic_dispatch_kind orelse .regular;
+                    const expected_dispatch_kind: sg.FunctionDeclaration.GenericDispatchKind = switch (dispatch_kind) {
+                        .regular => .regular,
+                        .abstract_contract => .abstract_contract,
+                    };
+                    if (cand_dispatch_kind != expected_dispatch_kind) continue;
                     if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = input })) {
                         return cand;
                     }
