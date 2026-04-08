@@ -2146,6 +2146,12 @@ test "feature_tests/modules/17_multi_file_module_forward_calls" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/modules/27_multi_file_typed_binding_initialization" {
+    const test_path = "tests/feature_tests/modules/27_multi_file_typed_binding_initialization";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
 test "feature_tests/modules/18_private_struct_field_same_module" {
     const test_path = "tests/feature_tests/modules/18_private_struct_field_same_module";
     try expectSuccessfulBuild(test_path);

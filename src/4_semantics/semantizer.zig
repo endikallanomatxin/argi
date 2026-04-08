@@ -589,7 +589,10 @@ pub const Semantizer = struct {
     fn predeclareTopLevelSymbols(self: *Semantizer, global: *Scope) SemErr!void {
         for (self.st_nodes) |node| {
             switch (node.content) {
-                .symbol_declaration => |decl| try self.predeclareTopLevelImportAlias(decl, global, node.location),
+                .symbol_declaration => |decl| {
+                    try self.predeclareTopLevelImportAlias(decl, global, node.location);
+                    try self.predeclareTopLevelBinding(decl, global, node.location);
+                },
                 .abstract_declaration => |decl| try self.predeclareTopLevelAbstract(decl, global),
                 .type_declaration => |decl| try self.predeclareTopLevelType(decl, global),
                 .choice_option_declaration => |decl| try self.predeclareTopLevelChoiceOption(decl, global, node.location),
@@ -641,6 +644,40 @@ pub const Semantizer = struct {
 
         const resolved = source_files.resolveImportDir(self.allocator, loc.file, value.*.content.import_statement.path) catch return;
         try global.module_aliases.put(decl.name.string, resolved);
+    }
+
+    fn predeclareTopLevelBinding(
+        self: *Semantizer,
+        decl: syn.SymbolDeclaration,
+        global: *Scope,
+        loc: tok.Location,
+    ) SemErr!void {
+        // Typed top-level bindings need a stub before full semantizing so other
+        // files in the same folder module can refer to them without depending on
+        // per-file declaration order.
+        if (decl.value) |value| {
+            if (value.*.content == .import_statement) return;
+        }
+        const binding_ty_node = decl.type orelse return;
+        if (global.bindings.contains(decl.name.string)) return;
+        if (global.module_aliases.contains(decl.name.string)) return;
+
+        const ty = self.resolveType(binding_ty_node, global) catch |err| switch (err) {
+            error.UnknownType, error.SymbolNotFound => return,
+            else => return err,
+        };
+        if (ty == .abstract_type) return;
+
+        const bd = try self.allocator.create(sg.BindingDeclaration);
+        bd.* = .{
+            .name = decl.name.string,
+            .location = loc,
+            .origin_file = loc.file,
+            .mutability = decl.mutability,
+            .ty = ty,
+            .initialization = null,
+        };
+        try global.bindings.put(decl.name.string, bd);
     }
 
     fn predeclareTopLevelType(
@@ -4094,7 +4131,13 @@ pub const Semantizer = struct {
             }
         }
 
-        if (s.bindings.contains(d.name.string)) {
+        const predeclared_binding = if (s.parent == null) s.bindings.get(d.name.string) else null;
+        const reuses_predeclared_binding = if (predeclared_binding) |bd|
+            std.mem.eql(u8, bd.location.file, loc.file) and bd.location.offset == loc.offset
+        else
+            false;
+
+        if (s.bindings.contains(d.name.string) and !reuses_predeclared_binding) {
             return error.SymbolAlreadyDefined;
         }
         if (s.lookupModuleAlias(d.name.string) != null) {
@@ -4172,21 +4215,27 @@ pub const Semantizer = struct {
             init_te_opt = try self.ensureValuePositionAllowed(init_te, init_node.?.location, s);
         }
 
-        const bd = try self.allocator.create(sg.BindingDeclaration);
-        bd.* = .{
-            .name = d.name.string,
-            .location = loc,
-            .origin_file = loc.file,
-            .mutability = d.mutability,
-            .ty = ty,
-            .initialization = null,
+        const bd = if (reuses_predeclared_binding)
+            predeclared_binding.?
+        else blk: {
+            const created = try self.allocator.create(sg.BindingDeclaration);
+            created.* = .{
+                .name = d.name.string,
+                .location = loc,
+                .origin_file = loc.file,
+                .mutability = d.mutability,
+                .ty = ty,
+                .initialization = null,
+            };
+            try s.bindings.put(d.name.string, created);
+            break :blk created;
         };
+        bd.mutability = d.mutability;
+        bd.ty = ty;
+        bd.initialization = null;
 
-        try s.bindings.put(d.name.string, bd);
         s.clearBindingMoved(d.name.string);
-        const n = try sg.makeSGNode(.{ .binding_declaration = bd }, loc, self.allocator);
-        try s.nodes.append(n);
-        if (s.parent == null) try self.root_list.append(n);
+        const n = try self.appendBindingDeclarationNodeIfMissing(s, bd, loc);
 
         if (init_te_opt) |init_te| bd.initialization = init_te.node;
 
@@ -4934,6 +4983,23 @@ pub const Semantizer = struct {
         const node = try sg.makeSGNode(.{ .function_declaration = fd }, loc, self.allocator);
         try s.nodes.append(node);
         if (s.parent == null) try self.root_list.append(node);
+    }
+
+    fn appendBindingDeclarationNodeIfMissing(
+        self: *Semantizer,
+        s: *Scope,
+        bd: *sg.BindingDeclaration,
+        loc: tok.Location,
+    ) !*sg.SGNode {
+        for (s.nodes.items) |node| {
+            if (node.content != .binding_declaration) continue;
+            if (node.content.binding_declaration == bd) return node;
+        }
+
+        const node = try sg.makeSGNode(.{ .binding_declaration = bd }, loc, self.allocator);
+        try s.nodes.append(node);
+        if (s.parent == null) try self.root_list.append(node);
+        return node;
     }
 
     fn appendTestDeclarationNodeIfMissing(

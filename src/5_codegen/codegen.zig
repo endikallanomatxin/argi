@@ -43,6 +43,12 @@ const BindingStorage = struct {
     sem_type: ?sem.Type = null,
 };
 
+const GlobalInitState = enum {
+    uninitialized,
+    in_progress,
+    done,
+};
+
 const LoopContext = struct {
     break_block: llvm.c.LLVMBasicBlockRef,
     continue_block: llvm.c.LLVMBasicBlockRef,
@@ -118,6 +124,7 @@ pub const CodeGenerator = struct {
     loop_stack: std.array_list.Managed(LoopContext),
     binding_storage: std.AutoHashMap(*const sem.BindingDeclaration, BindingStorage),
     binding_storage_by_name: std.StringHashMap(BindingStorage),
+    global_init_state: std.AutoHashMap(*const sem.BindingDeclaration, GlobalInitState),
 
     global_scope: *Scope, // nunca se destruye hasta el final
     current_scope: *Scope, // apunta al scope donde estamos ahora
@@ -141,6 +148,7 @@ pub const CodeGenerator = struct {
             .loop_stack = std.array_list.Managed(LoopContext).init(a.*),
             .binding_storage = std.AutoHashMap(*const sem.BindingDeclaration, BindingStorage).init(a.*),
             .binding_storage_by_name = std.StringHashMap(BindingStorage).init(a.*),
+            .global_init_state = std.AutoHashMap(*const sem.BindingDeclaration, GlobalInitState).init(a.*),
         };
     }
 
@@ -150,6 +158,7 @@ pub const CodeGenerator = struct {
         self.loop_stack.deinit();
         self.binding_storage.deinit();
         self.binding_storage_by_name.deinit();
+        self.global_init_state.deinit();
 
         // Recorremos la cadena y liberamos cada scope
         var s: ?*Scope = self.current_scope;
@@ -175,6 +184,8 @@ pub const CodeGenerator = struct {
 
     // ── top-level drive ───────────────────────
     pub fn generate(self: *CodeGenerator) !llvm.c.LLVMModuleRef {
+        try self.predeclareGlobalBindings();
+
         for (self.ast) |n| {
             _ = self.visitNode(n) catch |err| {
                 try self.diags.add(n.location, .codegen, "code generation error: {s}", .{@errorName(err)});
@@ -206,6 +217,44 @@ pub const CodeGenerator = struct {
         return self.module;
     }
 
+    fn predeclareGlobalBindings(self: *CodeGenerator) !void {
+        for (self.ast) |n| {
+            switch (n.content) {
+                .binding_declaration => |b| try self.predeclareGlobalBindingStorage(b),
+                else => {},
+            }
+        }
+    }
+
+    fn predeclareGlobalBindingStorage(self: *CodeGenerator, b: *const sem.BindingDeclaration) !void {
+        if (self.global_scope.lookupLocal(b.name) != null) return;
+
+        const llvm_decl_ty = try self.toLLVMType(b.ty);
+        const cname = try self.dupZ(b.name);
+        const storage = c.LLVMAddGlobal(self.module, llvm_decl_ty, cname.ptr);
+        c.LLVMSetInitializer(storage, c.LLVMConstNull(llvm_decl_ty));
+
+        try self.global_scope.symbols.put(b.name, .{
+            .cname = cname,
+            .mutability = b.mutability,
+            .type_ref = llvm_decl_ty,
+            .ref = storage,
+            .sem_type = b.ty,
+            .initialized = false,
+        });
+        try self.binding_storage.put(b, .{
+            .ref = storage,
+            .type_ref = llvm_decl_ty,
+            .sem_type = b.ty,
+        });
+        try self.binding_storage_by_name.put(b.name, .{
+            .ref = storage,
+            .type_ref = llvm_decl_ty,
+            .sem_type = b.ty,
+        });
+        try self.global_init_state.put(b, .uninitialized);
+    }
+
     // ────────────────────────────────────────── visitor dispatch ──
     fn visitNode(self: *CodeGenerator, n: *const sem.SGNode) CodegenError!?TypedValue {
         return switch (n.content) {
@@ -230,7 +279,7 @@ pub const CodeGenerator = struct {
                 return null;
             },
             .binding_declaration => |b| {
-                if (self.current_scope.lookup(b.name) != null)
+                if (self.current_scope.parent != null and self.current_scope.lookupLocal(b.name) != null)
                     return self.genBindingUse(b) catch |e| {
                         try self.diags.add(n.location, .codegen, "error generating binding {s}: {s}", .{ b.name, @errorName(e) });
                         return e;
@@ -706,7 +755,10 @@ pub const CodeGenerator = struct {
                 .ty = fld.ty,
                 .initialization = null,
             };
-            try self.genBindingDecl(&bd);
+            self.genBindingDecl(&bd) catch |err| {
+                try self.diags.add(f.location, .codegen, "error generating input binding '{s}' in function {s}: {s}", .{ fld.name, f.name, @errorName(err) });
+                return err;
+            };
         }
 
         // extraer struct-input
@@ -728,11 +780,17 @@ pub const CodeGenerator = struct {
                 .ty = fld.ty,
                 .initialization = fld.default_value,
             };
-            try self.genBindingDecl(&bd);
+            self.genBindingDecl(&bd) catch |err| {
+                try self.diags.add(f.location, .codegen, "error generating output binding '{s}' in function {s}: {s}", .{ fld.name, f.name, @errorName(err) });
+                return err;
+            };
         }
 
         // cuerpo del usuario
-        _ = try self.genCodeBlock(f.body.?);
+        _ = self.genCodeBlock(f.body.?) catch |err| {
+            try self.diags.add(f.location, .codegen, "error generating body of function {s}: {s}", .{ f.name, @errorName(err) });
+            return err;
+        };
 
         // return implícito si falta
         const cur_bb = c.LLVMGetInsertBlock(self.builder);
@@ -788,30 +846,24 @@ pub const CodeGenerator = struct {
 
     // ────────────────────────────────────────── bindings ──
     fn genBindingDecl(self: *CodeGenerator, b: *const sem.BindingDeclaration) !void {
-        if (self.current_scope.lookupLocal(b.name) != null)
+        const is_global = self.current_scope.parent == null;
+        if (!is_global and self.current_scope.lookupLocal(b.name) != null)
             return CodegenError.SymbolAlreadyDefined;
 
-        // 1) posible inicialización
-        var init_tv: ?TypedValue = null;
-        if (b.initialization) |n|
-            init_tv = try self.visitNode(n);
-
-        // 2) tipo declarado (siempre está resuelto por el semantizador)
         const llvm_decl_ty = try self.toLLVMType(b.ty);
-
-        const cname = try self.dupZ(b.name);
-
-        // 3) reserva de espacio
-        //    - En global scope: crear variable global
-        //    - Dentro de función: alloca en el entry
         var storage: llvm.c.LLVMValueRef = null;
-        if (self.current_scope.parent == null) {
-            // Global variable
-            storage = c.LLVMAddGlobal(self.module, llvm_decl_ty, cname.ptr);
-            // Use zero initializer for globals (safer than undef)
-            const zero = c.LLVMConstNull(llvm_decl_ty);
-            c.LLVMSetInitializer(storage, zero);
+        var init_tv: ?TypedValue = null;
+
+        if (is_global) {
+            const existing = self.binding_storage.get(b) orelse return CodegenError.SymbolNotFound;
+            storage = existing.ref;
+            try self.ensureGlobalBindingInitialized(b);
+            return;
         } else {
+            if (b.initialization) |n|
+                init_tv = try self.visitNode(n);
+
+            const cname = try self.dupZ(b.name);
             const cur_bb = c.LLVMGetInsertBlock(self.builder);
             const fnc = c.LLVMGetBasicBlockParent(cur_bb);
             const entry_bb = c.LLVMGetEntryBasicBlock(fnc);
@@ -825,48 +877,159 @@ pub const CodeGenerator = struct {
             }
 
             storage = c.LLVMBuildAlloca(tmp_builder, llvm_decl_ty, cname.ptr);
-        }
+            try self.current_scope.symbols.put(b.name, .{
+                .cname = cname,
+                .mutability = b.mutability,
+                .type_ref = llvm_decl_ty,
+                .ref = storage,
+                .sem_type = b.ty,
+                .initialized = init_tv != null,
+            });
+            try self.binding_storage.put(b, .{
+                .ref = storage,
+                .type_ref = llvm_decl_ty,
+                .sem_type = b.ty,
+            });
+            try self.binding_storage_by_name.put(b.name, .{
+                .ref = storage,
+                .type_ref = llvm_decl_ty,
+                .sem_type = b.ty,
+            });
 
-        // 4) registrar en la tabla
-        try self.current_scope.symbols.put(b.name, .{
-            .cname = cname,
-            .mutability = b.mutability,
-            .type_ref = llvm_decl_ty,
-            .ref = storage,
-            .sem_type = b.ty,
-            .initialized = init_tv != null,
-        });
-        try self.binding_storage.put(b, .{
-            .ref = storage,
-            .type_ref = llvm_decl_ty,
-            .sem_type = b.ty,
-        });
-        try self.binding_storage_by_name.put(b.name, .{
-            .ref = storage,
-            .type_ref = llvm_decl_ty,
-            .sem_type = b.ty,
-        });
+            if (init_tv) |tv_raw| {
+                var tv = tv_raw;
+                if (tv.type_ref != llvm_decl_ty) {
+                    tv = try self.coerceValueForStorage(tv, b.ty, llvm_decl_ty);
+                }
 
-        // 5) almacenar valor inicial
-        if (init_tv) |tv_raw| {
-            var tv = tv_raw;
-            // Global initializers must be constant; for now, only allow none
-            if (self.current_scope.parent == null) {
-                // Non-constant global init not supported yet; ignore for now
-                // (could enhance by constant-folding later)
-                return;
-            }
-
-            if (tv.type_ref != llvm_decl_ty) {
-                tv = try self.coerceValueForStorage(tv, b.ty, llvm_decl_ty);
-            }
-
-            if (tv.type_ref == llvm_decl_ty) {
-                _ = c.LLVMBuildStore(self.builder, tv.value_ref, storage);
-            } else {
-                return CodegenError.InvalidType;
+                if (tv.type_ref == llvm_decl_ty) {
+                    _ = c.LLVMBuildStore(self.builder, tv.value_ref, storage);
+                } else {
+                    return CodegenError.InvalidType;
+                }
             }
         }
+    }
+
+    // Top-level bindings are emitted as LLVM globals. Their initializers must be
+    // constants, and global storage is predeclared before codegen starts so
+    // references between module files do not depend on AST order.
+    fn ensureGlobalBindingInitialized(self: *CodeGenerator, b: *const sem.BindingDeclaration) CodegenError!void {
+        const state = self.global_init_state.get(b) orelse .done;
+        switch (state) {
+            .done => return,
+            .in_progress => return CodegenError.InvalidType,
+            .uninitialized => {},
+        }
+
+        try self.global_init_state.put(b, .in_progress);
+        errdefer _ = self.global_init_state.put(b, .uninitialized) catch {};
+
+        const storage = self.binding_storage.get(b) orelse return CodegenError.SymbolNotFound;
+        if (b.initialization) |init_node| {
+            var init_tv = try self.genGlobalConstant(init_node);
+            if (init_tv.type_ref != storage.type_ref) {
+                init_tv = try self.coerceGlobalConstant(init_tv, storage.type_ref);
+            }
+            c.LLVMSetInitializer(storage.ref, init_tv.value_ref);
+            if (self.global_scope.lookupLocal(b.name)) |sym| sym.initialized = true;
+        }
+
+        try self.global_init_state.put(b, .done);
+    }
+
+    fn genGlobalConstant(self: *CodeGenerator, n: *const sem.SGNode) CodegenError!TypedValue {
+        return switch (n.content) {
+            .value_literal => self.genGlobalValueLiteral(n),
+            .binding_use => |binding| blk: {
+                try self.ensureGlobalBindingInitialized(binding);
+                const storage = self.binding_storage.get(binding) orelse return CodegenError.SymbolNotFound;
+                const init_val = c.LLVMGetInitializer(storage.ref) orelse return CodegenError.InvalidType;
+                break :blk .{
+                    .value_ref = init_val,
+                    .type_ref = storage.type_ref,
+                    .sem_type = storage.sem_type,
+                };
+            },
+            .binary_operation => |bo| try self.genGlobalBinaryOperation(&bo),
+            .comparison => |co| try self.genGlobalComparison(&co),
+            .logical_operation => |lo| try self.genGlobalLogicalOperation(&lo),
+            else => CodegenError.InvalidType,
+        };
+    }
+
+    fn genGlobalValueLiteral(self: *CodeGenerator, n: *const sem.SGNode) CodegenError!TypedValue {
+        return switch (n.content.value_literal) {
+            .string_literal => CodegenError.InvalidType,
+            else => try self.genValueLiteral(n),
+        };
+    }
+
+    fn genGlobalBinaryOperation(self: *CodeGenerator, bo: *const sem.BinaryOperation) CodegenError!TypedValue {
+        const lhs = try self.genGlobalConstant(bo.left);
+        const rhs = try self.genGlobalConstant(bo.right);
+        if (lhs.type_ref != rhs.type_ref) return CodegenError.InvalidType;
+
+        const value_ref = switch (bo.operator) {
+            .addition => c.LLVMConstAdd(lhs.value_ref, rhs.value_ref),
+            .subtraction => c.LLVMConstSub(lhs.value_ref, rhs.value_ref),
+            .multiplication => c.LLVMConstMul(lhs.value_ref, rhs.value_ref),
+            else => return CodegenError.InvalidType,
+        };
+        return .{ .value_ref = value_ref, .type_ref = lhs.type_ref, .sem_type = lhs.sem_type };
+    }
+
+    fn genGlobalComparison(self: *CodeGenerator, co: *const sem.Comparison) CodegenError!TypedValue {
+        const lhs = try self.genGlobalConstant(co.left);
+        const rhs = try self.genGlobalConstant(co.right);
+        if (lhs.type_ref != rhs.type_ref) return CodegenError.InvalidType;
+
+        const is_float = lhs.type_ref == c.LLVMFloatType();
+        const use_unsigned = isUnsignedBuiltin(lhs.sem_type);
+        const value_ref = switch (co.operator) {
+            .equal => if (is_float) c.LLVMConstFCmp(c.LLVMRealOEQ, lhs.value_ref, rhs.value_ref) else c.LLVMConstICmp(c.LLVMIntEQ, lhs.value_ref, rhs.value_ref),
+            .not_equal => if (is_float) c.LLVMConstFCmp(c.LLVMRealONE, lhs.value_ref, rhs.value_ref) else c.LLVMConstICmp(c.LLVMIntNE, lhs.value_ref, rhs.value_ref),
+            .less_than => if (is_float) c.LLVMConstFCmp(c.LLVMRealOLT, lhs.value_ref, rhs.value_ref) else if (use_unsigned) c.LLVMConstICmp(c.LLVMIntULT, lhs.value_ref, rhs.value_ref) else c.LLVMConstICmp(c.LLVMIntSLT, lhs.value_ref, rhs.value_ref),
+            .greater_than => if (is_float) c.LLVMConstFCmp(c.LLVMRealOGT, lhs.value_ref, rhs.value_ref) else if (use_unsigned) c.LLVMConstICmp(c.LLVMIntUGT, lhs.value_ref, rhs.value_ref) else c.LLVMConstICmp(c.LLVMIntSGT, lhs.value_ref, rhs.value_ref),
+            .less_than_or_equal => if (is_float) c.LLVMConstFCmp(c.LLVMRealOLE, lhs.value_ref, rhs.value_ref) else if (use_unsigned) c.LLVMConstICmp(c.LLVMIntULE, lhs.value_ref, rhs.value_ref) else c.LLVMConstICmp(c.LLVMIntSLE, lhs.value_ref, rhs.value_ref),
+            .greater_than_or_equal => if (is_float) c.LLVMConstFCmp(c.LLVMRealOGE, lhs.value_ref, rhs.value_ref) else if (use_unsigned) c.LLVMConstICmp(c.LLVMIntUGE, lhs.value_ref, rhs.value_ref) else c.LLVMConstICmp(c.LLVMIntSGE, lhs.value_ref, rhs.value_ref),
+        };
+        return .{ .value_ref = value_ref, .type_ref = c.LLVMInt1Type(), .sem_type = .{ .builtin = .Bool } };
+    }
+
+    fn genGlobalLogicalOperation(self: *CodeGenerator, lo: *const sem.LogicalOperation) CodegenError!TypedValue {
+        const lhs = try self.genGlobalConstant(lo.left);
+        const rhs = try self.genGlobalConstant(lo.right);
+        if (lhs.type_ref != c.LLVMInt1Type() or rhs.type_ref != c.LLVMInt1Type()) return CodegenError.InvalidType;
+
+        const value_ref = switch (lo.operator) {
+            .and_ => c.LLVMConstAnd(lhs.value_ref, rhs.value_ref),
+            .or_ => c.LLVMConstOr(lhs.value_ref, rhs.value_ref),
+        };
+        return .{ .value_ref = value_ref, .type_ref = c.LLVMInt1Type(), .sem_type = .{ .builtin = .Bool } };
+    }
+
+    fn coerceGlobalConstant(self: *CodeGenerator, tv: TypedValue, target_ty_ref: llvm.c.LLVMTypeRef) CodegenError!TypedValue {
+        _ = self;
+        if (tv.type_ref == target_ty_ref) return tv;
+
+        if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMIntegerTypeKind and c.LLVMGetTypeKind(target_ty_ref) == c.LLVMIntegerTypeKind) {
+            return .{
+                .value_ref = c.LLVMConstIntCast(tv.value_ref, target_ty_ref, if (isUnsignedBuiltin(tv.sem_type)) 0 else 1),
+                .type_ref = target_ty_ref,
+                .sem_type = tv.sem_type,
+            };
+        }
+
+        if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMFloatTypeKind and c.LLVMGetTypeKind(target_ty_ref) == c.LLVMFloatTypeKind) {
+            return .{
+                .value_ref = c.LLVMConstFPCast(tv.value_ref, target_ty_ref),
+                .type_ref = target_ty_ref,
+                .sem_type = tv.sem_type,
+            };
+        }
+
+        return CodegenError.InvalidType;
     }
 
     fn coerceValueForStorage(
@@ -904,12 +1067,21 @@ pub const CodeGenerator = struct {
     }
 
     fn genBindingUse(self: *CodeGenerator, b: *sem.BindingDeclaration) !TypedValue {
+        const insert_block = c.LLVMGetInsertBlock(self.builder);
         if (self.current_scope.lookup(b.name)) |sym| {
+            if (insert_block == null) {
+                const init_val = c.LLVMGetInitializer(sym.ref) orelse return CodegenError.InvalidType;
+                return .{ .value_ref = init_val, .type_ref = sym.type_ref, .sem_type = sym.sem_type };
+            }
             const val = c.LLVMBuildLoad2(self.builder, sym.type_ref, sym.ref, sym.cname.ptr);
             return .{ .value_ref = val, .type_ref = sym.type_ref, .sem_type = sym.sem_type };
         }
 
         const storage = self.binding_storage.get(b) orelse self.binding_storage_by_name.get(b.name) orelse return CodegenError.SymbolNotFound;
+        if (insert_block == null) {
+            const init_val = c.LLVMGetInitializer(storage.ref) orelse return CodegenError.InvalidType;
+            return .{ .value_ref = init_val, .type_ref = storage.type_ref, .sem_type = storage.sem_type };
+        }
         const val = c.LLVMBuildLoad2(self.builder, storage.type_ref, storage.ref, "binding.load");
         return .{ .value_ref = val, .type_ref = storage.type_ref, .sem_type = storage.sem_type };
     }
@@ -2547,13 +2719,19 @@ pub const CodeGenerator = struct {
     fn genCodeBlock(self: *CodeGenerator, cb: *const sem.CodeBlock) !?TypedValue {
         try self.pushScope();
         defer self.popScope();
-        for (cb.nodes) |n| {
+        for (cb.nodes, 0..) |n, idx| {
             const current_bb = c.LLVMGetInsertBlock(self.builder);
             if (current_bb != null and c.LLVMGetBasicBlockTerminator(current_bb) != null) break;
-            _ = try self.visitNode(n);
+            _ = self.visitNode(n) catch |err| {
+                try self.diags.add(n.location, .codegen, "error generating code block node {d}: {s}", .{ idx, @errorName(err) });
+                return err;
+            };
         }
         if (cb.ret_val) |ret_val| {
-            return try self.visitNode(ret_val);
+            return self.visitNode(ret_val) catch |err| {
+                try self.diags.add(ret_val.location, .codegen, "error generating code block return value: {s}", .{@errorName(err)});
+                return err;
+            };
         }
         return null;
     }
