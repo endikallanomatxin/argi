@@ -1486,16 +1486,22 @@ test "feature_tests/system/14_file_system_capability" {
 }
 
 test "feature_tests/ownership/18X_system_noncopyable_assignment" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/ownership/18X_system_noncopyable_assignment",
-        "type 'System' is not copyable, so it cannot be used by value here",
+        \\tests/feature_tests/ownership/18X_system_noncopyable_assignment/main.rg:2:15: error: type 'System' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\      copied := system
+        \\                ^
+        \\
     );
 }
 
 test "feature_tests/ownership/19X_system_noncopyable_argument" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/ownership/19X_system_noncopyable_argument",
-        "type 'System' is not copyable, so it cannot be used by value here",
+        \\tests/feature_tests/ownership/19X_system_noncopyable_argument/main.rg:6:37: error: type 'System' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\      status_code = consume(.system = system)
+        \\                                      ^
+        \\
     );
 }
 
