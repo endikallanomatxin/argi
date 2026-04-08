@@ -760,30 +760,42 @@ test "feature_tests/ownership/04_noncopyable_temporary_values" {
 }
 
 test "feature_tests/ownership/05X_noncopyable_assignment" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/ownership/05X_noncopyable_assignment",
-        "type 'Resource' is not copyable, so it cannot be used by value here",
+        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:9:15: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\      second := first
+        \\                ^
+        \\
     );
 }
 
 test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/ownership/06X_noncopyable_argument_by_value",
-        "type 'Resource' is not copyable, so it cannot be used by value here",
+        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:13:34: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\      status_code = consume(.res = handle)
+        \\                                   ^
+        \\
     );
 }
 
 test "feature_tests/ownership/07X_noncopyable_struct_field" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/ownership/07X_noncopyable_struct_field",
-        "type 'Resource' is not copyable, so it cannot be used by value here",
+        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:13:33: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\      wrapped : Wrapper = (.res = handle)
+        \\                                  ^
+        \\
     );
 }
 
 test "feature_tests/ownership/08X_noncopyable_output_binding" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/ownership/08X_noncopyable_output_binding",
-        "type 'Resource' is not copyable, so it cannot be used by value here",
+        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:8:11: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\      out = res
+        \\            ^
+        \\
     );
 }
 
