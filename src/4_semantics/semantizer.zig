@@ -5922,11 +5922,15 @@ pub const Semantizer = struct {
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
         const binding = s.lookupBindingInModule(module_dir, field_name) orelse {
+            const module_name = if (std.mem.lastIndexOfScalar(u8, module_dir, '/')) |idx|
+                module_dir[idx + 1 ..]
+            else
+                module_dir;
             try self.diags.add(
                 loc,
                 .semantic,
-                "module has no value '.{s}'",
-                .{field_name},
+                "module '{s}' has no value '.{s}'",
+                .{ module_name, field_name },
             );
             return error.Reported;
         };

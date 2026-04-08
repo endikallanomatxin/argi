@@ -1856,9 +1856,12 @@ test "feature_tests/modules/03X_import_missing_module" {
 }
 
 test "feature_tests/modules/04X_import_missing_value" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/modules/04X_import_missing_value",
-        "module has no value '.missing_value'",
+        \\tests/feature_tests/modules/04X_import_missing_value/main.rg:3:19: error: module 'dep' has no value '.missing_value'
+        \\      status_code = dep.missing_value
+        \\                    ^
+        \\
     );
 }
 
