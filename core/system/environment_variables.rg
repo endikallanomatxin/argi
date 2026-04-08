@@ -5,10 +5,9 @@ once init(.p: $&EnvironmentVariables) -> () := {
 
 get(
     .self: &EnvironmentVariables,
-    .key: CString,
+    .key: &Char,
 ) -> (.value: ?StringView) := {
-    key_ptr ::= pointer(.self = &key)
-    raw_ptr ::= getenv(.name = key_ptr).value
+    raw_ptr ::= getenv(.name = key).value
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = raw_ptr)
 
     if raw_addr == 0 {
@@ -55,7 +54,7 @@ get(
 
 has(
     .self: &EnvironmentVariables,
-    .key: CString,
+    .key: &Char,
 ) -> (.ok: Bool) := {
     found ::= get(.self = self, .key = key)
     ok = found?
@@ -81,7 +80,7 @@ has(
 
 operator get[](
     .self: &EnvironmentVariables,
-    .index: CString,
+    .index: &Char,
 ) -> (.value: ?StringView) := {
     found ::= get(.self = self, .key = index)
     if found? {

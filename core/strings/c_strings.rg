@@ -1,30 +1,17 @@
-CString : Type = (
-    .data : UIntNative
-)
-
-init(
-    .p: $&CString,
-    .data: &Char,
-) -> () := {
-    p& = (
-        .data = cast#(.to: UIntNative)(.value = data)
-    )
-}
-
+--
+-- v1 keeps C-string interop as raw `&Char` plus explicit helpers.
+-- There is intentionally no separate nominal `CString` type in core.
+--
 from_literal(
     .data: &Char,
-) -> (.text: CString) := {
-    text = (
-        .data = cast#(.to: UIntNative)(.value = data)
-    )
+) -> (.text: &Char) := {
+    text = data
 }
 
 as_c_string(
     .self: &String,
-) -> (.text: CString) := {
-    text = (
-        .data = cast#(.to: UIntNative)(.value = self&.allocation.data)
-    )
+) -> (.text: &Char) := {
+    text = cast#(.to: &Char)(.value = cast#(.to: UIntNative)(.value = self&.allocation.data))
 }
 
 string_view_has_c_string_layout(
@@ -48,14 +35,12 @@ as_c_string(
     .self: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (
-    .text: CString,
+    .text: &Char,
     .storage: Allocation,
 ) := {
     if string_view_has_c_string_layout(.self = &self).ok {
         zero :: UIntNative = 0
-        text = (
-            .data = self.data
-        )
+        text = cast#(.to: &Char)(.value = self.data)
         storage = (
             .data = cast#(.to: $&UInt8)(.value = zero),
             .size = 0,
@@ -76,27 +61,18 @@ as_c_string(
     nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = data) + self.length)
     nul_ptr& = 0
 
-    text = (
-        .data = cast#(.to: UIntNative)(.value = data)
-    )
+    text = cast#(.to: &Char)(.value = cast#(.to: UIntNative)(.value = data))
     storage = (
         .data = data,
         .size = size,
     )
 }
 
-pointer(
-    .self: &CString,
-) -> (.out: &Char) := {
-    out = cast#(.to: &Char)(.value = self&.data)
-}
-
 as_view(
-    .self: &CString,
+    .self: &Char,
 ) -> (.view: StringView) := {
-    ptr ::= pointer(.self = self)
     view = (
-        .data = self&.data,
-        .length = strlen(.string = ptr).length,
+        .data = cast#(.to: UIntNative)(.value = self),
+        .length = strlen(.string = self).length,
     )
 }

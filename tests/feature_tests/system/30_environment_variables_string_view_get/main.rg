@@ -1,10 +1,6 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
     key_literal ::= from_literal(.data = "PATH")
-    key_ptr ::= pointer(.self = &key_literal)
-    key : StringView = (
-        .data = cast#(.to: UIntNative)(.value = key_ptr),
-        .length = 4,
-    )
+    key ::= as_view(.self = key_literal)
 
     found ::= get(.self = system.env_vars, .key = key)
     if found? {

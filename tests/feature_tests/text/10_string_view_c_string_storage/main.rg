@@ -30,8 +30,7 @@ main() -> (.status_code: Int32) := {
     )
 
     literal ::= from_literal(.data = "abc")
-    base_ptr ::= pointer(.self = &literal)
-    base_addr :: UIntNative = cast#(.to: UIntNative)(.value = base_ptr)
+    base_addr :: UIntNative = cast#(.to: UIntNative)(.value = literal)
 
     if 1 == 1 {
         borrowed_view : StringView = (

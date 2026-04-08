@@ -135,7 +135,7 @@ ficheros y de streams:
 ..stream_close_failed
 ..out_of_memory
 
-open_read(.p: $&File, .path: CString)
+open_read(.p: $&File, .path: &Char)
     -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed)))
 
 read_file(.self: &FileSystem, .path: StringView)

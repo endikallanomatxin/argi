@@ -116,7 +116,7 @@ as_view(
 
 as_c_string(
     .self: &Path,
-) -> (.text: CString) := {
+) -> (.text: &Char) := {
     text = as_c_string(.self = &self&.text)
 }
 

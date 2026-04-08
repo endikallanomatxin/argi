@@ -8,10 +8,9 @@ once init(.p: $&FileSystem) -> () := {
 
 exists(
     .self: &FileSystem,
-    .path: CString,
+    .path: &Char,
 ) -> (.ok: Bool) := {
-    path_ptr ::= pointer(.self = &path)
-    ok = access(.path = path_ptr, .mode = 0).status == 0
+    ok = access(.path = path, .mode = 0).status == 0
 }
 
 exists(
@@ -40,10 +39,9 @@ exists(
 
 remove(
     .self: &FileSystem,
-    .path: CString,
+    .path: &Char,
 ) -> (.result: Errable#(.t: Bool, .reasons: (..path_remove_failed))) := {
-    path_ptr ::= pointer(.self = &path)
-    if remove(.path = path_ptr).status != 0 {
+    if remove(.path = path).status != 0 {
         result = ..error(.reason = ..path_remove_failed)
         return
     }
@@ -77,12 +75,10 @@ remove(
 
 rename(
     .self: &FileSystem,
-    .from: CString,
-    .to: CString,
+    .from: &Char,
+    .to: &Char,
 ) -> (.result: Errable#(.t: Bool, .reasons: (..path_rename_failed))) := {
-    from_ptr ::= pointer(.self = &from)
-    to_ptr ::= pointer(.self = &to)
-    if rename(.old_path = from_ptr, .new_path = to_ptr).status != 0 {
+    if rename(.old_path = from, .new_path = to).status != 0 {
         result = ..error(.reason = ..path_rename_failed)
         return
     }
@@ -122,7 +118,7 @@ rename(
 
 open_read(
     .self: &FileSystem,
-    .path: CString,
+    .path: &Char,
 ) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
     file :: File = File(.handle = 0, .should_close = 0 == 1)
     opened ::= open_read(.p = $&file, .path = path)
@@ -160,7 +156,7 @@ open_read(
 
 open_write(
     .self: &FileSystem,
-    .path: CString,
+    .path: &Char,
 ) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
     file :: File = File(.handle = 0, .should_close = 0 == 1)
     opened ::= open_write(.p = $&file, .path = path)
@@ -198,7 +194,7 @@ open_write(
 
 open_append(
     .self: &FileSystem,
-    .path: CString,
+    .path: &Char,
 ) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
     file :: File = File(.handle = 0, .should_close = 0 == 1)
     opened ::= open_append(.p = $&file, .path = path)
@@ -236,7 +232,7 @@ open_append(
 
 read_file(
     .self: &FileSystem,
-    .path: CString,
+    .path: &Char,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory))) := {
     open_result ::= open_read(.self = self, .path = path)
@@ -319,7 +315,7 @@ read_file(
 
 write_file(
     .self: &FileSystem,
-    .path: CString,
+    .path: &Char,
     .text: String,
 ) -> (.result: Errable#(.t: Void, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed))) := {
     open_result ::= open_write(.self = self, .path = path)

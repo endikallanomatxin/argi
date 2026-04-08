@@ -43,12 +43,10 @@ argument_pointer_address(
 argument_at(
     .self: &Arguments,
     .index: UIntNative,
-) -> (.text: CString) := {
+) -> (.text: &Char) := {
     addr ::= argument_pointer_address(.self = self, .index = index).address
     ptr : &UIntNative = cast#(.to: &UIntNative)(.value = addr)
-    text = (
-        .data = ptr&
-    )
+    text = cast#(.to: &Char)(.value = ptr&)
 }
 
 argument_view_at(
@@ -56,10 +54,9 @@ argument_view_at(
     .index: UIntNative,
 ) -> (.view: StringView) := {
     text ::= argument_at(.self = self, .index = index)
-    c_ptr ::= pointer(.self = &text)
     view = (
-        .data = text.data,
-        .length = strlen(.string = c_ptr).length,
+        .data = cast#(.to: UIntNative)(.value = text),
+        .length = strlen(.string = text).length,
     )
 }
 

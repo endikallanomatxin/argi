@@ -13,8 +13,7 @@ main(.system: System) -> (.status_code: Int32) := {
     }
 
     c_text ::= as_c_string(.self = &text)
-    c_ptr ::= pointer(.self = &c_text)
-    if strlen(.string = c_ptr).length != 0 {
+    if strlen(.string = c_text).length != 0 {
         status_code = 3
         return
     }

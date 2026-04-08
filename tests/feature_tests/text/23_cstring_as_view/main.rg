@@ -1,6 +1,6 @@
 main() -> (.status_code: Int32) := {
     c_text ::= from_literal(.data = "hello")
-    view ::= as_view(.self = &c_text)
+    view ::= as_view(.self = c_text)
 
     if view.length != 5 {
         status_code = 1
