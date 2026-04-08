@@ -1886,23 +1886,32 @@ test "feature_tests/modules/05X_import_missing_overload" {
 }
 
 test "feature_tests/modules/06X_private_module_value" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/modules/06X_private_module_value",
-        "value '_hidden_value' is private to its module",
+        \\tests/feature_tests/modules/06X_private_module_value/main.rg:3:19: error: value '_hidden_value' is private to its module
+        \\      status_code = dep._hidden_value
+        \\                    ^
+        \\
     );
 }
 
 test "feature_tests/modules/07X_private_module_type" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/modules/07X_private_module_type",
-        "type '_HiddenStatus' is private to its module",
+        \\tests/feature_tests/modules/07X_private_module_type/main.rg:3:14: error: type '_HiddenStatus' is private to its module
+        \\      hidden : dep._HiddenStatus = (.code = 0)
+        \\               ^
+        \\
     );
 }
 
 test "feature_tests/modules/08X_private_module_function" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/modules/08X_private_module_function",
-        "function '_hidden_status' is private to its module",
+        \\tests/feature_tests/modules/08X_private_module_function/main.rg:3:37: error: function '_hidden_status' is private to its module
+        \\      status_code = dep._hidden_status()
+        \\                                      ^
+        \\
     );
 }
 
