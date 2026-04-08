@@ -2012,6 +2012,18 @@ test "feature_tests/modules/28X_imported_abstract_input_requires_implementation"
     );
 }
 
+test "feature_tests/modules/29X_imported_abstract_ambiguous_overload" {
+    try buildExpectFailExact(
+        "tests/feature_tests/modules/29X_imported_abstract_ambiguous_overload",
+        \\tests/feature_tests/modules/29X_imported_abstract_ambiguous_overload/main.rg:4:19: error: module-qualified call 'dep.pick' is ambiguous for arguments (.value: Int32). Possible overloads:
+        \\  - pick (.value: A, .left: Int32) -> (.result: Int32)
+        \\  - pick (.value: A, .right: Int32) -> (.result: Int32)
+        \\      _ ::= dep.pick(.value = 1)
+        \\                    ^
+        \\
+    );
+}
+
 test "feature_tests/control_flow/03_for_array" {
     const test_path = "tests/feature_tests/control_flow/03_for_array";
     try expectSuccessfulBuild(test_path);
