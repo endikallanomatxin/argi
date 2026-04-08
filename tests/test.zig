@@ -1484,6 +1484,12 @@ test "feature_tests/io/09_print_c_string_literal" {
     try runExpectStdout(test_path, 0, "literal output");
 }
 
+test "feature_tests/io/16_print_string_view" {
+    const test_path = "tests/feature_tests/io/16_print_string_view";
+    try expectSuccessfulBuild(test_path);
+    try runExpectStdout(test_path, 0, "string view output");
+}
+
 test "feature_tests/io/10_read_line" {
     const test_path = "tests/feature_tests/io/10_read_line";
     try expectSuccessfulBuild(test_path);
