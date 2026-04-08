@@ -1939,9 +1939,11 @@ test "feature_tests/modules/21_inferred_explicit_errable_imported" {
 
 
 test "feature_tests/modules/03X_import_missing_module" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/modules/03X_import_missing_module",
-        "cannot resolve import './missing_dep'",
+        \\cannot resolve import './missing_dep' from 'tests/feature_tests/modules/03X_import_missing_module/main.rg'
+        \\Build error: FileNotFound
+        \\
     );
 }
 
@@ -1956,9 +1958,12 @@ test "feature_tests/modules/04X_import_missing_value" {
 }
 
 test "feature_tests/modules/05X_import_missing_overload" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/modules/05X_import_missing_overload",
-        "module 'dep' has no function named 'missing_func'",
+        \\tests/feature_tests/modules/05X_import_missing_overload/main.rg:3:35: error: module 'dep' has no function named 'missing_func'
+        \\      status_code = dep.missing_func()
+        \\                                    ^
+        \\
     );
 }
 
@@ -2011,9 +2016,11 @@ test "feature_tests/control_flow/02_loops" {
 }
 
 test "feature_tests/modules/11X_import_cycle" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/modules/11X_import_cycle",
-        "import cycle detected",
+        \\import cycle detected: tests/feature_tests/modules/11X_import_cycle/dep_a -> tests/feature_tests/modules/11X_import_cycle/dep_b -> tests/feature_tests/modules/11X_import_cycle/dep_a
+        \\Build error: ImportCycle
+        \\
     );
 }
 
@@ -2040,9 +2047,12 @@ test "feature_tests/modules/13X_import_requires_binding_nested" {
 }
 
 test "feature_tests/modules/14X_missing_function_name" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/modules/14X_missing_function_name",
-        "no function named 'missing_func' exists",
+        \\tests/feature_tests/modules/14X_missing_function_name/main.rg:2:31: error: no function named 'missing_func' exists
+        \\      status_code = missing_func()
+        \\                                ^
+        \\
     );
 }
 
@@ -2053,9 +2063,11 @@ test "feature_tests/modules/15_import_root_relative" {
 }
 
 test "feature_tests/modules/16X_root_relative_missing_import" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/modules/16X_root_relative_missing_import/project/app",
-        "cannot resolve import '.../missing_shared'",
+        \\cannot resolve import '.../missing_shared' from 'tests/feature_tests/modules/16X_root_relative_missing_import/project/app/main.rg'
+        \\Build error: FileNotFound
+        \\
     );
 }
 
