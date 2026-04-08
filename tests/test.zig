@@ -1037,16 +1037,22 @@ test "feature_tests/types/13X_match_bind_payload_without_payload" {
 }
 
 test "feature_tests/types/28X_match_omit_payload_pattern" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/types/28X_match_omit_payload_pattern",
-        "choice variant '..error' carries a payload and match must bind it explicitly; use '..error _' to ignore it",
+        \\tests/feature_tests/types/28X_match_omit_payload_pattern/main.rg:13:11: error: choice variant '..error' carries a payload and match must bind it explicitly; use '..error _' to ignore it
+        \\          ..error {
+        \\            ^
+        \\
     );
 }
 
 test "feature_tests/types/32X_match_value_noncopyable_payload" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/types/32X_match_value_noncopyable_payload",
-        "type '{...}' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'",
+        \\tests/feature_tests/types/32X_match_value_noncopyable_payload/main.rg:17:14: error: type '{...}' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\          ..ok payload {
+        \\               ^
+        \\
     );
 }
 
@@ -1134,9 +1140,16 @@ test "feature_tests/collections/13X_iterator_abstract_missing_implements" {
 }
 
 test "feature_tests/control_flow/05X_for_requires_iterator_contract" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/control_flow/05X_for_requires_iterator_contract",
-        "type does not implement abstract 'Iterable'",
+        \\tests/feature_tests/control_flow/05X_for_requires_iterator_contract/main.rg:7:1: error: type does not implement abstract 'Iterable':
+        \\  missing function: to_iterator (.value: &FakeIterable)
+        \\  possible overloads:
+        \\  - to_iterator (.value: &FakeIterable) -> (.iterator: FakeIterator)
+        \\      file: tests/feature_tests/control_flow/05X_for_requires_iterator_contract/main.rg:9:1
+        \\  FakeIterable implements Iterable
+        \\  ^
+        \\
     );
 }
 
@@ -1147,9 +1160,16 @@ test "feature_tests/collections/14_iterable_abstract" {
 }
 
 test "feature_tests/collections/15X_iterable_abstract_missing_implements" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/collections/15X_iterable_abstract_missing_implements",
-        "does not implement abstract 'Iterable'",
+        \\tests/feature_tests/collections/15X_iterable_abstract_missing_implements/main.rg:18:31: error: type 'FakeIterable' does not implement abstract 'Iterable' required by parameter '.items' of 'sum_iterable':
+        \\missing function: to_iterator (.value: &FakeIterable)
+        \\possible overloads:
+        \\  - to_iterator (.value: &FakeIterable) -> (.iterator: FakeIterator)
+        \\      file: tests/feature_tests/collections/15X_iterable_abstract_missing_implements/main.rg:7:1
+        \\      status_code = sum_iterable(.items = &fake).sum
+        \\                                ^
+        \\
     );
 }
 
@@ -1247,9 +1267,12 @@ test "feature_tests/control_flow/12X_for_nullable_not_iterable" {
 }
 
 test "feature_tests/types/14X_errable_match_unknown_variant" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/types/14X_errable_match_unknown_variant",
-        "choice type 'Errable#(.t: Int32, .reasons: choice)' has no variant '..none'",
+        \\tests/feature_tests/types/14X_errable_match_unknown_variant/main.rg:7:11: error: choice type 'Errable#(.t: Int32, .reasons: choice)' has no variant '..none'
+        \\          ..none {
+        \\            ^
+        \\
     );
 }
 
@@ -1323,9 +1346,12 @@ test "feature_tests/system/02_reached_arguments" {
 }
 
 test "feature_tests/system/03X_reached_argument_missing" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/system/03X_reached_argument_missing",
-        "cannot resolve reached argument '.stdout'",
+        \\tests/feature_tests/system/03X_reached_argument_missing/main.rg:12:26: error: cannot resolve reached argument '.stdout' with alternatives [stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer] expected as 'Int32'
+        \\      status_code = forward()
+        \\                           ^
+        \\
     );
 }
 
@@ -1378,9 +1404,12 @@ test "feature_tests/ownership/16_keep_cancels_auto_deinit" {
 }
 
 test "feature_tests/ownership/17X_keep_without_auto_deinit" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/ownership/17X_keep_without_auto_deinit",
-        "cannot keep binding 'value': no automatic deinit is scheduled",
+        \\tests/feature_tests/ownership/17X_keep_without_auto_deinit/main.rg:3:11: error: cannot keep binding 'value': no automatic deinit is scheduled
+        \\      #keep value
+        \\            ^
+        \\
     );
 }
 
