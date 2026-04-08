@@ -922,7 +922,15 @@ pub const CodeGenerator = struct {
         const state = self.global_init_state.get(b) orelse .done;
         switch (state) {
             .done => return,
-            .in_progress => return CodegenError.InvalidType,
+            .in_progress => {
+                try self.diags.add(
+                    b.location,
+                    .codegen,
+                    "module-level binding '{s}' participates in a cyclic initializer dependency",
+                    .{b.name},
+                );
+                return CodegenError.Reported;
+            },
             .uninitialized => {},
         }
 
@@ -972,6 +980,17 @@ pub const CodeGenerator = struct {
         return switch (n.content) {
             .value_literal => self.genGlobalValueLiteral(n),
             .binding_use => |binding| blk: {
+                if (self.global_init_state.get(binding)) |state| {
+                    if (state == .in_progress) {
+                        try self.diags.add(
+                            binding.location,
+                            .codegen,
+                            "module-level binding '{s}' participates in a cyclic initializer dependency",
+                            .{binding.name},
+                        );
+                        return CodegenError.Reported;
+                    }
+                }
                 try self.ensureGlobalBindingInitialized(binding);
                 const storage = self.binding_storage.get(binding) orelse return CodegenError.SymbolNotFound;
                 const init_val = c.LLVMGetInitializer(storage.ref) orelse return CodegenError.InvalidType;
