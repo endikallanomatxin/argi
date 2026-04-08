@@ -90,3 +90,13 @@ pointer(
 ) -> (.out: &Char) := {
     out = cast#(.to: &Char)(.value = self&.data)
 }
+
+as_view(
+    .self: &CString,
+) -> (.view: StringView) := {
+    ptr ::= pointer(.self = self)
+    view = (
+        .data = self&.data,
+        .length = strlen(.string = ptr).length,
+    )
+}

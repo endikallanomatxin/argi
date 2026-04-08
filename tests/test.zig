@@ -1926,6 +1926,12 @@ test "feature_tests/text/22_user_module_oom_helpers" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/text/23_cstring_as_view" {
+    const test_path = "tests/feature_tests/text/23_cstring_as_view";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/types/33_error_propagation_statement_void" {
     const test_path = "tests/feature_tests/types/33_error_propagation_statement_void";
     try expectSuccessfulBuild(test_path);
