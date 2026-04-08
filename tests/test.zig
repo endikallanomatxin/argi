@@ -649,9 +649,13 @@ test "feature_tests/basics/13_core_and_libc" {
 }
 
 test "feature_tests/basics/17X_extern_call_requires_exact_argument_types" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types",
-        "no overload of 'putchar' accepts arguments (.character: UInt16)",
+        \\tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types/main.rg:3:12: error: no overload of 'putchar' accepts arguments (.character: UInt16). Available signatures:
+        \\  - putchar (.character: UInt8) -> ()
+        \\      putchar(.character = value)
+        \\             ^
+        \\
     );
 }
 
@@ -1003,9 +1007,12 @@ test "feature_tests/types/10X_choice_unknown_variant" {
 }
 
 test "feature_tests/types/11X_choice_payload_access_without_payload" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/types/11X_choice_payload_access_without_payload",
-        "choice variant '..north' has no payload",
+        \\tests/feature_tests/types/11X_choice_payload_access_without_payload/main.rg:8:23: error: choice variant '..north' has no payload
+        \\      payload := value..north
+        \\                        ^
+        \\
     );
 }
 
@@ -1020,9 +1027,12 @@ test "feature_tests/types/12X_match_non_choice" {
 }
 
 test "feature_tests/types/13X_match_bind_payload_without_payload" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/types/13X_match_bind_payload_without_payload",
-        "choice variant '..north' has no payload to bind",
+        \\tests/feature_tests/types/13X_match_bind_payload_without_payload/main.rg:10:17: error: choice variant '..north' has no payload to bind
+        \\          ..north payload {
+        \\                  ^
+        \\
     );
 }
 
@@ -1113,9 +1123,13 @@ test "feature_tests/collections/12_iterator_abstract" {
 }
 
 test "feature_tests/collections/13X_iterator_abstract_missing_implements" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/collections/13X_iterator_abstract_missing_implements",
-        "does not implement abstract 'Iterator'",
+        \\tests/feature_tests/collections/13X_iterator_abstract_missing_implements/main.rg:9:12: error: type 'FakeIterator' does not implement abstract 'Iterator' required by parameter '.it' of 'consume':
+        \\missing function: has_next (.self: &FakeIterator)
+        \\      consume(.it = $&fake)
+        \\             ^
+        \\
     );
 }
 
