@@ -818,9 +818,12 @@ test "feature_tests/ownership/13_move_operator" {
 }
 
 test "feature_tests/ownership/14X_use_after_move" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/ownership/14X_use_after_move",
-        "binding 'handle' was moved and cannot be used again before reinitialization",
+        \\tests/feature_tests/ownership/14X_use_after_move/main.rg:14:34: error: binding 'handle' was moved and cannot be used again before reinitialization (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:13:34)
+        \\      status_code = consume(.res = handle)
+        \\                                   ^
+        \\
     );
 }
 
