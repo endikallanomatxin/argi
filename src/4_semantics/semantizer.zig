@@ -6903,6 +6903,14 @@ pub const Semantizer = struct {
                 if (self.defer_unknown_top_level and self.current_top_node != null) {
                     return error.SymbolNotFound;
                 }
+                if (call.module_qualifier) |module_name| {
+                    const module_dir = s.lookupModuleAlias(module_name) orelse {
+                        try self.diags.add(loc, .semantic, "unknown module alias '{s}'", .{module_name});
+                        return error.Reported;
+                    };
+                    try self.addMissingModuleFunctionDiagnostic(module_name, module_dir, call.callee, input_te.ty, s, loc);
+                    return error.Reported;
+                }
                 if (try self.addMissingAbstractImplementationDiagnostic(call.callee, input_te.ty, s, loc)) {
                     return error.Reported;
                 }
