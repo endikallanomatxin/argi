@@ -953,9 +953,12 @@ test "feature_tests/types/03_choice_payloads" {
 }
 
 test "feature_tests/types/04X_choice_missing_payload" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/types/04X_choice_missing_payload",
-        "choice variant '..ok' requires a payload",
+        \\tests/feature_tests/types/04X_choice_missing_payload/main.rg:7:22: error: choice variant '..ok' requires a payload
+        \\      value : Result = ..ok
+        \\                       ^
+        \\
     );
 }
 
@@ -990,9 +993,12 @@ test "feature_tests/types/09_errable_generic" {
 }
 
 test "feature_tests/types/10X_choice_unknown_variant" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/types/10X_choice_unknown_variant",
-        "choice type 'Direction' has no variant '..east'",
+        \\tests/feature_tests/types/10X_choice_unknown_variant/main.rg:7:25: error: choice type 'Direction' has no variant '..east'
+        \\      value : Direction = ..east
+        \\                          ^
+        \\
     );
 }
 
@@ -1004,9 +1010,12 @@ test "feature_tests/types/11X_choice_payload_access_without_payload" {
 }
 
 test "feature_tests/types/12X_match_non_choice" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/types/12X_match_non_choice",
-        "match expects a choice value, found 'Int32'",
+        \\tests/feature_tests/types/12X_match_non_choice/main.rg:4:11: error: match expects a choice value, found 'Int32'
+        \\      match value {
+        \\            ^
+        \\
     );
 }
 
@@ -1214,9 +1223,12 @@ test "feature_tests/control_flow/11_range_default_start_with_step" {
 }
 
 test "feature_tests/control_flow/12X_for_nullable_not_iterable" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/control_flow/12X_for_nullable_not_iterable",
-        "for expects a type implementing abstract 'Iterable', got '?Int32'",
+        \\tests/feature_tests/control_flow/12X_for_nullable_not_iterable/main.rg:4:5: error: for expects a type implementing abstract 'Iterable', got '?Int32'
+        \\      for item in value {
+        \\      ^
+        \\
     );
 }
 
