@@ -93,6 +93,10 @@ Nomenclature to keep consistent:
 Current implementation direction:
 
 - `String` is now an owning byte buffer over `Allocation`.
+- string literals now materialize as borrowed read-only `StringView`.
+- raw `&Char` stays as the explicit C-string boundary, reached through helpers
+  such as `as_c_string(...)` / `as_view(...)` instead of being the default
+  language-level type of `"..."`.
 - `init(.p = $&string, .length = n)` allocates exactly `n` bytes.
 - `deinit(.self = $&string)` releases the backing allocation.
 - `copy(.self = string)` allocates a second backing buffer and copies the

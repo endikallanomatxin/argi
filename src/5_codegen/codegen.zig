@@ -121,6 +121,7 @@ pub const CodeGenerator = struct {
     selected_test_candidate: ?*sem.FunctionDeclaration = null,
     runtime_argc_global: ?llvm.c.LLVMValueRef = null,
     runtime_argv_global: ?llvm.c.LLVMValueRef = null,
+    string_literal_counter: u32 = 0,
 
     loop_stack: std.array_list.Managed(LoopContext),
     binding_storage: std.AutoHashMap(*const sem.BindingDeclaration, BindingStorage),
@@ -1008,10 +1009,34 @@ pub const CodeGenerator = struct {
     }
 
     fn genGlobalValueLiteral(self: *CodeGenerator, n: *const sem.SGNode) CodegenError!TypedValue {
-        return switch (n.content.value_literal) {
-            .string_literal => CodegenError.InvalidType,
-            else => try self.genValueLiteral(n),
-        };
+        return try self.genValueLiteral(n);
+    }
+
+    fn isStringViewType(ty: sem.Type) bool {
+        if (ty != .struct_type) return false;
+        const st = ty.struct_type;
+        if (st.fields.len != 2) return false;
+        if (!std.mem.eql(u8, st.fields[0].name, "data")) return false;
+        if (!std.mem.eql(u8, st.fields[1].name, "length")) return false;
+        return st.fields[0].ty == .builtin and st.fields[0].ty.builtin == .UIntNative and
+            st.fields[1].ty == .builtin and st.fields[1].ty.builtin == .UIntNative;
+    }
+
+    fn emitStringLiteralPointer(self: *CodeGenerator, str: []const u8) !llvm.c.LLVMValueRef {
+        const name = try std.fmt.allocPrint(self.allocator.*, "argi.strlit.{d}", .{self.string_literal_counter});
+        self.string_literal_counter += 1;
+
+        const ctx = c.LLVMGetModuleContext(self.module);
+        const array_ty = c.LLVMArrayType(c.LLVMInt8Type(), @intCast(str.len + 1));
+        const initializer = c.LLVMConstStringInContext(ctx, str.ptr, @intCast(str.len), 0);
+        const global = c.LLVMAddGlobal(self.module, array_ty, name.ptr);
+        c.LLVMSetInitializer(global, initializer);
+        c.LLVMSetGlobalConstant(global, 1);
+        c.LLVMSetLinkage(global, c.LLVMPrivateLinkage);
+
+        const zero = c.LLVMConstInt(c.LLVMInt32Type(), 0, 0);
+        var indices = [_]llvm.c.LLVMValueRef{ zero, zero };
+        return c.LLVMConstGEP2(array_ty, global, &indices, 2);
     }
 
     fn genGlobalBinaryOperation(self: *CodeGenerator, bo: *const sem.BinaryOperation) CodegenError!TypedValue {
@@ -1470,17 +1495,27 @@ pub const CodeGenerator = struct {
             },
             .char_literal => |ch| .{ .type_ref = c.LLVMInt8Type(), .value_ref = c.LLVMConstInt(c.LLVMInt8Type(), @intCast(ch), 0), .sem_type = sem_ty },
             .string_literal => |str| blk: {
-                // TODO: For now, we will use c-like strings.
-                // Later on, this should be a proper string type.
+                if (sem_ty) |ty| {
+                    if (isStringViewType(ty)) {
+                        // String literals lower to a static NUL-terminated byte
+                        // buffer plus a `StringView { data, length }` descriptor.
+                        // The terminator stays available for explicit `&Char`
+                        // interop, but it is not the literal's semantic type.
+                        const type_ref = try self.toLLVMType(ty);
+                        const data_ptr = try self.emitStringLiteralPointer(str);
+                        const native_uint_ty = try self.toLLVMType(.{ .builtin = .UIntNative });
+                        const data_addr = c.LLVMConstPtrToInt(data_ptr, native_uint_ty);
+                        const length = c.LLVMConstInt(native_uint_ty, @intCast(str.len), 0);
+                        var fields = [_]llvm.c.LLVMValueRef{ data_addr, length };
+                        break :blk .{
+                            .type_ref = type_ref,
+                            .value_ref = c.LLVMConstNamedStruct(type_ref, &fields, fields.len),
+                            .sem_type = sem_ty,
+                        };
+                    }
+                }
 
-                const str_z = try self.dupZ(str);
-
-                // Crea un global interno y recibe el i8* a su inicio
-                const gptr = c.LLVMBuildGlobalStringPtr(
-                    self.builder,
-                    str_z.ptr,
-                    "strlit",
-                );
+                const gptr = try self.emitStringLiteralPointer(str);
                 break :blk .{
                     .type_ref = c.LLVMPointerType(c.LLVMInt8Type(), 0),
                     .value_ref = gptr,

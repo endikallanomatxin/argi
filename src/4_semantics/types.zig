@@ -958,6 +958,34 @@ pub fn canLiteralCoerceToBuiltin(
     };
 }
 
+pub fn canStringLiteralCoerceToPointer(
+    expected: *const sg.PointerType,
+    expr: TypedExpr,
+) bool {
+    if (expected.mutability != .read_only) return false;
+    if (expected.child.* != .builtin or expected.child.*.builtin != .Char) return false;
+    if (expr.node.content != .value_literal) return false;
+
+    return switch (expr.node.content.value_literal) {
+        .string_literal => true,
+        else => false,
+    };
+}
+
+fn coerceStringLiteralToPointer(
+    expected: *const sg.PointerType,
+    expr: TypedExpr,
+) TypedExpr {
+    if (!canStringLiteralCoerceToPointer(expected, expr)) return expr;
+
+    const expected_ty = sg.Type{ .pointer_type = expected };
+    @constCast(expr.node).sem_type = expected_ty;
+    return .{
+        .node = expr.node,
+        .ty = expected_ty,
+    };
+}
+
 pub fn coerceExprToType(
     expected: sg.Type,
     expr: TypedExpr,
@@ -973,6 +1001,7 @@ pub fn coerceExprToType(
         .builtin => |bt| try coerceLiteralToBuiltin(bt, expr, expr_node, allocator, diags),
         .choice_type => |ct| try coerceChoiceLiteral(ct, expr, expr_node, s, allocator, diags),
         .struct_type => |st| try coerceStructLiteral(st, expr, expr_node, s, allocator, diags),
+        .pointer_type => |pt| coerceStringLiteralToPointer(pt, expr),
         else => expr,
     };
 }

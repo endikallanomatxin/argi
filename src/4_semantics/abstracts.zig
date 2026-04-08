@@ -268,6 +268,7 @@ pub fn specificityScore(expected: sg.Type, actual: sg.Type) u32 {
             else => 10,
         },
         .struct_type => |est| blk: {
+            if (actual != .struct_type) break :blk 10;
             var sum: u32 = 0;
             const ast = actual.struct_type;
             var i: usize = 0;
@@ -279,6 +280,7 @@ pub fn specificityScore(expected: sg.Type, actual: sg.Type) u32 {
             break :blk sum + 1;
         },
         .pointer_type => |ept_ptr| blk2: {
+            if (actual != .pointer_type) break :blk2 5;
             const apt_ptr = actual.pointer_type;
             const ept = ept_ptr.*;
             const apt = apt_ptr.*;
@@ -295,6 +297,7 @@ pub fn specificityScore(expected: sg.Type, actual: sg.Type) u32 {
             break :blk2 specificityScore(expected_child, actual_child);
         },
         .array_type => |eat_ptr| blk_arr: {
+            if (actual != .array_type) break :blk_arr 10;
             const aat_ptr = actual.array_type;
             const eat = eat_ptr.*;
             const aat = aat_ptr.*;

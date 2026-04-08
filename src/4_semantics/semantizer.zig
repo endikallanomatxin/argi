@@ -2688,7 +2688,7 @@ pub const Semantizer = struct {
                 break :blk error.Reported;
             },
 
-            .literal => |l| self.handleLiteral(l) catch |err| blk: {
+            .literal => |l| self.handleLiteral(l, s) catch |err| blk: {
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -3527,7 +3527,7 @@ pub const Semantizer = struct {
     }
 
     //─────────────────────────────────────────────────────────  LITERALS
-    fn handleLiteral(self: *Semantizer, lit: tok.Literal) SemErr!typ.TypedExpr {
+    fn handleLiteral(self: *Semantizer, lit: tok.Literal, s: *Scope) SemErr!typ.TypedExpr {
         var value_literal: sg.ValueLiteral = undefined;
         var ty: sg.Type = .{ .builtin = .Int32 };
 
@@ -3543,16 +3543,14 @@ pub const Semantizer = struct {
                 ty = .{ .builtin = .Char };
                 value_literal = .{ .char_literal = c };
             },
-            .string_literal => |s| {
-                const char_ty: sg.Type = .{ .builtin = .Char };
-                const child = try self.allocator.create(sg.Type);
-                child.* = char_ty;
-
-                const sem_ptr = try self.allocator.create(sg.PointerType);
-                sem_ptr.* = .{ .mutability = .read_only, .child = child };
-
-                ty = .{ .pointer_type = sem_ptr };
-                value_literal = .{ .string_literal = s };
+            .string_literal => |text| {
+                // Language-level string literals semantize as borrowed read-only
+                // text views. Raw `&Char` is kept as an explicit interop boundary
+                // through helpers in core/strings/c_strings.rg.
+                const string_view_decl = s.lookupType("StringView") orelse return error.UnknownType;
+                if (!typeDeclIsReady(string_view_decl)) return error.UnknownType;
+                ty = string_view_decl.ty;
+                value_literal = .{ .string_literal = text };
             },
             .bool_literal => |b| {
                 ty = .{ .builtin = .Bool };
@@ -3563,6 +3561,7 @@ pub const Semantizer = struct {
         const ptr = try self.allocator.create(sg.ValueLiteral);
         ptr.* = value_literal;
         const n = try sg.makeSGNode(.{ .value_literal = ptr.* }, undefined, self.allocator);
+        n.sem_type = ty;
         return .{ .node = n, .ty = ty };
     }
 
@@ -7379,6 +7378,7 @@ pub const Semantizer = struct {
 
         return switch (expected) {
             .builtin => |bt| typ.canLiteralCoerceToBuiltin(bt, actual),
+            .pointer_type => |pt| typ.canStringLiteralCoerceToPointer(pt, actual),
             .choice_type => |ct| blk: {
                 if (actual.node.content != .choice_literal) break :blk false;
                 const lit = actual.node.content.choice_literal;
@@ -7478,6 +7478,9 @@ pub const Semantizer = struct {
         if (typ.typesCompatible(expected, actual.ty)) return actual;
 
         if (expected == .pointer_type and actual.ty != .pointer_type) {
+            const coerced_pointer = try typ.coerceExprToType(expected, actual, expr_node, s, self.allocator, self.diags);
+            if (typ.typesCompatible(expected, coerced_pointer.ty)) return coerced_pointer;
+
             const ptr_expr = switch (expected.pointer_type.mutability) {
                 .read_only => try typ.ensureReadOnlyPointer(expr_node, actual, self.allocator, self.diags),
                 .read_write => try typ.ensureMutablePointer(expr_node, actual, s, self.allocator, self.diags),
