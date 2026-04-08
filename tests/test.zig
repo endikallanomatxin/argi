@@ -788,23 +788,32 @@ test "feature_tests/ownership/08X_noncopyable_output_binding" {
 }
 
 test "feature_tests/ownership/09X_mutable_and_read_alias_same_call" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/ownership/09X_mutable_and_read_alias_same_call",
-        "binding 'value' cannot be passed as '$&' and '&' in the same call to 'mix'",
+        \\tests/feature_tests/ownership/09X_mutable_and_read_alias_same_call/main.rg:5:8: error: binding 'value' cannot be passed as '$&' and '&' in the same call to 'mix'
+        \\      mix(.target = $&value, .reader = &value)
+        \\         ^
+        \\
     );
 }
 
 test "feature_tests/ownership/10X_mutable_and_value_alias_same_call" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/ownership/10X_mutable_and_value_alias_same_call",
-        "binding 'value' cannot be passed as '$&' and 'value' in the same call to 'mix'",
+        \\tests/feature_tests/ownership/10X_mutable_and_value_alias_same_call/main.rg:5:8: error: binding 'value' cannot be passed as '$&' and 'value' in the same call to 'mix'
+        \\      mix(.target = $&value, .snapshot = value)
+        \\         ^
+        \\
     );
 }
 
 test "feature_tests/ownership/11X_double_mutable_alias_same_call" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/ownership/11X_double_mutable_alias_same_call",
-        "binding 'value' cannot be passed as '$&' and '$&' in the same call to 'mix'",
+        \\tests/feature_tests/ownership/11X_double_mutable_alias_same_call/main.rg:5:8: error: binding 'value' cannot be passed as '$&' and '$&' in the same call to 'mix'
+        \\      mix(.left = $&value, .right = $&value)
+        \\         ^
+        \\
     );
 }
 
