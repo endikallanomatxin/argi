@@ -1656,13 +1656,23 @@ test "feature_tests/ownership/23_named_struct_auto_deinit" {
 }
 
 test "feature_tests/ownership/24X_mutable_and_read_field_alias_same_call" {
-    const test_path = "tests/feature_tests/ownership/24X_mutable_and_read_field_alias_same_call";
-    try buildExpectFail(test_path, "cannot be passed as '$&' and '&'");
+    try buildExpectFailExact(
+        "tests/feature_tests/ownership/24X_mutable_and_read_field_alias_same_call",
+        \\tests/feature_tests/ownership/24X_mutable_and_read_field_alias_same_call/main.rg:13:8: error: binding 'pair' cannot be passed as '$&' and '&' in the same call to 'mix'
+        \\      mix(.target = $&pair.left, .reader = &pair.left)
+        \\         ^
+        \\
+    );
 }
 
 test "feature_tests/ownership/25X_mutable_and_value_field_alias_same_call" {
-    const test_path = "tests/feature_tests/ownership/25X_mutable_and_value_field_alias_same_call";
-    try buildExpectFail(test_path, "cannot be passed as '$&' and 'value'");
+    try buildExpectFailExact(
+        "tests/feature_tests/ownership/25X_mutable_and_value_field_alias_same_call",
+        \\tests/feature_tests/ownership/25X_mutable_and_value_field_alias_same_call/main.rg:13:8: error: binding 'pair' cannot be passed as '$&' and 'value' in the same call to 'mix'
+        \\      mix(.target = $&pair.left, .snapshot = pair.left)
+        \\         ^
+        \\
+    );
 }
 
 test "feature_tests/ownership/26_distinct_fields_do_not_alias_same_call" {
@@ -1672,13 +1682,27 @@ test "feature_tests/ownership/26_distinct_fields_do_not_alias_same_call" {
 }
 
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
-    const test_path = "tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal";
-    try buildExpectFail(test_path, "copy() for type 'Resource' is ambiguous in value position");
+    try buildExpectFailExact(
+        "tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
+        \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: copy() for type 'Resource' is ambiguous in value position
+        \\      values : [2]Resource = (source, source)
+        \\                             ^
+        \\
+    );
 }
 
 test "feature_tests/ownership/28X_ambiguous_copy_assignment" {
-    const test_path = "tests/feature_tests/ownership/28X_ambiguous_copy_assignment";
-    try buildExpectFail(test_path, "ambiguous call to 'copy'");
+    try buildExpectFailExact(
+        "tests/feature_tests/ownership/28X_ambiguous_copy_assignment",
+        \\tests/feature_tests/ownership/28X_ambiguous_copy_assignment/main.rg:17:15: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
+        \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
+        \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
+        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
+        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
+        \\      copied := source
+        \\                ^
+        \\
+    );
 }
 
 test "feature_tests/ownership/29_string_view_is_copyable" {
@@ -1700,8 +1724,13 @@ test "feature_tests/ownership/31_array_of_pointers_is_copyable" {
 }
 
 test "feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable" {
-    const test_path = "tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable";
-    try buildExpectFail(test_path, "type '[2]Resource' is not copyable");
+    try buildExpectFailExact(
+        "tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable",
+        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:9:15: error: type '[2]Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\      copied := resources
+        \\                ^
+        \\
+    );
 }
 
 test "feature_tests/ownership/33_return_runs_defer" {
