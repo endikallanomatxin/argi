@@ -523,9 +523,13 @@ test "feature_tests/functions/13_mixed_function_call" {
 }
 
 test "feature_tests/functions/14X_positional_after_named_call" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/functions/14X_positional_after_named_call",
-        "positional collection items must appear before named items",
+        \\Parse error: ExpectedStructField
+        \\tests/feature_tests/functions/14X_positional_after_named_call/main.rg:6:40: error: positional collection items must appear before named items
+        \\      status_code = subtract(.left = 44, 2).diff
+        \\                                         ^
+        \\
     );
 }
 
@@ -536,9 +540,12 @@ test "feature_tests/functions/15_output_default_implicit_return" {
 }
 
 test "feature_tests/functions/16X_function_signature_requires_explicit_types" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/functions/16X_function_signature_requires_explicit_types",
-        "function output field '.result' requires an explicit type",
+        \\tests/feature_tests/functions/16X_function_signature_requires_explicit_types/main.rg:1:30: error: function output field '.result' requires an explicit type
+        \\  identity(.value: Int32) -> (.result) := {
+        \\                               ^
+        \\
     );
 }
 
@@ -695,16 +702,27 @@ test "feature_tests/polymorphism/08_abstract" {
 }
 
 test "feature_tests/polymorphism/09X_abstract_missing_requirement" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/polymorphism/09X_abstract_missing_requirement",
-        "type does not implement abstract 'Animal':\n  missing function: speak (.who: Dog)",
+        \\tests/feature_tests/polymorphism/09X_abstract_missing_requirement/main.rg:9:1: error: type does not implement abstract 'Animal':
+        \\  missing function: speak (.who: Dog)
+        \\  Dog implements Animal
+        \\  ^
+        \\
     );
 }
 
 test "feature_tests/polymorphism/10X_abstract_wrong_signature" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/polymorphism/10X_abstract_wrong_signature",
-        "type does not implement abstract 'Animal':\n  missing function: speak (.who: Dog)",
+        \\tests/feature_tests/polymorphism/10X_abstract_wrong_signature/main.rg:9:1: error: type does not implement abstract 'Animal':
+        \\  missing function: speak (.who: Dog)
+        \\  possible overloads:
+        \\  - speak (.who: Dog) -> (.s: Int32)
+        \\      file: tests/feature_tests/polymorphism/10X_abstract_wrong_signature/main.rg:13:1
+        \\  Dog implements Animal
+        \\  ^
+        \\
     );
 }
 
@@ -715,9 +733,12 @@ test "feature_tests/polymorphism/11_abstract_instantiation" {
 }
 
 test "feature_tests/polymorphism/12X_abstract_instantiation_missing_default" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/polymorphism/12X_abstract_instantiation_missing_default",
-        "cannot use abstract 'ExampleAbstract' as a type for a symbol",
+        \\tests/feature_tests/polymorphism/12X_abstract_instantiation_missing_default/main.rg:4:5: error: cannot use abstract 'ExampleAbstract' as a type for a symbol. Use a concrete type or add a default concrete type to the abstract type ('ExampleAbstract defaultsto <Type>')
+        \\      x : ExampleAbstract
+        \\      ^
+        \\
     );
 }
 
@@ -728,9 +749,16 @@ test "feature_tests/polymorphism/15_abstract_self_output" {
 }
 
 test "feature_tests/polymorphism/16X_abstract_self_output_wrong" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/polymorphism/16X_abstract_self_output_wrong",
-        "type does not implement abstract 'Animal':\n  missing function: clone (.who: Dog)",
+        \\tests/feature_tests/polymorphism/16X_abstract_self_output_wrong/main.rg:13:1: error: type does not implement abstract 'Animal':
+        \\  missing function: clone (.who: Dog)
+        \\  possible overloads:
+        \\  - clone (.who: Dog) -> (.copy: Int32)
+        \\      file: tests/feature_tests/polymorphism/16X_abstract_self_output_wrong/main.rg:9:1
+        \\  Dog implements Animal
+        \\  ^
+        \\
     );
 }
 
@@ -763,9 +791,12 @@ test "feature_tests/polymorphism/13X_abstract_function_input_requires_implementa
 }
 
 test "feature_tests/polymorphism/14X_abstract_function_output_requires_default" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/polymorphism/14X_abstract_function_output_requires_default",
-        "error generating function make_value: InvalidType",
+        \\tests/feature_tests/polymorphism/14X_abstract_function_output_requires_default/main.rg:3:1: error: error generating function make_value: InvalidType
+        \\  make_value () -> (.value: ExampleAbstract) := {
+        \\  ^
+        \\
     );
 }
 
@@ -1653,9 +1684,13 @@ test "feature_tests/polymorphism/20_generic_abstract_bound_syntax" {
 }
 
 test "feature_tests/polymorphism/21X_generic_bound_requires_type_keyword" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/polymorphism/21X_generic_bound_requires_type_keyword",
-        "generic parameter bounds use '.t: Type: Constraint'",
+        \\Parse error: ExpectedStructField
+        \\tests/feature_tests/polymorphism/21X_generic_bound_requires_type_keyword/main.rg:3:15: error: generic parameter bounds use '.t: Type: Constraint'
+        \\  foo#(.t: Int32: ExampleAbstract)(.value: Int32) -> (.result: Int32) := {
+        \\                ^
+        \\
     );
 }
 
