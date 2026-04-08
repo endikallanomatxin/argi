@@ -37,6 +37,22 @@ get(
     value = ..none
 }
 
+get(
+    .self: &EnvironmentVariables,
+    .key: StringView,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+) -> (.value: ?StringView) := {
+    c_key ::= as_c_string(.self = key, .allocator = allocator)
+    found ::= get(.self = self, .key = c_key.text)
+    if found? {
+        payload ::= found..some
+        value = ..some(.value = payload.value)
+        return
+    }
+
+    value = ..none
+}
+
 has(
     .self: &EnvironmentVariables,
     .key: CString,
