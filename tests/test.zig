@@ -403,23 +403,32 @@ test "feature_tests/basics/08_struct_field_store" {
 }
 
 test "feature_tests/basics/09X_integer_literal_overflow" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/basics/09X_integer_literal_overflow",
-        "integer literal 300 does not fit in 'UInt8' (max 255)",
+        \\tests/feature_tests/basics/09X_integer_literal_overflow/main.rg:2:21: error: integer literal 300 does not fit in 'UInt8' (max 255)
+        \\      value : UInt8 = 300
+        \\                      ^
+        \\
     );
 }
 
 test "feature_tests/basics/10X_signed_integer_literal_overflow" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/basics/10X_signed_integer_literal_overflow",
-        "integer literal 128 does not fit in 'Int8' (min -128, max 127)",
+        \\tests/feature_tests/basics/10X_signed_integer_literal_overflow/main.rg:2:20: error: integer literal 128 does not fit in 'Int8' (min -128, max 127)
+        \\      value : Int8 = 128
+        \\                     ^
+        \\
     );
 }
 
 test "feature_tests/basics/11X_negative_integer_literal_overflow" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/basics/11X_negative_integer_literal_overflow",
-        "integer literal -129 does not fit in 'Int8' (min -128, max 127)",
+        \\tests/feature_tests/basics/11X_negative_integer_literal_overflow/main.rg:2:20: error: integer literal -129 does not fit in 'Int8' (min -128, max 127)
+        \\      value : Int8 = -129
+        \\                     ^
+        \\
     );
 }
 
@@ -448,23 +457,32 @@ test "feature_tests/functions/04_pipe_pointer" {
 }
 
 test "feature_tests/functions/05X_pipe_requires_parentheses" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/functions/05X_pipe_requires_parentheses",
-        "pipe right-hand side must use at least one argument placeholder",
+        \\tests/feature_tests/functions/05X_pipe_requires_parentheses/main.rg:6:22: error: pipe right-hand side must use at least one argument placeholder
+        \\      status_code = 41 | add_one
+        \\                       ^
+        \\
     );
 }
 
 test "feature_tests/functions/06X_pipe_requires_placeholder" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/functions/06X_pipe_requires_placeholder",
-        "pipe right-hand side must use at least one argument placeholder",
+        \\tests/feature_tests/functions/06X_pipe_requires_placeholder/main.rg:6:22: error: pipe right-hand side must use at least one argument placeholder
+        \\      status_code = 41 | add_one(41)
+        \\                       ^
+        \\
     );
 }
 
 test "feature_tests/functions/07X_pipe_expression_placeholder_not_supported" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/functions/07X_pipe_expression_placeholder_not_supported",
-        "pipe placeholders are only supported as '_', '&_', '$&_', '_.field', or '..variant' payload access for now",
+        \\tests/feature_tests/functions/07X_pipe_expression_placeholder_not_supported/main.rg:6:34: error: pipe placeholders are only supported as '_', '&_', '$&_', '_.field', or '..variant' payload access for now
+        \\      status_code = 41 | add_one(_ + 1)
+        \\                                   ^
+        \\
     );
 }
 
@@ -561,23 +579,33 @@ test "feature_tests/pointers/02_read-only_vs_read-and-write_pointers" {
 }
 
 test "feature_tests/pointers/03X_assign_through_readonly_pointer" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/pointers/03X_assign_through_readonly_pointer",
-        "cannot assign through pointer '&Int32' because it is read-only",
+        \\tests/feature_tests/pointers/03X_assign_through_readonly_pointer/main.rg:5:11: error: cannot assign through pointer '&Int32' because it is read-only; use '$&' when acquiring it
+        \\      reader& = 1
+        \\            ^
+        \\
     );
 }
 
 test "feature_tests/pointers/04X_read-write_pointer_to_constant" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/pointers/04X_read-write_pointer_to_constant",
-        "binding 'value' is immutable",
+        \\tests/feature_tests/pointers/04X_read-write_pointer_to_constant/main.rg:4:32: error: binding 'value' is immutable; declare it with '::' or use '&value'
+        \\      mutable_view : $&Int32 = $&value
+        \\                                 ^
+        \\
     );
 }
 
 test "feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param",
-        "no overload of 'increment' accepts arguments (.ptr: &Int32)",
+        \\tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param/main.rg:9:14: error: no overload of 'increment' accepts arguments (.ptr: &Int32). Available signatures:
+        \\  - increment (.ptr: $&Int32) -> ()
+        \\      increment(.ptr=reader)
+        \\               ^
+        \\
     );
 }
 
@@ -588,16 +616,22 @@ test "feature_tests/pointers/06_explicit_pointer_casts" {
 }
 
 test "feature_tests/pointers/07X_pointer_arithmetic_requires_cast" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/pointers/07X_pointer_arithmetic_requires_cast",
-        "pointer arithmetic is not allowed; cast explicitly to an integer, perform the arithmetic, and cast back",
+        \\tests/feature_tests/pointers/07X_pointer_arithmetic_requires_cast/main.rg:4:14: error: pointer arithmetic is not allowed; cast explicitly to an integer, perform the arithmetic, and cast back
+        \\      _addr := ptr + 1
+        \\               ^
+        \\
     );
 }
 
 test "feature_tests/pointers/08X_array_index_requires_uint_native" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/pointers/08X_array_index_requires_uint_native",
-        "array index must be 'UIntNative'",
+        \\tests/feature_tests/pointers/08X_array_index_requires_uint_native/main.rg:4:23: error: array index must be 'UIntNative', got 'Int32'
+        \\      status_code = arr[idx]
+        \\                        ^
+        \\
     );
 }
 
