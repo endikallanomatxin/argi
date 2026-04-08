@@ -1668,9 +1668,14 @@ test "feature_tests/polymorphism/24_abstract_dispatch_beats_regular_generic_with
 }
 
 test "feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous",
-        "ambiguous call to 'pick'",
+        \\tests/feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous/main.rg:14:19: error: ambiguous call to 'pick' for arguments (.value: Int32). Possible overloads:
+        \\  - pick (.value: A, .left: Int32) -> (.status_code: Int32)
+        \\  - pick (.value: A, .right: Int32) -> (.status_code: Int32)
+        \\      status_code = pick(.value = 7).status_code
+        \\                    ^
+        \\
     );
 }
 

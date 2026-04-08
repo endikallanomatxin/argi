@@ -6532,7 +6532,21 @@ pub const Semantizer = struct {
 
         if (tv_in.ty != .struct_type) return error.InvalidType;
 
-        const chosen = try self.resolveRegularCallCallee(call, tv_in, s, call.input.*.location);
+        const chosen = self.resolveRegularCallCallee(call, tv_in, s, call.input.*.location) catch |err| switch (err) {
+            error.AmbiguousOverload => {
+                if (call.module_qualifier) |module_name| {
+                    const module_dir = s.lookupModuleAlias(module_name) orelse {
+                        try self.diags.add(call.callee_loc, .semantic, "unknown module alias '{s}'", .{module_name});
+                        return error.Reported;
+                    };
+                    try self.addAmbiguousModuleFunctionDiagnostic(module_name, module_dir, call.callee, tv_in.ty, s, call.callee_loc);
+                } else {
+                    try self.addAmbiguousFunctionDiagnostic(call.callee, tv_in.ty, s, call.callee_loc);
+                }
+                return error.Reported;
+            },
+            else => return err,
+        };
         const coerced_input = try self.coerceCallInputToExpected(&chosen.input, tv_in, call.input, s);
         try self.checkCallBindingExclusivity(call.callee, coerced_input, call.input.*.location);
         self.cancelExplicitDeinitAutoCleanup(chosen, coerced_input, s);
@@ -8007,6 +8021,20 @@ pub const Semantizer = struct {
                     try abs.appendFunctionSignature(&buf, cand, s);
                 }
             }
+            if (sc.generic_functions.getPtr(fn_name)) |list_ptr| {
+                for (list_ptr.items) |tmpl| {
+                    if (tmpl.dispatch_kind != .abstract_contract) continue;
+                    if (isPrivateName(fn_name)) {
+                        const requester_dir = self.moduleDirForFile(loc.file);
+                        const tmpl_dir = self.moduleDirForFile(tmpl.location.file);
+                        if (!std.mem.eql(u8, requester_dir, tmpl_dir)) continue;
+                    }
+                    if (!first) try buf.appendSlice("\n");
+                    first = false;
+                    try buf.appendSlice("  - ");
+                    try self.appendGenericTemplateSignature(&buf, tmpl, s);
+                }
+            }
         }
 
         if (first) try buf.appendSlice("  (none)");
@@ -8053,10 +8081,148 @@ pub const Semantizer = struct {
                     try abs.appendFunctionSignature(&buf, cand, s);
                 }
             }
+            if (sc.generic_functions.getPtr(fn_name)) |list_ptr| {
+                for (list_ptr.items) |tmpl| {
+                    if (tmpl.dispatch_kind != .abstract_contract) continue;
+                    if (!std.mem.startsWith(u8, tmpl.location.file, module_dir)) continue;
+                    if (isPrivateName(fn_name)) {
+                        const requester_dir = self.moduleDirForFile(loc.file);
+                        if (!std.mem.eql(u8, requester_dir, module_dir)) continue;
+                    }
+                    if (!first) try buf.appendSlice("\n");
+                    first = false;
+                    try buf.appendSlice("  - ");
+                    try self.appendGenericTemplateSignature(&buf, tmpl, s);
+                }
+            }
         }
 
         if (first) try buf.appendSlice("  (none)");
         return try buf.toOwnedSlice();
+    }
+
+    fn appendGenericTemplateSignature(
+        self: *Semantizer,
+        buf: *std.array_list.Managed(u8),
+        tmpl: gen.GenericTemplate,
+        s: *Scope,
+    ) !void {
+        _ = s;
+        try buf.appendSlice(tmpl.name);
+        try buf.appendSlice(" (");
+        for (tmpl.input.fields, 0..) |fld, i| {
+            if (i != 0) try buf.appendSlice(", ");
+            try buf.appendSlice(".");
+            try buf.appendSlice(fld.name.string);
+            try buf.appendSlice(": ");
+            try self.appendTemplateTypePretty(buf, fld.type.?, tmpl);
+        }
+        try buf.appendSlice(") -> (");
+        for (tmpl.output.fields, 0..) |fld, i| {
+            if (i != 0) try buf.appendSlice(", ");
+            try buf.appendSlice(".");
+            try buf.appendSlice(fld.name.string);
+            try buf.appendSlice(": ");
+            try self.appendTemplateTypePretty(buf, fld.type.?, tmpl);
+        }
+        try buf.appendSlice(")");
+    }
+
+    fn templateParamDisplayName(
+        self: *Semantizer,
+        tmpl: gen.GenericTemplate,
+        param_name: []const u8,
+    ) ?[]const u8 {
+        _ = self;
+        for (tmpl.params, 0..) |param, idx| {
+            if (!std.mem.eql(u8, param.name, param_name)) continue;
+            if (idx < tmpl.param_abstract_constraints.len) {
+                if (tmpl.param_abstract_constraints[idx]) |constraint| return constraint;
+            }
+            return param.name;
+        }
+        return null;
+    }
+
+    fn appendTemplateTypePretty(
+        self: *Semantizer,
+        buf: *std.array_list.Managed(u8),
+        ty: syn.Type,
+        tmpl: gen.GenericTemplate,
+    ) !void {
+        switch (ty) {
+            .type_name => |tn| {
+                try buf.appendSlice(self.templateParamDisplayName(tmpl, tn.string) orelse tn.string);
+            },
+            .pointer_type => |ptr_info| {
+                switch (ptr_info.mutability) {
+                    .read_only => try buf.appendSlice("&"),
+                    .read_write => try buf.appendSlice("$&"),
+                }
+                try self.appendTemplateTypePretty(buf, ptr_info.child.*, tmpl);
+            },
+            .inferred_errable => |inner| {
+                try buf.appendSlice("!");
+                try self.appendTemplateTypePretty(buf, inner.*, tmpl);
+            },
+            .array_type => |arr_info| {
+                try std.fmt.format(buf.writer(), "[{d}]", .{arr_info.length});
+                try self.appendTemplateTypePretty(buf, arr_info.element.*, tmpl);
+            },
+            .generic_type_instantiation => |g| {
+                try buf.appendSlice(g.base_name.string);
+                try buf.appendSlice("#(");
+                for (g.args.fields, 0..) |field, idx| {
+                    if (idx != 0) try buf.appendSlice(", ");
+                    try buf.appendSlice(".");
+                    try buf.appendSlice(field.name.string);
+                    if (field.type) |field_ty| {
+                        try buf.appendSlice(": ");
+                        try self.appendTemplateTypePretty(buf, field_ty, tmpl);
+                    }
+                }
+                try buf.appendSlice(")");
+            },
+            .struct_type_literal => |st| {
+                try buf.appendSlice("(");
+                for (st.fields, 0..) |field, idx| {
+                    if (idx != 0) try buf.appendSlice(", ");
+                    try buf.appendSlice(".");
+                    try buf.appendSlice(field.name.string);
+                    if (field.type) |field_ty| {
+                        try buf.appendSlice(": ");
+                        try self.appendTemplateTypePretty(buf, field_ty, tmpl);
+                    }
+                }
+                try buf.appendSlice(")");
+            },
+            .choice_type_literal => |ct| {
+                try buf.appendSlice("(");
+                for (ct.variants, 0..) |variant, idx| {
+                    if (idx != 0) try buf.appendSlice(", ");
+                    try buf.appendSlice("..");
+                    if (variant.module_qualifier) |qualifier| {
+                        try buf.appendSlice(qualifier.string);
+                        try buf.appendSlice(".");
+                    }
+                    try buf.appendSlice(variant.name.string);
+                    if (variant.payload_type) |payload| {
+                        try buf.appendSlice("(");
+                        for (payload.fields, 0..) |field, field_idx| {
+                            if (field_idx != 0) try buf.appendSlice(", ");
+                            try buf.appendSlice(".");
+                            try buf.appendSlice(field.name.string);
+                            if (field.type) |field_ty| {
+                                try buf.appendSlice(": ");
+                                try self.appendTemplateTypePretty(buf, field_ty, tmpl);
+                            }
+                        }
+                        try buf.appendSlice(")");
+                    }
+                }
+                try buf.appendSlice(")");
+            },
+        }
     }
 
     fn addMissingFunctionDiagnostic(
