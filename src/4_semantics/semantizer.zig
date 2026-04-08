@@ -4052,12 +4052,27 @@ pub const Semantizer = struct {
             try self.addPrivateMemberDiag(loc, "value", name);
             return error.Reported;
         }
+        if (self.isSystemType(binding.ty, s)) {
+            try self.diags.add(
+                loc,
+                .semantic,
+                "System cannot be moved by value; pass it by '&' or '$&' instead",
+                .{},
+            );
+            return error.Reported;
+        }
         try s.markBindingMoved(binding.name, loc);
 
         const binding_use = try sg.makeSGNode(.{ .binding_use = binding }, inner.location, self.allocator);
         const node = try sg.makeSGNode(.{ .move_value = binding_use }, loc, self.allocator);
         node.sem_type = binding.ty;
         return .{ .node = node, .ty = binding.ty };
+    }
+
+    fn isSystemType(self: *Semantizer, ty: sg.Type, s: *Scope) bool {
+        _ = self;
+        const type_name = typ.typeNameFor(s, ty) orelse return false;
+        return std.mem.eql(u8, type_name, "System");
     }
 
     //─────────────────────────────────────────────────────────  CODE BLOCK
