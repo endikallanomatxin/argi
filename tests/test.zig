@@ -1545,16 +1545,22 @@ test "feature_tests/system/19X_once_duplicate_branches" {
 }
 
 test "feature_tests/system/20X_once_duplicate_init" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/system/20X_once_duplicate_init",
-        "once function 'init' is consumed more than once from the reachable entrypoint graph",
+        \\tests/feature_tests/system/20X_once_duplicate_init/main.rg:8:15: error: once function 'init' is consumed more than once from the reachable entrypoint graph (first use at tests/feature_tests/system/20X_once_duplicate_init/main.rg:7:14 via 'main')
+        \\      second := Token()
+        \\                ^
+        \\
     );
 }
 
 test "feature_tests/system/21X_system_duplicate_init" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/system/21X_system_duplicate_init",
-        "once function 'init' is consumed more than once from the reachable entrypoint graph",
+        \\tests/feature_tests/system/21X_system_duplicate_init/main.rg:2:15: error: once function 'init' is consumed more than once from the reachable entrypoint graph (first use at tests/feature_tests/system/21X_system_duplicate_init/main.rg:1:24 via 'main')
+        \\      second := System()
+        \\                ^
+        \\
     );
 }
 
