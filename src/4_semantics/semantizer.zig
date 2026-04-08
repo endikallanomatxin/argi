@@ -6637,7 +6637,9 @@ pub const Semantizer = struct {
                 }
                 return error.Reported;
             },
-            else => return err,
+            else => {
+                return err;
+            },
         };
         const coerced_input = try self.coerceCallInputToExpected(&chosen.input, tv_in, call.input, s);
         try self.checkCallBindingExclusivity(call.callee, coerced_input, call.input.*.location);
@@ -7054,8 +7056,13 @@ pub const Semantizer = struct {
             };
         } else {
             const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+            var has_unknown_candidate = false;
             const inferred = self.instantiateGenericNamedVisible(call.callee, empty_args, input_te, s, .regular, qualified_module_dir, loc.file) catch |err| switch (err) {
                 error.SymbolNotFound => null,
+                error.UnknownType => blk: {
+                    has_unknown_candidate = true;
+                    break :blk null;
+                },
                 else => return err,
             };
 
@@ -7063,7 +7070,6 @@ pub const Semantizer = struct {
                 try self.resolveQualifiedDeclaredOverloadMaybe(module_name, call.callee, input_te, s, loc)
             else
                 try self.resolveVisibleDeclaredOverloadMaybe(call.callee, input_te, s, loc);
-
             const abstract_inferred = if (call.module_qualifier != null)
                 self.instantiateGenericNamedVisible(
                     call.callee,
@@ -7075,11 +7081,19 @@ pub const Semantizer = struct {
                     loc.file,
                 ) catch |inner_err| switch (inner_err) {
                     error.SymbolNotFound => null,
+                    error.UnknownType => blk: {
+                        has_unknown_candidate = true;
+                        break :blk null;
+                    },
                     else => return inner_err,
                 }
             else
                 self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .abstract_contract) catch |inner_err| switch (inner_err) {
                     error.SymbolNotFound => null,
+                    error.UnknownType => blk: {
+                        has_unknown_candidate = true;
+                        break :blk null;
+                    },
                     else => return inner_err,
                 };
 
@@ -7128,6 +7142,7 @@ pub const Semantizer = struct {
             if (best) |resolved_best| {
                 chosen = resolved_best;
             } else {
+                if (has_unknown_candidate) return error.UnknownType;
                 return error.SymbolNotFound;
             }
         }
@@ -7635,7 +7650,6 @@ pub const Semantizer = struct {
         s: *Scope,
     ) u32 {
         _ = s;
-
         if (input_te.ty != .struct_type or input_te.node.content != .struct_value_literal) {
             return abs.specificityScore(.{ .struct_type = expected }, input_te.ty);
         }
@@ -7652,10 +7666,13 @@ pub const Semantizer = struct {
                 .node = @constCast(actual_value.fields[idx].value),
                 .ty = actual_struct.fields[idx].ty,
             };
+            var used_pointer_lift = false;
             if (self.tryImplicitPointerLiftForDispatch(exp_field.ty, actual_field_expr)) |lifted| {
                 actual_field_expr = lifted;
+                used_pointer_lift = true;
             }
             score += abs.specificityScore(exp_field.ty, actual_field_expr.ty);
+            if (used_pointer_lift) score += 1;
         }
 
         for (actual_value.fields[positional_prefix..]) |actual_field| {
@@ -7665,10 +7682,13 @@ pub const Semantizer = struct {
                 .node = @constCast(actual_field.value),
                 .ty = actual_field_ty.ty,
             };
+            var used_pointer_lift = false;
             if (self.tryImplicitPointerLiftForDispatch(exp_field.ty, actual_field_expr)) |lifted| {
                 actual_field_expr = lifted;
+                used_pointer_lift = true;
             }
             score += abs.specificityScore(exp_field.ty, actual_field_expr.ty);
+            if (used_pointer_lift) score += 1;
         }
 
         return score;
@@ -9154,6 +9174,12 @@ pub const Semantizer = struct {
     ) SemErr!*sg.FunctionDeclaration {
         var best: ?PreparedGenericTemplateCandidate = null;
         var ambiguous = false;
+        // Some visible templates may still depend on unresolved top-level state
+        // and report UnknownType while a different template already matches the
+        // call. Keep those as "pending" noise instead of letting them hide an
+        // already-valid candidate. If nothing matches, the unknown still
+        // propagates so staged semantizing can retry later.
+        var has_unknown_candidate = false;
         defer if (best) |*prepared| prepared.deinit();
 
         var cur: ?*Scope = s;
@@ -9171,7 +9197,14 @@ pub const Semantizer = struct {
                         }
                     }
                     var subst = GenericSubst.init(self.allocator);
-                    const dispatch_input = try self.materializeTemplateReachDefaultsForDispatch(tmpl, call_input, s);
+                    const dispatch_input = self.materializeTemplateReachDefaultsForDispatch(tmpl, call_input, s) catch |err| switch (err) {
+                        error.UnknownType, error.SymbolNotFound => {
+                            has_unknown_candidate = true;
+                            subst.deinit();
+                            continue;
+                        },
+                        else => return err,
+                    };
 
                     var ok: bool = true;
                     for (tmpl.params) |param| {
@@ -9204,11 +9237,17 @@ pub const Semantizer = struct {
                         continue;
                     }
 
-                    const score = try self.templateInstantiationDispatchScore(tmpl, dispatch_input, s, &subst) orelse {
+                    const score = self.templateInstantiationDispatchScore(tmpl, dispatch_input, s, &subst) catch |err| switch (err) {
+                        error.UnknownType, error.SymbolNotFound => {
+                            has_unknown_candidate = true;
+                            subst.deinit();
+                            continue;
+                        },
+                        else => return err,
+                    } orelse {
                         subst.deinit();
                         continue;
                     };
-
                     if (best) |*current_best| {
                         if (self.chooseBetterPreparedTemplateCandidate(current_best, score)) {
                             current_best.deinit();
@@ -9242,6 +9281,7 @@ pub const Semantizer = struct {
         if (best) |*prepared| {
             return (try self.instantiateGenericTemplate(name, prepared.tmpl, prepared.dispatch_input, s, &prepared.subst)).?;
         }
+        if (has_unknown_candidate) return error.UnknownType;
         return error.SymbolNotFound;
     }
 
