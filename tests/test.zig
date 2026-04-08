@@ -531,9 +531,14 @@ test "feature_tests/polymorphism/01_multiple_dispatch" {
 }
 
 test "feature_tests/polymorphism/02X_multiple_dispatch_ambiguous" {
-    try buildExpectFail(
+    try buildExpectFailExact(
         "tests/feature_tests/polymorphism/02X_multiple_dispatch_ambiguous",
-        "ambiguous call to 'choose2'",
+        \\tests/feature_tests/polymorphism/02X_multiple_dispatch_ambiguous/main.rg:12:19: error: ambiguous call to 'choose2' for arguments (.a: &Int32, .b: &Int32). Possible overloads:
+        \\  - choose2 (.a: &Any, .b: &Int32) -> (.r: Int32)
+        \\  - choose2 (.a: &Int32, .b: &Any) -> (.r: Int32)
+        \\      status_code = choose2(.a = &i, .b = &i).r
+        \\                    ^
+        ++ "\n",
     );
 }
 
