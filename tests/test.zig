@@ -1667,6 +1667,13 @@ test "feature_tests/polymorphism/24_abstract_dispatch_beats_regular_generic_with
     try runExpect(test_path, 1);
 }
 
+test "feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous",
+        "ambiguous call to 'pick'",
+    );
+}
+
 test "feature_tests/text/10_string_view_c_string_storage" {
     const test_path = "tests/feature_tests/text/10_string_view_c_string_storage";
     try expectSuccessfulBuild(test_path);

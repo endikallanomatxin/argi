@@ -7056,6 +7056,17 @@ pub const Semantizer = struct {
         kind: CallCandidateKind,
     };
 
+    const PreparedGenericTemplateCandidate = struct {
+        tmpl: gen.GenericTemplate,
+        subst: GenericSubst,
+        dispatch_input: typ.TypedExpr,
+        score: u32,
+
+        fn deinit(self: *PreparedGenericTemplateCandidate) void {
+            self.subst.deinit();
+        }
+    };
+
     fn kindForResolvedFunction(function: *sg.FunctionDeclaration) CallCandidateKind {
         return switch (function.origin_kind) {
             .declared => .declared,
@@ -7097,6 +7108,31 @@ pub const Semantizer = struct {
         if (self.preferCandidateOnEqualSpecificity(current_kind, candidate_kind)) return candidate;
         if (self.preferCandidateOnEqualSpecificity(candidate_kind, current_kind)) return current;
         return error.AmbiguousOverload;
+    }
+
+    fn templateInstantiationDispatchScore(
+        self: *Semantizer,
+        tmpl: gen.GenericTemplate,
+        call_input: typ.TypedExpr,
+        s: *Scope,
+        subst: *const GenericSubst,
+    ) SemErr!?u32 {
+        var in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, subst);
+
+        if (try self.refinedStructTypeWithActual(in_struct_ptr, call_input.ty, s)) |refined| {
+            in_struct_ptr = refined;
+        }
+        if (!self.callInputMatchesDispatch(in_struct_ptr, call_input, s)) return null;
+        return self.callInputSpecificityScore(in_struct_ptr, call_input, s);
+    }
+
+    fn chooseBetterPreparedTemplateCandidate(
+        self: *Semantizer,
+        current: *const PreparedGenericTemplateCandidate,
+        candidate_score: u32,
+    ) bool {
+        _ = self;
+        return candidate_score < current.score;
     }
 
     fn resolveQualifiedDeclaredOverloadMaybe(
@@ -8858,6 +8894,10 @@ pub const Semantizer = struct {
         module_dir_filter: ?[]const u8,
         requester_file: ?[]const u8,
     ) SemErr!*sg.FunctionDeclaration {
+        var best: ?PreparedGenericTemplateCandidate = null;
+        var ambiguous = false;
+        defer if (best) |*prepared| prepared.deinit();
+
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.generic_functions.getPtr(name)) |list_ptr| {
@@ -8873,7 +8913,6 @@ pub const Semantizer = struct {
                         }
                     }
                     var subst = GenericSubst.init(self.allocator);
-                    defer subst.deinit();
                     const dispatch_input = try self.materializeTemplateReachDefaultsForDispatch(tmpl, call_input, s);
 
                     var ok: bool = true;
@@ -8898,13 +8937,52 @@ pub const Semantizer = struct {
                             break;
                         }
                     }
-                    if (!ok) continue;
-                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) continue;
-                    if (try self.instantiateGenericTemplate(name, tmpl, dispatch_input, s, &subst)) |instantiated| {
-                        return instantiated;
+                    if (!ok) {
+                        subst.deinit();
+                        continue;
+                    }
+                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) {
+                        subst.deinit();
+                        continue;
+                    }
+
+                    const score = try self.templateInstantiationDispatchScore(tmpl, dispatch_input, s, &subst) orelse {
+                        subst.deinit();
+                        continue;
+                    };
+
+                    if (best) |*current_best| {
+                        if (self.chooseBetterPreparedTemplateCandidate(current_best, score)) {
+                            current_best.deinit();
+                            current_best.* = .{
+                                .tmpl = tmpl,
+                                .subst = subst,
+                                .dispatch_input = dispatch_input,
+                                .score = score,
+                            };
+                            ambiguous = false;
+                        } else if (score == current_best.score) {
+                            subst.deinit();
+                            ambiguous = true;
+                        } else {
+                            subst.deinit();
+                        }
+                    } else {
+                        best = .{
+                            .tmpl = tmpl,
+                            .subst = subst,
+                            .dispatch_input = dispatch_input,
+                            .score = score,
+                        };
+                        ambiguous = false;
                     }
                 }
             }
+        }
+
+        if (ambiguous) return error.AmbiguousOverload;
+        if (best) |*prepared| {
+            return (try self.instantiateGenericTemplate(name, prepared.tmpl, prepared.dispatch_input, s, &prepared.subst)).?;
         }
         return error.SymbolNotFound;
     }
@@ -8918,6 +8996,10 @@ pub const Semantizer = struct {
         s: *Scope,
         allowed_kind: gen.GenericDispatchKind,
     ) SemErr!*sg.FunctionDeclaration {
+        var best: ?PreparedGenericTemplateCandidate = null;
+        var ambiguous = false;
+        defer if (best) |*prepared| prepared.deinit();
+
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.generic_functions.getPtr(name)) |list_ptr| {
@@ -8925,7 +9007,6 @@ pub const Semantizer = struct {
                     if (tmpl.dispatch_kind != allowed_kind) continue;
 
                     var subst = GenericSubst.init(self.allocator);
-                    defer subst.deinit();
                     const dispatch_input = try self.materializeTemplateReachDefaultsForDispatch(tmpl, call_input, s);
 
                     var ok = false;
@@ -8948,13 +9029,51 @@ pub const Semantizer = struct {
                         ok = false;
                         break;
                     }
-                    if (!ok) continue;
-                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) continue;
-                    if (try self.instantiateGenericTemplate(name, tmpl, dispatch_input, s, &subst)) |instantiated| {
-                        return instantiated;
+                    if (!ok) {
+                        subst.deinit();
+                        continue;
+                    }
+                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) {
+                        subst.deinit();
+                        continue;
+                    }
+                    const score = try self.templateInstantiationDispatchScore(tmpl, dispatch_input, s, &subst) orelse {
+                        subst.deinit();
+                        continue;
+                    };
+
+                    if (best) |*current_best| {
+                        if (self.chooseBetterPreparedTemplateCandidate(current_best, score)) {
+                            current_best.deinit();
+                            current_best.* = .{
+                                .tmpl = tmpl,
+                                .subst = subst,
+                                .dispatch_input = dispatch_input,
+                                .score = score,
+                            };
+                            ambiguous = false;
+                        } else if (score == current_best.score) {
+                            subst.deinit();
+                            ambiguous = true;
+                        } else {
+                            subst.deinit();
+                        }
+                    } else {
+                        best = .{
+                            .tmpl = tmpl,
+                            .subst = subst,
+                            .dispatch_input = dispatch_input,
+                            .score = score,
+                        };
+                        ambiguous = false;
                     }
                 }
             }
+        }
+
+        if (ambiguous) return error.AmbiguousOverload;
+        if (best) |*prepared| {
+            return (try self.instantiateGenericTemplate(name, prepared.tmpl, prepared.dispatch_input, s, &prepared.subst)).?;
         }
         return error.SymbolNotFound;
     }
@@ -9086,6 +9205,10 @@ pub const Semantizer = struct {
         module_dir_filter: ?[]const u8,
         requester_file: ?[]const u8,
     ) SemErr!*sg.FunctionDeclaration {
+        var best: ?PreparedGenericTemplateCandidate = null;
+        var ambiguous = false;
+        defer if (best) |*prepared| prepared.deinit();
+
         var cur: ?*Scope = s;
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.generic_functions.getPtr(name)) |list_ptr| {
@@ -9103,19 +9226,53 @@ pub const Semantizer = struct {
                     if (tmpl.params.len != type_args_syn.len) continue;
 
                     var subst = GenericSubst.init(self.allocator);
-                    defer subst.deinit();
                     var i: usize = 0;
                     while (i < tmpl.params.len) : (i += 1) {
                         if (tmpl.params[i].kind != .type) continue;
                         const resolved = try self.resolveTypeWithSubst(type_args_syn[i], s, &subst);
                         try subst.types.put(tmpl.params[i].name, resolved);
                     }
-                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) continue;
-                    if (try self.instantiateGenericTemplate(name, tmpl, call_input, s, &subst)) |instantiated| {
-                        return instantiated;
+                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) {
+                        subst.deinit();
+                        continue;
+                    }
+                    const score = try self.templateInstantiationDispatchScore(tmpl, call_input, s, &subst) orelse {
+                        subst.deinit();
+                        continue;
+                    };
+
+                    if (best) |*current_best| {
+                        if (self.chooseBetterPreparedTemplateCandidate(current_best, score)) {
+                            current_best.deinit();
+                            current_best.* = .{
+                                .tmpl = tmpl,
+                                .subst = subst,
+                                .dispatch_input = call_input,
+                                .score = score,
+                            };
+                            ambiguous = false;
+                        } else if (score == current_best.score) {
+                            subst.deinit();
+                            ambiguous = true;
+                        } else {
+                            subst.deinit();
+                        }
+                    } else {
+                        best = .{
+                            .tmpl = tmpl,
+                            .subst = subst,
+                            .dispatch_input = call_input,
+                            .score = score,
+                        };
+                        ambiguous = false;
                     }
                 }
             }
+        }
+
+        if (ambiguous) return error.AmbiguousOverload;
+        if (best) |*prepared| {
+            return (try self.instantiateGenericTemplate(name, prepared.tmpl, prepared.dispatch_input, s, &prepared.subst)).?;
         }
         return error.SymbolNotFound;
     }
