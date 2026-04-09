@@ -1,4 +1,14 @@
+TerminalStorage : Type = (
+    .stdin_file            : File
+    .stdout_file           : File
+    .stderr_file           : File
+    .stdin_buffered_reader : BufferedReader#(.base_type: File)
+    .stdout_buffered_writer: BufferedWriter#(.base_type: File)
+    .stderr_buffered_writer: BufferedWriter#(.base_type: File)
+)
+
 Terminal : Type = (
+    ._storage              : TerminalStorage
     .stdin_file            : $&File
     .stdout_file           : $&File
     .stderr_file           : $&File
@@ -9,21 +19,34 @@ Terminal : Type = (
 
 once init(
     .p: $&Terminal,
-    .stdin_file: $&File,
-    .stdout_file: $&File,
-    .stderr_file: $&File,
-    .stdin_buffered_reader: $&BufferedReader#(.base_type: File),
-    .stdout_buffered_writer: $&BufferedWriter#(.base_type: File),
-    .stderr_buffered_writer: $&BufferedWriter#(.base_type: File),
+    .allocator: $&CAllocator = #reach allocator, system.allocator,
 ) -> () := {
-    p& = (
-        .stdin_file = stdin_file,
-        .stdout_file = stdout_file,
-        .stderr_file = stderr_file,
-        .stdin_buffered_reader = stdin_buffered_reader,
-        .stdout_buffered_writer = stdout_buffered_writer,
-        .stderr_buffered_writer = stderr_buffered_writer,
+    init_stdin(.p = $&p&._storage.stdin_file)
+    init_stdout(.p = $&p&._storage.stdout_file)
+    init_stderr(.p = $&p&._storage.stderr_file)
+
+    p&._storage.stdin_buffered_reader = BufferedReader#(.base_type: File)(
+        .allocator = allocator,
+        .base = $&p&._storage.stdin_file,
+        .capacity = 256,
     )
+    p&._storage.stdout_buffered_writer = BufferedWriter#(.base_type: File)(
+        .allocator = allocator,
+        .base = $&p&._storage.stdout_file,
+        .capacity = 256,
+    )
+    p&._storage.stderr_buffered_writer = BufferedWriter#(.base_type: File)(
+        .allocator = allocator,
+        .base = $&p&._storage.stderr_file,
+        .capacity = 256,
+    )
+
+    p&.stdin_file = $&p&._storage.stdin_file
+    p&.stdout_file = $&p&._storage.stdout_file
+    p&.stderr_file = $&p&._storage.stderr_file
+    p&.stdin_buffered_reader = $&p&._storage.stdin_buffered_reader
+    p&.stdout_buffered_writer = $&p&._storage.stdout_buffered_writer
+    p&.stderr_buffered_writer = $&p&._storage.stderr_buffered_writer
 }
 
 deinit(
