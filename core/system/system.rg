@@ -27,8 +27,7 @@ System : Type = (
 
 once init(.p: $&System) -> () := {
     p&._storage.allocator = CAllocator()
-    init(
-        .p = $&p&._storage.terminal,
+    p&._storage.terminal = Terminal(
         .allocator = $&p&._storage.allocator,
     )
     p&._storage.args = Arguments()

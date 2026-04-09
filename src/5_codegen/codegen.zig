@@ -1454,6 +1454,18 @@ pub const CodeGenerator = struct {
         if (sym_ptr.*.mutability == .constant and sym_ptr.*.initialized)
             return CodegenError.ConstantReassignment;
 
+        if (a.value.content == .type_initializer) {
+            const ti = a.value.content.type_initializer;
+            const field_ty_ref = try self.toLLVMType(ti.type_decl.ty);
+            if (sym_ptr.*.type_ref != field_ty_ref)
+                return CodegenError.InvalidType;
+
+            try self.genTypeInitializerInto(&ti, sym_ptr.*.ref);
+            sym_ptr.*.initialized = true;
+            const loaded = c.LLVMBuildLoad2(self.builder, sym_ptr.*.type_ref, sym_ptr.*.ref, "assign.init.result");
+            return .{ .value_ref = loaded, .type_ref = sym_ptr.*.type_ref, .sem_type = sym_ptr.*.sem_type };
+        }
+
         const rhs = (try self.visitNode(a.value)) orelse return CodegenError.ValueNotFound;
         const rhs_val = rhs.value_ref;
         const rhs_ty = rhs.type_ref;
@@ -2144,10 +2156,10 @@ pub const CodeGenerator = struct {
         }
     }
 
-    fn genTypeInitializer(self: *CodeGenerator, ti: *const sem.TypeInitializer) CodegenError!TypedValue {
-        const result_ty_ref = try self.toLLVMType(ti.type_decl.ty);
-        const storage = c.LLVMBuildAlloca(self.builder, result_ty_ref, "type.init.tmp");
-
+    fn genTypeInitializerInto(self: *CodeGenerator, ti: *const sem.TypeInitializer, storage: llvm.c.LLVMValueRef) CodegenError!void {
+        // Type initializers conceptually construct the value at its final
+        // destination. Lowering through a temporary and then copying breaks
+        // types that keep references into their own backing storage.
         const total_fields = ti.init_fn.input.fields.len;
         if (total_fields == 0) return CodegenError.InvalidType;
         const user_field_count = total_fields - 1;
@@ -2208,6 +2220,13 @@ pub const CodeGenerator = struct {
 
         const call_name = if (c.LLVMGetReturnType(fn_sym.type_ref) == c.LLVMVoidType()) "" else "call";
         _ = c.LLVMBuildCall2(self.builder, fn_sym.type_ref, fn_sym.ref, argv.ptr, 1, call_name);
+    }
+
+    fn genTypeInitializer(self: *CodeGenerator, ti: *const sem.TypeInitializer) CodegenError!TypedValue {
+        const result_ty_ref = try self.toLLVMType(ti.type_decl.ty);
+        const storage = c.LLVMBuildAlloca(self.builder, result_ty_ref, "type.init.tmp");
+
+        try self.genTypeInitializerInto(ti, storage);
 
         const result_val = c.LLVMBuildLoad2(self.builder, result_ty_ref, storage, "type.init.result");
         return .{ .value_ref = result_val, .type_ref = result_ty_ref, .sem_type = ti.type_decl.ty };
@@ -2217,8 +2236,6 @@ pub const CodeGenerator = struct {
     fn genStructValueLiteral(self: *CodeGenerator, sl: *const sem.StructValueLiteral) !?TypedValue {
         const cnt = sl.fields.len;
         const ty = try self.toLLVMType(sl.ty);
-        var vals = try self.allocator.alloc(TypedValue, cnt);
-        defer self.allocator.free(vals);
 
         const sem_fields = switch (sl.ty) {
             .struct_type => |st| st.fields,
@@ -2228,6 +2245,50 @@ pub const CodeGenerator = struct {
             },
             else => return CodegenError.InvalidType,
         };
+
+        var needs_in_place = false;
+        for (sl.fields) |f| {
+            if (f.value.content == .type_initializer) {
+                needs_in_place = true;
+                break;
+            }
+        }
+
+        if (needs_in_place) {
+            const storage = c.LLVMBuildAlloca(self.builder, ty, "lit.tmp");
+            for (sl.fields, 0..) |f, i| {
+                const field_ptr = c.LLVMBuildStructGEP2(
+                    self.builder,
+                    ty,
+                    storage,
+                    @intCast(i),
+                    "lit.field.ptr",
+                );
+                const field_ll_ty = c.LLVMStructGetTypeAtIndex(ty, @intCast(i));
+
+                if (f.value.content == .type_initializer) {
+                    const ti = f.value.content.type_initializer;
+                    const init_ty_ref = try self.toLLVMType(ti.type_decl.ty);
+                    if (init_ty_ref != field_ll_ty)
+                        return CodegenError.InvalidType;
+                    try self.genTypeInitializerInto(&ti, field_ptr);
+                    continue;
+                }
+
+                var field_tv = (try self.visitNode(f.value)) orelse return CodegenError.ValueNotFound;
+                if (field_tv.type_ref != field_ll_ty) {
+                    field_tv = try self.coerceValueForStorage(field_tv, sem_fields[i].ty, field_ll_ty);
+                }
+                if (field_tv.type_ref != field_ll_ty) return CodegenError.InvalidType;
+                _ = c.LLVMBuildStore(self.builder, field_tv.value_ref, field_ptr);
+            }
+
+            const agg = c.LLVMBuildLoad2(self.builder, ty, storage, "lit.load");
+            return .{ .value_ref = agg, .type_ref = ty, .sem_type = sl.ty };
+        }
+
+        var vals = try self.allocator.alloc(TypedValue, cnt);
+        defer self.allocator.free(vals);
 
         for (sl.fields, 0..) |f, i| {
             const field_tv_opt = try self.visitNode(f.value);
@@ -2656,6 +2717,16 @@ pub const CodeGenerator = struct {
             "field.ptr",
         );
 
+        if (sf.value.content == .type_initializer) {
+            const ti = sf.value.content.type_initializer;
+            const field_ty_ref = try self.toLLVMType(sf.field_type);
+            const init_ty_ref = try self.toLLVMType(ti.type_decl.ty);
+            if (field_ty_ref != init_ty_ref)
+                return CodegenError.InvalidType;
+            try self.genTypeInitializerInto(&ti, field_ptr);
+            return;
+        }
+
         const value_tv_opt = try self.visitNode(sf.value);
         const value_tv = value_tv_opt orelse return CodegenError.ValueNotFound;
         const field_ty_ref = try self.toLLVMType(sf.field_type);
@@ -2792,11 +2863,17 @@ pub const CodeGenerator = struct {
             .dereference => |d| (try self.visitNode(d.pointer)) orelse return CodegenError.ValueNotFound,
             else => (try self.visitNode(pa.pointer)) orelse return CodegenError.ValueNotFound,
         };
-        const rhs_tv = (try self.visitNode(pa.value)) orelse return CodegenError.ValueNotFound;
 
         if (c.LLVMGetTypeKind(ptr_tv.type_ref) != c.LLVMPointerTypeKind)
             return CodegenError.InvalidType;
 
+        if (pa.value.content == .type_initializer) {
+            const ti = pa.value.content.type_initializer;
+            try self.genTypeInitializerInto(&ti, ptr_tv.value_ref);
+            return;
+        }
+
+        const rhs_tv = (try self.visitNode(pa.value)) orelse return CodegenError.ValueNotFound;
         _ = c.LLVMBuildStore(self.builder, rhs_tv.value_ref, ptr_tv.value_ref);
     }
     // ────────────────────────────────────────── misc helpers ──
