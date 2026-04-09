@@ -2086,7 +2086,7 @@ test "feature_tests/types/44_nullable_if_some_narrowing" {
 test "feature_tests/modules/01_folder_module_namespace" {
     const test_path = "tests/feature_tests/modules/01_folder_module_namespace";
     try expectSuccessfulBuild(test_path);
-    try runExpect(test_path, 1);
+    try runExpect(test_path, 42);
 }
 
 test "feature_tests/modules/02_import_current_relative" {

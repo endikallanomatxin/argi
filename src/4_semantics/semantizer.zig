@@ -10182,26 +10182,25 @@ pub const Semantizer = struct {
         }
 
         if (context_te) |ctx| {
-            if (ctx.ty != .pointer_type or ctx.ty.pointer_type.mutability != .read_only) {
-                const desc = try self.formatTypeText(ctx.ty, s);
-                defer desc.deinit();
-                try self.diags.add(
-                    loc,
-                    .semantic,
-                    "operator '!!' expects a context of type '&Char', found '{s}'",
-                    .{desc.bytes},
-                );
-                return error.Reported;
-            }
+            const is_c_string =
+                ctx.ty == .pointer_type and
+                ctx.ty.pointer_type.mutability == .read_only and
+                ctx.ty.pointer_type.child.* == .builtin and
+                ctx.ty.pointer_type.child.*.builtin == .Char;
 
-            const child_ty = ctx.ty.pointer_type.child.*;
-            if (child_ty != .builtin or child_ty.builtin != .Char) {
+            const is_string_view = blk: {
+                const string_view_decl = s.lookupType("StringView") orelse break :blk false;
+                if (!typeDeclIsReady(string_view_decl)) break :blk false;
+                break :blk typ.typesExactlyEqual(ctx.ty, string_view_decl.ty);
+            };
+
+            if (!is_c_string and !is_string_view) {
                 const desc = try self.formatTypeText(ctx.ty, s);
                 defer desc.deinit();
                 try self.diags.add(
                     loc,
                     .semantic,
-                    "operator '!!' expects a context of type '&Char', found '{s}'",
+                    "operator '!!' expects a context of type '&Char' or 'StringView', found '{s}'",
                     .{desc.bytes},
                 );
                 return error.Reported;

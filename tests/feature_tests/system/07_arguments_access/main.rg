@@ -6,7 +6,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     }
 
     arg0_text ::= argument_at(.self = system.args, .index = 0)
-    arg0_ptr ::= pointer(.self = &arg0_text)
+    arg0_ptr : &Char = arg0_text
     arg0_len ::= strlen(.string = arg0_ptr).length
 
     arg0_view ::= argument_view_at(.self = system.args, .index = 0)

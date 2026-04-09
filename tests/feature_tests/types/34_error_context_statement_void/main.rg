@@ -20,7 +20,8 @@ main() -> (.status_code: Int32) := {
             }
 
             entry := err&.trace.entries[0]
-            if entry.context == "while stepping" {
+            context_view ::= as_view(.self = entry.context)
+            if equals(.left = &context_view, .right = "while stepping").ok {
                 status_code = 0
             } else {
                 status_code = 3

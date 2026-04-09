@@ -1001,9 +1001,36 @@ pub const CodeGenerator = struct {
                     .sem_type = storage.sem_type,
                 };
             },
+            .address_of => |target| try self.genGlobalAddressOf(target),
             .binary_operation => |bo| try self.genGlobalBinaryOperation(&bo),
             .comparison => |co| try self.genGlobalComparison(&co),
             .logical_operation => |lo| try self.genGlobalLogicalOperation(&lo),
+            else => CodegenError.InvalidType,
+        };
+    }
+
+    fn genGlobalAddressOf(self: *CodeGenerator, target: *const sem.SGNode) CodegenError!TypedValue {
+        return switch (target.content) {
+            .binding_use => |binding| blk: {
+                if (self.global_init_state.get(binding)) |state| {
+                    if (state == .in_progress) {
+                        try self.diags.add(
+                            binding.location,
+                            .codegen,
+                            "module-level binding '{s}' participates in a cyclic initializer dependency",
+                            .{binding.name},
+                        );
+                        return CodegenError.Reported;
+                    }
+                }
+                try self.ensureGlobalBindingInitialized(binding);
+                const storage = self.binding_storage.get(binding) orelse return CodegenError.SymbolNotFound;
+                break :blk .{
+                    .value_ref = storage.ref,
+                    .type_ref = c.LLVMTypeOf(storage.ref),
+                    .sem_type = target.sem_type,
+                };
+            },
             else => CodegenError.InvalidType,
         };
     }
@@ -2412,7 +2439,7 @@ pub const CodeGenerator = struct {
         const source_line_z = try self.dupZ(resolved_source_line);
         const source_line_ptr = c.LLVMBuildGlobalStringPtr(self.builder, source_line_z.ptr, "trace_source_line");
         const context_ptr = if (context_node) |ctx_node|
-            (try self.visitNode(ctx_node) orelse return CodegenError.ValueNotFound).value_ref
+            try self.genErrorContextPointer(ctx_node)
         else
             c.LLVMConstNull(c.LLVMPointerType(c.LLVMInt8Type(), 0));
         const traced_error_payload = try self.appendTraceEntry(error_payload, error_payload_type, source_file_ptr, line, column, context_ptr, source_line_ptr);
@@ -2439,6 +2466,21 @@ pub const CodeGenerator = struct {
         const ok_value = c.LLVMBuildExtractValue(self.builder, ok_payload, ok_value_field_index, "errable.ok.value");
         const ok_ty = try self.toLLVMType(ok_payload_type);
         return .{ .value_ref = ok_value, .type_ref = ok_ty, .sem_type = ok_payload_type };
+    }
+
+    fn genErrorContextPointer(self: *CodeGenerator, ctx_node: *const sem.SGNode) !llvm.c.LLVMValueRef {
+        const ctx_tv = (try self.visitNode(ctx_node)) orelse return CodegenError.ValueNotFound;
+        if (ctx_tv.sem_type) |sem_ty| {
+            if (isStringViewType(sem_ty)) {
+                const native_uint_ty = try self.toLLVMType(.{ .builtin = .UIntNative });
+                const data_index = fieldIndexByName(sem_ty.struct_type, "data") orelse return CodegenError.InvalidType;
+                const data_addr = c.LLVMBuildExtractValue(self.builder, ctx_tv.value_ref, @intCast(data_index), "ctx.data");
+                if (c.LLVMTypeOf(data_addr) != native_uint_ty)
+                    return CodegenError.InvalidType;
+                return c.LLVMBuildIntToPtr(self.builder, data_addr, c.LLVMPointerType(c.LLVMInt8Type(), 0), "ctx.ptr");
+            }
+        }
+        return ctx_tv.value_ref;
     }
 
     fn buildCurrentFunctionErrableReturn(self: *CodeGenerator, errable_value: llvm.c.LLVMValueRef, cleanup_nodes: []const *sem.SGNode) !void {
