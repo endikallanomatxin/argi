@@ -195,13 +195,6 @@ print(
 }
 
 print(
-    .value: &StringView,
-    .stdout: $&Writer = #reach stdout, terminal.stdout_file, system.terminal.stdout_file,
-) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    result = print(.value = value&, .stdout = stdout)
-}
-
-print(
     .value: &Char,
     .stdout: $&Writer = #reach stdout, terminal.stdout_file, system.terminal.stdout_file,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
@@ -286,13 +279,6 @@ print_error(
     }
 
     result = ..ok(.value = Void())
-}
-
-print_error(
-    .value: &StringView,
-    .stderr: $&Writer = #reach stderr, terminal.stderr_file, system.terminal.stderr_file,
-) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    result = print_error(.value = value&, .stderr = stderr)
 }
 
 flush_error(

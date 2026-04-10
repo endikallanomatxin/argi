@@ -16,8 +16,8 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
                     return
                 } else {
                     line_text ::= line.text
-                    print(line_text)
-                    print("\n")
+                    print(.value = line_text)
+                    print(.value = "\n")
                 }
             }
         }

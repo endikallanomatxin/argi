@@ -83,6 +83,22 @@ StringViewRW : Type = (
 Copying a string view should copy only the descriptor. It should never imply
 ownership of the underlying bytes.
 
+API convention for borrowed text:
+
+- ordinary read-only text APIs should prefer `StringView` by value.
+- `&StringView` should be rare; a view is intended to be a small descriptor, so
+  passing a reference to the descriptor usually adds aliasing without useful
+  ownership information.
+- `&String` should be reserved for APIs that need the owning string object, not
+  merely some readable text.
+- raw `&Char` is the C-string / low-level interop boundary, not the general
+  string-like input type for high-level APIs.
+
+Avoid adding overloads only to accept every adjacent representation
+(`StringView`, `&StringView`, `&String`, `&Char`) unless those representations
+carry genuinely different semantics. Too many convenience overloads make
+multiple dispatch encode API adapter noise instead of domain meaning.
+
 Nomenclature to keep consistent:
 
 - `bytes`: byte-level access over UTF-8 storage.
