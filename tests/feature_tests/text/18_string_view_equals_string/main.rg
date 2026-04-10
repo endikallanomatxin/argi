@@ -7,7 +7,8 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     bytes_set(.string = $&text, .index = 4, .value = 111)
 
     text_view ::= as_view(.self = &text)
-    if &text_view == &text {
+    text_view_again ::= as_view(.self = &text)
+    if text_view == text_view_again {
         status_code = 0
     } else {
         status_code = 1

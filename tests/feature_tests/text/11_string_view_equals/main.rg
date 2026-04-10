@@ -30,19 +30,19 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         .length = 5,
     )
 
-    if equals(.left = &hello, .right = &hello_again).ok {
+    if equals(.left = hello, .right = hello_again).ok {
     } else {
         status_code = 1
         return
     }
 
-    if equals(.left = &hello, .right = "hello").ok {
+    if equals(.left = hello, .right = "hello").ok {
     } else {
         status_code = 2
         return
     }
 
-    if equals(.left = &hello, .right = "help").ok {
+    if equals(.left = hello, .right = "help").ok {
         status_code = 3
         return
     }

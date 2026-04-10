@@ -446,64 +446,6 @@ concat_views(
     out = temp
 }
 
-operator ==(
-    .left: &String,
-    .right: &String,
-) -> (.ok: Bool) := {
-    left_view ::= as_view(.self = left)
-    right_view ::= as_view(.self = right)
-    ok = equals(.left = &left_view, .right = &right_view).ok
-}
-
-operator ==(
-    .left: &String,
-    .right: &StringView,
-) -> (.ok: Bool) := {
-    left_view ::= as_view(.self = left)
-    ok = equals(.left = &left_view, .right = right).ok
-}
-
-operator ==(
-    .left: &String,
-    .right: &Char,
-) -> (.ok: Bool) := {
-    left_view ::= as_view(.self = left)
-    ok = equals(.left = &left_view, .right = right).ok
-}
-
-operator !=(
-    .left: &String,
-    .right: &String,
-) -> (.ok: Bool) := {
-    if left == right {
-        ok = false
-    } else {
-        ok = true
-    }
-}
-
-operator !=(
-    .left: &String,
-    .right: &StringView,
-) -> (.ok: Bool) := {
-    if left == right {
-        ok = false
-    } else {
-        ok = true
-    }
-}
-
-operator !=(
-    .left: &String,
-    .right: &Char,
-) -> (.ok: Bool) := {
-    if left == right {
-        ok = false
-    } else {
-        ok = true
-    }
-}
-
 operator +(
     .left: &String,
     .right: &Char,

@@ -12,10 +12,10 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
                 return
             }
             ..ok line {
-                if &line.text == "" {
+                line_text ::= as_view(.self = &line.text)
+                if line_text == "" {
                     return
                 } else {
-                    line_text ::= as_view(.self = &line.text)
                     print(.value = line_text)
                     print(.value = "\n")
                 }

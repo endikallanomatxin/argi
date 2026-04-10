@@ -8,7 +8,9 @@ main(.system: System = System()) -> (.status_code: Int32) := {
 
     with_newline :: String = &line + "\n"
 
-    if &with_newline == "hello\n" {
+    with_newline_view ::= as_view(.self = &with_newline)
+
+    if with_newline_view == "hello\n" {
         status_code = 0
     } else {
         status_code = 1

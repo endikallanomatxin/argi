@@ -176,7 +176,7 @@ string_hash_map_find_entry_index#(.value: Type) (
     current_index ::= current - 1
     while 1 == 1 {
         entry ::= self&.entries[current_index]
-        if equals(.left = &entry.key, .right = key).ok {
+        if equals(.left = entry.key, .right = key&).ok {
             index = ..some(.value = current_index)
             return
         }
@@ -359,7 +359,7 @@ delete#(.value: Type) (
     while current != 0 {
         current_index ::= current - 1
         entry ::= self&.entries[current_index]
-        if equals(.left = &entry.key, .right = key).ok {
+        if equals(.left = entry.key, .right = key&).ok {
             if previous == 0 {
                 self&.buckets[bucket_index] = entry.next
             } else {

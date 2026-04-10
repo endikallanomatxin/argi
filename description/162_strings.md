@@ -104,6 +104,11 @@ For example, terminal text helpers such as `print` and `print_error` accept
 explicitly, and raw `&Char` values should cross through the C-string conversion
 helpers before reaching high-level output APIs.
 
+Text equality follows the same rule: the byte-wise comparison primitive and
+`==` / `!=` overloads work on `StringView` values. Callers with owning `String`
+or raw `&Char` values should convert them explicitly instead of relying on
+high-level adapter overloads.
+
 Nomenclature to keep consistent:
 
 - `bytes`: byte-level access over UTF-8 storage.

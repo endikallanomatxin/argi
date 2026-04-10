@@ -301,5 +301,5 @@ path_equals(
 ) -> (.ok: Bool) := {
     left_view ::= as_view(.self = left)
     right_view ::= as_view(.self = right)
-    ok = &left_view == &right_view
+    ok = left_view == right_view
 }

@@ -17,7 +17,9 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     left_view ::= as_view(.self = &left)
     combined :: String = &left_view + &right
 
-    if &combined == "hello world" {
+    combined_view ::= as_view(.self = &combined)
+
+    if combined_view == "hello world" {
         status_code = 0
     } else {
         status_code = 1

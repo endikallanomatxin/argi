@@ -21,17 +21,17 @@ bytes_get(
 }
 
 equals(
-    .left: &StringView,
-    .right: &StringView,
+    .left: StringView,
+    .right: StringView,
 ) -> (.ok: Bool) := {
-    if left&.length != right&.length {
+    if left.length != right.length {
         ok = false
         return
     }
 
     i :: UIntNative = 0
-    while i < left&.length {
-        if bytes_get(.view = left, .index = i).byte != bytes_get(.view = right, .index = i).byte {
+    while i < left.length {
+        if bytes_get(.view = &left, .index = i).byte != bytes_get(.view = &right, .index = i).byte {
             ok = false
             return
         }
@@ -41,88 +41,16 @@ equals(
     ok = true
 }
 
-equals(
-    .left: &StringView,
-    .right: &Char,
-) -> (.ok: Bool) := {
-    i :: UIntNative = 0
-    while i < left&.length {
-        addr :: UIntNative = cast#(.to: UIntNative)(.value = right) + i
-        ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
-        if ptr& == 0 {
-            ok = false
-            return
-        }
-
-        if bytes_get(.view = left, .index = i).byte != ptr& {
-            ok = false
-            return
-        }
-
-        i = i + 1
-    }
-
-    terminator_addr :: UIntNative = cast#(.to: UIntNative)(.value = right) + left&.length
-    terminator_ptr : &UInt8 = cast#(.to: &UInt8)(.value = terminator_addr)
-    ok = terminator_ptr& == 0
-}
-
-equals(
-    .left: &StringView,
-    .right: &String,
-) -> (.ok: Bool) := {
-    -- A `StringViewable` abstract would reduce these overloads, but `&Abstract`
-    -- operator dispatch is not robust enough yet for this core path.
-    right_view ::= as_view(.self = right)
-    ok = equals(.left = left, .right = &right_view).ok
-}
-
 operator ==(
-    .left: &StringView,
-    .right: &StringView,
-) -> (.ok: Bool) := {
-    ok = equals(.left = left, .right = right).ok
-}
-
-operator ==(
-    .left: &StringView,
-    .right: &Char,
-) -> (.ok: Bool) := {
-    ok = equals(.left = left, .right = right).ok
-}
-
-operator ==(
-    .left: &StringView,
-    .right: &String,
+    .left: StringView,
+    .right: StringView,
 ) -> (.ok: Bool) := {
     ok = equals(.left = left, .right = right).ok
 }
 
 operator !=(
-    .left: &StringView,
-    .right: &StringView,
-) -> (.ok: Bool) := {
-    if equals(.left = left, .right = right).ok {
-        ok = false
-    } else {
-        ok = true
-    }
-}
-
-operator !=(
-    .left: &StringView,
-    .right: &Char,
-) -> (.ok: Bool) := {
-    if equals(.left = left, .right = right).ok {
-        ok = false
-    } else {
-        ok = true
-    }
-}
-
-operator !=(
-    .left: &StringView,
-    .right: &String,
+    .left: StringView,
+    .right: StringView,
 ) -> (.ok: Bool) := {
     if equals(.left = left, .right = right).ok {
         ok = false
