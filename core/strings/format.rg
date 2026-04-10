@@ -362,14 +362,6 @@ format_into(
 
 format_into(
     .out: $&String,
-    .value: &StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    result = push_view_growing(.self = out, .view = value, .allocator = allocator)
-}
-
-format_into(
-    .out: $&String,
     .value: &String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -452,13 +444,6 @@ format(
             result = ..error(.reason = ..out_of_memory)
         }
     }
-}
-
-format(
-    .value: &StringView,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
-    result = format(.value = value&, .allocator = allocator)
 }
 
 format(
