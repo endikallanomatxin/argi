@@ -99,10 +99,11 @@ Avoid adding overloads only to accept every adjacent representation
 carry genuinely different semantics. Too many convenience overloads make
 multiple dispatch encode API adapter noise instead of domain meaning.
 
-For example, terminal text helpers such as `print` and `print_error` accept
-`StringView`; callers with an owning `String` should call `as_view(...)`
-explicitly, and raw `&Char` values should cross through the C-string conversion
-helpers before reaching high-level output APIs.
+For example, terminal text helpers such as `print` / `print_error` and
+formatting helpers such as `format` / `format_into` accept `StringView` for
+text. Callers with an owning `String` should call `as_view(...)` explicitly, and
+raw `&Char` values should cross through the C-string conversion helpers before
+reaching high-level text APIs.
 
 Text equality follows the same rule: the byte-wise comparison primitive and
 `==` / `!=` overloads work on `StringView` values. Callers with owning `String`

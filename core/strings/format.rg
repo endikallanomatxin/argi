@@ -362,23 +362,6 @@ format_into(
 
 format_into(
     .out: $&String,
-    .value: &String,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    view ::= as_view(.self = value)
-    result = push_view(.self = out, .view = view, .allocator = allocator)
-}
-
-format_into(
-    .out: $&String,
-    .value: &Char,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    result = push_c_string(.self = out, .text = value, .allocator = allocator)
-}
-
-format_into(
-    .out: $&String,
     .value: Bool,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -430,40 +413,6 @@ format(
         ..ok ~ payload {
             out ::= payload.value
             pushed ::= push_view(.self = $&out, .view = value, .allocator = allocator)
-            match pushed {
-                ..ok _ {
-                    result = ..ok(.value = out)
-                }
-                ..error _ {
-                    deinit(.self = $&out, .allocator = allocator)
-                    result = ..error(.reason = ..out_of_memory)
-                }
-            }
-        }
-        ..error _ {
-            result = ..error(.reason = ..out_of_memory)
-        }
-    }
-}
-
-format(
-    .value: &String,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
-    view ::= as_view(.self = value)
-    result = format(.value = view, .allocator = allocator)
-}
-
-format(
-    .value: &Char,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
-    length ::= c_string_length(.text = value).length
-    create_result ::= string_with_capacity(.allocator = allocator, .capacity = length)
-    match create_result {
-        ..ok ~ payload {
-            out ::= payload.value
-            pushed ::= push_c_string(.self = $&out, .text = value, .allocator = allocator)
             match pushed {
                 ..ok _ {
                     result = ..ok(.value = out)
