@@ -155,30 +155,6 @@ read_line(
 }
 
 print(
-    .value: String,
-    .stdout: $&Writer = #reach stdout, terminal.stdout_file, system.terminal.stdout_file,
-) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    i :: UIntNative = 0
-    while i < value.length {
-        wrote ::= write_byte(.self = stdout, .byte = bytes_get(.string = &value, .index = i).byte)
-        match wrote {
-            ..ok _ {
-            }
-            ..error & err {
-                if is(.value = err&.reason, .variant = ..stream_write_failed) {
-                    result = ..error(.reason = ..stream_write_failed)
-                } else {
-                    result = ..error(.reason = ..stream_flush_failed)
-                }
-                return
-            }
-        }
-        i = i + 1
-    }
-    result = flush(.self = stdout)
-}
-
-print(
     .value: StringView,
     .stdout: $&Writer = #reach stdout, terminal.stdout_file, system.terminal.stdout_file,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
@@ -202,66 +178,10 @@ print(
     result = flush(.self = stdout)
 }
 
-print(
-    .value: &Char,
-    .stdout: $&Writer = #reach stdout, terminal.stdout_file, system.terminal.stdout_file,
-) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    i :: UIntNative = 0
-    while 1 == 1 {
-        addr :: UIntNative = cast#(.to: UIntNative)(.value = value) + i
-        ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
-        if ptr& == 0 {
-            break
-        }
-
-        wrote ::= write_byte(.self = stdout, .byte = ptr&)
-        match wrote {
-            ..ok _ {
-            }
-            ..error & err {
-                if is(.value = err&.reason, .variant = ..stream_write_failed) {
-                    result = ..error(.reason = ..stream_write_failed)
-                } else {
-                    result = ..error(.reason = ..stream_flush_failed)
-                }
-                return
-            }
-        }
-        i = i + 1
-    }
-
-    result = flush(.self = stdout)
-}
-
 flush(
     .stdout: $&Writer = #reach stdout, terminal.stdout_file, system.terminal.stdout_file,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     result = flush(.self = stdout)
-}
-
-print_error(
-    .value: String,
-    .stderr: $&Writer = #reach stderr, terminal.stderr_file, system.terminal.stderr_file,
-) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    i :: UIntNative = 0
-    while i < value.length {
-        wrote ::= write_byte(.self = stderr, .byte = bytes_get(.string = &value, .index = i).byte)
-        match wrote {
-            ..ok _ {
-            }
-            ..error & err {
-                if is(.value = err&.reason, .variant = ..stream_write_failed) {
-                    result = ..error(.reason = ..stream_write_failed)
-                } else {
-                    result = ..error(.reason = ..stream_flush_failed)
-                }
-                return
-            }
-        }
-        i = i + 1
-    }
-
-    result = ..ok(.value = Void())
 }
 
 print_error(

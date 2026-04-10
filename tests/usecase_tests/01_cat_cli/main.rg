@@ -20,7 +20,8 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
         match text_result {
             ..ok payload {
                 text ::= payload.value
-                print(.value = text)
+                view ::= as_view(.self = &text)
+                print(.value = view)
                 i = i + 1
             }
             ..error & err {

@@ -1545,8 +1545,8 @@ test "feature_tests/io/13_file_open_error" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/io/09_print_c_string_literal" {
-    const test_path = "tests/feature_tests/io/09_print_c_string_literal";
+test "feature_tests/io/09_print_string_literal" {
+    const test_path = "tests/feature_tests/io/09_print_string_literal";
     try expectSuccessfulBuild(test_path);
     try runExpectStdout(test_path, 0, "literal output");
 }

@@ -99,6 +99,11 @@ Avoid adding overloads only to accept every adjacent representation
 carry genuinely different semantics. Too many convenience overloads make
 multiple dispatch encode API adapter noise instead of domain meaning.
 
+For example, terminal text helpers such as `print` and `print_error` accept
+`StringView`; callers with an owning `String` should call `as_view(...)`
+explicitly, and raw `&Char` values should cross through the C-string conversion
+helpers before reaching high-level output APIs.
+
 Nomenclature to keep consistent:
 
 - `bytes`: byte-level access over UTF-8 storage.
