@@ -549,6 +549,18 @@ test "feature_tests/functions/16X_function_signature_requires_explicit_types" {
     );
 }
 
+test "feature_tests/functions/17_pipe_builtin_is_positional" {
+    const test_path = "tests/feature_tests/functions/17_pipe_builtin_is_positional";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/functions/18_choice_variant_equality" {
+    const test_path = "tests/feature_tests/functions/18_choice_variant_equality";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/polymorphism/01_multiple_dispatch" {
     const test_path = "tests/feature_tests/polymorphism/01_multiple_dispatch";
     try expectSuccessfulBuild(test_path);

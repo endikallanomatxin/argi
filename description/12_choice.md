@@ -102,7 +102,18 @@ Chequeo de variante:
 ```rg
 if is(.value = x, .variant = ..ok) {
 }
+
+if is(x, ..ok) {
+}
+
+if x == ..ok {
+}
 ```
+
+`is` accepts the named form and the positional `(value, variant)` form. `==`
+and `!=` can be used directly against a payloadless `..variant` literal when the
+other side is a value of that choice type; this compares the choice tag, not the
+payload.
 
 `match` sigue siendo la herramienta principal cuando interesa cubrir el conjunto
 cerrado completo.

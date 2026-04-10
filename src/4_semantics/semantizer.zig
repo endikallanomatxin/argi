@@ -6896,9 +6896,39 @@ pub const Semantizer = struct {
         var value_idx: ?usize = null;
         var variant_idx: ?usize = null;
         for (input_struct.fields, 0..) |field, idx| {
-            if (std.mem.eql(u8, field.name, "value")) {
+            if (idx < input_value.dispatch_prefix_positional_count) {
+                if (idx == 0) {
+                    if (value_idx != null) {
+                        try self.addDuplicateIsBuiltinArgument(loc);
+                        return error.Reported;
+                    }
+                    value_idx = idx;
+                } else if (idx == 1) {
+                    if (variant_idx != null) {
+                        try self.addDuplicateIsBuiltinArgument(loc);
+                        return error.Reported;
+                    }
+                    variant_idx = idx;
+                } else {
+                    try self.diags.add(
+                        loc,
+                        .semantic,
+                        "is only accepts two positional arguments: value and variant",
+                        .{},
+                    );
+                    return error.Reported;
+                }
+            } else if (std.mem.eql(u8, field.name, "value")) {
+                if (value_idx != null) {
+                    try self.addDuplicateIsBuiltinArgument(loc);
+                    return error.Reported;
+                }
                 value_idx = idx;
             } else if (std.mem.eql(u8, field.name, "variant")) {
+                if (variant_idx != null) {
+                    try self.addDuplicateIsBuiltinArgument(loc);
+                    return error.Reported;
+                }
                 variant_idx = idx;
             } else {
                 try self.diags.add(
@@ -6996,6 +7026,15 @@ pub const Semantizer = struct {
         const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, loc, self.allocator);
         try s.nodes.append(node);
         return .{ .node = node, .ty = .{ .builtin = .Bool } };
+    }
+
+    fn addDuplicateIsBuiltinArgument(self: *Semantizer, loc: tok.Location) !void {
+        try self.diags.add(
+            loc,
+            .semantic,
+            "is received the same argument more than once",
+            .{},
+        );
     }
 
     fn resolveRegularCallCallee(
@@ -9961,6 +10000,15 @@ pub const Semantizer = struct {
             }
         }
 
+        if (c.operator == .equal or c.operator == .not_equal) {
+            if (try self.coercePayloadlessChoiceComparisonSide(lhs.ty, rhs, c.right.*.location, s)) |coerced_rhs| {
+                rhs = coerced_rhs;
+            }
+            if (try self.coercePayloadlessChoiceComparisonSide(rhs.ty, lhs, c.left.*.location, s)) |coerced_lhs| {
+                lhs = coerced_lhs;
+            }
+        }
+
         rhs = try typ.coerceExprToType(lhs.ty, rhs, c.right, s, self.allocator, self.diags);
         lhs = try typ.coerceExprToType(rhs.ty, lhs, c.left, s, self.allocator, self.diags);
 
@@ -9986,6 +10034,48 @@ pub const Semantizer = struct {
         const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, undefined, self.allocator);
         try s.nodes.append(node);
         return .{ .node = node, .ty = .{ .builtin = .Bool } };
+    }
+
+    fn coercePayloadlessChoiceComparisonSide(
+        self: *Semantizer,
+        target_ty: sg.Type,
+        expr: typ.TypedExpr,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!?typ.TypedExpr {
+        if (target_ty != .choice_type) return null;
+        if (expr.node.content != .choice_literal) return null;
+        if (expr.ty != .builtin or expr.ty.builtin != .Any) return null;
+
+        const raw_variant = expr.node.content.choice_literal;
+        if (raw_variant.payload != null) return null;
+
+        const choice_ty = target_ty.choice_type;
+        for (choice_ty.variants, 0..) |variant, idx| {
+            if (!std.mem.eql(u8, variant.name, raw_variant.variant_name)) continue;
+
+            const typed = try self.allocator.create(sg.ChoiceLiteral);
+            typed.* = .{
+                .variant_name = raw_variant.variant_name,
+                .module_qualifier = raw_variant.module_qualifier,
+                .choice_type = choice_ty,
+                .variant_index = @intCast(idx),
+                .payload = null,
+            };
+            const typed_node = try sg.makeSGNode(.{ .choice_literal = typed }, loc, self.allocator);
+            typed_node.sem_type = target_ty;
+            return typ.TypedExpr{ .node = typed_node, .ty = target_ty };
+        }
+
+        const choice_text = try self.formatTypeText(target_ty, s);
+        defer choice_text.deinit();
+        try self.diags.add(
+            loc,
+            .semantic,
+            "choice type '{s}' has no variant '..{s}'",
+            .{ choice_text.bytes, raw_variant.variant_name },
+        );
+        return error.Reported;
     }
 
     fn handleLogicalOperation(
@@ -12151,10 +12241,40 @@ pub const Semantizer = struct {
         var value_field: ?syn.StructValueLiteralField = null;
         var variant_field: ?syn.StructValueLiteralField = null;
 
-        for (svl.fields) |field| {
-            if (std.mem.eql(u8, field.name.string, "value")) {
+        for (svl.fields, 0..) |field, idx| {
+            if (idx < svl.positional_prefix_count) {
+                if (idx == 0) {
+                    if (value_field != null) {
+                        try self.addDuplicateIsBuiltinArgument(arg_node.location);
+                        return error.Reported;
+                    }
+                    value_field = field;
+                } else if (idx == 1) {
+                    if (variant_field != null) {
+                        try self.addDuplicateIsBuiltinArgument(arg_node.location);
+                        return error.Reported;
+                    }
+                    variant_field = field;
+                } else {
+                    try self.diags.add(
+                        field.name.location,
+                        .semantic,
+                        "is only accepts two positional arguments: value and variant",
+                        .{},
+                    );
+                    return error.Reported;
+                }
+            } else if (std.mem.eql(u8, field.name.string, "value")) {
+                if (value_field != null) {
+                    try self.addDuplicateIsBuiltinArgument(field.name.location);
+                    return error.Reported;
+                }
                 value_field = field;
             } else if (std.mem.eql(u8, field.name.string, "variant")) {
+                if (variant_field != null) {
+                    try self.addDuplicateIsBuiltinArgument(field.name.location);
+                    return error.Reported;
+                }
                 variant_field = field;
             } else {
                 try self.diags.add(

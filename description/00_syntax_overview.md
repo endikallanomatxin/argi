@@ -191,6 +191,7 @@ return struct without unpacking.
 ```
 my_var | my_func (_, other_arg)         -- Single piped argument
 my_var | my_func (_.a, other_arg, _.b)  -- Multiple piped arguments
+result | is(_, ..error)                -- Positional arguments also work with builtins
 ```
 
 Se puede pasar por referencia sin necesidad de crear las variables intermedias.
