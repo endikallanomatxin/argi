@@ -713,7 +713,7 @@ pub const CodeGenerator = struct {
             break :blk created;
         };
 
-        if (is_extern and std.mem.eql(u8, f.name, "__argi_runtime_argc")) {
+        if (is_extern and std.mem.eql(u8, f.name, "argi_runtime_argc")) {
             try self.ensureRuntimeArgGlobals();
             const entry = c.LLVMAppendBasicBlock(fn_ref, "entry");
             c.LLVMPositionBuilderAtEnd(self.builder, entry);
@@ -724,7 +724,7 @@ pub const CodeGenerator = struct {
             return;
         }
 
-        if (is_extern and std.mem.eql(u8, f.name, "__argi_runtime_argv")) {
+        if (is_extern and std.mem.eql(u8, f.name, "argi_runtime_argv")) {
             try self.ensureRuntimeArgGlobals();
             const entry = c.LLVMAppendBasicBlock(fn_ref, "entry");
             c.LLVMPositionBuilderAtEnd(self.builder, entry);

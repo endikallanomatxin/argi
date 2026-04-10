@@ -1,5 +1,5 @@
-__argi_runtime_argc() -> (.count: UIntNative) : ExternFunction
-__argi_runtime_argv() -> (.argv: UIntNative) : ExternFunction
+argi_runtime_argc() -> (.count: UIntNative) : ExternFunction
+argi_runtime_argv() -> (.argv: UIntNative) : ExternFunction
 
 Arguments : Type = (
     .count : UIntNative
@@ -16,8 +16,8 @@ Arguments implements Iterable#(.t: StringView)
 
 once init(.p: $&Arguments) -> () := {
     p& = (
-        .count = __argi_runtime_argc().count,
-        .argv = __argi_runtime_argv().argv,
+        .count = argi_runtime_argc().count,
+        .argv = argi_runtime_argv().argv,
     )
 }
 
