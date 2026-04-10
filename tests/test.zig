@@ -1629,8 +1629,8 @@ test "feature_tests/system/12_environment_variables_index_operator" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/system/13_environment_variables_string_keys" {
-    const test_path = "tests/feature_tests/system/13_environment_variables_string_keys";
+test "feature_tests/system/13_environment_variables_string_view_keys" {
+    const test_path = "tests/feature_tests/system/13_environment_variables_string_view_keys";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }

@@ -7,29 +7,16 @@ main(.system: System = System()) -> (.status_code: Int32) := {
 
     home_view ::= as_view(.self = &home_string)
 
-    if has(.self = system.env_vars, .key = &home_string).ok {
-    } else {
-        status_code = 1
-        return
-    }
-
     if has(.self = system.env_vars, .key = home_view).ok {
     } else {
-        status_code = 2
-        return
-    }
-
-    from_string ::= system.env_vars[&home_string]
-    if is(.value = from_string, .variant = ..some) {
-    } else {
-        status_code = 3
+        status_code = 1
         return
     }
 
     from_view ::= system.env_vars[home_view]
     if is(.value = from_view, .variant = ..some) {
     } else {
-        status_code = 4
+        status_code = 2
         return
     }
 

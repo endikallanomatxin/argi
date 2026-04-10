@@ -3,8 +3,7 @@ EnvironmentVariables : Type = ()
 once init(.p: $&EnvironmentVariables) -> () := {
 }
 
-get(
-    .self: &EnvironmentVariables,
+environment_variables_get_c_string(
     .key: &Char,
 ) -> (.value: ?StringView) := {
     raw_ptr ::= getenv(.name = key).value
@@ -23,26 +22,12 @@ get(
 
 get(
     .self: &EnvironmentVariables,
-    .key: &String,
-) -> (.value: ?StringView) := {
-    c_key ::= as_c_string(.self = key)
-    found ::= get(.self = self, .key = c_key)
-    if found? {
-        payload ::= found..some
-        value = ..some(.value = payload.value)
-        return
-    }
-
-    value = ..none
-}
-
-get(
-    .self: &EnvironmentVariables,
     .key: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.value: ?StringView) := {
     c_key ::= as_c_string(.self = key, .allocator = allocator)
-    found ::= get(.self = self, .key = c_key.text)
+    found ::= environment_variables_get_c_string(.key = c_key.text)
+    deinit(.self = $&c_key.storage, .allocator = allocator)
     if found? {
         payload ::= found..some
         value = ..some(.value = payload.value)
@@ -50,22 +35,6 @@ get(
     }
 
     value = ..none
-}
-
-has(
-    .self: &EnvironmentVariables,
-    .key: &Char,
-) -> (.ok: Bool) := {
-    found ::= get(.self = self, .key = key)
-    ok = found?
-}
-
-has(
-    .self: &EnvironmentVariables,
-    .key: &String,
-) -> (.ok: Bool) := {
-    found ::= get(.self = self, .key = key)
-    ok = found?
 }
 
 has(
@@ -73,37 +42,8 @@ has(
     .key: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.ok: Bool) := {
-    c_key ::= as_c_string(.self = key, .allocator = allocator)
-    found ::= get(.self = self, .key = c_key.text)
+    found ::= get(.self = self, .key = key, .allocator = allocator)
     ok = found?
-}
-
-operator get[](
-    .self: &EnvironmentVariables,
-    .index: &Char,
-) -> (.value: ?StringView) := {
-    found ::= get(.self = self, .key = index)
-    if found? {
-        payload ::= found..some
-        value = ..some(.value = payload.value)
-        return
-    }
-
-    value = ..none
-}
-
-operator get[](
-    .self: &EnvironmentVariables,
-    .index: &String,
-) -> (.value: ?StringView) := {
-    found ::= get(.self = self, .key = index)
-    if found? {
-        payload ::= found..some
-        value = ..some(.value = payload.value)
-        return
-    }
-
-    value = ..none
 }
 
 operator get[](
@@ -111,10 +51,7 @@ operator get[](
     .index: StringView,
 ) -> (.value: ?StringView) := {
     allocator :: CAllocator = CAllocator()
-    c_key ::= as_c_string(.self = index, .allocator = $&allocator)
-    found ::= get(.self = self, .key = c_key.text)
-    deinit(.self = $&c_key.storage, .allocator = $&allocator)
-
+    found ::= get(.self = self, .key = index, .allocator = $&allocator)
     if found? {
         payload ::= found..some
         value = ..some(.value = payload.value)

@@ -1,7 +1,10 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
-    home_key ::= from_literal(.data = "HOME")
-    path_key ::= from_literal(.data = "PATH")
-    missing_key ::= from_literal(.data = "ARGI_ENV_SHOULD_NOT_EXIST_475")
+    home_literal ::= from_literal(.data = "HOME")
+    path_literal ::= from_literal(.data = "PATH")
+    missing_literal ::= from_literal(.data = "ARGI_ENV_SHOULD_NOT_EXIST_475")
+    home_key ::= as_view(.self = home_literal)
+    path_key ::= as_view(.self = path_literal)
+    missing_key ::= as_view(.self = missing_literal)
 
     if has(.self = system.env_vars, .key = home_key).ok {
     } else {
