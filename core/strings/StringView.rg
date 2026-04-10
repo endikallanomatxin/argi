@@ -71,6 +71,8 @@ equals(
     .left: &StringView,
     .right: &String,
 ) -> (.ok: Bool) := {
+    -- A `StringViewable` abstract would reduce these overloads, but `&Abstract`
+    -- operator dispatch is not robust enough yet for this core path.
     right_view ::= as_view(.self = right)
     ok = equals(.left = left, .right = &right_view).ok
 }
