@@ -89,7 +89,15 @@ read_line_into_buffer(
             break
         }
 
-        push_byte(.self = buffer, .byte = payload.byte)
+        pushed ::= push_byte(.self = buffer, .byte = payload.byte)
+        match pushed {
+            ..ok _ {
+            }
+            ..error _ {
+                result = ..error(.reason = ..stream_read_failed)
+                return
+            }
+        }
     }
 
     result = ..ok(.value = Void())
@@ -133,7 +141,7 @@ read_line(
             return
         }
 
-        grew ::= push_byte_growing(.self = $&line, .byte = payload.byte, .allocator = allocator)
+        grew ::= push_byte(.self = $&line, .byte = payload.byte, .allocator = allocator)
         match grew {
             ..ok _ {
             }

@@ -16,8 +16,12 @@ deinit(
     deinit(.self = $&self&.bytes, .allocator = allocator)
 }
 
-write_byte(.self: $&DummyWriter, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    push_byte(.self = $&self&.bytes, .byte = byte)
+write_byte(.self: $&DummyWriter, .byte: UInt8, .allocator: $&Allocator) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    pushed ::= push_byte(.self = $&self&.bytes, .byte = byte, .allocator = allocator)
+    if is(.value = pushed, .variant = ..error) {
+        result = ..error(.reason = ..stream_write_failed)
+        return
+    }
     result = ..ok(.value = Void())
 }
 
@@ -25,11 +29,16 @@ flush(.self: $&DummyWriter) -> (.result: Errable#(.t: Void, .reasons: (..stream_
     result = ..ok(.value = Void())
 }
 
-DummyWriter implements Writer
-
 main(.system: System = System()) -> (.status_code: Int32) := {
     buffer ::= String(.allocator = system.allocator, .capacity = 16)
-    push_c_string(.self = $&buffer, .text = "OK")
+    match push_c_string(.self = $&buffer, .text = "OK") {
+        ..ok _ {
+        }
+        ..error _ {
+            status_code = 10
+            return
+        }
+    }
 
     if buffer.length != 2 {
         status_code = 1
@@ -39,10 +48,10 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     writer ::= DummyWriter(.allocator = system.allocator)
     i :: UIntNative = 0
     while i < buffer.length {
-        write_byte(.self = $&writer, .byte = bytes_get(.string = &buffer, .index = i).byte)
+        write_byte(.self = $&writer, .byte = bytes_get(.string = &buffer, .index = i).byte, .allocator = system.allocator)
         i = i + 1
     }
-    write_byte(.self = $&writer, .byte = 10)
+    write_byte(.self = $&writer, .byte = 10, .allocator = system.allocator)
 
     if writer.bytes.length != 3 {
         status_code = 2

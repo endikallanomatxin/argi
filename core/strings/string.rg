@@ -337,16 +337,7 @@ string_append_bytes(
     bytes_set(.string = self, .index = self&.length, .value = 0)
 }
 
-push_byte(.self: $&String, .byte: UInt8) -> () := {
-    if has_space(.self = self).ok {
-    } else {
-        return
-    }
-
-    string_append_byte(.self = self, .byte = byte)
-}
-
-push_byte_growing(
+push_byte(
     .self: $&String,
     .byte: UInt8,
     .allocator: $&Allocator = #reach allocator, system.allocator,
@@ -370,23 +361,6 @@ push_byte_growing(
 }
 
 push_c_string(
-    .self: $&String,
-    .text: &Char,
-) -> () := {
-    available ::= capacity(.self = self).value - self&.length
-    append_length ::= c_string_length(.text = text).length
-    if append_length > available {
-        append_length = available
-    }
-
-    string_append_bytes(
-        .self = self,
-        .source = cast#(.to: UIntNative)(.value = text),
-        .length = append_length,
-    )
-}
-
-push_c_string_growing(
     .self: $&String,
     .text: &Char,
     .allocator: $&Allocator = #reach allocator, system.allocator,
@@ -413,27 +387,10 @@ push_c_string_growing(
 
 push_view(
     .self: $&String,
-    .view: &StringView,
-) -> () := {
-    available ::= capacity(.self = self).value - self&.length
-    append_length ::= view&.length
-    if append_length > available {
-        append_length = available
-    }
-
-    string_append_bytes(
-        .self = self,
-        .source = view&.data,
-        .length = append_length,
-    )
-}
-
-push_view_growing(
-    .self: $&String,
-    .view: &StringView,
+    .view: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    target_capacity ::= self&.length + view&.length
+    target_capacity ::= self&.length + view.length
     growth_result ::= ensure_capacity_growing(.self = self, .target_capacity = target_capacity, .allocator = allocator)
     match growth_result {
         ..ok _ {
@@ -446,8 +403,8 @@ push_view_growing(
 
     string_append_bytes(
         .self = self,
-        .source = view&.data,
-        .length = view&.length,
+        .source = view.data,
+        .length = view.length,
     )
     result = ..ok(.value = Void())
 }

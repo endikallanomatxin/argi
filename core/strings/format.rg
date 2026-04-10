@@ -76,7 +76,7 @@ format_unsigned_decimal_into_u64(
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     if value == 0 {
-        result = push_byte_growing(.self = out, .byte = 48, .allocator = allocator)
+        result = push_byte(.self = out, .byte = 48, .allocator = allocator)
         return
     }
 
@@ -92,7 +92,7 @@ format_unsigned_decimal_into_u64(
 
             while current > 0 {
                 digit ::= current % 10
-                pushed ::= push_byte_growing(.self = $&reversed, .byte = decimal_digit_byte_u32(.digit = digit).byte, .allocator = allocator)
+                pushed ::= push_byte(.self = $&reversed, .byte = decimal_digit_byte_u32(.digit = digit).byte, .allocator = allocator)
                 match pushed {
                     ..ok _ {
                     }
@@ -108,7 +108,7 @@ format_unsigned_decimal_into_u64(
             i :: UIntNative = reversed.length
             while i > 0 {
                 i = i - 1
-                pushed ::= push_byte_growing(
+                pushed ::= push_byte(
                     .self = out,
                     .byte = bytes_get(.string = &reversed, .index = i).byte,
                     .allocator = allocator,
@@ -136,7 +136,7 @@ format_unsigned_decimal_into_u32(
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     if value == 0 {
-        result = push_byte_growing(.self = out, .byte = 48, .allocator = allocator)
+        result = push_byte(.self = out, .byte = 48, .allocator = allocator)
         return
     }
 
@@ -152,7 +152,7 @@ format_unsigned_decimal_into_u32(
 
             while current > 0 {
                 digit ::= current % 10
-                pushed ::= push_byte_growing(.self = $&reversed, .byte = decimal_digit_byte_u32(.digit = digit).byte, .allocator = allocator)
+                pushed ::= push_byte(.self = $&reversed, .byte = decimal_digit_byte_u32(.digit = digit).byte, .allocator = allocator)
                 match pushed {
                     ..ok _ {
                     }
@@ -168,7 +168,7 @@ format_unsigned_decimal_into_u32(
             i :: UIntNative = reversed.length
             while i > 0 {
                 i = i - 1
-                pushed ::= push_byte_growing(
+                pushed ::= push_byte(
                     .self = out,
                     .byte = bytes_get(.string = &reversed, .index = i).byte,
                     .allocator = allocator,
@@ -196,7 +196,7 @@ format_signed_decimal_into_i64(
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     if value == 0 {
-        result = push_byte_growing(.self = out, .byte = 48, .allocator = allocator)
+        result = push_byte(.self = out, .byte = 48, .allocator = allocator)
         return
     }
 
@@ -211,7 +211,7 @@ format_signed_decimal_into_i64(
             current :: Int64 = value
 
             if current < 0 {
-                minus ::= push_byte_growing(.self = out, .byte = 45, .allocator = allocator)
+                minus ::= push_byte(.self = out, .byte = 45, .allocator = allocator)
                 match minus {
                     ..ok _ {
                     }
@@ -229,7 +229,7 @@ format_signed_decimal_into_i64(
                     remainder = 0 - remainder
                 }
 
-                pushed ::= push_byte_growing(
+                pushed ::= push_byte(
                     .self = $&reversed,
                     .byte = decimal_digit_byte_i32(.digit = remainder).byte,
                     .allocator = allocator,
@@ -249,7 +249,7 @@ format_signed_decimal_into_i64(
             i :: UIntNative = reversed.length
             while i > 0 {
                 i = i - 1
-                pushed ::= push_byte_growing(
+                pushed ::= push_byte(
                     .self = out,
                     .byte = bytes_get(.string = &reversed, .index = i).byte,
                     .allocator = allocator,
@@ -277,7 +277,7 @@ format_signed_decimal_into_i32(
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     if value == 0 {
-        result = push_byte_growing(.self = out, .byte = 48, .allocator = allocator)
+        result = push_byte(.self = out, .byte = 48, .allocator = allocator)
         return
     }
 
@@ -292,7 +292,7 @@ format_signed_decimal_into_i32(
             current :: Int32 = value
 
             if current < 0 {
-                minus ::= push_byte_growing(.self = out, .byte = 45, .allocator = allocator)
+                minus ::= push_byte(.self = out, .byte = 45, .allocator = allocator)
                 match minus {
                     ..ok _ {
                     }
@@ -310,7 +310,7 @@ format_signed_decimal_into_i32(
                     remainder = 0 - remainder
                 }
 
-                pushed ::= push_byte_growing(
+                pushed ::= push_byte(
                     .self = $&reversed,
                     .byte = decimal_digit_byte_i32(.digit = remainder).byte,
                     .allocator = allocator,
@@ -330,7 +330,7 @@ format_signed_decimal_into_i32(
             i :: UIntNative = reversed.length
             while i > 0 {
                 i = i - 1
-                pushed ::= push_byte_growing(
+                pushed ::= push_byte(
                     .self = out,
                     .byte = bytes_get(.string = &reversed, .index = i).byte,
                     .allocator = allocator,
@@ -357,7 +357,7 @@ format_into(
     .value: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    result = push_view_growing(.self = out, .view = &value, .allocator = allocator)
+    result = push_view(.self = out, .view = value, .allocator = allocator)
 }
 
 format_into(
@@ -366,7 +366,7 @@ format_into(
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     view ::= as_view(.self = value)
-    result = push_view_growing(.self = out, .view = &view, .allocator = allocator)
+    result = push_view(.self = out, .view = view, .allocator = allocator)
 }
 
 format_into(
@@ -374,7 +374,7 @@ format_into(
     .value: &Char,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    result = push_c_string_growing(.self = out, .text = value, .allocator = allocator)
+    result = push_c_string(.self = out, .text = value, .allocator = allocator)
 }
 
 format_into(
@@ -383,9 +383,9 @@ format_into(
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     if value {
-        result = push_c_string_growing(.self = out, .text = "true", .allocator = allocator)
+        result = push_c_string(.self = out, .text = "true", .allocator = allocator)
     } else {
-        result = push_c_string_growing(.self = out, .text = "false", .allocator = allocator)
+        result = push_c_string(.self = out, .text = "false", .allocator = allocator)
     }
 }
 
@@ -429,7 +429,7 @@ format(
     match create_result {
         ..ok ~ payload {
             out ::= payload.value
-            pushed ::= push_view_growing(.self = $&out, .view = &value, .allocator = allocator)
+            pushed ::= push_view(.self = $&out, .view = value, .allocator = allocator)
             match pushed {
                 ..ok _ {
                     result = ..ok(.value = out)
@@ -463,7 +463,7 @@ format(
     match create_result {
         ..ok ~ payload {
             out ::= payload.value
-            pushed ::= push_c_string_growing(.self = $&out, .text = value, .allocator = allocator)
+            pushed ::= push_c_string(.self = $&out, .text = value, .allocator = allocator)
             match pushed {
                 ..ok _ {
                     result = ..ok(.value = out)

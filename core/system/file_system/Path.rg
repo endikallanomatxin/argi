@@ -61,7 +61,13 @@ init(
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> () := {
     text :: String = String(.allocator = allocator, .capacity = view.length)
-    push_view(.self = $&text, .view = &view)
+    pushed ::= push_view(.self = $&text, .view = view)
+    match pushed {
+        ..ok _ {
+        }
+        ..error _ {
+        }
+    }
     p& = (
         .text = text,
     )
@@ -75,7 +81,7 @@ path_with_view(
     match created {
         ..ok payload {
             text ::= payload.value
-            pushed ::= push_view_growing(.self = $&text, .view = &view, .allocator = allocator)
+            pushed ::= push_view(.self = $&text, .view = view, .allocator = allocator)
             match pushed {
                 ..ok _ {
                     result = ..ok(.value = (.text = text))
@@ -228,7 +234,7 @@ join_views(
         ..ok payload {
             text ::= payload.value
 
-            pushed_left ::= push_view_growing(.self = $&text, .view = left, .allocator = allocator)
+            pushed_left ::= push_view(.self = $&text, .view = left&, .allocator = allocator)
             match pushed_left {
                 ..ok _ {
                 }
@@ -242,7 +248,7 @@ join_views(
             if left&.length > 0 and right&.length > 0 {
                 if path_is_separator(.byte = bytes_get(.view = left, .index = left&.length - 1).byte).ok {
                 } else {
-                    pushed_sep ::= push_byte_growing(.self = $&text, .byte = 47, .allocator = allocator)
+                    pushed_sep ::= push_byte(.self = $&text, .byte = 47, .allocator = allocator)
                     match pushed_sep {
                         ..ok _ {
                         }
@@ -255,7 +261,7 @@ join_views(
                 }
             }
 
-            pushed_right ::= push_view_growing(.self = $&text, .view = right, .allocator = allocator)
+            pushed_right ::= push_view(.self = $&text, .view = right&, .allocator = allocator)
             match pushed_right {
                 ..ok _ {
                     result = ..ok(.value = (.text = text))

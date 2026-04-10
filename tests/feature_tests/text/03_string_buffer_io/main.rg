@@ -1,8 +1,23 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
     buffer ::= String(.allocator = system.allocator, .capacity = 8)
 
-    push_byte(.self = $&buffer, .byte = 79)
-    push_byte(.self = $&buffer, .byte = 75)
+    match push_byte(.self = $&buffer, .byte = 79) {
+        ..ok _ {
+        }
+        ..error _ {
+            status_code = 10
+            return
+        }
+    }
+
+    match push_byte(.self = $&buffer, .byte = 75) {
+        ..ok _ {
+        }
+        ..error _ {
+            status_code = 11
+            return
+        }
+    }
 
     if buffer.length != 2 {
         status_code = 1

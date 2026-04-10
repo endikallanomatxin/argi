@@ -93,7 +93,7 @@ allocate(
     if needs_block {
         new_block_size ::= arena_min_block_capacity(.requested = required, .block_size = self&.block_size).capacity
         block_data ::= allocate(.self = self&.backing_allocator, .size = new_block_size)
-        push(
+        pushed ::= push(
             .allocator = self&.backing_allocator,
             .self = $&self&.blocks,
             .value = (
@@ -101,6 +101,11 @@ allocate(
                 .size = new_block_size,
             ),
         )
+        if is(.value = pushed, .variant = ..error) {
+            zero :: UIntNative = 0
+            data = cast#(.to: $&UInt8)(.value = zero)
+            return
+        }
         self&.current_block_offset = 0
     }
 

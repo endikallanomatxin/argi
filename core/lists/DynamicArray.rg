@@ -172,29 +172,6 @@ push #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&DynamicArray#(.t: t),
     .value: t,
-) -> () := {
-    one :: UIntNative = 1
-    offset ::= self&.length
-
-    if self&.length == self&.capacity {
-        dynamic_array_grow#(.t: t)(.allocator = allocator, .array = self, .min_capacity = self&.length + one)
-        offset = self&.length
-    }
-
-    ptr_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = offset).address
-    ptr : $&t = cast#(.to: $&t)(.value = ptr_addr)
-    ptr& = value
-    self& = (
-        .allocation = self&.allocation,
-        .length = offset + one,
-        .capacity = self&.capacity,
-    )
-}
-
-push_growing #(.t: Type) (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
-    .self: $&DynamicArray#(.t: t),
-    .value: t,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     one :: UIntNative = 1
     offset ::= self&.length

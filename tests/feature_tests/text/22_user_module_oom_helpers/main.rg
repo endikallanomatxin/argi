@@ -5,7 +5,7 @@ make_text(
     match created {
         ..ok ~ payload {
             text ::= payload.value
-            pushed ::= push_byte_growing(.self = $&text, .byte = 65, .allocator = allocator)
+            pushed ::= push_byte(.self = $&text, .byte = 65, .allocator = allocator)
             match pushed {
                 ..ok _ {
                     result = ..ok(.value = text)

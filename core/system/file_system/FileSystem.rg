@@ -265,7 +265,7 @@ read_file(
         }
 
         payload ::= next_value..ok
-        grew ::= push_byte_growing(.self = $&text, .byte = payload.byte, .allocator = allocator)
+        grew ::= push_byte(.self = $&text, .byte = payload.byte, .allocator = allocator)
         match grew {
             ..ok _ {
             }
