@@ -1392,7 +1392,7 @@ pub const Syntaxer = struct {
 
         switch (self.current().content) {
             .identifier => |ident_name| {
-                if (std.mem.eql(u8, ident_name, "ExternFunction")) {
+                if (std.mem.eql(u8, ident_name, "ExternFunction") or std.mem.eql(u8, ident_name, "CFunction")) {
                     self.advanceOne();
                     const ef = syn.FunctionDeclaration{
                         .name = name,

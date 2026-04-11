@@ -956,6 +956,12 @@ test "feature_tests/basics/16_bool_literals" {
     try run(test_path);
 }
 
+test "feature_tests/basics/19_c_function_alias" {
+    const test_path = "tests/feature_tests/basics/19_c_function_alias";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
 test "feature_tests/types/01_choice" {
     const test_path = "tests/feature_tests/types/01_choice";
     try expectSuccessfulBuild(test_path);
