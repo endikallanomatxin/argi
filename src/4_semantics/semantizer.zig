@@ -10740,8 +10740,7 @@ pub const Semantizer = struct {
         loc: tok.Location,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        _ = loc;
-        const n = try sg.makeSGNode(.{ .break_statement = .{} }, undefined, self.allocator);
+        const n = try sg.makeSGNode(.{ .break_statement = .{} }, loc, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -10751,8 +10750,7 @@ pub const Semantizer = struct {
         loc: tok.Location,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        _ = loc;
-        const n = try sg.makeSGNode(.{ .continue_statement = .{} }, undefined, self.allocator);
+        const n = try sg.makeSGNode(.{ .continue_statement = .{} }, loc, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }

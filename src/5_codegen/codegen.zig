@@ -266,6 +266,7 @@ pub const CodeGenerator = struct {
             },
             .function_declaration => |f| {
                 self.genFunction(f) catch |e| {
+                    if (e == CodegenError.Reported) return e;
                     try self.diags.add(n.location, .codegen, "error generating function {s}: {s}", .{ f.name, @errorName(e) });
                     return e;
                 };
@@ -273,6 +274,7 @@ pub const CodeGenerator = struct {
             },
             .test_declaration => |t| {
                 self.genFunction(@constCast(t.function)) catch |e| {
+                    if (e == CodegenError.Reported) return e;
                     try self.diags.add(n.location, .codegen, "error generating test {s}: {s}", .{ t.name, @errorName(e) });
                     return e;
                 };
@@ -336,6 +338,7 @@ pub const CodeGenerator = struct {
             },
             .break_statement => {
                 self.genBreak(n.location) catch |e| {
+                    if (e == CodegenError.Reported) return e;
                     try self.diags.add(n.location, .codegen, "error generating break statement: {s}", .{@errorName(e)});
                     return e;
                 };
@@ -343,6 +346,7 @@ pub const CodeGenerator = struct {
             },
             .continue_statement => {
                 self.genContinue(n.location) catch |e| {
+                    if (e == CodegenError.Reported) return e;
                     try self.diags.add(n.location, .codegen, "error generating continue statement: {s}", .{@errorName(e)});
                     return e;
                 };
@@ -793,6 +797,7 @@ pub const CodeGenerator = struct {
 
         // cuerpo del usuario
         _ = self.genCodeBlock(f.body.?) catch |err| {
+            if (err == CodegenError.Reported) return err;
             try self.diags.add(f.location, .codegen, "error generating body of function {s}: {s}", .{ f.name, @errorName(err) });
             return err;
         };
@@ -1961,7 +1966,7 @@ pub const CodeGenerator = struct {
     fn genBreak(self: *CodeGenerator, loc: tok.Location) !void {
         if (self.loop_stack.items.len == 0) {
             try self.diags.add(loc, .codegen, "break used outside of a loop", .{});
-            return CodegenError.CompilationFailed;
+            return CodegenError.Reported;
         }
         const loop_ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
         _ = c.LLVMBuildBr(self.builder, loop_ctx.break_block);
@@ -1974,7 +1979,7 @@ pub const CodeGenerator = struct {
     fn genContinue(self: *CodeGenerator, loc: tok.Location) !void {
         if (self.loop_stack.items.len == 0) {
             try self.diags.add(loc, .codegen, "continue used outside of a loop", .{});
-            return CodegenError.CompilationFailed;
+            return CodegenError.Reported;
         }
         const loop_ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
         _ = c.LLVMBuildBr(self.builder, loop_ctx.continue_block);
@@ -2926,12 +2931,14 @@ pub const CodeGenerator = struct {
             const current_bb = c.LLVMGetInsertBlock(self.builder);
             if (current_bb != null and c.LLVMGetBasicBlockTerminator(current_bb) != null) break;
             _ = self.visitNode(n) catch |err| {
+                if (err == CodegenError.Reported) return err;
                 try self.diags.add(n.location, .codegen, "error generating code block node {d}: {s}", .{ idx, @errorName(err) });
                 return err;
             };
         }
         if (cb.ret_val) |ret_val| {
             return self.visitNode(ret_val) catch |err| {
+                if (err == CodegenError.Reported) return err;
                 try self.diags.add(ret_val.location, .codegen, "error generating code block return value: {s}", .{@errorName(err)});
                 return err;
             };
