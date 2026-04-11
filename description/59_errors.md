@@ -250,3 +250,40 @@ En runtime:
 
 La representación sigue siendo ligera, pero el tipado conserva el conjunto
 exacto de razones disponible en cada frontera.
+
+## Future ergonomics proposal: `handle`
+
+Future direction, not current language behavior:
+
+```argi
+my_thing := fallible() handle value, error {
+    match error.reason {
+        ..file_not_found {
+            value = 0
+        }
+        ..permission_denied {
+            report_trace(.trace = &error.trace)
+            value = 1
+        }
+    }
+}
+```
+
+Intent:
+- `handle` would be sugar specific to `Errable`
+- the left side must have type `Errable#(.t: T, ...)`
+- `value` is the common result slot for the whole construction
+- if the `Errable` is `..ok(.value = x)`, then `value = x`
+- if it is `..error(...)`, the block runs with `error` bound to the full error payload
+
+Important design constraints:
+- this does not introduce a new `match`
+- this does not introduce value-returning blocks
+- this does not change the meaning of `return`
+- the block uses ordinary `match error.reason { ... }`
+- the final value of the whole construction is the assigned `value`
+- the compiler should require `value` to be assigned on every error-handling path
+
+The motivation is to cover the common case where a local `Errable` should be
+consumed and turned into a final value without forcing a new expression-block
+model just for errors.
