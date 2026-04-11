@@ -1819,6 +1819,12 @@ test "feature_tests/system/29_array_view_baseline" {
     try runExpect(test_path, 12);
 }
 
+test "feature_tests/system/30_page_allocator_baseline" {
+    const test_path = "tests/feature_tests/system/30_page_allocator_baseline";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/polymorphism/20_generic_abstract_bound_syntax" {
     const test_path = "tests/feature_tests/polymorphism/20_generic_abstract_bound_syntax";
     try expectSuccessfulBuild(test_path);

@@ -19,5 +19,7 @@ access ( .path : &Char, .mode : Int32 ) -> ( .status : Int32 ) : ExternFunction
 -- Memory management
 alloca ( .size : UIntNative ) -> ( .pointer: $&Any ) : ExternFunction
 malloc ( .size : UIntNative ) -> ( .pointer: $&Any ) : ExternFunction
+aligned_alloc ( .alignment : UIntNative, .size : UIntNative ) -> ( .pointer: $&Any ) : ExternFunction
+getpagesize ( ) -> ( .size : UIntNative ) : ExternFunction
 free ( .pointer: &Any ) -> () : ExternFunction
 memcpy ( .dst  : $&Any, .src : &Any, .n : UIntNative ) -> () : ExternFunction
