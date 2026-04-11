@@ -6,7 +6,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
             return
         }
         ..ok payload {
-            out ::= payload.value
+            out ::= payload
 
             step_1 ::= format_into(.out = $&out, .value = "answer=", .allocator = system.allocator)
             step_2 ::= format_into(.out = $&out, .value = 42, .allocator = system.allocator)
@@ -38,7 +38,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
             return
         }
         ..ok payload {
-            text ::= payload.value
+            text ::= payload
             text_view ::= as_view(.self = &text)
             if text_view == "-105" {
             } else {
@@ -58,7 +58,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
             return
         }
         ..ok payload {
-            text ::= payload.value
+            text ::= payload
             text_view ::= as_view(.self = &text)
             if text_view == "demo" {
             } else {

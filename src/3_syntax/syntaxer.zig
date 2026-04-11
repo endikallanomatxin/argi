@@ -659,9 +659,9 @@ pub const Syntaxer = struct {
             }
             self.advanceOne();
             const vname = try self.parseName();
-            var payload_type: ?syn.StructTypeLiteral = null;
-            if (self.tokenIs(.open_parenthesis)) {
-                payload_type = try self.parseStructTypeLiteral();
+            var payload_type: ?syn.Type = null;
+            if (self.tokenStartsChoicePayloadType()) {
+                payload_type = (try self.parseType()).?;
             }
             try variants.append(.{
                 .name = vname,
@@ -680,6 +680,21 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
         self.advanceOne();
         return .{ .variants = variants.items };
+    }
+
+    fn tokenStartsChoicePayloadType(self: *Syntaxer) bool {
+        return switch (self.current().content) {
+            .identifier, .question_mark, .open_parenthesis, .open_bracket, .ampersand, .dollar => true,
+            else => false,
+        };
+    }
+
+    fn tokenStartsChoicePayloadExpr(self: *Syntaxer) bool {
+        return switch (self.current().content) {
+            .identifier, .literal, .double_dot, .open_parenthesis, .tilde, .hash, .ampersand, .dollar => true,
+            .binary_operator => |op| op == .subtraction,
+            else => false,
+        };
     }
 
     fn parenthesizedTypeIsChoiceLiteral(self: *Syntaxer) bool {
@@ -1161,8 +1176,8 @@ pub const Syntaxer = struct {
                 self.advanceOne();
                 const variant = try self.parseName();
                 var payload: ?*syn.STNode = null;
-                if (self.tokenIs(.open_parenthesis)) {
-                    payload = try self.parseCollectionLiteral(true);
+                if (self.tokenStartsChoicePayloadExpr()) {
+                    payload = try self.parseExpression();
                 }
                 break :blk try self.makeNode(.{ .choice_literal = .{
                     .name = variant,

@@ -714,12 +714,7 @@ pub const LanguageService = struct {
                     .choice_type_literal => |ctl| {
                         for (ctl.variants) |variant| {
                             try this.identAt(variant.name.location, TOKEN_INDEX.property, decl_mods);
-                            if (variant.payload_type) |payload_ty| {
-                                for (payload_ty.fields) |field| {
-                                    try this.identAt(field.name.location, TOKEN_INDEX.property, decl_mods);
-                                    if (field.type) |child_t| try this.colorType(child_t, decl_mods);
-                                }
-                            }
+                            if (variant.payload_type) |payload_ty| try this.colorType(payload_ty, decl_mods);
                         }
                     },
                     .array_type => |arr_ptr| {
@@ -806,13 +801,7 @@ pub const LanguageService = struct {
                 .choice_type_literal => |ctl| {
                     for (ctl.variants) |v| {
                         try em.identAt(v.name.location, TOKEN_INDEX.property, DECL);
-                        if (v.payload_type) |stl| {
-                            for (stl.fields) |f| {
-                                try em.identAt(f.name.location, TOKEN_INDEX.property, DECL);
-                                if (f.type) |ty| try em.colorType(ty, DECL);
-                                if (f.default_value) |dv| try stack.append(dv);
-                            }
-                        }
+                        if (v.payload_type) |payload_ty| try em.colorType(payload_ty, DECL);
                     }
                 },
                 .choice_literal => |lit| {
@@ -1415,7 +1404,9 @@ fn collectSyntaxRefs(
             .choice_type_literal => |ctl| {
                 for (ctl.variants) |variant| {
                     if (variant.payload_type) |payload| {
-                        for (payload.fields) |field| if (field.default_value) |dv| try stack.append(dv);
+                        if (payload == .struct_type_literal) {
+                            for (payload.struct_type_literal.fields) |field| if (field.default_value) |dv| try stack.append(dv);
+                        }
                     }
                 }
             },
@@ -1508,11 +1499,7 @@ fn collectTypeRefsFromType(ty: st.Type, type_refs: *std.array_list.Managed(Synta
         },
         .choice_type_literal => |ctl| {
             for (ctl.variants) |variant| {
-                if (variant.payload_type) |payload_ty| {
-                    for (payload_ty.fields) |field| {
-                        if (field.type) |child_ty| try collectTypeRefsFromType(child_ty, type_refs);
-                    }
-                }
+                if (variant.payload_type) |payload_ty| try collectTypeRefsFromType(payload_ty, type_refs);
             }
         },
         .pointer_type => |ptr| try collectTypeRefsFromType(ptr.child.*, type_refs),

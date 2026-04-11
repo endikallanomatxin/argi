@@ -19,7 +19,7 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
         text_result ::= read_file(system.file_sys, path)
         match text_result {
             ..ok payload {
-                text ::= payload.value
+                text ::= payload
                 view ::= as_view(.self = &text)
                 print(.value = view)
                 i = i + 1

@@ -74,7 +74,7 @@ fn printChoiceTypeLiteral(ct: syn.ChoiceTypeLiteral, lvl: usize) void {
         std.debug.print("..{s}", .{v.name.string});
         if (v.payload_type) |pt| {
             std.debug.print(" ", .{});
-            printStructTypeLiteral(pt, lvl + 1);
+            printType(pt, lvl + 1);
         }
         std.debug.print("\n", .{});
     }

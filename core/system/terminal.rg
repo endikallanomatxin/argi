@@ -79,17 +79,17 @@ read_line_into_buffer(
             return
         }
 
-        next_value ::= next..ok.value
+        next_value ::= next..ok
         if is(.value = next_value, .variant = ..end) {
             break
         }
 
         payload ::= next_value..ok
-        if payload.byte == 10 {
+        if payload == 10 {
             break
         }
 
-        pushed ::= push_byte(.self = buffer, .byte = payload.byte)
+        pushed ::= push_byte(.self = buffer, .byte = payload)
         match pushed {
             ..ok _ {
             }
@@ -100,7 +100,7 @@ read_line_into_buffer(
         }
     }
 
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 read_line(
@@ -113,7 +113,7 @@ read_line(
         result = ..error(.reason = ..out_of_memory)
         return
     }
-    line ::= create_result..ok.value
+    line ::= create_result..ok
 
     while 1 == 1 {
         next ::= read_byte(.self = stdin)
@@ -123,25 +123,25 @@ read_line(
             return
         }
 
-        next_value ::= next..ok.value
+        next_value ::= next..ok
         if is(.value = next_value, .variant = ..end) {
             if line.length == 0 {
                 deinit(.self = $&line, .allocator = allocator)
-                result = ..ok(.value = ..end)
+                result = ..ok ..end
                 return
             }
 
-            result = ..ok(.value = ..ok(.text = line))
+            result = ..ok ..ok line
             return
         }
 
         payload ::= next_value..ok
-        if payload.byte == 10 {
-            result = ..ok(.value = ..ok(.text = line))
+        if payload == 10 {
+            result = ..ok ..ok line
             return
         }
 
-        grew ::= push_byte(.self = $&line, .byte = payload.byte, .allocator = allocator)
+        grew ::= push_byte(.self = $&line, .byte = payload, .allocator = allocator)
         match grew {
             ..ok _ {
             }
@@ -206,7 +206,7 @@ print_error(
         i = i + 1
     }
 
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 flush_error(

@@ -9,7 +9,7 @@ read_byte(
         self& = (
             .index = 1
         )
-        result = ..ok(.value = ..ok(.byte = 79))
+        result = ..ok ..ok 79
         return
     }
 
@@ -17,11 +17,11 @@ read_byte(
         self& = (
             .index = 2
         )
-        result = ..ok(.value = ..ok(.byte = 75))
+        result = ..ok ..ok 75
         return
     }
 
-    result = ..ok(.value = ..end)
+    result = ..ok ..end
 }
 
 DummyInput implements Reader
@@ -44,21 +44,21 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    if is(.value = third_result..ok.value, .variant = ..end) {
+    if is(.value = third_result..ok, .variant = ..end) {
     } else {
         status_code = 3
         return
     }
 
-    first ::= first_result..ok.value..ok
-    second ::= second_result..ok.value..ok
+    first ::= first_result..ok..ok
+    second ::= second_result..ok..ok
 
-    if first.byte != 79 {
+    if first != 79 {
         status_code = 4
         return
     }
 
-    if second.byte != 75 {
+    if second != 75 {
         status_code = 5
         return
     }

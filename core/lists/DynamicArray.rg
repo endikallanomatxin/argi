@@ -137,7 +137,7 @@ dynamic_array_grow_growing #(.t: Type) (
     allocate_result ::= allocate_fallible(.self = allocator, .size = new_bytes)
     match allocate_result {
         ..ok payload {
-            new_data : $&UInt8 = cast#(.to: $&UInt8)(.value = payload.value)
+            new_data : $&UInt8 = cast#(.to: $&UInt8)(.value = payload)
             new_addr :: UIntNative = cast#(.to: UIntNative)(.value = new_data)
             old_addr :: UIntNative = cast#(.to: UIntNative)(.value = array&.allocation.data)
 
@@ -160,7 +160,7 @@ dynamic_array_grow_growing #(.t: Type) (
                 .length = array&.length,
                 .capacity = new_capacity,
             )
-            result = ..ok(.value = Void())
+            result = ..ok Void()
         }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
@@ -197,7 +197,7 @@ push #(.t: Type) (
         .length = offset + one,
         .capacity = self&.capacity,
     )
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 pop #(.t: Type) (
@@ -293,7 +293,7 @@ insert_growing #(.t: Type) (
         temp_result ::= allocate_fallible(.self = allocator, .size = bytes_to_shift)
         match temp_result {
             ..ok payload {
-                temp_data : $&UInt8 = cast#(.to: $&UInt8)(.value = payload.value)
+                temp_data : $&UInt8 = cast#(.to: $&UInt8)(.value = payload)
                 temp_addr :: UIntNative = cast#(.to: UIntNative)(.value = temp_data)
 
                 source_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = i).address
@@ -328,7 +328,7 @@ insert_growing #(.t: Type) (
         .length = current_length + one,
         .capacity = self&.capacity,
     )
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 operator get[] #(.t: Type) (

@@ -60,7 +60,7 @@ open(
         result = ..error(.reason = ..file_open_failed)
         return
     }
-    result = ..ok(.value = 1 == 1)
+    result = ..ok 1 == 1
 }
 
 open_read(
@@ -113,7 +113,7 @@ init_stderr(.p: $&File) -> () := {
 
 close(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_close_failed))) := {
     if self&.handle == 0 {
-        result = ..ok(.value = Void())
+        result = ..ok Void()
         return
     }
 
@@ -134,7 +134,7 @@ close(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_close_f
         return
     }
 
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 flush(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
@@ -148,7 +148,7 @@ flush(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_f
         return
     }
 
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 read_byte(.self: $&File) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
@@ -173,7 +173,7 @@ read_byte(.self: $&File) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream
         }
 
         if feof(.stream = stream).status != 0 {
-            result = ..ok(.value = ..end)
+            result = ..ok ..end
             return
         }
 
@@ -181,7 +181,7 @@ read_byte(.self: $&File) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream
         return
     }
 
-    result = ..ok(.value = ..ok(.byte = byte))
+    result = ..ok ..ok byte
 }
 
 write_byte(.self: $&File, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
@@ -203,7 +203,7 @@ write_byte(.self: $&File, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons
         return
     }
 
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 File implements Reader
@@ -265,7 +265,7 @@ read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_t
     if self&.start < self&.end {
         addr :: UIntNative = buffered_reader_byte_address(.self = self, .index = self&.start).address
         ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
-        result = ..ok(.value = ..ok(.byte = ptr&))
+        result = ..ok ..ok ptr&
         self& = (
             .base = self&.base,
             .buffer = self&.buffer,
@@ -287,16 +287,16 @@ read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_t
         return
     }
 
-    first_payload ::= first..ok.value
+    first_payload ::= first..ok
     if is(.value = first_payload, .variant = ..end) {
-        result = ..ok(.value = ..end)
+        result = ..ok ..end
         return
     }
 
     payload ::= first_payload..ok
     addr :: UIntNative = buffered_reader_byte_address(.self = self, .index = 0).address
     ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
-    ptr& = payload.byte
+    ptr& = payload
     self& = (
         .base = self&.base,
         .buffer = self&.buffer,
@@ -304,7 +304,7 @@ read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_t
         .start = 1,
         .end = 1,
     )
-    result = ..ok(.value = ..ok(.byte = payload.byte))
+    result = ..ok ..ok payload
 }
 
 BufferedWriter#(.base_type: Type: Writer) : Type = (
@@ -394,7 +394,7 @@ buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_
         .capacity = self&.capacity,
         .length = 0,
     )
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 write_byte#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type), .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
@@ -414,7 +414,7 @@ write_byte#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_
         return
     }
 
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {

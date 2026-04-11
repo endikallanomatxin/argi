@@ -11,17 +11,17 @@ test_skip_impl() -> (.result: Errable#(.t: Void, .reasons: (..test_skipped))) :=
 
 fail(.message: &Char) -> (.result: Errable#(.t: Void, .reasons: (..test_failed))) := {
     test_fail_impl() !! message
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 skip(.message: &Char) -> (.result: Errable#(.t: Void, .reasons: (..test_skipped))) := {
     test_skip_impl() !! message
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 expect(.condition: Bool) -> (.result: Errable#(.t: Void, .reasons: (..test_failed))) := {
     if condition {
-        result = ..ok(.value = Void())
+        result = ..ok Void()
         return
     }
 
@@ -33,7 +33,7 @@ expect_equal #(.t: Type) (
     .actual: t,
 ) -> (.result: Errable#(.t: Void, .reasons: (..test_failed))) := {
     if expected == actual {
-        result = ..ok(.value = Void())
+        result = ..ok Void()
         return
     }
 

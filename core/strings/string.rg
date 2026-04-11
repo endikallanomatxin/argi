@@ -22,13 +22,13 @@ string_with_length(
         ..ok payload {
             out :: String = (
                 .allocation = (
-                    .data = cast#(.to: $&UInt8)(.value = payload.value),
+                    .data = cast#(.to: $&UInt8)(.value = payload),
                     .size = allocation_size,
                 ),
                 .length = length,
             )
             bytes_set(.string = $&out, .index = length, .value = 0)
-            result = ..ok(.value = out)
+            result = ..ok out
         }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
@@ -53,13 +53,13 @@ string_with_capacity(
         ..ok payload {
             out :: String = (
                 .allocation = (
-                    .data = cast#(.to: $&UInt8)(.value = payload.value),
+                    .data = cast#(.to: $&UInt8)(.value = payload),
                     .size = allocation_size,
                 ),
                 .length = 0,
             )
             bytes_set(.string = $&out, .index = 0, .value = 0)
-            result = ..ok(.value = out)
+            result = ..ok out
         }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
@@ -267,7 +267,7 @@ ensure_capacity_growing(
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     current_capacity ::= capacity(.self = self).value
     if current_capacity >= target_capacity {
-        result = ..ok(.value = Void())
+        result = ..ok Void()
         return
     }
 
@@ -275,7 +275,7 @@ ensure_capacity_growing(
     allocate_result ::= allocate_fallible(.self = allocator, .size = new_allocation_size)
     match allocate_result {
         ..ok payload {
-            new_data : $&UInt8 = cast#(.to: $&UInt8)(.value = payload.value)
+            new_data : $&UInt8 = cast#(.to: $&UInt8)(.value = payload)
 
             if self&.length > 0 {
                 memcpy(
@@ -296,7 +296,7 @@ ensure_capacity_growing(
                 ),
                 .length = self&.length,
             )
-            result = ..ok(.value = Void())
+            result = ..ok Void()
         }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
@@ -357,7 +357,7 @@ push_byte(
     }
 
     string_append_byte(.self = self, .byte = byte)
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 push_c_string(
@@ -382,7 +382,7 @@ push_c_string(
         .source = cast#(.to: UIntNative)(.value = text),
         .length = append_length,
     )
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 push_view(
@@ -406,7 +406,7 @@ push_view(
         .source = view.data,
         .length = view.length,
     )
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 c_string_length(

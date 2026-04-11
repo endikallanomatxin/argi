@@ -6,7 +6,7 @@ fail() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
 
 propagate() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
     value := fail()!
-    result = ..ok(.value = value)
+    result = ..ok value
 }
 
 main() -> (.status_code: Int32) := {

@@ -8,12 +8,12 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
                 return
             }
              ..ok next_line {
-                match next_line.value {
+                match next_line {
                     ..end {
                         return
                     }
                     ..ok line {
-                        line_text ::= as_view(.self = &line.text)
+                        line_text ::= as_view(.self = &line)
                         if line_text == "" {
                             return
                         } else {

@@ -4,12 +4,12 @@
 ..stream_close_failed
 
 ReadByte : Type = (
-    ..ok(.byte: UInt8)
+    ..ok UInt8
     ..end
 )
 
 ReadLine : Type = (
-    ..ok(.text: String)
+    ..ok String
     ..end
 )
 
@@ -39,5 +39,5 @@ write(
         }
         i = i + 1
     }
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }

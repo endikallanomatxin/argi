@@ -80,11 +80,11 @@ path_with_view(
     created ::= string_with_capacity(.allocator = allocator, .capacity = view.length)
     match created {
         ..ok payload {
-            text ::= payload.value
+            text ::= payload
             pushed ::= push_view(.self = $&text, .view = view, .allocator = allocator)
             match pushed {
                 ..ok _ {
-                    result = ..ok(.value = (.text = text))
+                    result = ..ok (.text = text)
                 }
                 ..error _ {
                     deinit(.self = $&text, .allocator = allocator)
@@ -232,7 +232,7 @@ join_views(
     created ::= string_with_capacity(.allocator = allocator, .capacity = target_capacity)
     match created {
         ..ok payload {
-            text ::= payload.value
+            text ::= payload
 
             pushed_left ::= push_view(.self = $&text, .view = left&, .allocator = allocator)
             match pushed_left {
@@ -264,7 +264,7 @@ join_views(
             pushed_right ::= push_view(.self = $&text, .view = right&, .allocator = allocator)
             match pushed_right {
                 ..ok _ {
-                    result = ..ok(.value = (.text = text))
+                    result = ..ok (.text = text)
                 }
                 ..error _ {
                     deinit(.self = $&text, .allocator = allocator)
