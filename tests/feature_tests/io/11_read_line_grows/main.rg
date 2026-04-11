@@ -6,17 +6,17 @@ read_byte(.self: $&DummyInput) -> (.result: Errable#(.t: ReadByte, .reasons: (..
     if self&.index < 20 {
         current ::= self&.index
         self& = (.index = current + 1)
-        result = ..ok(.value = ..ok(.byte = 65))
+        result = ..ok ..ok 65
         return
     }
 
     if self&.index == 20 {
         self& = (.index = 21)
-        result = ..ok(.value = ..ok(.byte = 10))
+        result = ..ok ..ok 10
         return
     }
 
-    result = ..ok(.value = ..end)
+    result = ..ok ..end
 }
 
 DummyInput implements Reader
@@ -33,7 +33,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    line ::= result..ok.value..ok.text
+    line ::= result..ok..ok
 
     if line.length != 20 {
         status_code = 2

@@ -16,7 +16,7 @@ allocate_fallible(
         return
     }
 
-    result = ..ok(.value = raw_addr)
+    result = ..ok raw_addr
 }
 
 CAllocator : Type = ()

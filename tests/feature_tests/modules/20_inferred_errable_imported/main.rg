@@ -4,7 +4,7 @@ main () -> (.status_code: Int32) := {
 
     match outcome {
         ..ok payload {
-            status_code = payload.value
+            status_code = payload
             return
         }
         ..error & err {

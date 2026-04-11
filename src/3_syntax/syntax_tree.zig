@@ -232,7 +232,7 @@ pub const ChoiceTypeLiteralVariant = struct {
     name: Name,
     module_qualifier: ?Name = null,
     is_default: bool,
-    payload_type: ?StructTypeLiteral = null,
+    payload_type: ?Type = null,
 };
 
 pub const ChoiceLiteral = struct {

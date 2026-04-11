@@ -4,7 +4,7 @@ fail() -> (.result: Errable#(.t: Void, .reasons: (..test_error))) := {
 
 run() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
     fail() !! "while stepping"
-    result = ..ok(.value = 0)
+    result = ..ok 0
 }
 
 main() -> (.status_code: Int32) := {

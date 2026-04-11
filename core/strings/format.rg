@@ -87,7 +87,7 @@ format_unsigned_decimal_into_u64(
             return
         }
         ..ok ~ payload {
-            reversed ::= payload.value
+            reversed ::= payload
             current :: UInt64 = value
 
             while current > 0 {
@@ -125,7 +125,7 @@ format_unsigned_decimal_into_u64(
             }
 
             deinit(.self = $&reversed, .allocator = allocator)
-            result = ..ok(.value = Void())
+            result = ..ok Void()
         }
     }
 }
@@ -147,7 +147,7 @@ format_unsigned_decimal_into_u32(
             return
         }
         ..ok ~ payload {
-            reversed ::= payload.value
+            reversed ::= payload
             current :: UInt32 = value
 
             while current > 0 {
@@ -185,7 +185,7 @@ format_unsigned_decimal_into_u32(
             }
 
             deinit(.self = $&reversed, .allocator = allocator)
-            result = ..ok(.value = Void())
+            result = ..ok Void()
         }
     }
 }
@@ -207,7 +207,7 @@ format_signed_decimal_into_i64(
             return
         }
         ..ok ~ payload {
-            reversed ::= payload.value
+            reversed ::= payload
             current :: Int64 = value
 
             if current < 0 {
@@ -266,7 +266,7 @@ format_signed_decimal_into_i64(
             }
 
             deinit(.self = $&reversed, .allocator = allocator)
-            result = ..ok(.value = Void())
+            result = ..ok Void()
         }
     }
 }
@@ -288,7 +288,7 @@ format_signed_decimal_into_i32(
             return
         }
         ..ok ~ payload {
-            reversed ::= payload.value
+            reversed ::= payload
             current :: Int32 = value
 
             if current < 0 {
@@ -347,7 +347,7 @@ format_signed_decimal_into_i32(
             }
 
             deinit(.self = $&reversed, .allocator = allocator)
-            result = ..ok(.value = Void())
+            result = ..ok Void()
         }
     }
 }
@@ -411,11 +411,11 @@ format(
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = value.length)
     match create_result {
         ..ok ~ payload {
-            out ::= payload.value
+            out ::= payload
             pushed ::= push_view(.self = $&out, .view = value, .allocator = allocator)
             match pushed {
                 ..ok _ {
-                    result = ..ok(.value = out)
+                    result = ..ok out
                 }
                 ..error _ {
                     deinit(.self = $&out, .allocator = allocator)
@@ -436,11 +436,11 @@ format(
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 5)
     match create_result {
         ..ok ~ payload {
-            out ::= payload.value
+            out ::= payload
             pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
             match pushed {
                 ..ok _ {
-                    result = ..ok(.value = out)
+                    result = ..ok out
                 }
                 ..error _ {
                     deinit(.self = $&out, .allocator = allocator)
@@ -461,11 +461,11 @@ format(
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 32)
     match create_result {
         ..ok ~ payload {
-            out ::= payload.value
+            out ::= payload
             pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
             match pushed {
                 ..ok _ {
-                    result = ..ok(.value = out)
+                    result = ..ok out
                 }
                 ..error _ {
                     deinit(.self = $&out, .allocator = allocator)
@@ -486,11 +486,11 @@ format(
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 16)
     match create_result {
         ..ok ~ payload {
-            out ::= payload.value
+            out ::= payload
             pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
             match pushed {
                 ..ok _ {
-                    result = ..ok(.value = out)
+                    result = ..ok out
                 }
                 ..error _ {
                     deinit(.self = $&out, .allocator = allocator)
@@ -511,11 +511,11 @@ format(
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 32)
     match create_result {
         ..ok ~ payload {
-            out ::= payload.value
+            out ::= payload
             pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
             match pushed {
                 ..ok _ {
-                    result = ..ok(.value = out)
+                    result = ..ok out
                 }
                 ..error _ {
                     deinit(.self = $&out, .allocator = allocator)
@@ -536,11 +536,11 @@ format(
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 16)
     match create_result {
         ..ok ~ payload {
-            out ::= payload.value
+            out ::= payload
             pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
             match pushed {
                 ..ok _ {
-                    result = ..ok(.value = out)
+                    result = ..ok out
                 }
                 ..error _ {
                     deinit(.self = $&out, .allocator = allocator)

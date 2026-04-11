@@ -45,7 +45,7 @@ remove(
         result = ..error(.reason = ..path_remove_failed)
         return
     }
-    result = ..ok(.value = 1 == 1)
+    result = ..ok 1 == 1
 }
 
 remove(
@@ -82,7 +82,7 @@ rename(
         result = ..error(.reason = ..path_rename_failed)
         return
     }
-    result = ..ok(.value = 1 == 1)
+    result = ..ok 1 == 1
 }
 
 rename(
@@ -123,7 +123,7 @@ open_read(
     file :: File = File(.handle = 0, .should_close = 0 == 1)
     opened ::= open_read(.p = $&file, .path = path)
     if is(.value = opened, .variant = ..ok) {
-        result = ..ok(.value = file)
+        result = ..ok file
         return
     }
     result = ..error(.reason = ..path_open_failed)
@@ -161,7 +161,7 @@ open_write(
     file :: File = File(.handle = 0, .should_close = 0 == 1)
     opened ::= open_write(.p = $&file, .path = path)
     if is(.value = opened, .variant = ..ok) {
-        result = ..ok(.value = file)
+        result = ..ok file
         return
     }
     result = ..error(.reason = ..path_open_failed)
@@ -199,7 +199,7 @@ open_append(
     file :: File = File(.handle = 0, .should_close = 0 == 1)
     opened ::= open_append(.p = $&file, .path = path)
     if is(.value = opened, .variant = ..ok) {
-        result = ..ok(.value = file)
+        result = ..ok file
         return
     }
     result = ..error(.reason = ..path_open_failed)
@@ -240,7 +240,7 @@ read_file(
         result = ..error(.reason = ..path_open_failed)
         return
     }
-    file ::= open_result..ok.value
+    file ::= open_result..ok
 
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 16)
     if is(.value = create_result, .variant = ..error) {
@@ -248,7 +248,7 @@ read_file(
         result = ..error(.reason = ..out_of_memory)
         return
     }
-    text ::= create_result..ok.value
+    text ::= create_result..ok
 
     while 1 == 1 {
         next ::= read_byte(.self = $&file)
@@ -259,13 +259,13 @@ read_file(
             return
         }
 
-        next_value ::= next..ok.value
+        next_value ::= next..ok
         if is(.value = next_value, .variant = ..end) {
             break
         }
 
         payload ::= next_value..ok
-        grew ::= push_byte(.self = $&text, .byte = payload.byte, .allocator = allocator)
+        grew ::= push_byte(.self = $&text, .byte = payload, .allocator = allocator)
         match grew {
             ..ok _ {
             }
@@ -284,7 +284,7 @@ read_file(
         result = ..error(.reason = ..stream_close_failed)
         return
     }
-    result = ..ok(.value = text)
+    result = ..ok text
 }
 
 read_file(
@@ -323,7 +323,7 @@ write_file(
         result = ..error(.reason = ..path_open_failed)
         return
     }
-    file ::= open_result..ok.value
+    file ::= open_result..ok
 
     wrote ::= write(.self = $&file, .text = text)
     match wrote {
@@ -361,7 +361,7 @@ write_file(
         return
     }
 
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 write_file(

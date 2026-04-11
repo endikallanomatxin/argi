@@ -4336,7 +4336,7 @@ pub const Semantizer = struct {
 
                     var variants = std.array_list.Managed(sg.ChoiceVariant).init(self.allocator.*);
                     for (ct_lit.variants, 0..) |variant, idx| {
-                        const payload_type = if (variant.payload_type) |pt| sg.Type{ .struct_type = try self.structTypeFromLiteral(pt, s) } else null;
+                        const payload_type = if (variant.payload_type) |pt| try self.resolveTypePreservingAbstracts(pt, s) else null;
                         const option_decl = if (payload_type == null) blk_option: {
                             if (variant.module_qualifier) |qualifier| {
                                 break :blk_option try self.resolveChoiceOptionReference(
@@ -5197,14 +5197,7 @@ pub const Semantizer = struct {
             .choice_type_literal => |ct| {
                 for (ct.variants) |variant| {
                     if (variant.payload_type) |payload_ty| {
-                        for (payload_ty.fields) |field| {
-                            if (field.type) |field_ty| {
-                                try self.collectHiddenImplementsParamsFromType(field_ty, params, s);
-                            }
-                            if (field.default_value) |value_expr| {
-                                try self.collectHiddenComptimeParamsFromValueExpr(value_expr, params, s);
-                            }
-                        }
+                        try self.collectHiddenImplementsParamsFromType(payload_ty, params, s);
                     }
                 }
             },
@@ -5663,11 +5656,7 @@ pub const Semantizer = struct {
             .choice_type_literal => |ct| blk: {
                 for (ct.variants) |variant| {
                     if (variant.payload_type) |payload_ty| {
-                        for (payload_ty.fields) |field| {
-                            if (field.type) |field_ty| {
-                                if (self.outputUsesAbstractWithoutDefault(field_ty, s)) break :blk true;
-                            }
-                        }
+                        if (self.outputUsesAbstractWithoutDefault(payload_ty, s)) break :blk true;
                     }
                 }
                 break :blk false;
@@ -6430,7 +6419,7 @@ pub const Semantizer = struct {
         var variants = std.array_list.Managed(sg.ChoiceVariant).init(self.allocator.*);
         for (ct.variants, 0..) |variant, idx| {
             const payload_type = if (variant.payload_type) |pt|
-                sg.Type{ .struct_type = try self.structTypeFromLiteralWithSubst(pt, s, subst) }
+                try self.resolveTypeWithSubstPreservingAbstracts(pt, s, subst)
             else
                 null;
             const option_decl = if (payload_type == null) blk_option: {
@@ -8361,17 +8350,8 @@ pub const Semantizer = struct {
                     }
                     try buf.appendSlice(variant.name.string);
                     if (variant.payload_type) |payload| {
-                        try buf.appendSlice("(");
-                        for (payload.fields, 0..) |field, field_idx| {
-                            if (field_idx != 0) try buf.appendSlice(", ");
-                            try buf.appendSlice(".");
-                            try buf.appendSlice(field.name.string);
-                            if (field.type) |field_ty| {
-                                try buf.appendSlice(": ");
-                                try self.appendTemplateTypePretty(buf, field_ty, tmpl);
-                            }
-                        }
-                        try buf.appendSlice(")");
+                        try buf.appendSlice(" ");
+                        try self.appendTemplateTypePretty(buf, payload, tmpl);
                     }
                 }
                 try buf.appendSlice(")");
@@ -8820,11 +8800,7 @@ pub const Semantizer = struct {
             .choice_type_literal => |ct| blk_choice: {
                 for (ct.variants) |variant| {
                     if (variant.payload_type) |payload_ty| {
-                        for (payload_ty.fields) |field| {
-                            if (field.type) |sub_ty| {
-                                if (self.typeUsesParam(sub_ty, param)) break :blk_choice true;
-                            }
-                        }
+                        if (self.typeUsesParam(payload_ty, param)) break :blk_choice true;
                     }
                 }
                 break :blk_choice false;
@@ -10174,7 +10150,7 @@ pub const Semantizer = struct {
     const ErrableInfo = struct {
         ok_variant_index: u32,
         ok_payload_type: sg.Type,
-        ok_value_field_index: u32,
+        ok_value_field_index: ?u32,
         error_variant_index: u32,
         error_payload_type: sg.Type,
     };
@@ -10427,9 +10403,8 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        var ok_payload_struct: ?*const sg.StructType = null;
-        var ok_value_ty: ?sg.Type = null;
-        var ok_value_field_index: u32 = 0;
+        var ok_payload_type: ?sg.Type = null;
+        var ok_value_field_index: ?u32 = null;
         var error_payload: ?sg.Type = null;
         var ok_variant_index: u32 = 0;
         var error_variant_index: u32 = 0;
@@ -10440,27 +10415,15 @@ pub const Semantizer = struct {
                     try self.diags.add(loc, .semantic, "Errable '..ok' must carry a payload", .{});
                     return error.Reported;
                 };
-                const payload_struct = switch (payload_ty) {
-                    .struct_type => |st| st,
-                    else => {
-                        const desc = try self.formatTypeText(payload_ty, s);
-                        defer desc.deinit();
-                        try self.diags.add(
-                            loc,
-                            .semantic,
-                            "Errable '..ok' payload must be a struct containing '.value', found '{s}'",
-                            .{desc.bytes},
-                        );
-                        return error.Reported;
-                    },
-                };
-                const value_field = typ.findFieldByName(payload_struct, "value") orelse {
-                    try self.diags.add(loc, .semantic, "Errable '..ok' payload must contain '.value'", .{});
-                    return error.Reported;
-                };
-                ok_payload_struct = payload_struct;
-                ok_value_ty = value_field.ty;
-                ok_value_field_index = fieldIndexInStruct(payload_struct, "value") orelse 0;
+                ok_payload_type = payload_ty;
+                if (payload_ty == .struct_type) {
+                    if (typ.findFieldByName(payload_ty.struct_type, "value")) |value_field| {
+                        if (payload_ty.struct_type.fields.len == 1) {
+                            ok_payload_type = value_field.ty;
+                            ok_value_field_index = fieldIndexInStruct(payload_ty.struct_type, "value");
+                        }
+                    }
+                }
                 ok_variant_index = @intCast(idx);
             } else if (std.mem.eql(u8, variant.name, "error")) {
                 error_payload = variant.payload_type;
@@ -10468,7 +10431,7 @@ pub const Semantizer = struct {
             }
         }
 
-        if (ok_payload_struct == null or ok_value_ty == null or error_payload == null) {
+        if (ok_payload_type == null or error_payload == null) {
             const desc = try self.formatTypeText(ty, s);
             defer desc.deinit();
             try self.diags.add(
@@ -10484,7 +10447,7 @@ pub const Semantizer = struct {
 
         return .{
             .ok_variant_index = ok_variant_index,
-            .ok_payload_type = ok_value_ty.?,
+            .ok_payload_type = ok_payload_type.?,
             .ok_value_field_index = ok_value_field_index,
             .error_variant_index = error_variant_index,
             .error_payload_type = error_payload.?,

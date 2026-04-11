@@ -996,6 +996,25 @@ test "feature_tests/types/07_choice_match_payload_binding" {
     try run(test_path);
 }
 
+
+test "feature_tests/types/41_choice_scalar_payload" {
+    const test_path = "tests/feature_tests/types/41_choice_scalar_payload";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/types/42_choice_struct_payload_access" {
+    const test_path = "tests/feature_tests/types/42_choice_struct_payload_access";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/types/43_choice_payload_precedence" {
+    const test_path = "tests/feature_tests/types/43_choice_payload_precedence";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
 test "feature_tests/types/08_nullable_generic" {
     const test_path = "tests/feature_tests/types/08_nullable_generic";
     try expectSuccessfulBuild(test_path);

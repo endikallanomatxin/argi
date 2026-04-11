@@ -63,11 +63,8 @@ Restricciones:
 
 ```rg
 Errable#(.t: Type, .reasons: Choice) : Type = (
-    ..ok(.value: t)
-    ..error(
-        .reason: reasons
-        .trace: ErrorTrace
-    )
+    ..ok t
+    ..error Error#(.reasons = reasons)
 )
 ```
 
@@ -88,7 +85,7 @@ read_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found))) := {
 
 load_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found, ..permission_denied))) := {
     value := read_file()!
-    result = ..ok(.value = value)
+    result = ..ok value
 }
 ```
 
@@ -97,7 +94,7 @@ For the common single-result case there is also shorthand syntax:
 ```rg
 load_file() -> !Int32 := {
     value := read_file()!
-    result = ..ok(.value = value)
+    result = ..ok value
 }
 ```
 
@@ -111,7 +108,7 @@ explicitly as `Errable#(.t: T)` and omits `.reasons`:
 ```rg
 load_file() -> (.result: Errable#(.t: Int32)) := {
     value := read_file()!
-    result = ..ok(.value = value)
+    result = ..ok value
 }
 ```
 
@@ -172,7 +169,7 @@ EOF sigue fuera del canal de error:
 
 ```rg
 ReadByte : Choice = (
-    ..ok(.byte: UInt8)
+    ..ok UInt8
     ..end
 )
 ```
@@ -218,42 +215,12 @@ suelta.
 Eso permite:
 - `match` sobre `Errable`
 - chequeos sobre `.reason`
-- futuras mejoras de narrowing/resto de casos sin depender de strings ni tipos
-  arbitrarios
+- remapeo seguro entre subconjuntos y supersets de razones
 
-Para inspeccionar un `Error` sin copiarlo, `match` puede bindear el payload por
-referencia:
+## Future Ergonomics
 
-```rg
-match result {
-    ..ok _ {
-    }
-    ..error & err {
-        match err&.reason {
-            ..file_not_found {
-                ...
-            }
-            ..permission_denied {
-                ...
-            }
-        }
-    }
-}
-```
-
-## Runtime
-
-En runtime:
-- la razón de error viaja como tag de `choice`
-- la identidad de cada opción viene de su id de compilación
-- la traza sigue siendo un valor autocontenido dentro del error
-
-La representación sigue siendo ligera, pero el tipado conserva el conjunto
-exacto de razones disponible en cada frontera.
-
-## Future ergonomics proposal: `handle`
-
-Future direction, not current language behavior:
+Propuesta futura aceptada como dirección de ergonomía, pero todavía no
+implementada:
 
 ```argi
 my_thing := fallible() handle value, error {
@@ -269,21 +236,24 @@ my_thing := fallible() handle value, error {
 }
 ```
 
-Intent:
-- `handle` would be sugar specific to `Errable`
-- the left side must have type `Errable#(.t: T, ...)`
-- `value` is the common result slot for the whole construction
-- if the `Errable` is `..ok(.value = x)`, then `value = x`
-- if it is `..error(...)`, the block runs with `error` bound to the full error payload
+Semántica esperada:
+- `handle` sería azúcar específica para `Errable`
+- la expresión a la izquierda debe tener tipo `Errable#(.t: T, ...)`
+- `value` sería el slot de resultado común
+- si el `Errable` es `..ok x`, entonces `value = x`
+- si es `..error(...)`, el bloque se ejecuta con `error` bindeado al payload
+  completo del error
+- dentro del bloque se usa `match` normal sobre `error.reason`
+- el bloque no devuelve valor de forma especial; solo asigna a `value`
+- la construcción completa produce `value`
+- el compilador debería exigir que `value` quede asignado en todos los caminos
+  del bloque de error
 
-Important design constraints:
-- this does not introduce a new `match`
-- this does not introduce value-returning blocks
-- this does not change the meaning of `return`
-- the block uses ordinary `match error.reason { ... }`
-- the final value of the whole construction is the assigned `value`
-- the compiler should require `value` to be assigned on every error-handling path
-
-The motivation is to cover the common case where a local `Errable` should be
-consumed and turned into a final value without forcing a new expression-block
-model just for errors.
+Motivación:
+- no introduce un `match` nuevo
+- no introduce bloques que devuelvan valor
+- no cambia la semántica de `return`
+- es solo azúcar ergonómica sobre el patrón habitual de consumir un `Errable`
+  localmente y producir un valor final
+- cubre el caso dominante en el que una función quiere manejar un `Errable`
+  localmente en vez de seguir propagándolo

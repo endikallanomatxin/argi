@@ -3,7 +3,7 @@ DummyInput : Type = (
 )
 
 read_byte(.self: $&DummyInput) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
-    result = ..ok(.value = ..end)
+    result = ..ok ..end
 }
 
 DummyInput implements Reader
@@ -14,7 +14,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     )
     result ::= read_line(.allocator = system.allocator, .stdin = $&stdin)
 
-    if is(.value = result..ok.value, .variant = ..end) {
+    if is(.value = result..ok, .variant = ..end) {
         status_code = 0
         return
     }

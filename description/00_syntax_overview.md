@@ -268,7 +268,7 @@ If wanted you can return an empty errable:
 
 ```
 ..init_failed
-init(out: $&MyType, ...) -> Errable#(.t: (), .reasons: (..init_failed))
+init(out: $&MyType, ...) -> Errable#(.t: Void, .reasons: (..init_failed))
 ```
 
 ### Deinit

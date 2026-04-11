@@ -6,19 +6,52 @@ Hay dos capas relacionadas:
 
 ## Choice with payload
 
+El payload de una variante puede ser cualquier `Type`, no solo un struct.
+
 ```rg
-Nullable#(.t: Type) : Type = (
-    =..none
-    ..some(.value: t)
+MaybeInt : Type = (
+    ..none
+    ..some Int32
+)
+
+SpanOrEnd : Type = (
+    ..end
+    ..span (.start: UIntNative, .end: UIntNative)
 )
 ```
 
+La sintaxis canónica de construcción es prefija:
+
 ```rg
-match value {
+a ::= ..none
+b ::= ..some 123
+c ::= ..span (.start = 3, .end = 8)
+```
+
+`..variant expr` consume la expresión completa del payload. Por ejemplo,
+`..some a + b` significa `..some (a + b)`.
+
+Si el payload es un struct, `..variant (...)` no es una llamada especial de
+variante: simplemente es `..variant <expr_struct_literal>`.
+
+## Match and payload access
+
+`match` bindea el payload con su tipo real:
+
+```rg
+match b {
     ..none {
     }
-    ..some payload {
-        use payload
+    ..some n {
+        use n
+    }
+}
+
+match c {
+    ..end {
+    }
+    ..span s {
+        use s.start
     }
 }
 ```
@@ -52,15 +85,23 @@ match value {
 ```
 
 Reglas:
-- `(..payload)` es binding por valor
-- `(..& payload)` es binding por referencia read-only, de tipo `&T`
-- `(..$& payload)` es binding por referencia mutable, de tipo `$&T`
-- `(..~ payload)` mueve el payload; si el scrutinee es un binding existente, el
+- `payload` es binding por valor
+- `& payload` es binding por referencia read-only, de tipo `&T`
+- `$& payload` es binding por referencia mutable, de tipo `$&T`
+- `~ payload` mueve el payload; si el scrutinee es un binding existente, el
   `match` lo consume
-- `(.._)` ignora el payload
+- `_` ignora el payload
 
-Esto evita préstamos implícitos mágicos: cada binding de payload declara
-explícitamente si quiere valor, préstamo o move.
+Además, `choice_value..variant` proyecta directamente el payload tipado de esa
+variante:
+
+```rg
+n ::= b..some
+s ::= c..span
+print(.value = c..span.start)
+```
+
+Si la variante no tiene payload, `choice_value..variant` es error.
 
 ## Choice options
 
@@ -91,12 +132,6 @@ Esto se usa especialmente para:
 
 ## Access and checks
 
-Valores `choice` con payload:
-
-```rg
-x..ok
-```
-
 Chequeo de variante:
 
 ```rg
@@ -110,10 +145,9 @@ if x == ..ok {
 }
 ```
 
-`is` accepts the named form and the positional `(value, variant)` form. `==`
-and `!=` can be used directly against a payloadless `..variant` literal when the
-other side is a value of that choice type; this compares the choice tag, not the
-payload.
+`is` acepta la forma nominal y la forma posicional `(value, variant)`. `==` y
+`!=` pueden usarse directamente contra un literal `..variant` cuando el otro
+lado ya tiene tipo `choice`; esto compara solo el tag e ignora el payload.
 
 `match` sigue siendo la herramienta principal cuando interesa cubrir el conjunto
 cerrado completo.

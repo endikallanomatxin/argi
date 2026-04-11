@@ -5,23 +5,23 @@ DummyInput : Type = (
 read_byte(.self: $&DummyInput) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
     if self&.index == 0 {
         self& = (.index = 1)
-        result = ..ok(.value = ..ok(.byte = 79))
+        result = ..ok ..ok 79
         return
     }
 
     if self&.index == 1 {
         self& = (.index = 2)
-        result = ..ok(.value = ..ok(.byte = 75))
+        result = ..ok ..ok 75
         return
     }
 
     if self&.index == 2 {
         self& = (.index = 3)
-        result = ..ok(.value = ..ok(.byte = 10))
+        result = ..ok ..ok 10
         return
     }
 
-    result = ..ok(.value = ..end)
+    result = ..ok ..end
 }
 
 DummyInput implements Reader
@@ -38,7 +38,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    line ::= result..ok.value..ok.text
+    line ::= result..ok..ok
 
     if line.length != 2 {
         status_code = 2

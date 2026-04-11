@@ -1,5 +1,5 @@
 produce() -> (.result: Errable#(.t: Void, .reasons: (..test_error))) := {
-    result = ..ok(.value = Void())
+    result = ..ok Void()
 }
 
 main() -> (.status_code: Int32) := {

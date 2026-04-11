@@ -21,7 +21,7 @@ propagate() -> (.result: Errable#(.t: Int32, .reasons: (..test_error, ..cleanup_
         result = ..error(.reason = ..cleanup_error)
         return
     }
-    result = ..ok(.value = value)
+    result = ..ok value
 }
 
 main() -> (.status_code: Int32) := {

@@ -147,9 +147,6 @@ report_trace(
 }
 
 Errable #(.t: Type, .reasons: Type) : Type = (
-    ..ok(.value: t)
-    ..error(
-        .reason: reasons
-        .trace: ErrorTrace
-    )
+    ..ok t
+    ..error Error#(.reasons = reasons)
 )

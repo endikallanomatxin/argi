@@ -6,12 +6,12 @@ fail() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
 
 middle() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
     value := fail()!
-    result = ..ok(.value = value)
+    result = ..ok value
 }
 
 top() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
     value := middle() !! "reading config"
-    result = ..ok(.value = value)
+    result = ..ok value
 }
 
 main(.system: System) -> (.status_code: Int32) := {

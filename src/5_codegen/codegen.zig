@@ -2408,7 +2408,7 @@ pub const CodeGenerator = struct {
         context_node: ?*const sem.SGNode,
         cleanup_nodes: []const *sem.SGNode,
         ok_variant_index: u32,
-        ok_value_field_index: u32,
+        ok_value_field_index: ?u32,
         error_variant_index: u32,
         propagated_errable_type: sem.Type,
         propagated_error_variant_index: u32,
@@ -2463,7 +2463,7 @@ pub const CodeGenerator = struct {
 
         c.LLVMPositionBuilderAtEnd(self.builder, ok_bb);
         const ok_payload = c.LLVMBuildExtractValue(self.builder, errable_tv.value_ref, ok_variant_index + 1, "errable.ok.payload");
-        const ok_value = c.LLVMBuildExtractValue(self.builder, ok_payload, ok_value_field_index, "errable.ok.value");
+        const ok_value = if (ok_value_field_index) |field_index| c.LLVMBuildExtractValue(self.builder, ok_payload, field_index, "errable.ok.value") else ok_payload;
         const ok_ty = try self.toLLVMType(ok_payload_type);
         return .{ .value_ref = ok_value, .type_ref = ok_ty, .sem_type = ok_payload_type };
     }
@@ -3198,20 +3198,21 @@ pub const CodeGenerator = struct {
             else => return CodegenError.InvalidType,
         };
         const ok_payload_type = result_choice.variants[ok_variant_index].payload_type orelse return CodegenError.InvalidType;
-        const ok_payload_struct = switch (ok_payload_type) {
-            .struct_type => |st| st,
-            else => return CodegenError.InvalidType,
-        };
-        const value_index = fieldIndexByName(ok_payload_struct, "value") orelse return CodegenError.InvalidType;
-
         var ok_payload = c.LLVMConstNull(try self.toLLVMType(ok_payload_type));
-        ok_payload = c.LLVMBuildInsertValue(
-            self.builder,
-            ok_payload,
-            c.LLVMConstNull(try self.toLLVMType(ok_payload_struct.fields[value_index].ty)),
-            value_index,
-            "test_expect_error.ok.payload",
-        );
+        if (ok_payload_type == .struct_type) {
+            const ok_payload_struct = ok_payload_type.struct_type;
+            if (fieldIndexByName(ok_payload_struct, "value")) |value_index| {
+                if (ok_payload_struct.fields.len == 1) {
+                    ok_payload = c.LLVMBuildInsertValue(
+                        self.builder,
+                        ok_payload,
+                        c.LLVMConstNull(try self.toLLVMType(ok_payload_struct.fields[value_index].ty)),
+                        value_index,
+                        "test_expect_error.ok.payload",
+                    );
+                }
+            }
+        }
 
         var result = c.LLVMConstNull(try self.toLLVMType(result_type));
         result = c.LLVMBuildInsertValue(self.builder, result, c.LLVMConstInt(c.LLVMInt32Type(), ok_variant_index, 0), 0, "test_expect_error.ok.tag");

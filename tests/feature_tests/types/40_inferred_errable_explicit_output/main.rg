@@ -6,7 +6,7 @@ fail() -> (.result: Errable#(.t: Int32, .reasons: (..test_error))) := {
 
 run() -> (.result: Errable#(.t: Int32)) := {
     value := fail()!
-    result = ..ok(.value = value + 2)
+    result = ..ok value + 2
 }
 
 main() -> (.status_code: Int32) := {
@@ -14,7 +14,7 @@ main() -> (.status_code: Int32) := {
 
     match outcome {
         ..ok payload {
-            status_code = payload.value
+            status_code = payload
             return
         }
         ..error & err {

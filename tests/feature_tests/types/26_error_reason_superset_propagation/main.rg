@@ -7,7 +7,7 @@ read_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found))) := {
 
 load_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found, ..permission_denied))) := {
     value := read_file()!
-    result = ..ok(.value = value)
+    result = ..ok value
 }
 
 main() -> (.status_code: Int32) := {

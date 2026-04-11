@@ -4,11 +4,11 @@ make_text(
     created ::= string_with_capacity(.allocator = allocator, .capacity = 4)
     match created {
         ..ok ~ payload {
-            text ::= payload.value
+            text ::= payload
             pushed ::= push_byte(.self = $&text, .byte = 65, .allocator = allocator)
             match pushed {
                 ..ok _ {
-                    result = ..ok(.value = text)
+                    result = ..ok text
                 }
                 ..error _ {
                     deinit(.self = $&text, .allocator = allocator)
@@ -26,7 +26,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     made ::= make_text(.allocator = system.allocator)
     match made {
         ..ok ~ payload {
-            text ::= payload.value
+            text ::= payload
             view ::= as_view(.self = &text)
             if view == "A" {
                 deinit(.self = $&text, .allocator = system.allocator)
