@@ -40,8 +40,7 @@ fn discoverTests(allocator: std.mem.Allocator, module_dir: []const u8) ![]Discov
     var pipeline = frontend.FrontendPipeline.init(&allocator, &diagnostics, .{});
     defer pipeline.deinit();
 
-    try pipeline.tokenizeFiles(files.items);
-    const st_nodes = try pipeline.syntax();
+    const st_nodes = try pipeline.parseFiles(files.items);
 
     if (diagnostics.hasErrors()) {
         try diagnostics.dumpWithLimit(std.math.maxInt(usize));
