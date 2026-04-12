@@ -23,3 +23,38 @@ aligned_alloc ( .alignment : UIntNative, .size : UIntNative ) -> ( .pointer: $&A
 getpagesize ( ) -> ( .size : UIntNative ) : ExternFunction
 free ( .pointer: &Any ) -> () : ExternFunction
 memcpy ( .dst  : $&Any, .src : &Any, .n : UIntNative ) -> () : ExternFunction
+
+fread_into(
+    .buffer: ArrayView#(.t: UInt8),
+    .stream: &Any,
+) -> (.count: UIntNative) := {
+    count = fread(
+        .buffer = buffer.data,
+        .size = 1,
+        .count = buffer.length,
+        .stream = stream,
+    ).count
+}
+
+fwrite_from(
+    .buffer: ArrayView#(.t: UInt8),
+    .stream: &Any,
+) -> (.count: UIntNative) := {
+    count = fwrite(
+        .buffer = &buffer.data&,
+        .size = 1,
+        .count = buffer.length,
+        .stream = stream,
+    ).count
+}
+
+memcpy_bytes(
+    .dst: ArrayView#(.t: UInt8),
+    .src: ArrayView#(.t: UInt8),
+) -> () := {
+    memcpy(
+        .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = dst.data)),
+        .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = src.data)),
+        .n = dst.length,
+    )
+}

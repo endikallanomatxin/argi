@@ -158,10 +158,12 @@ read_byte(.self: $&File) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream
     }
 
     byte :: UInt8 = 0
-    read_count ::= fread(
-        .buffer = $&byte,
-        .size = 1,
-        .count = 1,
+    byte_view ::= array_view#(.t: UInt8)(
+        .data = $&byte,
+        .length = 1,
+    )
+    read_count ::= fread_into(
+        .buffer = byte_view,
         .stream = file_stream_pointer(.self = self).stream,
     ).count
 
@@ -191,10 +193,12 @@ write_byte(.self: $&File, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons
     }
 
     single_byte :: UInt8 = byte
-    wrote ::= fwrite(
-        .buffer = &single_byte,
-        .size = 1,
-        .count = 1,
+    byte_view ::= array_view#(.t: UInt8)(
+        .data = $&single_byte,
+        .length = 1,
+    )
+    wrote ::= fwrite_from(
+        .buffer = byte_view,
         .stream = file_stream_pointer(.self = self).stream,
     ).count
 

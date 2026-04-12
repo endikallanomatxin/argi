@@ -141,14 +141,15 @@ copy (
     )
 
     if allocation_size > 0 {
-        src_addr :: UIntNative = cast#(.to: UIntNative)(.value = self.allocation.data)
-        dst_addr :: UIntNative = cast#(.to: UIntNative)(.value = out.allocation.data)
-
-        memcpy(
-            .dst = cast#(.to: $&Any)(.value = dst_addr),
-            .src = cast#(.to: &Any)(.value = src_addr),
-            .n = allocation_size,
+        dst_view ::= array_view#(.t: UInt8)(
+            .data = out.allocation.data,
+            .length = allocation_size,
         )
+        src_view ::= array_view#(.t: UInt8)(
+            .data = self.allocation.data,
+            .length = allocation_size,
+        )
+        memcpy_bytes(.dst = dst_view, .src = src_view)
     }
 }
 
@@ -243,11 +244,9 @@ ensure_capacity(
     new_data ::= allocate(.self = allocator, .size = new_allocation_size)
 
     if self&.length > 0 {
-        memcpy(
-            .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = new_data)),
-            .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = self&.allocation.data)),
-            .n = self&.length,
-        )
+        dst_view ::= array_view#(.t: UInt8)(.data = new_data, .length = self&.length)
+        src_view ::= array_view#(.t: UInt8)(.data = self&.allocation.data, .length = self&.length)
+        memcpy_bytes(.dst = dst_view, .src = src_view)
     }
 
     nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = new_data) + self&.length)
@@ -281,11 +280,9 @@ ensure_capacity_growing(
             new_data : $&UInt8 = cast#(.to: $&UInt8)(.value = payload)
 
             if self&.length > 0 {
-                memcpy(
-                    .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = new_data)),
-                    .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = self&.allocation.data)),
-                    .n = self&.length,
-                )
+                dst_view ::= array_view#(.t: UInt8)(.data = new_data, .length = self&.length)
+                src_view ::= array_view#(.t: UInt8)(.data = self&.allocation.data, .length = self&.length)
+                memcpy_bytes(.dst = dst_view, .src = src_view)
             }
 
             nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = new_data) + self&.length)
@@ -321,21 +318,17 @@ string_append_byte(
 
 string_append_bytes(
     .self: $&String,
-    .source: UIntNative,
-    .length: UIntNative,
+    .source: ArrayView#(.t: UInt8),
 ) -> () := {
-    if length > 0 {
-        dest ::= cast#(.to: UIntNative)(.value = self&.allocation.data) + self&.length
-        memcpy(
-            .dst = cast#(.to: $&Any)(.value = dest),
-            .src = cast#(.to: &Any)(.value = source),
-            .n = length,
-        )
+    if source.length > 0 {
+        dest_address ::= cast#(.to: UIntNative)(.value = self&.allocation.data) + self&.length
+        dest_view ::= array_view_from_address#(.t: UInt8)(.address = dest_address, .length = source.length)
+        memcpy_bytes(.dst = dest_view, .src = source)
     }
 
     self& = (
         .allocation = self&.allocation,
-        .length = self&.length + length,
+        .length = self&.length + source.length,
     )
     bytes_set(.string = self, .index = self&.length, .value = 0)
 }
@@ -380,11 +373,11 @@ push_c_string(
         }
     }
 
-    string_append_bytes(
-        .self = self,
-        .source = cast#(.to: UIntNative)(.value = text),
+    source_view ::= array_view_from_address#(.t: UInt8)(
+        .address = cast#(.to: UIntNative)(.value = text),
         .length = append_length,
     )
+    string_append_bytes(.self = self, .source = source_view)
     result = ..ok Void()
 }
 
@@ -404,11 +397,11 @@ push_view(
         }
     }
 
-    string_append_bytes(
-        .self = self,
-        .source = view.data,
+    source_view ::= array_view_from_address#(.t: UInt8)(
+        .address = view.data,
         .length = view.length,
     )
+    string_append_bytes(.self = self, .source = source_view)
     result = ..ok Void()
 }
 
@@ -444,8 +437,10 @@ concat_views(
 ) -> (.out: String) := {
     allocator : $&Allocator = #reach allocator, system.allocator
     temp :: String = String(.allocator = allocator, .capacity = left&.length + right&.length)
-    string_append_bytes(.self = $&temp, .source = left&.data, .length = left&.length)
-    string_append_bytes(.self = $&temp, .source = right&.data, .length = right&.length)
+    left_view ::= array_view_from_address#(.t: UInt8)(.address = left&.data, .length = left&.length)
+    right_view ::= array_view_from_address#(.t: UInt8)(.address = right&.data, .length = right&.length)
+    string_append_bytes(.self = $&temp, .source = left_view)
+    string_append_bytes(.self = $&temp, .source = right_view)
     out = temp
 }
 

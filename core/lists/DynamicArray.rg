@@ -91,16 +91,12 @@ dynamic_array_grow #(.t: Type) (
 
     new_bytes :: UIntNative = new_capacity * element_size
     new_data ::= allocate(.self = allocator, .size = new_bytes)
-    new_addr :: UIntNative = cast#(.to: UIntNative)(.value = new_data)
-    old_addr :: UIntNative = cast#(.to: UIntNative)(.value = array&.allocation.data)
 
     if array&.length > zero {
         bytes_to_copy :: UIntNative = array&.length * element_size
-        memcpy(
-            .dst = cast#(.to: $&Any)(.value = new_addr),
-            .src = cast#(.to: &Any)(.value = old_addr),
-            .n = bytes_to_copy,
-        )
+        dst_view ::= array_view#(.t: UInt8)(.data = new_data, .length = bytes_to_copy)
+        src_view ::= array_view#(.t: UInt8)(.data = array&.allocation.data, .length = bytes_to_copy)
+        memcpy_bytes(.dst = dst_view, .src = src_view)
     }
 
     deallocate(.self = allocator, .data = array&.allocation.data, .size = array&.allocation.size)
@@ -138,16 +134,12 @@ dynamic_array_grow_growing #(.t: Type) (
     match allocate_result {
         ..ok payload {
             new_data : $&UInt8 = cast#(.to: $&UInt8)(.value = payload)
-            new_addr :: UIntNative = cast#(.to: UIntNative)(.value = new_data)
-            old_addr :: UIntNative = cast#(.to: UIntNative)(.value = array&.allocation.data)
 
             if array&.length > zero {
                 bytes_to_copy :: UIntNative = array&.length * element_size
-                memcpy(
-                    .dst = cast#(.to: $&Any)(.value = new_addr),
-                    .src = cast#(.to: &Any)(.value = old_addr),
-                    .n = bytes_to_copy,
-                )
+                dst_view ::= array_view#(.t: UInt8)(.data = new_data, .length = bytes_to_copy)
+                src_view ::= array_view#(.t: UInt8)(.data = array&.allocation.data, .length = bytes_to_copy)
+                memcpy_bytes(.dst = dst_view, .src = src_view)
             }
 
             deallocate(.self = allocator, .data = array&.allocation.data, .size = array&.allocation.size)
@@ -239,17 +231,12 @@ insert #(.t: Type) (
         source_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = i).address
         dest_addr ::= source_addr + element_size
 
-        memcpy(
-            .dst = cast#(.to: $&Any)(.value = temp_addr),
-            .src = cast#(.to: &Any)(.value = source_addr),
-            .n = bytes_to_shift,
-        )
+        temp_view ::= array_view#(.t: UInt8)(.data = temp_data, .length = bytes_to_shift)
+        source_view ::= array_view_from_address#(.t: UInt8)(.address = source_addr, .length = bytes_to_shift)
+        dest_view ::= array_view_from_address#(.t: UInt8)(.address = dest_addr, .length = bytes_to_shift)
 
-        memcpy(
-            .dst = cast#(.to: $&Any)(.value = dest_addr),
-            .src = cast#(.to: &Any)(.value = temp_addr),
-            .n = bytes_to_shift,
-        )
+        memcpy_bytes(.dst = temp_view, .src = source_view)
+        memcpy_bytes(.dst = dest_view, .src = temp_view)
 
         deallocate(.self = allocator, .data = temp_data, .size = bytes_to_shift)
     }
@@ -294,22 +281,16 @@ insert_growing #(.t: Type) (
         match temp_result {
             ..ok payload {
                 temp_data : $&UInt8 = cast#(.to: $&UInt8)(.value = payload)
-                temp_addr :: UIntNative = cast#(.to: UIntNative)(.value = temp_data)
 
                 source_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = i).address
                 dest_addr ::= source_addr + element_size
 
-                memcpy(
-                    .dst = cast#(.to: $&Any)(.value = temp_addr),
-                    .src = cast#(.to: &Any)(.value = source_addr),
-                    .n = bytes_to_shift,
-                )
+                temp_view ::= array_view#(.t: UInt8)(.data = temp_data, .length = bytes_to_shift)
+                source_view ::= array_view_from_address#(.t: UInt8)(.address = source_addr, .length = bytes_to_shift)
+                dest_view ::= array_view_from_address#(.t: UInt8)(.address = dest_addr, .length = bytes_to_shift)
 
-                memcpy(
-                    .dst = cast#(.to: $&Any)(.value = dest_addr),
-                    .src = cast#(.to: &Any)(.value = temp_addr),
-                    .n = bytes_to_shift,
-                )
+                memcpy_bytes(.dst = temp_view, .src = source_view)
+                memcpy_bytes(.dst = dest_view, .src = temp_view)
 
                 deallocate(.self = allocator, .data = temp_data, .size = bytes_to_shift)
             }

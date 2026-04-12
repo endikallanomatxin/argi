@@ -20,6 +20,14 @@ array_view#(.t: Type)(
     )
 }
 
+array_view_from_address#(.t: Type)(
+    .address: UIntNative,
+    .length: UIntNative,
+) -> (.array: ArrayView#(.t: t)) := {
+    data : $&t = cast#(.to: $&t)(.value = address)
+    array = array_view#(.t: t)(.data = data, .length = length)
+}
+
 array_view_element_address#(.t: Type)(
     .self: &ArrayView#(.t: t),
     .index: UIntNative,
