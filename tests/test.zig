@@ -2756,3 +2756,30 @@ test "feature_tests/testing/11_expected_error_unexpected_ok" {
         "FAIL expected_error_unexpected_ok\n",
     );
 }
+
+test "argi test rejects missing filter value" {
+    const result = try runArgiCommand(&.{ "test", "tests/feature_tests/testing/01_simple_pass", "--filter" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqualStrings("Test error: MissingFlagValue\n", result.stderr);
+}
+
+test "argi test rejects unknown flag" {
+    const result = try runArgiCommand(&.{ "test", "tests/feature_tests/testing/01_simple_pass", "--bogus" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqualStrings("Test error: UnknownFlag\n", result.stderr);
+}
+
+test "argi test reports modules without tests" {
+    const result = try runArgiCommand(&.{ "test", "tests/feature_tests/system/14_file_system_capability" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqualStrings("No tests found\n", result.stderr);
+}
