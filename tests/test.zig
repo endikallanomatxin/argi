@@ -1602,6 +1602,12 @@ test "feature_tests/io/13_file_open_error" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/io/14_file_stream_error_reasons" {
+    const test_path = "tests/feature_tests/io/14_file_stream_error_reasons";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/io/09_print_string_literal" {
     const test_path = "tests/feature_tests/io/09_print_string_literal";
     try expectSuccessfulBuild(test_path);
@@ -1646,6 +1652,12 @@ test "feature_tests/io/11_read_line_grows" {
 
 test "feature_tests/io/12_read_line_end" {
     const test_path = "tests/feature_tests/io/12_read_line_end";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/io/15_read_line_error" {
+    const test_path = "tests/feature_tests/io/15_read_line_error";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
