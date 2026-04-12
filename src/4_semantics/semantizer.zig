@@ -4060,6 +4060,17 @@ pub const Semantizer = struct {
             );
             return error.Reported;
         }
+        if (s.bindingMoveLocation(binding.name)) |move_loc| {
+            if (!(std.mem.eql(u8, move_loc.file, loc.file) and move_loc.line == loc.line and move_loc.column == loc.column)) {
+                try self.diags.add(
+                    inner.location,
+                    .semantic,
+                    "binding '{s}' was moved and cannot be used again (moved at {s}:{d}:{d})",
+                    .{ binding.name, move_loc.file, move_loc.line, move_loc.column },
+                );
+                return error.Reported;
+            }
+        }
         try s.markBindingMoved(binding.name, loc);
 
         const binding_use = try sg.makeSGNode(.{ .binding_use = binding }, inner.location, self.allocator);

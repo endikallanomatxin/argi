@@ -1822,6 +1822,16 @@ test "feature_tests/ownership/35X_system_move_by_value" {
     );
 }
 
+test "feature_tests/ownership/36X_double_move" {
+    try buildExpectFailExact(
+        "tests/feature_tests/ownership/36X_double_move",
+        \\tests/feature_tests/ownership/36X_double_move/main.rg:14:35: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/36X_double_move/main.rg:13:34)
+        \\      status_code = consume(.res = ~handle)
+        \\                                    ^
+        \\
+    );
+}
+
 test "feature_tests/system/15_once_single_use" {
     const test_path = "tests/feature_tests/system/15_once_single_use";
     try expectSuccessfulBuild(test_path);
