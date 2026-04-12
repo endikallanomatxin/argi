@@ -1193,6 +1193,20 @@ test "feature_tests/types/48X_match_move_payload_consumes_binding" {
     );
 }
 
+test "feature_tests/types/49X_choice_payload_access_ambiguous_copy" {
+    try buildExpectFailExact(
+        "tests/feature_tests/types/49X_choice_payload_access_ambiguous_copy",
+        \\tests/feature_tests/types/49X_choice_payload_access_ambiguous_copy/main.rg:24:21: error: ambiguous call to 'copy' for arguments (.__arg0: Payload). Possible overloads:
+        \\  - copy (.payload: Payload, .tag: Int32) -> (.out: Payload)
+        \\  - copy (.payload: Payload, .flag: Bool) -> (.out: Payload)
+        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
+        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
+        \\      payload := value..ok
+        \\                      ^
+        \\
+    );
+}
+
 test "feature_tests/collections/01_list_literal_length" {
     const test_path = "tests/feature_tests/collections/01_list_literal_length";
     try expectSuccessfulBuild(test_path);
@@ -2070,6 +2084,20 @@ test "feature_tests/ownership/28X_ambiguous_copy_assignment" {
         \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
         \\      copied := source
         \\                ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/37X_ambiguous_copy_return" {
+    try buildExpectFailExact(
+        "tests/feature_tests/ownership/37X_ambiguous_copy_return",
+        \\tests/feature_tests/ownership/37X_ambiguous_copy_return/main.rg:16:12: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
+        \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
+        \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
+        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
+        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
+        \\      return source
+        \\             ^
         \\
     );
 }
