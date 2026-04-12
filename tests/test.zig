@@ -1183,6 +1183,16 @@ test "feature_tests/types/47X_match_value_payload_ambiguous_copy" {
     );
 }
 
+test "feature_tests/types/48X_match_move_payload_consumes_binding" {
+    try buildExpectFailExact(
+        "tests/feature_tests/types/48X_match_move_payload_consumes_binding",
+        \\tests/feature_tests/types/48X_match_move_payload_consumes_binding/main.rg:25:8: error: binding 'value' was moved and cannot be used again (moved at tests/feature_tests/types/48X_match_move_payload_consumes_binding/main.rg:16:11)
+        \\      if value == ..error {
+        \\         ^
+        \\
+    );
+}
+
 test "feature_tests/collections/01_list_literal_length" {
     const test_path = "tests/feature_tests/collections/01_list_literal_length";
     try expectSuccessfulBuild(test_path);
