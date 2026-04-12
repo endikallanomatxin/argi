@@ -299,6 +299,78 @@ fn pathInTest(name: []const u8, leaf: []const u8) ![]u8 {
     return std.fmt.allocPrint(std.testing.allocator, "{s}/{s}", .{ name, leaf });
 }
 
+fn fileHasSubstantiveContent(root: std.fs.Dir, relative_path: []const u8) !bool {
+    const text = try root.readFileAlloc(std.testing.allocator, relative_path, 1024 * 1024);
+    defer std.testing.allocator.free(text);
+
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \t\r");
+        if (trimmed.len == 0) continue;
+        if (std.mem.startsWith(u8, trimmed, "--")) continue;
+        return true;
+    }
+
+    return false;
+}
+
+test "feature test harness covers all substantive feature mains" {
+    var root = try std.fs.cwd().openDir(compilerRoot(), .{ .iterate = true });
+    defer root.close();
+
+    const test_file_text = try root.readFileAlloc(std.testing.allocator, "tests/test.zig", 1024 * 1024);
+    defer std.testing.allocator.free(test_file_text);
+
+    var feature_root = try root.openDir("tests/feature_tests", .{ .iterate = true });
+    defer feature_root.close();
+
+    var missing = std.array_list.Managed([]const u8).init(std.testing.allocator);
+    defer {
+        for (missing.items) |item| std.testing.allocator.free(item);
+        missing.deinit();
+    }
+
+    var category_iter = feature_root.iterate();
+    while (try category_iter.next()) |category| {
+        if (category.kind != .directory) continue;
+
+        const category_path = try std.fmt.allocPrint(std.testing.allocator, "tests/feature_tests/{s}", .{category.name});
+        defer std.testing.allocator.free(category_path);
+
+        var category_dir = try root.openDir(category_path, .{ .iterate = true });
+        defer category_dir.close();
+
+        var case_iter = category_dir.iterate();
+        while (try case_iter.next()) |case_entry| {
+            if (case_entry.kind != .directory) continue;
+
+            const case_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/{s}", .{ category_path, case_entry.name });
+            defer std.testing.allocator.free(case_path);
+
+            const main_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/main.rg", .{case_path});
+            defer std.testing.allocator.free(main_path);
+
+            root.access(main_path, .{}) catch |err| switch (err) {
+                error.FileNotFound => continue,
+                else => return err,
+            };
+
+            if (!try fileHasSubstantiveContent(root, main_path)) continue;
+            if (std.mem.indexOf(u8, test_file_text, case_path) != null) continue;
+
+            try missing.append(try std.testing.allocator.dupe(u8, case_path));
+        }
+    }
+
+    if (missing.items.len != 0) {
+        std.debug.print("missing feature test registrations in tests/test.zig:\n", .{});
+        for (missing.items) |item| {
+            std.debug.print("  {s}\n", .{item});
+        }
+        return error.MissingFeatureTestCoverage;
+    }
+}
+
 test "feature_tests/basics/01_minimal_main" {
     const test_path = "tests/feature_tests/basics/01_minimal_main";
     try expectSuccessfulBuild(test_path);
