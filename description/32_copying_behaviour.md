@@ -64,14 +64,22 @@ spelled explicitly:
 consume(.resource = ~file1)
 ```
 
-After `~file1`, the binding is considered moved and cannot be used again until
-it is reinitialized.
+After `~file1`, the binding is considered consumed and cannot be used again.
 
 This keeps the surface model simple:
 
 - temporary values can flow efficiently through composed expressions
 - named values keep copy semantics by default
 - ownership transfer from a binding is explicit
+
+That consumption is final for the binding itself:
+
+- reading it again is an error
+- moving it again is an error
+- assigning into the same binding is also an error
+
+If a programmer wants a new owned value later, they must introduce a new
+binding rather than reviving the old one.
 
 
 ## Non-copyable types

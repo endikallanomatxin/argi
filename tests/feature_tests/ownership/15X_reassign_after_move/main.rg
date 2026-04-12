@@ -12,5 +12,4 @@ main() -> (.status_code: Int32) := {
     handle ::= Resource()
     status_code = consume(.res = ~handle)
     handle = Resource()
-    status_code = consume(.res = ~handle)
 }

@@ -997,17 +997,21 @@ test "feature_tests/ownership/13_move_operator" {
 test "feature_tests/ownership/14X_use_after_move" {
     try buildExpectFailExact(
         "tests/feature_tests/ownership/14X_use_after_move",
-        \\tests/feature_tests/ownership/14X_use_after_move/main.rg:14:34: error: binding 'handle' was moved and cannot be used again before reinitialization (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:13:34)
+        \\tests/feature_tests/ownership/14X_use_after_move/main.rg:14:34: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:13:34)
         \\      status_code = consume(.res = handle)
         \\                                   ^
         \\
     );
 }
 
-test "feature_tests/ownership/15_move_then_reinitialize" {
-    const test_path = "tests/feature_tests/ownership/15_move_then_reinitialize";
-    try expectSuccessfulBuild(test_path);
-    try run(test_path);
+test "feature_tests/ownership/15X_reassign_after_move" {
+    try buildExpectFailExact(
+        "tests/feature_tests/ownership/15X_reassign_after_move",
+        \\tests/feature_tests/ownership/15X_reassign_after_move/main.rg:14:5: error: binding 'handle' was moved and cannot be reassigned (moved at tests/feature_tests/ownership/15X_reassign_after_move/main.rg:13:34)
+        \\      handle = Resource()
+        \\      ^
+        \\
+    );
 }
 
 test "feature_tests/basics/14_get_and_set_index_operators" {

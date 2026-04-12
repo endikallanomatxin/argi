@@ -3659,7 +3659,7 @@ pub const Semantizer = struct {
             try self.diags.add(
                 loc,
                 .semantic,
-                "binding '{s}' was moved and cannot be used again before reinitialization (moved at {s}:{d}:{d})",
+                "binding '{s}' was moved and cannot be used again (moved at {s}:{d}:{d})",
                 .{ name, move_loc.file, move_loc.line, move_loc.column },
             );
             return error.Reported;
@@ -5776,6 +5776,15 @@ pub const Semantizer = struct {
             try self.addPrivateMemberDiag(a.name.location, "value", a.name.string);
             return error.Reported;
         }
+        if (s.bindingMoveLocation(b.name)) |move_loc| {
+            try self.diags.add(
+                a.name.location,
+                .semantic,
+                "binding '{s}' was moved and cannot be reassigned (moved at {s}:{d}:{d})",
+                .{ b.name, move_loc.file, move_loc.line, move_loc.column },
+            );
+            return error.Reported;
+        }
         if (b.mutability == .constant and b.initialization != null) {
             try self.diags.add(
                 a.name.location,
@@ -5803,8 +5812,6 @@ pub const Semantizer = struct {
 
         const asg = try self.allocator.create(sg.Assignment);
         asg.* = .{ .sym_id = b, .value = rhs.node };
-
-        s.clearBindingMoved(b.name);
 
         const n = try sg.makeSGNode(.{ .binding_assignment = asg }, undefined, self.allocator);
         try s.nodes.append(n);

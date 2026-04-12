@@ -191,7 +191,7 @@ expressions unnecessarily expensive.
 Argi should also support an explicit move operation for existing bindings:
 
 - `~x` means transfer the value out of `x`,
-- after that, `x` cannot be used again until it is reinitialized,
+- after that, `x` is consumed and cannot be used again,
 - and `deinit()` should not run for that moved-out state.
 
 This is especially useful when ownership transfer is intended and an implicit
