@@ -2783,3 +2783,12 @@ test "argi test reports modules without tests" {
     try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
     try expectEqualStrings("No tests found\n", result.stderr);
 }
+
+test "argi test reports empty filter matches" {
+    const result = try runArgiCommand(&.{ "test", "tests/feature_tests/testing/03_once_isolated_per_test", "--filter", "missing" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqualStrings("No tests found\n", result.stderr);
+}
