@@ -122,6 +122,10 @@ Current implementation direction:
 - `String` is now an owning byte buffer over `Allocation`.
 - `String` is also the single growable text buffer shape in `core`; there is
   no separate `TextBuffer` type to keep in sync for 0.1.
+- buffered IO wrappers own only their internal byte buffers; they borrow the
+  underlying stream handles.
+- `read_line()` returns an owning `String`, so the resulting text outlives the
+  temporary buffering used while reading.
 - string literals now materialize as borrowed read-only `StringView`.
 - raw `&Char` stays as the explicit C-string boundary, reached through helpers
   such as `as_c_string(...)` / `as_view(...)` instead of being the default

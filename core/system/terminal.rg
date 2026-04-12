@@ -107,6 +107,12 @@ read_line(
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .stdin: $&Reader = #reach stdin, terminal.stdin_file, system.terminal.stdin_file,
 ) -> (.result: Errable#(.t: ReadLine, .reasons: (..stream_read_failed, ..out_of_memory))) := {
+    --
+    -- `read_line()` returns an owning `String`.
+    --
+    -- The returned bytes are independent from the input stream and remain
+    -- valid until the caller `deinit()`s that `String`.
+    --
     initial_capacity :: UIntNative = 16
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = initial_capacity)
     if is(.value = create_result, .variant = ..error) {

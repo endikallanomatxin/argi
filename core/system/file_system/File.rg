@@ -210,6 +210,15 @@ File implements Reader
 File implements Writer
 
 BufferedReader#(.base_type: Type: Reader) : Type = (
+    --
+    -- Owning buffered reader wrapper.
+    --
+    -- The wrapper owns only its internal byte buffer. The underlying `.base`
+    -- stream remains borrowed and is not closed or deinitialized here.
+    --
+    -- Bytes returned by `read_byte()` are copied out of the buffer, so callers
+    -- do not borrow storage tied to this wrapper's lifetime.
+    --
     .base     : $&base_type
     .buffer   : $&UInt8
     .capacity : UIntNative
@@ -308,6 +317,15 @@ read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_t
 }
 
 BufferedWriter#(.base_type: Type: Writer) : Type = (
+    --
+    -- Owning buffered writer wrapper.
+    --
+    -- The wrapper owns only its internal byte buffer. The underlying `.base`
+    -- writer remains borrowed and is not deinitialized here.
+    --
+    -- Pending buffered bytes are flushed on `deinit()`, after which the
+    -- internal buffer storage becomes invalid.
+    --
     .base     : $&base_type
     .buffer   : $&UInt8
     .capacity : UIntNative
