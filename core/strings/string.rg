@@ -5,6 +5,9 @@ String : Type = (
     -- `String` should be the standard-library owner for heap-backed text
     -- data, built on top of `Allocation`.
     --
+    -- This is also the canonical growable text buffer in core. There is no
+    -- separate `TextBuffer` abstraction in the current 0.1 library surface.
+    --
     -- Non-owning string slices/views should remain separate borrowed
     -- descriptors.
     --
