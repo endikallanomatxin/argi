@@ -1169,6 +1169,20 @@ test "feature_tests/types/32X_match_value_noncopyable_payload" {
     );
 }
 
+test "feature_tests/types/47X_match_value_payload_ambiguous_copy" {
+    try buildExpectFailExact(
+        "tests/feature_tests/types/47X_match_value_payload_ambiguous_copy",
+        \\tests/feature_tests/types/47X_match_value_payload_ambiguous_copy/main.rg:26:14: error: ambiguous call to 'copy' for arguments (.__arg0: Payload). Possible overloads:
+        \\  - copy (.payload: Payload, .tag: Int32) -> (.out: Payload)
+        \\  - copy (.payload: Payload, .flag: Bool) -> (.out: Payload)
+        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
+        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
+        \\          ..ok payload {
+        \\               ^
+        \\
+    );
+}
+
 test "feature_tests/collections/01_list_literal_length" {
     const test_path = "tests/feature_tests/collections/01_list_literal_length";
     try expectSuccessfulBuild(test_path);

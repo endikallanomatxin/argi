@@ -10664,7 +10664,7 @@ pub const Semantizer = struct {
             loc,
             child,
         );
-        init_expr = try typ.ensureValuePositionAllowed(init_expr, loc, child, self.allocator, self.diags);
+        init_expr = try self.ensureValuePositionAllowed(init_expr, loc, child);
 
         const synthetic_name = try self.makeSyntheticName("nullable_some");
         const binding = try self.allocator.create(sg.BindingDeclaration);
@@ -11109,12 +11109,10 @@ pub const Semantizer = struct {
             access_node.sem_type = resolved_payload_ty;
 
             const init_expr: typ.TypedExpr = switch (payload_binding.mode) {
-                .by_value => try typ.ensureValuePositionAllowed(
+                .by_value => try self.ensureValuePositionAllowed(
                     .{ .node = access_node, .ty = resolved_payload_ty },
                     binding_name.location,
                     parent,
-                    self.allocator,
-                    self.diags,
                 ),
                 .by_move => .{ .node = access_node, .ty = resolved_payload_ty },
                 .by_borrow => try typ.makeAddressablePointer(
