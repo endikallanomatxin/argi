@@ -1207,6 +1207,20 @@ test "feature_tests/types/49X_choice_payload_access_ambiguous_copy" {
     );
 }
 
+test "feature_tests/types/50X_choice_literal_payload_ambiguous_copy" {
+    try buildExpectFailExact(
+        "tests/feature_tests/types/50X_choice_literal_payload_ambiguous_copy",
+        \\tests/feature_tests/types/50X_choice_literal_payload_ambiguous_copy/main.rg:24:28: error: ambiguous call to 'copy' for arguments (.__arg0: Payload). Possible overloads:
+        \\  - copy (.payload: Payload, .tag: Int32) -> (.out: Payload)
+        \\  - copy (.payload: Payload, .flag: Bool) -> (.out: Payload)
+        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
+        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
+        \\      result : Result = ..ok payload
+        \\                             ^
+        \\
+    );
+}
+
 test "feature_tests/collections/01_list_literal_length" {
     const test_path = "tests/feature_tests/collections/01_list_literal_length";
     try expectSuccessfulBuild(test_path);
@@ -2098,6 +2112,20 @@ test "feature_tests/ownership/37X_ambiguous_copy_return" {
         \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
         \\      return source
         \\             ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/38X_ambiguous_copy_struct_field" {
+    try buildExpectFailExact(
+        "tests/feature_tests/ownership/38X_ambiguous_copy_struct_field",
+        \\tests/feature_tests/ownership/38X_ambiguous_copy_struct_field/main.rg:21:33: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
+        \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
+        \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
+        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
+        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
+        \\      wrapped : Wrapper = (.res = handle)
+        \\                                  ^
         \\
     );
 }
