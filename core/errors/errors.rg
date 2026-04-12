@@ -146,6 +146,24 @@ report_trace(
     flush(.self = stderr)
 }
 
+report_error #(.reasons: Type) (
+    .err: &Error#(.reasons: reasons),
+    .stderr: $&Writer = #reach stderr, terminal.stderr_file, system.terminal.stderr_file,
+) -> () := {
+    report_trace(.trace = &err&.trace, .stderr = stderr)
+}
+
+report_error #(.reasons: Type) (
+    .message: &Char,
+    .err: &Error#(.reasons: reasons),
+    .stderr: $&Writer = #reach stderr, terminal.stderr_file, system.terminal.stderr_file,
+) -> () := {
+    write_trace_text(.text = "error: ", .stderr = stderr)
+    write_trace_text(.text = message, .stderr = stderr)
+    write_byte(.self = stderr, .byte = 10)
+    report_trace(.trace = &err&.trace, .stderr = stderr)
+}
+
 Errable #(.t: Type, .reasons: Type) : Type = (
     ..ok t
     ..error Error#(.reasons = reasons)

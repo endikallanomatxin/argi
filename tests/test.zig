@@ -1340,6 +1340,22 @@ test "feature_tests/types/24_error_trace_report" {
     );
 }
 
+test "feature_tests/types/46_report_error_helper" {
+    const test_path = "tests/feature_tests/types/46_report_error_helper";
+    try expectSuccessfulBuild(test_path);
+    try runExpectStderr(test_path, 0,
+        \\error: project build failed
+        \\error trace (most recent first):
+        \\  at tests/feature_tests/types/46_report_error_helper/main.rg:13:23: loading project config
+        \\        value := middle() !! "loading project config"
+        \\                          ^
+        \\  at tests/feature_tests/types/46_report_error_helper/main.rg:8:20
+        \\        value := fail()!
+        \\                       ^
+        \\
+    );
+}
+
 test "feature_tests/types/25_choice_options_open_choices" {
     const test_path = "tests/feature_tests/types/25_choice_options_open_choices";
     try expectSuccessfulBuild(test_path);
