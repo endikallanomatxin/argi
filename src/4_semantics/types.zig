@@ -216,6 +216,63 @@ pub fn expressionNeedsCopyForValuePosition(node: *const sg.SGNode) bool {
     };
 }
 
+fn appendFunctionSignatureLocal(
+    buf: *std.array_list.Managed(u8),
+    f: *const sg.FunctionDeclaration,
+    s: *Scope,
+) !void {
+    try buf.appendSlice(f.name);
+    try buf.appendSlice(" (");
+    var i: usize = 0;
+    while (i < f.input.fields.len) : (i += 1) {
+        const fld = f.input.fields[i];
+        if (i != 0) try buf.appendSlice(", ");
+        try buf.appendSlice(".");
+        try buf.appendSlice(fld.name);
+        try buf.appendSlice(": ");
+        try appendTypePretty(buf, fld.ty, s);
+    }
+    try buf.appendSlice(") -> (");
+    i = 0;
+    while (i < f.output.fields.len) : (i += 1) {
+        const ofld = f.output.fields[i];
+        if (i != 0) try buf.appendSlice(", ");
+        try buf.appendSlice(".");
+        try buf.appendSlice(ofld.name);
+        try buf.appendSlice(": ");
+        try appendTypePretty(buf, ofld.ty, s);
+    }
+    try buf.appendSlice(")");
+}
+
+fn buildOverloadCandidatesStringLocal(
+    name: []const u8,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+) ![]u8 {
+    var buf = std.array_list.Managed(u8).init(allocator.*);
+    errdefer buf.deinit();
+
+    var cur: ?*Scope = s;
+    var first: bool = true;
+    while (cur) |sc| : (cur = sc.parent) {
+        if (sc.functions.getPtr(name)) |list_ptr| {
+            for (list_ptr.items) |cand| {
+                if (!first) try buf.appendSlice("\n");
+                first = false;
+                try buf.appendSlice("  - ");
+                try appendFunctionSignatureLocal(&buf, cand, s);
+            }
+        }
+    }
+
+    if (first) {
+        try buf.appendSlice("  (none)");
+    }
+
+    return try buf.toOwnedSlice();
+}
+
 pub fn ensureValuePositionAllowed(
     expr: TypedExpr,
     loc: tok.Location,
@@ -256,13 +313,26 @@ pub fn ensureValuePositionAllowed(
             return .{ .node = call_node, .ty = functionReturnType(copy_fn) };
         },
         .ambiguous => {
-            const ty_text = try formatTypeText(expr.ty, s, allocator);
-            defer ty_text.deinit();
+            var actual_fields = [_]sg.StructTypeField{
+                .{ .name = "__arg0", .ty = expr.ty, .default_value = null },
+            };
+            const actual_input = sg.StructType{
+                .fields = actual_fields[0..],
+                .identity = null,
+            };
+            const actual_text = try formatCallInput(&actual_input, s, allocator);
+            defer allocator.free(actual_text);
+            const candidates = try buildOverloadCandidatesStringLocal(
+                "copy",
+                s,
+                allocator,
+            );
+            defer allocator.free(candidates);
             try diags.add(
                 loc,
                 .semantic,
-                "copy() for type '{s}' is ambiguous in value position",
-                .{ty_text.bytes},
+                "ambiguous call to 'copy' for arguments {s}. Possible overloads:\n{s}",
+                .{ actual_text, candidates },
             );
             return error.Reported;
         },

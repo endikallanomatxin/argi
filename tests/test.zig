@@ -2051,7 +2051,9 @@ test "feature_tests/ownership/26_distinct_fields_do_not_alias_same_call" {
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
     try buildExpectFailExact(
         "tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
-        \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: copy() for type 'Resource' is ambiguous in value position
+        \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
+        \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
+        \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
         \\      values : [2]Resource = (source, source)
         \\                             ^
         \\
