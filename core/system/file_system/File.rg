@@ -210,6 +210,50 @@ write_byte(.self: $&File, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons
     result = ..ok Void()
 }
 
+read(
+    .self: $&File,
+    .buffer: ArrayView#(.t: UInt8),
+) -> (.result: Errable#(.t: UIntNative, .reasons: (..stream_read_failed))) := {
+    if self&.handle == 0 {
+        result = ..error(.reason = ..stream_read_failed)
+        return
+    }
+
+    stream ::= file_stream_pointer(.self = self).stream
+    read_count ::= fread_into(.buffer = buffer, .stream = stream).count
+
+    if read_count < buffer.length {
+        if ferror(.stream = stream).status != 0 {
+            result = ..error(.reason = ..stream_read_failed)
+            return
+        }
+    }
+
+    result = ..ok read_count
+}
+
+write(
+    .self: $&File,
+    .buffer: ArrayView#(.t: UInt8),
+) -> (.result: Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    if self&.handle == 0 {
+        result = ..error(.reason = ..stream_write_failed)
+        return
+    }
+
+    stream ::= file_stream_pointer(.self = self).stream
+    wrote ::= fwrite_from(.buffer = buffer, .stream = stream).count
+
+    if wrote < buffer.length {
+        if ferror(.stream = stream).status != 0 {
+            result = ..error(.reason = ..stream_write_failed)
+            return
+        }
+    }
+
+    result = ..ok wrote
+}
+
 File implements Reader
 File implements Writer
 

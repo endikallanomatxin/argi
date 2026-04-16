@@ -41,3 +41,57 @@ write(
     }
     result = ..ok Void()
 }
+
+read(
+    .self: $&Reader,
+    .buffer: ArrayView#(.t: UInt8),
+) -> (.result: Errable#(.t: UIntNative, .reasons: (..stream_read_failed))) := {
+    copied :: UIntNative = 0
+    view :: ArrayView#(.t: UInt8) = buffer
+
+    while copied < view.length {
+        next ::= read_byte(.self = self)
+        match next {
+            ..ok payload {
+                match payload {
+                    ..ok byte {
+                        view[copied] = byte
+                        copied = copied + 1
+                    }
+                    ..end {
+                        result = ..ok copied
+                        return
+                    }
+                }
+            }
+            ..error _ {
+                result = ..error(.reason = ..stream_read_failed)
+                return
+            }
+        }
+    }
+
+    result = ..ok copied
+}
+
+write(
+    .self: $&Writer,
+    .buffer: ArrayView#(.t: UInt8),
+) -> (.result: Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    wrote_count :: UIntNative = 0
+
+    while wrote_count < buffer.length {
+        wrote ::= write_byte(.self = self, .byte = buffer[wrote_count])
+        match wrote {
+            ..ok _ {
+                wrote_count = wrote_count + 1
+            }
+            ..error & err {
+                result = ..error(.reason = err&.reason)
+                return
+            }
+        }
+    }
+
+    result = ..ok wrote_count
+}

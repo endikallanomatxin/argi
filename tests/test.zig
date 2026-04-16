@@ -1630,6 +1630,18 @@ test "feature_tests/io/07_file_open_close" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/io/20_read_into_array_view" {
+    const test_path = "tests/feature_tests/io/20_read_into_array_view";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/io/21_write_from_array_view" {
+    const test_path = "tests/feature_tests/io/21_write_from_array_view";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/text/03_string_buffer_io" {
     const test_path = "tests/feature_tests/text/03_string_buffer_io";
     try expectSuccessfulBuild(test_path);
@@ -2005,6 +2017,12 @@ test "feature_tests/system/32_page_allocator_via_allocator_abstract" {
 
 test "feature_tests/system/33_array_view_libc_memcpy" {
     const test_path = "tests/feature_tests/system/33_array_view_libc_memcpy";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/system/34_file_block_short_read" {
+    const test_path = "tests/feature_tests/system/34_file_block_short_read";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
