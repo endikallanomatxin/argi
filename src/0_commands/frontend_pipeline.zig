@@ -77,6 +77,11 @@ pub const FrontendPipeline = struct {
         return try self.syntax();
     }
 
+    pub fn semantizeFiles(self: *FrontendPipeline, files: []const sf.SourceFile) ![]const *sg.SGNode {
+        _ = try self.parseFiles(files);
+        return try self.semantize();
+    }
+
     pub fn semantize(self: *FrontendPipeline) ![]const *sg.SGNode {
         self.sem_ctx = semantizer.Semantizer.init(self.allocator, self.st_nodes, self.diagnostics, self.options.semantizer);
         const result = try self.sem_ctx.?.semantizeWithTimings();

@@ -452,20 +452,9 @@ pub const LanguageService = struct {
         var pipeline = frontend.FrontendPipeline.init(analysis_allocator, &diagnostics, .{});
         defer pipeline.deinit();
 
-        pipeline.tokenizeFiles(files) catch {
+        _ = pipeline.semantizeFiles(files) catch {
             pipeline_failed = true;
         };
-
-        if (!pipeline_failed) analysis: {
-            _ = pipeline.syntax() catch {
-                pipeline_failed = true;
-                break :analysis;
-            };
-
-            _ = pipeline.semantize() catch {
-                pipeline_failed = true;
-            };
-        }
 
         var out = std.array_list.Managed(Diagnostic).init(self.allocator);
         errdefer {
@@ -537,15 +526,15 @@ pub const LanguageService = struct {
         var pipeline = frontend.FrontendPipeline.init(analysis_allocator, &diagnostics, .{});
         defer pipeline.deinit();
 
-        try pipeline.tokenizeFiles(files);
-        const st_nodes = pipeline.syntax() catch |err| {
-            log.err("syntaxing failed for '{s}': {s}", .{ doc.path, @errorName(err) });
+        const sg_nodes = pipeline.semantizeFiles(files) catch |err| {
+            if (pipeline.syntax_ctx == null) {
+                log.err("syntaxing failed for '{s}': {s}", .{ doc.path, @errorName(err) });
+            } else {
+                log.err("semantizing failed for '{s}': {s}", .{ doc.path, @errorName(err) });
+            }
             return null;
         };
-        const sg_nodes = pipeline.semantize() catch |err| {
-            log.err("semantizing failed for '{s}': {s}", .{ doc.path, @errorName(err) });
-            return null;
-        };
+        const st_nodes = pipeline.st_nodes;
 
         var syntax_functions = std.array_list.Managed(SyntaxFunctionDeclRef).init(analysis_allocator.*);
         defer syntax_functions.deinit();
