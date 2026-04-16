@@ -1529,7 +1529,7 @@ test "feature_tests/system/02_reached_arguments" {
 test "feature_tests/system/03X_reached_argument_missing" {
     try buildExpectFailExact(
         "tests/feature_tests/system/03X_reached_argument_missing",
-        \\tests/feature_tests/system/03X_reached_argument_missing/main.rg:12:26: error: cannot resolve reached argument '.stdout' with alternatives [stdout, terminal.stdout_buffered_writer, system.terminal.stdout_buffered_writer] expected as 'Int32'
+        \\tests/feature_tests/system/03X_reached_argument_missing/main.rg:12:26: error: cannot resolve reached argument '.stdout' with alternatives [stdout, terminal.stdout_writer, system.terminal.stdout_writer] expected as 'Int32'
         \\      status_code = forward()
         \\                           ^
         \\
