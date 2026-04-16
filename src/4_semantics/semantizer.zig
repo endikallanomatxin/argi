@@ -2284,7 +2284,7 @@ pub const Semantizer = struct {
         for (st.fields, 0..) |f, i| {
             if (std.mem.eql(u8, f.name, field_name.string)) {
                 idx = @intCast(i);
-                fty = f.ty;
+                fty = typ.effectiveStructFieldType(f);
                 break;
             }
         }
@@ -3757,7 +3757,7 @@ pub const Semantizer = struct {
         for (st.fields, 0..) |f, i| {
             if (std.mem.eql(u8, f.name, field_name)) {
                 idx = @intCast(i);
-                fty = f.ty;
+                fty = typ.effectiveStructFieldType(f);
                 break;
             }
         }
@@ -7512,6 +7512,40 @@ pub const Semantizer = struct {
             if (std.mem.eql(u8, field.name, name)) return field;
         }
         return null;
+    }
+
+    fn recordAbstractFieldStorageType(
+        self: *Semantizer,
+        struct_type: *sg.StructType,
+        field_index: usize,
+        actual_ty: sg.Type,
+        loc: tok.Location,
+        s: *Scope,
+    ) SemErr!void {
+        const field = &@constCast(struct_type.fields)[field_index];
+        if (typ.typesExactlyEqual(field.ty, actual_ty)) return;
+        if (!abs.typesCompatibleForDispatch(field.ty, actual_ty, s)) return;
+
+        if (field.storage_type) |existing_ty| {
+            if (typ.typesExactlyEqual(existing_ty, actual_ty)) return;
+
+            const pair = try self.formatTypePairText(existing_ty, actual_ty, s);
+            defer pair.deinit();
+            const abstract_text = try self.formatTypeText(field.ty, s);
+            defer abstract_text.deinit();
+            try self.diags.add(
+                loc,
+                .semantic,
+                "field '.{s}' already stores '{s}' for abstract type '{s}', so it cannot also store '{s}'",
+                .{ field.name, pair.expected.bytes, abstract_text.bytes, pair.actual.bytes },
+            );
+            return error.Reported;
+        }
+
+        // Abstract storage remains static: once a field picks a concrete
+        // implementer, later field access and codegen use that same backing
+        // type instead of introducing runtime interface dispatch.
+        field.storage_type = actual_ty;
     }
 
     fn coerceCallFieldExpr(
@@ -11397,13 +11431,16 @@ pub const Semantizer = struct {
                 return error.Reported;
             }
 
-            const struct_type = ptr_info.child.*.struct_type;
+            const struct_type = @constCast(ptr_info.child.*.struct_type);
             if (sf.field_index >= struct_type.fields.len) return error.SymbolNotFound;
-            const field_info = struct_type.fields[sf.field_index];
+            const field_index: usize = @intCast(sf.field_index);
+            const declared_field_ty = struct_type.fields[field_index].ty;
+            rhs = try typ.coerceExprToType(declared_field_ty, rhs, pa.value, s, self.allocator, self.diags);
+            try self.recordAbstractFieldStorageType(struct_type, field_index, rhs.ty, pa.value.*.location, s);
+            const field_ty = typ.effectiveStructFieldType(struct_type.fields[field_index]);
 
-            rhs = try typ.coerceExprToType(field_info.ty, rhs, pa.value, s, self.allocator, self.diags);
-            if (!typ.typesExactlyEqual(field_info.ty, rhs.ty)) {
-                const pair = try self.formatTypePairText(field_info.ty, rhs.ty, s);
+            if (!typ.typesExactlyEqual(field_ty, rhs.ty)) {
+                const pair = try self.formatTypePairText(field_ty, rhs.ty, s);
                 defer pair.deinit();
                 try self.diags.add(
                     pa.value.*.location,
@@ -11418,7 +11455,7 @@ pub const Semantizer = struct {
                 .struct_ptr = ptr_self.node,
                 .struct_type = struct_type,
                 .field_index = sf.field_index,
-                .field_type = field_info.ty,
+                .field_type = field_ty,
                 .value = rhs.node,
             };
 

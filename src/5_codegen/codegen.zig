@@ -523,7 +523,7 @@ pub const CodeGenerator = struct {
                 // Anonymous struct generation with the given fields
                 var fields = try self.allocator.alloc(llvm.c.LLVMTypeRef, st.fields.len);
                 for (st.fields, 0..) |f, i| {
-                    fields[i] = try self.toLLVMType(f.ty);
+                    fields[i] = try self.toLLVMType(sem_types.effectiveStructFieldType(f));
                 }
                 const struct_ty = c.LLVMStructType(fields.ptr, @intCast(st.fields.len), 0);
 
@@ -1239,7 +1239,7 @@ pub const CodeGenerator = struct {
             current = .{
                 .value_ref = c.LLVMBuildExtractValue(self.builder, current.value_ref, @intCast(field_index), "reach.field"),
                 .type_ref = field_ty_ref,
-                .sem_type = st.fields[field_index].ty,
+                .sem_type = sem_types.effectiveStructFieldType(st.fields[field_index]),
             };
         }
 
@@ -2353,7 +2353,7 @@ pub const CodeGenerator = struct {
         var field_sem_ty: ?sem.Type = null;
         if (base.sem_type) |sem_ty| {
             if (sem_ty == .struct_type) {
-                field_sem_ty = sem_ty.struct_type.fields[fa.field_index].ty;
+                field_sem_ty = sem_types.effectiveStructFieldType(sem_ty.struct_type.fields[fa.field_index]);
             }
         }
 
@@ -2803,7 +2803,7 @@ pub const CodeGenerator = struct {
                 const base_ty = try self.addressableValueType(sfa.struct_value);
                 if (base_ty != .struct_type) return CodegenError.InvalidType;
                 if (sfa.field_index >= base_ty.struct_type.fields.len) return CodegenError.InvalidType;
-                break :blk base_ty.struct_type.fields[sfa.field_index].ty;
+                break :blk sem_types.effectiveStructFieldType(base_ty.struct_type.fields[sfa.field_index]);
             },
             .choice_payload_access => |acc| acc.payload_type,
             .dereference => |d| d.ty,

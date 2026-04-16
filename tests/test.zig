@@ -1642,6 +1642,22 @@ test "feature_tests/io/21_write_from_array_view" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/io/22_abstract_writer_field_assignment" {
+    const test_path = "tests/feature_tests/io/22_abstract_writer_field_assignment";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/io/23X_abstract_writer_field_conflicting_assignment" {
+    try buildExpectFailExact(
+        "tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment",
+        \\tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment/main.rg:46:17: error: field '.writer' already stores '$&FirstWriter' for abstract type '$&Writer', so it cannot also store '$&SecondWriter'
+        \\      p&.writer = writer
+        \\                  ^
+        \\
+    );
+}
+
 test "feature_tests/text/03_string_buffer_io" {
     const test_path = "tests/feature_tests/text/03_string_buffer_io";
     try expectSuccessfulBuild(test_path);

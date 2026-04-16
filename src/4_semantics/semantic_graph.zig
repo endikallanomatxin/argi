@@ -217,6 +217,10 @@ pub const GenericIdentityArg = union(enum) {
 pub const StructTypeField = struct {
     name: []const u8,
     ty: Type,
+    // When an abstract-typed field always stores the same concrete implementer,
+    // semantizing records that backing type here so field access and codegen can
+    // stay fully static.
+    storage_type: ?Type = null,
     default_value: ?*SGNode = null,
 };
 

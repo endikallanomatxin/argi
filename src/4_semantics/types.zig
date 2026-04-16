@@ -12,6 +12,10 @@ pub const TypedExpr = struct {
     ty: sg.Type,
 };
 
+pub fn effectiveStructFieldType(field: sg.StructTypeField) sg.Type {
+    return field.storage_type orelse field.ty;
+}
+
 pub const BuiltinTypeInfoKind = enum {
     size,
     alignment,
