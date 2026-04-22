@@ -2442,6 +2442,18 @@ test "feature_tests/modules/21_inferred_explicit_errable_imported" {
     try runExpect(test_path, 44);
 }
 
+test "feature_tests/modules/25_inferred_errable_omitted_reasons_transitive" {
+    const test_path = "tests/feature_tests/modules/25_inferred_errable_omitted_reasons_transitive";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 45);
+}
+
+test "feature_tests/modules/26_inferred_shorthand_omitted_reasons_transitive" {
+    const test_path = "tests/feature_tests/modules/26_inferred_shorthand_omitted_reasons_transitive";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 46);
+}
+
 
 test "feature_tests/modules/03X_import_missing_module" {
     try buildExpectFailExact(
