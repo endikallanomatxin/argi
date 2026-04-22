@@ -1437,6 +1437,12 @@ test "feature_tests/collections/17_string_hash_map_baseline" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/collections/18_dynamic_array_copy" {
+    const test_path = "tests/feature_tests/collections/18_dynamic_array_copy";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/control_flow/11_range_default_start_with_step" {
     const test_path = "tests/feature_tests/control_flow/11_range_default_start_with_step";
     try expectSuccessfulBuild(test_path);

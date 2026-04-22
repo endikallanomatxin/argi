@@ -38,6 +38,11 @@ It uses `Allocation` internally, together with metadata such as length,
 capacity, and element type.
 `l ::= DynamicArray#(.t: Int32)(.capacity = 3)`
 
+In the current 0.1 baseline, `DynamicArray` also provides `copy()` so arrays of
+copyable elements can behave like ordinary values. This is the intended
+direction for compiler-style data structures, even though some collection
+ownership ergonomics remain a separate open front.
+
 
 #### LengthedArray (capacidad fija en stack, len runtime)
 

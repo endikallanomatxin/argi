@@ -62,6 +62,21 @@ deinit #(.t: Type) (
     )
 }
 
+copy #(.t: Type) (
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .self: DynamicArray#(.t: t),
+) -> (.out: DynamicArray#(.t: t)) := {
+    init#(.t: t)(.p = $&out, .allocator = allocator, .capacity = self.length)
+
+    i :: UIntNative = 0
+    while i < self.length {
+        addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = &self, .offset = i).address
+        ptr : &t = cast#(.to: &t)(.value = addr)
+        push#(.t: t)(.allocator = allocator, .self = $&out, .value = ptr&)
+        i = i + 1
+    }
+}
+
 dynamic_array_element_address #(.t: Type) (
     .array: &DynamicArray#(.t: t),
     .offset: UIntNative,
