@@ -1054,6 +1054,12 @@ test "feature_tests/basics/21X_c_enum_payload" {
     );
 }
 
+test "feature_tests/basics/22_c_union_baseline" {
+    const test_path = "tests/feature_tests/basics/22_c_union_baseline";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
 test "feature_tests/types/01_choice" {
     const test_path = "tests/feature_tests/types/01_choice";
     try expectSuccessfulBuild(test_path);

@@ -1358,6 +1358,10 @@ pub fn coerceStructLiteral(
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
 ) err.SemErr!TypedExpr {
+    if (expected.layout == .c_union) {
+        return coerceUnionLiteral(expected, expr, expr_node, s, allocator, diags);
+    }
+
     if (expr.node.content != .struct_value_literal) return expr;
     const lit = expr.node.content.struct_value_literal;
     const actual_struct = lit.ty.struct_type;
@@ -1454,6 +1458,59 @@ pub fn coerceStructLiteral(
         .fields = coerced_fields,
         .ty = .{ .struct_type = expected },
         .dispatch_prefix_positional_count = lit.dispatch_prefix_positional_count,
+    };
+
+    const node = try allocator.create(sg.SGNode);
+    node.* = .{
+        .location = expr_node.location,
+        .content = .{ .struct_value_literal = lit_ptr },
+    };
+    return .{ .node = node, .ty = .{ .struct_type = expected } };
+}
+
+fn coerceUnionLiteral(
+    expected: *const sg.StructType,
+    expr: TypedExpr,
+    expr_node: *const syn.STNode,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    if (expr.node.content != .struct_value_literal) return expr;
+    const lit = expr.node.content.struct_value_literal;
+    if (lit.dispatch_prefix_positional_count != 0) return expr;
+    if (lit.fields.len != 1) return expr;
+    if (lit.ty != .struct_type) return expr;
+
+    const field = lit.fields[0];
+    const expected_field = findFieldByName(expected, field.name) orelse return expr;
+    const actual_field = findFieldByName(lit.ty.struct_type, field.name) orelse return expr;
+    const field_node = @constCast(field.value);
+    var field_expr = TypedExpr{
+        .node = field_node,
+        .ty = actual_field.ty,
+    };
+    field_expr = try coerceExprToType(expected_field.ty, field_expr, expr_node, s, allocator, diags);
+    if (!typesExactlyEqual(expected_field.ty, field_expr.ty)) {
+        const pair = try formatTypePairText(expected_field.ty, field_expr.ty, s, allocator);
+        defer pair.deinit();
+        try diags.add(
+            expr_node.location,
+            .semantic,
+            "cannot initialize union field '.{s}' with '{s}' (expected '{s}')",
+            .{ expected_field.name, pair.actual.bytes, pair.expected.bytes },
+        );
+        return error.Reported;
+    }
+
+    const coerced_fields = try allocator.alloc(sg.StructValueLiteralField, 1);
+    coerced_fields[0] = .{ .name = expected_field.name, .value = field_expr.node };
+
+    const lit_ptr = try allocator.create(sg.StructValueLiteral);
+    lit_ptr.* = .{
+        .fields = coerced_fields,
+        .ty = .{ .struct_type = expected },
+        .dispatch_prefix_positional_count = 0,
     };
 
     const node = try allocator.create(sg.SGNode);

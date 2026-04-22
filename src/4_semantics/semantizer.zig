@@ -7463,6 +7463,17 @@ pub const Semantizer = struct {
             .struct_type => |st| blk: {
                 if (actual.node.content != .struct_value_literal or actual.ty != .struct_type) break :blk false;
                 const actual_value = actual.node.content.struct_value_literal;
+                if (st.layout == .c_union) {
+                    if (actual_value.fields.len != 1 or actual_value.dispatch_prefix_positional_count != 0) break :blk false;
+                    const actual_field_value = actual_value.fields[0];
+                    const expected_field = typ.findFieldByName(st, actual_field_value.name) orelse break :blk false;
+                    const actual_field_ty = typ.findFieldByName(actual.ty.struct_type, actual_field_value.name) orelse break :blk false;
+                    const actual_field_expr = typ.TypedExpr{
+                        .node = @constCast(actual_field_value.value),
+                        .ty = actual_field_ty.ty,
+                    };
+                    break :blk self.fieldExprMatchesDispatch(expected_field.ty, actual_field_expr, s);
+                }
                 for (st.fields) |exp_field| {
                     const actual_field_ty = typ.findFieldByName(actual.ty.struct_type, exp_field.name) orelse break :blk false;
                     const actual_field_value = typ.findStructValueFieldByName(actual_value, exp_field.name) orelse break :blk false;

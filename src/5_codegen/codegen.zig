@@ -523,6 +523,9 @@ pub const CodeGenerator = struct {
             },
             .abstract_type => CodegenError.InvalidType,
             .struct_type => |st| blk: {
+                if (st.layout == .c_union) {
+                    break :blk try self.toLLVMUnionType(st);
+                }
                 // Anonymous struct generation with the given fields
                 var fields = try self.allocator.alloc(llvm.c.LLVMTypeRef, st.fields.len);
                 for (st.fields, 0..) |f, i| {
@@ -559,6 +562,66 @@ pub const CodeGenerator = struct {
                 return c.LLVMArrayType(elem_ty, count);
             },
         };
+    }
+
+    fn unionStorageFieldType(self: *CodeGenerator, st: *const sem.StructType) !sem.Type {
+        _ = self;
+        if (st.fields.len == 0) return .{ .builtin = .UInt8 };
+
+        var best_ty = st.fields[0].ty;
+        var best_align = sem_types.computeTypeAlignment(best_ty);
+        var best_size = sem_types.computeTypeSize(best_ty);
+        for (st.fields[1..]) |field| {
+            const field_align = sem_types.computeTypeAlignment(field.ty);
+            const field_size = sem_types.computeTypeSize(field.ty);
+            if (field_align > best_align or (field_align == best_align and field_size > best_size)) {
+                best_ty = field.ty;
+                best_align = field_align;
+                best_size = field_size;
+            }
+        }
+        return best_ty;
+    }
+
+    fn toLLVMUnionType(self: *CodeGenerator, st: *const sem.StructType) CodegenError!llvm.c.LLVMTypeRef {
+        const total_size = sem_types.computeTypeSize(.{ .struct_type = st });
+        if (total_size == 0) return c.LLVMStructType(null, 0, 0);
+
+        const storage_sem_ty = try self.unionStorageFieldType(st);
+        const storage_ty = try self.toLLVMType(storage_sem_ty);
+        const storage_size = sem_types.computeTypeSize(storage_sem_ty);
+        if (storage_size >= total_size) {
+            var single = [_]llvm.c.LLVMTypeRef{storage_ty};
+            return c.LLVMStructType(&single, 1, 0);
+        }
+
+        const pad_size: c_uint = @intCast(total_size - storage_size);
+        var fields = [_]llvm.c.LLVMTypeRef{
+            storage_ty,
+            c.LLVMArrayType(c.LLVMInt8Type(), pad_size),
+        };
+        return c.LLVMStructType(&fields, 2, 0);
+    }
+
+    fn buildUnionFieldPointer(
+        self: *CodeGenerator,
+        union_ptr: llvm.c.LLVMValueRef,
+        field_ty: sem.Type,
+        name: [*:0]const u8,
+    ) !llvm.c.LLVMValueRef {
+        const field_ty_ref = try self.toLLVMType(field_ty);
+        const union_i8_ptr = c.LLVMBuildBitCast(
+            self.builder,
+            union_ptr,
+            c.LLVMPointerType(c.LLVMInt8Type(), 0),
+            "union.bytes.ptr",
+        );
+        return c.LLVMBuildBitCast(
+            self.builder,
+            union_i8_ptr,
+            c.LLVMPointerType(field_ty_ref, 0),
+            name,
+        );
     }
 
     // ────────────────────────────────────────── name mangling ──
@@ -2297,6 +2360,27 @@ pub const CodeGenerator = struct {
             else => return CodegenError.InvalidType,
         };
 
+        if (sl.ty == .struct_type and sl.ty.struct_type.layout == .c_union) {
+            if (cnt != 1) return CodegenError.InvalidType;
+            const union_storage = c.LLVMBuildAlloca(self.builder, ty, "union.tmp");
+            _ = c.LLVMBuildStore(self.builder, c.LLVMConstNull(ty), union_storage);
+
+            const active = sl.fields[0];
+            const field_index = fieldIndexByName(sl.ty.struct_type, active.name) orelse return CodegenError.InvalidType;
+            var field_tv = (try self.visitNode(active.value)) orelse return CodegenError.ValueNotFound;
+            const field_sem_ty = sem_fields[field_index].ty;
+            const field_ty_ref = try self.toLLVMType(field_sem_ty);
+            if (field_tv.type_ref != field_ty_ref) {
+                field_tv = try self.coerceValueForStorage(field_tv, field_sem_ty, field_ty_ref);
+            }
+            if (field_tv.type_ref != field_ty_ref) return CodegenError.InvalidType;
+
+            const field_ptr = try self.buildUnionFieldPointer(union_storage, field_sem_ty, "union.field.ptr");
+            _ = c.LLVMBuildStore(self.builder, field_tv.value_ref, field_ptr);
+            const agg = c.LLVMBuildLoad2(self.builder, ty, union_storage, "union.load");
+            return .{ .value_ref = agg, .type_ref = ty, .sem_type = sl.ty };
+        }
+
         var needs_in_place = false;
         for (sl.fields) |f| {
             if (f.value.content == .type_initializer) {
@@ -2364,6 +2448,18 @@ pub const CodeGenerator = struct {
     fn genStructFieldAccess(self: *CodeGenerator, fa: *const sem.StructFieldAccess) !TypedValue {
         const base = (try self.visitNode(fa.struct_value)) orelse
             return CodegenError.ValueNotFound;
+
+        if (base.sem_type) |sem_ty| {
+            if (sem_ty == .struct_type and sem_ty.struct_type.layout == .c_union) {
+                const union_storage = c.LLVMBuildAlloca(self.builder, base.type_ref, "union.read.tmp");
+                _ = c.LLVMBuildStore(self.builder, base.value_ref, union_storage);
+                const field_sem_ty = sem_types.effectiveStructFieldType(sem_ty.struct_type.fields[fa.field_index]);
+                const field_ty = try self.toLLVMType(field_sem_ty);
+                const field_ptr = try self.buildUnionFieldPointer(union_storage, field_sem_ty, "union.read.field.ptr");
+                const val = c.LLVMBuildLoad2(self.builder, field_ty, field_ptr, "union.fld");
+                return .{ .value_ref = val, .type_ref = field_ty, .sem_type = field_sem_ty };
+            }
+        }
 
         // el índice ya viene resuelto por el semantizador
         const val = c.LLVMBuildExtractValue(self.builder, base.value_ref, fa.field_index, "fld");
@@ -2775,13 +2871,16 @@ pub const CodeGenerator = struct {
             return CodegenError.InvalidType;
 
         const struct_ty_ref = try self.toLLVMType(.{ .struct_type = sf.struct_type });
-        const field_ptr = c.LLVMBuildStructGEP2(
-            self.builder,
-            struct_ty_ref,
-            struct_ptr_tv.value_ref,
-            sf.field_index,
-            "field.ptr",
-        );
+        const field_ptr = if (sf.struct_type.layout == .c_union)
+            try self.buildUnionFieldPointer(struct_ptr_tv.value_ref, sf.field_type, "union.field.ptr")
+        else
+            c.LLVMBuildStructGEP2(
+                self.builder,
+                struct_ty_ref,
+                struct_ptr_tv.value_ref,
+                sf.field_index,
+                "field.ptr",
+            );
 
         if (sf.value.content == .type_initializer) {
             const ti = sf.value.content.type_initializer;
@@ -2845,6 +2944,11 @@ pub const CodeGenerator = struct {
                 const base_ptr = try self.genAddressablePointer(sfa.struct_value);
                 const base_sem_ty = try self.addressableValueType(sfa.struct_value);
                 if (base_sem_ty != .struct_type) return CodegenError.InvalidType;
+                if (base_sem_ty.struct_type.layout == .c_union) {
+                    const field_sem_ty = sem_types.effectiveStructFieldType(base_sem_ty.struct_type.fields[sfa.field_index]);
+                    const field_ptr = try self.buildUnionFieldPointer(base_ptr.value_ref, field_sem_ty, "union.field.addr");
+                    break :blk .{ .value_ref = field_ptr, .type_ref = c.LLVMPointerType(try self.toLLVMType(field_sem_ty), 0), .sem_type = null };
+                }
                 const struct_ty_ref = try self.toLLVMType(.{ .struct_type = base_sem_ty.struct_type });
                 const field_ptr = c.LLVMBuildStructGEP2(
                     self.builder,
