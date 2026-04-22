@@ -120,7 +120,7 @@ open_read(
     .self: &FileSystem,
     .path: &Char,
 ) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
-    file :: File = File(.handle = 0, .should_close = 0 == 1)
+    file :: File = File(.stream_address = 0, .should_close = 0 == 1)
     opened ::= open_read(.p = $&file, .path = path)
     if is(.value = opened, .variant = ..ok) {
         result = ..ok file
@@ -158,7 +158,7 @@ open_write(
     .self: &FileSystem,
     .path: &Char,
 ) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
-    file :: File = File(.handle = 0, .should_close = 0 == 1)
+    file :: File = File(.stream_address = 0, .should_close = 0 == 1)
     opened ::= open_write(.p = $&file, .path = path)
     if is(.value = opened, .variant = ..ok) {
         result = ..ok file
@@ -196,7 +196,7 @@ open_append(
     .self: &FileSystem,
     .path: &Char,
 ) -> (.result: Errable#(.t: File, .reasons: (..path_open_failed))) := {
-    file :: File = File(.handle = 0, .should_close = 0 == 1)
+    file :: File = File(.stream_address = 0, .should_close = 0 == 1)
     opened ::= open_append(.p = $&file, .path = path)
     if is(.value = opened, .variant = ..ok) {
         result = ..ok file

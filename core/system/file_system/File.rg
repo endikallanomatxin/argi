@@ -6,23 +6,23 @@ FileOpenMode : Type = (
 ..file_open_failed
 
 File : Type = (
-    .handle       : UIntNative = 0
-    .should_close : Bool = 0 == 1
+    .stream_address : UIntNative = 0
+    .should_close   : Bool = 0 == 1
 )
 
 init(
     .p: $&File,
-    .handle: UIntNative,
+    .stream_address: UIntNative,
     .should_close: Bool,
 ) -> () := {
     p& = (
-        .handle = handle,
+        .stream_address = stream_address,
         .should_close = should_close,
     )
 }
 
 is_open(.self: &File) -> (.ok: Bool) := {
-    ok = self&.handle != 0
+    ok = self&.stream_address != 0
 }
 
 file_open_mode_c_string(
@@ -42,7 +42,7 @@ file_open_mode_c_string(
 }
 
 file_stream_pointer(.self: &File) -> (.stream: &Any) := {
-    stream = cast#(.to: &Any)(.value = self&.handle)
+    stream = cast#(.to: &Any)(.value = self&.stream_address)
 }
 
 open(
@@ -53,10 +53,10 @@ open(
     mode_text ::= file_open_mode_c_string(.mode = mode)
     opened : &Any = fopen(.path = path, .mode = mode_text)
     p& = (
-        .handle = cast#(.to: UIntNative)(.value = opened),
+        .stream_address = cast#(.to: UIntNative)(.value = opened),
         .should_close = 1 == 1,
     )
-    if p&.handle == 0 {
+    if p&.stream_address == 0 {
         result = ..error(.reason = ..file_open_failed)
         return
     }
@@ -88,7 +88,7 @@ init_stdin(.p: $&File) -> () := {
     mode_text ::= file_open_mode_c_string(.mode = ..read)
     stream : &Any = fdopen(.fd = 0, .mode = mode_text)
     p& = (
-        .handle = cast#(.to: UIntNative)(.value = stream),
+        .stream_address = cast#(.to: UIntNative)(.value = stream),
         .should_close = 0 == 1,
     )
 }
@@ -97,7 +97,7 @@ init_stdout(.p: $&File) -> () := {
     mode_text ::= file_open_mode_c_string(.mode = ..write)
     stream : &Any = fdopen(.fd = 1, .mode = mode_text)
     p& = (
-        .handle = cast#(.to: UIntNative)(.value = stream),
+        .stream_address = cast#(.to: UIntNative)(.value = stream),
         .should_close = 0 == 1,
     )
 }
@@ -106,13 +106,13 @@ init_stderr(.p: $&File) -> () := {
     mode_text ::= file_open_mode_c_string(.mode = ..write)
     stream : &Any = fdopen(.fd = 2, .mode = mode_text)
     p& = (
-        .handle = cast#(.to: UIntNative)(.value = stream),
+        .stream_address = cast#(.to: UIntNative)(.value = stream),
         .should_close = 0 == 1,
     )
 }
 
 close(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_close_failed))) := {
-    if self&.handle == 0 {
+    if self&.stream_address == 0 {
         result = ..ok Void()
         return
     }
@@ -125,7 +125,7 @@ close(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_close_f
     }
 
     self& = (
-        .handle = 0,
+        .stream_address = 0,
         .should_close = 0 == 1,
     )
 
@@ -138,7 +138,7 @@ close(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_close_f
 }
 
 flush(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    if self&.handle == 0 {
+    if self&.stream_address == 0 {
         result = ..error(.reason = ..stream_flush_failed)
         return
     }
@@ -152,7 +152,7 @@ flush(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_f
 }
 
 read_byte(.self: $&File) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
-    if self&.handle == 0 {
+    if self&.stream_address == 0 {
         result = ..error(.reason = ..stream_read_failed)
         return
     }
@@ -187,7 +187,7 @@ read_byte(.self: $&File) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream
 }
 
 write_byte(.self: $&File, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    if self&.handle == 0 {
+    if self&.stream_address == 0 {
         result = ..error(.reason = ..stream_write_failed)
         return
     }
@@ -214,7 +214,7 @@ read(
     .self: $&File,
     .buffer: ArrayView#(.t: UInt8),
 ) -> (.result: Errable#(.t: UIntNative, .reasons: (..stream_read_failed))) := {
-    if self&.handle == 0 {
+    if self&.stream_address == 0 {
         result = ..error(.reason = ..stream_read_failed)
         return
     }
@@ -236,7 +236,7 @@ write(
     .self: $&File,
     .buffer: ArrayView#(.t: UInt8),
 ) -> (.result: Errable#(.t: UIntNative, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    if self&.handle == 0 {
+    if self&.stream_address == 0 {
         result = ..error(.reason = ..stream_write_failed)
         return
     }

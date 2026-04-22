@@ -289,6 +289,32 @@ operations and tests.
 Capabilities are implemented as abstract types or lightweight capability
 structs, depending on the shape that best fits the feature.
 
+When a capability wraps a process-level runtime resource, the low-level handle
+should stay explicit in the capability storage instead of being disguised as an
+ordinary high-level value. In the current baseline this means, for example:
+
+- `Arguments` keeps the raw `argv_address` it receives from the runtime and
+  builds borrowed `StringView` values on top of it.
+- `File` keeps the raw `stream_address` of the underlying C `FILE*`, while the
+  higher-level `Reader`/`Writer` APIs stay separate.
+- `Terminal` exposes both the raw stdio files and the higher-level buffered
+  wrappers / abstract endpoints.
+
+That keeps the FFI/runtime edge honest without forcing everyday callers to work
+directly with those raw addresses.
+
+The current initialization story is intentionally small and explicit:
+
+- `System` starts from process-level runtime state rather than from a hidden VM.
+- `allocator` is the C allocator capability.
+- `terminal` wraps the preopened stdio streams provided by the host runtime.
+- `args` snapshots `argc` / `argv_address` from the runtime entrypoint.
+- `env_vars` and `ffi` are zero-state capability roots whose behavior lives in
+  their operations, not in hidden initialization payloads.
+
+That is enough for the current `build` / `test` / `lsp` era of the language
+without pretending the runtime capability story is broader than it is today.
+
 ```rg
 Clock : Abstract = (
     now         (&_)            -> (TimeStamp)

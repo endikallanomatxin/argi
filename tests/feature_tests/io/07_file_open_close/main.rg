@@ -1,5 +1,5 @@
 main() -> (.status_code: Int32) := {
-    file ::= File(.handle = 0, .should_close = 0 == 1)
+    file ::= File(.stream_address = 0, .should_close = 0 == 1)
     path ::= from_literal(.data = "/dev/null")
     open_result ::= open(.p = $&file, .path = path, .mode = ..write)
 

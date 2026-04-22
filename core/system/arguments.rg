@@ -1,9 +1,9 @@
 argi_runtime_argc() -> (.count: UIntNative) : ExternFunction
-argi_runtime_argv() -> (.argv: UIntNative) : ExternFunction
+argi_runtime_argv() -> (.argv_address: UIntNative) : ExternFunction
 
 Arguments : Type = (
-    .count : UIntNative
-    .argv  : UIntNative
+    .count        : UIntNative
+    .argv_address : UIntNative
 )
 
 ArgumentsIterator : Type = (
@@ -17,7 +17,7 @@ Arguments implements Iterable#(.t: StringView)
 once init(.p: $&Arguments) -> () := {
     p& = (
         .count = argi_runtime_argc().count,
-        .argv = argi_runtime_argv().argv,
+        .argv_address = argi_runtime_argv().argv_address,
     )
 }
 
@@ -37,7 +37,7 @@ argument_pointer_address(
     .index: UIntNative,
 ) -> (.address: UIntNative) := {
     stride :: UIntNative = size_of(.type = UIntNative)
-    address = self&.argv + index * stride
+    address = self&.argv_address + index * stride
 }
 
 argument_at(

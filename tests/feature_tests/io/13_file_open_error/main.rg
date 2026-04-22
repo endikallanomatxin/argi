@@ -1,5 +1,5 @@
 main() -> (.status_code: Int32) := {
-    file ::= File(.handle = 0, .should_close = 0 == 1)
+    file ::= File(.stream_address = 0, .should_close = 0 == 1)
     path ::= from_literal(.data = "tests/feature_tests/io/13_file_open_error/build/missing.txt")
 
     open_result ::= open_read(.p = $&file, .path = path)

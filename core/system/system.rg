@@ -26,6 +26,17 @@ System : Type = (
 )
 
 once init(.p: $&System) -> () := {
+    --
+    -- Current runtime-backed initialization baseline:
+    --
+    -- - `allocator` starts from the process C allocator.
+    -- - `terminal` wraps the preopened stdio streams exposed by the host
+    --   runtime.
+    -- - `args` snapshots `argc` / `argv` addresses from the runtime entrypoint.
+    -- - `env_vars` and `ffi` are zero-state capability roots; they gain
+    --   behavior through their operations rather than through stored runtime
+    --   state.
+    --
     p&._storage.allocator = CAllocator()
     p&._storage.terminal = Terminal(
         .allocator = $&p&._storage.allocator,
