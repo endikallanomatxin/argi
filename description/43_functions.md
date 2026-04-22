@@ -293,7 +293,7 @@ When a capability wraps a process-level runtime resource, the low-level handle
 should stay explicit in the capability storage instead of being disguised as an
 ordinary high-level value. In the current baseline this means, for example:
 
-- `Arguments` keeps the raw `argv_address` it receives from the runtime and
+- `Arguments` keeps the raw argument-vector `address` it receives from the runtime and
   builds borrowed `StringView` values on top of it.
 - `File` keeps the raw `stream_address` of the underlying C `FILE*`, while the
   higher-level `Reader`/`Writer` APIs stay separate.
@@ -308,7 +308,8 @@ The current initialization story is intentionally small and explicit:
 - `System` starts from process-level runtime state rather than from a hidden VM.
 - `allocator` is the C allocator capability.
 - `terminal` wraps the preopened stdio streams provided by the host runtime.
-- `args` snapshots `argc` / `argv_address` from the runtime entrypoint.
+- `args` snapshots the process argument count plus the raw argument-vector
+  address from the runtime entrypoint.
 - `env_vars` and `ffi` are zero-state capability roots whose behavior lives in
   their operations, not in hidden initialization payloads.
 
