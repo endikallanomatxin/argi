@@ -3,11 +3,8 @@ const std = @import("std");
 const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const token = @import("../2_tokens/token.zig");
-const tokenizer = @import("../2_tokens/tokenizer.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
-const syntaxer = @import("../3_syntax/syntaxer.zig");
 const sg = @import("../4_semantics/semantic_graph.zig");
-const semantizer = @import("../4_semantics/semantizer.zig");
 const typ = @import("../4_semantics/types.zig");
 const frontend = @import("frontend_pipeline.zig");
 
@@ -630,15 +627,20 @@ pub const LanguageService = struct {
         var diagnostics = diag.Diagnostics.init(&work, &one_file);
         defer diagnostics.deinit();
 
-        var tz = tokenizer.Tokenizer.init(&work, &diagnostics, text, doc.path);
-        const toks = try tz.tokenize();
-        if (toks.len == 0) return out;
+        var pipeline = frontend.FrontendPipeline.init(&work, &diagnostics, .{});
+        defer pipeline.deinit();
 
-        var syn_ctx = syntaxer.Syntaxer.init(&work, toks, &diagnostics);
-        const st_nodes = syn_ctx.parse() catch {
+        _ = pipeline.parseFiles(&one_file) catch {
+            const toks = pipeline.tokens.items;
+            if (toks.len == 0) return out;
+
             try emitLexical(&out, gpa, text, toks);
             return out;
         };
+
+        const toks = pipeline.tokens.items;
+        if (toks.len == 0) return out;
+        const st_nodes = pipeline.st_nodes;
 
         var off2ix = std.AutoHashMap(usize, usize).init(work);
         defer off2ix.deinit();
@@ -3358,6 +3360,39 @@ test "semantic tokens include string literal and function call" {
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
     defer diags.deinit();
+
+    var tokens = try svc.semanticTokensFull(uri);
+    defer tokens.deinit();
+
+    try std.testing.expect(tokens.items.len > 0);
+    try std.testing.expect(tokens.items.len % 5 == 0);
+}
+
+test "semantic tokens fall back to lexical tokens when syntaxing fails" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const code =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    print("hello")
+        \\    broken :: Int32 =
+        \\}
+        \\
+    ;
+
+    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    var svc = LanguageService.init(std.testing.allocator);
+    defer svc.deinit();
+
+    const diags = try svc.openDocument(uri, abs_path, 1, code);
+    defer diags.deinit();
+    try std.testing.expect(diags.items.len > 0);
 
     var tokens = try svc.semanticTokensFull(uri);
     defer tokens.deinit();
