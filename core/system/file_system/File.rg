@@ -364,6 +364,8 @@ read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_t
     result = ..ok ..ok payload
 }
 
+BufferedReader#(.base_type: Type: Reader) implements Reader
+
 BufferedWriter#(.base_type: Type: Writer) : Type = (
     --
     -- Owning buffered writer wrapper.
@@ -486,3 +488,5 @@ write_byte#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_
 flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     result = buffered_writer_flush(.self = self)
 }
+
+BufferedWriter#(.base_type: Type: Writer) implements Writer
