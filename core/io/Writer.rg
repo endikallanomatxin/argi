@@ -1,22 +1,3 @@
-..stream_read_failed
-..stream_write_failed
-..stream_flush_failed
-..stream_close_failed
-
-ReadByte : Type = (
-    ..ok UInt8
-    ..end
-)
-
-ReadLine : Type = (
-    ..ok String
-    ..end
-)
-
-Reader : Abstract = (
-    read_byte(.self: $&Self) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed)))
-)
-
 Writer : Abstract = (
     write_byte(.self: $&Self, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
     flush(.self: $&Self) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
@@ -40,38 +21,6 @@ write(
         i = i + 1
     }
     result = ..ok Void()
-}
-
-read(
-    .self: $&Reader,
-    .buffer: ArrayView#(.t: UInt8),
-) -> (.result: Errable#(.t: UIntNative, .reasons: (..stream_read_failed))) := {
-    copied :: UIntNative = 0
-    view :: ArrayView#(.t: UInt8) = buffer
-
-    while copied < view.length {
-        next ::= read_byte(.self = self)
-        match next {
-            ..ok payload {
-                match payload {
-                    ..ok byte {
-                        view[copied] = byte
-                        copied = copied + 1
-                    }
-                    ..end {
-                        result = ..ok copied
-                        return
-                    }
-                }
-            }
-            ..error _ {
-                result = ..error(.reason = ..stream_read_failed)
-                return
-            }
-        }
-    }
-
-    result = ..ok copied
 }
 
 write(
