@@ -1529,7 +1529,7 @@ test "feature_tests/system/02_reached_arguments" {
 test "feature_tests/system/03X_reached_argument_missing" {
     try buildExpectFailExact(
         "tests/feature_tests/system/03X_reached_argument_missing",
-        \\tests/feature_tests/system/03X_reached_argument_missing/main.rg:12:26: error: cannot resolve reached argument '.stdout' with alternatives [stdout, terminal.stdout_writer, system.terminal.stdout_writer] expected as 'Int32'
+        \\tests/feature_tests/system/03X_reached_argument_missing/main.rg:12:26: error: cannot resolve reached argument '.stdout' with alternatives [stdout, terminal.stdout, system.terminal.stdout] expected as 'Int32'
         \\      status_code = forward()
         \\                           ^
         \\
@@ -1656,6 +1656,12 @@ test "feature_tests/io/23X_abstract_writer_field_conflicting_assignment" {
         \\                  ^
         \\
     );
+}
+
+test "feature_tests/io/24_terminal_stream_aliases" {
+    const test_path = "tests/feature_tests/io/24_terminal_stream_aliases";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
 }
 
 test "feature_tests/text/03_string_buffer_io" {

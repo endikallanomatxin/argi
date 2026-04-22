@@ -15,6 +15,14 @@ Terminal : Type = (
     .stdin_reader  : $&BufferedReader#(.base_type: File)
     .stdout_writer : $&BufferedWriter#(.base_type: File)
     .stderr_writer : $&BufferedWriter#(.base_type: File)
+    --
+    -- High-level stdio endpoints stay abstract so helpers can depend on
+    -- `Reader`/`Writer`, while the raw file handles and concrete buffered
+    -- wrappers remain explicit and reachable separately.
+    --
+    .stdin         : $&Reader
+    .stdout        : $&Writer
+    .stderr        : $&Writer
 )
 
 once init(
@@ -47,6 +55,9 @@ once init(
     p&.stdin_reader = $&p&._storage.stdin_reader
     p&.stdout_writer = $&p&._storage.stdout_writer
     p&.stderr_writer = $&p&._storage.stderr_writer
+    p&.stdin = $&p&._storage.stdin_reader
+    p&.stdout = $&p&._storage.stdout_writer
+    p&.stderr = $&p&._storage.stderr_file
 }
 
 deinit(
@@ -63,7 +74,7 @@ deinit(
 
 read_line_into_buffer(
     .buffer: $&String,
-    .stdin: $&Reader = #reach stdin, terminal.stdin_file, system.terminal.stdin_file,
+    .stdin: $&Reader = #reach stdin, terminal.stdin, system.terminal.stdin,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_read_failed))) := {
     clear(.self = buffer)
 
@@ -105,7 +116,7 @@ read_line_into_buffer(
 
 read_line(
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .stdin: $&Reader = #reach stdin, terminal.stdin_file, system.terminal.stdin_file,
+    .stdin: $&Reader = #reach stdin, terminal.stdin, system.terminal.stdin,
 ) -> (.result: Errable#(.t: ReadLine, .reasons: (..stream_read_failed, ..out_of_memory))) := {
     --
     -- `read_line()` returns an owning `String`.
@@ -162,7 +173,7 @@ read_line(
 
 print(
     .value: StringView,
-    .stdout: $&Writer = #reach stdout, terminal.stdout_file, system.terminal.stdout_file,
+    .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
     while i < value.length {
@@ -185,14 +196,14 @@ print(
 }
 
 flush(
-    .stdout: $&Writer = #reach stdout, terminal.stdout_file, system.terminal.stdout_file,
+    .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     result = flush(.self = stdout)
 }
 
 print_error(
     .value: StringView,
-    .stderr: $&Writer = #reach stderr, terminal.stderr_file, system.terminal.stderr_file,
+    .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
     while i < value.length {
@@ -216,7 +227,7 @@ print_error(
 }
 
 flush_error(
-    .stderr: $&Writer = #reach stderr, terminal.stderr_file, system.terminal.stderr_file,
+    .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     result = flush(.self = stderr)
 }

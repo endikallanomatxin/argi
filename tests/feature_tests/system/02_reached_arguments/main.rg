@@ -1,5 +1,5 @@
 read_value(
-    .stdout: Int32 = #reach stdout, terminal.stdout_writer, system.terminal.stdout_writer,
+    .stdout: Int32 = #reach stdout, terminal.stdout, system.terminal.stdout,
 ) -> (.value: Int32) := {
     value = stdout
 }
@@ -11,11 +11,11 @@ forward() -> (.value: Int32) := {
 main() -> (.status_code: Int32) := {
     system : (
         .terminal: (
-            .stdout_writer: Int32
+            .stdout: Int32
         )
     ) = (
         .terminal = (
-            .stdout_writer = 7
+            .stdout = 7
         )
     )
 
