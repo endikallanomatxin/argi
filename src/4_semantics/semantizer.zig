@@ -4296,12 +4296,13 @@ pub const Semantizer = struct {
         } else {
             return switch (d.value.*.content) {
                 .struct_type_literal => |st_lit| blk_struct: {
+                    if (d.kind == .c_enum) return error.NotYetImplemented;
                     var td: *sg.TypeDeclaration = undefined;
                     if (s.types.get(d.name.string)) |existing| {
                         td = existing;
                     } else {
                         const stub = try self.allocator.create(sg.StructType);
-                        stub.* = .{ .fields = &.{} };
+                        stub.* = .{ .fields = &.{}, .layout = if (d.kind == .c_union) .c_union else .regular };
                         td = try self.allocator.create(sg.TypeDeclaration);
                         td.* = .{ .name = d.name.string, .origin_file = d.value.location.file, .ty = .{ .struct_type = stub } };
                         try s.types.put(d.name.string, td);
@@ -4312,6 +4313,7 @@ pub const Semantizer = struct {
                     const dst_const = td.ty.struct_type;
                     const dst: *sg.StructType = @constCast(dst_const);
                     dst.fields = st_ptr.fields;
+                    dst.layout = if (d.kind == .c_union) .c_union else .regular;
                     if (dst.identity == null) {
                         const identity = try self.allocator.create(sg.GenericTypeIdentity);
                         identity.* = .{
@@ -4326,13 +4328,14 @@ pub const Semantizer = struct {
                     break :blk_struct .{ .node = noop, .ty = .{ .builtin = .Any } };
                 },
                 .choice_type_literal => |ct_lit| blk_choice: {
+                    if (d.kind == .c_union) return error.NotYetImplemented;
                     var td: *sg.TypeDeclaration = undefined;
                     if (s.types.get(d.name.string)) |existing| {
                         if (existing.ty != .choice_type) return error.SymbolAlreadyDefined;
                         td = existing;
                     } else {
                         const stub = try self.allocator.create(sg.ChoiceType);
-                        stub.* = .{ .variants = &.{} };
+                        stub.* = .{ .variants = &.{}, .layout = if (d.kind == .c_enum) .c_enum else .regular };
 
                         td = try self.allocator.create(sg.TypeDeclaration);
                         td.* = .{
@@ -4347,6 +4350,15 @@ pub const Semantizer = struct {
 
                     var variants = std.array_list.Managed(sg.ChoiceVariant).init(self.allocator.*);
                     for (ct_lit.variants, 0..) |variant, idx| {
+                        if (d.kind == .c_enum and variant.payload_type != null) {
+                            try self.diags.add(
+                                variant.name.location,
+                                .semantic,
+                                "CEnum variant '..{s}' cannot carry a payload",
+                                .{variant.name.string},
+                            );
+                            return error.Reported;
+                        }
                         const payload_type = if (variant.payload_type) |pt| try self.resolveTypePreservingAbstracts(pt, s) else null;
                         const option_decl = if (payload_type == null) blk_option: {
                             if (variant.module_qualifier) |qualifier| {
@@ -4378,6 +4390,7 @@ pub const Semantizer = struct {
                     const choice_ptr_const = td.ty.choice_type;
                     const choice_ptr: *sg.ChoiceType = @constCast(choice_ptr_const);
                     choice_ptr.variants = try variants.toOwnedSlice();
+                    choice_ptr.layout = if (d.kind == .c_enum) .c_enum else .regular;
                     if (choice_ptr.identity == null) {
                         const identity = try self.allocator.create(sg.GenericTypeIdentity);
                         identity.* = .{

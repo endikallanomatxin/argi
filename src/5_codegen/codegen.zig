@@ -509,6 +509,9 @@ pub const CodeGenerator = struct {
                 .Any => c.LLVMInt8Type(), // &Any es i8*
             },
             .choice_type => |ct| blk_choice: {
+                if (ct.layout == .c_enum) {
+                    break :blk_choice c.LLVMInt32Type();
+                }
                 const field_count: usize = ct.variants.len + 1;
                 var fields = try self.allocator.alloc(llvm.c.LLVMTypeRef, field_count);
                 fields[0] = c.LLVMInt32Type();
@@ -587,8 +590,8 @@ pub const CodeGenerator = struct {
                 };
                 try buf.appendSlice(s);
             },
-            .choice_type => |_| {
-                try buf.appendSlice("choice");
+            .choice_type => |ct| {
+                try buf.appendSlice(if (ct.layout == .c_enum) "cenum" else "choice");
             },
             .abstract_type => |at| {
                 try buf.appendSlice("abs_");
@@ -1573,6 +1576,11 @@ pub const CodeGenerator = struct {
         const choice_ty = sem.Type{ .choice_type = lit.choice_type };
         const llvm_ty = try self.toLLVMType(choice_ty);
 
+        if (lit.choice_type.layout == .c_enum) {
+            const enum_val = c.LLVMConstInt(llvm_ty, @intCast(lit.variant_index), 0);
+            return .{ .value_ref = enum_val, .type_ref = llvm_ty, .sem_type = choice_ty };
+        }
+
         var agg = c.LLVMGetUndef(llvm_ty);
         const tag_val = c.LLVMConstInt(c.LLVMInt32Type(), @intCast(lit.variant_index), 0);
         agg = c.LLVMBuildInsertValue(self.builder, agg, tag_val, 0, "choice.tag");
@@ -1753,6 +1761,17 @@ pub const CodeGenerator = struct {
 
         if (lhs_tv.sem_type) |lhs_sem_ty| {
             if (lhs_sem_ty == .choice_type) {
+                if (lhs_sem_ty.choice_type.layout == .c_enum) {
+                    const val = switch (co.operator) {
+                        .equal => c.LLVMBuildICmp(self.builder, c.LLVMIntEQ, lhs_tv.value_ref, rhs_tv.value_ref, "cenum.eq"),
+                        .not_equal => c.LLVMBuildICmp(self.builder, c.LLVMIntNE, lhs_tv.value_ref, rhs_tv.value_ref, "cenum.ne"),
+                        .less_than => c.LLVMBuildICmp(self.builder, c.LLVMIntSLT, lhs_tv.value_ref, rhs_tv.value_ref, "cenum.lt"),
+                        .greater_than => c.LLVMBuildICmp(self.builder, c.LLVMIntSGT, lhs_tv.value_ref, rhs_tv.value_ref, "cenum.gt"),
+                        .less_than_or_equal => c.LLVMBuildICmp(self.builder, c.LLVMIntSLE, lhs_tv.value_ref, rhs_tv.value_ref, "cenum.le"),
+                        .greater_than_or_equal => c.LLVMBuildICmp(self.builder, c.LLVMIntSGE, lhs_tv.value_ref, rhs_tv.value_ref, "cenum.ge"),
+                    };
+                    return .{ .value_ref = val, .type_ref = c.LLVMInt1Type() };
+                }
                 const lhs_tag = c.LLVMBuildExtractValue(self.builder, lhs_tv.value_ref, 0, "choice.lhs.tag");
                 const rhs_tag = c.LLVMBuildExtractValue(self.builder, rhs_tv.value_ref, 0, "choice.rhs.tag");
                 const val = switch (co.operator) {

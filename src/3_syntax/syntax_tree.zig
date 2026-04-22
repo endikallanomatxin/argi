@@ -118,7 +118,14 @@ pub const TypeDeclaration = struct {
     name: Name,
     generic_params: []const []const u8,
     generic_params_struct: ?StructTypeLiteral,
+    kind: Kind = .regular,
     value: *STNode,
+
+    pub const Kind = enum {
+        regular,
+        c_enum,
+        c_union,
+    };
 };
 
 pub const ChoiceOptionDeclaration = struct {

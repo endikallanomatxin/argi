@@ -1038,6 +1038,22 @@ test "feature_tests/basics/19_c_function_alias" {
     try run(test_path);
 }
 
+test "feature_tests/basics/20_c_enum_baseline" {
+    const test_path = "tests/feature_tests/basics/20_c_enum_baseline";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/basics/21X_c_enum_payload" {
+    try buildExpectFailExact(
+        "tests/feature_tests/basics/21X_c_enum_payload",
+        \\tests/feature_tests/basics/21X_c_enum_payload/main.rg:3:7: error: CEnum variant '..exists' cannot carry a payload
+        \\      ..exists (.code: Int32),
+        \\        ^
+        \\
+    );
+}
+
 test "feature_tests/types/01_choice" {
     const test_path = "tests/feature_tests/types/01_choice";
     try expectSuccessfulBuild(test_path);

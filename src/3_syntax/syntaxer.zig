@@ -1641,22 +1641,39 @@ pub const Syntaxer = struct {
             const ty_opt = try self.parseType();
 
             if (ty_opt) |ty| {
-                if (ty == .type_name and std.mem.eql(u8, ty.type_name.string, "Type")) {
+                if (ty == .type_name and (std.mem.eql(u8, ty.type_name.string, "Type") or std.mem.eql(u8, ty.type_name.string, "CEnum") or std.mem.eql(u8, ty.type_name.string, "CUnion"))) {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                     self.advanceOne();
                     if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
-                    const lit_node = if (self.parenthesizedTypeIsChoiceLiteral()) blk: {
-                        const chlit = try self.parseChoiceTypeLiteral();
-                        break :blk try self.makeNode(.{ .choice_type_literal = chlit }, id_loc);
-                    } else blk: {
-                        const stlit = try self.parseStructTypeLiteral();
-                        break :blk try self.makeNode(.{ .struct_type_literal = stlit }, id_loc);
+                    const decl_kind: syn.TypeDeclaration.Kind = if (std.mem.eql(u8, ty.type_name.string, "CEnum"))
+                        .c_enum
+                    else if (std.mem.eql(u8, ty.type_name.string, "CUnion"))
+                        .c_union
+                    else
+                        .regular;
+                    const lit_node = switch (decl_kind) {
+                        .c_enum => blk: {
+                            const chlit = try self.parseChoiceTypeLiteral();
+                            break :blk try self.makeNode(.{ .choice_type_literal = chlit }, id_loc);
+                        },
+                        .c_union => blk: {
+                            const stlit = try self.parseStructTypeLiteral();
+                            break :blk try self.makeNode(.{ .struct_type_literal = stlit }, id_loc);
+                        },
+                        .regular => if (self.parenthesizedTypeIsChoiceLiteral()) blk: {
+                            const chlit = try self.parseChoiceTypeLiteral();
+                            break :blk try self.makeNode(.{ .choice_type_literal = chlit }, id_loc);
+                        } else blk: {
+                            const stlit = try self.parseStructTypeLiteral();
+                            break :blk try self.makeNode(.{ .struct_type_literal = stlit }, id_loc);
+                        },
                     };
 
                     const tdecl = syn.TypeDeclaration{
                         .name = name,
                         .generic_params = generic_params,
                         .generic_params_struct = generic_params_struct,
+                        .kind = decl_kind,
                         .value = lit_node,
                     };
                     return try self.makeNode(.{ .type_declaration = tdecl }, id_loc);

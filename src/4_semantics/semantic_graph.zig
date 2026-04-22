@@ -99,6 +99,12 @@ pub const AbstractType = struct {
 pub const ChoiceType = struct {
     variants: []const ChoiceVariant,
     identity: ?TypeIdentity = null,
+    layout: Layout = .regular,
+
+    pub const Layout = enum {
+        regular,
+        c_enum,
+    };
 };
 
 pub const InferredChoiceKind = enum {
@@ -196,6 +202,12 @@ pub const BuiltinType = enum {
 pub const StructType = struct {
     fields: []const StructTypeField,
     identity: ?TypeIdentity = null,
+    layout: Layout = .regular,
+
+    pub const Layout = enum {
+        regular,
+        c_union,
+    };
 };
 
 pub const TypeIdentity = union(enum) {

@@ -191,6 +191,7 @@ pub fn isTypeTriviallyCopyable(ty: sg.Type, s: *Scope) bool {
             break :blk true;
         },
         .choice_type => |ct| blk: {
+            if (ct.layout == .c_enum) break :blk true;
             for (ct.variants) |variant| {
                 if (variant.payload_type) |payload_ty| {
                     if (!isTypeTriviallyCopyable(payload_ty, s)) break :blk false;
@@ -662,7 +663,7 @@ fn appendType(buf: *std.array_list.Managed(u8), t: sg.Type) !void {
             try buf.appendSlice(s);
         },
         .abstract_type => |at| try buf.appendSlice(at.name),
-        .choice_type => |_| try buf.appendSlice("choice"),
+        .choice_type => |ct| try buf.appendSlice(if (ct.layout == .c_enum) "CEnum" else "choice"),
         .pointer_type => |ptr_info_ptr| {
             const ptr_info = ptr_info_ptr.*;
             const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
@@ -670,6 +671,20 @@ fn appendType(buf: *std.array_list.Managed(u8), t: sg.Type) !void {
             try appendType(buf, ptr_info.child.*);
         },
         .struct_type => |st| {
+            if (st.layout == .c_union) {
+                try buf.appendSlice("CUnion{");
+                var union_i: usize = 0;
+                while (union_i < st.fields.len) : (union_i += 1) {
+                    const fld = st.fields[union_i];
+                    if (union_i != 0) try buf.appendSlice(", ");
+                    try buf.appendSlice(".");
+                    try buf.appendSlice(fld.name);
+                    try buf.appendSlice(": ");
+                    try appendType(buf, fld.ty);
+                }
+                try buf.appendSlice("}");
+                return;
+            }
             try buf.appendSlice("{");
             var i: usize = 0;
             while (i < st.fields.len) : (i += 1) {
@@ -736,14 +751,18 @@ pub fn appendTypePretty(buf: *std.array_list.Managed(u8), t: sg.Type, s: *Scope)
             try buf.appendSlice(sname);
         },
         .abstract_type => |at| try buf.appendSlice(at.name),
-        .choice_type => |_| try buf.appendSlice("choice"),
+        .choice_type => |ct| try buf.appendSlice(if (ct.layout == .c_enum) "CEnum" else "choice"),
         .pointer_type => |ptr_info_ptr| {
             const ptr_info = ptr_info_ptr.*;
             const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
             try buf.appendSlice(prefix);
             try appendTypePretty(buf, ptr_info.child.*, s);
         },
-        .struct_type => |_| {
+        .struct_type => |st| {
+            if (st.layout == .c_union) {
+                try buf.appendSlice("CUnion{...}");
+                return;
+            }
             // Fallback: avoid expanding anonymous structs in this context
             try buf.appendSlice("{...}");
         },
@@ -792,6 +811,9 @@ pub fn computeTypeSize(ty: sg.Type) u64 {
         },
         .abstract_type => 0,
         .choice_type => |ct| blk_choice: {
+            if (ct.layout == .c_enum) {
+                break :blk_choice computeTypeSize(.{ .builtin = .Int32 });
+            }
             var size: u64 = 0;
             const tag_align = computeTypeAlignment(.{ .builtin = .Int32 });
             size = alignForward(size, tag_align);
@@ -806,6 +828,14 @@ pub fn computeTypeSize(ty: sg.Type) u64 {
         },
         .pointer_type => pointer_size_bytes,
         .struct_type => |st| blk: {
+            if (st.layout == .c_union) {
+                var max_field_size: u64 = 0;
+                for (st.fields) |field| {
+                    const field_size = computeTypeSize(field.ty);
+                    if (field_size > max_field_size) max_field_size = field_size;
+                }
+                break :blk alignForward(max_field_size, computeTypeAlignment(.{ .struct_type = st }));
+            }
             const max_align = computeTypeAlignment(.{ .struct_type = st });
             var size: u64 = 0;
             var idx: usize = 0;
@@ -840,6 +870,9 @@ pub fn computeTypeAlignment(ty: sg.Type) u64 {
         },
         .abstract_type => 1,
         .choice_type => |ct| blk_choice: {
+            if (ct.layout == .c_enum) {
+                break :blk_choice computeTypeAlignment(.{ .builtin = .Int32 });
+            }
             var max_align: u64 = computeTypeAlignment(.{ .builtin = .Int32 });
             for (ct.variants) |variant| {
                 const payload_ty: sg.Type = variant.payload_type orelse sg.Type{ .builtin = .UInt8 };
@@ -850,6 +883,15 @@ pub fn computeTypeAlignment(ty: sg.Type) u64 {
         },
         .pointer_type => pointer_alignment_bytes,
         .struct_type => |st| blk: {
+            if (st.layout == .c_union) {
+                var union_max_align: u64 = 1;
+                var union_idx: usize = 0;
+                while (union_idx < st.fields.len) : (union_idx += 1) {
+                    const fld_align = computeTypeAlignment(st.fields[union_idx].ty);
+                    if (fld_align > union_max_align) union_max_align = fld_align;
+                }
+                break :blk if (union_max_align == 0) 1 else union_max_align;
+            }
             var max_align: u64 = 1;
             var idx: usize = 0;
             while (idx < st.fields.len) : (idx += 1) {
