@@ -1686,6 +1686,12 @@ test "feature_tests/io/24_terminal_stream_aliases" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/io/25_positional_text_helpers" {
+    const test_path = "tests/feature_tests/io/25_positional_text_helpers";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/text/03_string_buffer_io" {
     const test_path = "tests/feature_tests/text/03_string_buffer_io";
     try expectSuccessfulBuild(test_path);

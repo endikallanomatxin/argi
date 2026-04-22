@@ -74,6 +74,7 @@ deinit(
 
 read_line_into_buffer(
     .buffer: $&String,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
     .stdin: $&Reader = #reach stdin, terminal.stdin, system.terminal.stdin,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_read_failed))) := {
     clear(.self = buffer)
@@ -100,7 +101,7 @@ read_line_into_buffer(
             break
         }
 
-        pushed ::= push_byte(.self = buffer, .byte = payload)
+        pushed ::= push_byte(.self = buffer, .byte = payload, .allocator = allocator)
         match pushed {
             ..ok _ {
             }
