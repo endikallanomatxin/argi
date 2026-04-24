@@ -6216,7 +6216,7 @@ pub const Semantizer = struct {
         const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
         const native_uint_ty: sg.Type = .{ .builtin = .UIntNative };
         var idx = try self.visitNode(index_node.*, s);
-        var input_te = try self.buildCallInput(&[_]CallArg{
+        var input_te = try self.buildNamedCallInput(&[_]CallArg{
             .{ .name = "self", .expr = self_expr },
             .{ .name = "index", .expr = idx },
         });
@@ -6239,7 +6239,7 @@ pub const Semantizer = struct {
 
         if (chosen == null and !typ.typesExactlyEqual(idx.ty, native_uint_ty)) {
             idx = try typ.coerceExprToType(native_uint_ty, idx, index_node, s, self.allocator, self.diags);
-            input_te = try self.buildCallInput(&[_]CallArg{
+            input_te = try self.buildNamedCallInput(&[_]CallArg{
                 .{ .name = "self", .expr = self_expr },
                 .{ .name = "index", .expr = idx },
             });
@@ -6364,7 +6364,7 @@ pub const Semantizer = struct {
 
         const name = "operator set[]";
         const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-        var input_te = try self.buildCallInput(&[_]CallArg{
+        var input_te = try self.buildNamedCallInput(&[_]CallArg{
             .{ .name = "self", .expr = ptr_self },
             .{ .name = "index", .expr = index_expr },
             .{ .name = "value", .expr = value_expr },
@@ -6388,7 +6388,7 @@ pub const Semantizer = struct {
 
         if (chosen == null and !typ.typesExactlyEqual(index_expr.ty, native_uint_ty)) {
             index_expr = try typ.coerceExprToType(native_uint_ty, index_expr, idx.index, s, self.allocator, self.diags);
-            input_te = try self.buildCallInput(&[_]CallArg{
+            input_te = try self.buildNamedCallInput(&[_]CallArg{
                 .{ .name = "self", .expr = ptr_self },
                 .{ .name = "index", .expr = index_expr },
                 .{ .name = "value", .expr = value_expr },
