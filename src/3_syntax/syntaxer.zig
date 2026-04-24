@@ -204,7 +204,11 @@ pub const Syntaxer = struct {
             .identifier => {
                 const ident = try self.parseIdentifier();
 
-                if (std.mem.eql(u8, ident, "get") or std.mem.eql(u8, ident, "set")) {
+                if (std.mem.eql(u8, ident, "get") or
+                    std.mem.eql(u8, ident, "set") or
+                    std.mem.eql(u8, ident, "get_ro_pointer") or
+                    std.mem.eql(u8, ident, "get_rw_pointer"))
+                {
                     if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
                     self.advanceOne();
                     if (!self.tokenIs(.close_bracket)) return SyntaxerError.ExpectedRightBracket;
