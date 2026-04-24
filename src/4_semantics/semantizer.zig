@@ -6195,14 +6195,29 @@ pub const Semantizer = struct {
             return .{ .node = @constCast(elem_node), .ty = elem_ty };
         }
 
-        var idx = try self.visitNode(ia.index.*, s);
-
         const ro_self = try typ.ensureReadOnlyPointer(ia.value, base, self.allocator, self.diags);
+        return self.lowerIndexedOperatorCall(
+            "operator get[]",
+            ro_self,
+            ia.index,
+            ia.value.*.location,
+            s,
+        );
+    }
 
-        const name = "operator get[]";
+    fn lowerIndexedOperatorCall(
+        self: *Semantizer,
+        name: []const u8,
+        self_expr: typ.TypedExpr,
+        index_node: *syn.STNode,
+        call_loc: tok.Location,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
         const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+        const native_uint_ty: sg.Type = .{ .builtin = .UIntNative };
+        var idx = try self.visitNode(index_node.*, s);
         var input_te = try self.buildCallInput(&[_]CallArg{
-            .{ .name = "self", .expr = ro_self },
+            .{ .name = "self", .expr = self_expr },
             .{ .name = "index", .expr = idx },
         });
 
@@ -6212,10 +6227,10 @@ pub const Semantizer = struct {
         };
 
         if (chosen == null) {
-            chosen = self.resolveVisibleOverload(name, input_te, s, ia.value.*.location) catch |err| switch (err) {
+            chosen = self.resolveVisibleOverload(name, input_te, s, call_loc) catch |err| switch (err) {
                 error.SymbolNotFound => null,
                 error.AmbiguousOverload => {
-                    try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.value.*.location);
+                    try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, call_loc);
                     return error.Reported;
                 },
                 else => return err,
@@ -6223,9 +6238,9 @@ pub const Semantizer = struct {
         }
 
         if (chosen == null and !typ.typesExactlyEqual(idx.ty, native_uint_ty)) {
-            idx = try typ.coerceExprToType(native_uint_ty, idx, ia.index, s, self.allocator, self.diags);
+            idx = try typ.coerceExprToType(native_uint_ty, idx, index_node, s, self.allocator, self.diags);
             input_te = try self.buildCallInput(&[_]CallArg{
-                .{ .name = "self", .expr = ro_self },
+                .{ .name = "self", .expr = self_expr },
                 .{ .name = "index", .expr = idx },
             });
 
@@ -6235,10 +6250,10 @@ pub const Semantizer = struct {
             };
 
             if (chosen == null) {
-                chosen = self.resolveVisibleOverload(name, input_te, s, ia.value.*.location) catch |err| switch (err) {
+                chosen = self.resolveVisibleOverload(name, input_te, s, call_loc) catch |err| switch (err) {
                     error.SymbolNotFound => null,
                     error.AmbiguousOverload => {
-                        try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.value.*.location);
+                        try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, call_loc);
                         return error.Reported;
                     },
                     else => return err,
@@ -6247,17 +6262,44 @@ pub const Semantizer = struct {
         }
 
         const chosen_fn = chosen orelse {
-            try self.addMissingFunctionDiagnostic(name, input_te.ty, s, ia.value.*.location);
+            try self.addMissingFunctionDiagnostic(name, input_te.ty, s, call_loc);
             return error.Reported;
         };
-        input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, ia.index, s);
+        input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, index_node, s);
 
         const call_ptr = try self.allocator.create(sg.FunctionCall);
         call_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
 
-        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, ia.value.*.location, self.allocator);
+        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, call_loc, self.allocator);
         try s.nodes.append(node);
         return .{ .node = node, .ty = typ.functionReturnType(chosen_fn) };
+    }
+
+    fn handleBorrowedIndexAccess(
+        self: *Semantizer,
+        ia: syn.IndexAccess,
+        mutability: syn.PointerMutability,
+        s: *Scope,
+    ) SemErr!typ.TypedExpr {
+        const base = try self.visitNode(ia.value.*, s);
+
+        const operator_name = switch (mutability) {
+            .read_only => "operator get_ro_pointer[]",
+            .read_write => "operator get_rw_pointer[]",
+        };
+
+        const self_expr = switch (mutability) {
+            .read_only => try typ.ensureReadOnlyPointer(ia.value, base, self.allocator, self.diags),
+            .read_write => try typ.ensureMutablePointer(ia.value, base, s, self.allocator, self.diags),
+        };
+
+        return self.lowerIndexedOperatorCall(
+            operator_name,
+            self_expr,
+            ia.index,
+            ia.value.*.location,
+            s,
+        );
     }
 
     fn handleIndexAssignment(
@@ -11245,6 +11287,16 @@ pub const Semantizer = struct {
         addr: syn.AddressOf,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
+        switch (addr.value.*.content) {
+            .index_access => |ia| {
+                const base = try self.visitNode(ia.value.*, s);
+                if (base.ty != .array_type and base.node.content != .list_literal) {
+                    return self.handleBorrowedIndexAccess(ia, addr.mutability, s);
+                }
+            },
+            else => {},
+        }
+
         const te = try self.visitNode(addr.value.*, s);
         return switch (addr.mutability) {
             .read_only => try typ.ensureReadOnlyPointer(addr.value, te, self.allocator, self.diags),
