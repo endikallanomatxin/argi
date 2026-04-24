@@ -20,6 +20,58 @@ A value is in value position when it is:
 In all those cases the semantics should be the same.
 
 
+## Places and access modes
+
+Argi also needs a uniform model for reading, borrowing, mutating and consuming
+an addressable place.
+
+The intended rule is:
+
+- `place` requests an independent value
+- `&place` requests a read-only reference
+- `$&place` requests a mutable reference
+- `~place` requests a move / take when that place supports it
+
+This should stay true across the language surface:
+
+```rg
+arr[i]
+obj.field
+ptr&
+```
+
+and also in pattern-style binding positions such as `match`.
+
+That means the access mode is expressed by a prefix over the whole place:
+
+```rg
+arr[i]
+&arr[i]
+$&arr[i]
+~arr[i]
+```
+
+not by inventing postfix spellings such as:
+
+```rg
+arr&[i]
+arr$&[i]
+```
+
+because postfix `&` already means dereferencing a reference or pointer in Argi.
+So `arr&[i]` must continue to parse as `(arr&)[i]`, just like
+`self&.field` already means “dereference `self`, then access `.field`”.
+
+The same principle should scale to other places:
+
+```rg
+obj.field
+&obj.field
+$&obj.field
+~obj.field
+```
+
+
 ## Copy model
 
 If a temporary value is used in value position, it may be moved directly.
@@ -131,6 +183,27 @@ That means the language-level rule stays simple:
 - view types may implement `copy()` only if that operation is semantically
   sound for the view itself
 - otherwise they are non-copyable and must be passed by reference
+
+
+## Indexed places
+
+For indexable collections the same place model applies.
+
+The design direction is:
+
+```rg
+arr[i]      -- value access
+&arr[i]     -- borrowed read-only access
+$&arr[i]    -- borrowed mutable access
+~arr[i]     -- move / take, if supported
+```
+
+`arr[i]` remains the value-form on purpose. It should keep meaning “produce an
+independent value under the normal copy rules of the language”.
+
+Borrowed indexed access should stay explicit. If the collection wants to expose
+reference-style indexing, that should be a separate contract from value access,
+not hidden behind allocator-taking `get[]` semantics.
 
 > [!TODO]
 > Think about how to make it clear that when copying a view or a

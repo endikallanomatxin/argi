@@ -92,6 +92,14 @@ Reglas:
   `match` lo consume
 - `_` ignora el payload
 
+Esto sigue el mismo modelo general de access modes del resto del lenguaje:
+
+- `name` bindea por valor
+- `& name` bindea una referencia read-only
+- `$& name` bindea una referencia mutable
+- `~ name` bindea por move
+- `_` ignora el payload
+
 Además, `choice_value..variant` proyecta directamente el payload tipado de esa
 variante:
 

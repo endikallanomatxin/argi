@@ -153,6 +153,30 @@ This is intended for ambient capabilities such as:
 - `stdout`
 - `logger`
 
+The same idea may also be used by operators. Operators are syntactic contracts:
+their principal arguments must correspond to syntax that the user actually
+writes, but they may still have extra defaulted parameters resolved through
+`#reach`.
+
+For example, an index operator may conceptually have:
+
+```rg
+operator get[] #(.t: Type) (
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .self: &DynamicArray#(.t: t),
+    .index: UIntNative,
+) -> (.value: t)
+```
+
+and the user still writes only:
+
+```rg
+arr[i]
+```
+
+If a caller needs to control the allocator explicitly, that should be done
+through a normal function rather than through operator syntax.
+
 ### Resolution rules
 
 Reached arguments are resolved by propagation through the call chain.

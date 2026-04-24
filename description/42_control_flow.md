@@ -59,6 +59,36 @@ Gleam también.
 > 
 > Darle una vuelta.
 
+Los bindings de patrón en `match` deben seguir el mismo modelo general de
+access modes:
+
+```rg
+match value {
+    ..some payload {
+    }
+
+    ..some & payload {
+    }
+
+    ..some $& payload {
+    }
+
+    ..some ~ payload {
+    }
+
+    ..some _ {
+    }
+}
+```
+
+Regla unificada:
+
+- `name` bindea por valor
+- `& name` bindea una referencia read-only
+- `$& name` bindea una referencia mutable
+- `~ name` bindea por move
+- `_` ignora el valor
+
 
 ## Loops
 
@@ -160,6 +190,26 @@ La idea interesante para Argi es conservar el mismo principio: `for` consume un
 `Iterable`, y el tipo exacto del valor que se le pase debería poder determinar
 si la iteración es por valor, por referencia inmutable o por referencia
 mutable.
+
+Dirección futura dentro del mismo marco:
+
+```rg
+for item in arr {
+}
+
+for & item in arr {
+}
+
+for $& item in arr {
+}
+
+for ~ item in arr {
+}
+```
+
+Eso debería comportarse como el análogo en `for` de `place`, `&place`,
+`$&place` y `~place`, pero sigue siendo un paso posterior a la baseline actual
+de iteradores de 0.1.
 
 Se puede hacer igual también que las funciones map(), filter() y demás tengan versiones que consumen iteradores (para lazy evaluation) o listas.
 _(Pensar en una forma de que esto sirva para vectorizar funciones. Que si la función llamada tiene una versión vector la tome, si no elemento a elemento)_

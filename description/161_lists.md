@@ -43,6 +43,26 @@ copyable elements can behave like ordinary values. This is the intended
 direction for compiler-style data structures, even though some collection
 ownership ergonomics remain a separate open front.
 
+Indexing follows the language-wide place model:
+
+```rg
+arr[i]      -- value access
+&arr[i]     -- borrowed read-only access
+$&arr[i]    -- borrowed mutable access
+arr[i] = x  -- assignment through the indexed place
+```
+
+For `DynamicArray`, the intended operator surface stays split between:
+
+- `get[]` for value access
+- `get_ro_pointer[]` for borrowed read-only access
+- `get_rw_pointer[]` for borrowed mutable access
+- `set[]` for assignment
+
+This is deliberate. `arr[i]` should keep meaning “produce a value under the
+normal copy rules”, while borrowed indexing remains explicit through `&place`
+and `$&place`.
+
 
 #### LengthedArray (capacidad fija en stack, len runtime)
 
