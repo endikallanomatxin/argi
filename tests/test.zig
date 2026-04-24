@@ -1443,6 +1443,24 @@ test "feature_tests/collections/18_dynamic_array_copy" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/collections/19_dynamic_array_borrowed_index_read_only" {
+    const test_path = "tests/feature_tests/collections/19_dynamic_array_borrowed_index_read_only";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/20_dynamic_array_borrowed_index_mutable" {
+    const test_path = "tests/feature_tests/collections/20_dynamic_array_borrowed_index_mutable";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/22_dynamic_array_borrowed_index_string" {
+    const test_path = "tests/feature_tests/collections/22_dynamic_array_borrowed_index_string";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/control_flow/11_range_default_start_with_step" {
     const test_path = "tests/feature_tests/control_flow/11_range_default_start_with_step";
     try expectSuccessfulBuild(test_path);
