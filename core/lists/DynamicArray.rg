@@ -336,6 +336,22 @@ operator get[] #(.t: Type) (
     value = ptr&
 }
 
+operator get_ro_pointer[] #(.t: Type) (
+    .self: &DynamicArray#(.t: t),
+    .index: UIntNative,
+) -> (.value: &t) := {
+    addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
+    value = cast#(.to: &t)(.value = addr)
+}
+
+operator get_rw_pointer[] #(.t: Type) (
+    .self: $&DynamicArray#(.t: t),
+    .index: UIntNative,
+) -> (.value: $&t) := {
+    addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
+    value = cast#(.to: $&t)(.value = addr)
+}
+
 operator set[] #(.t: Type) (
     .self: $&DynamicArray#(.t: t),
     .index: UIntNative,
