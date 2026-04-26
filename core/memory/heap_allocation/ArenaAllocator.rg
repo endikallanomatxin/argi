@@ -43,8 +43,8 @@ arena_release_blocks(
 ) -> () := {
     i :: UIntNative = 0
     while i < self&.blocks.length {
-        block ::= self&.blocks[i]
-        deallocate(.self = self&.backing_allocator, .data = block.data, .size = block.size)
+        block : &Allocation = &self&.blocks[i]
+        deallocate(.self = self&.backing_allocator, .data = block&.data, .size = block&.size)
         i = i + 1
     }
 
@@ -84,8 +84,8 @@ allocate(
     if self&.blocks.length == 0 {
         needs_block = true
     } else {
-        last_block ::= self&.blocks[self&.blocks.length - 1]
-        if self&.current_block_offset + required > last_block.size {
+        last_block : &Allocation = &self&.blocks[self&.blocks.length - 1]
+        if self&.current_block_offset + required > last_block&.size {
             needs_block = true
         }
     }
@@ -109,8 +109,8 @@ allocate(
         self&.current_block_offset = 0
     }
 
-    active_block ::= self&.blocks[self&.blocks.length - 1]
-    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = active_block.data) + self&.current_block_offset
+    active_block : &Allocation = &self&.blocks[self&.blocks.length - 1]
+    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = active_block&.data) + self&.current_block_offset
     self&.current_block_offset = self&.current_block_offset + required
     data = cast#(.to: $&UInt8)(.value = raw_addr)
 }

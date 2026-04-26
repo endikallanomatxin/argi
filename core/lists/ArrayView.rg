@@ -40,7 +40,9 @@ array_view_element_address#(.t: Type)(
 operator get[]#(.t: Type)(
     .self: &ArrayView#(.t: t),
     .index: UIntNative,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.value: t) := {
+    _ ::= allocator
     ptr : &t = cast#(.to: &t)(.value = array_view_element_address#(.t: t)(.self = self, .index = index).address)
     value = ptr&
 }

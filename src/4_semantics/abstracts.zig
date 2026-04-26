@@ -374,7 +374,10 @@ pub fn funcInputMatchesRequirement(
     s: *Scope,
 ) bool {
     const req_in = &rq.input;
-    if (cand_in.fields.len != req_in.fields.len) return false;
+    if (cand_in.fields.len < req_in.fields.len) return false;
+    for (cand_in.fields[req_in.fields.len..]) |extra_field| {
+        if (extra_field.default_value == null) return false;
+    }
 
     var i: usize = 0;
     while (i < req_in.fields.len) : (i += 1) {
@@ -603,7 +606,10 @@ fn genericTemplateFieldsMatchExpected(
     params: []const gen.GenericParam,
     bindings: *TemplateBindings,
 ) bool {
-    if (expected.fields.len != template_fields.len) return false;
+    if (template_fields.len < expected.fields.len) return false;
+    for (template_fields[expected.fields.len..]) |extra_field| {
+        if (extra_field.default_value == null) return false;
+    }
 
     var i: usize = 0;
     while (i < expected.fields.len) : (i += 1) {
