@@ -1829,12 +1829,26 @@ pub const Syntaxer = struct {
         const start = self.tokenLocation();
         if (!self.tokenIs(.keyword_for)) return SyntaxerError.ExpectedKeywordFor;
         self.advanceOne();
+        var item_mode: syn.ForBindingMode = .by_value;
+        if (self.tokenIs(.dollar)) {
+            self.advanceOne();
+            if (!self.tokenIs(.ampersand)) {
+                try self.diags.add(self.tokenLocation(), .syntax, "expected '&' after '$' in for binding", .{});
+                return SyntaxerError.ExpectedAmpersand;
+            }
+            item_mode = .by_mut_borrow;
+            self.advanceOne();
+        } else if (self.tokenIs(.ampersand)) {
+            item_mode = .by_borrow;
+            self.advanceOne();
+        }
         const item_name = try self.parseName();
         if (!self.tokenIs(.keyword_in)) return SyntaxerError.ExpectedKeywordIn;
         self.advanceOne();
         const iterable = try self.parseExpression();
         const body = try self.parseCodeBlock();
         return try self.makeNode(.{ .for_statement = .{
+            .item_mode = item_mode,
             .item_name = item_name,
             .iterable = iterable,
             .body = body,

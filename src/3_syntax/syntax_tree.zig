@@ -325,9 +325,16 @@ pub const WhileStatement = struct {
 };
 
 pub const ForStatement = struct {
+    item_mode: ForBindingMode,
     item_name: Name,
     iterable: *STNode,
     body: *STNode,
+};
+
+pub const ForBindingMode = enum {
+    by_value,
+    by_borrow,
+    by_mut_borrow,
 };
 
 pub const MatchStatement = struct {

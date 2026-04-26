@@ -1455,6 +1455,12 @@ test "feature_tests/collections/20_dynamic_array_borrowed_index_mutable" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/collections/21_dynamic_array_value_index_string" {
+    const test_path = "tests/feature_tests/collections/21_dynamic_array_value_index_string";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/collections/22_dynamic_array_borrowed_index_string" {
     const test_path = "tests/feature_tests/collections/22_dynamic_array_borrowed_index_string";
     try expectSuccessfulBuild(test_path);
@@ -1475,6 +1481,18 @@ test "feature_tests/control_flow/12X_for_nullable_not_iterable" {
         \\      ^
         \\
     );
+}
+
+test "feature_tests/control_flow/13_for_borrowed_array" {
+    const test_path = "tests/feature_tests/control_flow/13_for_borrowed_array";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/control_flow/14_for_mut_borrowed_dynamic_array" {
+    const test_path = "tests/feature_tests/control_flow/14_for_mut_borrowed_dynamic_array";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
 }
 
 test "feature_tests/types/14X_errable_match_unknown_variant" {

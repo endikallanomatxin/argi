@@ -10890,10 +10890,27 @@ pub const Semantizer = struct {
         s: *Scope,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
+        const iterable_abstract_name = switch (f.item_mode) {
+            .by_value => "Iterable",
+            .by_borrow => "ROPointerIterable",
+            .by_mut_borrow => "RWPointerIterable",
+        };
+        const iterator_ctor_name = switch (f.item_mode) {
+            .by_value => "to_iterator",
+            .by_borrow => "to_ro_pointer_iterator",
+            .by_mut_borrow => "to_rw_pointer_iterator",
+        };
+        const iterator_next_name = "next";
+        const iterable_needs_mutability = switch (f.item_mode) {
+            .by_mut_borrow => true,
+            else => false,
+        };
         const iterable_copyable = typ.isTypeCopyable(iterable_ty, s);
         const iterable_name = try self.makeSyntheticName("iterable");
         const iterator_name = try self.makeSyntheticName("iterator");
-        const iterable_direct_ok = iterable_ty == .pointer_type and abs.typeImplementsAbstract("Iterable", iterable_ty.pointer_type.child.*, s);
+        const iterable_direct_ok = iterable_ty == .pointer_type and
+            (!iterable_needs_mutability or iterable_ty.pointer_type.mutability == .read_write) and
+            abs.typeImplementsAbstract(iterable_abstract_name, iterable_ty.pointer_type.child.*, s);
 
         const iterable_ident = if (iterable_copyable and f.iterable.*.content != .identifier)
             try self.makeSynNode(.{ .identifier = iterable_name }, loc)
@@ -10910,14 +10927,14 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        if (!abs.typeImplementsAbstract("Iterable", iterable_ty, s) and !iterable_direct_ok) {
+        if (!abs.typeImplementsAbstract(iterable_abstract_name, iterable_ty, s) and !iterable_direct_ok) {
             const iterable_ty_text = try self.formatTypeText(iterable_ty, s);
             defer iterable_ty_text.deinit();
             try self.diags.add(
                 loc,
                 .semantic,
-                "for expects a type implementing abstract 'Iterable', got '{s}'",
-                .{iterable_ty_text.bytes},
+                "for expects a type implementing abstract '{s}', got '{s}'",
+                .{ iterable_abstract_name, iterable_ty_text.bytes },
             );
             return error.Reported;
         }
@@ -10927,17 +10944,17 @@ pub const Semantizer = struct {
             .name = .{ .string = "value", .location = loc },
             .value = if (iterable_direct_ok)
                 iterable_ident
-            else
+                else
                 try self.makeSynNode(.{ .address_of = .{
                     .value = iterable_ident,
-                    .mutability = .read_only,
+                    .mutability = if (iterable_needs_mutability) .read_write else .read_only,
                 } }, loc),
         };
         const to_iterator_arg = try self.makeSynNode(.{ .struct_value_literal = .{
             .fields = to_iterator_fields,
         } }, loc);
         const to_iterator_call = try self.makeSynNode(.{ .function_call = .{
-            .callee = "to_iterator",
+            .callee = iterator_ctor_name,
             .callee_loc = loc,
             .module_qualifier = null,
             .type_arguments = null,
@@ -10956,7 +10973,7 @@ pub const Semantizer = struct {
                 .name = iterable_name,
                 .location = loc,
                 .origin_file = loc.file,
-                .mutability = .constant,
+                .mutability = if (iterable_needs_mutability) .variable else .constant,
                 .ty = iterable_ty,
                 .initialization = null,
             };
@@ -10971,8 +10988,8 @@ pub const Semantizer = struct {
             try self.diags.add(
                 loc,
                 .semantic,
-                "for expects 'to_iterator(.value = &...)' to return a type implementing abstract 'Iterator', got '{s}'",
-                .{iterator_ty.bytes},
+                "for expects '{s}(.value = ...)' to return a type implementing abstract '{s}', got '{s}'",
+                .{ iterator_ctor_name, "Iterator", iterator_ty.bytes },
             );
             return error.Reported;
         }
@@ -11020,7 +11037,7 @@ pub const Semantizer = struct {
             .fields = next_fields,
         } }, loc);
         const next_call = try self.makeSynNode(.{ .function_call = .{
-            .callee = "next",
+            .callee = iterator_next_name,
             .callee_loc = loc,
             .module_qualifier = null,
             .type_arguments = null,
