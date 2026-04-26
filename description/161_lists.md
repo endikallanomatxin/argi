@@ -63,6 +63,25 @@ This is deliberate. `arr[i]` should keep meaning “produce a value under the
 normal copy rules”, while borrowed indexing remains explicit through `&place`
 and `$&place`.
 
+Iteration follows the same access-mode split, but at the iterable layer rather
+than the iterator layer:
+
+- `Iterable#(.t: T)` for `for item in arr`
+- `ROPointerIterable#(.t: T)` for `for & item in arr`
+- `RWPointerIterable#(.t: T)` for `for $& item in arr`
+
+The iterator contract itself stays unified:
+
+```rg
+Iterator#(.t: T)
+```
+
+That means borrowed iteration still uses `next(...)`, but on iterators whose
+item type is `&T` or `$&T`.
+
+Transfer-style iteration and `for ~ item in arr` remain deferred beyond the
+0.1 cut.
+
 
 #### LengthedArray (capacidad fija en stack, len runtime)
 

@@ -160,16 +160,35 @@ Iterable#(.t: Type) : Abstract = (
     to_iterator(.value: &Self) -> (.iterator: Iterator#(.t: t))
 )
 
+ROPointerIterable#(.t: Type) : Abstract = (
+    to_ro_pointer_iterator(.value: &Self) -> (.iterator: Iterator#(.t: &t))
+)
+
+RWPointerIterable#(.t: Type) : Abstract = (
+    to_rw_pointer_iterator(.value: $&Self) -> (.iterator: Iterator#(.t: $&t))
+)
+
 Iterator#(.t: Type) : Abstract = (
     has_next(.self: &Self) -> (.ok: Bool)
     next(.self: $&Self) -> (.value: t)
 )
 ```
 
-En rust hay tres tipos: iter (inmutable), iter_mut (mutable), into_iter(pasando ownership)
+La decisión de diseño es mantener un único abstract `Iterator`. Lo que cambia
+según el modo de iteración no es la interfaz del iterador, sino el abstract
+`Iterable` que la colección decide implementar.
 
-Eso puede modelarse más adelante con multiple dispatch y tipos distintos de
-iterador, pero la base actual es solo `Iterable` + `Iterator`.
+Eso deja el modelo así:
+
+- `Iterable#(.t: T)` para `for item in value`
+- `ROPointerIterable#(.t: T)` para `for & item in value`
+- `RWPointerIterable#(.t: T)` para `for $& item in value`
+
+Cada uno construye un `Iterator`, pero con distinto tipo de elemento:
+
+- `Iterator#(.t: T)` para iteración por valor
+- `Iterator#(.t: &T)` para iteración prestada read-only
+- `Iterator#(.t: $&T)` para iteración prestada mutable
 
 Nota conceptual útil: en Rust el `for` sigue siendo uno solo, pero el modo de
 iteración lo decide el tipo de la expresión que se le pasa.
@@ -207,9 +226,24 @@ for ~ item in arr {
 }
 ```
 
-Eso debería comportarse como el análogo en `for` de `place`, `&place`,
-`$&place` y `~place`, pero sigue siendo un paso posterior a la baseline actual
-de iteradores de 0.1.
+Eso debe comportarse como el análogo en `for` de `place`, `&place`, `$&place`
+y `~place`.
+
+Para `0.1`, el recorte implementado se centra en:
+
+- `for item in value`
+- `for & item in value`
+- `for $& item in value`
+
+La iteración por transferencia:
+
+```rg
+for ~ item in value {
+}
+```
+
+se deja explícitamente para `0.2`, porque necesita cerrar mejor la semántica de
+consumo de colecciones e iteradores.
 
 Se puede hacer igual también que las funciones map(), filter() y demás tengan versiones que consumen iteradores (para lazy evaluation) o listas.
 _(Pensar en una forma de que esto sirva para vectorizar funciones. Que si la función llamada tiene una versión vector la tome, si no elemento a elemento)_
@@ -228,7 +262,9 @@ MyTypeIterator : Type = (
 )
 
 MyType implements Iterable#(.t: Int)
+MyType implements ROPointerIterable#(.t: Int)
 MyTypeIterator implements Iterator#(.t: Int)
+MyTypeROIterator implements Iterator#(.t: &Int)
 
 to_iterator(.value: &MyType) -> (.iterator: MyTypeIterator) := {
     iterator = (
@@ -249,6 +285,17 @@ next(.self: $&MyTypeIterator) -> (.value: Int) := {
         .index = current_index + 1,
     )
 }
+
+to_ro_pointer_iterator(.value: &MyType) -> (.iterator: MyTypeROIterator) := {
+    iterator = (
+        .data = value,
+        .index = 0,
+    )
+}
+
+next(.self: $&MyTypeROIterator) -> (.value: &Int) := {
+    -- devolvería una referencia al elemento actual
+}
 ```
 
 
@@ -266,7 +313,11 @@ while has_next(.self = &it) {
 }
 ```
 
-El `for` debe tragar un `Iterable`.
+El `for` debe tragar un `Iterable` del modo adecuado:
+
+- `for item in x` requiere `Iterable`
+- `for & item in x` requiere `ROPointerIterable`
+- `for $& item in x` requiere `RWPointerIterable`
 
 Ideas:
 - Concatenar iteradores con comas: `Range(.start = 1, .end = 5), Range(.start = 80, .end = 92)`
