@@ -344,9 +344,7 @@ insert_growing #(.t: Type) (
 operator get[] #(.t: Type) (
     .self: &DynamicArray#(.t: t),
     .index: UIntNative,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.value: t) := {
-    _ ::= allocator
     addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
     ptr : &t = cast#(.to: &t)(.value = addr)
     value = ptr&
