@@ -3,6 +3,7 @@ const json = std.json;
 const log = std.log.scoped(.argi_lsp);
 
 const service = @import("lsp_service.zig");
+const argi_version = @import("version.zig");
 
 const AllocError = std.mem.Allocator.Error;
 
@@ -373,7 +374,7 @@ const LanguageServer = struct {
         try stream.objectField("name");
         try stream.write("argi");
         try stream.objectField("version");
-        try stream.write("0.1.0");
+        try stream.write(argi_version.current);
         try stream.endObject();
         try stream.endObject();
         try stream.endObject();

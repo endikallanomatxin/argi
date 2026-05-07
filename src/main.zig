@@ -4,6 +4,7 @@ const init_cmd = @import("0_commands/init.zig");
 const lsp_cmd = @import("0_commands/lsp.zig");
 const run_cmd = @import("0_commands/run.zig");
 const test_cmd = @import("0_commands/test.zig");
+const argi_version = @import("0_commands/version.zig");
 
 fn exitCommandError(prefix: []const u8, err: anyerror) noreturn {
     if (err != error.CompilationFailed) {
@@ -20,6 +21,7 @@ fn printHelp() void {
     std.debug.print("  test <directory> [--filter <name>]     Build and run native Argi tests\n", .{});
     std.debug.print("  init <project|module> <directory>      Create a starter scaffold\n", .{});
     std.debug.print("  lsp                                    Start the language server\n", .{});
+    std.debug.print("  version                                Show the Argi version\n", .{});
     std.debug.print("  help                                   Show this help\n", .{});
     std.debug.print("\nBuild flags:\n", .{});
     std.debug.print("  --output <path>                        Write the final binary there\n", .{});
@@ -40,6 +42,12 @@ fn isHelpArg(arg: []const u8) bool {
         std.mem.eql(u8, arg, "-h");
 }
 
+fn isVersionArg(arg: []const u8) bool {
+    return std.mem.eql(u8, arg, "version") or
+        std.mem.eql(u8, arg, "--version") or
+        std.mem.eql(u8, arg, "-V");
+}
+
 pub fn main() !void {
     const args = std.process.argsAlloc(std.heap.page_allocator) catch return;
     defer std.process.argsFree(std.heap.page_allocator, args);
@@ -50,6 +58,11 @@ pub fn main() !void {
     }
 
     const command = args[1];
+
+    if (isVersionArg(command)) {
+        std.debug.print("argi {s}\n", .{argi_version.current});
+        return;
+    }
 
     if (std.mem.eql(u8, command, "build")) {
         if (args.len < 3) {

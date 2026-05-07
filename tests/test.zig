@@ -2918,7 +2918,17 @@ test "argi help lists supported 0.1 commands" {
     try expect(std.mem.indexOf(u8, result.stderr, "test <directory> [--filter <name>]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "init <project|module> <directory>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "lsp") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "version") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "format") == null);
+}
+
+test "argi version reports current release" {
+    const result = try runArgiCommand(&.{"version"});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
+    try expectEqualStrings("argi 0.1.0\n", result.stderr);
 }
 
 test "argi unknown command exits with help" {

@@ -1,4 +1,5 @@
 const std = @import("std");
+const argi_version = @import("version.zig");
 
 pub const InitKind = enum {
     project,
@@ -120,11 +121,12 @@ fn manifestTemplate(allocator: std.mem.Allocator, package_name: []const u8, kind
     return std.fmt.allocPrint(
         allocator,
         \\name = "{s}"
-        \\version = "0.1.0"
+        \\version = "0.0.0"
         \\kind = "{s}"
+        \\minimum_argi_version = "{s}"
         \\
         ,
-        .{ package_name, kind },
+        .{ package_name, kind, argi_version.current },
     );
 }
 
@@ -180,6 +182,12 @@ fn expectFileMissing(path: []const u8) !void {
     return error.UnexpectedFile;
 }
 
+fn expectFileContains(path: []const u8, expected: []const u8) !void {
+    const text = try std.fs.cwd().readFileAlloc(std.testing.allocator, path, 1024 * 1024);
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, expected) != null);
+}
+
 test "init module scaffolds minimal files" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
@@ -204,6 +212,8 @@ test "init module scaffolds minimal files" {
     try expectFileExists(manifest);
     try expectFileExists(gitignore);
     try expectFileMissing(main_path);
+    try expectFileContains(manifest, "version = \"0.0.0\"\n");
+    try expectFileContains(manifest, "minimum_argi_version = \"0.1.0\"\n");
 }
 
 test "init project scaffolds basic layout" {
@@ -233,4 +243,6 @@ test "init project scaffolds basic layout" {
     try expectFileExists(gitignore);
     try expectFileMissing(public_dir);
     try expectFileMissing(private_dir);
+    try expectFileContains(manifest, "version = \"0.0.0\"\n");
+    try expectFileContains(manifest, "minimum_argi_version = \"0.1.0\"\n");
 }
