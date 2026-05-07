@@ -1455,6 +1455,12 @@ test "feature_tests/collections/20_dynamic_array_borrowed_index_mutable" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/collections/21_index_operator_reached_default" {
+    const test_path = "tests/feature_tests/collections/21_index_operator_reached_default";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
 test "feature_tests/collections/22_dynamic_array_borrowed_index_string" {
     const test_path = "tests/feature_tests/collections/22_dynamic_array_borrowed_index_string";
     try expectSuccessfulBuild(test_path);
