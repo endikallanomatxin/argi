@@ -2879,6 +2879,33 @@ test "feature_tests/testing/11_expected_error_unexpected_ok" {
     );
 }
 
+test "feature_tests/testing/12_language_regression_slice" {
+    try argiTestExpectStderr(
+        "tests/feature_tests/testing/12_language_regression_slice",
+        &.{},
+        0,
+        "PASS language_regression_slice\n",
+    );
+}
+
+test "feature_tests/testing/13_collections_text_regression_slice" {
+    try argiTestExpectStderr(
+        "tests/feature_tests/testing/13_collections_text_regression_slice",
+        &.{},
+        0,
+        "PASS collections_text_array_slice\nPASS collections_text_format_slice\n",
+    );
+}
+
+test "feature_tests/testing/14_core_path_regression_slice" {
+    try argiTestExpectStderr(
+        "tests/feature_tests/testing/14_core_path_regression_slice",
+        &.{},
+        0,
+        "PASS core_path_regression_slice\n",
+    );
+}
+
 test "argi test rejects missing filter value" {
     const result = try runArgiCommand(&.{ "test", "tests/feature_tests/testing/01_simple_pass", "--filter" });
     defer std.testing.allocator.free(result.stdout);
