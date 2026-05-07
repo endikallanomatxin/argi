@@ -28,7 +28,8 @@ It’s an early work-in-progress.
 - ❓ Errable and Nullable types.
 - 📚 Batteries included. Two official module libraries: Minimalist `core` and
 maximalist `more`.
-- 🛠️ Great tooling (official formatter, lsp...).
+- 🛠️ Tooling for building, testing, scaffolding, LSP, and a planned formatter
+  (not in 0.1 yet).
 
 
 ## Repository structure
@@ -111,8 +112,8 @@ PATH) to run it from anywhere:
 ln -s "$(pwd)/zig-out/bin/argi" ~/.local/bin/argi
 ```
 
-That way the editor will be able to find the tool for formatting and LSP
-features, and you can run it from anywhere in the terminal as well.
+That way the editor will be able to find the tool for LSP features, and you can
+run it from anywhere in the terminal as well.
 
 
 Also, for recompiling and using the tool directly, you can run:

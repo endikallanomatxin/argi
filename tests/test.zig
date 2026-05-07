@@ -2906,6 +2906,31 @@ test "feature_tests/testing/14_core_path_regression_slice" {
     );
 }
 
+test "argi help lists supported 0.1 commands" {
+    const result = try runArgiCommand(&.{"help"});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "Usage: argi <command> [arguments] [options]\n") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "build <directory> [flags]") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "run <directory> [build flags]") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "test <directory> [--filter <name>]") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "init <project|module> <directory>") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "lsp") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "format") == null);
+}
+
+test "argi unknown command exits with help" {
+    const result = try runArgiCommand(&.{"format"});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "Error: unknown command 'format'\n") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "Usage: argi <command> [arguments] [options]\n") != null);
+}
+
 test "argi test rejects missing filter value" {
     const result = try runArgiCommand(&.{ "test", "tests/feature_tests/testing/01_simple_pass", "--filter" });
     defer std.testing.allocator.free(result.stdout);
