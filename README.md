@@ -59,6 +59,22 @@ Start the language server:
 argi lsp
 ```
 
+### Scaffolding
+
+Create a package manifest and basic ignore files for an importable folder
+module:
+
+```sh
+argi init module my_module
+```
+
+Create a package manifest and a minimal application entrypoint:
+
+```sh
+argi init project my_project
+argi build my_project/source/entrypoints/main
+```
+
 
 ## Installation
 
