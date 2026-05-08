@@ -15,6 +15,16 @@ const ResolvedImport = struct {
     resolved_dir: []u8,
 };
 
+pub const CoreResolutionOptions = struct {
+    explicit_sysroot: ?[]const u8 = null,
+    fallback_core_dir: []const u8 = "core",
+};
+
+const CoreCandidate = struct {
+    label: []const u8,
+    path: []u8,
+};
+
 fn dirExists(path: []const u8) bool {
     var dir = std.fs.cwd().openDir(path, .{}) catch return false;
     dir.close();
@@ -67,18 +77,75 @@ fn firstExistingDir(
     return error.FileNotFound;
 }
 
-fn resolveToolCoreDir(alloc: *const std.mem.Allocator, preferred: []const u8) ![]u8 {
+fn appendSysrootCoreCandidate(
+    alloc: *const std.mem.Allocator,
+    candidates: *std.array_list.Managed(CoreCandidate),
+    label: []const u8,
+    sysroot: []const u8,
+) !void {
+    try candidates.append(.{
+        .label = label,
+        .path = try std.fs.path.resolve(alloc.*, &.{ sysroot, "lib", "argi", "core" }),
+    });
+}
+
+fn appendSelfExeCoreCandidate(
+    alloc: *const std.mem.Allocator,
+    candidates: *std.array_list.Managed(CoreCandidate),
+) !void {
     const exe_dir = try std.fs.selfExeDirPathAlloc(alloc.*);
     defer alloc.free(exe_dir);
 
-    const bundled_core = try std.fs.path.resolve(alloc.*, &.{ exe_dir, "..", "..", "core" });
-    defer alloc.free(bundled_core);
-
-    return try firstExistingDir(alloc, &.{
-        preferred,
-        "core",
-        bundled_core,
+    try candidates.append(.{
+        .label = "self executable",
+        .path = try std.fs.path.resolve(alloc.*, &.{ exe_dir, "..", "lib", "argi", "core" }),
     });
+}
+
+fn printCoreResolutionFailure(candidates: []const CoreCandidate) void {
+    std.debug.print("cannot find Argi core library\n", .{});
+    std.debug.print("tried:\n", .{});
+    for (candidates) |candidate| {
+        std.debug.print("  - {s}: {s}\n", .{ candidate.label, candidate.path });
+    }
+    std.debug.print("use --sysroot <path> or ARGI_SYSROOT to point at an Argi installation prefix\n", .{});
+}
+
+fn freeCoreCandidates(alloc: *const std.mem.Allocator, candidates: *std.array_list.Managed(CoreCandidate)) void {
+    for (candidates.items) |candidate| alloc.free(candidate.path);
+    candidates.deinit();
+}
+
+pub fn resolveToolCoreDir(
+    alloc: *const std.mem.Allocator,
+    options: CoreResolutionOptions,
+) ![]u8 {
+    var candidates = std.array_list.Managed(CoreCandidate).init(alloc.*);
+    defer freeCoreCandidates(alloc, &candidates);
+
+    if (options.explicit_sysroot) |sysroot| {
+        try appendSysrootCoreCandidate(alloc, &candidates, "--sysroot", sysroot);
+    }
+
+    if (std.process.getEnvVarOwned(alloc.*, "ARGI_SYSROOT") catch null) |env_sysroot| {
+        defer alloc.free(env_sysroot);
+        try appendSysrootCoreCandidate(alloc, &candidates, "ARGI_SYSROOT", env_sysroot);
+    }
+
+    try appendSelfExeCoreCandidate(alloc, &candidates);
+
+    try candidates.append(.{
+        .label = "development fallback",
+        .path = try std.fs.path.resolve(alloc.*, &.{options.fallback_core_dir}),
+    });
+
+    for (candidates.items) |candidate| {
+        if (!dirExists(candidate.path)) continue;
+        return try alloc.dupe(u8, candidate.path);
+    }
+
+    printCoreResolutionFailure(candidates.items);
+    return error.CoreNotFound;
 }
 
 fn resolveToolMoreDir(alloc: *const std.mem.Allocator) ![]u8 {
@@ -417,15 +484,37 @@ pub fn collect(
     return try collectWithEntrySource(alloc, core_dir, user_path, entry_source.code);
 }
 
+pub fn collectWithOptions(
+    alloc: *const std.mem.Allocator,
+    options: CoreResolutionOptions,
+    user_path: []const u8,
+) !std.array_list.Managed(SourceFile) {
+    const entry_source = try readFile(alloc, user_path);
+    defer {
+        alloc.free(entry_source.path);
+        alloc.free(entry_source.code);
+    }
+
+    return try collectWithEntrySourceWithOptions(alloc, options, user_path, entry_source.code);
+}
+
 pub fn collectModule(
     alloc: *const std.mem.Allocator,
     core_dir: []const u8,
     module_dir: []const u8,
 ) !std.array_list.Managed(SourceFile) {
+    return try collectModuleWithOptions(alloc, .{ .fallback_core_dir = core_dir }, module_dir);
+}
+
+pub fn collectModuleWithOptions(
+    alloc: *const std.mem.Allocator,
+    options: CoreResolutionOptions,
+    module_dir: []const u8,
+) !std.array_list.Managed(SourceFile) {
     var list = std.array_list.Managed(SourceFile).init(alloc.*);
     errdefer freeList(alloc, &list);
 
-    const resolved_core_dir = try resolveToolCoreDir(alloc, core_dir);
+    const resolved_core_dir = try resolveToolCoreDir(alloc, options);
     defer alloc.free(resolved_core_dir);
     const resolved_module_dir = try std.fs.path.resolve(alloc.*, &.{module_dir});
     defer alloc.free(resolved_module_dir);
@@ -488,10 +577,24 @@ pub fn collectWithEntrySource(
     user_path: []const u8,
     user_code: []const u8,
 ) !std.array_list.Managed(SourceFile) {
+    return try collectWithEntrySourceWithOptions(
+        alloc,
+        .{ .fallback_core_dir = core_dir },
+        user_path,
+        user_code,
+    );
+}
+
+pub fn collectWithEntrySourceWithOptions(
+    alloc: *const std.mem.Allocator,
+    options: CoreResolutionOptions,
+    user_path: []const u8,
+    user_code: []const u8,
+) !std.array_list.Managed(SourceFile) {
     var list = std.array_list.Managed(SourceFile).init(alloc.*);
     errdefer freeList(alloc, &list);
 
-    const resolved_core_dir = try resolveToolCoreDir(alloc, core_dir);
+    const resolved_core_dir = try resolveToolCoreDir(alloc, options);
     defer alloc.free(resolved_core_dir);
     const entry_source = SourceFile{
         .path = try alloc.dupe(u8, user_path),

@@ -96,7 +96,8 @@ pub fn run(args: []const []const u8) !u8 {
     const allocator = arena.allocator();
 
     const module_dir = try build_cmd.resolveBuildModuleDir(allocator, parsed.target);
-    const testing_module_dir = try std.fs.path.resolve(allocator, &.{"core/testing"});
+    const core_dir = try sf.resolveToolCoreDir(&allocator, .{});
+    const testing_module_dir = try std.fs.path.join(allocator, &.{ core_dir, "testing" });
     const discovered = try discoverTests(allocator, module_dir);
 
     var ran_any = false;
