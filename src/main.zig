@@ -18,7 +18,7 @@ fn printHelp() void {
     std.debug.print("\nCommands:\n", .{});
     std.debug.print("  build <directory> [flags]              Compile a folder module to a binary\n", .{});
     std.debug.print("  run <directory> [build flags]          Build a folder module and run it\n", .{});
-    std.debug.print("  test <directory> [--filter <name>]     Build and run native Argi tests\n", .{});
+    std.debug.print("  test <directory> [flags]               Build and run native Argi tests\n", .{});
     std.debug.print("  init <project|module> <directory>      Create a starter scaffold\n", .{});
     std.debug.print("  lsp                                    Start the language server\n", .{});
     std.debug.print("  version                                Show the Argi version\n", .{});
@@ -28,7 +28,10 @@ fn printHelp() void {
     std.debug.print("  --emit-llvm <path>                     Write the emitted LLVM IR there\n", .{});
     std.debug.print("  --emit-obj <path>                      Write the object file there as an extra output\n", .{});
     std.debug.print("  --just-emit-obj <path>                 Emit an object file there and skip final linking\n", .{});
+    std.debug.print("  --sysroot <path>                       Use an Argi installation prefix for core\n", .{});
     std.debug.print("  --time-phases                          Print compilation timings by phase\n", .{});
+    std.debug.print("\nTest flags:\n", .{});
+    std.debug.print("  --filter <name>                        Run only tests whose name contains this text\n", .{});
     std.debug.print("\nBuild diagnostic flags:\n", .{});
     std.debug.print("  --on-build-error-show-cascade          Print all cascading diagnostics\n", .{});
     std.debug.print("  --on-build-error-show-syntax-tree      Print the syntax tree\n", .{});

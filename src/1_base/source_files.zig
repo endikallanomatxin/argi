@@ -125,19 +125,19 @@ pub fn resolveToolCoreDir(
 
     if (options.explicit_sysroot) |sysroot| {
         try appendSysrootCoreCandidate(alloc, &candidates, "--sysroot", sysroot);
+    } else {
+        if (std.process.getEnvVarOwned(alloc.*, "ARGI_SYSROOT") catch null) |env_sysroot| {
+            defer alloc.free(env_sysroot);
+            try appendSysrootCoreCandidate(alloc, &candidates, "ARGI_SYSROOT", env_sysroot);
+        }
+
+        try appendSelfExeCoreCandidate(alloc, &candidates);
+
+        try candidates.append(.{
+            .label = "development fallback",
+            .path = try std.fs.path.resolve(alloc.*, &.{options.fallback_core_dir}),
+        });
     }
-
-    if (std.process.getEnvVarOwned(alloc.*, "ARGI_SYSROOT") catch null) |env_sysroot| {
-        defer alloc.free(env_sysroot);
-        try appendSysrootCoreCandidate(alloc, &candidates, "ARGI_SYSROOT", env_sysroot);
-    }
-
-    try appendSelfExeCoreCandidate(alloc, &candidates);
-
-    try candidates.append(.{
-        .label = "development fallback",
-        .path = try std.fs.path.resolve(alloc.*, &.{options.fallback_core_dir}),
-    });
 
     for (candidates.items) |candidate| {
         if (!dirExists(candidate.path)) continue;

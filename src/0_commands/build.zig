@@ -22,6 +22,7 @@ pub const BuildFlags = struct {
     llvm_ir_path: ?[]const u8 = null,
     object_path: ?[]const u8 = null,
     just_object_path: ?[]const u8 = null,
+    sysroot_path: ?[]const u8 = null,
 };
 
 pub const CompileOptions = struct {
@@ -82,6 +83,10 @@ fn parseFlags(args: []const []const u8) !BuildFlags {
             idx += 1;
             if (idx >= args.len) return error.MissingFlagValue;
             flags.just_object_path = args[idx];
+        } else if (std.mem.eql(u8, a, "--sysroot")) {
+            idx += 1;
+            if (idx >= args.len) return error.MissingFlagValue;
+            flags.sysroot_path = args[idx];
         }
     }
     if (flags.object_path != null and flags.just_object_path != null) return error.ConflictingObjectEmissionModes;
@@ -215,7 +220,9 @@ pub fn compileTarget(target_path: []const u8, flags: BuildFlags, options: Compil
 
     // 1. Reunir ficheros ──────────────────────────────────────────────────
     const collect_start = std.time.nanoTimestamp();
-    const files = try sf.collectModule(&allocator, "core", module_dir);
+    const files = try sf.collectModuleWithOptions(&allocator, .{
+        .explicit_sysroot = flags.sysroot_path,
+    }, module_dir);
     timings.collect_files_ns = elapsedSince(collect_start);
 
     // 2. Diagnósticos globales ────────────────────────────────────────────
@@ -418,6 +425,8 @@ test "parse build flags keeps diagnostics toggles and output paths" {
         "ir/app.ll",
         "--emit-obj",
         "obj/app.o",
+        "--sysroot",
+        "/opt/argi",
     });
 
     try std.testing.expect(flags.show_cascade);
@@ -426,11 +435,13 @@ test "parse build flags keeps diagnostics toggles and output paths" {
     try std.testing.expectEqualStrings("bin/app", flags.output_path.?);
     try std.testing.expectEqualStrings("ir/app.ll", flags.llvm_ir_path.?);
     try std.testing.expectEqualStrings("obj/app.o", flags.object_path.?);
+    try std.testing.expectEqualStrings("/opt/argi", flags.sysroot_path.?);
     try std.testing.expect(flags.just_object_path == null);
 }
 
 test "parse build flags rejects missing path value" {
     try std.testing.expectError(error.MissingFlagValue, parseFlags(&.{"--output"}));
+    try std.testing.expectError(error.MissingFlagValue, parseFlags(&.{"--sysroot"}));
 }
 
 test "parse build flags keeps just emit obj path" {

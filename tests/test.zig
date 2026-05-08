@@ -2915,7 +2915,9 @@ test "argi help lists supported 0.1 commands" {
     try expect(std.mem.indexOf(u8, result.stderr, "Usage: argi <command> [arguments] [options]\n") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "build <directory> [flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "run <directory> [build flags]") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "test <directory> [--filter <name>]") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "test <directory> [flags]") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "--sysroot <path>") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "--filter <name>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "init <project|module> <directory>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "lsp") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "version") != null);
@@ -2948,6 +2950,41 @@ test "argi test rejects missing filter value" {
 
     try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
     try expectEqualStrings("Test error: MissingFlagValue\n", result.stderr);
+}
+
+test "argi build rejects missing sysroot value" {
+    const result = try runArgiCommand(&.{ "build", "tests/feature_tests/basics/01_minimal_main", "--sysroot" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqualStrings("Build error: MissingFlagValue\n", result.stderr);
+}
+
+test "argi test rejects missing sysroot value" {
+    const result = try runArgiCommand(&.{ "test", "tests/feature_tests/testing/01_simple_pass", "--sysroot" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqualStrings("Test error: MissingFlagValue\n", result.stderr);
+}
+
+test "argi build reports invalid sysroot core lookup" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const sysroot = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(sysroot);
+
+    const result = try runArgiCommand(&.{ "build", "tests/feature_tests/basics/01_minimal_main", "--sysroot", sysroot });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "cannot find Argi core library") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "--sysroot") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "ARGI_SYSROOT") != null);
 }
 
 test "argi test rejects unknown flag" {

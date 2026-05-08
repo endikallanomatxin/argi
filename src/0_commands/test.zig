@@ -14,6 +14,7 @@ const DiscoverTest = struct {
 const ParsedArgs = struct {
     target: []const u8,
     filter: ?[]const u8 = null,
+    sysroot_path: ?[]const u8 = null,
 };
 
 fn parseArgs(args: []const []const u8) !ParsedArgs {
@@ -28,13 +29,23 @@ fn parseArgs(args: []const []const u8) !ParsedArgs {
             parsed.filter = args[idx];
             continue;
         }
+        if (std.mem.eql(u8, args[idx], "--sysroot")) {
+            idx += 1;
+            if (idx >= args.len) return error.MissingFlagValue;
+            parsed.sysroot_path = args[idx];
+            continue;
+        }
         return error.UnknownFlag;
     }
     return parsed;
 }
 
-fn discoverTests(allocator: std.mem.Allocator, module_dir: []const u8) ![]DiscoverTest {
-    const files = try sf.collectModule(&allocator, "core", module_dir);
+fn discoverTests(
+    allocator: std.mem.Allocator,
+    options: sf.CoreResolutionOptions,
+    module_dir: []const u8,
+) ![]DiscoverTest {
+    const files = try sf.collectModuleWithOptions(&allocator, options, module_dir);
     var diagnostics = diag.Diagnostics.init(&allocator, files.items);
 
     var pipeline = frontend.FrontendPipeline.init(&allocator, &diagnostics, .{});
@@ -96,9 +107,12 @@ pub fn run(args: []const []const u8) !u8 {
     const allocator = arena.allocator();
 
     const module_dir = try build_cmd.resolveBuildModuleDir(allocator, parsed.target);
-    const core_dir = try sf.resolveToolCoreDir(&allocator, .{});
+    const core_options = sf.CoreResolutionOptions{
+        .explicit_sysroot = parsed.sysroot_path,
+    };
+    const core_dir = try sf.resolveToolCoreDir(&allocator, core_options);
     const testing_module_dir = try std.fs.path.join(allocator, &.{ core_dir, "testing" });
-    const discovered = try discoverTests(allocator, module_dir);
+    const discovered = try discoverTests(allocator, core_options, module_dir);
 
     var ran_any = false;
     var had_failure = false;
@@ -112,6 +126,7 @@ pub fn run(args: []const []const u8) !u8 {
         const output_path = try outputPathForTest(allocator, module_dir, test_decl.name);
         const flags = build_cmd.BuildFlags{
             .output_path = output_path,
+            .sysroot_path = parsed.sysroot_path,
         };
 
         build_cmd.compileTarget(module_dir, flags, .{
