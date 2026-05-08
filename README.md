@@ -97,23 +97,51 @@ If these variables are set `llvm-config` will not be executed.
 
 ### Compilation
 
-To build the tool:
+To build the tool in the repository-local `zig-out/` prefix:
 
 ```sh
 zig build
 ```
 
-That will create a binary called `argi` in the `zig-out/bin/` directory.
+That creates:
 
-Yo can create a symlink to it in your `~/.local/bin/` (or any directory in your
-PATH) to run it from anywhere:
-
-```bash
-ln -s "$(pwd)/zig-out/bin/argi" ~/.local/bin/argi
+```text
+zig-out/
+├── bin/
+│   └── argi
+└── lib/
+    └── argi/
+        └── core/
 ```
 
-That way the editor will be able to find the tool for LSP features, and you can
-run it from anywhere in the terminal as well.
+For a normal user installation, install into a prefix such as `~/.local`:
+
+```sh
+zig build -p ~/.local
+```
+
+That installs:
+
+```text
+~/.local/
+├── bin/
+│   └── argi
+└── lib/
+    └── argi/
+        └── core/
+```
+
+Make sure `~/.local/bin` is in your `PATH`:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+The compiler resolves the required `core` library from the installation prefix,
+so symlinking only the binary is not the recommended installation path.
+`ARGI_SYSROOT=/path/to/prefix` and `--sysroot /path/to/prefix` are available as
+development/debugging overrides when you need to point the compiler at a
+specific Argi installation prefix.
 
 
 Also, for recompiling and using the tool directly, you can run:
