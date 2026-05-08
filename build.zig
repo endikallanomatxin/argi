@@ -30,6 +30,11 @@ pub fn build(b: *std.Build) void {
     exe.linkSystemLibrary("c");
 
     b.installArtifact(exe);
+    b.installDirectory(.{
+        .source_dir = b.path("core"),
+        .install_dir = .prefix,
+        .install_subdir = "lib/argi/core",
+    });
 
     //
     // INSTALL AND RUN EXECUTABLE ---------------------------------------------
