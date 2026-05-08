@@ -105,6 +105,14 @@ fn runArgiCommandWithEnv(
     });
 }
 
+fn runChildInCwd(argv: []const []const u8, cwd: []const u8) !std.process.Child.RunResult {
+    return std.process.Child.run(.{
+        .allocator = std.testing.allocator,
+        .argv = argv,
+        .cwd = cwd,
+    });
+}
+
 fn buildResult(name: []const u8) !std.process.Child.RunResult {
     try clean(name);
     return runChild(&[_][]const u8{
@@ -3042,6 +3050,45 @@ test "argi build sysroot flag takes precedence over ARGI_SYSROOT" {
         &.{ "build", "tests/feature_tests/basics/01_minimal_main", "--sysroot", good_sysroot },
         &env_map,
     );
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
+}
+
+test "installed argi finds core relative to installation prefix" {
+    var prefix_tmp = std.testing.tmpDir(.{});
+    defer prefix_tmp.cleanup();
+    const prefix = try prefix_tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(prefix);
+
+    const install_result = try runChild(&.{ "zig", "build", "-p", prefix });
+    defer std.testing.allocator.free(install_result.stdout);
+    defer std.testing.allocator.free(install_result.stderr);
+    try expectEqual(std.process.Child.Term{ .Exited = 0 }, install_result.term);
+
+    var module_tmp = std.testing.tmpDir(.{});
+    defer module_tmp.cleanup();
+    try module_tmp.dir.writeFile(.{
+        .sub_path = "main.rg",
+        .data =
+            \\main() -> (.status_code: Int32 = 0) := {
+            \\}
+            \\
+        ,
+    });
+    const module_dir = try module_tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(module_dir);
+
+    var outside_tmp = std.testing.tmpDir(.{});
+    defer outside_tmp.cleanup();
+    const outside_dir = try outside_tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(outside_dir);
+
+    const installed_argi = try std.fs.path.join(std.testing.allocator, &.{ prefix, "bin", "argi" });
+    defer std.testing.allocator.free(installed_argi);
+
+    const result = try runChildInCwd(&.{ installed_argi, "build", module_dir }, outside_dir);
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
