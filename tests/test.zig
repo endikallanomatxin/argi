@@ -85,6 +85,26 @@ fn runArgiCommand(args: []const []const u8) !std.process.Child.RunResult {
     return runChild(argv);
 }
 
+fn runArgiCommandWithEnv(
+    args: []const []const u8,
+    env_map: *const std.process.EnvMap,
+) !std.process.Child.RunResult {
+    const argv = try std.testing.allocator.alloc([]const u8, args.len + 1);
+    defer std.testing.allocator.free(argv);
+
+    argv[0] = argi_bin;
+    for (args, 0..) |arg, idx| {
+        argv[idx + 1] = arg;
+    }
+
+    return std.process.Child.run(.{
+        .allocator = std.testing.allocator,
+        .argv = argv,
+        .cwd = compilerRoot(),
+        .env_map = env_map,
+    });
+}
+
 fn buildResult(name: []const u8) !std.process.Child.RunResult {
     try clean(name);
     return runChild(&[_][]const u8{
@@ -2985,6 +3005,47 @@ test "argi build reports invalid sysroot core lookup" {
     try expect(std.mem.indexOf(u8, result.stderr, "cannot find Argi core library") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--sysroot") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "ARGI_SYSROOT") != null);
+}
+
+test "argi build uses ARGI_SYSROOT when flag is absent" {
+    const sysroot = try std.fs.path.join(std.testing.allocator, &.{ compilerRoot(), "zig-out" });
+    defer std.testing.allocator.free(sysroot);
+
+    var env_map = try std.process.getEnvMap(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("ARGI_SYSROOT", sysroot);
+
+    const result = try runArgiCommandWithEnv(
+        &.{ "build", "tests/feature_tests/basics/01_minimal_main" },
+        &env_map,
+    );
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
+}
+
+test "argi build sysroot flag takes precedence over ARGI_SYSROOT" {
+    const good_sysroot = try std.fs.path.join(std.testing.allocator, &.{ compilerRoot(), "zig-out" });
+    defer std.testing.allocator.free(good_sysroot);
+
+    var bad_tmp = std.testing.tmpDir(.{});
+    defer bad_tmp.cleanup();
+    const bad_sysroot = try bad_tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(bad_sysroot);
+
+    var env_map = try std.process.getEnvMap(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("ARGI_SYSROOT", bad_sysroot);
+
+    const result = try runArgiCommandWithEnv(
+        &.{ "build", "tests/feature_tests/basics/01_minimal_main", "--sysroot", good_sysroot },
+        &env_map,
+    );
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
 }
 
 test "argi test rejects unknown flag" {
