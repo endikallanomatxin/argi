@@ -79,20 +79,27 @@ argi build my_project/source/entrypoints/main
 
 ## Installation
 
+### Platform support
+
+Argi 0.1 is primarily tested on Linux and macOS.
+
+Windows is not an official 0.1 target yet.
+
+Building the compiler requires Zig 0.15.x and LLVM development files. The build
+script looks for `llvm-config`, or you can set:
+
+- `LLVM_INCLUDE_DIR`
+- `LLVM_LIB_DIR`
+- `LLVM_LIBS`
+
+Building Argi programs also requires a C compiler/linker. By default Argi uses
+`cc`. Set `CC=/path/to/compiler` to override it.
+
 ### Prerequisites
 
-The build script needs to know where LLVM is installed. Normally it attempts to
-invoke `llvm-config` but this may fail in restricted environments. As an
-alternative you can provide the paths manually via the following environment
-variables before running `zig build`:
-
-```
-export LLVM_INCLUDE_DIR=/path/to/llvm/include
-export LLVM_LIB_DIR=/path/to/llvm/lib
-export LLVM_LIBS="$(llvm-config --libs)"
-```
-
-If these variables are set `llvm-config` will not be executed.
+The build script needs to know where LLVM is installed. In restricted
+environments, set the environment variables above instead of relying on
+`llvm-config`.
 
 
 ### Compilation

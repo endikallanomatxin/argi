@@ -1,5 +1,6 @@
 const std = @import("std");
 const llvm = @import("llvm.zig");
+const c = llvm.c;
 
 const LinkError = error{
     TargetLookupFailed,
@@ -12,8 +13,6 @@ fn createTargetMachine(
     module: llvm.c.LLVMModuleRef,
     triple: []const u8,
 ) !llvm.c.LLVMTargetMachineRef {
-    const c = @import("llvm.zig").c;
-
     if (c.LLVMInitializeNativeTarget() != 0 or c.LLVMInitializeNativeAsmPrinter() != 0)
         return error.LLVMTargetInitFailed;
 
@@ -47,7 +46,6 @@ pub fn emitObjectFile(
     triple: []const u8,
     obj_output_path: []const u8,
 ) !void {
-    const c = @import("llvm.zig").c;
     const tm = try createTargetMachine(module, triple);
     defer c.LLVMDisposeTargetMachine(tm);
 
@@ -69,6 +67,67 @@ pub fn emitObjectFile(
     }
 }
 
+fn chooseLinkerCommand(cc_env: ?[]const u8) []const u8 {
+    if (cc_env) |value| {
+        if (value.len != 0) return value;
+    }
+    return "cc";
+}
+
+fn buildLinkArgv(
+    linker: []const u8,
+    obj_path: []const u8,
+    output_path: []const u8,
+) [5][]const u8 {
+    // For 0.1 we link against the platform C runtime explicitly.
+    // This keeps the current backend simple and will be revisited later.
+    return .{ linker, obj_path, "-o", output_path, "-lc" };
+}
+
+fn printLinkCommand(argv: []const []const u8) void {
+    std.debug.print("  ", .{});
+    for (argv, 0..) |arg, idx| {
+        if (idx != 0) std.debug.print(" ", .{});
+        std.debug.print("{s}", .{arg});
+    }
+    std.debug.print("\n", .{});
+}
+
+fn printCapturedStream(label: []const u8, data: []const u8) void {
+    if (data.len == 0) return;
+    std.debug.print("{s}:\n{s}\n", .{ label, data });
+}
+
+fn printTerm(term: std.process.Child.Term) void {
+    switch (term) {
+        .Exited => |code| std.debug.print("linker exited with code {d}\n", .{code}),
+        .Signal => |signal| std.debug.print("linker terminated by signal {d}\n", .{signal}),
+        .Stopped => |signal| std.debug.print("linker stopped by signal {d}\n", .{signal}),
+        .Unknown => |code| std.debug.print("linker terminated unexpectedly ({d})\n", .{code}),
+    }
+}
+
+fn printLinkerFailure(
+    linker: []const u8,
+    argv: []const []const u8,
+    result: ?std.process.Child.RunResult,
+    spawn_err: ?anyerror,
+) void {
+    std.debug.print("link failed while running:\n", .{});
+    printLinkCommand(argv);
+    if (spawn_err) |err| {
+        std.debug.print("failed to run C linker/compiler '{s}': {s}\n", .{ linker, @errorName(err) });
+        std.debug.print("install a C compiler or set CC=/path/to/compiler\n", .{});
+        return;
+    }
+
+    if (result) |res| {
+        printTerm(res.term);
+        printCapturedStream("stdout", res.stdout);
+        printCapturedStream("stderr", res.stderr);
+    }
+}
+
 /// Compila el `LLVMModuleRef` que llega de `codegen.generate` a objeto
 /// y lo enlaza con la libc del sistema produciendo `output_path`.
 pub fn linkWithLibc(
@@ -81,19 +140,46 @@ pub fn linkWithLibc(
     const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}.o", .{output_path});
     try emitObjectFile(module, triple, obj_path);
 
-    // ─── enlazamos con la libc usando el cc por defecto ───────────────────
-    const args_array = [_][]const u8{
-        "cc",
-        obj_path,
-        "-o",
-        output_path,
-        "-lc",
-    };
+    const cc_env = std.process.getEnvVarOwned(allocator.*, "CC") catch null;
+    defer if (cc_env) |value| allocator.free(value);
+    const linker = chooseLinkerCommand(cc_env);
 
-    // --- convierto ese array en un slice ---
-    const argv: []const []const u8 = args_array[0..];
-    var child = std.process.Child.init(argv[0..], allocator.*);
-    try child.spawn();
-    const term = try child.wait();
-    if (term != .Exited or term.Exited != 0) return error.LinkFailed;
+    const argv_array = buildLinkArgv(linker, obj_path, output_path);
+    const argv = argv_array[0..];
+
+    const result = std.process.Child.run(.{
+        .allocator = allocator.*,
+        .argv = argv,
+    }) catch |err| {
+        printLinkerFailure(linker, argv, null, err);
+        return error.LinkFailed;
+    };
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+
+    switch (result.term) {
+        .Exited => |code| if (code != 0) {
+            printLinkerFailure(linker, argv, result, null);
+            return error.LinkFailed;
+        },
+        else => {
+            printLinkerFailure(linker, argv, result, null);
+            return error.LinkFailed;
+        },
+    }
+}
+
+test "chooseLinkerCommand prefers CC when provided" {
+    try std.testing.expectEqualStrings("cc", chooseLinkerCommand(null));
+    try std.testing.expectEqualStrings("cc", chooseLinkerCommand(""));
+    try std.testing.expectEqualStrings("clang", chooseLinkerCommand("clang"));
+}
+
+test "buildLinkArgv keeps linker object output and libc order" {
+    const argv = buildLinkArgv("clang", "/tmp/input.o", "/tmp/output");
+    try std.testing.expectEqualStrings("clang", argv[0]);
+    try std.testing.expectEqualStrings("/tmp/input.o", argv[1]);
+    try std.testing.expectEqualStrings("-o", argv[2]);
+    try std.testing.expectEqualStrings("/tmp/output", argv[3]);
+    try std.testing.expectEqualStrings("-lc", argv[4]);
 }

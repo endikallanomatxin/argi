@@ -2,30 +2,6 @@
 
 ## Bloqueantes para `0.1`
 
-### Mejorar build/linking
-
-El linking funciona, pero todavía es demasiado dependiente del entorno local.
-
-Problemas:
-
-* Usa directamente `cc`.
-* No parece respetar `CC`.
-* No captura bien `stdout/stderr` del linker.
-* Si falla, el usuario recibe un error demasiado genérico.
-* `-lc` está fijo.
-* La dependencia de LLVM es sensible y debe estar bien explicada.
-
-Acciones mínimas:
-
-* Respetar la variable de entorno `CC` si existe.
-* Capturar `stdout/stderr` del linker.
-* Mostrar una explicación accionable si falta `cc`.
-* Mostrar una explicación accionable si falta LLVM.
-* Declarar oficialmente plataformas soportadas para `0.1`, probablemente Linux/macOS.
-* Revisar imports/bindings LLVM y añadir explícitamente headers necesarios como `Target` / `TargetMachine` si procede.
-
----
-
 ### Revisar ownership y liberar `CodeGenerator`
 
 En `compileTarget`, se crea `CodeGenerator`, pero hay que asegurar que se llama a `deinit()`.

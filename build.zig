@@ -5,7 +5,9 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const llvm_include_path, const llvm_lib_path, const llvm_libs_raw = prepareLlvm(b) catch |err| {
-        std.debug.print("Error preparing LLVM paths: {s}\n", .{err});
+        if (err != error.LlvmNotFound) {
+            std.debug.print("Error preparing LLVM paths: {s}\n", .{@errorName(err)});
+        }
         return;
     };
 
@@ -90,61 +92,29 @@ fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, 
     const env_include = std.process.getEnvVarOwned(b.allocator, "LLVM_INCLUDE_DIR") catch null;
     const env_lib = std.process.getEnvVarOwned(b.allocator, "LLVM_LIB_DIR") catch null;
     const env_libs = std.process.getEnvVarOwned(b.allocator, "LLVM_LIBS") catch null;
+    const tried_llvm_configs = llvmConfigCandidates();
+    const llvm_config_path = findLlvmConfig(b, tried_llvm_configs);
 
     const include_dir_raw: []const u8 = if (env_include) |v| v else blk: {
-        // Fallback to using `llvm-config` when environment variables are not provided.
-        const llvm_config = blk2: {
-            const names = &[_][]const u8{
-                "llvm-config",
-                "llvm-config-20",
-                "llvm-config-19",
-                "llvm-config-18",
-                "llvm-config-17",
-                "llvm-config-16",
-                "llvm-config-15",
-            };
-            for (names) |name| {
-                if (b.findProgram(&.{name}, &.{"/usr/bin"}) catch null) |path| break :blk2 path;
-            }
-            std.debug.panic("llvm-config not found; please install LLVM dev tools", .{});
+        const llvm_config = llvm_config_path orelse {
+            printMissingLlvmHelp(tried_llvm_configs);
+            return error.LlvmNotFound;
         };
         break :blk b.run(&.{ llvm_config, "--includedir" });
     };
 
     const lib_dir_raw: []const u8 = if (env_lib) |v| v else blk: {
-        const llvm_config = blk2: {
-            const names = &[_][]const u8{
-                "llvm-config",
-                "llvm-config-20",
-                "llvm-config-19",
-                "llvm-config-18",
-                "llvm-config-17",
-                "llvm-config-16",
-                "llvm-config-15",
-            };
-            for (names) |name| {
-                if (b.findProgram(&.{name}, &.{"/usr/bin"}) catch null) |path| break :blk2 path;
-            }
-            std.debug.panic("llvm-config not found; please install LLVM dev tools", .{});
+        const llvm_config = llvm_config_path orelse {
+            printMissingLlvmHelp(tried_llvm_configs);
+            return error.LlvmNotFound;
         };
         break :blk b.run(&.{ llvm_config, "--libdir" });
     };
 
     const llvm_libs_raw: []const u8 = if (env_libs) |v| v else blk: {
-        const llvm_config = blk2: {
-            const names = &[_][]const u8{
-                "llvm-config",
-                "llvm-config-20",
-                "llvm-config-19",
-                "llvm-config-18",
-                "llvm-config-17",
-                "llvm-config-16",
-                "llvm-config-15",
-            };
-            for (names) |name| {
-                if (b.findProgram(&.{name}, &.{"/usr/bin"}) catch null) |path| break :blk2 path;
-            }
-            std.debug.panic("llvm-config not found; please install LLVM dev tools", .{});
+        const llvm_config = llvm_config_path orelse {
+            printMissingLlvmHelp(tried_llvm_configs);
+            return error.LlvmNotFound;
         };
         break :blk std.mem.trimRight(u8, b.run(&.{ llvm_config, "--libs" }), "\n");
     };
@@ -153,6 +123,39 @@ fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, 
     const llvm_lib_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, lib_dir_raw, " \n") };
 
     return .{ llvm_include_path, llvm_lib_path, llvm_libs_raw };
+}
+
+const llvm_config_candidates = [_][]const u8{
+    "llvm-config",
+    "llvm-config-20",
+    "llvm-config-19",
+    "llvm-config-18",
+    "llvm-config-17",
+    "llvm-config-16",
+    "llvm-config-15",
+};
+
+fn llvmConfigCandidates() []const []const u8 {
+    return &llvm_config_candidates;
+}
+
+fn findLlvmConfig(b: *std.Build, names: []const []const u8) ?[]const u8 {
+    for (names) |name| {
+        if (b.findProgram(&.{name}, &.{"/usr/bin"}) catch null) |path| return path;
+    }
+    return null;
+}
+
+fn printMissingLlvmHelp(tried: []const []const u8) void {
+    std.debug.print("LLVM development files were not found.\n", .{});
+    std.debug.print("Install LLVM development tools, including llvm-config, or set:\n", .{});
+    std.debug.print("  LLVM_INCLUDE_DIR=/path/to/llvm/include\n", .{});
+    std.debug.print("  LLVM_LIB_DIR=/path/to/llvm/lib\n", .{});
+    std.debug.print("  LLVM_LIBS=\"-lLLVM...\"\n", .{});
+    std.debug.print("\nTried:\n", .{});
+    for (tried) |name| {
+        std.debug.print("  {s}\n", .{name});
+    }
 }
 
 fn linkLlvm(step: *std.Build.Step.Compile, libs_str: []const u8) void {
