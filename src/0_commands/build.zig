@@ -87,6 +87,8 @@ fn parseFlags(args: []const []const u8) !BuildFlags {
             idx += 1;
             if (idx >= args.len) return error.MissingFlagValue;
             flags.sysroot_path = args[idx];
+        } else {
+            return error.UnknownFlag;
         }
     }
     if (flags.object_path != null and flags.just_object_path != null) return error.ConflictingObjectEmissionModes;
@@ -442,6 +444,15 @@ test "parse build flags keeps diagnostics toggles and output paths" {
 test "parse build flags rejects missing path value" {
     try std.testing.expectError(error.MissingFlagValue, parseFlags(&.{"--output"}));
     try std.testing.expectError(error.MissingFlagValue, parseFlags(&.{"--sysroot"}));
+}
+
+test "parse build flags rejects unknown flag" {
+    try std.testing.expectError(error.UnknownFlag, parseFlags(&.{"--unknown"}));
+    try std.testing.expectError(error.UnknownFlag, parseFlags(&.{
+        "--sysroot",
+        "/tmp/argi",
+        "--unknown",
+    }));
 }
 
 test "parse build flags keeps just emit obj path" {
