@@ -3033,6 +3033,29 @@ test "argi build uses ARGI_SYSROOT when flag is absent" {
     try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
 }
 
+test "argi build rejects invalid ARGI_SYSROOT without fallback" {
+    var bad_tmp = std.testing.tmpDir(.{});
+    defer bad_tmp.cleanup();
+    const bad_sysroot = try bad_tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(bad_sysroot);
+
+    var env_map = try std.process.getEnvMap(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("ARGI_SYSROOT", bad_sysroot);
+
+    const result = try runArgiCommandWithEnv(
+        &.{ "build", "tests/feature_tests/basics/01_minimal_main" },
+        &env_map,
+    );
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "cannot find Argi core library") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "ARGI_SYSROOT") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "installation prefix, not directly at core") != null);
+}
+
 test "argi build sysroot flag takes precedence over ARGI_SYSROOT" {
     const good_sysroot = try std.fs.path.join(std.testing.allocator, &.{ compilerRoot(), "zig-out" });
     defer std.testing.allocator.free(good_sysroot);

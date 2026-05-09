@@ -108,7 +108,7 @@ fn printCoreResolutionFailure(candidates: []const CoreCandidate) void {
     for (candidates) |candidate| {
         std.debug.print("  - {s}: {s}\n", .{ candidate.label, candidate.path });
     }
-    std.debug.print("use --sysroot <path> or ARGI_SYSROOT to point at an Argi installation prefix\n", .{});
+    std.debug.print("--sysroot and ARGI_SYSROOT must point at an Argi installation prefix, not directly at core\n", .{});
 }
 
 fn freeCoreCandidates(alloc: *const std.mem.Allocator, candidates: *std.array_list.Managed(CoreCandidate)) void {
@@ -129,14 +129,14 @@ pub fn resolveToolCoreDir(
         if (std.process.getEnvVarOwned(alloc.*, "ARGI_SYSROOT") catch null) |env_sysroot| {
             defer alloc.free(env_sysroot);
             try appendSysrootCoreCandidate(alloc, &candidates, "ARGI_SYSROOT", env_sysroot);
+        } else {
+            try appendSelfExeCoreCandidate(alloc, &candidates);
+
+            try candidates.append(.{
+                .label = "development fallback",
+                .path = try std.fs.path.resolve(alloc.*, &.{options.fallback_core_dir}),
+            });
         }
-
-        try appendSelfExeCoreCandidate(alloc, &candidates);
-
-        try candidates.append(.{
-            .label = "development fallback",
-            .path = try std.fs.path.resolve(alloc.*, &.{options.fallback_core_dir}),
-        });
     }
 
     for (candidates.items) |candidate| {
