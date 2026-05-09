@@ -2503,7 +2503,7 @@ fn locationToRange(loc: token.Location) Range {
 }
 
 fn firstImportRange(text: []const u8) Range {
-    if (std.mem.indexOf(u8, text, "#import(\"")) |offset| {
+    if (sf.firstImportDirectiveOffset(text)) |offset| {
         var line: u32 = 0;
         var col: u32 = 0;
         var idx: usize = 0;

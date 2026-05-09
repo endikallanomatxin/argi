@@ -3,28 +3,7 @@
 ## Bloqueantes para `0.1`
 
 
-### 2. Mejorar detección de imports
-
-Ahora los imports se detectan buscando literalmente `#import("` en el texto fuente antes de tokenizar/parsear.
-
-Problemas:
-
-* Puede detectar imports dentro de comentarios.
-* Puede detectar imports dentro de strings.
-* Duplica parte de la sintaxis fuera del parser.
-* Acopla el sistema de módulos a una búsqueda textual frágil.
-
-Opciones:
-
-* Solución buena: extraer imports desde el árbol sintáctico.
-* Solución mínima para `0.1`: hacer un escaneo léxico que ignore strings y comentarios.
-* Documentar que el sistema actual es provisional si no se arregla del todo.
-
-Para release pública, no conviene dejarlo como búsqueda por substring sin cubrir comentarios/strings.
-
----
-
-### 3. Quitar ruido de debug en diagnósticos del parser
+### 2. Quitar ruido de debug en diagnósticos del parser
 
 El parser, al fallar, añade diagnóstico pero también imprime directamente algo como:
 
@@ -46,7 +25,7 @@ Acciones:
 
 ---
 
-### 4. Mejorar build/linking
+### 3. Mejorar build/linking
 
 El linking funciona, pero todavía es demasiado dependiente del entorno local.
 
@@ -70,7 +49,7 @@ Acciones mínimas:
 
 ---
 
-### 5. Revisar ownership y liberar `CodeGenerator`
+### 4. Revisar ownership y liberar `CodeGenerator`
 
 En `compileTarget`, se crea `CodeGenerator`, pero hay que asegurar que se llama a `deinit()`.
 
@@ -91,7 +70,7 @@ No tiene por qué bloquear por sí solo, pero conviene arreglarlo antes de relea
 
 ---
 
-### 6. Prueba de instalación limpia
+### 5. Prueba de instalación limpia
 
 Antes de taggear, hacer una prueba desde cero fuera del repo.
 
@@ -130,7 +109,7 @@ Objetivo:
 
 ## No bloqueante, pero recomendable antes de seguir creciendo
 
-### 7. Documentar invariantes del `Semantizer`
+### 6. Documentar invariantes del `Semantizer`
 
 La arquitectura del semantizer parece razonable: fases staged, predeclaración top-level, estabilización de declaraciones, interfaces de funciones antes de cuerpos, verificación de abstracts, retries, verificación de `once`, inferencia de error reasons, etc.
 
@@ -151,7 +130,7 @@ No bloquea `0.1` si funciona, pero hay que tenerlo vigilado.
 
 ---
 
-### 8. Documentar responsabilidades de `Scope`
+### 7. Documentar responsabilidades de `Scope`
 
 `Scope` acumula muchas responsabilidades:
 
@@ -191,7 +170,7 @@ Solución:
 
 ---
 
-### 9. Documentar las distintas igualdades de tipos
+### 8. Documentar las distintas igualdades de tipos
 
 Hay varias funciones relacionadas con igualdad/compatibilidad de tipos:
 
@@ -218,7 +197,7 @@ Esto probablemente va mejor en documentación interna del compilador.
 
 ---
 
-### 10. Revisar `argi test`
+### 9. Revisar `argi test`
 
 El test runner nativo descubre tests parseando el módulo y compila un binario por test.
 
@@ -232,7 +211,7 @@ No hace falta optimizarlo todavía.
 
 ---
 
-### 11. Acotar expectativas del LSP
+### 10. Acotar expectativas del LSP
 
 El LSP ya cubre bastante para un MVP:
 
@@ -257,7 +236,7 @@ Acciones:
 
 ## Documentación de release
 
-### 12. Añadir resumen de release en `plan/0.1.md`
+### 11. Añadir resumen de release en `plan/0.1.md`
 
 Añadir un breve resumen final de qué representa `0.1`.
 
@@ -273,7 +252,7 @@ Debe incluir:
 
 ---
 
-### 13. Añadir sección de versiones en `README.md`
+### 12. Añadir sección de versiones en `README.md`
 
 Añadir una sección tipo:
 
@@ -307,7 +286,7 @@ También dejar claro:
 
 ---
 
-### 14. Crear `CHANGELOG.md`
+### 13. Crear `CHANGELOG.md`
 
 Añadir entrada inicial para `0.1.0`.
 
@@ -353,7 +332,7 @@ Argi `0.1.0` is experimental. Breaking changes are expected.
 
 ---
 
-### 15. Actualizar `build.zig.zon`
+### 14. Actualizar `build.zig.zon`
 
 Revisar `.paths`.
 
@@ -370,7 +349,7 @@ No incluir `more` todavía para `0.1`.
 
 ---
 
-### 16. Aclarar que `more/` no entra en `0.1`
+### 15. Aclarar que `more/` no entra en `0.1`
 
 En README o release notes, dejar explícito:
 
@@ -381,7 +360,7 @@ En README o release notes, dejar explícito:
 
 ---
 
-### 17. Recopilar TODOs internos del repo
+### 16. Recopilar TODOs internos del repo
 
 Buscar TODOs en:
 
@@ -418,7 +397,7 @@ Criterio:
 
 ## Runtime / 0.2
 
-### 18. Documentar `Runtime`
+### 17. Documentar `Runtime`
 
 Dejar documentado qué se entiende por `Runtime` en Argi.
 
@@ -440,7 +419,7 @@ Marcarlo explícitamente como objetivo de `0.2`.
 
 ---
 
-### 19. Diseñar threading antes de desarrollar el Runtime
+### 18. Diseñar threading antes de desarrollar el Runtime
 
 Antes de implementar o cerrar el diseño del `Runtime`, conviene pensar primero el modelo de threading/concurrencia.
 
@@ -475,7 +454,7 @@ Antes de desarrollar seriamente el runtime, tiene sentido diseñar primero threa
 
 ## Preparar release final
 
-### 20. Commit final de release
+### 19. Commit final de release
 
 Cuando todo lo anterior esté cerrado:
 
@@ -490,7 +469,7 @@ Cuando todo lo anterior esté cerrado:
 
 ---
 
-### 21. Taggear `v0.1.0`
+### 20. Taggear `v0.1.0`
 
 Cuando la release esté lista:
 
@@ -500,4 +479,3 @@ git push origin v0.1.0
 ```
 
 Crear release en GitHub usando el resumen del `CHANGELOG.md`.
-

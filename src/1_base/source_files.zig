@@ -267,16 +267,12 @@ fn collectImportDirsFromSource(
     source_code: []const u8,
     imports: *ImportList,
 ) !void {
-    var rest = source_code;
-    const needle = "#import(\"";
+    var offset: usize = 0;
+    while (offset < source_code.len) {
+        const parsed = nextImportDirective(source_code, &offset) orelse break;
+        offset = parsed.next_offset;
 
-    while (std.mem.indexOf(u8, rest, needle)) |idx| {
-        rest = rest[idx + needle.len ..];
-        const end_idx = std.mem.indexOfScalar(u8, rest, '"') orelse break;
-        const import_path = rest[0..end_idx];
-        rest = rest[end_idx + 1 ..];
-
-        const resolved = try resolveImportDir(alloc, source_path, import_path);
+        const resolved = try resolveImportDir(alloc, source_path, parsed.path);
         errdefer alloc.free(resolved);
         var already_known = false;
 
@@ -292,11 +288,113 @@ fn collectImportDirsFromSource(
         }
 
         try imports.append(.{
-            .raw_path = try alloc.dupe(u8, import_path),
+            .raw_path = try alloc.dupe(u8, parsed.path),
             .importer_path = try alloc.dupe(u8, source_path),
             .resolved_dir = resolved,
         });
     }
+}
+
+const ParsedImportDirective = struct {
+    hash_offset: usize,
+    path: []const u8,
+    next_offset: usize,
+};
+
+pub fn firstImportDirectiveOffset(source_code: []const u8) ?usize {
+    var offset: usize = 0;
+    return if (nextImportDirective(source_code, &offset)) |parsed| parsed.hash_offset else null;
+}
+
+fn nextImportDirective(source_code: []const u8, offset: *usize) ?ParsedImportDirective {
+    while (offset.* < source_code.len) {
+        if (source_code[offset.*] == '-' and offset.* + 1 < source_code.len and source_code[offset.* + 1] == '-') {
+            offset.* += 2;
+            while (offset.* < source_code.len and source_code[offset.*] != '\n') : (offset.* += 1) {}
+            continue;
+        }
+
+        if (source_code[offset.*] == '"') {
+            skipQuoted(source_code, offset, '"');
+            continue;
+        }
+
+        if (source_code[offset.*] == '\'') {
+            skipQuoted(source_code, offset, '\'');
+            continue;
+        }
+
+        if (source_code[offset.*] != '#') {
+            offset.* += 1;
+            continue;
+        }
+
+        const hash_offset = offset.*;
+        const parsed = parseImportDirective(source_code, hash_offset) orelse {
+            offset.* += 1;
+            continue;
+        };
+        return parsed;
+    }
+
+    return null;
+}
+
+fn skipQuoted(source_code: []const u8, offset: *usize, quote: u8) void {
+    offset.* += 1;
+    while (offset.* < source_code.len) : (offset.* += 1) {
+        if (source_code[offset.*] == '\\') {
+            offset.* += 1;
+            continue;
+        }
+        if (source_code[offset.*] == quote) {
+            offset.* += 1;
+            return;
+        }
+    }
+}
+
+fn skipWhitespace(source_code: []const u8, offset: *usize) void {
+    while (offset.* < source_code.len and std.ascii.isWhitespace(source_code[offset.*])) : (offset.* += 1) {}
+}
+
+fn parseImportDirective(source_code: []const u8, hash_offset: usize) ?ParsedImportDirective {
+    var offset = hash_offset + 1;
+    skipWhitespace(source_code, &offset);
+
+    const import_name = "import";
+    if (offset + import_name.len > source_code.len) return null;
+    if (!std.mem.eql(u8, source_code[offset .. offset + import_name.len], import_name)) return null;
+    offset += import_name.len;
+
+    skipWhitespace(source_code, &offset);
+    if (offset >= source_code.len or source_code[offset] != '(') return null;
+    offset += 1;
+
+    skipWhitespace(source_code, &offset);
+    if (offset >= source_code.len or source_code[offset] != '"') return null;
+    offset += 1;
+
+    const path_start = offset;
+    while (offset < source_code.len) : (offset += 1) {
+        if (source_code[offset] == '\\') {
+            offset += 1;
+            continue;
+        }
+        if (source_code[offset] == '"') {
+            const path = source_code[path_start..offset];
+            offset += 1;
+            skipWhitespace(source_code, &offset);
+            if (offset >= source_code.len or source_code[offset] != ')') return null;
+            return .{
+                .hash_offset = hash_offset,
+                .path = path,
+                .next_offset = offset + 1,
+            };
+        }
+    }
+
+    return null;
 }
 
 fn freeImportList(alloc: *const std.mem.Allocator, imports: *ImportList) void {
@@ -352,6 +450,53 @@ fn scanImports(
         if (module_dirs.contains(entry.resolved_dir)) continue;
         try module_dirs.put(try alloc.dupe(u8, entry.resolved_dir), {});
     }
+}
+
+test "import scanner ignores comments strings and chars" {
+    var imports = ImportList.init(std.testing.allocator);
+    defer freeImportList(&std.testing.allocator, &imports);
+
+    try collectImportDirsFromSource(
+        &std.testing.allocator,
+        "tests/feature_tests/modules/example/main.rg",
+        \\-- ignored := #import("./comment_dep")
+        \\message := "#import(\"./string_dep\")"
+        \\quote := '#'
+        \\dep := #import("./real_dep")
+        \\spaced := # import ( "./spaced_dep" )
+    ,
+        &imports,
+    );
+
+    try std.testing.expectEqual(@as(usize, 2), imports.items.len);
+    try std.testing.expectEqualStrings("./real_dep", imports.items[0].raw_path);
+    try std.testing.expectEqualStrings("./spaced_dep", imports.items[1].raw_path);
+}
+
+test "import scanner ignores unterminated strings" {
+    var imports = ImportList.init(std.testing.allocator);
+    defer freeImportList(&std.testing.allocator, &imports);
+
+    try collectImportDirsFromSource(
+        &std.testing.allocator,
+        "tests/feature_tests/modules/example/main.rg",
+        "message := \"#import(\\\"./string_dep\\\")",
+        &imports,
+    );
+
+    try std.testing.expectEqual(@as(usize, 0), imports.items.len);
+}
+
+test "first import offset uses lexical import scanner" {
+    const source =
+        \\-- ignored := #import("./comment_dep")
+        \\message := "#import(\"./string_dep\")"
+        \\dep := #import("./real_dep")
+    ;
+
+    const offset = firstImportDirectiveOffset(source) orelse return error.ExpectedImportOffset;
+    try std.testing.expectEqualStrings("#import", source[offset .. offset + "#import".len]);
+    try std.testing.expect(std.mem.indexOf(u8, source[0..offset], "dep :=") != null);
 }
 
 fn printImportCycle(stack: []const []const u8, repeated_dir: []const u8) void {

@@ -64,19 +64,19 @@ pub fn build(b: *std.Build) void {
     const run_exe_tests = b.addRunArtifact(exe_tests);
     run_exe_tests.step.dependOn(b.getInstallStep());
 
-    const tokenizer_tests_mod = b.createModule(.{
-        .root_source_file = b.path("src/tokenizer_tests.zig"),
+    const internal_tests_mod = b.createModule(.{
+        .root_source_file = b.path("src/internal_tests.zig"),
         .target = target,
         .optimize = optimize,
     });
-    const tokenizer_tests = b.addTest(.{
-        .root_module = tokenizer_tests_mod,
+    const internal_tests = b.addTest(.{
+        .root_module = internal_tests_mod,
     });
-    const run_tokenizer_tests = b.addRunArtifact(tokenizer_tests);
+    const run_internal_tests = b.addRunArtifact(internal_tests);
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_tests.step);
-    test_step.dependOn(&run_tokenizer_tests.step);
+    test_step.dependOn(&run_internal_tests.step);
     test_step.dependOn(b.getInstallStep());
 }
 
