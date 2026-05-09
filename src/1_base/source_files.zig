@@ -126,7 +126,10 @@ pub fn resolveToolCoreDir(
     if (options.explicit_sysroot) |sysroot| {
         try appendSysrootCoreCandidate(alloc, &candidates, "--sysroot", sysroot);
     } else {
-        if (std.process.getEnvVarOwned(alloc.*, "ARGI_SYSROOT") catch null) |env_sysroot| {
+        if (std.process.getEnvVarOwned(alloc.*, "ARGI_SYSROOT") catch |err| switch (err) {
+            error.EnvironmentVariableNotFound => null,
+            else => return err,
+        }) |env_sysroot| {
             defer alloc.free(env_sysroot);
             try appendSysrootCoreCandidate(alloc, &candidates, "ARGI_SYSROOT", env_sysroot);
         } else {

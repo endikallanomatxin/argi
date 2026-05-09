@@ -84,15 +84,27 @@ pub fn build(b: *std.Build) void {
 }
 
 fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, []const u8 } {
-    if (std.process.getEnvVarOwned(b.allocator, "PATH") catch null) |path| {
+    if (std.process.getEnvVarOwned(b.allocator, "PATH") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => null,
+        else => return err,
+    }) |path| {
         b.graph.env_map.put("PATH", path) catch @panic("OOM");
     }
 
     // Obtain LLVM paths. First try environment variables to avoid spawning
     // `llvm-config` which might not be supported in restricted environments.
-    const env_include = std.process.getEnvVarOwned(b.allocator, "LLVM_INCLUDE_DIR") catch null;
-    const env_lib = std.process.getEnvVarOwned(b.allocator, "LLVM_LIB_DIR") catch null;
-    const env_libs = std.process.getEnvVarOwned(b.allocator, "LLVM_LIBS") catch null;
+    const env_include = std.process.getEnvVarOwned(b.allocator, "LLVM_INCLUDE_DIR") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => null,
+        else => return err,
+    };
+    const env_lib = std.process.getEnvVarOwned(b.allocator, "LLVM_LIB_DIR") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => null,
+        else => return err,
+    };
+    const env_libs = std.process.getEnvVarOwned(b.allocator, "LLVM_LIBS") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => null,
+        else => return err,
+    };
     const tried_llvm_configs = llvmConfigCandidates();
     const llvm_config_path = findLlvmConfig(b, tried_llvm_configs);
 

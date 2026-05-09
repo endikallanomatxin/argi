@@ -134,9 +134,17 @@ pub const CodeGenerator = struct {
     pub fn init(a: *const std.mem.Allocator, ast: []const *sem.SGNode, diags: *diagnostic.Diagnostics, options: Options) !CodeGenerator {
         const m = c.LLVMModuleCreateWithName("argi_module");
         if (m == null) return CodegenError.ModuleCreationFailed;
+        errdefer c.LLVMDisposeModule(m);
 
         const b = c.LLVMCreateBuilder();
+        if (b == null) return CodegenError.ModuleCreationFailed;
+        errdefer c.LLVMDisposeBuilder(b);
+
         const gscope = try Scope.init(a, null);
+        errdefer {
+            gscope.deinit();
+            a.destroy(gscope);
+        }
 
         return .{
             .allocator = a,

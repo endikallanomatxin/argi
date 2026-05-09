@@ -140,7 +140,10 @@ pub fn linkWithLibc(
     const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}.o", .{output_path});
     try emitObjectFile(module, triple, obj_path);
 
-    const cc_env = std.process.getEnvVarOwned(allocator.*, "CC") catch null;
+    const cc_env = std.process.getEnvVarOwned(allocator.*, "CC") catch |err| switch (err) {
+        error.EnvironmentVariableNotFound => null,
+        else => return err,
+    };
     defer if (cc_env) |value| allocator.free(value);
     const linker = chooseLinkerCommand(cc_env);
 
