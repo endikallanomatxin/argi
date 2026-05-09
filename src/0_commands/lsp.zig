@@ -355,7 +355,7 @@ const LanguageServer = struct {
         try stream.objectField("full");
         try stream.write(true); // MVP: full, sin delta
         try stream.objectField("range");
-        try stream.write(true); // si quieres implementar /range más tarde
+        try stream.write(false);
         try stream.endObject();
         try stream.objectField("hoverProvider");
         try stream.write(true);
@@ -363,10 +363,11 @@ const LanguageServer = struct {
         try stream.write(true);
         try stream.objectField("referencesProvider");
         try stream.write(true);
+        try stream.objectField("renameProvider");
+        try stream.beginObject();
         try stream.objectField("prepareProvider");
         try stream.write(true);
-        try stream.objectField("renameProvider");
-        try stream.write(true);
+        try stream.endObject();
         try stream.endObject();
 
         try stream.objectField("serverInfo");
@@ -962,7 +963,14 @@ test "initialize response advertises hover definition references and rename" {
     try std.testing.expect(capabilities.get("hoverProvider").?.bool);
     try std.testing.expect(capabilities.get("definitionProvider").?.bool);
     try std.testing.expect(capabilities.get("referencesProvider").?.bool);
-    try std.testing.expect(capabilities.get("renameProvider").?.bool);
+    try std.testing.expect(capabilities.get("prepareProvider") == null);
+
+    const semantic_tokens = capabilities.get("semanticTokensProvider").?.object;
+    try std.testing.expect(semantic_tokens.get("full").?.bool);
+    try std.testing.expect(!semantic_tokens.get("range").?.bool);
+
+    const rename_provider = capabilities.get("renameProvider").?.object;
+    try std.testing.expect(rename_provider.get("prepareProvider").?.bool);
 }
 
 test "didOpen publishes diagnostics and hover responds with payload" {
