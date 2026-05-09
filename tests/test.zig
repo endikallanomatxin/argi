@@ -3007,6 +3007,29 @@ test "argi init without full arguments exits with error" {
     try expectEqualStrings("Error: init requires <project|module> and <directory>\n", result.stderr);
 }
 
+test "argi run rejects output override" {
+    const result = try runArgiCommand(&.{ "run", "tests/feature_tests/basics/01_minimal_main", "--output", "build/custom-run-output" });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqualStrings(
+        "Run error: --output is not supported by argi run; use argi build --output and execute the binary manually\n",
+        result.stderr,
+    );
+}
+
+test "argi run accepts explicit sysroot" {
+    const sysroot = try std.fs.path.join(std.testing.allocator, &.{ compilerRoot(), "zig-out" });
+    defer std.testing.allocator.free(sysroot);
+
+    const result = try runArgiCommand(&.{ "run", "tests/feature_tests/basics/01_minimal_main", "--sysroot", sysroot });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
+}
+
 test "argi test rejects missing filter value" {
     const result = try runArgiCommand(&.{ "test", "tests/feature_tests/testing/01_simple_pass", "--filter" });
     defer std.testing.allocator.free(result.stdout);

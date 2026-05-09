@@ -1,8 +1,18 @@
 const std = @import("std");
 const build_cmd = @import("build.zig");
 
+fn rejectUnsupportedRunFlags(args: []const []const u8) !void {
+    for (args[1..]) |arg| {
+        if (std.mem.eql(u8, arg, "--output")) return error.RunOutputFlagUnsupported;
+        if (std.mem.eql(u8, arg, "--emit-llvm")) return error.RunEmitLlvmUnsupported;
+        if (std.mem.eql(u8, arg, "--emit-obj")) return error.RunEmitObjectUnsupported;
+        if (std.mem.eql(u8, arg, "--just-emit-obj")) return error.RunEmitObjectUnsupported;
+    }
+}
+
 pub fn run(args: []const []const u8) !u8 {
     if (args.len == 0) return error.MissingRunTarget;
+    try rejectUnsupportedRunFlags(args);
 
     try build_cmd.compile(args);
 
@@ -22,6 +32,10 @@ pub fn run(args: []const []const u8) !u8 {
         .Exited => |code| @intCast(code),
         else => error.UnexpectedProcessTermination,
     };
+}
+
+test "run command rejects output path override" {
+    try std.testing.expectError(error.RunOutputFlagUnsupported, run(&.{ "/tmp/module", "--output", "bin/app" }));
 }
 
 test "run command builds and runs a module" {

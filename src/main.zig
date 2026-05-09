@@ -13,6 +13,22 @@ fn exitCommandError(prefix: []const u8, err: anyerror) noreturn {
     std.process.exit(1);
 }
 
+fn exitRunError(err: anyerror) noreturn {
+    switch (err) {
+        error.RunOutputFlagUnsupported => {
+            std.debug.print("Run error: --output is not supported by argi run; use argi build --output and execute the binary manually\n", .{});
+        },
+        error.RunEmitLlvmUnsupported => {
+            std.debug.print("Run error: --emit-llvm is not supported by argi run; use argi build --emit-llvm and execute the binary manually\n", .{});
+        },
+        error.RunEmitObjectUnsupported => {
+            std.debug.print("Run error: object emission flags are not supported by argi run; use argi build and execute the binary manually\n", .{});
+        },
+        else => exitCommandError("Run error", err),
+    }
+    std.process.exit(1);
+}
+
 fn printHelp() void {
     std.debug.print("Usage: argi <command> [arguments] [options]\n", .{});
     std.debug.print("\nCommands:\n", .{});
@@ -94,7 +110,7 @@ pub fn main() !void {
             std.process.exit(1);
         }
         const exit_code = run_cmd.run(args[2..]) catch |err| {
-            exitCommandError("Run error", err);
+            exitRunError(err);
         };
         std.process.exit(exit_code);
     } else if (std.mem.eql(u8, command, "test")) {
