@@ -2,6 +2,7 @@ const std = @import("std");
 const tok = @import("token.zig");
 const tok_print = @import("token_print.zig");
 const diag = @import("../1_base/diagnostic.zig");
+const sf = @import("../1_base/source_files.zig");
 
 pub const TokenizerError = error{
     UnknownCharacter,
@@ -61,22 +62,18 @@ pub const Tokenizer = struct {
         try self.tokens.append(token);
     }
 
-    pub fn this(self: *Tokenizer) u8 {
+    pub fn peek(self: *Tokenizer) ?u8 {
+        if (self.location.offset >= self.source.len) return null;
         return self.source[self.location.offset];
     }
 
-    pub fn next(self: *Tokenizer) !u8 {
-        if (self.location.offset + 1 >= self.source.len) {
-            return error.ReachedEOF;
-        }
+    pub fn peekNext(self: *Tokenizer) ?u8 {
+        if (self.location.offset + 1 >= self.source.len) return null;
         return self.source[self.location.offset + 1];
     }
 
-    pub fn advanceOne(self: *Tokenizer) !void {
-        const c = self.this();
-        if (self.location.offset >= self.source.len) {
-            return error.ReachedEOF;
-        }
+    pub fn advance(self: *Tokenizer) bool {
+        const c = self.peek() orelse return false;
         self.location.offset += 1;
         if (c == '\n') {
             self.location.line += 1;
@@ -84,27 +81,52 @@ pub const Tokenizer = struct {
         } else {
             self.location.column += 1;
         }
+        return true;
+    }
+
+    pub fn this(self: *Tokenizer) u8 {
+        return self.peek() orelse unreachable;
+    }
+
+    pub fn next(self: *Tokenizer) !u8 {
+        return self.peekNext() orelse error.ReachedEOF;
+    }
+
+    pub fn advanceOne(self: *Tokenizer) !void {
+        if (!self.advance()) return error.ReachedEOF;
+    }
+
+    fn isHexDigit(c: u8) bool {
+        return std.ascii.isDigit(c) or
+            (c >= 'a' and c <= 'f') or
+            (c >= 'A' and c <= 'F');
+    }
+
+    fn isNumberTail(c: u8) bool {
+        return std.ascii.isDigit(c) or c == '.' or c == 'e' or c == 'E';
     }
 
     pub fn lexNextToken(self: *Tokenizer) !void {
         const loc = self.location;
+        const current = self.peek() orelse return;
 
-        if (self.this() == '\n') {
+        if (current == '\n') {
             try self.addToken(tok.Content{ .new_line = .{} }, loc);
-            try self.advanceOne();
+            _ = self.advance();
             return;
         }
 
-        if (std.ascii.isWhitespace(self.this())) {
-            try self.advanceOne();
+        if (std.ascii.isWhitespace(current)) {
+            _ = self.advance();
             return;
         }
 
         // Comments
-        if (self.this() == '-' and try self.next() == '-') {
+        if (current == '-' and self.peekNext() == '-') {
             const start = self.location.offset;
-            while (self.this() != '\n') {
-                try self.advanceOne();
+            while (self.peek()) |c| {
+                if (c == '\n') break;
+                _ = self.advance();
             }
             const comment = self.source[start..self.location.offset];
             try self.addToken(tok.Content{ .comment = comment }, loc);
@@ -112,85 +134,104 @@ pub const Tokenizer = struct {
         }
 
         // Double dot / dot
-        if (self.this() == '.' and self.next() catch 0 == '.') {
+        if (current == '.' and self.peekNext() == '.') {
             try self.addToken(tok.Content{ .double_dot = .{} }, loc);
-            try self.advanceOne();
-            try self.advanceOne();
+            _ = self.advance();
+            _ = self.advance();
             return;
         }
-        if (self.this() == '.') {
+        if (current == '.') {
             try self.addToken(tok.Content{ .dot = .{} }, loc);
-            try self.advanceOne();
+            _ = self.advance();
             return;
         }
 
         // Comma
-        if (self.this() == ',') {
+        if (current == ',') {
             try self.addToken(tok.Content{ .comma = .{} }, loc);
-            try self.advanceOne();
+            _ = self.advance();
             return;
         }
 
         // Literales
-        if (std.ascii.isDigit(self.this())) {
+        if (std.ascii.isDigit(current)) {
             const start = self.location.offset;
             var literal: tok.Literal = tok.Literal{ .decimal_int_literal = "" };
-            if (self.this() == '0') {
+            if (current == '0') {
                 // Check for hexadecimal, octal or binary
-                try self.advanceOne(); // Avanzar el '0'
-                if (self.this() == 'x' or self.this() == 'X') {
-                    // Hexadecimal
-                    literal = tok.Literal{ .hexadecimal_int_literal = "" };
-                    try self.advanceOne();
-                    while (self.this() >= '0' and self.this() <= '9' or
-                        (self.this() >= 'a' and self.this() <= 'f') or
-                        (self.this() >= 'A' and self.this() <= 'F'))
-                    {
-                        try self.advanceOne();
-                    }
-                } else if (self.this() == 'b' or self.this() == 'B') {
-                    // Binary
-                    literal = tok.Literal{ .binary_int_literal = "" };
-                    try self.advanceOne();
-                    while (self.this() == '0' or self.this() == '1') {
-                        try self.advanceOne();
-                    }
-                } else if (self.this() == 'o' or self.this() == 'O') {
-                    // Octal
-                    literal = tok.Literal{ .octal_int_literal = "" };
-                    try self.advanceOne();
-                    while (self.this() >= '0' and self.this() <= '7') {
-                        try self.advanceOne();
-                    }
-                } else {
-                    // ESTO
-                    while ((std.ascii.isDigit(self.this()) or self.this() == '.') or
-                        self.this() == 'e' or self.this() == 'E')
-                    {
-                        if (self.this() == '.') {
-                            literal = tok.Literal{ .regular_float_literal = "" };
+                _ = self.advance(); // Avanzar el '0'
+                if (self.peek()) |prefix| {
+                    if (prefix == 'x' or prefix == 'X') {
+                        // Hexadecimal
+                        literal = tok.Literal{ .hexadecimal_int_literal = "" };
+                        _ = self.advance();
+                        const digit_start = self.location.offset;
+                        while (self.peek()) |c| {
+                            if (!isHexDigit(c)) break;
+                            _ = self.advance();
                         }
-                        if (self.this() == 'e' or self.this() == 'E') {
-                            literal = tok.Literal{ .scientific_float_literal = "" };
+                        if (self.location.offset == digit_start) {
+                            try self.diagnostics.add(loc, .syntax, "incomplete hexadecimal integer literal", .{});
+                            return TokenizerError.UnknownCharacter;
                         }
-                        try self.advanceOne();
+                    } else if (prefix == 'b' or prefix == 'B') {
+                        // Binary
+                        literal = tok.Literal{ .binary_int_literal = "" };
+                        _ = self.advance();
+                        const digit_start = self.location.offset;
+                        while (self.peek()) |c| {
+                            if (c != '0' and c != '1') break;
+                            _ = self.advance();
+                        }
+                        if (self.location.offset == digit_start) {
+                            try self.diagnostics.add(loc, .syntax, "incomplete binary integer literal", .{});
+                            return TokenizerError.UnknownCharacter;
+                        }
+                    } else if (prefix == 'o' or prefix == 'O') {
+                        // Octal
+                        literal = tok.Literal{ .octal_int_literal = "" };
+                        _ = self.advance();
+                        const digit_start = self.location.offset;
+                        while (self.peek()) |c| {
+                            if (c < '0' or c > '7') break;
+                            _ = self.advance();
+                        }
+                        if (self.location.offset == digit_start) {
+                            try self.diagnostics.add(loc, .syntax, "incomplete octal integer literal", .{});
+                            return TokenizerError.UnknownCharacter;
+                        }
+                    } else {
+                        // ESTO
+                        while (self.peek()) |c| {
+                            if (!isNumberTail(c)) break;
+                            if (c == '.') {
+                                literal = tok.Literal{ .regular_float_literal = "" };
+                            }
+                            if (c == 'e' or c == 'E') {
+                                literal = tok.Literal{ .scientific_float_literal = "" };
+                            }
+                            _ = self.advance();
+                        }
                     }
                 }
             } else {
                 // Y ESTO SON IGUALES
-                while ((std.ascii.isDigit(self.this()) or self.this() == '.') or
-                    self.this() == 'e' or self.this() == 'E')
-                {
-                    if (self.this() == '.') {
+                while (self.peek()) |c| {
+                    if (!isNumberTail(c)) break;
+                    if (c == '.') {
                         literal = tok.Literal{ .regular_float_literal = "" };
                     }
-                    if (self.this() == 'e' or self.this() == 'E') {
+                    if (c == 'e' or c == 'E') {
                         literal = tok.Literal{ .scientific_float_literal = "" };
                     }
-                    try self.advanceOne();
+                    _ = self.advance();
                 }
             }
             const num_str = self.source[start..self.location.offset];
+            if (num_str[num_str.len - 1] == 'e' or num_str[num_str.len - 1] == 'E') {
+                try self.diagnostics.add(loc, .syntax, "incomplete scientific float literal", .{});
+                return TokenizerError.UnknownCharacter;
+            }
             literal = switch (literal) {
                 .decimal_int_literal => tok.Literal{ .decimal_int_literal = num_str },
                 .hexadecimal_int_literal => tok.Literal{ .hexadecimal_int_literal = num_str },
@@ -206,10 +247,11 @@ pub const Tokenizer = struct {
         }
 
         // Identificadores y keywords
-        if (std.ascii.isAlphabetic(self.this()) or self.this() == '_') {
+        if (std.ascii.isAlphabetic(current) or current == '_') {
             const start = self.location.offset;
-            while (std.ascii.isAlphanumeric(self.this()) or self.this() == '_') {
-                try self.advanceOne();
+            while (self.peek()) |c| {
+                if (!std.ascii.isAlphanumeric(c) and c != '_') break;
+                _ = self.advance();
             }
             const word = self.source[start..self.location.offset];
             if (std.mem.eql(u8, word, "return")) {
@@ -249,7 +291,7 @@ pub const Tokenizer = struct {
         }
 
         // Para tokens individuales según el carácter:
-        switch (self.this()) {
+        switch (current) {
             '#' => {
                 try self.addToken(tok.Content{ .hash = .{} }, loc);
             },
@@ -273,44 +315,44 @@ pub const Tokenizer = struct {
             },
             ':' => {
                 // Check for double colon
-                if (try self.next() == ':') {
+                if (self.peekNext() == ':') {
                     try self.addToken(tok.Content{ .double_colon = .{} }, loc);
-                    try self.advanceOne(); // Avanzar el segundo ':'
+                    _ = self.advance(); // Avanzar el segundo ':'
                 } else {
                     try self.addToken(tok.Content{ .colon = .{} }, loc);
                 }
             },
             '=' => {
-                if (try self.next() == '=') {
+                if (self.peekNext() == '=') {
                     try self.addToken(tok.Content{ .comparison_operator = .equal }, loc);
-                    try self.advanceOne(); // Avanzar el segundo '='
+                    _ = self.advance(); // Avanzar el segundo '='
                 } else {
                     try self.addToken(tok.Content{ .equal = .{} }, loc);
                 }
             },
             '!' => {
-                if (try self.next() == '=') {
+                if (self.peekNext() == '=') {
                     try self.addToken(tok.Content{ .comparison_operator = .not_equal }, loc);
-                    try self.advanceOne(); // Avanzar el segundo '!'
-                } else if (try self.next() == '!') {
+                    _ = self.advance(); // Avanzar el segundo '!'
+                } else if (self.peekNext() == '!') {
                     try self.addToken(tok.Content{ .double_bang = .{} }, loc);
-                    try self.advanceOne(); // Avanzar el segundo '!'
+                    _ = self.advance(); // Avanzar el segundo '!'
                 } else {
                     try self.addToken(tok.Content{ .bang = .{} }, loc);
                 }
             },
             '<' => {
-                if (try self.next() == '=') {
+                if (self.peekNext() == '=') {
                     try self.addToken(tok.Content{ .comparison_operator = .less_than_or_equal }, loc);
-                    try self.advanceOne(); // Avanzar el '='
+                    _ = self.advance(); // Avanzar el '='
                 } else {
                     try self.addToken(tok.Content{ .comparison_operator = .less_than }, loc);
                 }
             },
             '>' => {
-                if (try self.next() == '=') {
+                if (self.peekNext() == '=') {
                     try self.addToken(tok.Content{ .comparison_operator = .greater_than_or_equal }, loc);
-                    try self.advanceOne(); // Avanzar el '='
+                    _ = self.advance(); // Avanzar el '='
                 } else {
                     try self.addToken(tok.Content{ .comparison_operator = .greater_than }, loc);
                 }
@@ -320,10 +362,10 @@ pub const Tokenizer = struct {
                 try self.addToken(tok.Content{ .binary_operator = .addition }, loc);
             },
             '-' => {
-                if (self.next() catch 0 == '>') {
+                if (self.peekNext() == '>') {
                     try self.addToken(tok.Content{ .arrow = .{} }, loc);
-                    try self.advanceOne();
-                    try self.advanceOne();
+                    _ = self.advance();
+                    _ = self.advance();
                     return;
                 } else {
                     try self.addToken(tok.Content{ .binary_operator = .subtraction }, loc);
@@ -355,14 +397,21 @@ pub const Tokenizer = struct {
             },
             '\'' => {
                 // Salta la comilla de apertura
-                try self.advanceOne();
+                _ = self.advance();
 
                 // 1. ¿escape (`\`) o carácter directo?
                 var char_val: u8 = undefined;
-                if (self.this() == '\\') { // -- escape --
-                    try self.advanceOne(); // salta la '\'
+                if (self.peek() == null) {
+                    try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
+                    return TokenizerError.UnknownCharacter;
+                }
+                if (self.peek().? == '\\') { // -- escape --
+                    _ = self.advance(); // salta la '\'
 
-                    const esc = self.this();
+                    const esc = self.peek() orelse {
+                        try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
+                        return TokenizerError.UnknownCharacter;
+                    };
                     char_val = switch (esc) {
                         'n' => '\n', // salto de línea
                         't' => '\t', // tabulador
@@ -375,22 +424,22 @@ pub const Tokenizer = struct {
                             return TokenizerError.UnknownCharacter;
                         },
                     };
-                    try self.advanceOne(); // salta la letra de escape
+                    _ = self.advance(); // salta la letra de escape
                 } else { // -- carácter simple --
-                    if (self.this() == '\'') {
+                    if (self.peek().? == '\'') {
                         try self.diagnostics.add(loc, .syntax, "empty char literal", .{});
                         return TokenizerError.UnknownCharacter;
                     }
-                    char_val = self.this();
-                    try self.advanceOne();
+                    char_val = self.peek().?;
+                    _ = self.advance();
                 }
 
                 // 2. debe venir la comilla de cierre
-                if (self.this() != '\'') {
+                if (self.peek() != '\'') {
                     try self.diagnostics.add(loc, .syntax, "unterminated char literal", .{});
                     return TokenizerError.UnknownCharacter;
                 }
-                try self.advanceOne(); // salta la comilla de cierre
+                _ = self.advance(); // salta la comilla de cierre
 
                 try self.addToken(
                     tok.Content{ .literal = tok.Literal{ .char_literal = char_val } },
@@ -401,16 +450,20 @@ pub const Tokenizer = struct {
 
             '"' => {
                 // saltamos la comilla inicial
-                try self.advanceOne();
+                _ = self.advance();
 
                 var buf = std.array_list.Managed(u8).init(self.allocator.*);
                 defer buf.deinit();
 
                 // recopilamos caracteres, gestionando escapes
-                while (self.this() != '"') : (try self.advanceOne()) {
-                    if (self.this() == '\\') {
-                        try self.advanceOne(); // salta '\'
-                        const esc = self.this();
+                while (self.peek()) |c| {
+                    if (c == '"') break;
+                    if (c == '\\') {
+                        _ = self.advance(); // salta '\'
+                        const esc = self.peek() orelse {
+                            try self.diagnostics.add(loc, .syntax, "unterminated string literal", .{});
+                            return TokenizerError.UnknownCharacter;
+                        };
                         const ch: u8 = switch (esc) { // escapes comunes
                             'n' => '\n',
                             't' => '\t',
@@ -418,15 +471,24 @@ pub const Tokenizer = struct {
                             '\\' => '\\',
                             '"' => '"',
                             '0' => 0,
-                            else => return TokenizerError.UnknownCharacter,
+                            else => {
+                                try self.diagnostics.add(loc, .syntax, "unsupported escape: \\{c}", .{esc});
+                                return TokenizerError.UnknownCharacter;
+                            },
                         };
                         try buf.append(ch);
+                        _ = self.advance();
                     } else {
-                        try buf.append(self.this());
+                        try buf.append(c);
+                        _ = self.advance();
                     }
                 }
+                if (self.peek() != '"') {
+                    try self.diagnostics.add(loc, .syntax, "unterminated string literal", .{});
+                    return TokenizerError.UnknownCharacter;
+                }
                 // cerramos comilla
-                try self.advanceOne();
+                _ = self.advance();
 
                 // copiamos a memoria propia (slice independiente del source)
                 const data = try self.allocator.alloc(u8, buf.items.len);
@@ -439,12 +501,12 @@ pub const Tokenizer = struct {
                 return;
             },
             else => {
-                try self.diagnostics.add(loc, .syntax, "unrecognized character: '{c}'", .{self.this()});
-                try self.advanceOne(); // saltamos y seguimos
+                try self.diagnostics.add(loc, .syntax, "unrecognized character: '{c}'", .{current});
+                _ = self.advance(); // saltamos y seguimos
                 return;
             },
         }
-        try self.advanceOne();
+        _ = self.advance();
         return;
     }
 
@@ -462,3 +524,38 @@ pub const Tokenizer = struct {
         }
     }
 };
+
+fn expectTokenizerDiagnostics(source: []const u8, should_diagnose: bool) !void {
+    const files = [_]sf.SourceFile{.{
+        .path = "tokenizer_crash_resistance.rg",
+        .code = source,
+    }};
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+
+    const allocator = arena.allocator();
+    var diagnostics = diag.Diagnostics.init(&allocator, files[0..]);
+    defer diagnostics.deinit();
+
+    var tokenizer_ctx = Tokenizer.init(
+        &allocator,
+        &diagnostics,
+        source,
+        files[0].path,
+    );
+    defer tokenizer_ctx.deinit();
+
+    _ = tokenizer_ctx.tokenize() catch {};
+    try std.testing.expectEqual(should_diagnose, diagnostics.hasErrors());
+}
+
+test "tokenizer crash resistance at EOF" {
+    try expectTokenizerDiagnostics("-- comentario sin newline final", false);
+    try expectTokenizerDiagnostics("0", false);
+    try expectTokenizerDiagnostics("0x", true);
+    try expectTokenizerDiagnostics("0b", true);
+    try expectTokenizerDiagnostics("1e", true);
+    try expectTokenizerDiagnostics("\"string sin cerrar", true);
+    try expectTokenizerDiagnostics("'c", true);
+    try expectTokenizerDiagnostics("-", false);
+}

@@ -2,48 +2,6 @@
 
 ## Bloqueantes para `0.1`
 
-### 1. Endurecer el tokenizer
-
-El tokenizer necesita una revisión antes de taggear `0.1`.
-
-Problemas detectados:
-
-- Hay caminos donde se llama a `self.this()` sin comprobar antes si `offset < source.len`.
-- Algunos inputs mal formados pueden acabar en acceso fuera de rango en vez de producir un diagnóstico limpio.
-- Casos sensibles:
-  - comentarios que llegan a EOF sin `\n`;
-  - strings sin cerrar;
-  - literales de char incompletos;
-  - números con prefijos incompletos;
-  - operadores sueltos al final del fichero.
-
-Casos que habría que probar sí o sí:
-
-```txt
-// comentario sin newline final
-0
-0x
-0b
-1e
-"string sin cerrar
-'c
--
-````
-
-Acciones:
-
-* Reescribir helpers seguros:
-
-  * `peek() ?u8`
-  * `peekNext() ?u8`
-  * `advance() bool`
-* Eliminar accesos directos inseguros.
-* Añadir tests de crash-resistance del lexer.
-* Asegurar que todo input inválido produce diagnóstico, no panic.
-
-Esto sí bloquea `0.1`.
-
----
 
 ### 2. Mejorar detección de imports
 
