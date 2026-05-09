@@ -13,6 +13,10 @@ const gen = @import("generics.zig");
 const Scope = @import("scope.zig").Scope;
 const SemErr = @import("errors.zig").SemErr;
 
+fn nowNs(io: std.Io) i96 {
+    return std.Io.Timestamp.now(io, .boot).nanoseconds;
+}
+
 const OwnedText = struct {
     allocator: *const std.mem.Allocator,
     bytes: []u8,
@@ -161,6 +165,7 @@ pub const Semantizer = struct {
     // The split keeps top-level nominal work separated from executable body
     // work and makes the remaining retries residual rather than fundamental.
     allocator: *const std.mem.Allocator,
+    io: std.Io,
     st_nodes: []const *syn.STNode, // entrada
     root_list: std.array_list.Managed(*sg.SGNode), // buffer mut
     root_nodes: []const *sg.SGNode = &.{}, // slice final
@@ -190,12 +195,14 @@ pub const Semantizer = struct {
 
     pub fn init(
         alloc: *const std.mem.Allocator,
+        io: std.Io,
         st: []const *syn.STNode,
         diags: *diagnostic.Diagnostics,
         options: SemantizerOptions,
     ) Semantizer {
         return .{
             .allocator = alloc,
+            .io = io,
             .st_nodes = st,
             .root_list = std.array_list.Managed(*sg.SGNode).init(alloc.*),
             .diags = diags,
@@ -327,9 +334,9 @@ pub const Semantizer = struct {
         // 1) Pasada inicial: estabiliza primero top-level de soporte y sólo
         // después entra en funciones. Esto evita que los cuerpos se conviertan
         // en la fuente principal de dependencias top-level pendientes.
-        const initial_start = std.time.nanoTimestamp();
+        const initial_start = nowNs(self.io);
         self.defer_unknown_top_level = true;
-        const support_top_level_start = std.time.nanoTimestamp();
+        const support_top_level_start = nowNs(self.io);
         for (self.st_nodes) |n| {
             if (self.topLevelNodeIsCallable(n)) continue;
             if (n.content == .test_declaration and !self.options.include_tests) continue;
@@ -364,14 +371,14 @@ pub const Semantizer = struct {
             if (!progressed) break;
             support_round += 1;
         }
-        timings.support_top_level_ns = @intCast(std.time.nanoTimestamp() - support_top_level_start);
+        timings.support_top_level_ns = @intCast(nowNs(self.io) - support_top_level_start);
 
         // Functions are semantized in two late stages: first their callable
         // interface, so overloads and abstract checks can stabilize on a
         // declaration-only world, and only afterwards their defaults and
         // bodies. Requiring explicit signature types is what keeps this split
         // practical without depending on body-semantic inference.
-        const function_interface_start = std.time.nanoTimestamp();
+        const function_interface_start = nowNs(self.io);
         self.function_semantize_mode = .interface_only;
         for (self.st_nodes) |n| {
             if (!self.topLevelNodeIsCallable(n)) continue;
@@ -407,11 +414,11 @@ pub const Semantizer = struct {
             if (!progressed) break;
             interface_round += 1;
         }
-        timings.function_interface_ns = @intCast(std.time.nanoTimestamp() - function_interface_start);
+        timings.function_interface_ns = @intCast(nowNs(self.io) - function_interface_start);
 
-        const abstract_verify_start = std.time.nanoTimestamp();
+        const abstract_verify_start = nowNs(self.io);
         try abs.verifyAbstracts(&global, self.allocator, self.diags);
-        timings.abstract_verify_ns = @intCast(std.time.nanoTimestamp() - abstract_verify_start);
+        timings.abstract_verify_ns = @intCast(nowNs(self.io) - abstract_verify_start);
 
         self.function_semantize_mode = .body_only;
         const pending_fn_timings = try self.semantizePendingFunctionBodies(&global);
@@ -419,10 +426,10 @@ pub const Semantizer = struct {
         timings.function_input_defaults_ns = pending_fn_timings.input_defaults_ns;
         timings.function_output_defaults_ns = pending_fn_timings.output_defaults_ns;
         timings.function_body_ns = pending_fn_timings.body_ns;
-        timings.initial_pass_ns = @intCast(std.time.nanoTimestamp() - initial_start);
+        timings.initial_pass_ns = @intCast(nowNs(self.io) - initial_start);
         timings.initial_retry_count = @intCast(self.pending_next.items.len);
         // 2) Rondas de reintento: solo lo pendiente
-        const retry_start = std.time.nanoTimestamp();
+        const retry_start = nowNs(self.io);
         var round: u32 = 0;
         while (self.pending_next.items.len > 0 and round < self.max_retry_rounds) {
             // swap pending_next -> pending_now
@@ -457,11 +464,11 @@ pub const Semantizer = struct {
             if (!progressed) break;
             round += 1;
         }
-        timings.retry_passes_ns = @intCast(std.time.nanoTimestamp() - retry_start);
+        timings.retry_passes_ns = @intCast(nowNs(self.io) - retry_start);
         timings.retry_round_count = round;
 
         // 3) Último pase: ya NO diferir => emitir diags de lo que quede
-        const final_retry_start = std.time.nanoTimestamp();
+        const final_retry_start = nowNs(self.io);
         self.defer_unknown_top_level = false;
         if (self.pending_next.items.len > 0) {
             for (self.pending_next.items) |pn| {
@@ -473,15 +480,15 @@ pub const Semantizer = struct {
             self.current_top_node = null;
             self.pending_next.items.len = 0;
         }
-        timings.final_retry_resolution_ns = @intCast(std.time.nanoTimestamp() - final_retry_start);
+        timings.final_retry_resolution_ns = @intCast(nowNs(self.io) - final_retry_start);
 
-        const once_verify_start = std.time.nanoTimestamp();
+        const once_verify_start = nowNs(self.io);
         try self.verifyOnceFunctions(&global);
-        timings.once_verify_ns = @intCast(std.time.nanoTimestamp() - once_verify_start);
+        timings.once_verify_ns = @intCast(nowNs(self.io) - once_verify_start);
 
-        const reason_inference_start = std.time.nanoTimestamp();
+        const reason_inference_start = nowNs(self.io);
         try self.inferFunctionErrorReasons(&global);
-        timings.error_reason_inference_ns = @intCast(std.time.nanoTimestamp() - reason_inference_start);
+        timings.error_reason_inference_ns = @intCast(nowNs(self.io) - reason_inference_start);
         timings.retry_enqueue_attempts = self.retry_enqueue_attempts;
         timings.retry_enqueue_unique = self.retry_enqueue_unique;
         timings.retry_function_nodes = self.retry_function_nodes;
@@ -540,7 +547,7 @@ pub const Semantizer = struct {
 
         // Input defaults are part of the callable interface because omitted
         // call arguments need them before any function body is semantized.
-        const input_defaults_start = std.time.nanoTimestamp();
+        const input_defaults_start = nowNs(self.io);
         for (self.pending_function_bodies.items, 0..) |*pending, idx| {
             self.current_top_node = pending.top_node;
             self.prepareFunctionInputDefaults(pending, global) catch |err| switch (err) {
@@ -551,11 +558,11 @@ pub const Semantizer = struct {
                 else => return err,
             };
         }
-        timings.input_defaults_ns = @intCast(std.time.nanoTimestamp() - input_defaults_start);
+        timings.input_defaults_ns = @intCast(nowNs(self.io) - input_defaults_start);
 
         // Output defaults belong to the body-facing execution state, so only
         // stage them once every callable interface is complete.
-        const output_defaults_start = std.time.nanoTimestamp();
+        const output_defaults_start = nowNs(self.io);
         for (self.pending_function_bodies.items, 0..) |*pending, idx| {
             if (deferred[idx]) continue;
             self.current_top_node = pending.top_node;
@@ -567,9 +574,9 @@ pub const Semantizer = struct {
                 else => return err,
             };
         }
-        timings.output_defaults_ns = @intCast(std.time.nanoTimestamp() - output_defaults_start);
+        timings.output_defaults_ns = @intCast(nowNs(self.io) - output_defaults_start);
 
-        const body_start = std.time.nanoTimestamp();
+        const body_start = nowNs(self.io);
         for (self.pending_function_bodies.items, 0..) |*pending, idx| {
             if (deferred[idx]) continue;
             self.current_top_node = pending.top_node;
@@ -581,7 +588,7 @@ pub const Semantizer = struct {
                 else => return err,
             };
         }
-        timings.body_ns = @intCast(std.time.nanoTimestamp() - body_start);
+        timings.body_ns = @intCast(nowNs(self.io) - body_start);
         self.current_top_node = null;
         return timings;
     }
@@ -642,7 +649,7 @@ pub const Semantizer = struct {
         if (value.*.content != .import_statement) return;
         if (global.module_aliases.contains(decl.name.string)) return;
 
-        const resolved = source_files.resolveImportDir(self.allocator, loc.file, value.*.content.import_statement.path) catch return;
+        const resolved = source_files.resolveImportDir(self.allocator, self.io, loc.file, value.*.content.import_statement.path) catch return;
         try global.module_aliases.put(decl.name.string, resolved);
     }
 
@@ -787,19 +794,16 @@ pub const Semantizer = struct {
         var uses_inferred_error_reasons = false;
         for (decl.output.fields) |*fld| {
             const field_ty = &fld.type.?;
-            const ty = if (self.inferableErrableInnerTypeFromOutput(field_ty.*)) |inner|
-                blk: {
-                    uses_inferred_error_reasons = true;
-                    break :blk self.makeInferredErrableTypeForSignaturePredeclaration(inner, &child, fld.name.location) catch |err| switch (err) {
-                        error.UnknownType, error.SymbolNotFound => return,
-                        else => return err,
-                    };
-                }
-            else
-                self.resolveCachedSignatureType(field_ty, .signature_predeclaration, &child) catch |err| switch (err) {
+            const ty = if (self.inferableErrableInnerTypeFromOutput(field_ty.*)) |inner| blk: {
+                uses_inferred_error_reasons = true;
+                break :blk self.makeInferredErrableTypeForSignaturePredeclaration(inner, &child, fld.name.location) catch |err| switch (err) {
                     error.UnknownType, error.SymbolNotFound => return,
                     else => return err,
                 };
+            } else self.resolveCachedSignatureType(field_ty, .signature_predeclaration, &child) catch |err| switch (err) {
+                error.UnknownType, error.SymbolNotFound => return,
+                else => return err,
+            };
 
             try out_fields.append(.{
                 .name = fld.name.string,
@@ -1012,7 +1016,7 @@ pub const Semantizer = struct {
             var line_index: u32 = 1;
             while (lines.next()) |line| : (line_index += 1) {
                 if (line_index != loc.line) continue;
-                return std.mem.trimRight(u8, line, "\r");
+                return std.mem.trim(u8, line, "\r");
             }
         }
         return "";
@@ -3377,12 +3381,10 @@ pub const Semantizer = struct {
         info.requirements = requirements;
         info.param_names = generic_params;
 
-        const td = if (s.types.get(ad.name.string)) |existing|
-            blk: {
-                if (existing.ty != .abstract_type) return error.SymbolAlreadyDefined;
-                break :blk existing;
-            }
-        else blk: {
+        const td = if (s.types.get(ad.name.string)) |existing| blk: {
+            if (existing.ty != .abstract_type) return error.SymbolAlreadyDefined;
+            break :blk existing;
+        } else blk: {
             const abs_ty = try self.allocator.create(sg.AbstractType);
             abs_ty.* = .{ .name = ad.name.string };
             const created = try self.allocator.create(sg.TypeDeclaration);
@@ -4135,7 +4137,7 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         if (d.value) |v| {
             if (v.*.content == .import_statement) {
-                const resolved = source_files.resolveImportDir(self.allocator, loc.file, v.*.content.import_statement.path) catch {
+                const resolved = source_files.resolveImportDir(self.allocator, self.io, loc.file, v.*.content.import_statement.path) catch {
                     try self.diags.add(
                         v.*.location,
                         .semantic,
@@ -4533,13 +4535,10 @@ pub const Semantizer = struct {
         var output_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
         var uses_inferred_error_reasons = false;
         for (f.output.fields) |fld| {
-            const ty = if (self.inferableErrableInnerTypeFromOutput(fld.type.?)) |inner|
-                blk: {
-                    uses_inferred_error_reasons = true;
-                    break :blk self.makeInferredErrableType(inner, &child, fld.name.location) catch |err| return err;
-                }
-            else
-                self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| return err;
+            const ty = if (self.inferableErrableInnerTypeFromOutput(fld.type.?)) |inner| blk: {
+                uses_inferred_error_reasons = true;
+                break :blk self.makeInferredErrableType(inner, &child, fld.name.location) catch |err| return err;
+            } else self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| return err;
             const dvp = if (fld.default_value) |n|
                 ((self.visitNode(n.*, &child) catch |err| return err)).node
             else
@@ -4756,13 +4755,10 @@ pub const Semantizer = struct {
         var uses_inferred_error_reasons = false;
         for (f.output.fields) |*fld| {
             const field_ty = &fld.type.?;
-            const ty = if (self.inferableErrableInnerTypeFromOutput(field_ty.*)) |inner|
-                blk: {
-                    uses_inferred_error_reasons = true;
-                    break :blk try self.makeInferredErrableType(inner, &child, fld.name.location);
-                }
-            else
-                try self.resolveCachedSignatureType(field_ty, .preserving_abstracts, &child);
+            const ty = if (self.inferableErrableInnerTypeFromOutput(field_ty.*)) |inner| blk: {
+                uses_inferred_error_reasons = true;
+                break :blk try self.makeInferredErrableType(inner, &child, fld.name.location);
+            } else try self.resolveCachedSignatureType(field_ty, .preserving_abstracts, &child);
 
             try out_fields.append(.{
                 .name = fld.name.string,
@@ -7664,7 +7660,7 @@ pub const Semantizer = struct {
         const actual_struct = input_te.ty.struct_type;
         const actual_value = input_te.node.content.struct_value_literal;
         const positional_prefix: usize = @min(actual_value.dispatch_prefix_positional_count, actual_value.fields.len);
- 
+
         if (positional_prefix > expected.fields.len) {
             return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_node, s, self.allocator, self.diags);
         }
@@ -8427,7 +8423,9 @@ pub const Semantizer = struct {
                 try self.appendTemplateTypePretty(buf, inner.*, tmpl);
             },
             .array_type => |arr_info| {
-                try std.fmt.format(buf.writer(), "[{d}]", .{arr_info.length});
+                var len_buf: [32]u8 = undefined;
+                const len_text = std.fmt.bufPrint(&len_buf, "[{d}]", .{arr_info.length}) catch unreachable;
+                try buf.appendSlice(len_text);
                 try self.appendTemplateTypePretty(buf, arr_info.element.*, tmpl);
             },
             .generic_type_instantiation => |g| {
@@ -9091,7 +9089,7 @@ pub const Semantizer = struct {
                     .comptime_int => {
                         if (self.extractComptimeIntArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
                             return .{ .comptime_int = res };
-                    }
+                    },
                 }
             }
         }
@@ -9129,7 +9127,7 @@ pub const Semantizer = struct {
                     .comptime_int => {
                         if (self.extractComptimeIntArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
                             return .{ .comptime_int = res };
-                    }
+                    },
                 }
             }
         }
@@ -10944,7 +10942,7 @@ pub const Semantizer = struct {
             .name = .{ .string = "value", .location = loc },
             .value = if (iterable_direct_ok)
                 iterable_ident
-                else
+            else
                 try self.makeSynNode(.{ .address_of = .{
                     .value = iterable_ident,
                     .mutability = if (iterable_needs_mutability) .read_write else .read_only,
@@ -11206,64 +11204,64 @@ pub const Semantizer = struct {
                     return error.Reported;
                 }
             } else {
-            const resolved_payload_ty = payload_ty orelse {
-                try self.diags.add(
-                    binding_name.location,
-                    .semantic,
-                    "choice variant '..{s}' has no payload to bind",
-                    .{case_syn.variant_name.string},
-                );
-                return error.Reported;
-            };
+                const resolved_payload_ty = payload_ty orelse {
+                    try self.diags.add(
+                        binding_name.location,
+                        .semantic,
+                        "choice variant '..{s}' has no payload to bind",
+                        .{case_syn.variant_name.string},
+                    );
+                    return error.Reported;
+                };
 
-            const access = try self.allocator.create(sg.ChoicePayloadAccess);
-            access.* = .{
-                .choice_value = choice_value.node,
-                .variant_index = variant_index,
-                .payload_type = resolved_payload_ty,
-            };
-            const access_node = try sg.makeSGNode(.{ .choice_payload_access = access }, binding_name.location, self.allocator);
-            access_node.sem_type = resolved_payload_ty;
+                const access = try self.allocator.create(sg.ChoicePayloadAccess);
+                access.* = .{
+                    .choice_value = choice_value.node,
+                    .variant_index = variant_index,
+                    .payload_type = resolved_payload_ty,
+                };
+                const access_node = try sg.makeSGNode(.{ .choice_payload_access = access }, binding_name.location, self.allocator);
+                access_node.sem_type = resolved_payload_ty;
 
-            const init_expr: typ.TypedExpr = switch (payload_binding.mode) {
-                .by_value => try self.ensureValuePositionAllowed(
-                    .{ .node = access_node, .ty = resolved_payload_ty },
-                    binding_name.location,
-                    parent,
-                ),
-                .by_move => .{ .node = access_node, .ty = resolved_payload_ty },
-                .by_borrow => try typ.makeAddressablePointer(
-                    access_node,
-                    resolved_payload_ty,
-                    .read_only,
-                    binding_name.location,
-                    self.allocator,
-                    self.diags,
-                ),
-                .by_mut_borrow => try typ.makeAddressablePointer(
-                    access_node,
-                    resolved_payload_ty,
-                    .read_write,
-                    binding_name.location,
-                    self.allocator,
-                    self.diags,
-                ),
-            };
+                const init_expr: typ.TypedExpr = switch (payload_binding.mode) {
+                    .by_value => try self.ensureValuePositionAllowed(
+                        .{ .node = access_node, .ty = resolved_payload_ty },
+                        binding_name.location,
+                        parent,
+                    ),
+                    .by_move => .{ .node = access_node, .ty = resolved_payload_ty },
+                    .by_borrow => try typ.makeAddressablePointer(
+                        access_node,
+                        resolved_payload_ty,
+                        .read_only,
+                        binding_name.location,
+                        self.allocator,
+                        self.diags,
+                    ),
+                    .by_mut_borrow => try typ.makeAddressablePointer(
+                        access_node,
+                        resolved_payload_ty,
+                        .read_write,
+                        binding_name.location,
+                        self.allocator,
+                        self.diags,
+                    ),
+                };
 
-            const bd = try self.allocator.create(sg.BindingDeclaration);
-            bd.* = .{
-                .name = binding_name.string,
-                .location = binding_name.location,
-                .origin_file = binding_name.location.file,
-                .mutability = .constant,
-                .ty = init_expr.ty,
-                .initialization = init_expr.node,
-            };
+                const bd = try self.allocator.create(sg.BindingDeclaration);
+                bd.* = .{
+                    .name = binding_name.string,
+                    .location = binding_name.location,
+                    .origin_file = binding_name.location.file,
+                    .mutability = .constant,
+                    .ty = init_expr.ty,
+                    .initialization = init_expr.node,
+                };
 
-            try child.bindings.put(binding_name.string, bd);
-            const decl_node = try sg.makeSGNode(.{ .binding_declaration = bd }, binding_name.location, self.allocator);
-            try child.nodes.append(decl_node);
-            try self.maybeScheduleAutoDeinit(bd, binding_name.location, &child);
+                try child.bindings.put(binding_name.string, bd);
+                const decl_node = try sg.makeSGNode(.{ .binding_declaration = bd }, binding_name.location, self.allocator);
+                try child.nodes.append(decl_node);
+                try self.maybeScheduleAutoDeinit(bd, binding_name.location, &child);
             }
         } else if (payload_ty != null) {
             try self.diags.add(

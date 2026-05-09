@@ -14,25 +14,35 @@ const ReadMessageError = error{
 
 const UriError = error{UnsupportedUri};
 
-pub fn start() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+fn tmpRootPath(tmp: *const std.testing.TmpDir) ![]u8 {
+    return std.fs.path.resolve(std.testing.allocator, &.{ ".", ".zig-cache", "tmp", tmp.sub_path[0..] });
+}
+
+fn tmpFilePath(tmp: *const std.testing.TmpDir, rel_path: []const u8) ![]u8 {
+    return std.fs.path.resolve(std.testing.allocator, &.{ ".", ".zig-cache", "tmp", tmp.sub_path[0..], rel_path });
+}
+
+pub fn start(io: std.Io) !void {
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
 
-    var server = LanguageServer.init(gpa.allocator());
+    var server = LanguageServer.init(gpa.allocator(), io);
     defer server.deinit();
 
-    try server.run();
+    try server.run(io);
 }
 
 const LanguageServer = struct {
     allocator: std.mem.Allocator,
+    io: std.Io,
     buffer: std.array_list.Managed(u8),
     service: ?service.LanguageService = null,
     shutdown_requested: bool = false,
 
-    pub fn init(allocator: std.mem.Allocator) LanguageServer {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) LanguageServer {
         return .{
             .allocator = allocator,
+            .io = io,
             .buffer = std.array_list.Managed(u8).init(allocator),
         };
     }
@@ -53,9 +63,11 @@ const LanguageServer = struct {
         };
     }
 
-    pub fn run(self: *LanguageServer) !void {
-        var reader = std.fs.File.stdin().deprecatedReader();
-        var writer = std.fs.File.stdout().deprecatedWriter();
+    pub fn run(self: *LanguageServer, io: std.Io) !void {
+        var stdin_buffer: [4096]u8 = undefined;
+        var stdout_buffer: [4096]u8 = undefined;
+        var reader = std.Io.File.stdin().reader(io, &stdin_buffer);
+        var writer = std.Io.File.stdout().writer(io, &stdout_buffer);
 
         while (true) {
             const payload = self.readMessage(&reader) catch |err| switch (err) {
@@ -153,27 +165,33 @@ const LanguageServer = struct {
     fn readMessage(
         self: *LanguageServer,
         reader: anytype,
-    ) (ReadMessageError || error{EndOfStream} || std.io.AnyReader.Error || AllocError)![]const u8 {
+    ) (ReadMessageError || error{EndOfStream} || std.Io.Reader.DelimiterError || std.Io.Reader.Error || AllocError)![]const u8 {
         var content_length: ?usize = null;
 
         while (true) {
-            const line_opt = try reader.readUntilDelimiterOrEofAlloc(self.allocator, '\n', 1024);
-            if (line_opt == null) return error.EndOfStream;
-            const line_raw = line_opt.?;
-            defer self.allocator.free(line_raw);
-
-            const line_trimmed = std.mem.trimRight(u8, line_raw, "\r\n");
+            const line_raw = reader.interface.takeDelimiterExclusive('\n') catch |err| switch (err) {
+                error.EndOfStream => return error.EndOfStream,
+                else => return err,
+            };
+            const line_trimmed = std.mem.trim(u8, line_raw, "\r\n");
             if (line_trimmed.len == 0) break;
 
             if (std.mem.startsWith(u8, line_trimmed, "Content-Length:")) {
-                const value_slice = std.mem.trimLeft(u8, line_trimmed["Content-Length:".len..], " ");
+                const value_slice = std.mem.trim(u8, line_trimmed["Content-Length:".len..], " ");
                 content_length = std.fmt.parseInt(usize, value_slice, 10) catch return ReadMessageError.InvalidContentLength;
             }
         }
 
         const len = content_length orelse return ReadMessageError.MissingContentLength;
         try self.buffer.resize(len);
-        try reader.readNoEof(self.buffer.items[0..len]);
+        var written: usize = 0;
+        while (written < len) {
+            const chunk_len = @min(len - written, 4096);
+            const payload = try reader.interface.take(chunk_len);
+            if (payload.len == 0) return error.EndOfStream;
+            @memcpy(self.buffer.items[written .. written + payload.len], payload);
+            written += payload.len;
+        }
         return self.buffer.items[0..len];
     }
 
@@ -184,7 +202,7 @@ const LanguageServer = struct {
         params_value: ?json.Value,
     ) !void {
         if (self.service == null) {
-            self.service = service.LanguageService.init(self.allocator);
+            self.service = service.LanguageService.init(self.allocator, self.io);
         }
 
         if (params_value) |params| {
@@ -826,8 +844,9 @@ const LanguageServer = struct {
 
     fn sendMessage(self: *LanguageServer, writer: anytype, payload: []const u8) !void {
         _ = self;
-        try writer.print("Content-Length: {d}\r\n\r\n", .{payload.len});
-        try writer.writeAll(payload);
+        try writer.interface.print("Content-Length: {d}\r\n\r\n", .{payload.len});
+        try writer.interface.writeAll(payload);
+        try writer.interface.flush();
     }
 
     fn uriToPath(self: *LanguageServer, uri: []const u8) (AllocError || UriError)![]u8 {
@@ -986,8 +1005,8 @@ test "didOpen publishes diagnostics and hover responds with payload" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
@@ -1078,8 +1097,8 @@ test "didChange publishes diagnostics and ignores stale versions" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = fixed_code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = fixed_code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
@@ -1182,8 +1201,8 @@ test "didClose publishes empty diagnostics" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
@@ -1256,8 +1275,8 @@ test "definition responds with target location over protocol" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
@@ -1330,8 +1349,8 @@ test "references responds with declaration and uses over protocol" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
@@ -1403,8 +1422,8 @@ test "rename responds with workspace edits over protocol" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);

@@ -17,6 +17,7 @@ const ResolvedImport = struct {
 
 pub const CoreResolutionOptions = struct {
     explicit_sysroot: ?[]const u8 = null,
+    environ_map: ?*const std.process.Environ.Map = null,
     fallback_core_dir: []const u8 = "core",
 };
 
@@ -25,33 +26,33 @@ const CoreCandidate = struct {
     path: []u8,
 };
 
-fn dirExists(path: []const u8) bool {
-    var dir = std.fs.cwd().openDir(path, .{}) catch return false;
-    dir.close();
+fn dirExists(io: std.Io, path: []const u8) bool {
+    var dir = std.Io.Dir.cwd().openDir(io, path, .{}) catch return false;
+    dir.close(io);
     return true;
 }
 
-fn fileExists(path: []const u8) bool {
-    std.fs.cwd().access(path, .{}) catch return false;
+fn fileExists(io: std.Io, path: []const u8) bool {
+    std.Io.Dir.cwd().access(io, path, .{}) catch return false;
     return true;
 }
 
-fn isProjectRoot(path: []const u8) bool {
+fn isProjectRoot(io: std.Io, path: []const u8) bool {
     const git_path = std.fs.path.join(std.heap.page_allocator, &.{ path, ".git" }) catch return false;
     defer std.heap.page_allocator.free(git_path);
-    if (dirExists(git_path)) return true;
+    if (dirExists(io, git_path)) return true;
 
     const argi_toml_path = std.fs.path.join(std.heap.page_allocator, &.{ path, "argi.toml" }) catch return false;
     defer std.heap.page_allocator.free(argi_toml_path);
-    return fileExists(argi_toml_path);
+    return fileExists(io, argi_toml_path);
 }
 
-fn findProjectRoot(alloc: *const std.mem.Allocator, importer_path: []const u8) ![]u8 {
+fn findProjectRoot(alloc: *const std.mem.Allocator, io: std.Io, importer_path: []const u8) ![]u8 {
     var current = try std.fs.path.resolve(alloc.*, &.{std.fs.path.dirname(importer_path) orelse "."});
     errdefer alloc.free(current);
 
     while (true) {
-        if (isProjectRoot(current)) return current;
+        if (isProjectRoot(io, current)) return current;
 
         const parent = std.fs.path.dirname(current) orelse return current;
         const resolved_parent = try std.fs.path.resolve(alloc.*, &.{parent});
@@ -67,11 +68,12 @@ fn findProjectRoot(alloc: *const std.mem.Allocator, importer_path: []const u8) !
 
 fn firstExistingDir(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     candidates: []const []const u8,
 ) ![]u8 {
     for (candidates) |candidate| {
         const resolved = try std.fs.path.resolve(alloc.*, &.{candidate});
-        if (dirExists(resolved)) return resolved;
+        if (dirExists(io, resolved)) return resolved;
         alloc.free(resolved);
     }
     return error.FileNotFound;
@@ -91,9 +93,10 @@ fn appendSysrootCoreCandidate(
 
 fn appendSelfExeCoreCandidate(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     candidates: *std.array_list.Managed(CoreCandidate),
 ) !void {
-    const exe_dir = try std.fs.selfExeDirPathAlloc(alloc.*);
+    const exe_dir = try std.process.executableDirPathAlloc(io, alloc.*);
     defer alloc.free(exe_dir);
 
     try candidates.append(.{
@@ -118,6 +121,7 @@ fn freeCoreCandidates(alloc: *const std.mem.Allocator, candidates: *std.array_li
 
 pub fn resolveToolCoreDir(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     options: CoreResolutionOptions,
 ) ![]u8 {
     var candidates = std.array_list.Managed(CoreCandidate).init(alloc.*);
@@ -126,14 +130,19 @@ pub fn resolveToolCoreDir(
     if (options.explicit_sysroot) |sysroot| {
         try appendSysrootCoreCandidate(alloc, &candidates, "--sysroot", sysroot);
     } else {
-        if (std.process.getEnvVarOwned(alloc.*, "ARGI_SYSROOT") catch |err| switch (err) {
-            error.EnvironmentVariableNotFound => null,
-            else => return err,
-        }) |env_sysroot| {
-            defer alloc.free(env_sysroot);
-            try appendSysrootCoreCandidate(alloc, &candidates, "ARGI_SYSROOT", env_sysroot);
+        if (options.environ_map) |environ_map| {
+            if (environ_map.get("ARGI_SYSROOT")) |env_sysroot| {
+                try appendSysrootCoreCandidate(alloc, &candidates, "ARGI_SYSROOT", env_sysroot);
+            } else {
+                try appendSelfExeCoreCandidate(alloc, io, &candidates);
+
+                try candidates.append(.{
+                    .label = "development fallback",
+                    .path = try std.fs.path.resolve(alloc.*, &.{options.fallback_core_dir}),
+                });
+            }
         } else {
-            try appendSelfExeCoreCandidate(alloc, &candidates);
+            try appendSelfExeCoreCandidate(alloc, io, &candidates);
 
             try candidates.append(.{
                 .label = "development fallback",
@@ -143,7 +152,7 @@ pub fn resolveToolCoreDir(
     }
 
     for (candidates.items) |candidate| {
-        if (!dirExists(candidate.path)) continue;
+        if (!dirExists(io, candidate.path)) continue;
         return try alloc.dupe(u8, candidate.path);
     }
 
@@ -151,14 +160,14 @@ pub fn resolveToolCoreDir(
     return error.CoreNotFound;
 }
 
-fn resolveToolMoreDir(alloc: *const std.mem.Allocator) ![]u8 {
-    const exe_dir = try std.fs.selfExeDirPathAlloc(alloc.*);
+fn resolveToolMoreDir(alloc: *const std.mem.Allocator, io: std.Io) ![]u8 {
+    const exe_dir = try std.process.executableDirPathAlloc(io, alloc.*);
     defer alloc.free(exe_dir);
 
     const bundled_more = try std.fs.path.resolve(alloc.*, &.{ exe_dir, "..", "..", "..", "more" });
     defer alloc.free(bundled_more);
 
-    return try firstExistingDir(alloc, &.{
+    return try firstExistingDir(alloc, io, &.{
         "more",
         "../more",
         bundled_more,
@@ -167,15 +176,16 @@ fn resolveToolMoreDir(alloc: *const std.mem.Allocator) ![]u8 {
 
 fn collectRgFilesRecursively(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     list: *std.array_list.Managed(SourceFile),
     dir_path: []const u8,
     seen_files: *DirSet,
 ) !void {
-    var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |e| {
+    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch |e| {
         std.debug.print("failed to open source directory '{s}': {any}\n", .{ dir_path, e });
         return e;
     };
-    defer dir.close();
+    defer dir.close(io);
 
     var walker = dir.walk(alloc.*) catch unreachable;
     defer walker.deinit();
@@ -186,7 +196,7 @@ fn collectRgFilesRecursively(
         paths.deinit();
     }
 
-    while (try walker.next()) |entry| {
+    while (try walker.next(io)) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.path, ".rg")) continue;
 
@@ -208,22 +218,23 @@ fn collectRgFilesRecursively(
 
     for (paths.items) |full_path| {
         try seen_files.put(try alloc.dupe(u8, full_path), {});
-        try list.append(try readFile(alloc, full_path));
+        try list.append(try readFile(alloc, io, full_path));
     }
 }
 
 fn collectRgFilesInDir(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     list: *std.array_list.Managed(SourceFile),
     dir_path: []const u8,
     skip_path: ?[]const u8,
     seen_files: *DirSet,
 ) !void {
-    var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch |e| {
+    var dir = std.Io.Dir.cwd().openDir(io, dir_path, .{ .iterate = true }) catch |e| {
         std.debug.print("failed to open module directory '{s}': {any}\n", .{ dir_path, e });
         return e;
     };
-    defer dir.close();
+    defer dir.close(io);
 
     var paths = std.array_list.Managed([]u8).init(alloc.*);
     defer {
@@ -232,7 +243,7 @@ fn collectRgFilesInDir(
     }
 
     var it = dir.iterate();
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.name, ".rg")) continue;
 
@@ -260,12 +271,13 @@ fn collectRgFilesInDir(
 
     for (paths.items) |full_path| {
         try seen_files.put(try alloc.dupe(u8, full_path), {});
-        try list.append(try readFile(alloc, full_path));
+        try list.append(try readFile(alloc, io, full_path));
     }
 }
 
 fn collectImportDirsFromSource(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     source_path: []const u8,
     source_code: []const u8,
     imports: *ImportList,
@@ -275,7 +287,7 @@ fn collectImportDirsFromSource(
         const parsed = nextImportDirective(source_code, &offset) orelse break;
         offset = parsed.next_offset;
 
-        const resolved = try resolveImportDir(alloc, source_path, parsed.path);
+        const resolved = try resolveImportDir(alloc, io, source_path, parsed.path);
         errdefer alloc.free(resolved);
         var already_known = false;
 
@@ -409,8 +421,8 @@ fn freeImportList(alloc: *const std.mem.Allocator, imports: *ImportList) void {
     imports.deinit();
 }
 
-fn ensureImportDirExists(entry: ResolvedImport) !void {
-    if (dirExists(entry.resolved_dir)) return;
+fn ensureImportDirExists(io: std.Io, entry: ResolvedImport) !void {
+    if (dirExists(io, entry.resolved_dir)) return;
     std.debug.print(
         "cannot resolve import '{s}' from '{s}'\n",
         .{ entry.raw_path, entry.importer_path },
@@ -420,6 +432,7 @@ fn ensureImportDirExists(entry: ResolvedImport) !void {
 
 pub fn resolveImportDir(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     importer_path: []const u8,
     import_path: []const u8,
 ) ![]u8 {
@@ -429,27 +442,28 @@ pub fn resolveImportDir(
     }
 
     if (std.mem.startsWith(u8, import_path, ".../")) {
-        const project_root = try findProjectRoot(alloc, importer_path);
+        const project_root = try findProjectRoot(alloc, io, importer_path);
         defer alloc.free(project_root);
         return try std.fs.path.resolve(alloc.*, &.{ project_root, import_path[4..] });
     }
 
-    const more_root = try resolveToolMoreDir(alloc);
+    const more_root = try resolveToolMoreDir(alloc, io);
     defer alloc.free(more_root);
     return try std.fs.path.resolve(alloc.*, &.{ more_root, import_path });
 }
 
 fn scanImports(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     source: SourceFile,
     module_dirs: *DirSet,
 ) !void {
     var imports = ImportList.init(alloc.*);
     defer freeImportList(alloc, &imports);
 
-    try collectImportDirsFromSource(alloc, source.path, source.code, &imports);
+    try collectImportDirsFromSource(alloc, io, source.path, source.code, &imports);
     for (imports.items) |entry| {
-        try ensureImportDirExists(entry);
+        try ensureImportDirExists(io, entry);
         if (module_dirs.contains(entry.resolved_dir)) continue;
         try module_dirs.put(try alloc.dupe(u8, entry.resolved_dir), {});
     }
@@ -461,6 +475,7 @@ test "import scanner ignores comments strings and chars" {
 
     try collectImportDirsFromSource(
         &std.testing.allocator,
+        std.testing.io,
         "tests/feature_tests/modules/example/main.rg",
         \\-- ignored := #import("./comment_dep")
         \\message := "#import(\"./string_dep\")"
@@ -482,6 +497,7 @@ test "import scanner ignores unterminated strings" {
 
     try collectImportDirsFromSource(
         &std.testing.allocator,
+        std.testing.io,
         "tests/feature_tests/modules/example/main.rg",
         "message := \"#import(\\\"./string_dep\\\")",
         &imports,
@@ -519,6 +535,7 @@ fn printImportCycle(stack: []const []const u8, repeated_dir: []const u8) void {
 
 fn validateModuleGraphAcyclic(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     dir_path: []const u8,
     skip_path: ?[]const u8,
     entry_override: ?SourceFile,
@@ -545,7 +562,7 @@ fn validateModuleGraphAcyclic(
         seen_module_files.deinit();
     }
 
-    try collectRgFilesInDir(alloc, &module_files, dir_path, skip_path, &seen_module_files);
+    try collectRgFilesInDir(alloc, io, &module_files, dir_path, skip_path, &seen_module_files);
     if (entry_override) |entry_source| {
         try module_files.append(.{
             .path = try alloc.dupe(u8, entry_source.path),
@@ -557,12 +574,12 @@ fn validateModuleGraphAcyclic(
     defer freeImportList(alloc, &imports);
 
     for (module_files.items) |source| {
-        try collectImportDirsFromSource(alloc, source.path, source.code, &imports);
+        try collectImportDirsFromSource(alloc, io, source.path, source.code, &imports);
     }
 
     for (imports.items) |entry| {
-        try ensureImportDirExists(entry);
-        try validateModuleGraphAcyclic(alloc, entry.resolved_dir, null, null, visited_dirs, stack);
+        try ensureImportDirExists(io, entry);
+        try validateModuleGraphAcyclic(alloc, io, entry.resolved_dir, null, null, visited_dirs, stack);
     }
 
     try visited_dirs.put(try alloc.dupe(u8, dir_path), {});
@@ -570,6 +587,7 @@ fn validateModuleGraphAcyclic(
 
 fn collectModuleOrder(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     dir_path: []const u8,
     skip_path: ?[]const u8,
     entry_override: ?SourceFile,
@@ -587,7 +605,7 @@ fn collectModuleOrder(
         seen_module_files.deinit();
     }
 
-    try collectRgFilesInDir(alloc, &module_files, dir_path, skip_path, &seen_module_files);
+    try collectRgFilesInDir(alloc, io, &module_files, dir_path, skip_path, &seen_module_files);
     if (entry_override) |entry_source| {
         try module_files.append(.{
             .path = try alloc.dupe(u8, entry_source.path),
@@ -599,12 +617,12 @@ fn collectModuleOrder(
     defer freeImportList(alloc, &imports);
 
     for (module_files.items) |source| {
-        try collectImportDirsFromSource(alloc, source.path, source.code, &imports);
+        try collectImportDirsFromSource(alloc, io, source.path, source.code, &imports);
     }
 
     for (imports.items) |entry| {
-        try ensureImportDirExists(entry);
-        try collectModuleOrder(alloc, entry.resolved_dir, null, null, visited_dirs, ordered_dirs);
+        try ensureImportDirExists(io, entry);
+        try collectModuleOrder(alloc, io, entry.resolved_dir, null, null, visited_dirs, ordered_dirs);
     }
 
     try visited_dirs.put(try alloc.dupe(u8, dir_path), {});
@@ -612,57 +630,61 @@ fn collectModuleOrder(
 }
 
 /// Lee un único fichero.
-pub fn readFile(alloc: *const std.mem.Allocator, path: []const u8) !SourceFile {
-    const code = try std.fs.cwd().readFileAlloc(alloc.*, path, 1 << 24); // 16 MiB máx.
+pub fn readFile(alloc: *const std.mem.Allocator, io: std.Io, path: []const u8) !SourceFile {
+    const code = try std.Io.Dir.cwd().readFileAlloc(io, path, alloc.*, .limited(1 << 24)); // 16 MiB máx.
     return .{ .path = try alloc.dupe(u8, path), .code = code };
 }
 
 /// Reúne todos los .rg de `core_dir` + el `user_path`.
 pub fn collect(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     core_dir: []const u8,
     user_path: []const u8,
 ) !std.array_list.Managed(SourceFile) {
-    const entry_source = try readFile(alloc, user_path);
+    const entry_source = try readFile(alloc, io, user_path);
     defer {
         alloc.free(entry_source.path);
         alloc.free(entry_source.code);
     }
 
-    return try collectWithEntrySource(alloc, core_dir, user_path, entry_source.code);
+    return try collectWithEntrySource(alloc, io, core_dir, user_path, entry_source.code);
 }
 
 pub fn collectWithOptions(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     options: CoreResolutionOptions,
     user_path: []const u8,
 ) !std.array_list.Managed(SourceFile) {
-    const entry_source = try readFile(alloc, user_path);
+    const entry_source = try readFile(alloc, io, user_path);
     defer {
         alloc.free(entry_source.path);
         alloc.free(entry_source.code);
     }
 
-    return try collectWithEntrySourceWithOptions(alloc, options, user_path, entry_source.code);
+    return try collectWithEntrySourceWithOptions(alloc, io, options, user_path, entry_source.code);
 }
 
 pub fn collectModule(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     core_dir: []const u8,
     module_dir: []const u8,
 ) !std.array_list.Managed(SourceFile) {
-    return try collectModuleWithOptions(alloc, .{ .fallback_core_dir = core_dir }, module_dir);
+    return try collectModuleWithOptions(alloc, io, .{ .fallback_core_dir = core_dir }, module_dir);
 }
 
 pub fn collectModuleWithOptions(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     options: CoreResolutionOptions,
     module_dir: []const u8,
 ) !std.array_list.Managed(SourceFile) {
     var list = std.array_list.Managed(SourceFile).init(alloc.*);
     errdefer freeList(alloc, &list);
 
-    const resolved_core_dir = try resolveToolCoreDir(alloc, options);
+    const resolved_core_dir = try resolveToolCoreDir(alloc, io, options);
     defer alloc.free(resolved_core_dir);
     const resolved_module_dir = try std.fs.path.resolve(alloc.*, &.{module_dir});
     defer alloc.free(resolved_module_dir);
@@ -693,10 +715,11 @@ pub fn collectModuleWithOptions(
         ordered_seen.deinit();
     }
 
-    try collectRgFilesRecursively(alloc, &list, resolved_core_dir, &seen_files);
+    try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files);
 
     try validateModuleGraphAcyclic(
         alloc,
+        io,
         resolved_module_dir,
         null,
         null,
@@ -705,6 +728,7 @@ pub fn collectModuleWithOptions(
     );
     try collectModuleOrder(
         alloc,
+        io,
         resolved_module_dir,
         null,
         null,
@@ -713,7 +737,7 @@ pub fn collectModuleWithOptions(
     );
 
     for (ordered_dirs.items) |dir_path| {
-        try collectRgFilesInDir(alloc, &list, dir_path, null, &seen_files);
+        try collectRgFilesInDir(alloc, io, &list, dir_path, null, &seen_files);
     }
 
     return list;
@@ -721,12 +745,14 @@ pub fn collectModuleWithOptions(
 
 pub fn collectWithEntrySource(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     core_dir: []const u8,
     user_path: []const u8,
     user_code: []const u8,
 ) !std.array_list.Managed(SourceFile) {
     return try collectWithEntrySourceWithOptions(
         alloc,
+        io,
         .{ .fallback_core_dir = core_dir },
         user_path,
         user_code,
@@ -735,6 +761,7 @@ pub fn collectWithEntrySource(
 
 pub fn collectWithEntrySourceWithOptions(
     alloc: *const std.mem.Allocator,
+    io: std.Io,
     options: CoreResolutionOptions,
     user_path: []const u8,
     user_code: []const u8,
@@ -742,7 +769,7 @@ pub fn collectWithEntrySourceWithOptions(
     var list = std.array_list.Managed(SourceFile).init(alloc.*);
     errdefer freeList(alloc, &list);
 
-    const resolved_core_dir = try resolveToolCoreDir(alloc, options);
+    const resolved_core_dir = try resolveToolCoreDir(alloc, io, options);
     defer alloc.free(resolved_core_dir);
     const entry_source = SourceFile{
         .path = try alloc.dupe(u8, user_path),
@@ -779,7 +806,7 @@ pub fn collectWithEntrySourceWithOptions(
     }
 
     // ─── core/ ────────────────────────────────────────────────────────────
-    try collectRgFilesRecursively(alloc, &list, resolved_core_dir, &seen_files);
+    try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files);
 
     // ─── carpeta del entrypoint del usuario y imports explícitos ─────────
     const user_dir = std.fs.path.dirname(user_path) orelse ".";
@@ -787,6 +814,7 @@ pub fn collectWithEntrySourceWithOptions(
     defer alloc.free(root_module_dir);
     try validateModuleGraphAcyclic(
         alloc,
+        io,
         root_module_dir,
         user_path,
         entry_source,
@@ -795,6 +823,7 @@ pub fn collectWithEntrySourceWithOptions(
     );
     try collectModuleOrder(
         alloc,
+        io,
         root_module_dir,
         user_path,
         entry_source,
@@ -804,7 +833,7 @@ pub fn collectWithEntrySourceWithOptions(
 
     for (ordered_dirs.items) |dir_path| {
         const skip_path = if (std.mem.eql(u8, dir_path, user_dir)) user_path else null;
-        try collectRgFilesInDir(alloc, &list, dir_path, skip_path, &seen_files);
+        try collectRgFilesInDir(alloc, io, &list, dir_path, skip_path, &seen_files);
     }
 
     // ─── entrypoint del usuario al final ─────────────────────────────────

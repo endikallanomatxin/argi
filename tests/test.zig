@@ -42,8 +42,8 @@ fn objPathFor(name: []const u8) ![]u8 {
 }
 
 fn clean(name: []const u8) !void {
-    var root = try std.fs.cwd().openDir(compilerRoot(), .{});
-    defer root.close();
+    var root = try std.Io.Dir.cwd().openDir(std.testing.io, compilerRoot(), .{});
+    defer root.close(std.testing.io);
 
     const output_path = try outputPathFor(name);
     defer std.testing.allocator.free(output_path);
@@ -54,26 +54,26 @@ fn clean(name: []const u8) !void {
     const obj_path = try objPathFor(name);
     defer std.testing.allocator.free(obj_path);
 
-    root.deleteFile(ir_path) catch |err| {
+    root.deleteFile(std.testing.io, ir_path) catch |err| {
         if (err != error.FileNotFound) return err;
     };
-    root.deleteFile(output_path) catch |err| {
+    root.deleteFile(std.testing.io, output_path) catch |err| {
         if (err != error.FileNotFound) return err;
     };
-    root.deleteFile(obj_path) catch |err| {
+    root.deleteFile(std.testing.io, obj_path) catch |err| {
         if (err != error.FileNotFound) return err;
     };
 }
 
-fn runChild(argv: []const []const u8) !std.process.Child.RunResult {
-    return std.process.Child.run(.{
-        .allocator = std.testing.allocator,
+fn runChild(argv: []const []const u8) !std.process.RunResult {
+    const result = try std.process.run(std.testing.allocator, std.testing.io, .{
         .argv = argv,
-        .cwd = compilerRoot(),
+        .cwd = .{ .path = compilerRoot() },
     });
+    return normalizeRunResult(result);
 }
 
-fn runArgiCommand(args: []const []const u8) !std.process.Child.RunResult {
+fn runArgiCommand(args: []const []const u8) !std.process.RunResult {
     const argv = try std.testing.allocator.alloc([]const u8, args.len + 1);
     defer std.testing.allocator.free(argv);
 
@@ -87,8 +87,8 @@ fn runArgiCommand(args: []const []const u8) !std.process.Child.RunResult {
 
 fn runArgiCommandWithEnv(
     args: []const []const u8,
-    env_map: *const std.process.EnvMap,
-) !std.process.Child.RunResult {
+    env_map: *const std.process.Environ.Map,
+) !std.process.RunResult {
     const argv = try std.testing.allocator.alloc([]const u8, args.len + 1);
     defer std.testing.allocator.free(argv);
 
@@ -97,36 +97,60 @@ fn runArgiCommandWithEnv(
         argv[idx + 1] = arg;
     }
 
-    return std.process.Child.run(.{
-        .allocator = std.testing.allocator,
+    const result = try std.process.run(std.testing.allocator, std.testing.io, .{
         .argv = argv,
-        .cwd = compilerRoot(),
-        .env_map = env_map,
+        .cwd = .{ .path = compilerRoot() },
+        .environ_map = env_map,
     });
+    return normalizeRunResult(result);
 }
 
-fn runChildInCwd(argv: []const []const u8, cwd: []const u8) !std.process.Child.RunResult {
-    return std.process.Child.run(.{
-        .allocator = std.testing.allocator,
+fn runChildInCwd(argv: []const []const u8, cwd: []const u8) !std.process.RunResult {
+    const result = try std.process.run(std.testing.allocator, std.testing.io, .{
         .argv = argv,
-        .cwd = cwd,
+        .cwd = .{ .path = cwd },
     });
+    return normalizeRunResult(result);
 }
 
 fn runChildInCwdWithEnv(
     argv: []const []const u8,
     cwd: []const u8,
-    env_map: *const std.process.EnvMap,
-) !std.process.Child.RunResult {
-    return std.process.Child.run(.{
-        .allocator = std.testing.allocator,
+    env_map: *const std.process.Environ.Map,
+) !std.process.RunResult {
+    const result = try std.process.run(std.testing.allocator, std.testing.io, .{
         .argv = argv,
-        .cwd = cwd,
-        .env_map = env_map,
+        .cwd = .{ .path = cwd },
+        .environ_map = env_map,
     });
+    return normalizeRunResult(result);
 }
 
-fn buildResult(name: []const u8) !std.process.Child.RunResult {
+fn normalizeRunResult(result: std.process.RunResult) !std.process.RunResult {
+    const root = try repoRootPrefix();
+    defer std.testing.allocator.free(root);
+    const root_with_sep = try std.fmt.allocPrint(std.testing.allocator, "{s}/", .{root});
+    defer std.testing.allocator.free(root_with_sep);
+
+    var normalized = result;
+    const stdout = normalized.stdout;
+    normalized.stdout = try std.mem.replaceOwned(u8, std.testing.allocator, stdout, root_with_sep, "");
+    std.testing.allocator.free(stdout);
+
+    const stderr = normalized.stderr;
+    normalized.stderr = try std.mem.replaceOwned(u8, std.testing.allocator, stderr, root_with_sep, "");
+    std.testing.allocator.free(stderr);
+
+    return normalized;
+}
+
+fn repoRootPrefix() ![]u8 {
+    const cwd = try std.process.currentPathAlloc(std.testing.io, std.testing.allocator);
+    defer std.testing.allocator.free(cwd);
+    return std.fs.path.resolve(std.testing.allocator, &.{ cwd, compilerRoot() });
+}
+
+fn buildResult(name: []const u8) !std.process.RunResult {
     try clean(name);
     return runChild(&[_][]const u8{
         argi_bin,
@@ -140,7 +164,7 @@ fn expectSuccessfulBuild(name: []const u8) !void {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
 }
 
 fn buildExpectFail(name: []const u8, expected_stderr: []const u8) !void {
@@ -149,7 +173,7 @@ fn buildExpectFail(name: []const u8, expected_stderr: []const u8) !void {
     defer std.testing.allocator.free(result.stderr);
 
     switch (result.term) {
-        .Exited => |code| try expect(code != 0),
+        .exited => |code| try expect(code != 0),
         else => return error.UnexpectedProcessTermination,
     }
 
@@ -162,7 +186,7 @@ fn buildExpectFailWithoutNoise(name: []const u8, expected_stderr: []const u8, fo
     defer std.testing.allocator.free(result.stderr);
 
     switch (result.term) {
-        .Exited => |code| try expect(code != 0),
+        .exited => |code| try expect(code != 0),
         else => return error.UnexpectedProcessTermination,
     }
 
@@ -176,7 +200,7 @@ fn buildExpectFailExact(name: []const u8, expected_stderr: []const u8) !void {
     defer std.testing.allocator.free(result.stderr);
 
     switch (result.term) {
-        .Exited => |code| try expect(code != 0),
+        .exited => |code| try expect(code != 0),
         else => return error.UnexpectedProcessTermination,
     }
 
@@ -191,7 +215,7 @@ fn buildExpectFailWithoutParseNoise(name: []const u8, expected_stderr_fragment: 
     defer std.testing.allocator.free(result.stderr);
 
     switch (result.term) {
-        .Exited => |code| try expect(code != 0),
+        .exited => |code| try expect(code != 0),
         else => return error.UnexpectedProcessTermination,
     }
 
@@ -208,7 +232,7 @@ fn runExpect(name: []const u8, expected_code: u8) !void {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = expected_code }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = expected_code }, result.term);
 }
 
 fn run(name: []const u8) !void {
@@ -234,7 +258,7 @@ fn argiTestExpectStderr(
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = expected_code }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = expected_code }, result.term);
     try expectEqualStrings(expected_stderr, result.stderr);
 }
 
@@ -257,7 +281,7 @@ fn argiTestExpectStderrContains(
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = expected_code }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = expected_code }, result.term);
     try expect(std.mem.indexOf(u8, result.stderr, expected_stderr_fragment) != null);
 }
 
@@ -282,7 +306,7 @@ fn runExpectStdoutWithArgs(
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = expected_code }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = expected_code }, result.term);
     try expectEqualStrings(expected_stdout, result.stdout);
 }
 
@@ -298,7 +322,7 @@ fn runExpectStderr(name: []const u8, expected_code: u8, expected_stderr: []const
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = expected_code }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = expected_code }, result.term);
     try expectEqualStrings(expected_stderr, result.stderr);
 }
 
@@ -320,36 +344,40 @@ fn runExpectStdoutWithArgsAndStdin(
         argv[i + 1] = arg;
     }
 
-    var child = std.process.Child.init(argv, std.testing.allocator);
-    child.cwd = compilerRoot();
-    child.stdin_behavior = .Pipe;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
+    var child = try std.process.spawn(std.testing.io, .{
+        .argv = argv,
+        .cwd = .{ .path = compilerRoot() },
+        .stdin = .pipe,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
 
-    var stdout: std.ArrayList(u8) = .empty;
-    defer stdout.deinit(std.testing.allocator);
-    var stderr: std.ArrayList(u8) = .empty;
-    defer stderr.deinit(std.testing.allocator);
-
-    try child.spawn();
-    errdefer {
-        _ = child.kill() catch {};
-    }
-
-    if (child.stdin) |stdin_file| {
-        try stdin_file.writeAll(stdin_text);
-        stdin_file.close();
+    if (child.stdin) |stdin_pipe| {
+        try stdin_pipe.writeStreamingAll(std.testing.io, stdin_text);
+        stdin_pipe.close(std.testing.io);
         child.stdin = null;
     }
 
-    try child.collectOutput(std.testing.allocator, &stdout, &stderr, 50 * 1024);
+    var mr_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: std.Io.File.MultiReader = undefined;
+    multi_reader.init(std.testing.allocator, std.testing.io, mr_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
 
-    const stdout_owned = try stdout.toOwnedSlice(std.testing.allocator);
+    while (true) {
+        if (multi_reader.fill(1, .none)) |_| {
+            continue;
+        } else |err| switch (err) {
+            error.EndOfStream => break,
+            else => return err,
+        }
+    }
+
+    const stdout_owned = try multi_reader.toOwnedSlice(0);
     defer std.testing.allocator.free(stdout_owned);
-    const stderr_owned = try stderr.toOwnedSlice(std.testing.allocator);
+    const stderr_owned = try multi_reader.toOwnedSlice(1);
     defer std.testing.allocator.free(stderr_owned);
 
-    try expectEqual(std.process.Child.Term{ .Exited = expected_code }, try child.wait());
+    try expectEqual(std.process.Child.Term{ .exited = expected_code }, try child.wait(std.testing.io));
     try expectEqualStrings(expected_stdout, stdout_owned);
 }
 
@@ -357,8 +385,8 @@ fn pathInTest(name: []const u8, leaf: []const u8) ![]u8 {
     return std.fmt.allocPrint(std.testing.allocator, "{s}/{s}", .{ name, leaf });
 }
 
-fn fileHasSubstantiveContent(root: std.fs.Dir, relative_path: []const u8) !bool {
-    const text = try root.readFileAlloc(std.testing.allocator, relative_path, 1024 * 1024);
+fn fileHasSubstantiveContent(root: std.Io.Dir, relative_path: []const u8) !bool {
+    const text = try root.readFileAlloc(std.testing.io, relative_path, std.testing.allocator, .limited(1024 * 1024));
     defer std.testing.allocator.free(text);
 
     var lines = std.mem.splitScalar(u8, text, '\n');
@@ -373,14 +401,14 @@ fn fileHasSubstantiveContent(root: std.fs.Dir, relative_path: []const u8) !bool 
 }
 
 test "feature test harness covers all substantive feature mains" {
-    var root = try std.fs.cwd().openDir(compilerRoot(), .{ .iterate = true });
-    defer root.close();
+    var root = try std.Io.Dir.cwd().openDir(std.testing.io, compilerRoot(), .{ .iterate = true });
+    defer root.close(std.testing.io);
 
-    const test_file_text = try root.readFileAlloc(std.testing.allocator, "tests/test.zig", 1024 * 1024);
+    const test_file_text = try root.readFileAlloc(std.testing.io, "tests/test.zig", std.testing.allocator, .limited(1024 * 1024));
     defer std.testing.allocator.free(test_file_text);
 
-    var feature_root = try root.openDir("tests/feature_tests", .{ .iterate = true });
-    defer feature_root.close();
+    var feature_root = try root.openDir(std.testing.io, "tests/feature_tests", .{ .iterate = true });
+    defer feature_root.close(std.testing.io);
 
     var missing = std.array_list.Managed([]const u8).init(std.testing.allocator);
     defer {
@@ -389,17 +417,17 @@ test "feature test harness covers all substantive feature mains" {
     }
 
     var category_iter = feature_root.iterate();
-    while (try category_iter.next()) |category| {
+    while (try category_iter.next(std.testing.io)) |category| {
         if (category.kind != .directory) continue;
 
         const category_path = try std.fmt.allocPrint(std.testing.allocator, "tests/feature_tests/{s}", .{category.name});
         defer std.testing.allocator.free(category_path);
 
-        var category_dir = try root.openDir(category_path, .{ .iterate = true });
-        defer category_dir.close();
+        var category_dir = try root.openDir(std.testing.io, category_path, .{ .iterate = true });
+        defer category_dir.close(std.testing.io);
 
         var case_iter = category_dir.iterate();
-        while (try case_iter.next()) |case_entry| {
+        while (try case_iter.next(std.testing.io)) |case_entry| {
             if (case_entry.kind != .directory) continue;
 
             const case_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/{s}", .{ category_path, case_entry.name });
@@ -408,7 +436,7 @@ test "feature test harness covers all substantive feature mains" {
             const main_path = try std.fmt.allocPrint(std.testing.allocator, "{s}/main.rg", .{case_path});
             defer std.testing.allocator.free(main_path);
 
-            root.access(main_path, .{}) catch |err| switch (err) {
+            root.access(std.testing.io, main_path, .{}) catch |err| switch (err) {
                 error.FileNotFound => continue,
                 else => return err,
             };
@@ -433,10 +461,10 @@ test "installed argi resolves core from its installation prefix outside repo" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("module");
-    try tmp.dir.makePath("outside");
+    try tmp.dir.createDirPath(std.testing.io, "module");
+    try tmp.dir.createDirPath(std.testing.io, "outside");
 
-    try tmp.dir.writeFile(.{
+    try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "module/main.rg",
         .data =
         \\main() -> (.status_code: Int32 = 0) := {
@@ -445,7 +473,10 @@ test "installed argi resolves core from its installation prefix outside repo" {
         ,
     });
 
-    const tmp_root = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const repo_root = try repoRootPrefix();
+    defer std.testing.allocator.free(repo_root);
+
+    const tmp_root = try std.fs.path.join(std.testing.allocator, &.{ repo_root, ".zig-cache", "tmp", tmp.sub_path[0..] });
     defer std.testing.allocator.free(tmp_root);
 
     const module_dir = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "module" });
@@ -454,14 +485,11 @@ test "installed argi resolves core from its installation prefix outside repo" {
     const outside_dir = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "outside" });
     defer std.testing.allocator.free(outside_dir);
 
-    const compiler_root = try std.fs.cwd().realpathAlloc(std.testing.allocator, compilerRoot());
-    defer std.testing.allocator.free(compiler_root);
-
-    const installed_argi = try std.fs.path.resolve(std.testing.allocator, &.{ compiler_root, argi_bin });
+    const installed_argi = try std.fs.path.join(std.testing.allocator, &.{ repo_root, argi_bin });
     defer std.testing.allocator.free(installed_argi);
 
-    const installed_core = try std.fs.path.resolve(std.testing.allocator, &.{
-        compiler_root,
+    const installed_core = try std.fs.path.join(std.testing.allocator, &.{
+        repo_root,
         "zig-out",
         "lib",
         "argi",
@@ -469,14 +497,14 @@ test "installed argi resolves core from its installation prefix outside repo" {
     });
     defer std.testing.allocator.free(installed_core);
 
-    try std.fs.cwd().access(installed_argi, .{});
-    try std.fs.cwd().access(installed_core, .{});
+    try std.Io.Dir.cwd().access(std.testing.io, installed_argi, .{});
+    try std.Io.Dir.cwd().access(std.testing.io, installed_core, .{});
 
-    var env_map = try std.process.getEnvMap(std.testing.allocator);
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
     defer env_map.deinit();
 
     // This test must verify selfExePath-based sysroot resolution.
-    _ = env_map.remove("ARGI_SYSROOT");
+    _ = env_map.swapRemove("ARGI_SYSROOT");
 
     const build_result = try runChildInCwdWithEnv(
         &.{ installed_argi, "build", module_dir },
@@ -486,18 +514,18 @@ test "installed argi resolves core from its installation prefix outside repo" {
     defer std.testing.allocator.free(build_result.stdout);
     defer std.testing.allocator.free(build_result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 0 }, build_result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, build_result.term);
 
     const output_path = try std.fs.path.join(std.testing.allocator, &.{ module_dir, "build", "output" });
     defer std.testing.allocator.free(output_path);
 
-    try std.fs.cwd().access(output_path, .{});
+    try std.Io.Dir.cwd().access(std.testing.io, output_path, .{});
 
     const run_result = try runChildInCwd(&.{output_path}, outside_dir);
     defer std.testing.allocator.free(run_result.stdout);
     defer std.testing.allocator.free(run_result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 0 }, run_result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, run_result.term);
 }
 
 test "feature_tests/basics/01_minimal_main" {
@@ -774,7 +802,7 @@ test "feature_tests/polymorphism/02X_multiple_dispatch_ambiguous" {
         \\  - choose2 (.a: &Int32, .b: &Any) -> (.r: Int32)
         \\      status_code = choose2(.a = &i, .b = &i).r
         \\                    ^
-    ++ "\n",
+        ++ "\n",
     );
 }
 
@@ -2803,13 +2831,13 @@ test "feature_tests/testing/01_simple_pass" {
 }
 
 test "feature_tests/testing/01_simple_pass_uses_local_cache" {
-    var root = try std.fs.cwd().openDir(compilerRoot(), .{});
-    defer root.close();
+    var root = try std.Io.Dir.cwd().openDir(std.testing.io, compilerRoot(), .{});
+    defer root.close(std.testing.io);
 
-    root.deleteTree(".argi-cache/tests") catch |err| {
+    root.deleteTree(std.testing.io, ".argi-cache/tests") catch |err| {
         if (err != error.FileNotFound) return err;
     };
-    root.deleteTree("build/tests") catch |err| {
+    root.deleteTree(std.testing.io, "build/tests") catch |err| {
         if (err != error.FileNotFound) return err;
     };
 
@@ -2820,8 +2848,8 @@ test "feature_tests/testing/01_simple_pass_uses_local_cache" {
         "PASS simple_pass\n",
     );
 
-    try root.access(".argi-cache/tests", .{});
-    root.access("build/tests", .{}) catch |err| switch (err) {
+    try root.access(std.testing.io, ".argi-cache/tests", .{});
+    root.access(std.testing.io, "build/tests", .{}) catch |err| switch (err) {
         error.FileNotFound => {},
         else => return err,
     };
@@ -2955,7 +2983,7 @@ test "argi help lists supported 0.1 commands" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
     try expect(std.mem.indexOf(u8, result.stderr, "Usage: argi <command> [arguments] [options]\n") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "build <directory> [flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "run <directory> [build flags]") != null);
@@ -2973,7 +3001,7 @@ test "argi version reports current release" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
     try expectEqualStrings("argi 0.1.0\n", result.stderr);
 }
 
@@ -2982,7 +3010,7 @@ test "argi unknown command exits with help" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expect(std.mem.indexOf(u8, result.stderr, "Error: unknown command 'format'\n") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "Usage: argi <command> [arguments] [options]\n") != null);
 }
@@ -2992,7 +3020,7 @@ test "argi build without target exits with error" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("Error: module directory required\n", result.stderr);
 }
 
@@ -3001,7 +3029,7 @@ test "argi run without target exits with error" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("Error: module directory required\n", result.stderr);
 }
 
@@ -3010,7 +3038,7 @@ test "argi test without target exits with error" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("Error: module directory required\n", result.stderr);
 }
 
@@ -3019,7 +3047,7 @@ test "argi init without full arguments exits with error" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("Error: init requires <project|module> and <directory>\n", result.stderr);
 }
 
@@ -3028,7 +3056,7 @@ test "argi run rejects output override" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings(
         "Run error: --output is not supported by argi run; use argi build --output and execute the binary manually\n",
         result.stderr,
@@ -3043,7 +3071,7 @@ test "argi run accepts explicit sysroot" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
 }
 
 test "argi test rejects missing filter value" {
@@ -3051,7 +3079,7 @@ test "argi test rejects missing filter value" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("Test error: MissingFlagValue\n", result.stderr);
 }
 
@@ -3060,7 +3088,7 @@ test "argi build rejects missing sysroot value" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("Build error: MissingFlagValue\n", result.stderr);
 }
 
@@ -3069,7 +3097,7 @@ test "argi test rejects missing sysroot value" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("Test error: MissingFlagValue\n", result.stderr);
 }
 
@@ -3077,14 +3105,14 @@ test "argi build reports invalid sysroot core lookup" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const sysroot = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const sysroot = try std.fs.path.join(std.testing.allocator, &.{ compilerRoot(), ".zig-cache", "tmp", tmp.sub_path[0..] });
     defer std.testing.allocator.free(sysroot);
 
     const result = try runArgiCommand(&.{ "build", "tests/feature_tests/basics/01_minimal_main", "--sysroot", sysroot });
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expect(std.mem.indexOf(u8, result.stderr, "cannot find Argi core library") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--sysroot") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "ARGI_SYSROOT") != null);
@@ -3094,7 +3122,7 @@ test "argi build uses ARGI_SYSROOT when flag is absent" {
     const sysroot = try std.fs.path.join(std.testing.allocator, &.{ compilerRoot(), "zig-out" });
     defer std.testing.allocator.free(sysroot);
 
-    var env_map = try std.process.getEnvMap(std.testing.allocator);
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
     defer env_map.deinit();
     try env_map.put("ARGI_SYSROOT", sysroot);
 
@@ -3105,16 +3133,16 @@ test "argi build uses ARGI_SYSROOT when flag is absent" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
 }
 
 test "argi build rejects invalid ARGI_SYSROOT without fallback" {
     var bad_tmp = std.testing.tmpDir(.{});
     defer bad_tmp.cleanup();
-    const bad_sysroot = try bad_tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const bad_sysroot = try std.fs.path.join(std.testing.allocator, &.{ compilerRoot(), ".zig-cache", "tmp", bad_tmp.sub_path[0..] });
     defer std.testing.allocator.free(bad_sysroot);
 
-    var env_map = try std.process.getEnvMap(std.testing.allocator);
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
     defer env_map.deinit();
     try env_map.put("ARGI_SYSROOT", bad_sysroot);
 
@@ -3125,7 +3153,7 @@ test "argi build rejects invalid ARGI_SYSROOT without fallback" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expect(std.mem.indexOf(u8, result.stderr, "cannot find Argi core library") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "ARGI_SYSROOT") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "installation prefix, not directly at core") != null);
@@ -3137,10 +3165,10 @@ test "argi build sysroot flag takes precedence over ARGI_SYSROOT" {
 
     var bad_tmp = std.testing.tmpDir(.{});
     defer bad_tmp.cleanup();
-    const bad_sysroot = try bad_tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const bad_sysroot = try std.fs.path.join(std.testing.allocator, &.{ compilerRoot(), ".zig-cache", "tmp", bad_tmp.sub_path[0..] });
     defer std.testing.allocator.free(bad_sysroot);
 
-    var env_map = try std.process.getEnvMap(std.testing.allocator);
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
     defer env_map.deinit();
     try env_map.put("ARGI_SYSROOT", bad_sysroot);
 
@@ -3151,7 +3179,7 @@ test "argi build sysroot flag takes precedence over ARGI_SYSROOT" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 0 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
 }
 
 test "argi test rejects unknown flag" {
@@ -3159,7 +3187,7 @@ test "argi test rejects unknown flag" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("Test error: UnknownFlag\n", result.stderr);
 }
 
@@ -3168,7 +3196,7 @@ test "argi test reports modules without tests" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("No tests found\n", result.stderr);
 }
 
@@ -3177,6 +3205,6 @@ test "argi test reports empty filter matches" {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
-    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
     try expectEqualStrings("No tests found\n", result.stderr);
 }

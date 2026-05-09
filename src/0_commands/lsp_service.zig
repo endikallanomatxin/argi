@@ -10,6 +10,14 @@ const frontend = @import("frontend_pipeline.zig");
 
 const log = std.log.scoped(.lsp_service);
 
+fn tmpRootPath(tmp: *const std.testing.TmpDir) ![]u8 {
+    return std.fs.path.resolve(std.testing.allocator, &.{ ".", ".zig-cache", "tmp", tmp.sub_path[0..] });
+}
+
+fn tmpFilePath(tmp: *const std.testing.TmpDir, rel_path: []const u8) ![]u8 {
+    return std.fs.path.resolve(std.testing.allocator, &.{ ".", ".zig-cache", "tmp", tmp.sub_path[0..], rel_path });
+}
+
 // Token types legend indices
 const TOKEN_INDEX = struct {
     pub const namespace: u32 = 0;
@@ -303,12 +311,14 @@ const Document = struct {
 
 pub const LanguageService = struct {
     allocator: std.mem.Allocator,
+    io: std.Io,
     documents: std.array_list.Managed(Document),
     root_path: ?[]u8 = null,
 
-    pub fn init(allocator: std.mem.Allocator) LanguageService {
+    pub fn init(allocator: std.mem.Allocator, io: std.Io) LanguageService {
         return .{
             .allocator = allocator,
+            .io = io,
             .documents = std.array_list.Managed(Document).init(allocator),
         };
     }
@@ -419,7 +429,7 @@ pub const LanguageService = struct {
         var analysis_allocator = arena.allocator();
         const core_dir = try self.preferredCoreDir(analysis_allocator);
 
-        const files_list = sf.collectWithEntrySource(&analysis_allocator, core_dir, doc.path, doc.text) catch |err| {
+        const files_list = sf.collectWithEntrySource(&analysis_allocator, self.io, core_dir, doc.path, doc.text) catch |err| {
             return try self.collectLoadFailureDiagnostics(doc, err);
         };
         const files = files_list.items;
@@ -446,7 +456,7 @@ pub const LanguageService = struct {
         defer diagnostics.deinit();
 
         var pipeline_failed = false;
-        var pipeline = frontend.FrontendPipeline.init(analysis_allocator, &diagnostics, .{});
+        var pipeline = frontend.FrontendPipeline.init(analysis_allocator, self.io, &diagnostics, .{});
         defer pipeline.deinit();
 
         _ = pipeline.semantizeFiles(files) catch {
@@ -492,7 +502,7 @@ pub const LanguageService = struct {
         doc: *Document,
     ) ![]const sf.SourceFile {
         const core_dir = try self.preferredCoreDir(analysis_allocator.*);
-        const files_list = try sf.collectWithEntrySource(analysis_allocator, core_dir, doc.path, doc.text);
+        const files_list = try sf.collectWithEntrySource(analysis_allocator, self.io, core_dir, doc.path, doc.text);
 
         for (files_list.items) |*source_file| {
             for (self.documents.items) |open_doc| {
@@ -520,7 +530,7 @@ pub const LanguageService = struct {
         var diagnostics = diag.Diagnostics.init(analysis_allocator, &one_primary);
         defer diagnostics.deinit();
 
-        var pipeline = frontend.FrontendPipeline.init(analysis_allocator, &diagnostics, .{});
+        var pipeline = frontend.FrontendPipeline.init(analysis_allocator, self.io, &diagnostics, .{});
         defer pipeline.deinit();
 
         const sg_nodes = pipeline.semantizeFiles(files) catch |err| {
@@ -627,7 +637,7 @@ pub const LanguageService = struct {
         var diagnostics = diag.Diagnostics.init(&work, &one_file);
         defer diagnostics.deinit();
 
-        var pipeline = frontend.FrontendPipeline.init(&work, &diagnostics, .{});
+        var pipeline = frontend.FrontendPipeline.init(&work, self.io, &diagnostics, .{});
         defer pipeline.deinit();
 
         _ = pipeline.parseFiles(&one_file) catch {
@@ -1722,7 +1732,11 @@ fn appendHoverType(
             try out.appendSlice(": ");
             switch (arg_value) {
                 .type => |arg_ty| try appendHoverType(out, arg_ty, type_refs),
-                .comptime_int => |value| try out.writer().print("{d}", .{value}),
+                .comptime_int => |value| {
+                    var tmp: [32]u8 = undefined;
+                    const text = std.fmt.bufPrint(&tmp, "{d}", .{value}) catch unreachable;
+                    try out.appendSlice(text);
+                },
             }
         }
         try out.appendSlice(")");
@@ -1737,11 +1751,13 @@ fn appendHoverType(
             try appendHoverType(out, ptr.child.*, type_refs);
         },
         .array_type => |arr| {
-            try out.writer().print("[{d}]", .{arr.length});
+            var tmp: [32]u8 = undefined;
+            const text = std.fmt.bufPrint(&tmp, "[{d}]", .{arr.length}) catch unreachable;
+            try out.appendSlice(text);
             try appendHoverType(out, arr.element_type.*, type_refs);
         },
-        .struct_type => |_| try out.appendSlice("{...}"),
-        .choice_type => |_| try out.appendSlice("choice"),
+        .struct_type => try out.appendSlice("{...}"),
+        .choice_type => try out.appendSlice("choice"),
     }
 }
 
@@ -1795,11 +1811,11 @@ fn extractFunctionHeaderSource(
             },
             .equal => if (paren_depth == 0) {
                 const raw = source_text[syntax_decl.name.location.offset .. tk.location.offset + 1];
-                return std.mem.trimRight(u8, raw, " \t\r\n");
+                return std.mem.trim(u8, raw, " \t\r\n");
             },
             .new_line => if (paren_depth == 0 and syntax_decl.body == null) {
                 const raw = source_text[syntax_decl.name.location.offset..tk.location.offset];
-                return std.mem.trimRight(u8, raw, " \t\r\n");
+                return std.mem.trim(u8, raw, " \t\r\n");
             },
             else => {},
         }
@@ -1837,7 +1853,7 @@ fn collectLeadingCommentBlock(source_text: []const u8, name_loc: token.Location)
     const first = first_comment_line orelse return null;
     const start = line_starts[first];
     const end = line_starts[name_line_idx];
-    return std.mem.trimRight(u8, source_text[start..end], "\r\n");
+    return std.mem.trim(u8, source_text[start..end], "\r\n");
 }
 
 fn computeLineStarts(allocator: std.mem.Allocator, text: []const u8) ![]usize {
@@ -1855,7 +1871,7 @@ fn computeLineStarts(allocator: std.mem.Allocator, text: []const u8) ![]usize {
 fn lineSlice(text: []const u8, starts: []const usize, line_idx: usize) []const u8 {
     const start = starts[line_idx];
     const end = if (line_idx + 1 < starts.len) starts[line_idx + 1] else text.len;
-    return std.mem.trimRight(u8, text[start..end], "\n");
+    return std.mem.trim(u8, text[start..end], "\n");
 }
 
 fn lineIndexForOffset(starts: []const usize, offset: usize) ?usize {
@@ -2825,13 +2841,13 @@ test "definition resolves local binding use" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
@@ -2860,13 +2876,13 @@ test "definition resolves function parameter use" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
@@ -2897,13 +2913,13 @@ test "definition resolves operator use" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
@@ -2919,24 +2935,24 @@ test "definition works for open core document" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("core");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.createDirPath(std.testing.io, "core");
+    try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "core/sample.rg",
         .data =
-            \\main() -> (.status_code: Int32 = 0) := {
-            \\    broken :: Int32 =
-            \\}
-            \\
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\    broken :: Int32 =
+        \\}
+        \\
         ,
     });
 
-    const root_path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const root_path = try tmpRootPath(&tmp);
     defer std.testing.allocator.free(root_path);
     const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
     defer std.testing.allocator.free(root_uri);
 
     const rel_path = "core/sample.rg";
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
@@ -2949,7 +2965,7 @@ test "definition works for open core document" {
         \\
     ;
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
     try svc.initialize(root_uri);
 
@@ -2967,15 +2983,15 @@ test "definition resolves core function from project document" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("core");
-    try tmp.dir.makePath("app");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.createDirPath(std.testing.io, "core");
+    try tmp.dir.createDirPath(std.testing.io, "app");
+    try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "core/util.rg",
         .data =
-            \\helper() -> (.value: Int32) := {
-            \\    value = 42
-            \\}
-            \\
+        \\helper() -> (.value: Int32) := {
+        \\    value = 42
+        \\}
+        \\
         ,
     });
 
@@ -2985,19 +3001,19 @@ test "definition resolves core function from project document" {
         \\}
         \\
     ;
-    try tmp.dir.writeFile(.{ .sub_path = "app/main.rg", .data = code });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "app/main.rg", .data = code });
 
-    const root_path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const root_path = try tmpRootPath(&tmp);
     defer std.testing.allocator.free(root_path);
     const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
     defer std.testing.allocator.free(root_uri);
 
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, "app/main.rg");
+    const abs_path = try tmpFilePath(&tmp, "app/main.rg");
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
     try svc.initialize(root_uri);
 
@@ -3016,14 +3032,14 @@ test "definition resolves imported module function" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("app/dep");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.createDirPath(std.testing.io, "app/dep");
+    try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "app/dep/math.rg",
         .data =
-            \\answer() -> (.value: Int32) := {
-            \\    value = 42
-            \\}
-            \\
+        \\answer() -> (.value: Int32) := {
+        \\    value = 42
+        \\}
+        \\
         ,
     });
 
@@ -3034,19 +3050,19 @@ test "definition resolves imported module function" {
         \\}
         \\
     ;
-    try tmp.dir.writeFile(.{ .sub_path = "app/main.rg", .data = code });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "app/main.rg", .data = code });
 
-    const root_path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const root_path = try tmpRootPath(&tmp);
     defer std.testing.allocator.free(root_path);
     const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
     defer std.testing.allocator.free(root_uri);
 
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, "app/main.rg");
+    const abs_path = try tmpFilePath(&tmp, "app/main.rg");
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
     try svc.initialize(root_uri);
 
@@ -3065,20 +3081,20 @@ test "definition resolves imported module struct field" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("app/dep");
-    try tmp.dir.writeFile(.{
+    try tmp.dir.createDirPath(std.testing.io, "app/dep");
+    try tmp.dir.writeFile(std.testing.io, .{
         .sub_path = "app/dep/point.rg",
         .data =
-            \\Point : Type = (
-            \\    .value: Int32
-            \\)
-            \\
-            \\make() -> (.point: Point) := {
-            \\    point = (
-            \\        .value = 7,
-            \\    )
-            \\}
-            \\
+        \\Point : Type = (
+        \\    .value: Int32
+        \\)
+        \\
+        \\make() -> (.point: Point) := {
+        \\    point = (
+        \\        .value = 7,
+        \\    )
+        \\}
+        \\
         ,
     });
 
@@ -3090,19 +3106,19 @@ test "definition resolves imported module struct field" {
         \\}
         \\
     ;
-    try tmp.dir.writeFile(.{ .sub_path = "app/main.rg", .data = code });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "app/main.rg", .data = code });
 
-    const root_path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const root_path = try tmpRootPath(&tmp);
     defer std.testing.allocator.free(root_path);
     const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
     defer std.testing.allocator.free(root_uri);
 
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, "app/main.rg");
+    const abs_path = try tmpFilePath(&tmp, "app/main.rg");
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
     try svc.initialize(root_uri);
 
@@ -3131,13 +3147,13 @@ test "references include binding declaration and uses" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
@@ -3171,13 +3187,13 @@ test "references resolve function declaration and calls" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
@@ -3204,13 +3220,13 @@ test "rename rewrites binding declaration and uses" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
@@ -3238,13 +3254,13 @@ test "hover returns information for local binding use" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
@@ -3275,13 +3291,13 @@ test "hover returns information for operator use" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
@@ -3314,13 +3330,13 @@ test "hover shows inferred error reasons" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
@@ -3349,13 +3365,13 @@ test "semantic tokens include string literal and function call" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
@@ -3381,13 +3397,13 @@ test "semantic tokens fall back to lexical tokens when syntaxing fails" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
@@ -3419,13 +3435,13 @@ test "change document updates diagnostics" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = broken_code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = broken_code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
 
     var diags = try svc.openDocument(uri, abs_path, 1, broken_code);
@@ -3455,13 +3471,13 @@ test "change document ignores stale version" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = broken_code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = broken_code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
 
     var diags = try svc.openDocument(uri, abs_path, 2, fixed_code);
@@ -3481,7 +3497,7 @@ test "analysis uses open overlay for imported sibling document" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    try tmp.dir.makePath("app/dep");
+    try tmp.dir.createDirPath(std.testing.io, "app/dep");
     const dep_code =
         \\helper() -> (.value: Int32) := {
         \\    value = 42
@@ -3502,23 +3518,23 @@ test "analysis uses open overlay for imported sibling document" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = "app/dep/helper.rg", .data = dep_code });
-    try tmp.dir.writeFile(.{ .sub_path = "app/main.rg", .data = main_code });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "app/dep/helper.rg", .data = dep_code });
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "app/main.rg", .data = main_code });
 
-    const root_path = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const root_path = try tmpRootPath(&tmp);
     defer std.testing.allocator.free(root_path);
 
-    const dep_path = try tmp.dir.realpathAlloc(std.testing.allocator, "app/dep/helper.rg");
+    const dep_path = try tmpFilePath(&tmp, "app/dep/helper.rg");
     defer std.testing.allocator.free(dep_path);
     const dep_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{dep_path});
     defer std.testing.allocator.free(dep_uri);
 
-    const main_path = try tmp.dir.realpathAlloc(std.testing.allocator, "app/main.rg");
+    const main_path = try tmpFilePath(&tmp, "app/main.rg");
     defer std.testing.allocator.free(main_path);
     const main_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{main_path});
     defer std.testing.allocator.free(main_uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
     const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
     defer std.testing.allocator.free(root_uri);
@@ -3553,13 +3569,13 @@ test "close document removes open state" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
@@ -3583,13 +3599,13 @@ test "prepare rename returns binding range and placeholder" {
         \\
     ;
 
-    try tmp.dir.writeFile(.{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmp.dir.realpathAlloc(std.testing.allocator, rel_path);
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
-    var svc = LanguageService.init(std.testing.allocator);
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);

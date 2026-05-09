@@ -6,17 +6,17 @@ pub const InitKind = enum {
     module,
 };
 
-pub fn run(args: []const []const u8) !void {
+pub fn run(io: std.Io, args: []const []const u8) !void {
     if (args.len < 2) return error.InvalidArguments;
 
     const kind = parseKind(args[0]) orelse return error.InvalidArguments;
-    try initAtPath(std.heap.page_allocator, kind, args[1]);
+    try initAtPath(std.heap.page_allocator, io, kind, args[1]);
 }
 
-pub fn initAtPath(allocator: std.mem.Allocator, kind: InitKind, root_path: []const u8) !void {
+pub fn initAtPath(allocator: std.mem.Allocator, io: std.Io, kind: InitKind, root_path: []const u8) !void {
     switch (kind) {
-        .module => try initModule(allocator, root_path),
-        .project => try initProject(allocator, root_path),
+        .module => try initModule(allocator, io, root_path),
+        .project => try initProject(allocator, io, root_path),
     }
 }
 
@@ -26,8 +26,8 @@ fn parseKind(text: []const u8) ?InitKind {
     return null;
 }
 
-fn initModule(allocator: std.mem.Allocator, root_path: []const u8) !void {
-    try std.fs.cwd().makePath(root_path);
+fn initModule(allocator: std.mem.Allocator, io: std.Io, root_path: []const u8) !void {
+    try std.Io.Dir.cwd().createDirPath(io, root_path);
     const package_name = try packageNameFromPath(allocator, root_path, "module");
     defer allocator.free(package_name);
 
@@ -35,56 +35,58 @@ fn initModule(allocator: std.mem.Allocator, root_path: []const u8) !void {
     defer allocator.free(readme_path);
     const readme = try moduleReadmeTemplate(allocator, package_name);
     defer allocator.free(readme);
-    try writeFileIfMissing(readme_path, readme);
+    try writeFileIfMissing(io, readme_path, readme);
 
     const manifest_path = try std.fs.path.join(allocator, &.{ root_path, "argi.toml" });
     defer allocator.free(manifest_path);
     const manifest = try manifestTemplate(allocator, package_name, "module");
     defer allocator.free(manifest);
-    try writeFileIfMissing(manifest_path, manifest);
+    try writeFileIfMissing(io, manifest_path, manifest);
 
     const gitignore_path = try std.fs.path.join(allocator, &.{ root_path, ".gitignore" });
     defer allocator.free(gitignore_path);
-    try writeFileIfMissing(gitignore_path, gitignoreTemplate);
+    try writeFileIfMissing(io, gitignore_path, gitignoreTemplate);
 }
 
-fn initProject(allocator: std.mem.Allocator, root_path: []const u8) !void {
-    try std.fs.cwd().makePath(root_path);
+fn initProject(allocator: std.mem.Allocator, io: std.Io, root_path: []const u8) !void {
+    try std.Io.Dir.cwd().createDirPath(io, root_path);
     const package_name = try packageNameFromPath(allocator, root_path, "project");
     defer allocator.free(package_name);
 
     const entry_dir = try std.fs.path.join(allocator, &.{ root_path, "source", "entrypoints", "main" });
     defer allocator.free(entry_dir);
-    try std.fs.cwd().makePath(entry_dir);
+    try std.Io.Dir.cwd().createDirPath(io, entry_dir);
 
     const readme_path = try std.fs.path.join(allocator, &.{ root_path, "README.md" });
     defer allocator.free(readme_path);
     const readme = try projectReadmeTemplate(allocator, package_name);
     defer allocator.free(readme);
-    try writeFileIfMissing(readme_path, readme);
+    try writeFileIfMissing(io, readme_path, readme);
 
     const manifest_path = try std.fs.path.join(allocator, &.{ root_path, "argi.toml" });
     defer allocator.free(manifest_path);
     const manifest = try manifestTemplate(allocator, package_name, "project");
     defer allocator.free(manifest);
-    try writeFileIfMissing(manifest_path, manifest);
+    try writeFileIfMissing(io, manifest_path, manifest);
 
     const entry_main_path = try std.fs.path.join(allocator, &.{ root_path, "source", "entrypoints", "main", "main.rg" });
     defer allocator.free(entry_main_path);
-    try writeFileIfMissing(entry_main_path, moduleMainTemplate);
+    try writeFileIfMissing(io, entry_main_path, moduleMainTemplate);
 
     const gitignore_path = try std.fs.path.join(allocator, &.{ root_path, ".gitignore" });
     defer allocator.free(gitignore_path);
-    try writeFileIfMissing(gitignore_path, gitignoreTemplate);
+    try writeFileIfMissing(io, gitignore_path, gitignoreTemplate);
 }
 
-fn writeFileIfMissing(path: []const u8, contents: []const u8) !void {
-    const file = std.fs.cwd().createFile(path, .{ .exclusive = true }) catch |err| switch (err) {
+fn writeFileIfMissing(io: std.Io, path: []const u8, contents: []const u8) !void {
+    std.Io.Dir.cwd().writeFile(io, .{
+        .sub_path = path,
+        .data = contents,
+        .flags = .{ .exclusive = true },
+    }) catch |err| switch (err) {
         error.PathAlreadyExists => return,
         else => return err,
     };
-    defer file.close();
-    try file.writeAll(contents);
 }
 
 const moduleMainTemplate =
@@ -125,7 +127,7 @@ fn manifestTemplate(allocator: std.mem.Allocator, package_name: []const u8, kind
         \\kind = "{s}"
         \\minimum_argi_version = "{s}"
         \\
-        ,
+    ,
         .{ package_name, kind, argi_version.current },
     );
 }
@@ -140,7 +142,7 @@ fn moduleReadmeTemplate(allocator: std.mem.Allocator, package_name: []const u8) 
         \\This package is a folder module intended to be imported by another
         \\Argi module. Add `.rg` files when the package needs public API.
         \\
-        ,
+    ,
         .{package_name},
     );
 }
@@ -164,26 +166,26 @@ fn projectReadmeTemplate(allocator: std.mem.Allocator, package_name: []const u8)
         \\argi run source/entrypoints/main
         \\```
         \\
-        ,
+    ,
         .{package_name},
     );
 }
 
-fn expectFileExists(path: []const u8) !void {
-    const file = try std.fs.cwd().openFile(path, .{});
-    file.close();
+fn expectFileExists(io: std.Io, path: []const u8) !void {
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{});
+    file.close(io);
 }
 
-fn expectFileMissing(path: []const u8) !void {
-    std.fs.cwd().access(path, .{}) catch |err| switch (err) {
+fn expectFileMissing(io: std.Io, path: []const u8) !void {
+    std.Io.Dir.cwd().access(io, path, .{}) catch |err| switch (err) {
         error.FileNotFound => return,
         else => return err,
     };
     return error.UnexpectedFile;
 }
 
-fn expectFileContains(path: []const u8, expected: []const u8) !void {
-    const text = try std.fs.cwd().readFileAlloc(std.testing.allocator, path, 1024 * 1024);
+fn expectFileContains(io: std.Io, path: []const u8, expected: []const u8) !void {
+    const text = try std.Io.Dir.cwd().readFileAlloc(io, path, std.testing.allocator, .limited(1024 * 1024));
     defer std.testing.allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, expected) != null);
 }
@@ -192,12 +194,12 @@ test "init module scaffolds minimal files" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_root = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const tmp_root = try std.fs.path.resolve(std.testing.allocator, &.{ ".", ".zig-cache", "tmp", tmp.sub_path[0..] });
     defer std.testing.allocator.free(tmp_root);
     const module_root = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "sample_module" });
     defer std.testing.allocator.free(module_root);
 
-    try initAtPath(std.testing.allocator, .module, module_root);
+    try initAtPath(std.testing.allocator, std.testing.io, .module, module_root);
 
     const readme = try std.fs.path.join(std.testing.allocator, &.{ module_root, "README.md" });
     defer std.testing.allocator.free(readme);
@@ -208,24 +210,24 @@ test "init module scaffolds minimal files" {
     const main_path = try std.fs.path.join(std.testing.allocator, &.{ module_root, "main.rg" });
     defer std.testing.allocator.free(main_path);
 
-    try expectFileExists(readme);
-    try expectFileExists(manifest);
-    try expectFileExists(gitignore);
-    try expectFileMissing(main_path);
-    try expectFileContains(manifest, "version = \"0.0.0\"\n");
-    try expectFileContains(manifest, "minimum_argi_version = \"0.1.0\"\n");
+    try expectFileExists(std.testing.io, readme);
+    try expectFileExists(std.testing.io, manifest);
+    try expectFileExists(std.testing.io, gitignore);
+    try expectFileMissing(std.testing.io, main_path);
+    try expectFileContains(std.testing.io, manifest, "version = \"0.0.0\"\n");
+    try expectFileContains(std.testing.io, manifest, "minimum_argi_version = \"0.1.0\"\n");
 }
 
 test "init project scaffolds basic layout" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const tmp_root = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    const tmp_root = try std.fs.path.resolve(std.testing.allocator, &.{ ".", ".zig-cache", "tmp", tmp.sub_path[0..] });
     defer std.testing.allocator.free(tmp_root);
     const project_root = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "sample_project" });
     defer std.testing.allocator.free(project_root);
 
-    try initAtPath(std.testing.allocator, .project, project_root);
+    try initAtPath(std.testing.allocator, std.testing.io, .project, project_root);
 
     const entry_main = try std.fs.path.join(std.testing.allocator, &.{ project_root, "source", "entrypoints", "main", "main.rg" });
     defer std.testing.allocator.free(entry_main);
@@ -238,11 +240,11 @@ test "init project scaffolds basic layout" {
     const private_dir = try std.fs.path.join(std.testing.allocator, &.{ project_root, "private" });
     defer std.testing.allocator.free(private_dir);
 
-    try expectFileExists(entry_main);
-    try expectFileExists(manifest);
-    try expectFileExists(gitignore);
-    try expectFileMissing(public_dir);
-    try expectFileMissing(private_dir);
-    try expectFileContains(manifest, "version = \"0.0.0\"\n");
-    try expectFileContains(manifest, "minimum_argi_version = \"0.1.0\"\n");
+    try expectFileExists(std.testing.io, entry_main);
+    try expectFileExists(std.testing.io, manifest);
+    try expectFileExists(std.testing.io, gitignore);
+    try expectFileMissing(std.testing.io, public_dir);
+    try expectFileMissing(std.testing.io, private_dir);
+    try expectFileContains(std.testing.io, manifest, "version = \"0.0.0\"\n");
+    try expectFileContains(std.testing.io, manifest, "minimum_argi_version = \"0.1.0\"\n");
 }

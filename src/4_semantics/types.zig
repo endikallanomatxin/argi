@@ -622,7 +622,9 @@ fn appendGenericIdentityArgPretty(
         },
         .comptime_int => |value| {
             try buf.appendSlice(" = ");
-            try buf.writer().print("{d}", .{value});
+            var tmp: [32]u8 = undefined;
+            const text = std.fmt.bufPrint(&tmp, "{d}", .{value}) catch unreachable;
+            try buf.appendSlice(text);
         },
     }
 }

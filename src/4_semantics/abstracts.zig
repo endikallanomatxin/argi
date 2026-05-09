@@ -91,8 +91,7 @@ fn findGenericParam(params: []const gen.GenericParam, name: []const u8) ?gen.Gen
 
 fn parseIntLiteral(lit: tok.Literal) ?i64 {
     return switch (lit) {
-        .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => |txt|
-            std.fmt.parseInt(i64, txt, 0) catch null,
+        .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => |txt| std.fmt.parseInt(i64, txt, 0) catch null,
         else => null,
     };
 }

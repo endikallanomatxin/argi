@@ -41,14 +41,15 @@ fn parseArgs(args: []const []const u8) !ParsedArgs {
 }
 
 fn discoverTests(
+    io: std.Io,
     allocator: std.mem.Allocator,
     options: sf.CoreResolutionOptions,
     module_dir: []const u8,
 ) ![]DiscoverTest {
-    const files = try sf.collectModuleWithOptions(&allocator, options, module_dir);
+    const files = try sf.collectModuleWithOptions(&allocator, io, options, module_dir);
     var diagnostics = diag.Diagnostics.init(&allocator, files.items);
 
-    var pipeline = frontend.FrontendPipeline.init(&allocator, &diagnostics, .{});
+    var pipeline = frontend.FrontendPipeline.init(&allocator, io, &diagnostics, .{});
     defer pipeline.deinit();
 
     const st_nodes = try pipeline.parseFiles(files.items);
@@ -94,25 +95,30 @@ fn printResultLine(status: []const u8, test_name: []const u8) void {
     std.debug.print("{s} {s}\n", .{ status, test_name });
 }
 
-fn printCapturedOutput(result: std.process.Child.RunResult) void {
+fn printCapturedOutput(result: std.process.RunResult) void {
     if (result.stdout.len > 0) std.debug.print("{s}", .{result.stdout});
     if (result.stderr.len > 0) std.debug.print("{s}", .{result.stderr});
 }
 
-pub fn run(args: []const []const u8) !u8 {
+pub fn run(
+    io: std.Io,
+    environ_map: ?*const std.process.Environ.Map,
+    args: []const []const u8,
+) !u8 {
     const parsed = try parseArgs(args);
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const module_dir = try build_cmd.resolveBuildModuleDir(allocator, parsed.target);
+    const module_dir = try build_cmd.resolveBuildModuleDir(allocator, io, parsed.target);
     const core_options = sf.CoreResolutionOptions{
         .explicit_sysroot = parsed.sysroot_path,
+        .environ_map = environ_map,
     };
-    const core_dir = try sf.resolveToolCoreDir(&allocator, core_options);
+    const core_dir = try sf.resolveToolCoreDir(&allocator, io, core_options);
     const testing_module_dir = try std.fs.path.join(allocator, &.{ core_dir, "testing" });
-    const discovered = try discoverTests(allocator, core_options, module_dir);
+    const discovered = try discoverTests(io, allocator, core_options, module_dir);
 
     var ran_any = false;
     var had_failure = false;
@@ -141,19 +147,18 @@ pub fn run(args: []const []const u8) !u8 {
                 .selected_test_name = test_decl.name,
             },
             .success_message = null,
-        }) catch {
+        }, io, environ_map) catch {
             printResultLine("FAIL", test_decl.name);
             had_failure = true;
             continue;
         };
 
-        const result = try std.process.Child.run(.{
-            .allocator = allocator,
+        const result = try std.process.run(allocator, io, .{
             .argv = &.{output_path},
         });
 
         switch (result.term) {
-            .Exited => |code| switch (code) {
+            .exited => |code| switch (code) {
                 0 => {
                     printResultLine("PASS", test_decl.name);
                 },

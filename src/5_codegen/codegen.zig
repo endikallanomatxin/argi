@@ -109,6 +109,7 @@ pub const CodeGenerator = struct {
     };
 
     allocator: *const std.mem.Allocator,
+    io: std.Io,
     ast: []const *sem.SGNode,
     diags: *diagnostic.Diagnostics,
     options: Options,
@@ -131,7 +132,7 @@ pub const CodeGenerator = struct {
     global_scope: *Scope, // nunca se destruye hasta el final
     current_scope: *Scope, // apunta al scope donde estamos ahora
 
-    pub fn init(a: *const std.mem.Allocator, ast: []const *sem.SGNode, diags: *diagnostic.Diagnostics, options: Options) !CodeGenerator {
+    pub fn init(a: *const std.mem.Allocator, io: std.Io, ast: []const *sem.SGNode, diags: *diagnostic.Diagnostics, options: Options) !CodeGenerator {
         const m = c.LLVMModuleCreateWithName("argi_module");
         if (m == null) return CodegenError.ModuleCreationFailed;
         errdefer c.LLVMDisposeModule(m);
@@ -148,6 +149,7 @@ pub const CodeGenerator = struct {
 
         return .{
             .allocator = a,
+            .io = io,
             .ast = ast,
             .diags = diags,
             .options = options,
@@ -273,7 +275,7 @@ pub const CodeGenerator = struct {
     // ────────────────────────────────────────── visitor dispatch ──
     fn visitNode(self: *CodeGenerator, n: *const sem.SGNode) CodegenError!?TypedValue {
         return switch (n.content) {
-            .choice_option_declaration => |_| {
+            .choice_option_declaration => {
                 return null;
             },
             .function_declaration => |f| {
@@ -292,7 +294,7 @@ pub const CodeGenerator = struct {
                 };
                 return null;
             },
-            .type_declaration => |_| {
+            .type_declaration => {
                 return null;
             },
             .binding_declaration => |b| {
@@ -364,7 +366,7 @@ pub const CodeGenerator = struct {
                 };
                 return null;
             },
-            .value_literal => |_| self.genValueLiteral(n) catch |e| {
+            .value_literal => self.genValueLiteral(n) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating value literal: {s}", .{@errorName(e)});
                 return e;
             },
@@ -424,7 +426,7 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "error generating struct value literal: {s}", .{@errorName(e)});
                 return e;
             },
-            .list_literal => |_| {
+            .list_literal => {
                 try self.diags.add(n.location, .codegen, "list literals are compile-time only", .{});
                 return CodegenError.NotYetImplemented;
             },
@@ -452,7 +454,7 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "error generating contextual error propagation: {s}", .{@errorName(e)});
                 return e;
             },
-            .address_of => |_| self.genAddressOf(n) catch |e| {
+            .address_of => self.genAddressOf(n) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating address-of: {s}", .{@errorName(e)});
                 return e;
             },
@@ -482,7 +484,7 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "error generating type initializer: {s}", .{@errorName(e)});
                 return e;
             },
-            .type_literal => |_| {
+            .type_literal => {
                 try self.diags.add(n.location, .codegen, "type values are compile-time only", .{});
                 return CodegenError.NotYetImplemented;
             },
@@ -708,7 +710,9 @@ pub const CodeGenerator = struct {
         // signature. Input/output types are still useful in the symbol for
         // readability, but generic specializations are not always recoverable
         // from the lowered callable shape alone.
-        try buf.writer().print("__f{d}", .{f.id});
+        var tmp: [32]u8 = undefined;
+        const id_text = std.fmt.bufPrint(&tmp, "__f{d}", .{f.id}) catch unreachable;
+        try buf.appendSlice(id_text);
         try buf.appendSlice("__in_");
         try self.encodeType(&buf, .{ .struct_type = &f.input });
         try buf.appendSlice("__out_");
@@ -3089,12 +3093,12 @@ pub const CodeGenerator = struct {
     }
 
     fn readSourceLine(self: *CodeGenerator, file_path: []const u8, line_number: u32) ![]const u8 {
-        const file_text = std.fs.cwd().readFileAlloc(self.allocator.*, file_path, 1 << 24) catch return "";
+        const file_text = std.Io.Dir.cwd().readFileAlloc(self.io, file_path, self.allocator.*, .limited(1 << 24)) catch return "";
         var lines = std.mem.splitScalar(u8, file_text, '\n');
         var current_line: u32 = 1;
         while (lines.next()) |line| : (current_line += 1) {
             if (current_line != line_number) continue;
-            return std.mem.trimRight(u8, line, "\r");
+            return std.mem.trim(u8, line, "\r");
         }
         return "";
     }

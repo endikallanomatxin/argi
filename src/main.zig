@@ -67,9 +67,9 @@ fn isVersionArg(arg: []const u8) bool {
         std.mem.eql(u8, arg, "-V");
 }
 
-pub fn main() !void {
-    const args = std.process.argsAlloc(std.heap.page_allocator) catch return;
-    defer std.process.argsFree(std.heap.page_allocator, args);
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
     if (args.len < 2 or isHelpArg(args[1])) {
         printHelp();
@@ -89,7 +89,7 @@ pub fn main() !void {
             std.process.exit(1);
         }
         const build_args = args[2..];
-        build_cmd.compile(build_args) catch |err| {
+        build_cmd.compile(io, init.environ_map, build_args) catch |err| {
             exitCommandError("Build error", err);
         };
     } else if (std.mem.eql(u8, command, "init")) {
@@ -97,11 +97,11 @@ pub fn main() !void {
             std.debug.print("Error: init requires <project|module> and <directory>\n", .{});
             std.process.exit(1);
         }
-        init_cmd.run(args[2..4]) catch |err| {
+        init_cmd.run(io, args[2..4]) catch |err| {
             exitCommandError("Init error", err);
         };
     } else if (std.mem.eql(u8, command, "lsp")) {
-        lsp_cmd.start() catch |err| {
+        lsp_cmd.start(io) catch |err| {
             exitCommandError("LSP error", err);
         };
     } else if (std.mem.eql(u8, command, "run")) {
@@ -109,7 +109,7 @@ pub fn main() !void {
             std.debug.print("Error: module directory required\n", .{});
             std.process.exit(1);
         }
-        const exit_code = run_cmd.run(args[2..]) catch |err| {
+        const exit_code = run_cmd.run(io, init.environ_map, args[2..]) catch |err| {
             exitRunError(err);
         };
         std.process.exit(exit_code);
@@ -118,7 +118,7 @@ pub fn main() !void {
             std.debug.print("Error: module directory required\n", .{});
             std.process.exit(1);
         }
-        const exit_code = test_cmd.run(args[2..]) catch |err| {
+        const exit_code = test_cmd.run(io, init.environ_map, args[2..]) catch |err| {
             exitCommandError("Test error", err);
         };
         std.process.exit(exit_code);

@@ -100,17 +100,17 @@ fn printCapturedStream(label: []const u8, data: []const u8) void {
 
 fn printTerm(term: std.process.Child.Term) void {
     switch (term) {
-        .Exited => |code| std.debug.print("linker exited with code {d}\n", .{code}),
-        .Signal => |signal| std.debug.print("linker terminated by signal {d}\n", .{signal}),
-        .Stopped => |signal| std.debug.print("linker stopped by signal {d}\n", .{signal}),
-        .Unknown => |code| std.debug.print("linker terminated unexpectedly ({d})\n", .{code}),
+        .exited => |code| std.debug.print("linker exited with code {d}\n", .{code}),
+        .signal => |signal| std.debug.print("linker terminated by signal {d}\n", .{signal}),
+        .stopped => |signal| std.debug.print("linker stopped by signal {d}\n", .{signal}),
+        .unknown => |code| std.debug.print("linker terminated unexpectedly ({d})\n", .{code}),
     }
 }
 
 fn printLinkerFailure(
     linker: []const u8,
     argv: []const []const u8,
-    result: ?std.process.Child.RunResult,
+    result: ?std.process.RunResult,
     spawn_err: ?anyerror,
 ) void {
     std.debug.print("link failed while running:\n", .{});
@@ -135,24 +135,22 @@ pub fn linkWithLibc(
     triple: []const u8,
     output_path: []const u8,
     allocator: *const std.mem.Allocator,
+    io: std.Io,
+    environ_map: ?*const std.process.Environ.Map,
 ) !void {
     var obj_path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}.o", .{output_path});
     try emitObjectFile(module, triple, obj_path);
 
-    const cc_env = std.process.getEnvVarOwned(allocator.*, "CC") catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => null,
-        else => return err,
-    };
-    defer if (cc_env) |value| allocator.free(value);
+    const cc_env = if (environ_map) |env_map| env_map.get("CC") else null;
     const linker = chooseLinkerCommand(cc_env);
 
     const argv_array = buildLinkArgv(linker, obj_path, output_path);
     const argv = argv_array[0..];
 
-    const result = std.process.Child.run(.{
-        .allocator = allocator.*,
+    const result = std.process.run(allocator.*, io, .{
         .argv = argv,
+        .environ_map = environ_map,
     }) catch |err| {
         printLinkerFailure(linker, argv, null, err);
         return error.LinkFailed;
@@ -161,7 +159,7 @@ pub fn linkWithLibc(
     defer allocator.free(result.stderr);
 
     switch (result.term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             printLinkerFailure(linker, argv, result, null);
             return error.LinkFailed;
         },

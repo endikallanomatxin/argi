@@ -21,16 +21,21 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const llvm_c = b.addTranslateC(.{
+        .root_source_file = b.path("src/5_codegen/llvm-c.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    llvm_c.addIncludePath(llvm_include_path);
+    const llvm_c_mod = llvm_c.createModule();
+    exe_mod.addImport("llvm_c", llvm_c_mod);
+
     const exe = b.addExecutable(.{
         .name = "argi",
         .root_module = exe_mod,
     });
 
-    exe.addIncludePath(llvm_include_path);
-    exe.addLibraryPath(llvm_lib_path);
-    linkLlvm(exe, llvm_libs_raw);
-
-    exe.linkSystemLibrary("c");
+    linkLlvmModule(exe_mod, llvm_lib_path, llvm_libs_raw);
 
     b.installArtifact(exe);
     b.installDirectory(.{
@@ -60,6 +65,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    tests_mod.addImport("llvm_c", llvm_c_mod);
+    linkLlvmModule(tests_mod, llvm_lib_path, llvm_libs_raw);
 
     const exe_tests = b.addTest(.{
         .root_module = tests_mod,
@@ -72,6 +79,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    internal_tests_mod.addImport("llvm_c", llvm_c_mod);
+    linkLlvmModule(internal_tests_mod, llvm_lib_path, llvm_libs_raw);
     const internal_tests = b.addTest(.{
         .root_module = internal_tests_mod,
     });
@@ -84,27 +93,11 @@ pub fn build(b: *std.Build) void {
 }
 
 fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, []const u8 } {
-    if (std.process.getEnvVarOwned(b.allocator, "PATH") catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => null,
-        else => return err,
-    }) |path| {
-        b.graph.env_map.put("PATH", path) catch @panic("OOM");
-    }
-
     // Obtain LLVM paths. First try environment variables to avoid spawning
     // `llvm-config` which might not be supported in restricted environments.
-    const env_include = std.process.getEnvVarOwned(b.allocator, "LLVM_INCLUDE_DIR") catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => null,
-        else => return err,
-    };
-    const env_lib = std.process.getEnvVarOwned(b.allocator, "LLVM_LIB_DIR") catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => null,
-        else => return err,
-    };
-    const env_libs = std.process.getEnvVarOwned(b.allocator, "LLVM_LIBS") catch |err| switch (err) {
-        error.EnvironmentVariableNotFound => null,
-        else => return err,
-    };
+    const env_include = b.graph.environ_map.get("LLVM_INCLUDE_DIR");
+    const env_lib = b.graph.environ_map.get("LLVM_LIB_DIR");
+    const env_libs = b.graph.environ_map.get("LLVM_LIBS");
     const tried_llvm_configs = llvmConfigCandidates();
     const llvm_config_path = findLlvmConfig(b, tried_llvm_configs);
 
@@ -129,7 +122,7 @@ fn prepareLlvm(b: *std.Build) !struct { std.Build.LazyPath, std.Build.LazyPath, 
             printMissingLlvmHelp(tried_llvm_configs);
             return error.LlvmNotFound;
         };
-        break :blk std.mem.trimRight(u8, b.run(&.{ llvm_config, "--libs" }), "\n");
+        break :blk std.mem.trim(u8, b.run(&.{ llvm_config, "--libs" }), "\n");
     };
 
     const llvm_include_path = std.Build.LazyPath{ .cwd_relative = std.mem.trim(u8, include_dir_raw, " \n") };
@@ -171,11 +164,17 @@ fn printMissingLlvmHelp(tried: []const []const u8) void {
     }
 }
 
-fn linkLlvm(step: *std.Build.Step.Compile, libs_str: []const u8) void {
+fn linkLlvmModule(module: *std.Build.Module, lib_path: std.Build.LazyPath, libs_str: []const u8) void {
+    module.addLibraryPath(lib_path);
+    module.linkSystemLibrary("c", .{});
+    linkLlvm(module, libs_str);
+}
+
+fn linkLlvm(module: *std.Build.Module, libs_str: []const u8) void {
     var it = std.mem.tokenizeScalar(u8, libs_str, ' ');
     while (it.next()) |tok| {
         if (std.mem.startsWith(u8, tok, "-l")) {
-            step.linkSystemLibrary(tok[2..]);
+            module.linkSystemLibrary(tok[2..], .{});
         }
     }
 }

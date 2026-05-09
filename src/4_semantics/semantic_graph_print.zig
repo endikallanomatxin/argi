@@ -10,13 +10,13 @@ fn typeToString(t: sem.Type) []const u8 {
     return switch (t) {
         .builtin => |b| @tagName(b),
         .abstract_type => |at| at.name,
-        .choice_type => |_| "choice",
-        .struct_type => |_| "struct",
+        .choice_type => "choice",
+        .struct_type => "struct",
         .pointer_type => |ptr| switch (ptr.*.mutability) {
             .read_only => "&",
             .read_write => "$&",
         },
-        .array_type => |_| "array",
+        .array_type => "array",
     };
 }
 
@@ -320,8 +320,8 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
             }
         },
 
-        .while_statement => |_| std.debug.print("WhileStatement\n", .{}),
-        .for_statement => |_| std.debug.print("ForStatement\n", .{}),
+        .while_statement => std.debug.print("WhileStatement\n", .{}),
+        .for_statement => std.debug.print("ForStatement\n", .{}),
         .switch_statement => |sw| {
             std.debug.print("SwitchStatement\n", .{});
             indent(lvl + 1);
@@ -338,8 +338,8 @@ pub fn printNode(node: *const sem.SGNode, lvl: usize) void {
                 printNode(&b, lvl + 2);
             }
         },
-        .break_statement => |_| std.debug.print("Break\n", .{}),
-        .continue_statement => |_| std.debug.print("Continue\n", .{}),
+        .break_statement => std.debug.print("Break\n", .{}),
+        .continue_statement => std.debug.print("Continue\n", .{}),
 
         .address_of => |ao| {
             std.debug.print("AddressOf\n", .{});

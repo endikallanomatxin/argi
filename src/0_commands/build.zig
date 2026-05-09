@@ -103,8 +103,12 @@ fn printTokenList(all: []const token.Token) void {
     }
 }
 
-fn elapsedSince(start_ns: i128) u64 {
-    return @intCast(std.time.nanoTimestamp() - start_ns);
+fn nowNs(io: std.Io) i96 {
+    return std.Io.Timestamp.now(io, .boot).nanoseconds;
+}
+
+fn elapsedSince(io: std.Io, start_ns: i96) u64 {
+    return @intCast(std.Io.Timestamp.now(io, .boot).nanoseconds - start_ns);
 }
 
 fn printPhaseTimings(timings: PhaseTimings) void {
@@ -152,25 +156,27 @@ fn dumpDiagnosticsOrWarn(
     };
 }
 
-pub fn resolveBuildModuleDir(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    if (std.fs.cwd().openDir(path, .{})) |opened_dir| {
-        var dir = opened_dir;
-        dir.close();
-        return std.fs.path.resolve(allocator, &.{path});
+pub fn resolveBuildModuleDir(allocator: std.mem.Allocator, io: std.Io, path: []const u8) ![]u8 {
+    const cwd_path = try std.process.currentPathAlloc(io, allocator);
+    defer allocator.free(cwd_path);
+    const cwd = std.Io.Dir.cwd();
+    if (cwd.openDir(io, path, .{})) |opened_dir| {
+        opened_dir.close(io);
+        return std.fs.path.resolve(allocator, &.{ cwd_path, path });
     } else |dir_err| switch (dir_err) {
         error.NotDir, error.FileNotFound => {},
         else => return dir_err,
     }
 
-    _ = try std.fs.cwd().statFile(path);
+    _ = try cwd.statFile(io, path, .{});
     const dir = std.fs.path.dirname(path) orelse ".";
-    return std.fs.path.resolve(allocator, &.{dir});
+    return std.fs.path.resolve(allocator, &.{ cwd_path, dir });
 }
 
-fn ensureParentDir(path: []const u8) !void {
+fn ensureParentDir(io: std.Io, path: []const u8) !void {
     const parent = std.fs.path.dirname(path) orelse return;
     if (parent.len == 0 or std.mem.eql(u8, parent, ".")) return;
-    try std.fs.cwd().makePath(parent);
+    try std.Io.Dir.cwd().createDirPath(io, parent);
 }
 
 pub fn defaultOutputPathForModuleDir(allocator: std.mem.Allocator, module_dir: []const u8) ![]u8 {
@@ -181,72 +187,75 @@ pub fn defaultOutputPathForModuleDir(allocator: std.mem.Allocator, module_dir: [
     );
 }
 
-fn replaceFile(src: []const u8, dst: []const u8) !void {
-    std.fs.cwd().rename(src, dst) catch |err| switch (err) {
-        error.PathAlreadyExists => {
-            try std.fs.cwd().deleteFile(dst);
-            try std.fs.cwd().rename(src, dst);
-        },
-        else => return err,
-    };
+fn replaceFile(io: std.Io, src: []const u8, dst: []const u8) !void {
+    try std.Io.Dir.renameAbsolute(src, dst, io);
 }
 
-pub fn compileTarget(target_path: []const u8, flags: BuildFlags, options: CompileOptions) !void {
+pub fn compileTarget(
+    target_path: []const u8,
+    flags: BuildFlags,
+    options: CompileOptions,
+    io: std.Io,
+    environ_map: ?*const std.process.Environ.Map,
+) !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const module_dir = try resolveBuildModuleDir(allocator, target_path);
+    const module_dir = try resolveBuildModuleDir(allocator, io, target_path);
     var timings: PhaseTimings = .{};
+    const cwd_path = try std.process.currentPathAlloc(io, allocator);
+    defer allocator.free(cwd_path);
 
     // Salidas finales por defecto dentro del módulo compilado.
     const final_output_path = if (flags.output_path) |path|
-        try std.fs.path.resolve(allocator, &.{path})
+        try std.fs.path.resolve(allocator, &.{ cwd_path, path })
     else
         try defaultOutputPathForModuleDir(allocator, module_dir);
     const final_ir_path = if (flags.llvm_ir_path) |path|
-        try std.fs.path.resolve(allocator, &.{path})
+        try std.fs.path.resolve(allocator, &.{ cwd_path, path })
     else
         null;
     const final_obj_path = if (flags.just_object_path) |path|
-        try std.fs.path.resolve(allocator, &.{path})
+        try std.fs.path.resolve(allocator, &.{ cwd_path, path })
     else if (flags.object_path) |path|
-        try std.fs.path.resolve(allocator, &.{path})
+        try std.fs.path.resolve(allocator, &.{ cwd_path, path })
     else
         null;
     const emit_object_only = flags.just_object_path != null;
 
-    if (!emit_object_only) try ensureParentDir(final_output_path);
-    if (final_ir_path) |path| try ensureParentDir(path);
-    if (final_obj_path) |path| try ensureParentDir(path);
+    if (!emit_object_only) try ensureParentDir(io, final_output_path);
+    if (final_ir_path) |path| try ensureParentDir(io, path);
+    if (final_obj_path) |path| try ensureParentDir(io, path);
 
     // 1. Reunir ficheros ──────────────────────────────────────────────────
-    const collect_start = std.time.nanoTimestamp();
-    const files = try sf.collectModuleWithOptions(&allocator, .{
+    const collect_start = nowNs(io);
+    const files = try sf.collectModuleWithOptions(&allocator, io, .{
         .explicit_sysroot = flags.sysroot_path,
+        .environ_map = environ_map,
     }, module_dir);
-    timings.collect_files_ns = elapsedSince(collect_start);
+    timings.collect_files_ns = elapsedSince(io, collect_start);
 
     // 2. Diagnósticos globales ────────────────────────────────────────────
     var diagnostics = diag.Diagnostics.init(&allocator, files.items);
 
-    var pipeline = frontend.FrontendPipeline.init(&allocator, &diagnostics, options.frontend_options);
+    var pipeline = frontend.FrontendPipeline.init(&allocator, io, &diagnostics, options.frontend_options);
     defer pipeline.deinit();
 
     // 3. Tokenizar todos (fusionando EOF) ─────────────────────────────────
-    const tokenize_start = std.time.nanoTimestamp();
+    const tokenize_start = nowNs(io);
     pipeline.tokenizeFiles(files.items) catch {
-        timings.tokenize_ns = elapsedSince(tokenize_start);
+        timings.tokenize_ns = elapsedSince(io, tokenize_start);
         if (flags.show_token_list) printTokenList(pipeline.tokens.items);
         dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
         return error.CompilationFailed;
     };
-    timings.tokenize_ns = elapsedSince(tokenize_start);
+    timings.tokenize_ns = elapsedSince(io, tokenize_start);
 
     // 4. Sintaxis ──────────────────────────────────────────────────────────
-    const syntax_start = std.time.nanoTimestamp();
+    const syntax_start = nowNs(io);
     _ = pipeline.syntax() catch {
-        timings.syntax_ns = elapsedSince(syntax_start);
+        timings.syntax_ns = elapsedSince(io, syntax_start);
         if (flags.show_token_list) printTokenList(pipeline.tokens.items);
         if (pipeline.syntax_ctx) |*syntax_ctx| {
             if (flags.show_syntax_tree) syntax_ctx.printST();
@@ -254,12 +263,12 @@ pub fn compileTarget(target_path: []const u8, flags: BuildFlags, options: Compil
         dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
         return error.CompilationFailed;
     };
-    timings.syntax_ns = elapsedSince(syntax_start);
+    timings.syntax_ns = elapsedSince(io, syntax_start);
 
     // 5. Semántica ────────────────────────────────────────────────────────
-    const semantizing_start = std.time.nanoTimestamp();
+    const semantizing_start = nowNs(io);
     const sg = pipeline.semantize() catch {
-        timings.semantizing_ns = elapsedSince(semantizing_start);
+        timings.semantizing_ns = elapsedSince(io, semantizing_start);
         if (flags.show_token_list) printTokenList(pipeline.tokens.items);
         if (pipeline.syntax_ctx) |*syntax_ctx| {
             if (flags.show_syntax_tree) syntax_ctx.printST();
@@ -270,7 +279,7 @@ pub fn compileTarget(target_path: []const u8, flags: BuildFlags, options: Compil
         dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
         return error.CompilationFailed;
     };
-    timings.semantizing_ns = elapsedSince(semantizing_start);
+    timings.semantizing_ns = elapsedSince(io, semantizing_start);
 
     // 6. Si hubo errores semánticos, parar antes de codegen ───────────────
     if (diagnostics.hasErrors()) {
@@ -286,14 +295,14 @@ pub fn compileTarget(target_path: []const u8, flags: BuildFlags, options: Compil
     }
 
     // 7. Generación de código ──────────────────────────────────────────────
-    const codegen_start = std.time.nanoTimestamp();
-    var gen = codegen.CodeGenerator.init(&allocator, sg, &diagnostics, options.codegen_options) catch |err| {
+    const codegen_start = nowNs(io);
+    var gen = codegen.CodeGenerator.init(&allocator, io, sg, &diagnostics, options.codegen_options) catch |err| {
         std.debug.print("failed to initialize codegen: {s}\n", .{@errorName(err)});
         return err;
     };
     defer gen.deinit();
     const module = gen.generate() catch {
-        timings.codegen_ns = elapsedSince(codegen_start);
+        timings.codegen_ns = elapsedSince(io, codegen_start);
         if (flags.show_token_list) printTokenList(pipeline.tokens.items);
         if (pipeline.sem_ctx) |*semantizer_ctx| {
             if (flags.show_semantic_graph) semantizer_ctx.printSG();
@@ -301,14 +310,14 @@ pub fn compileTarget(target_path: []const u8, flags: BuildFlags, options: Compil
         dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
         return error.CompilationFailed;
     };
-    timings.codegen_ns = elapsedSince(codegen_start);
+    timings.codegen_ns = elapsedSince(io, codegen_start);
 
     // Temporales en el mismo directorio final.
     const temp_stem_base = if (emit_object_only) final_obj_path.? else final_output_path;
     const temp_stem = try std.fmt.allocPrint(
         allocator,
         "{s}.tmp.{d}",
-        .{ temp_stem_base, std.time.nanoTimestamp() },
+        .{ temp_stem_base, nowNs(io) },
     );
     const temp_ir_path = if (final_ir_path != null)
         try std.fmt.allocPrint(
@@ -324,19 +333,19 @@ pub fn compileTarget(target_path: []const u8, flags: BuildFlags, options: Compil
         .{temp_stem},
     );
 
-    try ensureParentDir(temp_stem);
-    if (temp_ir_path) |path| try ensureParentDir(path);
-    try ensureParentDir(temp_obj_path);
+    try ensureParentDir(io, temp_stem);
+    if (temp_ir_path) |path| try ensureParentDir(io, path);
+    try ensureParentDir(io, temp_obj_path);
 
     if (temp_ir_path) |path| {
-        std.fs.cwd().deleteFile(path) catch |err| {
+        std.Io.Dir.deleteFileAbsolute(io, path) catch |err| {
             if (err != error.FileNotFound) return err;
         };
     }
-    std.fs.cwd().deleteFile(temp_stem) catch |err| {
+    std.Io.Dir.deleteFileAbsolute(io, temp_stem) catch |err| {
         if (err != error.FileNotFound) return err;
     };
-    std.fs.cwd().deleteFile(temp_obj_path) catch |err| {
+    std.Io.Dir.deleteFileAbsolute(io, temp_obj_path) catch |err| {
         if (err != error.FileNotFound) return err;
     };
 
@@ -355,48 +364,48 @@ pub fn compileTarget(target_path: []const u8, flags: BuildFlags, options: Compil
     defer c.LLVMDisposeMessage(triple_cstr);
     const triple = std.mem.span(triple_cstr);
 
-    const link_start = std.time.nanoTimestamp();
+    const link_start = nowNs(io);
     if (emit_object_only)
         try link.emitObjectFile(module, triple, temp_obj_path)
     else
-        try link.linkWithLibc(module, triple, temp_stem, &allocator);
-    timings.link_ns = elapsedSince(link_start);
+        try link.linkWithLibc(module, triple, temp_stem, &allocator, io, environ_map);
+    timings.link_ns = elapsedSince(io, link_start);
 
     // 10. Mover a nombres finales ─────────────────────────────────────────
     if (temp_ir_path) |src| {
         const dst = final_ir_path.?;
-        if (std.fs.cwd().statFile(src)) |_| {} else |err| switch (err) {
+        if (std.Io.Dir.cwd().statFile(io, src, .{})) |_| {} else |err| switch (err) {
             error.FileNotFound => {
                 std.debug.print("missing temp ir before rename: {s}\n", .{src});
                 return err;
             },
             else => return err,
         }
-        try replaceFile(src, dst);
+        try replaceFile(io, src, dst);
     }
 
     if (!emit_object_only) {
-        if (std.fs.cwd().statFile(temp_stem)) |_| {} else |err| switch (err) {
+        if (std.Io.Dir.cwd().statFile(io, temp_stem, .{})) |_| {} else |err| switch (err) {
             error.FileNotFound => {
                 std.debug.print("missing temp output before rename: {s}\n", .{temp_stem});
                 return err;
             },
             else => return err,
         }
-        try replaceFile(temp_stem, final_output_path);
+        try replaceFile(io, temp_stem, final_output_path);
     }
 
     if (final_obj_path) |obj_dst| {
-        if (std.fs.cwd().statFile(temp_obj_path)) |_| {} else |err| switch (err) {
+        if (std.Io.Dir.cwd().statFile(io, temp_obj_path, .{})) |_| {} else |err| switch (err) {
             error.FileNotFound => {
                 std.debug.print("missing temp obj before rename: {s}\n", .{temp_obj_path});
                 return err;
             },
             else => return err,
         }
-        try replaceFile(temp_obj_path, obj_dst);
+        try replaceFile(io, temp_obj_path, obj_dst);
     } else {
-        std.fs.cwd().deleteFile(temp_obj_path) catch |err| {
+        std.Io.Dir.deleteFileAbsolute(io, temp_obj_path) catch |err| {
             if (err != error.FileNotFound) return err;
         };
     }
@@ -411,10 +420,10 @@ pub fn compileTarget(target_path: []const u8, flags: BuildFlags, options: Compil
     }
 }
 
-pub fn compile(args: []const []const u8) !void {
+pub fn compile(io: std.Io, environ_map: ?*const std.process.Environ.Map, args: []const []const u8) !void {
     if (args.len == 0) return error.MissingBuildTarget;
     const flags = try parseFlags(args[1..]);
-    try compileTarget(args[0], flags, .{});
+    try compileTarget(args[0], flags, .{}, io, environ_map);
 }
 
 test "parse build flags keeps diagnostics toggles and output paths" {
