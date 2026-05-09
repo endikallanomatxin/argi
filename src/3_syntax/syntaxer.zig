@@ -60,7 +60,6 @@ pub const Syntaxer = struct {
             } else {
                 try self.diags.add(self.tokenLocation(), .syntax, "syntax error: {s}", .{@errorName(err)});
             }
-            std.debug.print("Parse error: {s}\n", .{@errorName(err)});
             return err;
         };
         return self.st.items; // slice inmutable a devolver
@@ -1637,7 +1636,7 @@ pub const Syntaxer = struct {
         }
 
         // Declarations: ":" or "::"
-            if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) {
+        if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) {
             var mut: syn.Mutability = .constant;
             if (self.tokenIs(.double_colon)) mut = .variable;
             self.advanceOne();

@@ -181,6 +181,23 @@ fn buildExpectFailExact(name: []const u8, expected_stderr: []const u8) !void {
     }
 
     try expectEqualStrings(expected_stderr, result.stderr);
+    try expect(std.mem.indexOf(u8, result.stdout, "Parse error:") == null);
+    try expect(std.mem.indexOf(u8, result.stderr, "Parse error:") == null);
+}
+
+fn buildExpectFailWithoutParseNoise(name: []const u8, expected_stderr_fragment: []const u8) !void {
+    const result = try buildResult(name);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    switch (result.term) {
+        .Exited => |code| try expect(code != 0),
+        else => return error.UnexpectedProcessTermination,
+    }
+
+    try expect(std.mem.indexOf(u8, result.stderr, expected_stderr_fragment) != null);
+    try expect(std.mem.indexOf(u8, result.stdout, "Parse error:") == null);
+    try expect(std.mem.indexOf(u8, result.stderr, "Parse error:") == null);
 }
 
 fn runExpect(name: []const u8, expected_code: u8) !void {
@@ -422,9 +439,9 @@ test "installed argi resolves core from its installation prefix outside repo" {
     try tmp.dir.writeFile(.{
         .sub_path = "module/main.rg",
         .data =
-            \\main() -> (.status_code: Int32 = 0) := {
-            \\}
-            \\
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\}
+        \\
         ,
     });
 
@@ -587,8 +604,7 @@ test "feature_tests/basics/08_struct_field_store" {
 }
 
 test "feature_tests/basics/09X_integer_literal_overflow" {
-    try buildExpectFailExact(
-        "tests/feature_tests/basics/09X_integer_literal_overflow",
+    try buildExpectFailExact("tests/feature_tests/basics/09X_integer_literal_overflow",
         \\tests/feature_tests/basics/09X_integer_literal_overflow/main.rg:2:21: error: integer literal 300 does not fit in 'UInt8' (max 255)
         \\      value : UInt8 = 300
         \\                      ^
@@ -597,8 +613,7 @@ test "feature_tests/basics/09X_integer_literal_overflow" {
 }
 
 test "feature_tests/basics/10X_signed_integer_literal_overflow" {
-    try buildExpectFailExact(
-        "tests/feature_tests/basics/10X_signed_integer_literal_overflow",
+    try buildExpectFailExact("tests/feature_tests/basics/10X_signed_integer_literal_overflow",
         \\tests/feature_tests/basics/10X_signed_integer_literal_overflow/main.rg:2:20: error: integer literal 128 does not fit in 'Int8' (min -128, max 127)
         \\      value : Int8 = 128
         \\                     ^
@@ -607,8 +622,7 @@ test "feature_tests/basics/10X_signed_integer_literal_overflow" {
 }
 
 test "feature_tests/basics/11X_negative_integer_literal_overflow" {
-    try buildExpectFailExact(
-        "tests/feature_tests/basics/11X_negative_integer_literal_overflow",
+    try buildExpectFailExact("tests/feature_tests/basics/11X_negative_integer_literal_overflow",
         \\tests/feature_tests/basics/11X_negative_integer_literal_overflow/main.rg:2:20: error: integer literal -129 does not fit in 'Int8' (min -128, max 127)
         \\      value : Int8 = -129
         \\                     ^
@@ -641,8 +655,7 @@ test "feature_tests/functions/04_pipe_pointer" {
 }
 
 test "feature_tests/functions/05X_pipe_requires_parentheses" {
-    try buildExpectFailExact(
-        "tests/feature_tests/functions/05X_pipe_requires_parentheses",
+    try buildExpectFailExact("tests/feature_tests/functions/05X_pipe_requires_parentheses",
         \\tests/feature_tests/functions/05X_pipe_requires_parentheses/main.rg:6:22: error: pipe right-hand side must use at least one argument placeholder
         \\      status_code = 41 | add_one
         \\                       ^
@@ -651,8 +664,7 @@ test "feature_tests/functions/05X_pipe_requires_parentheses" {
 }
 
 test "feature_tests/functions/06X_pipe_requires_placeholder" {
-    try buildExpectFailExact(
-        "tests/feature_tests/functions/06X_pipe_requires_placeholder",
+    try buildExpectFailExact("tests/feature_tests/functions/06X_pipe_requires_placeholder",
         \\tests/feature_tests/functions/06X_pipe_requires_placeholder/main.rg:6:22: error: pipe right-hand side must use at least one argument placeholder
         \\      status_code = 41 | add_one(41)
         \\                       ^
@@ -661,8 +673,7 @@ test "feature_tests/functions/06X_pipe_requires_placeholder" {
 }
 
 test "feature_tests/functions/07X_pipe_expression_placeholder_not_supported" {
-    try buildExpectFailExact(
-        "tests/feature_tests/functions/07X_pipe_expression_placeholder_not_supported",
+    try buildExpectFailExact("tests/feature_tests/functions/07X_pipe_expression_placeholder_not_supported",
         \\tests/feature_tests/functions/07X_pipe_expression_placeholder_not_supported/main.rg:6:34: error: pipe placeholders are only supported as '_', '&_', '$&_', '_.field', or '..variant' payload access for now
         \\      status_code = 41 | add_one(_ + 1)
         \\                                   ^
@@ -707,13 +718,18 @@ test "feature_tests/functions/13_mixed_function_call" {
 }
 
 test "feature_tests/functions/14X_positional_after_named_call" {
-    try buildExpectFailExact(
-        "tests/feature_tests/functions/14X_positional_after_named_call",
-        \\Parse error: ExpectedStructField
+    try buildExpectFailExact("tests/feature_tests/functions/14X_positional_after_named_call",
         \\tests/feature_tests/functions/14X_positional_after_named_call/main.rg:6:40: error: positional collection items must appear before named items
         \\      status_code = subtract(.left = 44, 2).diff
         \\                                         ^
         \\
+    );
+}
+
+test "parser errors do not print parse error noise" {
+    try buildExpectFailWithoutParseNoise(
+        "tests/feature_tests/functions/14X_positional_after_named_call",
+        "positional collection items must appear before named items",
     );
 }
 
@@ -724,8 +740,7 @@ test "feature_tests/functions/15_output_default_implicit_return" {
 }
 
 test "feature_tests/functions/16X_function_signature_requires_explicit_types" {
-    try buildExpectFailExact(
-        "tests/feature_tests/functions/16X_function_signature_requires_explicit_types",
+    try buildExpectFailExact("tests/feature_tests/functions/16X_function_signature_requires_explicit_types",
         \\tests/feature_tests/functions/16X_function_signature_requires_explicit_types/main.rg:1:30: error: function output field '.result' requires an explicit type
         \\  identity(.value: Int32) -> (.result) := {
         \\                               ^
@@ -759,7 +774,7 @@ test "feature_tests/polymorphism/02X_multiple_dispatch_ambiguous" {
         \\  - choose2 (.a: &Int32, .b: &Any) -> (.r: Int32)
         \\      status_code = choose2(.a = &i, .b = &i).r
         \\                    ^
-        ++ "\n",
+    ++ "\n",
     );
 }
 
@@ -782,8 +797,7 @@ test "feature_tests/pointers/02_read-only_vs_read-and-write_pointers" {
 }
 
 test "feature_tests/pointers/03X_assign_through_readonly_pointer" {
-    try buildExpectFailExact(
-        "tests/feature_tests/pointers/03X_assign_through_readonly_pointer",
+    try buildExpectFailExact("tests/feature_tests/pointers/03X_assign_through_readonly_pointer",
         \\tests/feature_tests/pointers/03X_assign_through_readonly_pointer/main.rg:5:11: error: cannot assign through pointer '&Int32' because it is read-only; use '$&' when acquiring it
         \\      reader& = 1
         \\            ^
@@ -792,8 +806,7 @@ test "feature_tests/pointers/03X_assign_through_readonly_pointer" {
 }
 
 test "feature_tests/pointers/04X_read-write_pointer_to_constant" {
-    try buildExpectFailExact(
-        "tests/feature_tests/pointers/04X_read-write_pointer_to_constant",
+    try buildExpectFailExact("tests/feature_tests/pointers/04X_read-write_pointer_to_constant",
         \\tests/feature_tests/pointers/04X_read-write_pointer_to_constant/main.rg:4:32: error: binding 'value' is immutable; declare it with '::' or use '&value'
         \\      mutable_view : $&Int32 = $&value
         \\                                 ^
@@ -802,8 +815,7 @@ test "feature_tests/pointers/04X_read-write_pointer_to_constant" {
 }
 
 test "feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param" {
-    try buildExpectFailExact(
-        "tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param",
+    try buildExpectFailExact("tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param",
         \\tests/feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param/main.rg:9:14: error: no overload of 'increment' accepts arguments (.ptr: &Int32). Available signatures:
         \\  - increment (.ptr: $&Int32) -> ()
         \\      increment(.ptr=reader)
@@ -819,8 +831,7 @@ test "feature_tests/pointers/06_explicit_pointer_casts" {
 }
 
 test "feature_tests/pointers/07X_pointer_arithmetic_requires_cast" {
-    try buildExpectFailExact(
-        "tests/feature_tests/pointers/07X_pointer_arithmetic_requires_cast",
+    try buildExpectFailExact("tests/feature_tests/pointers/07X_pointer_arithmetic_requires_cast",
         \\tests/feature_tests/pointers/07X_pointer_arithmetic_requires_cast/main.rg:4:14: error: pointer arithmetic is not allowed; cast explicitly to an integer, perform the arithmetic, and cast back
         \\      _addr := ptr + 1
         \\               ^
@@ -829,8 +840,7 @@ test "feature_tests/pointers/07X_pointer_arithmetic_requires_cast" {
 }
 
 test "feature_tests/pointers/08X_array_index_requires_uint_native" {
-    try buildExpectFailExact(
-        "tests/feature_tests/pointers/08X_array_index_requires_uint_native",
+    try buildExpectFailExact("tests/feature_tests/pointers/08X_array_index_requires_uint_native",
         \\tests/feature_tests/pointers/08X_array_index_requires_uint_native/main.rg:4:23: error: array index must be 'UIntNative', got 'Int32'
         \\      status_code = arr[idx]
         \\                        ^
@@ -845,8 +855,7 @@ test "feature_tests/basics/13_core_and_libc" {
 }
 
 test "feature_tests/basics/17X_extern_call_requires_exact_argument_types" {
-    try buildExpectFailExact(
-        "tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types",
+    try buildExpectFailExact("tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types",
         \\tests/feature_tests/basics/17X_extern_call_requires_exact_argument_types/main.rg:3:12: error: no overload of 'putchar' accepts arguments (.character: UInt16). Available signatures:
         \\  - putchar (.character: UInt8) -> ()
         \\      putchar(.character = value)
@@ -856,8 +865,7 @@ test "feature_tests/basics/17X_extern_call_requires_exact_argument_types" {
 }
 
 test "feature_tests/basics/18X_constant_reassignment" {
-    try buildExpectFailExact(
-        "tests/feature_tests/basics/18X_constant_reassignment",
+    try buildExpectFailExact("tests/feature_tests/basics/18X_constant_reassignment",
         \\tests/feature_tests/basics/18X_constant_reassignment/main.rg:3:5: error: binding 'answer' is constant and cannot be reassigned after initialization
         \\      answer = 2
         \\      ^
@@ -902,8 +910,7 @@ test "feature_tests/polymorphism/08_abstract" {
 }
 
 test "feature_tests/polymorphism/09X_abstract_missing_requirement" {
-    try buildExpectFailExact(
-        "tests/feature_tests/polymorphism/09X_abstract_missing_requirement",
+    try buildExpectFailExact("tests/feature_tests/polymorphism/09X_abstract_missing_requirement",
         \\tests/feature_tests/polymorphism/09X_abstract_missing_requirement/main.rg:9:1: error: type does not implement abstract 'Animal':
         \\  missing function: speak (.who: Dog)
         \\  Dog implements Animal
@@ -913,8 +920,7 @@ test "feature_tests/polymorphism/09X_abstract_missing_requirement" {
 }
 
 test "feature_tests/polymorphism/10X_abstract_wrong_signature" {
-    try buildExpectFailExact(
-        "tests/feature_tests/polymorphism/10X_abstract_wrong_signature",
+    try buildExpectFailExact("tests/feature_tests/polymorphism/10X_abstract_wrong_signature",
         \\tests/feature_tests/polymorphism/10X_abstract_wrong_signature/main.rg:9:1: error: type does not implement abstract 'Animal':
         \\  missing function: speak (.who: Dog)
         \\  possible overloads:
@@ -933,8 +939,7 @@ test "feature_tests/polymorphism/11_abstract_instantiation" {
 }
 
 test "feature_tests/polymorphism/12X_abstract_instantiation_missing_default" {
-    try buildExpectFailExact(
-        "tests/feature_tests/polymorphism/12X_abstract_instantiation_missing_default",
+    try buildExpectFailExact("tests/feature_tests/polymorphism/12X_abstract_instantiation_missing_default",
         \\tests/feature_tests/polymorphism/12X_abstract_instantiation_missing_default/main.rg:4:5: error: cannot use abstract 'ExampleAbstract' as a type for a symbol. Use a concrete type or add a default concrete type to the abstract type ('ExampleAbstract defaultsto <Type>')
         \\      x : ExampleAbstract
         \\      ^
@@ -949,8 +954,7 @@ test "feature_tests/polymorphism/15_abstract_self_output" {
 }
 
 test "feature_tests/polymorphism/16X_abstract_self_output_wrong" {
-    try buildExpectFailExact(
-        "tests/feature_tests/polymorphism/16X_abstract_self_output_wrong",
+    try buildExpectFailExact("tests/feature_tests/polymorphism/16X_abstract_self_output_wrong",
         \\tests/feature_tests/polymorphism/16X_abstract_self_output_wrong/main.rg:13:1: error: type does not implement abstract 'Animal':
         \\  missing function: clone (.who: Dog)
         \\  possible overloads:
@@ -981,8 +985,7 @@ test "feature_tests/polymorphism/19_abstract_monomorphization_isolation" {
 }
 
 test "feature_tests/polymorphism/13X_abstract_function_input_requires_implementation" {
-    try buildExpectFailExact(
-        "tests/feature_tests/polymorphism/13X_abstract_function_input_requires_implementation",
+    try buildExpectFailExact("tests/feature_tests/polymorphism/13X_abstract_function_input_requires_implementation",
         \\tests/feature_tests/polymorphism/13X_abstract_function_input_requires_implementation/main.rg:8:28: error: type 'Int32' does not implement abstract 'ExampleAbstract' required by parameter '.value' of 'use_value'
         \\      status_code = use_value(.value = 7)
         \\                             ^
@@ -991,8 +994,7 @@ test "feature_tests/polymorphism/13X_abstract_function_input_requires_implementa
 }
 
 test "feature_tests/polymorphism/14X_abstract_function_output_requires_default" {
-    try buildExpectFailExact(
-        "tests/feature_tests/polymorphism/14X_abstract_function_output_requires_default",
+    try buildExpectFailExact("tests/feature_tests/polymorphism/14X_abstract_function_output_requires_default",
         \\tests/feature_tests/polymorphism/14X_abstract_function_output_requires_default/main.rg:3:1: error: error generating function make_value: InvalidType
         \\  make_value () -> (.value: ExampleAbstract) := {
         \\  ^
@@ -1025,8 +1027,7 @@ test "feature_tests/ownership/04_noncopyable_temporary_values" {
 }
 
 test "feature_tests/ownership/05X_noncopyable_assignment" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/05X_noncopyable_assignment",
+    try buildExpectFailExact("tests/feature_tests/ownership/05X_noncopyable_assignment",
         \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:9:15: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
         \\      second := first
         \\                ^
@@ -1035,8 +1036,7 @@ test "feature_tests/ownership/05X_noncopyable_assignment" {
 }
 
 test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/06X_noncopyable_argument_by_value",
+    try buildExpectFailExact("tests/feature_tests/ownership/06X_noncopyable_argument_by_value",
         \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:13:34: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
         \\      status_code = consume(.res = handle)
         \\                                   ^
@@ -1045,8 +1045,7 @@ test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
 }
 
 test "feature_tests/ownership/07X_noncopyable_struct_field" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/07X_noncopyable_struct_field",
+    try buildExpectFailExact("tests/feature_tests/ownership/07X_noncopyable_struct_field",
         \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:13:33: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
         \\      wrapped : Wrapper = (.res = handle)
         \\                                  ^
@@ -1055,8 +1054,7 @@ test "feature_tests/ownership/07X_noncopyable_struct_field" {
 }
 
 test "feature_tests/ownership/08X_noncopyable_output_binding" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/08X_noncopyable_output_binding",
+    try buildExpectFailExact("tests/feature_tests/ownership/08X_noncopyable_output_binding",
         \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:8:11: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
         \\      out = res
         \\            ^
@@ -1065,8 +1063,7 @@ test "feature_tests/ownership/08X_noncopyable_output_binding" {
 }
 
 test "feature_tests/ownership/09X_mutable_and_read_alias_same_call" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/09X_mutable_and_read_alias_same_call",
+    try buildExpectFailExact("tests/feature_tests/ownership/09X_mutable_and_read_alias_same_call",
         \\tests/feature_tests/ownership/09X_mutable_and_read_alias_same_call/main.rg:5:8: error: binding 'value' cannot be passed as '$&' and '&' in the same call to 'mix'
         \\      mix(.target = $&value, .reader = &value)
         \\         ^
@@ -1075,8 +1072,7 @@ test "feature_tests/ownership/09X_mutable_and_read_alias_same_call" {
 }
 
 test "feature_tests/ownership/10X_mutable_and_value_alias_same_call" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/10X_mutable_and_value_alias_same_call",
+    try buildExpectFailExact("tests/feature_tests/ownership/10X_mutable_and_value_alias_same_call",
         \\tests/feature_tests/ownership/10X_mutable_and_value_alias_same_call/main.rg:5:8: error: binding 'value' cannot be passed as '$&' and 'value' in the same call to 'mix'
         \\      mix(.target = $&value, .snapshot = value)
         \\         ^
@@ -1085,8 +1081,7 @@ test "feature_tests/ownership/10X_mutable_and_value_alias_same_call" {
 }
 
 test "feature_tests/ownership/11X_double_mutable_alias_same_call" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/11X_double_mutable_alias_same_call",
+    try buildExpectFailExact("tests/feature_tests/ownership/11X_double_mutable_alias_same_call",
         \\tests/feature_tests/ownership/11X_double_mutable_alias_same_call/main.rg:5:8: error: binding 'value' cannot be passed as '$&' and '$&' in the same call to 'mix'
         \\      mix(.left = $&value, .right = $&value)
         \\         ^
@@ -1107,8 +1102,7 @@ test "feature_tests/ownership/13_move_operator" {
 }
 
 test "feature_tests/ownership/14X_use_after_move" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/14X_use_after_move",
+    try buildExpectFailExact("tests/feature_tests/ownership/14X_use_after_move",
         \\tests/feature_tests/ownership/14X_use_after_move/main.rg:14:34: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/14X_use_after_move/main.rg:13:34)
         \\      status_code = consume(.res = handle)
         \\                                   ^
@@ -1117,8 +1111,7 @@ test "feature_tests/ownership/14X_use_after_move" {
 }
 
 test "feature_tests/ownership/15X_reassign_after_move" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/15X_reassign_after_move",
+    try buildExpectFailExact("tests/feature_tests/ownership/15X_reassign_after_move",
         \\tests/feature_tests/ownership/15X_reassign_after_move/main.rg:14:5: error: binding 'handle' was moved and cannot be reassigned (moved at tests/feature_tests/ownership/15X_reassign_after_move/main.rg:13:34)
         \\      handle = Resource()
         \\      ^
@@ -1157,8 +1150,7 @@ test "feature_tests/basics/20_c_enum_baseline" {
 }
 
 test "feature_tests/basics/21X_c_enum_payload" {
-    try buildExpectFailExact(
-        "tests/feature_tests/basics/21X_c_enum_payload",
+    try buildExpectFailExact("tests/feature_tests/basics/21X_c_enum_payload",
         \\tests/feature_tests/basics/21X_c_enum_payload/main.rg:3:7: error: CEnum variant '..exists' cannot carry a payload
         \\      ..exists (.code: Int32),
         \\        ^
@@ -1185,8 +1177,7 @@ test "feature_tests/types/03_choice_payloads" {
 }
 
 test "feature_tests/types/04X_choice_missing_payload" {
-    try buildExpectFailExact(
-        "tests/feature_tests/types/04X_choice_missing_payload",
+    try buildExpectFailExact("tests/feature_tests/types/04X_choice_missing_payload",
         \\tests/feature_tests/types/04X_choice_missing_payload/main.rg:7:22: error: choice variant '..ok' requires a payload
         \\      value : Result = ..ok
         \\                       ^
@@ -1211,7 +1202,6 @@ test "feature_tests/types/07_choice_match_payload_binding" {
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
-
 
 test "feature_tests/types/41_choice_scalar_payload" {
     const test_path = "tests/feature_tests/types/41_choice_scalar_payload";
@@ -1244,8 +1234,7 @@ test "feature_tests/types/09_errable_generic" {
 }
 
 test "feature_tests/types/10X_choice_unknown_variant" {
-    try buildExpectFailExact(
-        "tests/feature_tests/types/10X_choice_unknown_variant",
+    try buildExpectFailExact("tests/feature_tests/types/10X_choice_unknown_variant",
         \\tests/feature_tests/types/10X_choice_unknown_variant/main.rg:7:25: error: choice type 'Direction' has no variant '..east'
         \\      value : Direction = ..east
         \\                          ^
@@ -1254,8 +1243,7 @@ test "feature_tests/types/10X_choice_unknown_variant" {
 }
 
 test "feature_tests/types/11X_choice_payload_access_without_payload" {
-    try buildExpectFailExact(
-        "tests/feature_tests/types/11X_choice_payload_access_without_payload",
+    try buildExpectFailExact("tests/feature_tests/types/11X_choice_payload_access_without_payload",
         \\tests/feature_tests/types/11X_choice_payload_access_without_payload/main.rg:8:23: error: choice variant '..north' has no payload
         \\      payload := value..north
         \\                        ^
@@ -1264,8 +1252,7 @@ test "feature_tests/types/11X_choice_payload_access_without_payload" {
 }
 
 test "feature_tests/types/12X_match_non_choice" {
-    try buildExpectFailExact(
-        "tests/feature_tests/types/12X_match_non_choice",
+    try buildExpectFailExact("tests/feature_tests/types/12X_match_non_choice",
         \\tests/feature_tests/types/12X_match_non_choice/main.rg:4:11: error: match expects a choice value, found 'Int32'
         \\      match value {
         \\            ^
@@ -1274,8 +1261,7 @@ test "feature_tests/types/12X_match_non_choice" {
 }
 
 test "feature_tests/types/13X_match_bind_payload_without_payload" {
-    try buildExpectFailExact(
-        "tests/feature_tests/types/13X_match_bind_payload_without_payload",
+    try buildExpectFailExact("tests/feature_tests/types/13X_match_bind_payload_without_payload",
         \\tests/feature_tests/types/13X_match_bind_payload_without_payload/main.rg:10:17: error: choice variant '..north' has no payload to bind
         \\          ..north payload {
         \\                  ^
@@ -1284,8 +1270,7 @@ test "feature_tests/types/13X_match_bind_payload_without_payload" {
 }
 
 test "feature_tests/types/28X_match_omit_payload_pattern" {
-    try buildExpectFailExact(
-        "tests/feature_tests/types/28X_match_omit_payload_pattern",
+    try buildExpectFailExact("tests/feature_tests/types/28X_match_omit_payload_pattern",
         \\tests/feature_tests/types/28X_match_omit_payload_pattern/main.rg:13:11: error: choice variant '..error' carries a payload and match must bind it explicitly; use '..error _' to ignore it
         \\          ..error {
         \\            ^
@@ -1294,8 +1279,7 @@ test "feature_tests/types/28X_match_omit_payload_pattern" {
 }
 
 test "feature_tests/types/32X_match_value_noncopyable_payload" {
-    try buildExpectFailExact(
-        "tests/feature_tests/types/32X_match_value_noncopyable_payload",
+    try buildExpectFailExact("tests/feature_tests/types/32X_match_value_noncopyable_payload",
         \\tests/feature_tests/types/32X_match_value_noncopyable_payload/main.rg:17:14: error: type '{...}' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
         \\          ..ok payload {
         \\               ^
@@ -1304,8 +1288,7 @@ test "feature_tests/types/32X_match_value_noncopyable_payload" {
 }
 
 test "feature_tests/types/47X_match_value_payload_ambiguous_copy" {
-    try buildExpectFailExact(
-        "tests/feature_tests/types/47X_match_value_payload_ambiguous_copy",
+    try buildExpectFailExact("tests/feature_tests/types/47X_match_value_payload_ambiguous_copy",
         \\tests/feature_tests/types/47X_match_value_payload_ambiguous_copy/main.rg:26:14: error: ambiguous call to 'copy' for arguments (.__arg0: Payload). Possible overloads:
         \\  - copy (.payload: Payload, .tag: Int32) -> (.out: Payload)
         \\  - copy (.payload: Payload, .flag: Bool) -> (.out: Payload)
@@ -1318,8 +1301,7 @@ test "feature_tests/types/47X_match_value_payload_ambiguous_copy" {
 }
 
 test "feature_tests/types/48X_match_move_payload_consumes_binding" {
-    try buildExpectFailExact(
-        "tests/feature_tests/types/48X_match_move_payload_consumes_binding",
+    try buildExpectFailExact("tests/feature_tests/types/48X_match_move_payload_consumes_binding",
         \\tests/feature_tests/types/48X_match_move_payload_consumes_binding/main.rg:25:8: error: binding 'value' was moved and cannot be used again (moved at tests/feature_tests/types/48X_match_move_payload_consumes_binding/main.rg:16:11)
         \\      if value == ..error {
         \\         ^
@@ -1328,8 +1310,7 @@ test "feature_tests/types/48X_match_move_payload_consumes_binding" {
 }
 
 test "feature_tests/types/49X_choice_payload_access_ambiguous_copy" {
-    try buildExpectFailExact(
-        "tests/feature_tests/types/49X_choice_payload_access_ambiguous_copy",
+    try buildExpectFailExact("tests/feature_tests/types/49X_choice_payload_access_ambiguous_copy",
         \\tests/feature_tests/types/49X_choice_payload_access_ambiguous_copy/main.rg:24:21: error: ambiguous call to 'copy' for arguments (.__arg0: Payload). Possible overloads:
         \\  - copy (.payload: Payload, .tag: Int32) -> (.out: Payload)
         \\  - copy (.payload: Payload, .flag: Bool) -> (.out: Payload)
@@ -1342,8 +1323,7 @@ test "feature_tests/types/49X_choice_payload_access_ambiguous_copy" {
 }
 
 test "feature_tests/types/50X_choice_literal_payload_ambiguous_copy" {
-    try buildExpectFailExact(
-        "tests/feature_tests/types/50X_choice_literal_payload_ambiguous_copy",
+    try buildExpectFailExact("tests/feature_tests/types/50X_choice_literal_payload_ambiguous_copy",
         \\tests/feature_tests/types/50X_choice_literal_payload_ambiguous_copy/main.rg:24:28: error: ambiguous call to 'copy' for arguments (.__arg0: Payload). Possible overloads:
         \\  - copy (.payload: Payload, .tag: Int32) -> (.out: Payload)
         \\  - copy (.payload: Payload, .flag: Bool) -> (.out: Payload)
@@ -1428,8 +1408,7 @@ test "feature_tests/collections/12_iterator_abstract" {
 }
 
 test "feature_tests/collections/13X_iterator_abstract_missing_implements" {
-    try buildExpectFailExact(
-        "tests/feature_tests/collections/13X_iterator_abstract_missing_implements",
+    try buildExpectFailExact("tests/feature_tests/collections/13X_iterator_abstract_missing_implements",
         \\tests/feature_tests/collections/13X_iterator_abstract_missing_implements/main.rg:9:12: error: type 'FakeIterator' does not implement abstract 'Iterator' required by parameter '.it' of 'consume':
         \\missing function: has_next (.self: &FakeIterator)
         \\      consume(.it = $&fake)
@@ -1439,8 +1418,7 @@ test "feature_tests/collections/13X_iterator_abstract_missing_implements" {
 }
 
 test "feature_tests/control_flow/05X_for_requires_iterator_contract" {
-    try buildExpectFailExact(
-        "tests/feature_tests/control_flow/05X_for_requires_iterator_contract",
+    try buildExpectFailExact("tests/feature_tests/control_flow/05X_for_requires_iterator_contract",
         \\tests/feature_tests/control_flow/05X_for_requires_iterator_contract/main.rg:7:1: error: type does not implement abstract 'Iterable':
         \\  missing function: to_iterator (.value: &FakeIterable)
         \\  possible overloads:
@@ -1459,8 +1437,7 @@ test "feature_tests/collections/14_iterable_abstract" {
 }
 
 test "feature_tests/collections/15X_iterable_abstract_missing_implements" {
-    try buildExpectFailExact(
-        "tests/feature_tests/collections/15X_iterable_abstract_missing_implements",
+    try buildExpectFailExact("tests/feature_tests/collections/15X_iterable_abstract_missing_implements",
         \\tests/feature_tests/collections/15X_iterable_abstract_missing_implements/main.rg:18:31: error: type 'FakeIterable' does not implement abstract 'Iterable' required by parameter '.items' of 'sum_iterable':
         \\missing function: to_iterator (.value: &FakeIterable)
         \\possible overloads:
@@ -1527,8 +1504,7 @@ test "feature_tests/types/20_struct_initializer_without_init" {
 }
 
 test "feature_tests/types/21X_struct_initializer_must_use_visible_init" {
-    try buildExpectFailExact(
-        "tests/feature_tests/types/21X_struct_initializer_must_use_visible_init",
+    try buildExpectFailExact("tests/feature_tests/types/21X_struct_initializer_must_use_visible_init",
         \\tests/feature_tests/types/21X_struct_initializer_must_use_visible_init/main.rg:14:19: error: failed to initialize type 'Point': no visible 'init' overload accepts arguments (.x: Int32, .y: Int32). Available overloads:
         \\  - init (.p: $&Point, .sum: Int32) -> ()
         \\      point := Point(.x = 1, .y = 2)
@@ -1586,8 +1562,7 @@ test "feature_tests/control_flow/11_range_default_start_with_step" {
 }
 
 test "feature_tests/control_flow/12X_for_nullable_not_iterable" {
-    try buildExpectFailExact(
-        "tests/feature_tests/control_flow/12X_for_nullable_not_iterable",
+    try buildExpectFailExact("tests/feature_tests/control_flow/12X_for_nullable_not_iterable",
         \\tests/feature_tests/control_flow/12X_for_nullable_not_iterable/main.rg:4:5: error: for expects a type implementing abstract 'Iterable', got '?Int32'
         \\      for item in value {
         \\      ^
@@ -1608,8 +1583,7 @@ test "feature_tests/control_flow/14_for_mut_borrowed_dynamic_array" {
 }
 
 test "feature_tests/types/14X_errable_match_unknown_variant" {
-    try buildExpectFailExact(
-        "tests/feature_tests/types/14X_errable_match_unknown_variant",
+    try buildExpectFailExact("tests/feature_tests/types/14X_errable_match_unknown_variant",
         \\tests/feature_tests/types/14X_errable_match_unknown_variant/main.rg:7:11: error: choice type 'Errable#(.t: Int32, .reasons: choice)' has no variant '..none'
         \\          ..none {
         \\            ^
@@ -1703,8 +1677,7 @@ test "feature_tests/system/02_reached_arguments" {
 }
 
 test "feature_tests/system/03X_reached_argument_missing" {
-    try buildExpectFailExact(
-        "tests/feature_tests/system/03X_reached_argument_missing",
+    try buildExpectFailExact("tests/feature_tests/system/03X_reached_argument_missing",
         \\tests/feature_tests/system/03X_reached_argument_missing/main.rg:12:26: error: cannot resolve reached argument '.stdout' with alternatives [stdout, terminal.stdout, system.terminal.stdout] expected as 'Int32'
         \\      status_code = forward()
         \\                           ^
@@ -1761,8 +1734,7 @@ test "feature_tests/ownership/16_keep_cancels_auto_deinit" {
 }
 
 test "feature_tests/ownership/17X_keep_without_auto_deinit" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/17X_keep_without_auto_deinit",
+    try buildExpectFailExact("tests/feature_tests/ownership/17X_keep_without_auto_deinit",
         \\tests/feature_tests/ownership/17X_keep_without_auto_deinit/main.rg:3:11: error: cannot keep binding 'value': no automatic deinit is scheduled
         \\      #keep value
         \\            ^
@@ -1825,8 +1797,7 @@ test "feature_tests/io/22_abstract_writer_field_assignment" {
 }
 
 test "feature_tests/io/23X_abstract_writer_field_conflicting_assignment" {
-    try buildExpectFailExact(
-        "tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment",
+    try buildExpectFailExact("tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment",
         \\tests/feature_tests/io/23X_abstract_writer_field_conflicting_assignment/main.rg:46:17: error: field '.writer' already stores '$&FirstWriter' for abstract type '$&Writer', so it cannot also store '$&SecondWriter'
         \\      p&.writer = writer
         \\                  ^
@@ -1889,8 +1860,7 @@ test "feature_tests/control_flow/18_continue" {
 }
 
 test "feature_tests/control_flow/19X_continue_outside_loop" {
-    try buildExpectFailExact(
-        "tests/feature_tests/control_flow/19X_continue_outside_loop",
+    try buildExpectFailExact("tests/feature_tests/control_flow/19X_continue_outside_loop",
         \\tests/feature_tests/control_flow/19X_continue_outside_loop/main.rg:2:5: error: continue used outside of a loop
         \\      continue
         \\      ^
@@ -2061,8 +2031,7 @@ test "feature_tests/system/14_file_system_capability" {
 }
 
 test "feature_tests/ownership/18X_system_noncopyable_assignment" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/18X_system_noncopyable_assignment",
+    try buildExpectFailExact("tests/feature_tests/ownership/18X_system_noncopyable_assignment",
         \\tests/feature_tests/ownership/18X_system_noncopyable_assignment/main.rg:2:15: error: type 'System' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
         \\      copied := system
         \\                ^
@@ -2071,8 +2040,7 @@ test "feature_tests/ownership/18X_system_noncopyable_assignment" {
 }
 
 test "feature_tests/ownership/19X_system_noncopyable_argument" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/19X_system_noncopyable_argument",
+    try buildExpectFailExact("tests/feature_tests/ownership/19X_system_noncopyable_argument",
         \\tests/feature_tests/ownership/19X_system_noncopyable_argument/main.rg:6:37: error: type 'System' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
         \\      status_code = consume(.system = system)
         \\                                      ^
@@ -2081,8 +2049,7 @@ test "feature_tests/ownership/19X_system_noncopyable_argument" {
 }
 
 test "feature_tests/ownership/35X_system_move_by_value" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/35X_system_move_by_value",
+    try buildExpectFailExact("tests/feature_tests/ownership/35X_system_move_by_value",
         \\tests/feature_tests/ownership/35X_system_move_by_value/main.rg:6:37: error: System cannot be moved by value; pass it by '&' or '$&' instead
         \\      status_code = consume(.system = ~system)
         \\                                      ^
@@ -2091,8 +2058,7 @@ test "feature_tests/ownership/35X_system_move_by_value" {
 }
 
 test "feature_tests/ownership/36X_double_move" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/36X_double_move",
+    try buildExpectFailExact("tests/feature_tests/ownership/36X_double_move",
         \\tests/feature_tests/ownership/36X_double_move/main.rg:14:35: error: binding 'handle' was moved and cannot be used again (moved at tests/feature_tests/ownership/36X_double_move/main.rg:13:34)
         \\      status_code = consume(.res = ~handle)
         \\                                    ^
@@ -2107,8 +2073,7 @@ test "feature_tests/system/15_once_single_use" {
 }
 
 test "feature_tests/system/16X_once_duplicate_direct" {
-    try buildExpectFailExact(
-        "tests/feature_tests/system/16X_once_duplicate_direct",
+    try buildExpectFailExact("tests/feature_tests/system/16X_once_duplicate_direct",
         \\tests/feature_tests/system/16X_once_duplicate_direct/main.rg:6:5: error: once function 'setup' is consumed more than once from the reachable entrypoint graph (first use at tests/feature_tests/system/16X_once_duplicate_direct/main.rg:5:5 via 'main')
         \\      setup()
         \\      ^
@@ -2123,8 +2088,7 @@ test "feature_tests/system/17_once_unreached_duplicate_allowed" {
 }
 
 test "feature_tests/system/18X_once_duplicate_indirect" {
-    try buildExpectFailExact(
-        "tests/feature_tests/system/18X_once_duplicate_indirect",
+    try buildExpectFailExact("tests/feature_tests/system/18X_once_duplicate_indirect",
         \\tests/feature_tests/system/18X_once_duplicate_indirect/main.rg:9:5: error: once function 'setup' is consumed more than once from the reachable entrypoint graph (first use at tests/feature_tests/system/18X_once_duplicate_indirect/main.rg:5:5 via 'path_a')
         \\      setup()
         \\      ^
@@ -2140,8 +2104,7 @@ test "feature_tests/system/19X_once_duplicate_branches" {
 }
 
 test "feature_tests/system/20X_once_duplicate_init" {
-    try buildExpectFailExact(
-        "tests/feature_tests/system/20X_once_duplicate_init",
+    try buildExpectFailExact("tests/feature_tests/system/20X_once_duplicate_init",
         \\tests/feature_tests/system/20X_once_duplicate_init/main.rg:8:15: error: once function 'init' is consumed more than once from the reachable entrypoint graph (first use at tests/feature_tests/system/20X_once_duplicate_init/main.rg:7:14 via 'main')
         \\      second := Token()
         \\                ^
@@ -2150,8 +2113,7 @@ test "feature_tests/system/20X_once_duplicate_init" {
 }
 
 test "feature_tests/system/21X_system_duplicate_init" {
-    try buildExpectFailExact(
-        "tests/feature_tests/system/21X_system_duplicate_init",
+    try buildExpectFailExact("tests/feature_tests/system/21X_system_duplicate_init",
         \\tests/feature_tests/system/21X_system_duplicate_init/main.rg:2:15: error: once function 'init' is consumed more than once from the reachable entrypoint graph (first use at tests/feature_tests/system/21X_system_duplicate_init/main.rg:1:24 via 'main')
         \\      second := System()
         \\                ^
@@ -2238,9 +2200,7 @@ test "feature_tests/polymorphism/20_generic_abstract_bound_syntax" {
 }
 
 test "feature_tests/polymorphism/21X_generic_bound_requires_type_keyword" {
-    try buildExpectFailExact(
-        "tests/feature_tests/polymorphism/21X_generic_bound_requires_type_keyword",
-        \\Parse error: ExpectedStructField
+    try buildExpectFailExact("tests/feature_tests/polymorphism/21X_generic_bound_requires_type_keyword",
         \\tests/feature_tests/polymorphism/21X_generic_bound_requires_type_keyword/main.rg:3:15: error: generic parameter bounds use '.t: Type: Constraint'
         \\  foo#(.t: Int32: ExampleAbstract)(.value: Int32) -> (.result: Int32) := {
         \\                ^
@@ -2279,8 +2239,7 @@ test "feature_tests/ownership/23_named_struct_auto_deinit" {
 }
 
 test "feature_tests/ownership/24X_mutable_and_read_field_alias_same_call" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/24X_mutable_and_read_field_alias_same_call",
+    try buildExpectFailExact("tests/feature_tests/ownership/24X_mutable_and_read_field_alias_same_call",
         \\tests/feature_tests/ownership/24X_mutable_and_read_field_alias_same_call/main.rg:13:8: error: binding 'pair' cannot be passed as '$&' and '&' in the same call to 'mix'
         \\      mix(.target = $&pair.left, .reader = &pair.left)
         \\         ^
@@ -2289,8 +2248,7 @@ test "feature_tests/ownership/24X_mutable_and_read_field_alias_same_call" {
 }
 
 test "feature_tests/ownership/25X_mutable_and_value_field_alias_same_call" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/25X_mutable_and_value_field_alias_same_call",
+    try buildExpectFailExact("tests/feature_tests/ownership/25X_mutable_and_value_field_alias_same_call",
         \\tests/feature_tests/ownership/25X_mutable_and_value_field_alias_same_call/main.rg:13:8: error: binding 'pair' cannot be passed as '$&' and 'value' in the same call to 'mix'
         \\      mix(.target = $&pair.left, .snapshot = pair.left)
         \\         ^
@@ -2305,8 +2263,7 @@ test "feature_tests/ownership/26_distinct_fields_do_not_alias_same_call" {
 }
 
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
+    try buildExpectFailExact("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
         \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
         \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
         \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
@@ -2317,8 +2274,7 @@ test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
 }
 
 test "feature_tests/ownership/28X_ambiguous_copy_assignment" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/28X_ambiguous_copy_assignment",
+    try buildExpectFailExact("tests/feature_tests/ownership/28X_ambiguous_copy_assignment",
         \\tests/feature_tests/ownership/28X_ambiguous_copy_assignment/main.rg:17:15: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
         \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
         \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
@@ -2331,8 +2287,7 @@ test "feature_tests/ownership/28X_ambiguous_copy_assignment" {
 }
 
 test "feature_tests/ownership/37X_ambiguous_copy_return" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/37X_ambiguous_copy_return",
+    try buildExpectFailExact("tests/feature_tests/ownership/37X_ambiguous_copy_return",
         \\tests/feature_tests/ownership/37X_ambiguous_copy_return/main.rg:16:12: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
         \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
         \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
@@ -2345,8 +2300,7 @@ test "feature_tests/ownership/37X_ambiguous_copy_return" {
 }
 
 test "feature_tests/ownership/38X_ambiguous_copy_struct_field" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/38X_ambiguous_copy_struct_field",
+    try buildExpectFailExact("tests/feature_tests/ownership/38X_ambiguous_copy_struct_field",
         \\tests/feature_tests/ownership/38X_ambiguous_copy_struct_field/main.rg:21:33: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
         \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
         \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
@@ -2377,8 +2331,7 @@ test "feature_tests/ownership/31_array_of_pointers_is_copyable" {
 }
 
 test "feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable" {
-    try buildExpectFailExact(
-        "tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable",
+    try buildExpectFailExact("tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable",
         \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:9:15: error: type '[2]Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
         \\      copied := resources
         \\                ^
@@ -2411,8 +2364,7 @@ test "feature_tests/polymorphism/24_abstract_dispatch_beats_regular_generic_with
 }
 
 test "feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous" {
-    try buildExpectFailExact(
-        "tests/feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous",
+    try buildExpectFailExact("tests/feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous",
         \\tests/feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous/main.rg:14:19: error: ambiguous call to 'pick' for arguments (.value: Int32). Possible overloads:
         \\  - pick (.value: A, .left: Int32) -> (.status_code: Int32)
         \\  - pick (.value: A, .right: Int32) -> (.status_code: Int32)
@@ -2608,10 +2560,8 @@ test "feature_tests/modules/26_inferred_shorthand_omitted_reasons_transitive" {
     try runExpect(test_path, 46);
 }
 
-
 test "feature_tests/modules/03X_import_missing_module" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/03X_import_missing_module",
+    try buildExpectFailExact("tests/feature_tests/modules/03X_import_missing_module",
         \\cannot resolve import './missing_dep' from 'tests/feature_tests/modules/03X_import_missing_module/main.rg'
         \\Build error: FileNotFound
         \\
@@ -2619,8 +2569,7 @@ test "feature_tests/modules/03X_import_missing_module" {
 }
 
 test "feature_tests/modules/04X_import_missing_value" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/04X_import_missing_value",
+    try buildExpectFailExact("tests/feature_tests/modules/04X_import_missing_value",
         \\tests/feature_tests/modules/04X_import_missing_value/main.rg:3:19: error: module 'dep' has no value '.missing_value'
         \\      status_code = dep.missing_value
         \\                    ^
@@ -2629,8 +2578,7 @@ test "feature_tests/modules/04X_import_missing_value" {
 }
 
 test "feature_tests/modules/05X_import_missing_overload" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/05X_import_missing_overload",
+    try buildExpectFailExact("tests/feature_tests/modules/05X_import_missing_overload",
         \\tests/feature_tests/modules/05X_import_missing_overload/main.rg:3:35: error: module 'dep' has no function named 'missing_func'
         \\      status_code = dep.missing_func()
         \\                                    ^
@@ -2639,8 +2587,7 @@ test "feature_tests/modules/05X_import_missing_overload" {
 }
 
 test "feature_tests/modules/06X_private_module_value" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/06X_private_module_value",
+    try buildExpectFailExact("tests/feature_tests/modules/06X_private_module_value",
         \\tests/feature_tests/modules/06X_private_module_value/main.rg:3:19: error: value '_hidden_value' is private to its module
         \\      status_code = dep._hidden_value
         \\                    ^
@@ -2649,8 +2596,7 @@ test "feature_tests/modules/06X_private_module_value" {
 }
 
 test "feature_tests/modules/07X_private_module_type" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/07X_private_module_type",
+    try buildExpectFailExact("tests/feature_tests/modules/07X_private_module_type",
         \\tests/feature_tests/modules/07X_private_module_type/main.rg:3:14: error: type '_HiddenStatus' is private to its module
         \\      hidden : dep._HiddenStatus = (.code = 0)
         \\               ^
@@ -2659,8 +2605,7 @@ test "feature_tests/modules/07X_private_module_type" {
 }
 
 test "feature_tests/modules/08X_private_module_function" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/08X_private_module_function",
+    try buildExpectFailExact("tests/feature_tests/modules/08X_private_module_function",
         \\tests/feature_tests/modules/08X_private_module_function/main.rg:3:37: error: function '_hidden_status' is private to its module
         \\      status_code = dep._hidden_status()
         \\                                      ^
@@ -2687,8 +2632,7 @@ test "feature_tests/control_flow/02_loops" {
 }
 
 test "feature_tests/modules/11X_import_cycle" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/11X_import_cycle",
+    try buildExpectFailExact("tests/feature_tests/modules/11X_import_cycle",
         \\import cycle detected: tests/feature_tests/modules/11X_import_cycle/dep_a -> tests/feature_tests/modules/11X_import_cycle/dep_b -> tests/feature_tests/modules/11X_import_cycle/dep_a
         \\Build error: ImportCycle
         \\
@@ -2696,9 +2640,7 @@ test "feature_tests/modules/11X_import_cycle" {
 }
 
 test "feature_tests/modules/12X_import_requires_binding" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/12X_import_requires_binding",
-        \\Parse error: ExpectedDeclarationOrAssignment
+    try buildExpectFailExact("tests/feature_tests/modules/12X_import_requires_binding",
         \\tests/feature_tests/modules/12X_import_requires_binding/main.rg:1:1: error: #import must be assigned to a name
         \\  #import("./dep")
         \\  ^
@@ -2707,9 +2649,7 @@ test "feature_tests/modules/12X_import_requires_binding" {
 }
 
 test "feature_tests/modules/13X_import_requires_binding_nested" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/13X_import_requires_binding_nested",
-        \\Parse error: ExpectedDeclarationOrAssignment
+    try buildExpectFailExact("tests/feature_tests/modules/13X_import_requires_binding_nested",
         \\tests/feature_tests/modules/13X_import_requires_binding_nested/main.rg:3:9: error: #import must be assigned to a name
         \\          #import("./dep")
         \\          ^
@@ -2718,8 +2658,7 @@ test "feature_tests/modules/13X_import_requires_binding_nested" {
 }
 
 test "feature_tests/modules/14X_missing_function_name" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/14X_missing_function_name",
+    try buildExpectFailExact("tests/feature_tests/modules/14X_missing_function_name",
         \\tests/feature_tests/modules/14X_missing_function_name/main.rg:2:31: error: no function named 'missing_func' exists
         \\      status_code = missing_func()
         \\                                ^
@@ -2734,8 +2673,7 @@ test "feature_tests/modules/15_import_root_relative" {
 }
 
 test "feature_tests/modules/16X_root_relative_missing_import" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/16X_root_relative_missing_import/project/app",
+    try buildExpectFailExact("tests/feature_tests/modules/16X_root_relative_missing_import/project/app",
         \\cannot resolve import '.../missing_shared' from 'tests/feature_tests/modules/16X_root_relative_missing_import/project/app/main.rg'
         \\Build error: FileNotFound
         \\
@@ -2761,8 +2699,7 @@ test "feature_tests/modules/18_private_struct_field_same_module" {
 }
 
 test "feature_tests/modules/19X_private_struct_field_imported" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/19X_private_struct_field_imported",
+    try buildExpectFailExact("tests/feature_tests/modules/19X_private_struct_field_imported",
         \\tests/feature_tests/modules/19X_private_struct_field_imported/main.rg:4:32: error: field '_hidden' is private to its module
         \\      status_code = point._hidden
         \\                                 ^
@@ -2789,8 +2726,7 @@ test "feature_tests/modules/24_imported_generic_abstract_dispatch_prefers_concre
 }
 
 test "feature_tests/modules/25X_private_choice_option_imported" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/25X_private_choice_option_imported",
+    try buildExpectFailExact("tests/feature_tests/modules/25X_private_choice_option_imported",
         \\tests/feature_tests/modules/25X_private_choice_option_imported/main.rg:4:10: error: choice option '_hidden_reason' is private to its module
         \\      dep.._hidden_reason
         \\           ^
@@ -2799,8 +2735,7 @@ test "feature_tests/modules/25X_private_choice_option_imported" {
 }
 
 test "feature_tests/modules/26X_module_qualified_ambiguous_overload" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/26X_module_qualified_ambiguous_overload",
+    try buildExpectFailExact("tests/feature_tests/modules/26X_module_qualified_ambiguous_overload",
         \\tests/feature_tests/modules/26X_module_qualified_ambiguous_overload/main.rg:4:19: error: module-qualified call 'dep.pick' is ambiguous for arguments (.value: Int32). Possible overloads:
         \\  - pick (.value: Int32, .left: Int32) -> (.result: Int32)
         \\  - pick (.value: Int32, .right: Int32) -> (.result: Int32)
@@ -2818,8 +2753,7 @@ test "feature_tests/modules/28X_imported_abstract_input_requires_implementation"
 }
 
 test "feature_tests/modules/29X_imported_abstract_ambiguous_overload" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/29X_imported_abstract_ambiguous_overload",
+    try buildExpectFailExact("tests/feature_tests/modules/29X_imported_abstract_ambiguous_overload",
         \\tests/feature_tests/modules/29X_imported_abstract_ambiguous_overload/main.rg:4:19: error: module-qualified call 'dep.pick' is ambiguous for arguments (.value: Int32). Possible overloads:
         \\  - pick (.value: A, .left: Int32) -> (.result: Int32)
         \\  - pick (.value: A, .right: Int32) -> (.result: Int32)
@@ -2830,8 +2764,7 @@ test "feature_tests/modules/29X_imported_abstract_ambiguous_overload" {
 }
 
 test "feature_tests/modules/30X_nonconstant_module_binding_initialization" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/30X_nonconstant_module_binding_initialization",
+    try buildExpectFailExact("tests/feature_tests/modules/30X_nonconstant_module_binding_initialization",
         \\tests/feature_tests/modules/30X_nonconstant_module_binding_initialization/main.rg:5:1: error: module-level binding 'computed' must use a constant initializer for now
         \\  computed : Int32 = make_value().value
         \\  ^
@@ -2840,8 +2773,7 @@ test "feature_tests/modules/30X_nonconstant_module_binding_initialization" {
 }
 
 test "feature_tests/modules/31X_cyclic_module_binding_initialization" {
-    try buildExpectFailExact(
-        "tests/feature_tests/modules/31X_cyclic_module_binding_initialization",
+    try buildExpectFailExact("tests/feature_tests/modules/31X_cyclic_module_binding_initialization",
         \\tests/feature_tests/modules/31X_cyclic_module_binding_initialization/a_first.rg:1:1: error: module-level binding 'first' participates in a cyclic initializer dependency
         \\  first : Int32 = second + 1
         \\  ^

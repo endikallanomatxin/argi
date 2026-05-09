@@ -2,30 +2,7 @@
 
 ## Bloqueantes para `0.1`
 
-
-### 2. Quitar ruido de debug en diagnósticos del parser
-
-El parser, al fallar, añade diagnóstico pero también imprime directamente algo como:
-
-```txt
-Parse error: Expected...
-```
-
-Problemas:
-
-* Esa salida se ha convertido accidentalmente en salida pública.
-* Puede aparecer mezclada con snapshots de tests.
-* El usuario debería ver solo diagnósticos formateados.
-
-Acciones:
-
-* Quitar ese `print`.
-* O moverlo detrás de una flag debug.
-* Mantener la salida pública basada en diagnósticos con fichero, línea, columna y mensaje.
-
----
-
-### 3. Mejorar build/linking
+### Mejorar build/linking
 
 El linking funciona, pero todavía es demasiado dependiente del entorno local.
 
@@ -49,7 +26,7 @@ Acciones mínimas:
 
 ---
 
-### 4. Revisar ownership y liberar `CodeGenerator`
+### Revisar ownership y liberar `CodeGenerator`
 
 En `compileTarget`, se crea `CodeGenerator`, pero hay que asegurar que se llama a `deinit()`.
 
@@ -70,7 +47,7 @@ No tiene por qué bloquear por sí solo, pero conviene arreglarlo antes de relea
 
 ---
 
-### 5. Prueba de instalación limpia
+### Prueba de instalación limpia
 
 Antes de taggear, hacer una prueba desde cero fuera del repo.
 
@@ -109,7 +86,7 @@ Objetivo:
 
 ## No bloqueante, pero recomendable antes de seguir creciendo
 
-### 6. Documentar invariantes del `Semantizer`
+### Documentar invariantes del `Semantizer`
 
 La arquitectura del semantizer parece razonable: fases staged, predeclaración top-level, estabilización de declaraciones, interfaces de funciones antes de cuerpos, verificación de abstracts, retries, verificación de `once`, inferencia de error reasons, etc.
 
@@ -130,7 +107,7 @@ No bloquea `0.1` si funciona, pero hay que tenerlo vigilado.
 
 ---
 
-### 7. Documentar responsabilidades de `Scope`
+### Documentar responsabilidades de `Scope`
 
 `Scope` acumula muchas responsabilidades:
 
@@ -170,7 +147,7 @@ Solución:
 
 ---
 
-### 8. Documentar las distintas igualdades de tipos
+### Documentar las distintas igualdades de tipos
 
 Hay varias funciones relacionadas con igualdad/compatibilidad de tipos:
 
@@ -197,7 +174,7 @@ Esto probablemente va mejor en documentación interna del compilador.
 
 ---
 
-### 9. Revisar `argi test`
+### Revisar `argi test`
 
 El test runner nativo descubre tests parseando el módulo y compila un binario por test.
 
@@ -211,7 +188,7 @@ No hace falta optimizarlo todavía.
 
 ---
 
-### 10. Acotar expectativas del LSP
+### Acotar expectativas del LSP
 
 El LSP ya cubre bastante para un MVP:
 
@@ -236,7 +213,7 @@ Acciones:
 
 ## Documentación de release
 
-### 11. Añadir resumen de release en `plan/0.1.md`
+### Añadir resumen de release en `plan/0.1.md`
 
 Añadir un breve resumen final de qué representa `0.1`.
 
@@ -252,7 +229,7 @@ Debe incluir:
 
 ---
 
-### 12. Añadir sección de versiones en `README.md`
+### Añadir sección de versiones en `README.md`
 
 Añadir una sección tipo:
 
@@ -286,7 +263,7 @@ También dejar claro:
 
 ---
 
-### 13. Crear `CHANGELOG.md`
+### Crear `CHANGELOG.md`
 
 Añadir entrada inicial para `0.1.0`.
 
@@ -332,7 +309,7 @@ Argi `0.1.0` is experimental. Breaking changes are expected.
 
 ---
 
-### 14. Actualizar `build.zig.zon`
+### Actualizar `build.zig.zon`
 
 Revisar `.paths`.
 
@@ -349,7 +326,7 @@ No incluir `more` todavía para `0.1`.
 
 ---
 
-### 15. Aclarar que `more/` no entra en `0.1`
+### Aclarar que `more/` no entra en `0.1`
 
 En README o release notes, dejar explícito:
 
@@ -360,7 +337,7 @@ En README o release notes, dejar explícito:
 
 ---
 
-### 16. Recopilar TODOs internos del repo
+### Recopilar TODOs internos del repo
 
 Buscar TODOs en:
 
@@ -397,7 +374,7 @@ Criterio:
 
 ## Runtime / 0.2
 
-### 17. Documentar `Runtime`
+### Documentar `Runtime`
 
 Dejar documentado qué se entiende por `Runtime` en Argi.
 
@@ -419,7 +396,7 @@ Marcarlo explícitamente como objetivo de `0.2`.
 
 ---
 
-### 18. Diseñar threading antes de desarrollar el Runtime
+### Diseñar threading antes de desarrollar el Runtime
 
 Antes de implementar o cerrar el diseño del `Runtime`, conviene pensar primero el modelo de threading/concurrencia.
 
@@ -454,7 +431,7 @@ Antes de desarrollar seriamente el runtime, tiene sentido diseñar primero threa
 
 ## Preparar release final
 
-### 19. Commit final de release
+### Commit final de release
 
 Cuando todo lo anterior esté cerrado:
 
@@ -469,7 +446,7 @@ Cuando todo lo anterior esté cerrado:
 
 ---
 
-### 20. Taggear `v0.1.0`
+### Taggear `v0.1.0`
 
 Cuando la release esté lista:
 
