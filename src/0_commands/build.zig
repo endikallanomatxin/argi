@@ -291,6 +291,7 @@ pub fn compileTarget(target_path: []const u8, flags: BuildFlags, options: Compil
         std.debug.print("failed to initialize codegen: {s}\n", .{@errorName(err)});
         return err;
     };
+    defer gen.deinit();
     const module = gen.generate() catch {
         timings.codegen_ns = elapsedSince(codegen_start);
         if (flags.show_token_list) printTokenList(pipeline.tokens.items);

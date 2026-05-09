@@ -156,6 +156,9 @@ pub const CodeGenerator = struct {
 
     pub fn deinit(self: *CodeGenerator) void {
         if (self.builder) |b| c.LLVMDisposeBuilder(b);
+        // CodeGenerator owns the LLVM module. It is borrowed by generate()
+        // and remains valid until this deinit runs.
+        if (self.module) |m| c.LLVMDisposeModule(m);
 
         self.loop_stack.deinit();
         self.binding_storage.deinit();
@@ -185,6 +188,7 @@ pub const CodeGenerator = struct {
     }
 
     // ── top-level drive ───────────────────────
+    /// Returns the owned LLVM module as a borrowed handle valid until deinit().
     pub fn generate(self: *CodeGenerator) !llvm.c.LLVMModuleRef {
         try self.predeclareGlobalBindings();
 
