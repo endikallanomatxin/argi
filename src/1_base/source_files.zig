@@ -784,6 +784,7 @@ pub fn collectWithEntrySourceWithOptions(
     // ─── carpeta del entrypoint del usuario y imports explícitos ─────────
     const user_dir = std.fs.path.dirname(user_path) orelse ".";
     const root_module_dir = try alloc.dupe(u8, user_dir);
+    defer alloc.free(root_module_dir);
     try validateModuleGraphAcyclic(
         alloc,
         root_module_dir,
