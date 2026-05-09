@@ -70,7 +70,7 @@ pub fn main() !void {
     if (std.mem.eql(u8, command, "build")) {
         if (args.len < 3) {
             std.debug.print("Error: module directory required\n", .{});
-            return;
+            std.process.exit(1);
         }
         const build_args = args[2..];
         build_cmd.compile(build_args) catch |err| {
@@ -79,7 +79,7 @@ pub fn main() !void {
     } else if (std.mem.eql(u8, command, "init")) {
         if (args.len < 4) {
             std.debug.print("Error: init requires <project|module> and <directory>\n", .{});
-            return;
+            std.process.exit(1);
         }
         init_cmd.run(args[2..4]) catch |err| {
             exitCommandError("Init error", err);
@@ -91,7 +91,7 @@ pub fn main() !void {
     } else if (std.mem.eql(u8, command, "run")) {
         if (args.len < 3) {
             std.debug.print("Error: module directory required\n", .{});
-            return;
+            std.process.exit(1);
         }
         const exit_code = run_cmd.run(args[2..]) catch |err| {
             exitCommandError("Run error", err);
@@ -100,7 +100,7 @@ pub fn main() !void {
     } else if (std.mem.eql(u8, command, "test")) {
         if (args.len < 3) {
             std.debug.print("Error: module directory required\n", .{});
-            return;
+            std.process.exit(1);
         }
         const exit_code = test_cmd.run(args[2..]) catch |err| {
             exitCommandError("Test error", err);

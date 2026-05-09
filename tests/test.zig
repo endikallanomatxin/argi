@@ -2971,6 +2971,42 @@ test "argi unknown command exits with help" {
     try expect(std.mem.indexOf(u8, result.stderr, "Usage: argi <command> [arguments] [options]\n") != null);
 }
 
+test "argi build without target exits with error" {
+    const result = try runArgiCommand(&.{"build"});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqualStrings("Error: module directory required\n", result.stderr);
+}
+
+test "argi run without target exits with error" {
+    const result = try runArgiCommand(&.{"run"});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqualStrings("Error: module directory required\n", result.stderr);
+}
+
+test "argi test without target exits with error" {
+    const result = try runArgiCommand(&.{"test"});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqualStrings("Error: module directory required\n", result.stderr);
+}
+
+test "argi init without full arguments exits with error" {
+    const result = try runArgiCommand(&.{"init"});
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .Exited = 1 }, result.term);
+    try expectEqualStrings("Error: init requires <project|module> and <directory>\n", result.stderr);
+}
+
 test "argi test rejects missing filter value" {
     const result = try runArgiCommand(&.{ "test", "tests/feature_tests/testing/01_simple_pass", "--filter" });
     defer std.testing.allocator.free(result.stdout);
