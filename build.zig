@@ -7,8 +7,9 @@ pub fn build(b: *std.Build) void {
     const llvm_include_path, const llvm_lib_path, const llvm_libs_raw = prepareLlvm(b) catch |err| {
         if (err != error.LlvmNotFound) {
             std.debug.print("Error preparing LLVM paths: {s}\n", .{@errorName(err)});
+            @panic("failed to prepare LLVM paths");
         }
-        return;
+        @panic("LLVM development files were not found");
     };
 
     //
