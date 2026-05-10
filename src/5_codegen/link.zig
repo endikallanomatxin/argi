@@ -11,7 +11,7 @@ const LinkError = error{
 
 fn createTargetMachine(
     module: llvm.c.LLVMModuleRef,
-    triple: []const u8,
+    triple: [:0]const u8,
 ) !llvm.c.LLVMTargetMachineRef {
     if (c.LLVMInitializeNativeTarget() != 0 or c.LLVMInitializeNativeAsmPrinter() != 0)
         return error.LLVMTargetInitFailed;
@@ -19,7 +19,7 @@ fn createTargetMachine(
     var err_ptr: [*c]u8 = null;
     var target_ref: llvm.c.LLVMTargetRef = null;
 
-    if (c.LLVMGetTargetFromTriple(triple.ptr, &target_ref, &err_ptr) != 0) {
+    if (c.LLVMGetTargetFromTriple(triple, &target_ref, &err_ptr) != 0) {
         std.debug.print("LLVMGetTargetFromTriple failed: {s}\n", .{err_ptr});
         c.LLVMDisposeMessage(err_ptr);
         return LinkError.TargetLookupFailed;
@@ -29,7 +29,7 @@ fn createTargetMachine(
 
     const tm = c.LLVMCreateTargetMachine(
         target_ref,
-        triple.ptr,
+        triple,
         "", // CPU
         "", // features
         c.LLVMCodeGenLevelDefault,
@@ -37,13 +37,13 @@ fn createTargetMachine(
         c.LLVMCodeModelDefault,
     ) orelse return error.TargetMachineFailed;
 
-    c.LLVMSetTarget(module, triple.ptr);
+    c.LLVMSetTarget(module, triple);
     return tm;
 }
 
 pub fn emitObjectFile(
     module: llvm.c.LLVMModuleRef,
-    triple: []const u8,
+    triple: [:0]const u8,
     obj_output_path: []const u8,
 ) !void {
     const tm = try createTargetMachine(module, triple);
@@ -55,7 +55,7 @@ pub fn emitObjectFile(
     if (c.LLVMTargetMachineEmitToFile(
         tm,
         module,
-        @ptrCast(obj_path_z.ptr),
+        obj_path_z,
         c.LLVMObjectFile,
         &err_ptr,
     ) != 0) {
@@ -132,7 +132,7 @@ fn printLinkerFailure(
 /// y lo enlaza con la libc del sistema produciendo `output_path`.
 pub fn linkWithLibc(
     module: llvm.c.LLVMModuleRef,
-    triple: []const u8,
+    triple: [:0]const u8,
     output_path: []const u8,
     allocator: *const std.mem.Allocator,
     io: std.Io,

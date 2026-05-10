@@ -364,9 +364,9 @@ pub fn compileTarget(
     }
 
     // 9. Emitir objeto y, si hace falta, enlazar con libc ─────────────────
-    const triple_cstr = c.LLVMGetDefaultTargetTriple();
-    defer c.LLVMDisposeMessage(triple_cstr);
-    const triple = std.mem.span(triple_cstr);
+    const triple_message = c.LLVMGetDefaultTargetTriple();
+    defer c.LLVMDisposeMessage(triple_message);
+    const triple = std.mem.span(triple_message);
 
     const link_start = nowNs(io);
     if (emit_object_only)
