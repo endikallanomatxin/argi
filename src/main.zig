@@ -32,10 +32,11 @@ fn exitRunError(err: anyerror) noreturn {
 fn printHelp() void {
     std.debug.print("Usage: argi <command> [arguments] [options]\n", .{});
     std.debug.print("\nCommands:\n", .{});
-    std.debug.print("  build [directory] [flags]              Compile a folder module to a binary\n", .{});
-    std.debug.print("  run [directory] [build flags]          Build a folder module and run it\n", .{});
+    std.debug.print("  build [path] [flags]                   Build the current package, package path, or module path\n", .{});
+    std.debug.print("  run [executable] [build flags]         Build and run the default or selected executable\n", .{});
     std.debug.print("  test <directory> [flags]               Build and run native Argi tests\n", .{});
-    std.debug.print("  init <project|module> <directory>      Create a starter scaffold\n", .{});
+    std.debug.print("  init <name>                            Create an executable package\n", .{});
+    std.debug.print("  init --lib <name>                      Create a library package\n", .{});
     std.debug.print("  lsp                                    Start the language server\n", .{});
     std.debug.print("  version                                Show the Argi version\n", .{});
     std.debug.print("  help                                   Show this help\n", .{});
@@ -45,7 +46,7 @@ fn printHelp() void {
     std.debug.print("  --emit-obj <path>                      Write the object file there as an extra output\n", .{});
     std.debug.print("  --just-emit-obj <path>                 Emit an object file there and skip final linking\n", .{});
     std.debug.print("  --sysroot <path>                       Use an Argi installation prefix for core\n", .{});
-    std.debug.print("  --entry <name>                         Build a named entrypoint from argi.toml\n", .{});
+    std.debug.print("  --entry <name>                         Build a named executable from argi.toml\n", .{});
     std.debug.print("  --time-phases                          Print compilation timings by phase\n", .{});
     std.debug.print("\nTest flags:\n", .{});
     std.debug.print("  --filter <name>                        Run only tests whose name contains this text\n", .{});
@@ -90,11 +91,11 @@ pub fn main(init: std.process.Init) !void {
             exitCommandError("Build error", err);
         };
     } else if (std.mem.eql(u8, command, "init")) {
-        if (args.len < 4) {
-            std.debug.print("Error: init requires <project|module> and <directory>\n", .{});
+        if (args.len < 3) {
+            std.debug.print("Error: init requires <name> or --lib <name>\n", .{});
             std.process.exit(1);
         }
-        init_cmd.run(io, args[2..4]) catch |err| {
+        init_cmd.run(io, args[2..]) catch |err| {
             exitCommandError("Init error", err);
         };
     } else if (std.mem.eql(u8, command, "lsp")) {

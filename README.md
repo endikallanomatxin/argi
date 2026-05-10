@@ -58,27 +58,27 @@ Build a specific module directory:
 argi build <root_dir>
 ```
 
-If the directory contains `argi.toml`, the tool uses its build configuration.
-For application-style modules this typically means:
+If the directory contains `argi.toml`, the tool uses its package configuration.
+Executable packages declare build targets with `[executables.*]`:
 
 ```toml
-[build]
-default_entrypoint = "main"
+[executables.hello]
+path = "source/entrypoints/hello"
 
-[entrypoints.main]
-path = "source/entrypoints/main"
+[run]
+default = "hello"
 ```
 
-The default output for configured entrypoints is:
+The default output for package executables is:
 
 ```text
-build/debug/<entrypoint-name>
+build/debug/<executable-name>
 ```
 
-Use a named entrypoint explicitly with:
+Run the default executable with:
 
 ```bash
-argi build --entry main
+argi run
 ```
 
 ### LSP
@@ -91,19 +91,19 @@ argi lsp
 
 ### Scaffolding
 
-Create a manifest and basic ignore files for an importable module directory:
+Create an executable package:
 
 ```sh
-argi init module my_module
-```
-
-Create a manifest and a minimal application entrypoint:
-
-```sh
-argi init project my_project
-cd my_project
+argi init hello
+cd hello
 argi build
 argi run
+```
+
+Create a library/importable package with no executables:
+
+```sh
+argi init --lib math_utils
 ```
 
 
@@ -199,7 +199,7 @@ Use:
 ```
 
 Generated test binaries and other transient testing artifacts live under the
-project-local `.argi-cache/` directory. Configured entrypoint outputs live under
+project-local `.argi-cache/` directory. Package executable outputs live under
 `build/debug/`. Explicit module-directory builds keep their legacy default
 `build/output` path for now, or use the path given with `--output`.
 

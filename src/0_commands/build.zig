@@ -24,7 +24,7 @@ pub const BuildFlags = struct {
     object_path: ?[]const u8 = null,
     just_object_path: ?[]const u8 = null,
     sysroot_path: ?[]const u8 = null,
-    entry_name: ?[]const u8 = null,
+    executable_name: ?[]const u8 = null,
 };
 
 const ParsedBuildArgs = struct {
@@ -36,24 +36,23 @@ pub const BuildPlan = struct {
     target_path: []const u8,
     module_dir: []const u8,
     output_path: []const u8,
-    entrypoint_name: ?[]const u8 = null,
+    executable_name: ?[]const u8 = null,
     module_root: ?[]const u8 = null,
 };
 
-const ManifestEntrypoint = struct {
+const ManifestExecutable = struct {
     name: []const u8,
     path: ?[]const u8 = null,
-    output_name: ?[]const u8 = null,
 };
 
 const ModuleManifest = struct {
     name: ?[]const u8 = null,
-    default_entrypoint: ?[]const u8 = null,
-    entrypoints: std.array_list.Managed(ManifestEntrypoint),
+    run_default: ?[]const u8 = null,
+    executables: std.array_list.Managed(ManifestExecutable),
 
     fn init(allocator: std.mem.Allocator) ModuleManifest {
         return .{
-            .entrypoints = std.array_list.Managed(ManifestEntrypoint).init(allocator),
+            .executables = std.array_list.Managed(ManifestExecutable).init(allocator),
         };
     }
 };
@@ -124,7 +123,7 @@ pub fn parseBuildArgs(args: []const []const u8) !ParsedBuildArgs {
         } else if (std.mem.eql(u8, a, "--entry")) {
             idx += 1;
             if (idx >= args.len) return error.MissingFlagValue;
-            parsed.flags.entry_name = args[idx];
+            parsed.flags.executable_name = args[idx];
         } else if (std.mem.startsWith(u8, a, "--")) {
             return error.UnknownFlag;
         } else {
@@ -235,16 +234,15 @@ pub fn defaultOutputPathForModuleDir(allocator: std.mem.Allocator, module_dir: [
     );
 }
 
-fn defaultOutputPathForEntrypoint(
+fn defaultOutputPathForExecutable(
     allocator: std.mem.Allocator,
     module_root: []const u8,
-    entry_name: []const u8,
-    output_name: ?[]const u8,
+    executable_name: []const u8,
 ) ![]u8 {
     return std.fmt.allocPrint(
         allocator,
         "{s}/build/debug/{s}",
-        .{ module_root, output_name orelse entry_name },
+        .{ module_root, executable_name },
     );
 }
 
@@ -277,9 +275,9 @@ fn parseKey(line: []const u8) []const u8 {
     return std.mem.trim(u8, line[0..eq_idx], " \t\r\n");
 }
 
-fn findEntrypoint(manifest: *ModuleManifest, name: []const u8) ?*ManifestEntrypoint {
-    for (manifest.entrypoints.items) |*entry| {
-        if (std.mem.eql(u8, entry.name, name)) return entry;
+fn findExecutable(manifest: *ModuleManifest, name: []const u8) ?*ManifestExecutable {
+    for (manifest.executables.items) |*exe| {
+        if (std.mem.eql(u8, exe.name, name)) return exe;
     }
     return null;
 }
@@ -290,8 +288,8 @@ fn readManifest(allocator: std.mem.Allocator, io: std.Io, module_root: []const u
 
     const text = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1024 * 1024));
     var manifest = ModuleManifest.init(allocator);
-    var current_entry: ?*ManifestEntrypoint = null;
-    var in_build = false;
+    var current_executable: ?*ManifestExecutable = null;
+    var in_run = false;
 
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |raw_line| {
@@ -300,27 +298,25 @@ fn readManifest(allocator: std.mem.Allocator, io: std.Io, module_root: []const u
 
         if (line[0] == '[' and line[line.len - 1] == ']') {
             const section = line[1 .. line.len - 1];
-            in_build = std.mem.eql(u8, section, "build");
-            current_entry = null;
-            if (std.mem.startsWith(u8, section, "entrypoints.")) {
-                const name = section["entrypoints.".len..];
-                try manifest.entrypoints.append(.{ .name = try allocator.dupe(u8, name) });
-                current_entry = &manifest.entrypoints.items[manifest.entrypoints.items.len - 1];
+            in_run = std.mem.eql(u8, section, "run");
+            current_executable = null;
+            if (std.mem.startsWith(u8, section, "executables.")) {
+                const name = section["executables.".len..];
+                try manifest.executables.append(.{ .name = try allocator.dupe(u8, name) });
+                current_executable = &manifest.executables.items[manifest.executables.items.len - 1];
             }
             continue;
         }
 
         const key = parseKey(line);
         const value = parseQuotedValue(line) orelse continue;
-        if (current_entry) |entry| {
+        if (current_executable) |exe| {
             if (std.mem.eql(u8, key, "path")) {
-                entry.path = try allocator.dupe(u8, value);
-            } else if (std.mem.eql(u8, key, "output_name")) {
-                entry.output_name = try allocator.dupe(u8, value);
+                exe.path = try allocator.dupe(u8, value);
             }
-        } else if (in_build) {
-            if (std.mem.eql(u8, key, "default_entrypoint")) {
-                manifest.default_entrypoint = try allocator.dupe(u8, value);
+        } else if (in_run) {
+            if (std.mem.eql(u8, key, "default")) {
+                manifest.run_default = try allocator.dupe(u8, value);
             }
         } else {
             if (std.mem.eql(u8, key, "name")) {
@@ -332,64 +328,53 @@ fn readManifest(allocator: std.mem.Allocator, io: std.Io, module_root: []const u
     return manifest;
 }
 
-fn printAvailableEntrypoints(entries: []const ManifestEntrypoint) void {
-    std.debug.print("Available entrypoints:\n", .{});
-    for (entries) |entry| {
-        std.debug.print("  - {s}\n", .{entry.name});
+fn printAvailableExecutables(executables: []const ManifestExecutable) void {
+    std.debug.print("Available executables:\n", .{});
+    for (executables) |exe| {
+        std.debug.print("  - {s}\n", .{exe.name});
     }
 }
 
-fn printMultipleEntrypointsError(entries: []const ManifestEntrypoint) void {
-    std.debug.print("Error: module has multiple entrypoints and no default entrypoint.\n\n", .{});
-    printAvailableEntrypoints(entries);
-    std.debug.print("\nUse:\n  argi build --entry {s}\n\n", .{entries[0].name});
-    std.debug.print("Or set in argi.toml:\n  [build]\n  default_entrypoint = \"{s}\"\n", .{entries[0].name});
-}
-
-fn printNoEntrypointError() void {
+fn printNoExecutablesError() void {
     std.debug.print(
-        \\Error: module has no executable entrypoint.
+        \\Error: package has no executables to build.
         \\
         \\Add one to argi.toml:
         \\
-        \\  [build]
-        \\  default_entrypoint = "main"
+        \\  [executables.app]
+        \\  path = "source/entrypoints/app"
         \\
-        \\  [entrypoints.main]
-        \\  path = "source/entrypoints/main"
-        \\
-        \\Or build a module path explicitly:
-        \\  argi build path/to/module
+        \\Or create a library package with:
+        \\  argi init --lib <name>
         \\
     , .{});
 }
 
-fn printUnknownEntrypointError(name: []const u8, entries: []const ManifestEntrypoint) void {
-    std.debug.print("Error: unknown entrypoint '{s}'.\n\n", .{name});
-    if (entries.len > 0) printAvailableEntrypoints(entries);
+fn printUnknownExecutableError(name: []const u8, executables: []const ManifestExecutable) void {
+    std.debug.print("Error: unknown executable '{s}'.\n\n", .{name});
+    if (executables.len > 0) printAvailableExecutables(executables);
 }
 
-fn selectEntrypoint(manifest: *ModuleManifest, requested: ?[]const u8) !?*ManifestEntrypoint {
-    if (requested) |name| {
-        return findEntrypoint(manifest, name) orelse {
-            printUnknownEntrypointError(name, manifest.entrypoints.items);
-            return error.CompilationFailed;
-        };
-    }
+fn printAmbiguousRunDefaultError(executables: []const ManifestExecutable) void {
+    std.debug.print("Error: package has multiple executables and no default run target.\n\n", .{});
+    printAvailableExecutables(executables);
+    std.debug.print("\nUse:\n  argi run {s}\n\n", .{executables[0].name});
+    std.debug.print("Or set in argi.toml:\n  [run]\n  default = \"{s}\"\n", .{executables[0].name});
+}
 
-    if (manifest.default_entrypoint) |name| {
-        return findEntrypoint(manifest, name) orelse {
-            printUnknownEntrypointError(name, manifest.entrypoints.items);
-            return error.CompilationFailed;
-        };
-    }
-
-    if (manifest.entrypoints.items.len == 1) return &manifest.entrypoints.items[0];
-    if (manifest.entrypoints.items.len > 1) {
-        printMultipleEntrypointsError(manifest.entrypoints.items);
+fn selectExecutable(manifest: *ModuleManifest, requested: []const u8) !*ManifestExecutable {
+    return findExecutable(manifest, requested) orelse {
+        printUnknownExecutableError(requested, manifest.executables.items);
         return error.CompilationFailed;
-    }
-    return null;
+    };
+}
+
+fn selectRunExecutable(manifest: *ModuleManifest, requested: ?[]const u8) !*ManifestExecutable {
+    if (requested) |name| return try selectExecutable(manifest, name);
+    if (manifest.run_default) |name| return try selectExecutable(manifest, name);
+    if (manifest.executables.items.len == 1) return &manifest.executables.items[0];
+    printAmbiguousRunDefaultError(manifest.executables.items);
+    return error.CompilationFailed;
 }
 
 fn ensureDirExists(io: std.Io, path: []const u8) !void {
@@ -402,54 +387,107 @@ fn ensureDirExists(io: std.Io, path: []const u8) !void {
     dir.close(io);
 }
 
+fn appendExecutablePlan(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    plans: *std.array_list.Managed(BuildPlan),
+    target_path: []const u8,
+    module_root: []const u8,
+    executable: *const ManifestExecutable,
+) !void {
+    const rel_path = executable.path orelse executable.name;
+    const executable_path = try std.fs.path.resolve(allocator, &.{ module_root, rel_path });
+    ensureDirExists(io, executable_path) catch |err| switch (err) {
+        error.FileNotFound => {
+            std.debug.print("Error: executable '{s}' points to missing path:\n  {s}\n", .{ executable.name, rel_path });
+            return error.CompilationFailed;
+        },
+        else => return err,
+    };
+    try plans.append(.{
+        .target_path = target_path,
+        .module_root = module_root,
+        .module_dir = executable_path,
+        .executable_name = executable.name,
+        .output_path = try defaultOutputPathForExecutable(allocator, module_root, executable.name),
+    });
+}
+
+pub fn resolveBuildPlans(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    target_path: []const u8,
+    flags: BuildFlags,
+) !std.array_list.Managed(BuildPlan) {
+    var plans = std.array_list.Managed(BuildPlan).init(allocator);
+    errdefer plans.deinit();
+
+    const target_dir = try resolveBuildModuleDir(allocator, io, target_path);
+
+    if (try hasManifest(io, allocator, target_dir)) {
+        var manifest = try readManifest(allocator, io, target_dir);
+        if (manifest.executables.items.len == 0) {
+            printNoExecutablesError();
+            return error.CompilationFailed;
+        }
+        if (flags.executable_name) |name| {
+            const executable = try selectExecutable(&manifest, name);
+            try appendExecutablePlan(allocator, io, &plans, target_path, target_dir, executable);
+            return plans;
+        }
+        for (manifest.executables.items) |*executable| {
+            try appendExecutablePlan(allocator, io, &plans, target_path, target_dir, executable);
+        }
+        return plans;
+    }
+
+    if (flags.executable_name != null) {
+        std.debug.print("Error: --entry requires argi.toml in the selected package root.\n", .{});
+        return error.CompilationFailed;
+    }
+
+    try plans.append(.{
+        .target_path = target_path,
+        .module_dir = target_dir,
+        .output_path = try defaultOutputPathForModuleDir(allocator, target_dir),
+    });
+    return plans;
+}
+
 pub fn resolveBuildPlan(
     allocator: std.mem.Allocator,
     io: std.Io,
     target_path: []const u8,
     flags: BuildFlags,
 ) !BuildPlan {
-    const target_dir = try resolveBuildModuleDir(allocator, io, target_path);
+    const plans = try resolveBuildPlans(allocator, io, target_path, flags);
+    if (plans.items.len != 1) return error.AmbiguousBuildPlan;
+    return plans.items[0];
+}
 
-    if (try hasManifest(io, allocator, target_dir)) {
-        var manifest = try readManifest(allocator, io, target_dir);
-        const entry = try selectEntrypoint(&manifest, flags.entry_name);
-        if (entry) |selected| {
-            const entry_rel_path = selected.path orelse selected.name;
-            const entry_path = try std.fs.path.resolve(allocator, &.{ target_dir, entry_rel_path });
-            ensureDirExists(io, entry_path) catch |err| switch (err) {
-                error.FileNotFound => {
-                    std.debug.print("Error: entrypoint '{s}' points to missing path:\n  {s}\n", .{ selected.name, entry_rel_path });
-                    return error.CompilationFailed;
-                },
-                else => return err,
-            };
-            return .{
-                .target_path = target_path,
-                .module_root = target_dir,
-                .module_dir = entry_path,
-                .entrypoint_name = selected.name,
-                .output_path = try defaultOutputPathForEntrypoint(allocator, target_dir, selected.name, selected.output_name),
-            };
-        }
-
+pub fn resolveRunPlan(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    requested_executable: ?[]const u8,
+) !BuildPlan {
+    const target_dir = try resolveBuildModuleDir(allocator, io, ".");
+    if (!try hasManifest(io, allocator, target_dir)) {
         return .{
-            .target_path = target_path,
-            .module_root = target_dir,
+            .target_path = ".",
             .module_dir = target_dir,
-            .output_path = try defaultOutputPathForEntrypoint(allocator, target_dir, std.fs.path.basename(target_dir), manifest.name),
+            .output_path = try defaultOutputPathForModuleDir(allocator, target_dir),
         };
     }
 
-    if (flags.entry_name != null) {
-        std.debug.print("Error: --entry requires argi.toml in the selected module root.\n", .{});
+    var manifest = try readManifest(allocator, io, target_dir);
+    if (manifest.executables.items.len == 0) {
+        printNoExecutablesError();
         return error.CompilationFailed;
     }
-
-    return .{
-        .target_path = target_path,
-        .module_dir = target_dir,
-        .output_path = try defaultOutputPathForModuleDir(allocator, target_dir),
-    };
+    const executable = try selectRunExecutable(&manifest, requested_executable);
+    var plans = std.array_list.Managed(BuildPlan).init(allocator);
+    try appendExecutablePlan(allocator, io, &plans, ".", target_dir, executable);
+    return plans.items[0];
 }
 
 fn isWrappableMainCandidate(f: *const sg_mod.FunctionDeclaration) bool {
@@ -473,9 +511,8 @@ fn hasExecutableMain(nodes: []const *sg_mod.SGNode) bool {
 
 fn printMissingMainError(module_dir: []const u8, from_manifest: bool) void {
     if (from_manifest) {
-        std.debug.print("Error: module has no executable entrypoint.\n\n", .{});
-        std.debug.print("Configured module root has no entrypoints and no valid main function:\n  {s}\n\n", .{module_dir});
-        std.debug.print("Add [entrypoints.<name>] to argi.toml or define main() -> (.status_code: Int32).\n", .{});
+        std.debug.print("Error: executable module has no valid main function:\n  {s}\n\n", .{module_dir});
+        std.debug.print("Expected main() -> (.status_code: Int32).\n", .{});
     } else {
         std.debug.print("Error: module has no executable main function:\n  {s}\n\n", .{module_dir});
         std.debug.print("Expected main() -> (.status_code: Int32).\n", .{});
@@ -501,7 +538,24 @@ pub fn compileTarget(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const plan = try resolveBuildPlan(allocator, io, target_path, flags);
+    const plans = try resolveBuildPlans(allocator, io, target_path, flags);
+    if (plans.items.len > 1 and flags.output_path != null) {
+        std.debug.print("Error: --output is ambiguous when building multiple executables.\n", .{});
+        return error.CompilationFailed;
+    }
+    for (plans.items) |plan| {
+        try compileResolvedPlan(allocator, plan, flags, options, io, environ_map);
+    }
+}
+
+fn compileResolvedPlan(
+    allocator: std.mem.Allocator,
+    plan: BuildPlan,
+    flags: BuildFlags,
+    options: CompileOptions,
+    io: std.Io,
+    environ_map: ?*const std.process.Environ.Map,
+) !void {
     const module_dir = plan.module_dir;
     var timings: PhaseTimings = .{};
     const cwd_path = try std.process.currentPathAlloc(io, allocator);

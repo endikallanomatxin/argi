@@ -14,6 +14,11 @@ fn tmpDirPath(tmp: *const std.testing.TmpDir) ![]u8 {
     return std.fs.path.resolve(std.testing.allocator, &.{ ".", ".zig-cache", "tmp", tmp.sub_path[0..] });
 }
 
+fn cwdHasManifest(io: std.Io) bool {
+    std.Io.Dir.cwd().access(io, "argi.toml", .{}) catch return false;
+    return true;
+}
+
 pub fn run(
     io: std.Io,
     environ_map: ?*const std.process.Environ.Map,
@@ -25,10 +30,23 @@ pub fn run(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const parsed = try build_cmd.parseBuildArgs(args);
-    const plan = try build_cmd.resolveBuildPlan(allocator, io, parsed.target_path, parsed.flags);
+    const in_package = cwdHasManifest(io);
+    const selected_executable: ?[]const u8 = if (in_package and args.len > 0 and !std.mem.startsWith(u8, args[0], "--") and !std.mem.eql(u8, args[0], "."))
+        args[0]
+    else
+        null;
+    const build_args = if (selected_executable != null) args[1..] else args;
+    const parsed = try build_cmd.parseBuildArgs(build_args);
 
-    try build_cmd.compileTarget(parsed.target_path, parsed.flags, .{}, io, environ_map);
+    const plan = if (in_package)
+        try build_cmd.resolveRunPlan(allocator, io, selected_executable)
+    else
+        try build_cmd.resolveBuildPlan(allocator, io, parsed.target_path, parsed.flags);
+
+    var flags = parsed.flags;
+    if (plan.executable_name) |name| flags.executable_name = name;
+
+    try build_cmd.compileTarget(parsed.target_path, flags, .{}, io, environ_map);
 
     const result = try std.process.run(allocator, io, .{
         .argv = &.{plan.output_path},
