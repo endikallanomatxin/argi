@@ -101,7 +101,7 @@ move any still-useful notes into comments in `feature.rg`. If some ideas remain
 unfinished, leave them commented there rather than keeping a parallel `.txt`
 file around.
 
-- Commits: focused, descriptive subject in imperative mood (e.g., "add binary
+- Commits: focused, descriptive subject in imperative mood (e.g., "Add binary
 literals to lexer").
 
 - If you think some important information is missing from this guide, please
