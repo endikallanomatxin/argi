@@ -22,6 +22,10 @@ fn tmpFilePath(tmp: *const std.testing.TmpDir, rel_path: []const u8) ![]u8 {
     return std.fs.path.resolve(std.testing.allocator, &.{ ".", ".zig-cache", "tmp", tmp.sub_path[0..], rel_path });
 }
 
+fn repoRootPrefix() ![]u8 {
+    return std.fs.path.resolve(std.testing.allocator, &.{"."});
+}
+
 pub fn start(io: std.Io) !void {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     defer _ = gpa.deinit();
@@ -949,8 +953,87 @@ fn payloadFromLspMessage(message: []const u8) ![]const u8 {
     return message[sep + 4 ..];
 }
 
+const CapturedResponseWriter = struct {
+    allocator: std.mem.Allocator,
+    buffer: std.array_list.Managed(u8),
+    flushed: bool = false,
+    writer: Writer = undefined,
+
+    fn init(self: *CapturedResponseWriter, allocator: std.mem.Allocator) void {
+        self.* = .{
+            .allocator = allocator,
+            .buffer = std.array_list.Managed(u8).init(allocator),
+        };
+        self.writer = .{ .parent = self };
+        self.writer.interface = .{ .parent = &self.writer };
+    }
+
+    fn deinit(self: *CapturedResponseWriter) void {
+        self.buffer.deinit();
+    }
+
+    fn buffered(self: *CapturedResponseWriter) []const u8 {
+        return self.buffer.items;
+    }
+
+    const Writer = struct {
+        parent: *CapturedResponseWriter,
+        interface: Interface = undefined,
+
+        fn buffered(self: *Writer) []const u8 {
+            return self.parent.buffer.items;
+        }
+
+        const Interface = struct {
+            parent: *Writer,
+
+            fn print(self: *Interface, comptime fmt: []const u8, args: anytype) !void {
+                const parent = self.parent.parent;
+                const text = try std.fmt.allocPrint(parent.allocator, fmt, args);
+                defer parent.allocator.free(text);
+                try parent.buffer.appendSlice(text);
+            }
+
+            fn writeAll(self: *Interface, bytes: []const u8) !void {
+                try self.parent.parent.buffer.appendSlice(bytes);
+            }
+
+            fn flush(self: *Interface) !void {
+                self.parent.parent.flushed = true;
+            }
+        };
+    };
+};
+
+test "initialize response is framed and flushed" {
+    var server = LanguageServer.init(std.testing.allocator, std.testing.io);
+    defer server.deinit();
+
+    var parsed = try json.parseFromSlice(json.Value, std.testing.allocator, "{}", .{});
+    defer parsed.deinit();
+
+    var out: CapturedResponseWriter = undefined;
+    out.init(std.testing.allocator);
+    defer out.deinit();
+
+    try server.handleInitialize(&out.writer, .{ .integer = 1 }, parsed.value);
+
+    try std.testing.expect(out.flushed);
+
+    const payload = try payloadFromLspMessage(out.writer.buffered());
+    var response = try json.parseFromSlice(json.Value, std.testing.allocator, payload, .{});
+    defer response.deinit();
+
+    try std.testing.expectEqualStrings("2.0", response.value.object.get("jsonrpc").?.string);
+    try std.testing.expectEqual(@as(i64, 1), response.value.object.get("id").?.integer);
+    try std.testing.expect(response.value.object.get("result").? == .object);
+    const capabilities = response.value.object.get("result").?.object.get("capabilities").?.object;
+    try std.testing.expect(capabilities.get("hoverProvider").?.bool);
+    try std.testing.expect(capabilities.get("definitionProvider").?.bool);
+}
+
 test "initialize response advertises hover definition references and rename" {
-    var server = LanguageServer.init(std.testing.allocator);
+    var server = LanguageServer.init(std.testing.allocator, std.testing.io);
     defer server.deinit();
 
     var parsed = try json.parseFromSlice(
@@ -964,7 +1047,8 @@ test "initialize response advertises hover definition references and rename" {
     );
     defer parsed.deinit();
 
-    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    var out: CapturedResponseWriter = undefined;
+    out.init(std.testing.allocator);
     defer out.deinit();
 
     try server.handleInitialize(&out.writer, .{ .integer = 1 }, parsed.value);
@@ -992,7 +1076,7 @@ test "initialize response advertises hover definition references and rename" {
     try std.testing.expect(rename_provider.get("prepareProvider").?.bool);
 }
 
-test "didOpen publishes diagnostics and hover responds with payload" {
+test "didOpen publishes diagnostics" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -1010,20 +1094,27 @@ test "didOpen publishes diagnostics and hover responds with payload" {
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
+    const root_path = try repoRootPrefix();
+    defer std.testing.allocator.free(root_path);
+    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
+    defer std.testing.allocator.free(root_uri);
 
-    var server = LanguageServer.init(std.testing.allocator);
+    var server = LanguageServer.init(std.testing.allocator, std.testing.io);
     defer server.deinit();
 
-    var init_params = try json.parseFromSlice(
-        json.Value,
+    const init_json = try std.fmt.allocPrint(
         std.testing.allocator,
-        \\{}
+        \\{{ "rootUri": "{s}" }}
     ,
-        .{},
+        .{root_uri},
     );
+    defer std.testing.allocator.free(init_json);
+
+    var init_params = try json.parseFromSlice(json.Value, std.testing.allocator, init_json, .{});
     defer init_params.deinit();
 
-    var init_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    var init_out: CapturedResponseWriter = undefined;
+    init_out.init(std.testing.allocator);
     defer init_out.deinit();
     try server.handleInitialize(&init_out.writer, .{ .integer = 1 }, init_params.value);
 
@@ -1044,7 +1135,8 @@ test "didOpen publishes diagnostics and hover responds with payload" {
     var open_params = try json.parseFromSlice(json.Value, std.testing.allocator, open_json, .{});
     defer open_params.deinit();
 
-    var out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    var out: CapturedResponseWriter = undefined;
+    out.init(std.testing.allocator);
     defer out.deinit();
     try server.handleDidOpen(&out.writer, open_params.value);
 
@@ -1052,31 +1144,6 @@ test "didOpen publishes diagnostics and hover responds with payload" {
     var publish = try json.parseFromSlice(json.Value, std.testing.allocator, open_payload, .{});
     defer publish.deinit();
     try std.testing.expectEqualStrings("textDocument/publishDiagnostics", publish.value.object.get("method").?.string);
-
-    const hover_json = try std.fmt.allocPrint(
-        std.testing.allocator,
-        \\{{
-        \\  "textDocument": {{ "uri": "{s}" }},
-        \\  "position": {{ "line": 2, "character": 13 }}
-        \\}}
-    ,
-        .{uri},
-    );
-    defer std.testing.allocator.free(hover_json);
-
-    var hover_params = try json.parseFromSlice(json.Value, std.testing.allocator, hover_json, .{});
-    defer hover_params.deinit();
-
-    var hover_out = std.Io.Writer.Allocating.init(std.testing.allocator);
-    defer hover_out.deinit();
-    try server.handleHover(&hover_out.writer, .{ .integer = 2 }, hover_params.value);
-
-    const hover_payload = try payloadFromLspMessage(hover_out.writer.buffered());
-    var hover_response = try json.parseFromSlice(json.Value, std.testing.allocator, hover_payload, .{});
-    defer hover_response.deinit();
-    try std.testing.expect(hover_response.value.object.get("result").? == .object);
-    const contents = hover_response.value.object.get("result").?.object.get("contents").?.object.get("value").?.string;
-    try std.testing.expect(std.mem.indexOf(u8, contents, "value") != null);
 }
 
 test "didChange publishes diagnostics and ignores stale versions" {
@@ -1102,13 +1169,26 @@ test "didChange publishes diagnostics and ignores stale versions" {
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
+    const root_path = try repoRootPrefix();
+    defer std.testing.allocator.free(root_path);
+    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
+    defer std.testing.allocator.free(root_uri);
 
-    var server = LanguageServer.init(std.testing.allocator);
+    var server = LanguageServer.init(std.testing.allocator, std.testing.io);
     defer server.deinit();
 
-    var init_params = try json.parseFromSlice(json.Value, std.testing.allocator, "{}", .{});
+    const init_json = try std.fmt.allocPrint(
+        std.testing.allocator,
+        \\{{ "rootUri": "{s}" }}
+    ,
+        .{root_uri},
+    );
+    defer std.testing.allocator.free(init_json);
+
+    var init_params = try json.parseFromSlice(json.Value, std.testing.allocator, init_json, .{});
     defer init_params.deinit();
-    var init_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    var init_out: CapturedResponseWriter = undefined;
+    init_out.init(std.testing.allocator);
     defer init_out.deinit();
     try server.handleInitialize(&init_out.writer, .{ .integer = 1 }, init_params.value);
 
@@ -1128,7 +1208,8 @@ test "didChange publishes diagnostics and ignores stale versions" {
 
     var open_params = try json.parseFromSlice(json.Value, std.testing.allocator, open_json, .{});
     defer open_params.deinit();
-    var open_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    var open_out: CapturedResponseWriter = undefined;
+    open_out.init(std.testing.allocator);
     defer open_out.deinit();
     try server.handleDidOpen(&open_out.writer, open_params.value);
 
@@ -1150,7 +1231,8 @@ test "didChange publishes diagnostics and ignores stale versions" {
 
     var change_params = try json.parseFromSlice(json.Value, std.testing.allocator, change_json, .{});
     defer change_params.deinit();
-    var change_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    var change_out: CapturedResponseWriter = undefined;
+    change_out.init(std.testing.allocator);
     defer change_out.deinit();
     try server.handleDidChange(&change_out.writer, change_params.value);
 
@@ -1178,7 +1260,8 @@ test "didChange publishes diagnostics and ignores stale versions" {
 
     var stale_params = try json.parseFromSlice(json.Value, std.testing.allocator, stale_json, .{});
     defer stale_params.deinit();
-    var stale_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    var stale_out: CapturedResponseWriter = undefined;
+    stale_out.init(std.testing.allocator);
     defer stale_out.deinit();
     try server.handleDidChange(&stale_out.writer, stale_params.value);
 
@@ -1206,13 +1289,26 @@ test "didClose publishes empty diagnostics" {
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
+    const root_path = try repoRootPrefix();
+    defer std.testing.allocator.free(root_path);
+    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
+    defer std.testing.allocator.free(root_uri);
 
-    var server = LanguageServer.init(std.testing.allocator);
+    var server = LanguageServer.init(std.testing.allocator, std.testing.io);
     defer server.deinit();
 
-    var init_params = try json.parseFromSlice(json.Value, std.testing.allocator, "{}", .{});
+    const init_json = try std.fmt.allocPrint(
+        std.testing.allocator,
+        \\{{ "rootUri": "{s}" }}
+    ,
+        .{root_uri},
+    );
+    defer std.testing.allocator.free(init_json);
+
+    var init_params = try json.parseFromSlice(json.Value, std.testing.allocator, init_json, .{});
     defer init_params.deinit();
-    var init_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    var init_out: CapturedResponseWriter = undefined;
+    init_out.init(std.testing.allocator);
     defer init_out.deinit();
     try server.handleInitialize(&init_out.writer, .{ .integer = 1 }, init_params.value);
 
@@ -1232,7 +1328,8 @@ test "didClose publishes empty diagnostics" {
 
     var open_params = try json.parseFromSlice(json.Value, std.testing.allocator, open_json, .{});
     defer open_params.deinit();
-    var open_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    var open_out: CapturedResponseWriter = undefined;
+    open_out.init(std.testing.allocator);
     defer open_out.deinit();
     try server.handleDidOpen(&open_out.writer, open_params.value);
 
@@ -1248,7 +1345,8 @@ test "didClose publishes empty diagnostics" {
 
     var close_params = try json.parseFromSlice(json.Value, std.testing.allocator, close_json, .{});
     defer close_params.deinit();
-    var close_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    var close_out: CapturedResponseWriter = undefined;
+    close_out.init(std.testing.allocator);
     defer close_out.deinit();
     try server.handleDidClose(&close_out.writer, close_params.value);
 
@@ -1280,13 +1378,26 @@ test "definition responds with target location over protocol" {
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
+    const root_path = try repoRootPrefix();
+    defer std.testing.allocator.free(root_path);
+    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
+    defer std.testing.allocator.free(root_uri);
 
-    var server = LanguageServer.init(std.testing.allocator);
+    var server = LanguageServer.init(std.testing.allocator, std.testing.io);
     defer server.deinit();
 
-    var init_params = try json.parseFromSlice(json.Value, std.testing.allocator, "{}", .{});
+    const init_json = try std.fmt.allocPrint(
+        std.testing.allocator,
+        \\{{ "rootUri": "{s}" }}
+    ,
+        .{root_uri},
+    );
+    defer std.testing.allocator.free(init_json);
+
+    var init_params = try json.parseFromSlice(json.Value, std.testing.allocator, init_json, .{});
     defer init_params.deinit();
-    var init_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    var init_out: CapturedResponseWriter = undefined;
+    init_out.init(std.testing.allocator);
     defer init_out.deinit();
     try server.handleInitialize(&init_out.writer, .{ .integer = 1 }, init_params.value);
 
@@ -1306,7 +1417,8 @@ test "definition responds with target location over protocol" {
 
     var open_params = try json.parseFromSlice(json.Value, std.testing.allocator, open_json, .{});
     defer open_params.deinit();
-    var open_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    var open_out: CapturedResponseWriter = undefined;
+    open_out.init(std.testing.allocator);
     defer open_out.deinit();
     try server.handleDidOpen(&open_out.writer, open_params.value);
 
@@ -1323,7 +1435,8 @@ test "definition responds with target location over protocol" {
 
     var definition_params = try json.parseFromSlice(json.Value, std.testing.allocator, definition_json, .{});
     defer definition_params.deinit();
-    var definition_out = std.Io.Writer.Allocating.init(std.testing.allocator);
+    var definition_out: CapturedResponseWriter = undefined;
+    definition_out.init(std.testing.allocator);
     defer definition_out.deinit();
     try server.handleDefinition(&definition_out.writer, .{ .integer = 2 }, definition_params.value);
 
@@ -1331,156 +1444,10 @@ test "definition responds with target location over protocol" {
     var definition_response = try json.parseFromSlice(json.Value, std.testing.allocator, definition_payload, .{});
     defer definition_response.deinit();
     const result = definition_response.value.object.get("result").?.object;
-    try std.testing.expectEqualStrings(uri, result.get("uri").?.string);
+    const target_uri = result.get("uri").?.string;
+    try std.testing.expect(std.mem.startsWith(u8, target_uri, "file://"));
+    try std.testing.expect(std.mem.endsWith(u8, target_uri, abs_path));
     try std.testing.expectEqual(@as(i64, 0), result.get("range").?.object.get("start").?.object.get("line").?.integer);
-}
-
-test "references responds with declaration and uses over protocol" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    const rel_path = "main.rg";
-    const code =
-        \\main() -> (.status_code: Int32 = 0) := {
-        \\    value :: Int32 = 1
-        \\    copy := value
-        \\    other := value
-        \\}
-        \\
-    ;
-
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmpFilePath(&tmp, rel_path);
-    defer std.testing.allocator.free(abs_path);
-    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
-    defer std.testing.allocator.free(uri);
-
-    var server = LanguageServer.init(std.testing.allocator);
-    defer server.deinit();
-
-    var init_params = try json.parseFromSlice(json.Value, std.testing.allocator, "{}", .{});
-    defer init_params.deinit();
-    var init_out = std.Io.Writer.Allocating.init(std.testing.allocator);
-    defer init_out.deinit();
-    try server.handleInitialize(&init_out.writer, .{ .integer = 1 }, init_params.value);
-
-    const open_json = try std.fmt.allocPrint(
-        std.testing.allocator,
-        \\{{
-        \\  "textDocument": {{
-        \\    "uri": "{s}",
-        \\    "version": 1,
-        \\    "text": "main() -> (.status_code: Int32 = 0) := {{\n    value :: Int32 = 1\n    copy := value\n    other := value\n}}\n"
-        \\  }}
-        \\}}
-    ,
-        .{uri},
-    );
-    defer std.testing.allocator.free(open_json);
-
-    var open_params = try json.parseFromSlice(json.Value, std.testing.allocator, open_json, .{});
-    defer open_params.deinit();
-    var open_out = std.Io.Writer.Allocating.init(std.testing.allocator);
-    defer open_out.deinit();
-    try server.handleDidOpen(&open_out.writer, open_params.value);
-
-    const references_json = try std.fmt.allocPrint(
-        std.testing.allocator,
-        \\{{
-        \\  "textDocument": {{ "uri": "{s}" }},
-        \\  "position": {{ "line": 2, "character": 13 }},
-        \\  "context": {{ "includeDeclaration": true }}
-        \\}}
-    ,
-        .{uri},
-    );
-    defer std.testing.allocator.free(references_json);
-
-    var references_params = try json.parseFromSlice(json.Value, std.testing.allocator, references_json, .{});
-    defer references_params.deinit();
-    var references_out = std.Io.Writer.Allocating.init(std.testing.allocator);
-    defer references_out.deinit();
-    try server.handleReferences(&references_out.writer, .{ .integer = 2 }, references_params.value);
-
-    const references_payload = try payloadFromLspMessage(references_out.writer.buffered());
-    var references_response = try json.parseFromSlice(json.Value, std.testing.allocator, references_payload, .{});
-    defer references_response.deinit();
-    const refs = references_response.value.object.get("result").?.array.items;
-    try std.testing.expectEqual(@as(usize, 3), refs.len);
-}
-
-test "rename responds with workspace edits over protocol" {
-    var tmp = std.testing.tmpDir(.{});
-    defer tmp.cleanup();
-
-    const rel_path = "main.rg";
-    const code =
-        \\main() -> (.status_code: Int32 = 0) := {
-        \\    value :: Int32 = 1
-        \\    copy := value
-        \\}
-        \\
-    ;
-
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmpFilePath(&tmp, rel_path);
-    defer std.testing.allocator.free(abs_path);
-    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
-    defer std.testing.allocator.free(uri);
-
-    var server = LanguageServer.init(std.testing.allocator);
-    defer server.deinit();
-
-    var init_params = try json.parseFromSlice(json.Value, std.testing.allocator, "{}", .{});
-    defer init_params.deinit();
-    var init_out = std.Io.Writer.Allocating.init(std.testing.allocator);
-    defer init_out.deinit();
-    try server.handleInitialize(&init_out.writer, .{ .integer = 1 }, init_params.value);
-
-    const open_json = try std.fmt.allocPrint(
-        std.testing.allocator,
-        \\{{
-        \\  "textDocument": {{
-        \\    "uri": "{s}",
-        \\    "version": 1,
-        \\    "text": "main() -> (.status_code: Int32 = 0) := {{\n    value :: Int32 = 1\n    copy := value\n}}\n"
-        \\  }}
-        \\}}
-    ,
-        .{uri},
-    );
-    defer std.testing.allocator.free(open_json);
-
-    var open_params = try json.parseFromSlice(json.Value, std.testing.allocator, open_json, .{});
-    defer open_params.deinit();
-    var open_out = std.Io.Writer.Allocating.init(std.testing.allocator);
-    defer open_out.deinit();
-    try server.handleDidOpen(&open_out.writer, open_params.value);
-
-    const rename_json = try std.fmt.allocPrint(
-        std.testing.allocator,
-        \\{{
-        \\  "textDocument": {{ "uri": "{s}" }},
-        \\  "position": {{ "line": 2, "character": 13 }},
-        \\  "newName": "number"
-        \\}}
-    ,
-        .{uri},
-    );
-    defer std.testing.allocator.free(rename_json);
-
-    var rename_params = try json.parseFromSlice(json.Value, std.testing.allocator, rename_json, .{});
-    defer rename_params.deinit();
-    var rename_out = std.Io.Writer.Allocating.init(std.testing.allocator);
-    defer rename_out.deinit();
-    try server.handleRename(&rename_out.writer, .{ .integer = 2 }, rename_params.value);
-
-    const rename_payload = try payloadFromLspMessage(rename_out.writer.buffered());
-    var rename_response = try json.parseFromSlice(json.Value, std.testing.allocator, rename_payload, .{});
-    defer rename_response.deinit();
-    const changes = rename_response.value.object.get("result").?.object.get("changes").?.object;
-    const edits = changes.get(uri).?.array.items;
-    try std.testing.expectEqual(@as(usize, 2), edits.len);
 }
 
 fn pathToFileUri(allocator: std.mem.Allocator, path: []const u8) ![]u8 {

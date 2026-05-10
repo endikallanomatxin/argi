@@ -3181,6 +3181,43 @@ test "argi build uses ARGI_SYSROOT when flag is absent" {
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
 }
 
+test "argi run uses ARGI_SYSROOT when flag is absent" {
+    const sysroot = try std.fs.path.join(std.testing.allocator, &.{ compilerRoot(), "zig-out" });
+    defer std.testing.allocator.free(sysroot);
+
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("ARGI_SYSROOT", sysroot);
+
+    const result = try runArgiCommandWithEnv(
+        &.{ "run", "tests/feature_tests/basics/01_minimal_main" },
+        &env_map,
+    );
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+}
+
+test "argi test uses ARGI_SYSROOT when flag is absent" {
+    const sysroot = try std.fs.path.join(std.testing.allocator, &.{ compilerRoot(), "zig-out" });
+    defer std.testing.allocator.free(sysroot);
+
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("ARGI_SYSROOT", sysroot);
+
+    const result = try runArgiCommandWithEnv(
+        &.{ "test", "tests/feature_tests/testing/01_simple_pass" },
+        &env_map,
+    );
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "PASS simple_pass\n") != null);
+}
+
 test "argi build rejects invalid ARGI_SYSROOT without fallback" {
     var bad_tmp = std.testing.tmpDir(.{});
     defer bad_tmp.cleanup();
@@ -3225,6 +3262,53 @@ test "argi build sysroot flag takes precedence over ARGI_SYSROOT" {
     defer std.testing.allocator.free(result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+}
+
+test "argi build respects CC wrapper from environment" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const repo_root = try repoRootPrefix();
+    defer std.testing.allocator.free(repo_root);
+
+    const tmp_root = try std.fs.path.join(std.testing.allocator, &.{ repo_root, ".zig-cache", "tmp", tmp.sub_path[0..] });
+    defer std.testing.allocator.free(tmp_root);
+
+    const wrapper_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "cc-wrapper.sh" });
+    defer std.testing.allocator.free(wrapper_path);
+    const log_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "cc-wrapper.log" });
+    defer std.testing.allocator.free(log_path);
+
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "cc-wrapper.sh",
+        .data =
+        \\#!/bin/sh
+        \\printf '%s\n' "wrapper-invoked" "$@" >> "$LOG_FILE"
+        \\exec cc "$@"
+        \\
+        ,
+        .flags = .{ .permissions = .executable_file },
+    });
+
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+    try env_map.put("CC", wrapper_path);
+    try env_map.put("LOG_FILE", log_path);
+
+    const result = try runArgiCommandWithEnv(
+        &.{ "build", "tests/feature_tests/basics/01_minimal_main" },
+        &env_map,
+    );
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+
+    const log = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, log_path, std.testing.allocator, .limited(1024 * 1024));
+    defer std.testing.allocator.free(log);
+
+    try expect(std.mem.indexOf(u8, log, "wrapper-invoked\n") != null);
+    try expect(std.mem.indexOf(u8, log, "-lc\n") != null);
 }
 
 test "argi test rejects unknown flag" {
