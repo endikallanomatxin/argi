@@ -1,46 +1,6 @@
 # TODOs antes de release `0.1`
 
-## Bloqueantes para `0.1`
-
-### Prueba de instalación limpia
-
-Antes de taggear, hacer una prueba desde cero fuera del repo.
-
-Acciones:
-
-```bash
-git clean -xfd
-zig build test --summary all
-zig build install
-```
-
-Después, desde fuera del repo:
-
-```bash
-argi version
-argi build <ruta-a-un-modulo-de-prueba>
-argi test <ruta-a-un-modulo-de-prueba>
-```
-
-También probar instalación con prefijo explícito:
-
-```bash
-zig build -p /tmp/argi-install
-/tmp/argi-install/bin/argi version
-/tmp/argi-install/bin/argi build <ruta-a-un-modulo-de-prueba>
-/tmp/argi-install/bin/argi test <ruta-a-un-modulo-de-prueba>
-```
-
-Objetivo:
-
-* Confirmar que `core` se resuelve desde instalación/sysroot.
-* Confirmar que no depende accidentalmente de estar dentro del repo.
-* Confirmar que los tests instalados funcionan fuera del árbol de desarrollo.
-
----
-
 ## No bloqueante, pero recomendable antes de seguir creciendo
-
 
 ### Documentar las distintas igualdades de tipos
 
