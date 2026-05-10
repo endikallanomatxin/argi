@@ -594,11 +594,6 @@ pub fn compileTarget(
         return error.CompilationFailed;
     }
 
-    if (!emit_object_only and !hasExecutableMain(sg)) {
-        printMissingMainError(module_dir, plan.module_root != null);
-        return error.CompilationFailed;
-    }
-
     // 7. Generación de código ──────────────────────────────────────────────
     const codegen_start = nowNs(io);
     var gen = codegen.CodeGenerator.init(&allocator, io, sg, &diagnostics, options.codegen_options) catch |err| {
@@ -616,6 +611,11 @@ pub fn compileTarget(
         return error.CompilationFailed;
     };
     timings.codegen_ns = elapsedSince(io, codegen_start);
+
+    if (!emit_object_only and options.codegen_options.selected_test_name == null and !hasExecutableMain(sg)) {
+        printMissingMainError(module_dir, plan.module_root != null);
+        return error.CompilationFailed;
+    }
 
     // Temporales en el mismo directorio final.
     const temp_stem_base = if (emit_object_only) final_obj_path.? else final_output_path;

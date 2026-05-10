@@ -3301,10 +3301,11 @@ test "argi help lists supported 0.1 commands" {
 
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
     try expect(std.mem.indexOf(u8, result.stderr, "Usage: argi <command> [arguments] [options]\n") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "build <directory> [flags]") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "run <directory> [build flags]") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "build [directory] [flags]") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "run [directory] [build flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "test <directory> [flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--sysroot <path>") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "--entry <name>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--filter <name>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "init <project|module> <directory>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "lsp") != null);
