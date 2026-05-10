@@ -188,6 +188,10 @@ pub fn defaultOutputPathForModuleDir(allocator: std.mem.Allocator, module_dir: [
 }
 
 fn replaceFile(io: std.Io, src: []const u8, dst: []const u8) !void {
+    std.Io.Dir.deleteFileAbsolute(io, dst) catch |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    };
     try std.Io.Dir.renameAbsolute(src, dst, io);
 }
 

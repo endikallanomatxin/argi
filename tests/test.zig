@@ -105,6 +105,14 @@ fn runArgiCommandWithEnv(
     return normalizeRunResult(result);
 }
 
+fn expectArgiBuildSuccess(args: []const []const u8) !void {
+    const result = try runArgiCommand(args);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+}
+
 fn runChildInCwd(argv: []const []const u8, cwd: []const u8) !std.process.RunResult {
     const result = try std.process.run(std.testing.allocator, std.testing.io, .{
         .argv = argv,
@@ -526,6 +534,43 @@ test "installed argi resolves core from its installation prefix outside repo" {
     defer std.testing.allocator.free(run_result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = 0 }, run_result.term);
+}
+
+test "build overwrites existing output binary" {
+    const test_path = "tests/feature_tests/basics/01_minimal_main";
+    try clean(test_path);
+    try expectArgiBuildSuccess(&.{ "build", test_path });
+    try expectArgiBuildSuccess(&.{ "build", test_path });
+}
+
+test "build overwrites existing emitted llvm" {
+    const test_path = "tests/feature_tests/basics/01_minimal_main";
+    const ir_path = try irPathFor(test_path);
+    defer std.testing.allocator.free(ir_path);
+
+    try clean(test_path);
+    try expectArgiBuildSuccess(&.{ "build", test_path, "--emit-llvm", ir_path });
+    try expectArgiBuildSuccess(&.{ "build", test_path, "--emit-llvm", ir_path });
+}
+
+test "build overwrites existing emitted object" {
+    const test_path = "tests/feature_tests/basics/01_minimal_main";
+    const obj_path = try objPathFor(test_path);
+    defer std.testing.allocator.free(obj_path);
+
+    try clean(test_path);
+    try expectArgiBuildSuccess(&.{ "build", test_path, "--emit-obj", obj_path });
+    try expectArgiBuildSuccess(&.{ "build", test_path, "--emit-obj", obj_path });
+}
+
+test "build overwrites existing just emitted object" {
+    const test_path = "tests/feature_tests/basics/01_minimal_main";
+    const obj_path = try objPathFor(test_path);
+    defer std.testing.allocator.free(obj_path);
+
+    try clean(test_path);
+    try expectArgiBuildSuccess(&.{ "build", test_path, "--just-emit-obj", obj_path });
+    try expectArgiBuildSuccess(&.{ "build", test_path, "--just-emit-obj", obj_path });
 }
 
 test "feature_tests/basics/01_minimal_main" {
