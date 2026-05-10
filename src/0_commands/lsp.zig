@@ -166,10 +166,9 @@ const LanguageServer = struct {
         var content_length: ?usize = null;
 
         while (true) {
-            const line_raw = reader.interface.takeDelimiterExclusive('\n') catch |err| switch (err) {
-                error.EndOfStream => return error.EndOfStream,
+            const line_raw = (reader.interface.takeDelimiter('\n') catch |err| switch (err) {
                 else => return err,
-            };
+            }) orelse return error.EndOfStream;
             const line_trimmed = std.mem.trim(u8, line_raw, "\r\n");
             if (line_trimmed.len == 0) break;
 
@@ -181,14 +180,7 @@ const LanguageServer = struct {
 
         const len = content_length orelse return ReadMessageError.MissingContentLength;
         try self.buffer.resize(len);
-        var written: usize = 0;
-        while (written < len) {
-            const chunk_len = @min(len - written, 4096);
-            const payload = try reader.interface.take(chunk_len);
-            if (payload.len == 0) return error.EndOfStream;
-            @memcpy(self.buffer.items[written .. written + payload.len], payload);
-            written += payload.len;
-        }
+        try reader.interface.readSliceAll(self.buffer.items[0..len]);
         return self.buffer.items[0..len];
     }
 
@@ -944,6 +936,25 @@ fn writeWorkspaceEdit(stream: *json.Stringify, allocator: std.mem.Allocator, edi
 fn payloadFromLspMessage(message: []const u8) ![]const u8 {
     const sep = std.mem.indexOf(u8, message, "\r\n\r\n") orelse return error.InvalidLspMessage;
     return message[sep + 4 ..];
+}
+
+test "readMessage consumes LSP header delimiters between messages" {
+    var server = LanguageServer.init(std.testing.allocator, std.testing.io);
+    defer server.deinit();
+
+    const input = std.Io.Reader.fixed(
+        "Content-Length: 2\r\n\r\n{}" ++
+            "Content-Length: 2\r\n\r\n[]",
+    );
+    var reader = struct {
+        interface: std.Io.Reader,
+    }{ .interface = input };
+
+    const first = try server.readMessage(&reader);
+    try std.testing.expectEqualStrings("{}", first);
+
+    const second = try server.readMessage(&reader);
+    try std.testing.expectEqualStrings("[]", second);
 }
 
 const CapturedResponseWriter = struct {
