@@ -158,6 +158,18 @@ fn repoRootPrefix() ![]u8 {
     return std.fs.path.resolve(std.testing.allocator, &.{ cwd, compilerRoot() });
 }
 
+fn installedArgiPath() ![]u8 {
+    const repo_root = try repoRootPrefix();
+    defer std.testing.allocator.free(repo_root);
+    return std.fs.path.join(std.testing.allocator, &.{ repo_root, argi_bin });
+}
+
+fn tmpDirRootPath(tmp: *const std.testing.TmpDir) ![]u8 {
+    const repo_root = try repoRootPrefix();
+    defer std.testing.allocator.free(repo_root);
+    return std.fs.path.join(std.testing.allocator, &.{ repo_root, ".zig-cache", "tmp", tmp.sub_path[0..] });
+}
+
 fn buildResult(name: []const u8) !std.process.RunResult {
     try clean(name);
     return runChild(&[_][]const u8{
@@ -534,6 +546,265 @@ test "installed argi resolves core from its installation prefix outside repo" {
     defer std.testing.allocator.free(run_result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = 0 }, run_result.term);
+}
+
+test "argi init project manifest configures default entrypoint" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(tmp_root);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+
+    const result = try runChildInCwd(&.{ installed_argi, "init", "project", "prueba" }, tmp_root);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+
+    const manifest_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "prueba", "argi.toml" });
+    defer std.testing.allocator.free(manifest_path);
+    const text = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, manifest_path, std.testing.allocator, .limited(1024 * 1024));
+    defer std.testing.allocator.free(text);
+
+    try expect(std.mem.indexOf(u8, text, "kind = ") == null);
+    try expect(std.mem.indexOf(u8, text, "[build]\n") != null);
+    try expect(std.mem.indexOf(u8, text, "default_entrypoint = \"main\"\n") != null);
+    try expect(std.mem.indexOf(u8, text, "[entrypoints.main]\n") != null);
+    try expect(std.mem.indexOf(u8, text, "path = \"source/entrypoints/main\"\n") != null);
+}
+
+test "argi init module manifest has no persisted kind" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(tmp_root);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+
+    const result = try runChildInCwd(&.{ installed_argi, "init", "module", "prueba" }, tmp_root);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+
+    const manifest_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "prueba", "argi.toml" });
+    defer std.testing.allocator.free(manifest_path);
+    const text = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, manifest_path, std.testing.allocator, .limited(1024 * 1024));
+    defer std.testing.allocator.free(text);
+
+    try expect(std.mem.indexOf(u8, text, "kind = ") == null);
+    try expect(std.mem.indexOf(u8, text, "[entrypoints.") == null);
+}
+
+test "argi build and run default entrypoint from configured module cwd" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(tmp_root);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+
+    const init_result = try runChildInCwd(&.{ installed_argi, "init", "project", "prueba" }, tmp_root);
+    defer std.testing.allocator.free(init_result.stdout);
+    defer std.testing.allocator.free(init_result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, init_result.term);
+
+    const module_root = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "prueba" });
+    defer std.testing.allocator.free(module_root);
+
+    const build_result = try runChildInCwd(&.{ installed_argi, "build" }, module_root);
+    defer std.testing.allocator.free(build_result.stdout);
+    defer std.testing.allocator.free(build_result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, build_result.term);
+
+    const output_path = try std.fs.path.join(std.testing.allocator, &.{ module_root, "build", "debug", "main" });
+    defer std.testing.allocator.free(output_path);
+    try std.Io.Dir.cwd().access(std.testing.io, output_path, .{});
+
+    const binary_result = try runChildInCwd(&.{output_path}, module_root);
+    defer std.testing.allocator.free(binary_result.stdout);
+    defer std.testing.allocator.free(binary_result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, binary_result.term);
+
+    const run_result = try runChildInCwd(&.{ installed_argi, "run" }, module_root);
+    defer std.testing.allocator.free(run_result.stdout);
+    defer std.testing.allocator.free(run_result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, run_result.term);
+}
+
+test "argi build configured module supports explicit dot and entry flag" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(tmp_root);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+
+    const init_result = try runChildInCwd(&.{ installed_argi, "init", "project", "prueba" }, tmp_root);
+    defer std.testing.allocator.free(init_result.stdout);
+    defer std.testing.allocator.free(init_result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, init_result.term);
+
+    const module_root = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "prueba" });
+    defer std.testing.allocator.free(module_root);
+
+    const dot_result = try runChildInCwd(&.{ installed_argi, "build", "." }, module_root);
+    defer std.testing.allocator.free(dot_result.stdout);
+    defer std.testing.allocator.free(dot_result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, dot_result.term);
+
+    const entry_result = try runChildInCwd(&.{ installed_argi, "build", "--entry", "main" }, module_root);
+    defer std.testing.allocator.free(entry_result.stdout);
+    defer std.testing.allocator.free(entry_result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, entry_result.term);
+}
+
+test "argi build configured module uses output_name" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(tmp_root);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+
+    try tmp.dir.createDirPath(std.testing.io, "app/source/entrypoints/main");
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "app/argi.toml",
+        .data =
+        \\name = "app"
+        \\version = "0.0.0"
+        \\minimum_argi_version = "0.1.0"
+        \\
+        \\[entrypoints.main]
+        \\path = "source/entrypoints/main"
+        \\output_name = "prueba"
+        \\
+        ,
+    });
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "app/source/entrypoints/main/main.rg",
+        .data =
+        \\main() -> (.status_code: Int32 = 0) := {
+        \\}
+        \\
+        ,
+    });
+
+    const module_root = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "app" });
+    defer std.testing.allocator.free(module_root);
+
+    const result = try runChildInCwd(&.{ installed_argi, "build" }, module_root);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+
+    const output_path = try std.fs.path.join(std.testing.allocator, &.{ module_root, "build", "debug", "prueba" });
+    defer std.testing.allocator.free(output_path);
+    try std.Io.Dir.cwd().access(std.testing.io, output_path, .{});
+}
+
+test "argi build configured module rejects ambiguous entrypoints" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(tmp_root);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+
+    try tmp.dir.createDirPath(std.testing.io, "app/source/entrypoints/main");
+    try tmp.dir.createDirPath(std.testing.io, "app/source/entrypoints/worker");
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "app/argi.toml",
+        .data =
+        \\name = "app"
+        \\version = "0.0.0"
+        \\minimum_argi_version = "0.1.0"
+        \\
+        \\[entrypoints.main]
+        \\path = "source/entrypoints/main"
+        \\
+        \\[entrypoints.worker]
+        \\path = "source/entrypoints/worker"
+        \\
+        ,
+    });
+
+    const module_root = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "app" });
+    defer std.testing.allocator.free(module_root);
+
+    const result = try runChildInCwd(&.{ installed_argi, "build" }, module_root);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "module has multiple entrypoints and no default entrypoint") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "argi build --entry main") != null);
+}
+
+test "argi build configured module rejects unknown entrypoint" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(tmp_root);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+
+    const init_result = try runChildInCwd(&.{ installed_argi, "init", "project", "prueba" }, tmp_root);
+    defer std.testing.allocator.free(init_result.stdout);
+    defer std.testing.allocator.free(init_result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, init_result.term);
+
+    const module_root = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "prueba" });
+    defer std.testing.allocator.free(module_root);
+
+    const result = try runChildInCwd(&.{ installed_argi, "build", "--entry", "worker" }, module_root);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "unknown entrypoint 'worker'") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "  - main") != null);
+}
+
+test "argi build configured module rejects missing entrypoint path" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(tmp_root);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+
+    try tmp.dir.createDirPath(std.testing.io, "app");
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "app/argi.toml",
+        .data =
+        \\name = "app"
+        \\version = "0.0.0"
+        \\minimum_argi_version = "0.1.0"
+        \\
+        \\[build]
+        \\default_entrypoint = "main"
+        \\
+        \\[entrypoints.main]
+        \\path = "source/entrypoints/main"
+        \\
+        ,
+    });
+
+    const module_root = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "app" });
+    defer std.testing.allocator.free(module_root);
+
+    const result = try runChildInCwd(&.{ installed_argi, "build" }, module_root);
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "entrypoint 'main' points to missing path") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "source/entrypoints/main") != null);
 }
 
 test "build overwrites existing output binary" {
@@ -3060,22 +3331,22 @@ test "argi unknown command exits with help" {
     try expect(std.mem.indexOf(u8, result.stderr, "Usage: argi <command> [arguments] [options]\n") != null);
 }
 
-test "argi build without target exits with error" {
+test "argi build without target uses current directory" {
     const result = try runArgiCommand(&.{"build"});
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
-    try expectEqualStrings("Error: module directory required\n", result.stderr);
+    try expect(std.mem.indexOf(u8, result.stderr, "module directory required") == null);
 }
 
-test "argi run without target exits with error" {
+test "argi run without target uses current directory" {
     const result = try runArgiCommand(&.{"run"});
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = 1 }, result.term);
-    try expectEqualStrings("Error: module directory required\n", result.stderr);
+    try expect(std.mem.indexOf(u8, result.stderr, "module directory required") == null);
 }
 
 test "argi test without target exits with error" {
