@@ -2,7 +2,7 @@ const std = @import("std");
 const build_cmd = @import("build.zig");
 
 fn rejectUnsupportedRunFlags(args: []const []const u8) !void {
-    for (args[1..]) |arg| {
+    for (args) |arg| {
         if (std.mem.eql(u8, arg, "--output")) return error.RunOutputFlagUnsupported;
         if (std.mem.eql(u8, arg, "--emit-llvm")) return error.RunEmitLlvmUnsupported;
         if (std.mem.eql(u8, arg, "--emit-obj")) return error.RunEmitObjectUnsupported;
@@ -19,20 +19,19 @@ pub fn run(
     environ_map: ?*const std.process.Environ.Map,
     args: []const []const u8,
 ) !u8 {
-    if (args.len == 0) return error.MissingRunTarget;
     try rejectUnsupportedRunFlags(args);
-
-    try build_cmd.compile(io, environ_map, args);
 
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const module_dir = try build_cmd.resolveBuildModuleDir(allocator, io, args[0]);
-    const output_path = try build_cmd.defaultOutputPathForModuleDir(allocator, module_dir);
+    const parsed = try build_cmd.parseBuildArgs(args);
+    const plan = try build_cmd.resolveBuildPlan(allocator, io, parsed.target_path, parsed.flags);
+
+    try build_cmd.compileTarget(parsed.target_path, parsed.flags, .{}, io, environ_map);
 
     const result = try std.process.run(allocator, io, .{
-        .argv = &.{output_path},
+        .argv = &.{plan.output_path},
     });
 
     return switch (result.term) {

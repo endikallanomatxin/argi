@@ -32,8 +32,8 @@ fn exitRunError(err: anyerror) noreturn {
 fn printHelp() void {
     std.debug.print("Usage: argi <command> [arguments] [options]\n", .{});
     std.debug.print("\nCommands:\n", .{});
-    std.debug.print("  build <directory> [flags]              Compile a folder module to a binary\n", .{});
-    std.debug.print("  run <directory> [build flags]          Build a folder module and run it\n", .{});
+    std.debug.print("  build [directory] [flags]              Compile a folder module to a binary\n", .{});
+    std.debug.print("  run [directory] [build flags]          Build a folder module and run it\n", .{});
     std.debug.print("  test <directory> [flags]               Build and run native Argi tests\n", .{});
     std.debug.print("  init <project|module> <directory>      Create a starter scaffold\n", .{});
     std.debug.print("  lsp                                    Start the language server\n", .{});
@@ -84,10 +84,6 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (std.mem.eql(u8, command, "build")) {
-        if (args.len < 3) {
-            std.debug.print("Error: module directory required\n", .{});
-            std.process.exit(1);
-        }
         const build_args = args[2..];
         build_cmd.compile(io, init.environ_map, build_args) catch |err| {
             exitCommandError("Build error", err);
@@ -105,10 +101,6 @@ pub fn main(init: std.process.Init) !void {
             exitCommandError("LSP error", err);
         };
     } else if (std.mem.eql(u8, command, "run")) {
-        if (args.len < 3) {
-            std.debug.print("Error: module directory required\n", .{});
-            std.process.exit(1);
-        }
         const exit_code = run_cmd.run(io, init.environ_map, args[2..]) catch |err| {
             exitRunError(err);
         };

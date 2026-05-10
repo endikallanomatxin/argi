@@ -11,6 +11,7 @@ const codegen = @import("../5_codegen/codegen.zig");
 const tokp = @import("../2_tokens/token_print.zig");
 const frontend = @import("frontend_pipeline.zig");
 const semantizer_mod = @import("../4_semantics/semantizer.zig");
+const sg_mod = @import("../4_semantics/semantic_graph.zig");
 
 pub const BuildFlags = struct {
     show_cascade: bool = false,
@@ -23,6 +24,38 @@ pub const BuildFlags = struct {
     object_path: ?[]const u8 = null,
     just_object_path: ?[]const u8 = null,
     sysroot_path: ?[]const u8 = null,
+    entry_name: ?[]const u8 = null,
+};
+
+const ParsedBuildArgs = struct {
+    target_path: []const u8 = ".",
+    flags: BuildFlags = .{},
+};
+
+pub const BuildPlan = struct {
+    target_path: []const u8,
+    module_dir: []const u8,
+    output_path: []const u8,
+    entrypoint_name: ?[]const u8 = null,
+    module_root: ?[]const u8 = null,
+};
+
+const ManifestEntrypoint = struct {
+    name: []const u8,
+    path: ?[]const u8 = null,
+    output_name: ?[]const u8 = null,
+};
+
+const ModuleManifest = struct {
+    name: ?[]const u8 = null,
+    default_entrypoint: ?[]const u8 = null,
+    entrypoints: std.array_list.Managed(ManifestEntrypoint),
+
+    fn init(allocator: std.mem.Allocator) ModuleManifest {
+        return .{
+            .entrypoints = std.array_list.Managed(ManifestEntrypoint).init(allocator),
+        };
+    }
 };
 
 pub const CompileOptions = struct {
@@ -52,47 +85,62 @@ const PhaseTimings = struct {
     }
 };
 
-fn parseFlags(args: []const []const u8) !BuildFlags {
-    var flags: BuildFlags = .{};
+pub fn parseBuildArgs(args: []const []const u8) !ParsedBuildArgs {
+    var parsed: ParsedBuildArgs = .{};
+    var saw_target = false;
     var idx: usize = 0;
     while (idx < args.len) : (idx += 1) {
         const a = args[idx];
         if (std.mem.eql(u8, a, "--on-build-error-show-cascade")) {
-            flags.show_cascade = true;
+            parsed.flags.show_cascade = true;
         } else if (std.mem.eql(u8, a, "--on-build-error-show-syntax-tree")) {
-            flags.show_syntax_tree = true;
+            parsed.flags.show_syntax_tree = true;
         } else if (std.mem.eql(u8, a, "--on-build-error-show-semantic-graph")) {
-            flags.show_semantic_graph = true;
+            parsed.flags.show_semantic_graph = true;
         } else if (std.mem.eql(u8, a, "--on-build-error-show-token-list")) {
-            flags.show_token_list = true;
+            parsed.flags.show_token_list = true;
         } else if (std.mem.eql(u8, a, "--time-phases")) {
-            flags.time_phases = true;
+            parsed.flags.time_phases = true;
         } else if (std.mem.eql(u8, a, "--output")) {
             idx += 1;
             if (idx >= args.len) return error.MissingFlagValue;
-            flags.output_path = args[idx];
+            parsed.flags.output_path = args[idx];
         } else if (std.mem.eql(u8, a, "--emit-llvm")) {
             idx += 1;
             if (idx >= args.len) return error.MissingFlagValue;
-            flags.llvm_ir_path = args[idx];
+            parsed.flags.llvm_ir_path = args[idx];
         } else if (std.mem.eql(u8, a, "--emit-obj")) {
             idx += 1;
             if (idx >= args.len) return error.MissingFlagValue;
-            flags.object_path = args[idx];
+            parsed.flags.object_path = args[idx];
         } else if (std.mem.eql(u8, a, "--just-emit-obj")) {
             idx += 1;
             if (idx >= args.len) return error.MissingFlagValue;
-            flags.just_object_path = args[idx];
+            parsed.flags.just_object_path = args[idx];
         } else if (std.mem.eql(u8, a, "--sysroot")) {
             idx += 1;
             if (idx >= args.len) return error.MissingFlagValue;
-            flags.sysroot_path = args[idx];
-        } else {
+            parsed.flags.sysroot_path = args[idx];
+        } else if (std.mem.eql(u8, a, "--entry")) {
+            idx += 1;
+            if (idx >= args.len) return error.MissingFlagValue;
+            parsed.flags.entry_name = args[idx];
+        } else if (std.mem.startsWith(u8, a, "--")) {
             return error.UnknownFlag;
+        } else {
+            if (saw_target) return error.UnknownFlag;
+            parsed.target_path = a;
+            saw_target = true;
         }
     }
-    if (flags.object_path != null and flags.just_object_path != null) return error.ConflictingObjectEmissionModes;
-    return flags;
+    if (parsed.flags.object_path != null and parsed.flags.just_object_path != null) return error.ConflictingObjectEmissionModes;
+    return parsed;
+}
+
+fn parseFlags(args: []const []const u8) !BuildFlags {
+    const parsed = try parseBuildArgs(args);
+    if (!std.mem.eql(u8, parsed.target_path, ".")) return error.UnknownFlag;
+    return parsed.flags;
 }
 
 fn printTokenList(all: []const token.Token) void {
@@ -187,6 +235,253 @@ pub fn defaultOutputPathForModuleDir(allocator: std.mem.Allocator, module_dir: [
     );
 }
 
+fn defaultOutputPathForEntrypoint(
+    allocator: std.mem.Allocator,
+    module_root: []const u8,
+    entry_name: []const u8,
+    output_name: ?[]const u8,
+) ![]u8 {
+    return std.fmt.allocPrint(
+        allocator,
+        "{s}/build/debug/{s}",
+        .{ module_root, output_name orelse entry_name },
+    );
+}
+
+fn manifestPath(allocator: std.mem.Allocator, module_root: []const u8) ![]u8 {
+    return try std.fs.path.join(allocator, &.{ module_root, "argi.toml" });
+}
+
+fn hasManifest(io: std.Io, allocator: std.mem.Allocator, module_root: []const u8) !bool {
+    const path = try manifestPath(allocator, module_root);
+    defer allocator.free(path);
+    std.Io.Dir.cwd().access(io, path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return false,
+        else => return err,
+    };
+    return true;
+}
+
+fn parseQuotedValue(line: []const u8) ?[]const u8 {
+    const eq_idx = std.mem.indexOfScalar(u8, line, '=') orelse return null;
+    var value = std.mem.trim(u8, line[eq_idx + 1 ..], " \t\r\n");
+    if (std.mem.indexOfScalar(u8, value, '#')) |comment_idx| {
+        value = std.mem.trim(u8, value[0..comment_idx], " \t\r\n");
+    }
+    if (value.len < 2 or value[0] != '"' or value[value.len - 1] != '"') return null;
+    return value[1 .. value.len - 1];
+}
+
+fn parseKey(line: []const u8) []const u8 {
+    const eq_idx = std.mem.indexOfScalar(u8, line, '=') orelse return "";
+    return std.mem.trim(u8, line[0..eq_idx], " \t\r\n");
+}
+
+fn findEntrypoint(manifest: *ModuleManifest, name: []const u8) ?*ManifestEntrypoint {
+    for (manifest.entrypoints.items) |*entry| {
+        if (std.mem.eql(u8, entry.name, name)) return entry;
+    }
+    return null;
+}
+
+fn readManifest(allocator: std.mem.Allocator, io: std.Io, module_root: []const u8) !ModuleManifest {
+    const path = try manifestPath(allocator, module_root);
+    defer allocator.free(path);
+
+    const text = try std.Io.Dir.cwd().readFileAlloc(io, path, allocator, .limited(1024 * 1024));
+    var manifest = ModuleManifest.init(allocator);
+    var current_entry: ?*ManifestEntrypoint = null;
+    var in_build = false;
+
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw_line| {
+        const line = std.mem.trim(u8, raw_line, " \t\r\n");
+        if (line.len == 0 or line[0] == '#') continue;
+
+        if (line[0] == '[' and line[line.len - 1] == ']') {
+            const section = line[1 .. line.len - 1];
+            in_build = std.mem.eql(u8, section, "build");
+            current_entry = null;
+            if (std.mem.startsWith(u8, section, "entrypoints.")) {
+                const name = section["entrypoints.".len..];
+                try manifest.entrypoints.append(.{ .name = try allocator.dupe(u8, name) });
+                current_entry = &manifest.entrypoints.items[manifest.entrypoints.items.len - 1];
+            }
+            continue;
+        }
+
+        const key = parseKey(line);
+        const value = parseQuotedValue(line) orelse continue;
+        if (current_entry) |entry| {
+            if (std.mem.eql(u8, key, "path")) {
+                entry.path = try allocator.dupe(u8, value);
+            } else if (std.mem.eql(u8, key, "output_name")) {
+                entry.output_name = try allocator.dupe(u8, value);
+            }
+        } else if (in_build) {
+            if (std.mem.eql(u8, key, "default_entrypoint")) {
+                manifest.default_entrypoint = try allocator.dupe(u8, value);
+            }
+        } else {
+            if (std.mem.eql(u8, key, "name")) {
+                manifest.name = try allocator.dupe(u8, value);
+            }
+        }
+    }
+
+    return manifest;
+}
+
+fn printAvailableEntrypoints(entries: []const ManifestEntrypoint) void {
+    std.debug.print("Available entrypoints:\n", .{});
+    for (entries) |entry| {
+        std.debug.print("  - {s}\n", .{entry.name});
+    }
+}
+
+fn printMultipleEntrypointsError(entries: []const ManifestEntrypoint) void {
+    std.debug.print("Error: module has multiple entrypoints and no default entrypoint.\n\n", .{});
+    printAvailableEntrypoints(entries);
+    std.debug.print("\nUse:\n  argi build --entry {s}\n\n", .{entries[0].name});
+    std.debug.print("Or set in argi.toml:\n  [build]\n  default_entrypoint = \"{s}\"\n", .{entries[0].name});
+}
+
+fn printNoEntrypointError() void {
+    std.debug.print(
+        \\Error: module has no executable entrypoint.
+        \\
+        \\Add one to argi.toml:
+        \\
+        \\  [build]
+        \\  default_entrypoint = "main"
+        \\
+        \\  [entrypoints.main]
+        \\  path = "source/entrypoints/main"
+        \\
+        \\Or build a module path explicitly:
+        \\  argi build path/to/module
+        \\
+    , .{});
+}
+
+fn printUnknownEntrypointError(name: []const u8, entries: []const ManifestEntrypoint) void {
+    std.debug.print("Error: unknown entrypoint '{s}'.\n\n", .{name});
+    if (entries.len > 0) printAvailableEntrypoints(entries);
+}
+
+fn selectEntrypoint(manifest: *ModuleManifest, requested: ?[]const u8) !?*ManifestEntrypoint {
+    if (requested) |name| {
+        return findEntrypoint(manifest, name) orelse {
+            printUnknownEntrypointError(name, manifest.entrypoints.items);
+            return error.CompilationFailed;
+        };
+    }
+
+    if (manifest.default_entrypoint) |name| {
+        return findEntrypoint(manifest, name) orelse {
+            printUnknownEntrypointError(name, manifest.entrypoints.items);
+            return error.CompilationFailed;
+        };
+    }
+
+    if (manifest.entrypoints.items.len == 1) return &manifest.entrypoints.items[0];
+    if (manifest.entrypoints.items.len > 1) {
+        printMultipleEntrypointsError(manifest.entrypoints.items);
+        return error.CompilationFailed;
+    }
+    return null;
+}
+
+fn ensureDirExists(io: std.Io, path: []const u8) !void {
+    var dir = std.Io.Dir.cwd().openDir(io, path, .{}) catch |err| switch (err) {
+        error.FileNotFound => {
+            return error.FileNotFound;
+        },
+        else => return err,
+    };
+    dir.close(io);
+}
+
+pub fn resolveBuildPlan(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    target_path: []const u8,
+    flags: BuildFlags,
+) !BuildPlan {
+    const target_dir = try resolveBuildModuleDir(allocator, io, target_path);
+
+    if (try hasManifest(io, allocator, target_dir)) {
+        var manifest = try readManifest(allocator, io, target_dir);
+        const entry = try selectEntrypoint(&manifest, flags.entry_name);
+        if (entry) |selected| {
+            const entry_rel_path = selected.path orelse selected.name;
+            const entry_path = try std.fs.path.resolve(allocator, &.{ target_dir, entry_rel_path });
+            ensureDirExists(io, entry_path) catch |err| switch (err) {
+                error.FileNotFound => {
+                    std.debug.print("Error: entrypoint '{s}' points to missing path:\n  {s}\n", .{ selected.name, entry_rel_path });
+                    return error.CompilationFailed;
+                },
+                else => return err,
+            };
+            return .{
+                .target_path = target_path,
+                .module_root = target_dir,
+                .module_dir = entry_path,
+                .entrypoint_name = selected.name,
+                .output_path = try defaultOutputPathForEntrypoint(allocator, target_dir, selected.name, selected.output_name),
+            };
+        }
+
+        return .{
+            .target_path = target_path,
+            .module_root = target_dir,
+            .module_dir = target_dir,
+            .output_path = try defaultOutputPathForEntrypoint(allocator, target_dir, std.fs.path.basename(target_dir), manifest.name),
+        };
+    }
+
+    if (flags.entry_name != null) {
+        std.debug.print("Error: --entry requires argi.toml in the selected module root.\n", .{});
+        return error.CompilationFailed;
+    }
+
+    return .{
+        .target_path = target_path,
+        .module_dir = target_dir,
+        .output_path = try defaultOutputPathForModuleDir(allocator, target_dir),
+    };
+}
+
+fn isWrappableMainCandidate(f: *const sg_mod.FunctionDeclaration) bool {
+    if (!std.mem.eql(u8, f.name, "main")) return false;
+    if (f.output.fields.len != 1) return false;
+    const fld = f.output.fields[0];
+    if (!std.mem.eql(u8, fld.name, "status_code")) return false;
+    return switch (fld.ty) {
+        .builtin => |bt| bt == .Int32,
+        else => false,
+    };
+}
+
+fn hasExecutableMain(nodes: []const *sg_mod.SGNode) bool {
+    for (nodes) |node| {
+        if (node.content != .function_declaration) continue;
+        if (isWrappableMainCandidate(node.content.function_declaration)) return true;
+    }
+    return false;
+}
+
+fn printMissingMainError(module_dir: []const u8, from_manifest: bool) void {
+    if (from_manifest) {
+        std.debug.print("Error: module has no executable entrypoint.\n\n", .{});
+        std.debug.print("Configured module root has no entrypoints and no valid main function:\n  {s}\n\n", .{module_dir});
+        std.debug.print("Add [entrypoints.<name>] to argi.toml or define main() -> (.status_code: Int32).\n", .{});
+    } else {
+        std.debug.print("Error: module has no executable main function:\n  {s}\n\n", .{module_dir});
+        std.debug.print("Expected main() -> (.status_code: Int32).\n", .{});
+    }
+}
+
 fn replaceFile(io: std.Io, src: []const u8, dst: []const u8) !void {
     std.Io.Dir.deleteFileAbsolute(io, dst) catch |err| switch (err) {
         error.FileNotFound => {},
@@ -206,7 +501,8 @@ pub fn compileTarget(
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    const module_dir = try resolveBuildModuleDir(allocator, io, target_path);
+    const plan = try resolveBuildPlan(allocator, io, target_path, flags);
+    const module_dir = plan.module_dir;
     var timings: PhaseTimings = .{};
     const cwd_path = try std.process.currentPathAlloc(io, allocator);
     defer allocator.free(cwd_path);
@@ -215,7 +511,7 @@ pub fn compileTarget(
     const final_output_path = if (flags.output_path) |path|
         try std.fs.path.resolve(allocator, &.{ cwd_path, path })
     else
-        try defaultOutputPathForModuleDir(allocator, module_dir);
+        plan.output_path;
     const final_ir_path = if (flags.llvm_ir_path) |path|
         try std.fs.path.resolve(allocator, &.{ cwd_path, path })
     else
@@ -295,6 +591,11 @@ pub fn compileTarget(
             if (flags.show_semantic_graph) semantizer_ctx.printSG();
         }
         dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
+        return error.CompilationFailed;
+    }
+
+    if (!emit_object_only and !hasExecutableMain(sg)) {
+        printMissingMainError(module_dir, plan.module_root != null);
         return error.CompilationFailed;
     }
 
@@ -425,9 +726,8 @@ pub fn compileTarget(
 }
 
 pub fn compile(io: std.Io, environ_map: ?*const std.process.Environ.Map, args: []const []const u8) !void {
-    if (args.len == 0) return error.MissingBuildTarget;
-    const flags = try parseFlags(args[1..]);
-    try compileTarget(args[0], flags, .{}, io, environ_map);
+    const parsed = try parseBuildArgs(args);
+    try compileTarget(parsed.target_path, parsed.flags, .{}, io, environ_map);
 }
 
 test "parse build flags keeps diagnostics toggles and output paths" {
