@@ -37,17 +37,17 @@ pub const SyntaxerError = error{
 pub const Syntaxer = struct {
     tokens: []const tok.Token,
     index: usize,
-    allocator: *const std.mem.Allocator,
+    allocator: std.mem.Allocator,
     st: std.array_list.Managed(*syn.STNode),
     diags: *diagnostic.Diagnostics,
     parsing_pipe_rhs: bool,
 
-    pub fn init(alloc: *const std.mem.Allocator, toks: []const tok.Token, diags: *diagnostic.Diagnostics) Syntaxer {
+    pub fn init(alloc: std.mem.Allocator, toks: []const tok.Token, diags: *diagnostic.Diagnostics) Syntaxer {
         return .{
             .tokens = toks,
             .index = 0,
             .allocator = alloc,
-            .st = std.array_list.Managed(*syn.STNode).init(alloc.*),
+            .st = std.array_list.Managed(*syn.STNode).init(alloc),
             .diags = diags,
             .parsing_pipe_rhs = false,
         };
@@ -164,12 +164,12 @@ pub const Syntaxer = struct {
         };
 
         const signed_literal = switch (literal) {
-            .decimal_int_literal => |text| tok.Literal{ .decimal_int_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
-            .hexadecimal_int_literal => |text| tok.Literal{ .hexadecimal_int_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
-            .octal_int_literal => |text| tok.Literal{ .octal_int_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
-            .binary_int_literal => |text| tok.Literal{ .binary_int_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
-            .regular_float_literal => |text| tok.Literal{ .regular_float_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
-            .scientific_float_literal => |text| tok.Literal{ .scientific_float_literal = try std.fmt.allocPrint(self.allocator.*, "-{s}", .{text}) },
+            .decimal_int_literal => |text| tok.Literal{ .decimal_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
+            .hexadecimal_int_literal => |text| tok.Literal{ .hexadecimal_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
+            .octal_int_literal => |text| tok.Literal{ .octal_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
+            .binary_int_literal => |text| tok.Literal{ .binary_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
+            .regular_float_literal => |text| tok.Literal{ .regular_float_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
+            .scientific_float_literal => |text| tok.Literal{ .scientific_float_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
             else => {
                 try self.diags.add(minus_loc, .syntax, "expected numeric literal after unary '-'", .{});
                 return SyntaxerError.ExpectedIntLiteral;
@@ -212,7 +212,7 @@ pub const Syntaxer = struct {
                     self.advanceOne();
                     if (!self.tokenIs(.close_bracket)) return SyntaxerError.ExpectedRightBracket;
                     self.advanceOne();
-                    return try std.fmt.allocPrint(self.allocator.*, "operator {s}[]", .{ident});
+                    return try std.fmt.allocPrint(self.allocator, "operator {s}[]", .{ident});
                 }
 
                 try self.diags.add(self.tokenLocation(), .syntax, "unsupported operator '{s}'", .{ident});
@@ -256,7 +256,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var names = std.array_list.Managed([]const u8).init(self.allocator.*);
+        var names = std.array_list.Managed([]const u8).init(self.allocator);
         while (!self.tokenIs(.close_bracket)) {
             const n = try self.parseIdentifier();
             try names.append(n);
@@ -276,7 +276,7 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
         self.advanceOne();
         self.skipNewLinesAndComments();
-        var tys = std.array_list.Managed(syn.Type).init(self.allocator.*);
+        var tys = std.array_list.Managed(syn.Type).init(self.allocator);
         while (!self.tokenIs(.close_bracket)) {
             const t = (try self.parseType()).?; // types are mandatory here
             try tys.append(t);
@@ -418,7 +418,7 @@ pub const Syntaxer = struct {
             self.advanceOne();
             const rhs = try self.parseName();
             tname = .{
-                .string = try std.fmt.allocPrint(self.allocator.*, "{s}.{s}", .{ tname.string, rhs.string }),
+                .string = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ tname.string, rhs.string }),
                 .location = tname.location,
             };
         }
@@ -443,8 +443,8 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var names = std.array_list.Managed([]const u8).init(self.allocator.*);
-        var funcs = std.array_list.Managed(syn.AbstractFunctionRequirement).init(self.allocator.*);
+        var names = std.array_list.Managed([]const u8).init(self.allocator);
+        var funcs = std.array_list.Managed(syn.AbstractFunctionRequirement).init(self.allocator);
 
         while (!self.tokenIs(.close_parenthesis)) {
             var name = try self.parseName();
@@ -486,7 +486,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var elems = std.array_list.Managed(*syn.STNode).init(self.allocator.*);
+        var elems = std.array_list.Managed(*syn.STNode).init(self.allocator);
 
         while (!self.tokenIs(.close_parenthesis)) {
             const elem = try self.parseExpression();
@@ -514,7 +514,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var fields = std.array_list.Managed(syn.StructTypeLiteralField).init(self.allocator.*);
+        var fields = std.array_list.Managed(syn.StructTypeLiteralField).init(self.allocator);
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
@@ -582,7 +582,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var fields = std.array_list.Managed(syn.StructTypeLiteralField).init(self.allocator.*);
+        var fields = std.array_list.Managed(syn.StructTypeLiteralField).init(self.allocator);
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
@@ -637,7 +637,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var variants = std.array_list.Managed(syn.ChoiceTypeLiteralVariant).init(self.allocator.*);
+        var variants = std.array_list.Managed(syn.ChoiceTypeLiteralVariant).init(self.allocator);
 
         while (!self.tokenIs(.close_parenthesis)) {
             var is_default = false;
@@ -786,10 +786,10 @@ pub const Syntaxer = struct {
     }
 
     fn parseReachDirective(self: *Syntaxer, hash_loc: tok.Location) SyntaxerError!*syn.STNode {
-        var alternatives = std.array_list.Managed(syn.ReachAlternative).init(self.allocator.*);
+        var alternatives = std.array_list.Managed(syn.ReachAlternative).init(self.allocator);
 
         while (true) {
-            var segments = std.array_list.Managed(syn.Name).init(self.allocator.*);
+            var segments = std.array_list.Managed(syn.Name).init(self.allocator);
             const first = try self.parseName();
             try segments.append(first);
 
@@ -812,7 +812,7 @@ pub const Syntaxer = struct {
     }
 
     fn makeSyntheticPositionalName(self: *Syntaxer, idx: usize, loc: tok.Location) !syn.Name {
-        const name = try std.fmt.allocPrint(self.allocator.*, "__positional_{d}", .{idx});
+        const name = try std.fmt.allocPrint(self.allocator, "__positional_{d}", .{idx});
         return .{
             .string = name,
             .location = loc,
@@ -896,8 +896,8 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var fields = std.array_list.Managed(syn.StructValueLiteralField).init(self.allocator.*);
-        var positional_elements = std.array_list.Managed(*syn.STNode).init(self.allocator.*);
+        var fields = std.array_list.Managed(syn.StructValueLiteralField).init(self.allocator);
+        var positional_elements = std.array_list.Managed(*syn.STNode).init(self.allocator);
         var positional_prefix_count: u32 = 0;
         var has_named = false;
         var positional_index: usize = 0;
@@ -1535,7 +1535,7 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.hash)) {
             self.advanceOne();
             const gen_struct = try self.parseGenericParamsStruct();
-            var names = std.array_list.Managed([]const u8).init(self.allocator.*);
+            var names = std.array_list.Managed([]const u8).init(self.allocator);
             for (gen_struct.fields) |fld| try names.append(fld.name.string);
             generic_params = names.items;
             generic_params_struct = gen_struct;
@@ -1722,7 +1722,7 @@ pub const Syntaxer = struct {
 
     // ─────────────────────────────  SENTENCES  ──────────────────────────────
     fn parseSentences(self: *Syntaxer) !std.array_list.Managed(*syn.STNode) {
-        var list = std.array_list.Managed(*syn.STNode).init(self.allocator.*);
+        var list = std.array_list.Managed(*syn.STNode).init(self.allocator);
 
         while (!self.tokenIs(.eof) and !self.tokenIs(.close_brace)) {
             switch (self.current().content) {
@@ -1773,7 +1773,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var cases = std.array_list.Managed(syn.MatchCase).init(self.allocator.*);
+        var cases = std.array_list.Managed(syn.MatchCase).init(self.allocator);
         while (!self.tokenIs(.close_brace)) {
             if (!self.tokenIs(.double_dot)) return SyntaxerError.ExpectedIdentifier;
             self.advanceOne();

@@ -243,7 +243,7 @@ pub fn compileTarget(
     // 2. Diagnósticos globales ────────────────────────────────────────────
     var diagnostics = diag.Diagnostics.init(&allocator, files.items);
 
-    var pipeline = frontend.FrontendPipeline.init(&allocator, io, &diagnostics, options.frontend_options);
+    var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, options.frontend_options);
     defer pipeline.deinit();
 
     // 3. Tokenizar todos (fusionando EOF) ─────────────────────────────────

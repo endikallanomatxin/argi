@@ -18,7 +18,7 @@ pub const FrontendPipeline = struct {
         semantizer: semantizer.SemantizerOptions = .{},
     };
 
-    allocator: *const std.mem.Allocator,
+    allocator: std.mem.Allocator,
     io: std.Io,
     diagnostics: *diag.Diagnostics,
     options: Options,
@@ -30,7 +30,7 @@ pub const FrontendPipeline = struct {
     sg_nodes: []const *sg.SGNode = &.{},
 
     pub fn init(
-        allocator: *const std.mem.Allocator,
+        allocator: std.mem.Allocator,
         io: std.Io,
         diagnostics: *diag.Diagnostics,
         options: Options,
@@ -40,7 +40,7 @@ pub const FrontendPipeline = struct {
             .io = io,
             .diagnostics = diagnostics,
             .options = options,
-            .tokens = std.array_list.Managed(token.Token).init(allocator.*),
+            .tokens = std.array_list.Managed(token.Token).init(allocator),
         };
     }
 
@@ -86,7 +86,7 @@ pub const FrontendPipeline = struct {
     }
 
     pub fn semantize(self: *FrontendPipeline) ![]const *sg.SGNode {
-        self.sem_ctx = semantizer.Semantizer.init(self.allocator, self.io, self.st_nodes, self.diagnostics, self.options.semantizer);
+        self.sem_ctx = semantizer.Semantizer.init(&self.allocator, self.io, self.st_nodes, self.diagnostics, self.options.semantizer);
         const result = try self.sem_ctx.?.semantizeWithTimings();
         self.sg_nodes = result.nodes;
         self.semantize_timings = result.timings;

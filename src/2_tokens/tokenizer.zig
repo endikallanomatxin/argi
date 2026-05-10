@@ -20,7 +20,7 @@ const NumericLiteralKind = enum {
 const LiteralTag = std.meta.Tag(tok.Literal);
 
 pub const Tokenizer = struct {
-    allocator: *const std.mem.Allocator,
+    allocator: std.mem.Allocator,
     diagnostics: *diag.Diagnostics,
     source: []const u8,
     tokens: std.array_list.Managed(tok.Token),
@@ -28,7 +28,7 @@ pub const Tokenizer = struct {
     location: tok.Location,
 
     pub fn init(
-        allocator: *const std.mem.Allocator,
+        allocator: std.mem.Allocator,
         diagnostics: *diag.Diagnostics,
         source: []const u8,
         file_name: []const u8,
@@ -37,7 +37,7 @@ pub const Tokenizer = struct {
             .allocator = allocator,
             .diagnostics = diagnostics,
             .source = source,
-            .tokens = std.array_list.Managed(tok.Token).init(allocator.*),
+            .tokens = std.array_list.Managed(tok.Token).init(allocator),
             .location = tok.Location{
                 .file = file_name,
                 .offset = 0,
@@ -575,7 +575,7 @@ pub const Tokenizer = struct {
                 // saltamos la comilla inicial
                 _ = self.advance();
 
-                var buf = std.array_list.Managed(u8).init(self.allocator.*);
+                var buf = std.array_list.Managed(u8).init(self.allocator);
                 defer buf.deinit();
 
                 // recopilamos caracteres, gestionando escapes
@@ -661,7 +661,7 @@ fn expectTokenizerDiagnostics(source: []const u8, should_diagnose: bool) !void {
     defer diagnostics.deinit();
 
     var tokenizer_ctx = Tokenizer.init(
-        &allocator,
+        allocator,
         &diagnostics,
         source,
         files[0].path,
@@ -685,7 +685,7 @@ fn expectNumericLiteralToken(source: []const u8, expected_tag: LiteralTag) !void
     defer diagnostics.deinit();
 
     var tokenizer_ctx = Tokenizer.init(
-        &allocator,
+        allocator,
         &diagnostics,
         source,
         files[0].path,

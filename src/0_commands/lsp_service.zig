@@ -451,7 +451,7 @@ pub const LanguageService = struct {
         defer diagnostics.deinit();
 
         var pipeline_failed = false;
-        var pipeline = frontend.FrontendPipeline.init(analysis_allocator, self.io, &diagnostics, .{});
+        var pipeline = frontend.FrontendPipeline.init(analysis_allocator.*, self.io, &diagnostics, .{});
         defer pipeline.deinit();
 
         _ = pipeline.semantizeFiles(files) catch {
@@ -525,7 +525,7 @@ pub const LanguageService = struct {
         var diagnostics = diag.Diagnostics.init(analysis_allocator, &one_primary);
         defer diagnostics.deinit();
 
-        var pipeline = frontend.FrontendPipeline.init(analysis_allocator, self.io, &diagnostics, .{});
+        var pipeline = frontend.FrontendPipeline.init(analysis_allocator.*, self.io, &diagnostics, .{});
         defer pipeline.deinit();
 
         const sg_nodes = pipeline.semantizeFiles(files) catch |err| {
@@ -632,7 +632,7 @@ pub const LanguageService = struct {
         var diagnostics = diag.Diagnostics.init(&work, &one_file);
         defer diagnostics.deinit();
 
-        var pipeline = frontend.FrontendPipeline.init(&work, self.io, &diagnostics, .{});
+        var pipeline = frontend.FrontendPipeline.init(work, self.io, &diagnostics, .{});
         defer pipeline.deinit();
 
         _ = pipeline.parseFiles(&one_file) catch {

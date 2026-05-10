@@ -49,7 +49,7 @@ fn discoverTests(
     const files = try sf.collectModuleWithOptions(&allocator, io, options, module_dir);
     var diagnostics = diag.Diagnostics.init(&allocator, files.items);
 
-    var pipeline = frontend.FrontendPipeline.init(&allocator, io, &diagnostics, .{});
+    var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, .{});
     defer pipeline.deinit();
 
     const st_nodes = try pipeline.parseFiles(files.items);
