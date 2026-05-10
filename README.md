@@ -46,10 +46,39 @@ are in [`more/`](more/).
 
 ### Building
 
-Build a module by running:
+Build the natural target for the current module directory:
+
+```bash
+argi build
+```
+
+Build a specific module directory:
 
 ```bash
 argi build <root_dir>
+```
+
+If the directory contains `argi.toml`, the tool uses its build configuration.
+For application-style modules this typically means:
+
+```toml
+[build]
+default_entrypoint = "main"
+
+[entrypoints.main]
+path = "source/entrypoints/main"
+```
+
+The default output for configured entrypoints is:
+
+```text
+build/debug/<entrypoint-name>
+```
+
+Use a named entrypoint explicitly with:
+
+```bash
+argi build --entry main
 ```
 
 ### LSP
@@ -62,18 +91,19 @@ argi lsp
 
 ### Scaffolding
 
-Create a package manifest and basic ignore files for an importable folder
-module:
+Create a manifest and basic ignore files for an importable module directory:
 
 ```sh
 argi init module my_module
 ```
 
-Create a package manifest and a minimal application entrypoint:
+Create a manifest and a minimal application entrypoint:
 
 ```sh
 argi init project my_project
-argi build my_project/source/entrypoints/main
+cd my_project
+argi build
+argi run
 ```
 
 
@@ -85,7 +115,7 @@ Argi 0.1 is primarily tested on Linux and macOS.
 
 Windows is not an official 0.1 target yet.
 
-Building the compiler requires Zig 0.15.x and LLVM development files. The build
+Building the compiler requires Zig 0.16.x and LLVM development files. The build
 script looks for `llvm-config`, or you can set:
 
 - `LLVM_INCLUDE_DIR`
@@ -169,9 +199,9 @@ Use:
 ```
 
 Generated test binaries and other transient testing artifacts live under the
-project-local `.argi-cache/` directory. Normal build outputs stay explicit:
-`argi build` still writes the final binary to `build/output` by default, or to
-the path given with `--output`.
+project-local `.argi-cache/` directory. Configured entrypoint outputs live under
+`build/debug/`. Explicit module-directory builds keep their legacy default
+`build/output` path for now, or use the path given with `--output`.
 
 Tests are declared explicitly in source:
 
