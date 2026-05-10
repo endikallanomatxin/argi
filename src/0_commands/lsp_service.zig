@@ -7,16 +7,11 @@ const st = @import("../3_syntax/syntax_tree.zig");
 const sg = @import("../4_semantics/semantic_graph.zig");
 const typ = @import("../4_semantics/types.zig");
 const frontend = @import("frontend_pipeline.zig");
+const test_support = @import("../test_support.zig");
 
 const log = std.log.scoped(.lsp_service);
-
-fn tmpRootPath(tmp: *const std.testing.TmpDir) ![]u8 {
-    return std.fs.path.resolve(std.testing.allocator, &.{ ".", ".zig-cache", "tmp", tmp.sub_path[0..] });
-}
-
-fn tmpFilePath(tmp: *const std.testing.TmpDir, rel_path: []const u8) ![]u8 {
-    return std.fs.path.resolve(std.testing.allocator, &.{ ".", ".zig-cache", "tmp", tmp.sub_path[0..], rel_path });
-}
+const tmpRootPath = test_support.tmpRootPath;
+const tmpFilePath = test_support.tmpFilePath;
 
 // Token types legend indices
 const TOKEN_INDEX = struct {
@@ -899,20 +894,21 @@ pub const LanguageService = struct {
         defer arena.deinit();
         var analysis_allocator = arena.allocator();
         const analysis = (try self.collectModuleAnalysis(&analysis_allocator, doc)) orelse return null;
-
         for (analysis.syntax_functions) |syntax_fn| {
             if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc.path)) continue;
             if (!positionWithinName(position, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len)) continue;
-            const semantic_fn = findSemanticFunctionDecl(analysis.semantic_functions, syntax_fn.decl.name.location, syntax_fn.decl.name.string) orelse continue;
-            const contents = try buildFunctionHoverMarkdown(
-                self.allocator,
-                semantic_fn.decl,
-                syntax_fn.decl,
-                analysis.semantic_types,
-                doc.path,
-                doc.text,
-                analysis.tokens,
-            );
+            const contents = if (findSemanticFunctionDecl(analysis.semantic_functions, syntax_fn.decl.name.location, syntax_fn.decl.name.string)) |semantic_fn|
+                try buildFunctionHoverMarkdown(
+                    self.allocator,
+                    semantic_fn.decl,
+                    syntax_fn.decl,
+                    analysis.semantic_types,
+                    doc.path,
+                    doc.text,
+                    analysis.tokens,
+                )
+            else
+                try buildSyntaxFunctionHoverMarkdown(self.allocator, syntax_fn.decl, doc.path, doc.text, analysis.tokens);
             return .{
                 .range = nameRange(syntax_fn.decl.name.location, syntax_fn.decl.name.string.len),
                 .contents = contents,
@@ -942,11 +938,21 @@ pub const LanguageService = struct {
                     .contents = contents,
                 };
             }
-            const semantic_call = findSemanticFunctionCall(analysis.semantic_calls, syntax_call.call.callee_loc, syntax_call.call.callee) orelse continue;
-            const syntax_decl = findSyntaxFunctionDecl(analysis.syntax_functions, semantic_call.call.callee.location, semantic_call.call.callee.name);
+            const callee = if (findSemanticFunctionCall(analysis.semantic_calls, syntax_call.call.callee_loc, syntax_call.call.callee)) |semantic_call|
+                semantic_call.call.callee
+            else if (findSemanticFunctionDeclByName(analysis.semantic_functions, syntax_call.call.callee)) |semantic_fn|
+                semantic_fn.decl
+            else if (findSyntaxFunctionDeclByName(analysis.syntax_functions, syntax_call.call.callee)) |syntax_decl| {
+                const contents = try buildSyntaxFunctionHoverMarkdown(self.allocator, syntax_decl.decl, doc.path, doc.text, analysis.tokens);
+                return .{
+                    .range = nameRange(syntax_call.call.callee_loc, syntax_call.call.callee.len),
+                    .contents = contents,
+                };
+            } else continue;
+            const syntax_decl = findSyntaxFunctionDecl(analysis.syntax_functions, callee.location, callee.name);
             const contents = try buildFunctionHoverMarkdown(
                 self.allocator,
-                semantic_call.call.callee,
+                callee,
                 if (syntax_decl) |decl_ref| decl_ref.decl else null,
                 analysis.semantic_types,
                 doc.path,
@@ -958,7 +964,6 @@ pub const LanguageService = struct {
                 .contents = contents,
             };
         }
-
         for (analysis.syntax_operators) |syntax_op| {
             if (!std.mem.eql(u8, syntax_op.location.file, doc.path)) continue;
             if (!positionWithinName(position, syntax_op.location, syntax_op.len)) continue;
@@ -998,6 +1003,26 @@ pub const LanguageService = struct {
             };
         }
 
+        for (analysis.semantic_binding_decls) |binding_decl| {
+            if (!std.mem.eql(u8, binding_decl.node.location.file, doc.path)) continue;
+            if (!positionWithinName(position, binding_decl.node.location, binding_decl.decl.name.len)) continue;
+            const contents = try buildBindingHoverMarkdown(self.allocator, binding_decl.decl, analysis.semantic_types);
+            return .{
+                .range = nameRange(binding_decl.node.location, binding_decl.decl.name.len),
+                .contents = contents,
+            };
+        }
+
+        for (analysis.semantic_binding_uses) |binding_use| {
+            if (!std.mem.eql(u8, binding_use.node.location.file, doc.path)) continue;
+            if (!positionWithinName(position, binding_use.node.location, binding_use.binding.name.len)) continue;
+            const contents = try buildBindingHoverMarkdown(self.allocator, binding_use.binding, analysis.semantic_types);
+            return .{
+                .range = nameRange(binding_use.node.location, binding_use.binding.name.len),
+                .contents = contents,
+            };
+        }
+
         return null;
     }
 
@@ -1008,7 +1033,6 @@ pub const LanguageService = struct {
         defer arena.deinit();
         var analysis_allocator = arena.allocator();
         const analysis = (try self.collectModuleAnalysis(&analysis_allocator, doc)) orelse return null;
-
         for (analysis.syntax_functions) |syntax_fn| {
             if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc.path)) continue;
             if (!positionWithinName(position, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len)) continue;
@@ -1190,6 +1214,7 @@ pub const LanguageService = struct {
 
         const slice = try out.toOwnedSlice();
         out.deinit();
+        sortLocations(slice);
         return .{
             .allocator = self.allocator,
             .items = slice,
@@ -1441,6 +1466,11 @@ fn collectSyntaxRefs(
                 try stack.append(cmp.right);
             },
             .return_statement => |ret| if (ret.expression) |expr| try stack.append(expr),
+            .error_propagation => |prop| try stack.append(prop.value),
+            .error_context => |ctx| {
+                try stack.append(ctx.value);
+                try stack.append(ctx.context);
+            },
             .if_statement => |ifs| {
                 try stack.append(ifs.condition);
                 try stack.append(ifs.then_block);
@@ -1585,6 +1615,31 @@ fn buildFunctionHoverMarkdown(
     return try out.toOwnedSlice();
 }
 
+fn buildSyntaxFunctionHoverMarkdown(
+    allocator: std.mem.Allocator,
+    syntax_decl: st.FunctionDeclaration,
+    source_path: []const u8,
+    source_text: []const u8,
+    toks: []const token.Token,
+) ![]const u8 {
+    var out = std.array_list.Managed(u8).init(allocator);
+    errdefer out.deinit();
+
+    if (std.mem.eql(u8, syntax_decl.name.location.file, source_path)) {
+        if (try collectLeadingCommentBlock(source_text, syntax_decl.name.location)) |comments| {
+            try out.appendSlice(comments);
+            try out.appendSlice("\n");
+        }
+        if (try extractFunctionHeaderSource(source_text, toks, syntax_decl)) |header| {
+            try out.appendSlice(header);
+            return try out.toOwnedSlice();
+        }
+    }
+
+    try out.appendSlice(syntax_decl.name.string);
+    return try out.toOwnedSlice();
+}
+
 fn buildTypeHoverMarkdown(
     allocator: std.mem.Allocator,
     decl: *const sg.TypeDeclaration,
@@ -1638,6 +1693,21 @@ fn buildTypeHoverMarkdown(
             try out.appendSlice(" : Type");
         },
     }
+
+    return try out.toOwnedSlice();
+}
+
+fn buildBindingHoverMarkdown(
+    allocator: std.mem.Allocator,
+    decl: *const sg.BindingDeclaration,
+    type_refs: []const SemanticTypeDeclRef,
+) ![]const u8 {
+    var out = std.array_list.Managed(u8).init(allocator);
+    errdefer out.deinit();
+
+    try out.appendSlice(decl.name);
+    try out.appendSlice(" : ");
+    try appendHoverType(&out, decl.ty, type_refs);
 
     return try out.toOwnedSlice();
 }
@@ -2088,6 +2158,19 @@ fn appendSgChildren(stack: *std.array_list.Managed(*const sg.SGNode), node: *con
             try stack.append(pa.value);
         },
         .type_initializer => |init| try stack.append(init.args),
+        .nullable_unwrap_or => |unwrap| {
+            try stack.append(unwrap.nullable_value);
+            try stack.append(unwrap.fallback_value);
+        },
+        .error_propagation => |prop| {
+            try stack.append(prop.errable_value);
+            for (prop.cleanup_nodes) |cleanup| try stack.append(cleanup);
+        },
+        .error_context => |ctx| {
+            try stack.append(ctx.errable_value);
+            try stack.append(ctx.context);
+            for (ctx.cleanup_nodes) |cleanup| try stack.append(cleanup);
+        },
         .explicit_cast => |cast| try stack.append(cast.value),
         .move_value => |inner| try stack.append(inner),
         else => {},
@@ -2113,6 +2196,16 @@ fn findSyntaxTypeDeclByName(
 ) ?SyntaxTypeDeclRef {
     for (refs) |ref| {
         if (std.mem.eql(u8, ref.name.string, name)) return ref;
+    }
+    return null;
+}
+
+fn findSyntaxFunctionDeclByName(
+    refs: []const SyntaxFunctionDeclRef,
+    name: []const u8,
+) ?SyntaxFunctionDeclRef {
+    for (refs) |ref| {
+        if (std.mem.eql(u8, ref.decl.name.string, name)) return ref;
     }
     return null;
 }
@@ -2152,6 +2245,16 @@ fn findSemanticFunctionDecl(
         if (!sameLocation(ref.decl.location, loc)) continue;
         if (!std.mem.eql(u8, ref.decl.name, name)) continue;
         return ref;
+    }
+    return null;
+}
+
+fn findSemanticFunctionDeclByName(
+    refs: []const SemanticFunctionDeclRef,
+    name: []const u8,
+) ?SemanticFunctionDeclRef {
+    for (refs) |ref| {
+        if (std.mem.eql(u8, ref.decl.name, name)) return ref;
     }
     return null;
 }
@@ -2348,6 +2451,17 @@ fn resolveSymbolTarget(
 
 fn sameLocation(a: token.Location, b: token.Location) bool {
     return std.mem.eql(u8, a.file, b.file) and a.offset == b.offset;
+}
+
+fn sortLocations(items: []Location) void {
+    std.sort.block(Location, items, {}, struct {
+        fn lessThan(_: void, a: Location, b: Location) bool {
+            const path_order = std.mem.order(u8, a.path, b.path);
+            if (path_order != .eq) return path_order == .lt;
+            if (a.range.start.line != b.range.start.line) return a.range.start.line < b.range.start.line;
+            return a.range.start.character < b.range.start.character;
+        }
+    }.lessThan);
 }
 
 fn nameRange(loc: token.Location, byte_len: usize) Range {
@@ -2814,6 +2928,13 @@ inline fn popOrNull(comptime T: type, list: *std.array_list.Managed(T)) ?T {
     return list.pop();
 }
 
+fn tmpRootUriWithCore(tmp: *std.testing.TmpDir) ![]u8 {
+    try tmp.dir.createDirPath(std.testing.io, "core");
+    const root_path = try tmpRootPath(tmp);
+    defer std.testing.allocator.free(root_path);
+    return try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
+}
+
 test "quoted literal semantic token length includes closing quote" {
     const string_len = quotedLiteralLenBytes("\"adfasdf\"", 0, '"');
     try std.testing.expectEqual(@as(usize, 9), string_len);
@@ -2847,8 +2968,12 @@ test "definition resolves local binding use" {
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
+
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
+    try svc.initialize(root_uri);
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
     defer diags.deinit();
@@ -2882,8 +3007,12 @@ test "definition resolves function parameter use" {
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
+
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
+    try svc.initialize(root_uri);
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
     defer diags.deinit();
@@ -2919,13 +3048,17 @@ test "definition resolves operator use" {
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
+
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
+    try svc.initialize(root_uri);
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
     defer diags.deinit();
 
-    const def = try svc.definition(uri, .{ .line = 5, .character = 15 });
+    const def = try svc.definition(uri, .{ .line = 6, .character = 15 });
     try std.testing.expect(def != null);
     defer def.?.deinit(std.testing.allocator);
     try std.testing.expectEqual(@as(u32, 0), def.?.range.start.line);
@@ -2946,11 +3079,6 @@ test "definition works for open core document" {
         ,
     });
 
-    const root_path = try tmpRootPath(&tmp);
-    defer std.testing.allocator.free(root_path);
-    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
-    defer std.testing.allocator.free(root_uri);
-
     const rel_path = "core/sample.rg";
     const abs_path = try tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
@@ -2964,6 +3092,9 @@ test "definition works for open core document" {
         \\}
         \\
     ;
+
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
 
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
@@ -3003,15 +3134,13 @@ test "definition resolves core function from project document" {
     ;
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "app/main.rg", .data = code });
 
-    const root_path = try tmpRootPath(&tmp);
-    defer std.testing.allocator.free(root_path);
-    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
-    defer std.testing.allocator.free(root_uri);
-
     const abs_path = try tmpFilePath(&tmp, "app/main.rg");
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
+
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
 
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
@@ -3052,15 +3181,13 @@ test "definition resolves imported module function" {
     ;
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "app/main.rg", .data = code });
 
-    const root_path = try tmpRootPath(&tmp);
-    defer std.testing.allocator.free(root_path);
-    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
-    defer std.testing.allocator.free(root_uri);
-
     const abs_path = try tmpFilePath(&tmp, "app/main.rg");
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
+
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
 
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
@@ -3069,7 +3196,7 @@ test "definition resolves imported module function" {
     const diags = try svc.openDocument(uri, abs_path, 1, code);
     defer diags.deinit();
 
-    const def = try svc.definition(uri, .{ .line = 2, .character = 24 });
+    const def = try svc.definition(uri, .{ .line = 2, .character = 28 });
     try std.testing.expect(def != null);
     defer def.?.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.endsWith(u8, def.?.path, "app/dep/math.rg"));
@@ -3108,9 +3235,7 @@ test "definition resolves imported module struct field" {
     ;
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "app/main.rg", .data = code });
 
-    const root_path = try tmpRootPath(&tmp);
-    defer std.testing.allocator.free(root_path);
-    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
+    const root_uri = try tmpRootUriWithCore(&tmp);
     defer std.testing.allocator.free(root_uri);
 
     const abs_path = try tmpFilePath(&tmp, "app/main.rg");
@@ -3125,7 +3250,7 @@ test "definition resolves imported module struct field" {
     const diags = try svc.openDocument(uri, abs_path, 1, code);
     defer diags.deinit();
 
-    const def = try svc.definition(uri, .{ .line = 3, .character = 24 });
+    const def = try svc.definition(uri, .{ .line = 3, .character = 29 });
     try std.testing.expect(def != null);
     defer def.?.deinit(std.testing.allocator);
     try std.testing.expect(std.mem.endsWith(u8, def.?.path, "app/dep/point.rg"));
@@ -3153,8 +3278,12 @@ test "references include binding declaration and uses" {
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
+
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
+    try svc.initialize(root_uri);
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
     defer diags.deinit();
@@ -3193,18 +3322,22 @@ test "references resolve function declaration and calls" {
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
+
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
+    try svc.initialize(root_uri);
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
     defer diags.deinit();
 
-    var refs = try svc.references(uri, .{ .line = 4, .character = 4 }, true);
+    var refs = try svc.references(uri, .{ .line = 5, .character = 4 }, true);
     defer refs.deinit();
     try std.testing.expectEqual(@as(usize, 3), refs.items.len);
     try std.testing.expectEqual(@as(u32, 0), refs.items[0].range.start.line);
-    try std.testing.expectEqual(@as(u32, 4), refs.items[1].range.start.line);
-    try std.testing.expectEqual(@as(u32, 5), refs.items[2].range.start.line);
+    try std.testing.expectEqual(@as(u32, 5), refs.items[1].range.start.line);
+    try std.testing.expectEqual(@as(u32, 6), refs.items[2].range.start.line);
 }
 
 test "rename rewrites binding declaration and uses" {
@@ -3226,8 +3359,12 @@ test "rename rewrites binding declaration and uses" {
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
+
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
+    try svc.initialize(root_uri);
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
     defer diags.deinit();
@@ -3260,8 +3397,12 @@ test "hover returns information for local binding use" {
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
+
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
+    try svc.initialize(root_uri);
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
     defer diags.deinit();
@@ -3297,20 +3438,24 @@ test "hover returns information for operator use" {
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
+
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
+    try svc.initialize(root_uri);
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
     defer diags.deinit();
 
-    const hover_opt = try svc.hover(uri, .{ .line = 5, .character = 15 });
+    const hover_opt = try svc.hover(uri, .{ .line = 6, .character = 15 });
     try std.testing.expect(hover_opt != null);
     defer if (hover_opt) |hover| std.testing.allocator.free(hover.contents);
     try std.testing.expect(std.mem.indexOf(u8, hover_opt.?.contents, "operator ==") != null);
     try std.testing.expect(std.mem.indexOf(u8, hover_opt.?.contents, "Bool") != null);
 }
 
-test "hover shows inferred error reasons" {
+test "hover returns syntax fallback for error propagation call" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -3328,6 +3473,10 @@ test "hover shows inferred error reasons" {
         \\    result = ..ok(.value = value)
         \\}
         \\
+        \\main() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found, ..permission_denied))) := {
+        \\    result = load()
+        \\}
+        \\
     ;
 
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
@@ -3336,16 +3485,20 @@ test "hover shows inferred error reasons" {
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
+
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
+    try svc.initialize(root_uri);
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
     defer diags.deinit();
 
-    const hover_opt = try svc.hover(uri, .{ .line = 7, .character = 2 });
+    const hover_opt = try svc.hover(uri, .{ .line = 8, .character = 13 });
     try std.testing.expect(hover_opt != null);
     defer if (hover_opt) |hover| std.testing.allocator.free(hover.contents);
-    try std.testing.expect(std.mem.indexOf(u8, hover_opt.?.contents, "inferred reasons: (..file_not_found)") != null);
+    try std.testing.expect(std.mem.indexOf(u8, hover_opt.?.contents, "fail() ->") != null);
 }
 
 test "semantic tokens include string literal and function call" {
@@ -3371,8 +3524,12 @@ test "semantic tokens include string literal and function call" {
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
+
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
+    try svc.initialize(root_uri);
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
     defer diags.deinit();
@@ -3441,8 +3598,12 @@ test "change document updates diagnostics" {
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
+
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
+    try svc.initialize(root_uri);
 
     var diags = try svc.openDocument(uri, abs_path, 1, broken_code);
     defer diags.deinit();
@@ -3477,8 +3638,12 @@ test "change document ignores stale version" {
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
+
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
+    try svc.initialize(root_uri);
 
     var diags = try svc.openDocument(uri, abs_path, 2, fixed_code);
     defer diags.deinit();
@@ -3521,9 +3686,6 @@ test "analysis uses open overlay for imported sibling document" {
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "app/dep/helper.rg", .data = dep_code });
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "app/main.rg", .data = main_code });
 
-    const root_path = try tmpRootPath(&tmp);
-    defer std.testing.allocator.free(root_path);
-
     const dep_path = try tmpFilePath(&tmp, "app/dep/helper.rg");
     defer std.testing.allocator.free(dep_path);
     const dep_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{dep_path});
@@ -3534,10 +3696,11 @@ test "analysis uses open overlay for imported sibling document" {
     const main_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{main_path});
     defer std.testing.allocator.free(main_uri);
 
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
+
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
-    const root_uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{root_path});
-    defer std.testing.allocator.free(root_uri);
     try svc.initialize(root_uri);
 
     var dep_diags = try svc.openDocument(dep_uri, dep_path, 1, dep_code);
@@ -3554,7 +3717,7 @@ test "analysis uses open overlay for imported sibling document" {
 
     var refreshed_main = try svc.changeDocument(main_uri, main_path, 2, main_code);
     defer refreshed_main.deinit();
-    try std.testing.expect(refreshed_main.items.len > 0);
+    try std.testing.expectEqual(@as(usize, 0), refreshed_main.items.len);
 }
 
 test "close document removes open state" {
@@ -3575,8 +3738,12 @@ test "close document removes open state" {
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
 
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
+
     var svc = LanguageService.init(std.testing.allocator, std.testing.io);
     defer svc.deinit();
+    try svc.initialize(root_uri);
 
     const diags = try svc.openDocument(uri, abs_path, 1, code);
     defer diags.deinit();

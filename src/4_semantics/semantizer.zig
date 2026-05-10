@@ -3654,7 +3654,7 @@ pub const Semantizer = struct {
                     try self.addPrivateMemberDiag(loc, "value", name);
                     return error.Reported;
                 }
-                const n = try sg.makeSGNode(.{ .binding_use = b }, undefined, self.allocator);
+                const n = try sg.makeSGNode(.{ .binding_use = b }, loc, self.allocator);
                 n.sem_type = b.ty;
                 return .{ .node = n, .ty = b.ty };
             }
@@ -3678,7 +3678,7 @@ pub const Semantizer = struct {
         }
 
         if (s.lookupRefinedBinding(name)) |b| {
-            const n = try sg.makeSGNode(.{ .binding_use = b }, undefined, self.allocator);
+            const n = try sg.makeSGNode(.{ .binding_use = b }, loc, self.allocator);
             n.sem_type = b.ty;
             return .{ .node = n, .ty = b.ty };
         }
@@ -3688,7 +3688,7 @@ pub const Semantizer = struct {
             try self.addPrivateMemberDiag(loc, "value", name);
             return error.Reported;
         }
-        const n = try sg.makeSGNode(.{ .binding_use = b }, undefined, self.allocator);
+        const n = try sg.makeSGNode(.{ .binding_use = b }, loc, self.allocator);
         n.sem_type = b.ty;
         return .{ .node = n, .ty = b.ty };
     }
@@ -10023,7 +10023,7 @@ pub const Semantizer = struct {
         const bin = try self.allocator.create(sg.BinaryOperation);
         bin.* = .{ .operator = bo.operator, .left = lhs.node, .right = rhs.node };
 
-        const n = try sg.makeSGNode(.{ .binary_operation = bin.* }, undefined, self.allocator);
+        const n = try sg.makeSGNode(.{ .binary_operation = bin.* }, loc, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = lhs.ty };
     }
@@ -10123,7 +10123,7 @@ pub const Semantizer = struct {
             .right = rhs.node,
         };
 
-        const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, undefined, self.allocator);
+        const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, loc, self.allocator);
         try s.nodes.append(node);
         return .{ .node = node, .ty = .{ .builtin = .Bool } };
     }
@@ -10213,7 +10213,7 @@ pub const Semantizer = struct {
             .right = rhs.node,
         };
 
-        const node = try sg.makeSGNode(.{ .logical_operation = logical_ptr.* }, undefined, self.allocator);
+        const node = try sg.makeSGNode(.{ .logical_operation = logical_ptr.* }, lo.left.*.location, self.allocator);
         try s.nodes.append(node);
         return .{ .node = node, .ty = bool_ty };
     }
@@ -10236,7 +10236,7 @@ pub const Semantizer = struct {
             .cleanup_nodes = cleanup_nodes,
         };
 
-        const n = try sg.makeSGNode(.{ .return_statement = rs }, undefined, self.allocator);
+        const n = try sg.makeSGNode(.{ .return_statement = rs }, if (r.expression) |ex| ex.location else undefined, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }

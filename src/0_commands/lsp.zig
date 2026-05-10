@@ -4,6 +4,7 @@ const log = std.log.scoped(.argi_lsp);
 
 const service = @import("lsp_service.zig");
 const argi_version = @import("version.zig");
+const test_support = @import("../test_support.zig");
 
 const AllocError = std.mem.Allocator.Error;
 
@@ -13,14 +14,6 @@ const ReadMessageError = error{
 };
 
 const UriError = error{UnsupportedUri};
-
-fn tmpRootPath(tmp: *const std.testing.TmpDir) ![]u8 {
-    return std.fs.path.resolve(std.testing.allocator, &.{ ".", ".zig-cache", "tmp", tmp.sub_path[0..] });
-}
-
-fn tmpFilePath(tmp: *const std.testing.TmpDir, rel_path: []const u8) ![]u8 {
-    return std.fs.path.resolve(std.testing.allocator, &.{ ".", ".zig-cache", "tmp", tmp.sub_path[0..], rel_path });
-}
 
 fn repoRootPrefix() ![]u8 {
     return std.fs.path.resolve(std.testing.allocator, &.{"."});
@@ -1090,7 +1083,7 @@ test "didOpen publishes diagnostics" {
     ;
 
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmpFilePath(&tmp, rel_path);
+    const abs_path = try test_support.tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
@@ -1165,7 +1158,7 @@ test "didChange publishes diagnostics and ignores stale versions" {
     ;
 
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = fixed_code });
-    const abs_path = try tmpFilePath(&tmp, rel_path);
+    const abs_path = try test_support.tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
@@ -1242,6 +1235,13 @@ test "didChange publishes diagnostics and ignores stale versions" {
     const change_diags = change_response.value.object.get("params").?.object.get("diagnostics").?.array.items;
     try std.testing.expect(change_diags.len > 0);
 
+    const broken_code_json = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "{f}",
+        .{std.json.fmt(broken_code, .{})},
+    );
+    defer std.testing.allocator.free(broken_code_json);
+
     const stale_json = try std.fmt.allocPrint(
         std.testing.allocator,
         \\{{
@@ -1250,11 +1250,11 @@ test "didChange publishes diagnostics and ignores stale versions" {
         \\    "version": 2
         \\  }},
         \\  "contentChanges": [{{
-        \\    "text": "{s}"
+        \\    "text": {s}
         \\  }}]
         \\}}
     ,
-        .{ uri, broken_code },
+        .{ uri, broken_code_json },
     );
     defer std.testing.allocator.free(stale_json);
 
@@ -1285,7 +1285,7 @@ test "didClose publishes empty diagnostics" {
     ;
 
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmpFilePath(&tmp, rel_path);
+    const abs_path = try test_support.tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
@@ -1374,7 +1374,7 @@ test "definition responds with target location over protocol" {
     ;
 
     try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
-    const abs_path = try tmpFilePath(&tmp, rel_path);
+    const abs_path = try test_support.tmpFilePath(&tmp, rel_path);
     defer std.testing.allocator.free(abs_path);
     const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
     defer std.testing.allocator.free(uri);
