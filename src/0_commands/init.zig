@@ -39,7 +39,7 @@ fn initModule(allocator: std.mem.Allocator, io: std.Io, root_path: []const u8) !
 
     const manifest_path = try std.fs.path.join(allocator, &.{ root_path, "argi.toml" });
     defer allocator.free(manifest_path);
-    const manifest = try manifestTemplate(allocator, package_name, "module");
+    const manifest = try moduleManifestTemplate(allocator, package_name);
     defer allocator.free(manifest);
     try writeFileIfMissing(io, manifest_path, manifest);
 
@@ -65,7 +65,7 @@ fn initProject(allocator: std.mem.Allocator, io: std.Io, root_path: []const u8) 
 
     const manifest_path = try std.fs.path.join(allocator, &.{ root_path, "argi.toml" });
     defer allocator.free(manifest_path);
-    const manifest = try manifestTemplate(allocator, package_name, "project");
+    const manifest = try projectManifestTemplate(allocator, package_name);
     defer allocator.free(manifest);
     try writeFileIfMissing(io, manifest_path, manifest);
 
@@ -119,16 +119,33 @@ fn packageNameFromPath(allocator: std.mem.Allocator, root_path: []const u8, fall
     return try out.toOwnedSlice();
 }
 
-fn manifestTemplate(allocator: std.mem.Allocator, package_name: []const u8, kind: []const u8) ![]u8 {
+fn moduleManifestTemplate(allocator: std.mem.Allocator, package_name: []const u8) ![]u8 {
     return std.fmt.allocPrint(
         allocator,
         \\name = "{s}"
         \\version = "0.0.0"
-        \\kind = "{s}"
         \\minimum_argi_version = "{s}"
         \\
     ,
-        .{ package_name, kind, argi_version.current },
+        .{ package_name, argi_version.current },
+    );
+}
+
+fn projectManifestTemplate(allocator: std.mem.Allocator, package_name: []const u8) ![]u8 {
+    return std.fmt.allocPrint(
+        allocator,
+        \\name = "{s}"
+        \\version = "0.0.0"
+        \\minimum_argi_version = "{s}"
+        \\
+        \\[build]
+        \\default_entrypoint = "main"
+        \\
+        \\[entrypoints.main]
+        \\path = "source/entrypoints/main"
+        \\
+    ,
+        .{ package_name, argi_version.current },
     );
 }
 
@@ -152,18 +169,18 @@ fn projectReadmeTemplate(allocator: std.mem.Allocator, package_name: []const u8)
         allocator,
         \\# {s}
         \\
-        \\Argi project package.
+        \\Argi module scaffolded as an application.
         \\
         \\Build the default entrypoint with:
         \\
         \\```sh
-        \\argi build source/entrypoints/main
+        \\argi build
         \\```
         \\
         \\Run it with:
         \\
         \\```sh
-        \\argi run source/entrypoints/main
+        \\argi run
         \\```
         \\
     ,
@@ -188,6 +205,12 @@ fn expectFileContains(io: std.Io, path: []const u8, expected: []const u8) !void 
     const text = try std.Io.Dir.cwd().readFileAlloc(io, path, std.testing.allocator, .limited(1024 * 1024));
     defer std.testing.allocator.free(text);
     try std.testing.expect(std.mem.indexOf(u8, text, expected) != null);
+}
+
+fn expectFileOmits(io: std.Io, path: []const u8, forbidden: []const u8) !void {
+    const text = try std.Io.Dir.cwd().readFileAlloc(io, path, std.testing.allocator, .limited(1024 * 1024));
+    defer std.testing.allocator.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, forbidden) == null);
 }
 
 test "init module scaffolds minimal files" {
@@ -216,6 +239,8 @@ test "init module scaffolds minimal files" {
     try expectFileMissing(std.testing.io, main_path);
     try expectFileContains(std.testing.io, manifest, "version = \"0.0.0\"\n");
     try expectFileContains(std.testing.io, manifest, "minimum_argi_version = \"0.1.0\"\n");
+    try expectFileOmits(std.testing.io, manifest, "kind = ");
+    try expectFileOmits(std.testing.io, manifest, "[entrypoints.");
 }
 
 test "init project scaffolds basic layout" {
@@ -247,4 +272,9 @@ test "init project scaffolds basic layout" {
     try expectFileMissing(std.testing.io, private_dir);
     try expectFileContains(std.testing.io, manifest, "version = \"0.0.0\"\n");
     try expectFileContains(std.testing.io, manifest, "minimum_argi_version = \"0.1.0\"\n");
+    try expectFileContains(std.testing.io, manifest, "[build]\n");
+    try expectFileContains(std.testing.io, manifest, "default_entrypoint = \"main\"\n");
+    try expectFileContains(std.testing.io, manifest, "[entrypoints.main]\n");
+    try expectFileContains(std.testing.io, manifest, "path = \"source/entrypoints/main\"\n");
+    try expectFileOmits(std.testing.io, manifest, "kind = ");
 }
