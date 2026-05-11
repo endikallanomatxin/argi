@@ -8591,11 +8591,9 @@ pub const Semantizer = struct {
 
     fn appendReachDefaultHintForDecl(
         self: *Semantizer,
-        signatures: *std.array_list.Managed(u8),
-        reach_defaults: *std.array_list.Managed(u8),
+        out: *std.array_list.Managed(u8),
         decl: syn.FunctionDeclaration,
-        any_signature: *bool,
-        any_reach: *bool,
+        any_overload: *bool,
     ) !void {
         var decl_has_reach_default = false;
         for (decl.input.fields) |field| {
@@ -8606,25 +8604,24 @@ pub const Semantizer = struct {
         }
         if (!decl_has_reach_default) return;
 
-        if (any_signature.*) try signatures.appendSlice("\n");
-        any_signature.* = true;
-        try signatures.appendSlice("  - ");
-        try self.appendSyntaxFunctionSignature(signatures, decl);
+        if (any_overload.*) try out.appendSlice("\n");
+        any_overload.* = true;
+        try out.appendSlice("  - ");
+        try self.appendSyntaxFunctionSignature(out, decl);
+        try out.appendSlice("\n    omitted #reach defaults:");
 
         for (decl.input.fields) |field| {
             const default_node = field.default_value orelse continue;
             if (default_node.content != .reach_directive) continue;
-            if (any_reach.*) try reach_defaults.appendSlice("\n");
-            any_reach.* = true;
-            try reach_defaults.appendSlice("  - .");
-            try reach_defaults.appendSlice(field.name.string);
-            try reach_defaults.appendSlice(" uses #reach [");
-            try self.appendSyntaxReachDirective(reach_defaults, default_node.content.reach_directive);
-            try reach_defaults.appendSlice("]");
+            try out.appendSlice("\n      - .");
+            try out.appendSlice(field.name.string);
+            try out.appendSlice(" uses #reach [");
+            try self.appendSyntaxReachDirective(out, default_node.content.reach_directive);
+            try out.appendSlice("]");
             if (field.type) |field_ty| {
-                try reach_defaults.appendSlice(" expected as '");
-                try self.appendSyntaxTypePretty(reach_defaults, field_ty);
-                try reach_defaults.appendSlice("'");
+                try out.appendSlice(" expected as '");
+                try self.appendSyntaxTypePretty(out, field_ty);
+                try out.appendSlice("'");
             }
         }
     }
@@ -8634,13 +8631,10 @@ pub const Semantizer = struct {
         fn_name: []const u8,
         requester_file: []const u8,
     ) !?OwnedText {
-        var signatures = std.array_list.Managed(u8).init(self.allocator.*);
-        defer signatures.deinit();
-        var reach_defaults = std.array_list.Managed(u8).init(self.allocator.*);
-        defer reach_defaults.deinit();
+        var overloads = std.array_list.Managed(u8).init(self.allocator.*);
+        defer overloads.deinit();
 
-        var any_signature = false;
-        var any_reach = false;
+        var any_overload = false;
         for (self.st_nodes) |node| {
             const decl = switch (node.content) {
                 .function_declaration => |decl| decl,
@@ -8649,16 +8643,14 @@ pub const Semantizer = struct {
             };
             if (!std.mem.eql(u8, decl.name.string, fn_name)) continue;
             if (!(try self.syntaxFunctionVisibleFrom(decl, node.location, requester_file))) continue;
-            try self.appendReachDefaultHintForDecl(&signatures, &reach_defaults, decl, &any_signature, &any_reach);
+            try self.appendReachDefaultHintForDecl(&overloads, decl, &any_overload);
         }
-        if (!any_signature or !any_reach) return null;
+        if (!any_overload) return null;
 
         var out = std.array_list.Managed(u8).init(self.allocator.*);
         errdefer out.deinit();
-        try out.appendSlice("Available signatures:\n");
-        try out.appendSlice(signatures.items);
-        try out.appendSlice("\n\nDefaults that could not be supplied from #reach:\n");
-        try out.appendSlice(reach_defaults.items);
+        try out.appendSlice("Overloads with omitted #reach defaults:\n");
+        try out.appendSlice(overloads.items);
         try out.appendSlice("\n\nAdd a reachable value in the caller, for example:\n");
         try out.appendSlice("  main(.system: System = System()) -> (.status_code: Int32 = 0) := { ... }\n\n");
         try out.appendSlice("Or pass the omitted argument explicitly.");
