@@ -2412,6 +2412,25 @@ test "feature_tests/io/25_positional_text_helpers" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/io/26X_print_without_system" {
+    try buildExpectFailExact("tests/feature_tests/io/26X_print_without_system",
+        \\tests/feature_tests/io/26X_print_without_system/main.rg:2:10: error: function 'print' exists, but no overload matches the provided arguments.
+        \\Available signatures:
+        \\  - print(.value: StringView, .stdout: $&Writer = #reach stdout, terminal.stdout, system.terminal.stdout) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
+        \\
+        \\Defaults that could not be supplied from #reach:
+        \\  - .stdout uses #reach [stdout, terminal.stdout, system.terminal.stdout] expected as '$&Writer'
+        \\
+        \\Add a reachable value in the caller, for example:
+        \\  main(.system: System = System()) -> (.status_code: Int32 = 0) := { ... }
+        \\
+        \\Or pass the omitted argument explicitly.
+        \\      print("Hello, World!\n")
+        \\           ^
+        \\
+    );
+}
+
 test "feature_tests/text/03_string_buffer_io" {
     const test_path = "tests/feature_tests/text/03_string_buffer_io";
     try expectSuccessfulBuild(test_path);

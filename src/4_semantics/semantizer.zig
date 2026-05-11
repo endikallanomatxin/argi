@@ -8475,6 +8475,196 @@ pub const Semantizer = struct {
         }
     }
 
+    fn appendSyntaxTypePretty(self: *Semantizer, buf: *std.array_list.Managed(u8), ty: syn.Type) !void {
+        switch (ty) {
+            .type_name => |tn| try buf.appendSlice(tn.string),
+            .pointer_type => |ptr_info| {
+                switch (ptr_info.mutability) {
+                    .read_only => try buf.appendSlice("&"),
+                    .read_write => try buf.appendSlice("$&"),
+                }
+                try self.appendSyntaxTypePretty(buf, ptr_info.child.*);
+            },
+            .inferred_errable => |inner| {
+                try buf.appendSlice("!");
+                try self.appendSyntaxTypePretty(buf, inner.*);
+            },
+            .array_type => |arr_info| {
+                var len_buf: [32]u8 = undefined;
+                const len_text = std.fmt.bufPrint(&len_buf, "[{d}]", .{arr_info.length}) catch unreachable;
+                try buf.appendSlice(len_text);
+                try self.appendSyntaxTypePretty(buf, arr_info.element.*);
+            },
+            .generic_type_instantiation => |g| {
+                try buf.appendSlice(g.base_name.string);
+                try buf.appendSlice("#(");
+                for (g.args.fields, 0..) |field, idx| {
+                    if (idx != 0) try buf.appendSlice(", ");
+                    try buf.appendSlice(".");
+                    try buf.appendSlice(field.name.string);
+                    if (field.type) |field_ty| {
+                        try buf.appendSlice(": ");
+                        try self.appendSyntaxTypePretty(buf, field_ty);
+                    }
+                }
+                try buf.appendSlice(")");
+            },
+            .struct_type_literal => |st| {
+                try buf.appendSlice("(");
+                for (st.fields, 0..) |field, idx| {
+                    if (idx != 0) try buf.appendSlice(", ");
+                    try buf.appendSlice(".");
+                    try buf.appendSlice(field.name.string);
+                    if (field.type) |field_ty| {
+                        try buf.appendSlice(": ");
+                        try self.appendSyntaxTypePretty(buf, field_ty);
+                    }
+                }
+                try buf.appendSlice(")");
+            },
+            .choice_type_literal => |ct| {
+                try buf.appendSlice("(");
+                for (ct.variants, 0..) |variant, idx| {
+                    if (idx != 0) try buf.appendSlice(", ");
+                    try buf.appendSlice("..");
+                    if (variant.module_qualifier) |qualifier| {
+                        try buf.appendSlice(qualifier.string);
+                        try buf.appendSlice(".");
+                    }
+                    try buf.appendSlice(variant.name.string);
+                    if (variant.payload_type) |payload| {
+                        try buf.appendSlice(" ");
+                        try self.appendSyntaxTypePretty(buf, payload);
+                    }
+                }
+                try buf.appendSlice(")");
+            },
+        }
+    }
+
+    fn appendSyntaxReachDirective(self: *Semantizer, buf: *std.array_list.Managed(u8), reach: syn.ReachDirective) !void {
+        _ = self;
+        for (reach.alternatives, 0..) |alt, alt_idx| {
+            if (alt_idx != 0) try buf.appendSlice(", ");
+            for (alt.segments, 0..) |segment, seg_idx| {
+                if (seg_idx != 0) try buf.append('.');
+                try buf.appendSlice(segment.string);
+            }
+        }
+    }
+
+    fn appendSyntaxFunctionSignature(self: *Semantizer, buf: *std.array_list.Managed(u8), decl: syn.FunctionDeclaration) !void {
+        try buf.appendSlice(decl.name.string);
+        try buf.appendSlice("(");
+        for (decl.input.fields, 0..) |field, idx| {
+            if (idx != 0) try buf.appendSlice(", ");
+            try buf.appendSlice(".");
+            try buf.appendSlice(field.name.string);
+            if (field.type) |field_ty| {
+                try buf.appendSlice(": ");
+                try self.appendSyntaxTypePretty(buf, field_ty);
+            }
+            if (field.default_value) |default_node| {
+                if (default_node.content == .reach_directive) {
+                    try buf.appendSlice(" = #reach ");
+                    try self.appendSyntaxReachDirective(buf, default_node.content.reach_directive);
+                }
+            }
+        }
+        try buf.appendSlice(") -> (");
+        for (decl.output.fields, 0..) |field, idx| {
+            if (idx != 0) try buf.appendSlice(", ");
+            try buf.appendSlice(".");
+            try buf.appendSlice(field.name.string);
+            if (field.type) |field_ty| {
+                try buf.appendSlice(": ");
+                try self.appendSyntaxTypePretty(buf, field_ty);
+            }
+        }
+        try buf.appendSlice(")");
+    }
+
+    fn syntaxFunctionVisibleFrom(self: *Semantizer, decl: syn.FunctionDeclaration, decl_loc: tok.Location, requester_file: []const u8) !bool {
+        if (!isPrivateName(decl.name.string)) return true;
+        return try self.isSameModule(requester_file, decl_loc.file);
+    }
+
+    fn appendReachDefaultHintForDecl(
+        self: *Semantizer,
+        signatures: *std.array_list.Managed(u8),
+        reach_defaults: *std.array_list.Managed(u8),
+        decl: syn.FunctionDeclaration,
+        any_signature: *bool,
+        any_reach: *bool,
+    ) !void {
+        var decl_has_reach_default = false;
+        for (decl.input.fields) |field| {
+            const default_node = field.default_value orelse continue;
+            if (default_node.content != .reach_directive) continue;
+            decl_has_reach_default = true;
+            break;
+        }
+        if (!decl_has_reach_default) return;
+
+        if (any_signature.*) try signatures.appendSlice("\n");
+        any_signature.* = true;
+        try signatures.appendSlice("  - ");
+        try self.appendSyntaxFunctionSignature(signatures, decl);
+
+        for (decl.input.fields) |field| {
+            const default_node = field.default_value orelse continue;
+            if (default_node.content != .reach_directive) continue;
+            if (any_reach.*) try reach_defaults.appendSlice("\n");
+            any_reach.* = true;
+            try reach_defaults.appendSlice("  - .");
+            try reach_defaults.appendSlice(field.name.string);
+            try reach_defaults.appendSlice(" uses #reach [");
+            try self.appendSyntaxReachDirective(reach_defaults, default_node.content.reach_directive);
+            try reach_defaults.appendSlice("]");
+            if (field.type) |field_ty| {
+                try reach_defaults.appendSlice(" expected as '");
+                try self.appendSyntaxTypePretty(reach_defaults, field_ty);
+                try reach_defaults.appendSlice("'");
+            }
+        }
+    }
+
+    fn buildReachDefaultDiagnosticText(
+        self: *Semantizer,
+        fn_name: []const u8,
+        requester_file: []const u8,
+    ) !?OwnedText {
+        var signatures = std.array_list.Managed(u8).init(self.allocator.*);
+        defer signatures.deinit();
+        var reach_defaults = std.array_list.Managed(u8).init(self.allocator.*);
+        defer reach_defaults.deinit();
+
+        var any_signature = false;
+        var any_reach = false;
+        for (self.st_nodes) |node| {
+            const decl = switch (node.content) {
+                .function_declaration => |decl| decl,
+                .test_declaration => |td| td.decl,
+                else => continue,
+            };
+            if (!std.mem.eql(u8, decl.name.string, fn_name)) continue;
+            if (!(try self.syntaxFunctionVisibleFrom(decl, node.location, requester_file))) continue;
+            try self.appendReachDefaultHintForDecl(&signatures, &reach_defaults, decl, &any_signature, &any_reach);
+        }
+        if (!any_signature or !any_reach) return null;
+
+        var out = std.array_list.Managed(u8).init(self.allocator.*);
+        errdefer out.deinit();
+        try out.appendSlice("Available signatures:\n");
+        try out.appendSlice(signatures.items);
+        try out.appendSlice("\n\nDefaults that could not be supplied from #reach:\n");
+        try out.appendSlice(reach_defaults.items);
+        try out.appendSlice("\n\nAdd a reachable value in the caller, for example:\n");
+        try out.appendSlice("  main(.system: System = System()) -> (.status_code: Int32 = 0) := { ... }\n\n");
+        try out.appendSlice("Or pass the omitted argument explicitly.");
+        return self.formatOwnedText(try out.toOwnedSlice());
+    }
+
     fn addMissingFunctionDiagnostic(
         self: *Semantizer,
         fn_name: []const u8,
@@ -8483,6 +8673,16 @@ pub const Semantizer = struct {
         loc: tok.Location,
     ) !void {
         if (!(try self.hasVisibleFunctionNamed(fn_name, s, loc))) {
+            if (try self.buildReachDefaultDiagnosticText(fn_name, loc.file)) |details| {
+                defer details.deinit();
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "function '{s}' exists, but no overload matches the provided arguments.\n{s}",
+                    .{ fn_name, details.bytes },
+                );
+                return;
+            }
             try self.diags.add(
                 loc,
                 .semantic,
