@@ -146,6 +146,8 @@ pub fn choiceTypeContainsVariant(choice_ty: *const sg.ChoiceType, variant: sg.Ch
     return null;
 }
 
+// Inclusion relation for choice types: expected accepts actual when it contains
+// every variant that actual can produce.
 pub fn choiceTypeIsSupersetOf(expected: *const sg.ChoiceType, actual: *const sg.ChoiceType) bool {
     for (actual.variants) |variant| {
         if (choiceTypeContainsVariant(expected, variant) == null) return false;
@@ -355,6 +357,9 @@ pub fn ensureValuePositionAllowed(
     return error.Reported;
 }
 
+// Structural equality is deliberately narrower than assignment compatibility.
+// Use it only where matching type shape is intended, such as selected
+// anonymous/inferred forms and codegen checks.
 pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
     return switch (a) {
         .builtin => |ab| switch (b) {
@@ -428,7 +433,10 @@ pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
     };
 }
 
-// Strict type equality: no wildcards; pointer subtypes must match exactly.
+// Strict identity check: nominal declarations must be the same declaration or
+// share the same generic identity, and pointer subtypes must match exactly.
+// Generic identity keeps instantiated generic structs, choices, and arrays
+// equal across instantiation paths; it is not a broad structural fallback.
 pub fn typesExactlyEqual(a: sg.Type, b: sg.Type) bool {
     return switch (a) {
         .builtin => |ab| switch (b) {
@@ -521,6 +529,8 @@ pub fn pointerMutabilityCompatible(expected: syn.PointerMutability, actual: syn.
     };
 }
 
+// Assignment and argument-passing compatibility. Prefer this when checking
+// whether an expression can be used where an expected type is required.
 pub fn typesCompatible(expected: sg.Type, actual: sg.Type) bool {
     return switch (expected) {
         .builtin => |eb| switch (actual) {
