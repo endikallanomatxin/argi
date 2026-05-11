@@ -41,6 +41,16 @@ fn objPathFor(name: []const u8) ![]u8 {
     );
 }
 
+fn argiTestCacheDirForModule(module_dir: []const u8) ![]u8 {
+    var hasher = std.hash.Wyhash.init(0);
+    hasher.update(module_dir);
+    return std.fmt.allocPrint(
+        std.testing.allocator,
+        "{s}/.argi-cache/tests/{x}",
+        .{ compilerRoot(), hasher.final() },
+    );
+}
+
 fn clean(name: []const u8) !void {
     var root = try std.Io.Dir.cwd().openDir(std.testing.io, compilerRoot(), .{});
     defer root.close(std.testing.io);
@@ -546,6 +556,53 @@ test "installed argi resolves core from its installation prefix outside repo" {
     defer std.testing.allocator.free(run_result.stderr);
 
     try expectEqual(std.process.Child.Term{ .exited = 0 }, run_result.term);
+}
+
+test "installed argi test resolves core from its installation prefix outside repo" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.createDirPath(std.testing.io, "module");
+    try tmp.dir.createDirPath(std.testing.io, "outside");
+
+    try tmp.dir.writeFile(std.testing.io, .{
+        .sub_path = "module/main.rg",
+        .data =
+        \\test installed_prefix(.system: System = System()) -> !() := {
+        \\    testing.expect(.condition = true)!
+        \\}
+        \\
+        ,
+    });
+
+    const tmp_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(tmp_root);
+
+    const module_dir = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "module" });
+    defer std.testing.allocator.free(module_dir);
+
+    const outside_dir = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "outside" });
+    defer std.testing.allocator.free(outside_dir);
+
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+
+    var env_map = try std.testing.environ.createMap(std.testing.allocator);
+    defer env_map.deinit();
+
+    // This test must verify selfExePath-based sysroot resolution for argi test.
+    _ = env_map.swapRemove("ARGI_SYSROOT");
+
+    const result = try runChildInCwdWithEnv(
+        &.{ installed_argi, "test", module_dir },
+        outside_dir,
+        &env_map,
+    );
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
+    try expect(std.mem.indexOf(u8, result.stderr, "PASS installed_prefix\n") != null);
 }
 
 test "argi init creates executable package" {
@@ -3315,6 +3372,40 @@ test "feature_tests/testing/01_simple_pass_uses_local_cache" {
         error.FileNotFound => {},
         else => return err,
     };
+}
+
+test "feature_tests/testing/01_simple_pass_cleans_module_test_cache" {
+    const test_path = "tests/feature_tests/testing/01_simple_pass";
+    const repo_root = try repoRootPrefix();
+    defer std.testing.allocator.free(repo_root);
+
+    const module_dir = try std.fs.path.join(std.testing.allocator, &.{ repo_root, test_path });
+    defer std.testing.allocator.free(module_dir);
+
+    const cache_dir = try argiTestCacheDirForModule(module_dir);
+    defer std.testing.allocator.free(cache_dir);
+
+    const stale_path = try std.fs.path.join(std.testing.allocator, &.{ cache_dir, "stale" });
+    defer std.testing.allocator.free(stale_path);
+
+    try std.Io.Dir.cwd().createDirPath(std.testing.io, cache_dir);
+    try std.Io.Dir.cwd().writeFile(std.testing.io, .{
+        .sub_path = stale_path,
+        .data = "stale test binary",
+    });
+
+    try argiTestExpectStderr(
+        test_path,
+        &.{},
+        0,
+        "PASS simple_pass\n",
+    );
+
+    std.Io.Dir.cwd().access(std.testing.io, stale_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    return error.StaleTestCacheSurvived;
 }
 
 test "feature_tests/testing/02_skip" {

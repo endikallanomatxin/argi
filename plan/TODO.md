@@ -1,45 +1,5 @@
 # TODOs antes de release `0.1`
 
-## No bloqueante, pero recomendable antes de seguir creciendo
-
-### Documentar las distintas igualdades de tipos
-
-Hay varias funciones relacionadas con igualdad/compatibilidad de tipos:
-
-* `typesExactlyEqual`
-* `typesStructurallyEqual`
-* `typesCompatible`
-* superset de choices
-* identidad genérica
-
-Esto puede estar bien, pero debe estar documentado para evitar usos incorrectos.
-
-Añadir una mini nota interna:
-
-```md
-## Type equality / compatibility
-
-- `typesExactlyEqual`: identidad nominal / identidad genérica estricta.
-- `typesStructurallyEqual`: igualdad estructural usada en contextos concretos.
-- `typesCompatible`: compatibilidad para asignación y paso de argumentos.
-- `choiceTypeIsSupersetOf`: relación de inclusión para choices abiertos.
-```
-
-Esto probablemente va mejor en documentación interna del compilador.
-
----
-
-### Revisar `argi test`
-
-El test runner nativo descubre tests parseando el módulo y compila un binario por test.
-
-Para `0.1` está bien, pero hay que cuidar:
-
-* limpieza o gestión de `.argi-cache/tests`;
-* diagnósticos completos cuando falla la compilación de un test;
-* comportamiento desde instalación externa al repo.
-
-No hace falta optimizarlo todavía.
 
 ## Runtime / 0.2
 

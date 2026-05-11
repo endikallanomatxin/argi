@@ -81,14 +81,28 @@ fn sanitizeTestName(allocator: std.mem.Allocator, name: []const u8) ![]u8 {
     return out;
 }
 
-fn outputPathForTest(allocator: std.mem.Allocator, module_dir: []const u8, test_name: []const u8) ![]u8 {
+fn testCacheDirForModule(allocator: std.mem.Allocator, module_dir: []const u8) ![]u8 {
     var hasher = std.hash.Wyhash.init(0);
     hasher.update(module_dir);
     const module_hash = hasher.final();
+    const cache_root = try build_cmd.localCacheRoot(allocator);
+    return try std.fmt.allocPrint(allocator, "{s}/tests/{x}", .{ cache_root, module_hash });
+}
+
+fn outputPathForTest(allocator: std.mem.Allocator, module_dir: []const u8, test_name: []const u8) ![]u8 {
+    const cache_dir = try testCacheDirForModule(allocator, module_dir);
     const safe_name = try sanitizeTestName(allocator, test_name);
     defer allocator.free(safe_name);
-    const cache_root = try build_cmd.localCacheRoot(allocator);
-    return try std.fmt.allocPrint(allocator, "{s}/tests/{x}/{s}", .{ cache_root, module_hash, safe_name });
+    return try std.fmt.allocPrint(allocator, "{s}/{s}", .{ cache_dir, safe_name });
+}
+
+fn clearTestCacheForModule(io: std.Io, allocator: std.mem.Allocator, module_dir: []const u8) !void {
+    const cache_dir = try testCacheDirForModule(allocator, module_dir);
+    std.Io.Dir.cwd().access(io, cache_dir, .{}) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    try std.Io.Dir.cwd().deleteTree(io, cache_dir);
 }
 
 fn printResultLine(status: []const u8, test_name: []const u8) void {
@@ -119,6 +133,9 @@ pub fn run(
     const core_dir = try sf.resolveToolCoreDir(&allocator, io, core_options);
     const testing_module_dir = try std.fs.path.join(allocator, &.{ core_dir, "testing" });
     const discovered = try discoverTests(io, allocator, core_options, module_dir);
+    // Test binaries are transient and test selection changes codegen output, so
+    // rebuild this module's cache slice from scratch on each `argi test` run.
+    try clearTestCacheForModule(io, allocator, module_dir);
 
     var ran_any = false;
     var had_failure = false;
@@ -131,6 +148,7 @@ pub fn run(
 
         const output_path = try outputPathForTest(allocator, module_dir, test_decl.name);
         const flags = build_cmd.BuildFlags{
+            .show_cascade = true,
             .output_path = output_path,
             .sysroot_path = parsed.sysroot_path,
         };
