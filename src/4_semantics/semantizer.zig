@@ -8483,15 +8483,6 @@ pub const Semantizer = struct {
         loc: tok.Location,
     ) !void {
         if (!(try self.hasVisibleFunctionNamed(fn_name, s, loc))) {
-            if (std.mem.eql(u8, fn_name, "print")) {
-                try self.diags.add(
-                    loc,
-                    .semantic,
-                    "no function named 'print' exists. The standard print helper needs a reachable stdout; add '.system: System = System()' to main or pass '.stdout' explicitly",
-                    .{},
-                );
-                return;
-            }
             try self.diags.add(
                 loc,
                 .semantic,
