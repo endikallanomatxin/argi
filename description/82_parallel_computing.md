@@ -1,4 +1,4 @@
-### Parallelism / GPU
+### Parallel computing / GPU
 
 <iframe width="560" height="315" src="https://www.youtube.com/embed/9-DiGrnz8l8?si=xdX92FK0uv8cYoaa" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 <iframe width="560" height="315" src="https://www.youtube.com/embed/Cak8ASX7NOk?si=nvnwLH70aVcLUqSz" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
