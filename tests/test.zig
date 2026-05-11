@@ -627,12 +627,15 @@ test "argi init creates executable package" {
     const source_path = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "hello", "source", "entrypoints", "hello", "main.rg" });
     defer std.testing.allocator.free(source_path);
     try std.Io.Dir.cwd().access(std.testing.io, source_path, .{});
+    const source_text = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, source_path, std.testing.allocator, .limited(1024 * 1024));
+    defer std.testing.allocator.free(source_text);
 
     try expect(std.mem.indexOf(u8, text, "kind = ") == null);
     try expect(std.mem.indexOf(u8, text, "[executables.hello]\n") != null);
     try expect(std.mem.indexOf(u8, text, "path = \"source/entrypoints/hello\"\n") != null);
     try expect(std.mem.indexOf(u8, text, "[run]\n") != null);
     try expect(std.mem.indexOf(u8, text, "default = \"hello\"\n") != null);
+    try expectEqualStrings("main(.system: System = System()) -> (.status_code: Int32 = 0) := {\n}\n", source_text);
 }
 
 test "argi init lib creates package without executables" {
@@ -694,6 +697,51 @@ test "argi build and run executable package from cwd" {
     defer std.testing.allocator.free(run_result.stdout);
     defer std.testing.allocator.free(run_result.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 0 }, run_result.term);
+}
+
+test "argi init executable package can print from generated main" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const tmp_root = try tmpDirRootPath(&tmp);
+    defer std.testing.allocator.free(tmp_root);
+    const installed_argi = try installedArgiPath();
+    defer std.testing.allocator.free(installed_argi);
+
+    const init_result = try runChildInCwd(&.{ installed_argi, "init", "hello" }, tmp_root);
+    defer std.testing.allocator.free(init_result.stdout);
+    defer std.testing.allocator.free(init_result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, init_result.term);
+
+    const module_root = try std.fs.path.join(std.testing.allocator, &.{ tmp_root, "hello" });
+    defer std.testing.allocator.free(module_root);
+
+    const source_path = try std.fs.path.join(std.testing.allocator, &.{ module_root, "source", "entrypoints", "hello", "main.rg" });
+    defer std.testing.allocator.free(source_path);
+
+    try std.Io.Dir.cwd().writeFile(std.testing.io, .{
+        .sub_path = source_path,
+        .data =
+        \\main(.system: System = System()) -> (.status_code: Int32 = 0) := {
+        \\    print("Hello, World!\n")
+        \\}
+        \\
+        ,
+    });
+
+    const build_result = try runChildInCwd(&.{ installed_argi, "build" }, module_root);
+    defer std.testing.allocator.free(build_result.stdout);
+    defer std.testing.allocator.free(build_result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, build_result.term);
+
+    const output_path = try std.fs.path.join(std.testing.allocator, &.{ module_root, "build", "debug", "hello" });
+    defer std.testing.allocator.free(output_path);
+
+    const run_result = try runChildInCwd(&.{output_path}, module_root);
+    defer std.testing.allocator.free(run_result.stdout);
+    defer std.testing.allocator.free(run_result.stderr);
+    try expectEqual(std.process.Child.Term{ .exited = 0 }, run_result.term);
+    try expectEqualStrings("Hello, World!\n", run_result.stdout);
 }
 
 test "argi build package supports explicit dot and executable flag" {

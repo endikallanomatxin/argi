@@ -89,7 +89,7 @@ fn writeFileIfMissing(io: std.Io, path: []const u8, contents: []const u8) !void 
 }
 
 const moduleMainTemplate =
-    \\main() -> (.status_code: Int32 = 0) := {
+    \\main(.system: System = System()) -> (.status_code: Int32 = 0) := {
     \\}
     \\
 ;
@@ -277,4 +277,5 @@ test "init executable scaffolds basic layout" {
     try expectFileContains(std.testing.io, manifest, "[run]\n");
     try expectFileContains(std.testing.io, manifest, "default = \"sample_app\"\n");
     try expectFileOmits(std.testing.io, manifest, "kind = ");
+    try expectFileContains(std.testing.io, entry_main, "main(.system: System = System()) -> (.status_code: Int32 = 0) := {\n}\n");
 }
