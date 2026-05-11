@@ -120,7 +120,7 @@ pub fn parseBuildArgs(args: []const []const u8) !ParsedBuildArgs {
             idx += 1;
             if (idx >= args.len) return error.MissingFlagValue;
             parsed.flags.sysroot_path = args[idx];
-        } else if (std.mem.eql(u8, a, "--entry")) {
+        } else if (std.mem.eql(u8, a, "--exec") or std.mem.eql(u8, a, "--executable")) {
             idx += 1;
             if (idx >= args.len) return error.MissingFlagValue;
             parsed.flags.executable_name = args[idx];
@@ -442,7 +442,7 @@ pub fn resolveBuildPlans(
     }
 
     if (flags.executable_name != null) {
-        std.debug.print("Error: --entry requires argi.toml in the selected package root.\n", .{});
+        std.debug.print("Error: --exec requires argi.toml in the selected package root.\n", .{});
         return error.CompilationFailed;
     }
 

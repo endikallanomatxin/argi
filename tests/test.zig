@@ -661,7 +661,7 @@ test "argi build package supports explicit dot and executable flag" {
     defer std.testing.allocator.free(dot_result.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 0 }, dot_result.term);
 
-    const entry_result = try runChildInCwd(&.{ installed_argi, "build", "--entry", "hello" }, module_root);
+    const entry_result = try runChildInCwd(&.{ installed_argi, "build", "--exec", "hello" }, module_root);
     defer std.testing.allocator.free(entry_result.stdout);
     defer std.testing.allocator.free(entry_result.stderr);
     try expectEqual(std.process.Child.Term{ .exited = 0 }, entry_result.term);
@@ -3451,7 +3451,7 @@ test "argi help lists supported 0.1 commands" {
     try expect(std.mem.indexOf(u8, result.stderr, "run [executable] [build flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "test <directory> [flags]") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--sysroot <path>") != null);
-    try expect(std.mem.indexOf(u8, result.stderr, "--entry <name>") != null);
+    try expect(std.mem.indexOf(u8, result.stderr, "--exec <name>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "--filter <name>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "init <name>") != null);
     try expect(std.mem.indexOf(u8, result.stderr, "init --lib <name>") != null);
