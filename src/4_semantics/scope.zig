@@ -1,0 +1,341 @@
+const std = @import("std");
+const sg = @import("semantic_graph.zig");
+const tok = @import("../2_tokens/token.zig");
+
+const abs = @import("abstracts.zig");
+const gen = @import("generics.zig");
+const typ = @import("types.zig");
+
+pub const DeferredGroup = struct {
+    nodes: []const *sg.SGNode,
+};
+
+pub const DeinitInfo = struct {
+    function: *sg.FunctionDeclaration,
+    self_field_index: u32,
+};
+
+pub const CopyInfo = struct {
+    function: *sg.FunctionDeclaration,
+    self_field_index: u32,
+};
+
+pub const Scope = struct {
+    parent: ?*Scope,
+    allocator: *const std.mem.Allocator,
+
+    nodes: std.array_list.Managed(*sg.SGNode),
+    module_aliases: std.StringHashMap([]const u8),
+    bindings: std.StringHashMap(*sg.BindingDeclaration),
+    refined_bindings: std.StringHashMap(*sg.BindingDeclaration),
+    generic_values: std.StringHashMap(gen.GenericValueBinding),
+    moved_bindings: std.StringHashMap(tok.Location),
+    functions: std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)),
+    types: std.StringHashMap(*sg.TypeDeclaration),
+    choice_options: std.StringHashMap(*sg.ChoiceOptionDeclaration),
+    abstracts: std.StringHashMap(*abs.AbstractInfo),
+    abstract_impls: std.StringHashMap(std.array_list.Managed(abs.AbstractImplEntry)),
+    abstract_impl_templates: std.StringHashMap(std.array_list.Managed(abs.AbstractImplTemplate)),
+    abstract_defaults: std.StringHashMap(abs.AbstractDefaultEntry),
+    generic_functions: std.StringHashMap(std.array_list.Managed(gen.GenericTemplate)),
+    generic_types: std.StringHashMap(std.array_list.Managed(gen.GenericTypeTemplate)),
+    deferred: std.array_list.Managed(DeferredGroup),
+
+    current_fn: ?*sg.FunctionDeclaration,
+
+    pub fn init(
+        a: *const std.mem.Allocator,
+        p: ?*Scope,
+        fnc: ?*sg.FunctionDeclaration,
+    ) !Scope {
+        return .{
+            .parent = p,
+            .allocator = a,
+            .nodes = std.array_list.Managed(*sg.SGNode).init(a.*),
+            .module_aliases = std.StringHashMap([]const u8).init(a.*),
+            .bindings = std.StringHashMap(*sg.BindingDeclaration).init(a.*),
+            .refined_bindings = std.StringHashMap(*sg.BindingDeclaration).init(a.*),
+            .generic_values = std.StringHashMap(gen.GenericValueBinding).init(a.*),
+            .moved_bindings = std.StringHashMap(tok.Location).init(a.*),
+            .functions = std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)).init(a.*),
+            .types = std.StringHashMap(*sg.TypeDeclaration).init(a.*),
+            .choice_options = std.StringHashMap(*sg.ChoiceOptionDeclaration).init(a.*),
+            .abstracts = std.StringHashMap(*abs.AbstractInfo).init(a.*),
+            .abstract_impls = std.StringHashMap(std.array_list.Managed(abs.AbstractImplEntry)).init(a.*),
+            .abstract_impl_templates = std.StringHashMap(std.array_list.Managed(abs.AbstractImplTemplate)).init(a.*),
+            .abstract_defaults = std.StringHashMap(abs.AbstractDefaultEntry).init(a.*),
+            .generic_functions = std.StringHashMap(std.array_list.Managed(gen.GenericTemplate)).init(a.*),
+            .generic_types = std.StringHashMap(std.array_list.Managed(gen.GenericTypeTemplate)).init(a.*),
+            .deferred = std.array_list.Managed(DeferredGroup).init(a.*),
+            .current_fn = fnc,
+        };
+    }
+
+    pub fn appendAbstractImpl(self: *Scope, name: []const u8, entry: abs.AbstractImplEntry) !void {
+        if (self.abstract_impls.getPtr(name)) |list_ptr| {
+            try list_ptr.append(entry);
+            return;
+        }
+
+        var list = std.array_list.Managed(abs.AbstractImplEntry).init(self.allocator.*);
+        try list.append(entry);
+        try self.abstract_impls.put(name, list);
+    }
+
+    pub fn appendGenericFunctionTemplate(self: *Scope, name: []const u8, tmpl: gen.GenericTemplate) !void {
+        if (self.generic_functions.getPtr(name)) |list_ptr| {
+            try list_ptr.append(tmpl);
+            return;
+        }
+
+        var list = std.array_list.Managed(gen.GenericTemplate).init(self.allocator.*);
+        try list.append(tmpl);
+        try self.generic_functions.put(name, list);
+    }
+
+    pub fn appendAbstractImplTemplate(self: *Scope, name: []const u8, tmpl: abs.AbstractImplTemplate) !void {
+        if (self.abstract_impl_templates.getPtr(name)) |list_ptr| {
+            try list_ptr.append(tmpl);
+            return;
+        }
+
+        var list = std.array_list.Managed(abs.AbstractImplTemplate).init(self.allocator.*);
+        try list.append(tmpl);
+        try self.abstract_impl_templates.put(name, list);
+    }
+
+    pub fn appendGenericTypeTemplate(self: *Scope, name: []const u8, tmpl: gen.GenericTypeTemplate) !void {
+        if (self.generic_types.getPtr(name)) |list_ptr| {
+            try list_ptr.append(tmpl);
+            return;
+        }
+
+        var list = std.array_list.Managed(gen.GenericTypeTemplate).init(self.allocator.*);
+        try list.append(tmpl);
+        try self.generic_types.put(name, list);
+    }
+
+    pub fn appendFunction(self: *Scope, name: []const u8, fd: *sg.FunctionDeclaration) !void {
+        if (self.functions.getPtr(name)) |list_ptr| {
+            try list_ptr.append(fd);
+            return;
+        }
+
+        var list = std.array_list.Managed(*sg.FunctionDeclaration).init(self.allocator.*);
+        try list.append(fd);
+        try self.functions.put(name, list);
+    }
+
+    pub fn lookupBinding(self: *Scope, n: []const u8) ?*sg.BindingDeclaration {
+        if (self.bindings.get(n)) |b| return b;
+        if (self.parent) |p| return p.lookupBinding(n);
+        return null;
+    }
+
+    pub fn lookupRefinedBinding(self: *Scope, n: []const u8) ?*sg.BindingDeclaration {
+        if (self.refined_bindings.get(n)) |b| return b;
+        if (self.parent) |p| return p.lookupRefinedBinding(n);
+        return null;
+    }
+
+    pub fn lookupGenericValue(self: *Scope, n: []const u8) ?gen.GenericValueBinding {
+        if (self.generic_values.get(n)) |v| return v;
+        if (self.parent) |p| return p.lookupGenericValue(n);
+        return null;
+    }
+
+    pub fn bindingMoveLocation(self: *Scope, n: []const u8) ?tok.Location {
+        if (self.moved_bindings.get(n)) |loc| return loc;
+        if (self.parent) |p| return p.bindingMoveLocation(n);
+        return null;
+    }
+
+    pub fn markBindingMoved(self: *Scope, n: []const u8, loc: tok.Location) !void {
+        if (self.bindings.contains(n)) {
+            try self.moved_bindings.put(n, loc);
+            return;
+        }
+        if (self.parent) |p| return p.markBindingMoved(n, loc);
+    }
+
+    pub fn clearBindingMoved(self: *Scope, n: []const u8) void {
+        if (self.bindings.contains(n)) {
+            _ = self.moved_bindings.remove(n);
+            return;
+        }
+        if (self.parent) |p| p.clearBindingMoved(n);
+    }
+
+    pub fn lookupBindingInModule(self: *Scope, module_dir: []const u8, n: []const u8) ?*sg.BindingDeclaration {
+        var cur: ?*Scope = self;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.bindings.get(n)) |b| {
+                if (std.mem.startsWith(u8, b.origin_file, module_dir)) return b;
+            }
+        }
+        return null;
+    }
+
+    pub fn lookupModuleAlias(self: *Scope, n: []const u8) ?[]const u8 {
+        if (self.module_aliases.get(n)) |path| return path;
+        if (self.parent) |p| return p.lookupModuleAlias(n);
+        return null;
+    }
+
+    pub fn lookupType(self: *Scope, n: []const u8) ?*sg.TypeDeclaration {
+        if (self.types.get(n)) |t| return t;
+        if (self.parent) |p| return p.lookupType(n);
+        return null;
+    }
+
+    pub fn lookupChoiceOption(self: *Scope, n: []const u8) ?*sg.ChoiceOptionDeclaration {
+        if (self.choice_options.get(n)) |opt| return opt;
+        if (self.parent) |p| return p.lookupChoiceOption(n);
+        return null;
+    }
+
+    pub fn lookupTypeInModule(self: *Scope, module_dir: []const u8, n: []const u8) ?*sg.TypeDeclaration {
+        var cur: ?*Scope = self;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.types.get(n)) |t| {
+                if (std.mem.startsWith(u8, t.origin_file, module_dir)) return t;
+            }
+        }
+        return null;
+    }
+
+    pub fn lookupChoiceOptionInModule(self: *Scope, module_dir: []const u8, n: []const u8) ?*sg.ChoiceOptionDeclaration {
+        var cur: ?*Scope = self;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.choice_options.get(n)) |opt| {
+                if (std.mem.startsWith(u8, opt.origin_file, module_dir)) return opt;
+            }
+        }
+        return null;
+    }
+
+    pub fn lookupGenericTypeTemplate(
+        self: *Scope,
+        name: []const u8,
+        param_count: usize,
+    ) ?*const gen.GenericTypeTemplate {
+        var cur: ?*Scope = self;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.generic_types.get(name)) |list_ptr| {
+                for (list_ptr.items, 0..) |tmpl, idx| {
+                    if (tmpl.params.len == param_count) return &list_ptr.items[idx];
+                }
+            }
+        }
+        return null;
+    }
+
+    pub fn lookupAbstractDefault(s: *Scope, name: []const u8) ?abs.AbstractDefaultEntry {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.abstract_defaults.get(name)) |def| return def;
+        }
+        return null;
+    }
+
+    pub fn lookupAbstractInfo(s: *Scope, name: []const u8) ?*abs.AbstractInfo {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.abstracts.get(name)) |info| return info;
+        }
+        return null;
+    }
+
+    pub fn findDeinitInfo(s: *Scope, ty: sg.Type) ?DeinitInfo {
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr("deinit")) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    for (cand.input.fields, 0..) |field, idx| {
+                        if (field.ty != .pointer_type) continue;
+                        const ptr_info = field.ty.pointer_type.*;
+                        if (ptr_info.mutability != .read_write) continue;
+                        const pointee = ptr_info.child.*;
+                        if (!typ.typesStructurallyEqual(pointee, ty)) continue;
+
+                        var other_fields_have_defaults = true;
+                        for (cand.input.fields, 0..) |other_field, other_idx| {
+                            if (other_idx == idx) continue;
+                            if (other_field.default_value == null) {
+                                other_fields_have_defaults = false;
+                                break;
+                            }
+                        }
+                        if (!other_fields_have_defaults) continue;
+
+                        return .{
+                            .function = cand,
+                            .self_field_index = @intCast(idx),
+                        };
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    pub fn findDeinit(s: *Scope, ty: sg.Type) ?*sg.FunctionDeclaration {
+        const info = s.findDeinitInfo(ty) orelse return null;
+        return info.function;
+    }
+
+    pub fn findCopyInfo(s: *Scope, ty: sg.Type) ?CopyInfo {
+        return switch (s.lookupCopyInfo(ty)) {
+            .unique => |info| info,
+            else => null,
+        };
+    }
+
+    pub const CopyLookup = union(enum) {
+        none,
+        unique: CopyInfo,
+        ambiguous,
+    };
+
+    pub fn lookupCopyInfo(s: *Scope, ty: sg.Type) CopyLookup {
+        var cur: ?*Scope = s;
+        var found: ?CopyInfo = null;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.functions.getPtr("copy")) |list_ptr| {
+                for (list_ptr.items) |cand| {
+                    if (cand.output.fields.len != 1) continue;
+                    const out_ty = cand.output.fields[0].ty;
+                    if (!typ.typesStructurallyEqual(out_ty, ty)) continue;
+
+                    for (cand.input.fields, 0..) |field, idx| {
+                        if (!typ.typesStructurallyEqual(field.ty, ty)) continue;
+
+                        var other_fields_have_defaults = true;
+                        for (cand.input.fields, 0..) |other_field, other_idx| {
+                            if (other_idx == idx) continue;
+                            if (other_field.default_value == null) {
+                                other_fields_have_defaults = false;
+                                break;
+                            }
+                        }
+                        if (!other_fields_have_defaults) continue;
+
+                        const info: CopyInfo = .{
+                            .function = cand,
+                            .self_field_index = @intCast(idx),
+                        };
+                        if (found != null) return .ambiguous;
+                        found = info;
+                    }
+                }
+            }
+        }
+        if (found) |info| return .{ .unique = info };
+        return .none;
+    }
+
+    pub fn findCopy(s: *Scope, ty: sg.Type) ?*sg.FunctionDeclaration {
+        const info = s.findCopyInfo(ty) orelse return null;
+        return info.function;
+    }
+};

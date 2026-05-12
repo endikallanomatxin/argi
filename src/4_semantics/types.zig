@@ -1,0 +1,1763 @@
+const std = @import("std");
+const syn = @import("../3_syntax/syntax_tree.zig");
+const tok = @import("../2_tokens/token.zig");
+const sg = @import("semantic_graph.zig");
+const Scope = @import("scope.zig").Scope;
+
+const diagnostics = @import("../1_base/diagnostic.zig");
+const err = @import("errors.zig");
+
+pub const TypedExpr = struct {
+    node: *sg.SGNode,
+    ty: sg.Type,
+};
+
+pub fn effectiveStructFieldType(field: sg.StructTypeField) sg.Type {
+    return field.storage_type orelse field.ty;
+}
+
+pub const BuiltinTypeInfoKind = enum {
+    size,
+    alignment,
+};
+
+const OwnedText = struct {
+    allocator: *const std.mem.Allocator,
+    bytes: []u8,
+
+    fn deinit(self: OwnedText) void {
+        self.allocator.free(self.bytes);
+    }
+};
+
+const TypePairText = struct {
+    expected: OwnedText,
+    actual: OwnedText,
+
+    fn deinit(self: TypePairText) void {
+        self.expected.deinit();
+        self.actual.deinit();
+    }
+};
+
+pub const pointer_size_bytes: u64 = @sizeOf(*usize);
+pub const pointer_alignment_bytes: u64 = pointer_size_bytes;
+
+fn genericIdentityArgEqual(a: sg.GenericIdentityArg, b: sg.GenericIdentityArg) bool {
+    return switch (a) {
+        .type => |aty| switch (b) {
+            .type => |bty| typesExactlyEqual(aty, bty),
+            else => false,
+        },
+        .comptime_int => |aint| switch (b) {
+            .comptime_int => |bint| aint == bint,
+            else => false,
+        },
+    };
+}
+
+fn genericIdentitiesEqual(a: *const sg.GenericTypeIdentity, b: *const sg.GenericTypeIdentity) bool {
+    if (!std.mem.eql(u8, a.base_name, b.base_name)) return false;
+    if (a.arg_names.len != b.arg_names.len) return false;
+
+    var i: usize = 0;
+    while (i < a.arg_names.len) : (i += 1) {
+        if (!std.mem.eql(u8, a.arg_names[i], b.arg_names[i])) return false;
+        if (!genericIdentityArgEqual(a.arg_values[i], b.arg_values[i])) return false;
+    }
+
+    return true;
+}
+
+pub fn genericIdentityOf(ty: sg.Type) ?*const sg.GenericTypeIdentity {
+    return switch (ty) {
+        .choice_type => |ct| switch (ct.identity orelse return null) {
+            .generic => |identity| identity,
+            .inferred_choice => null,
+        },
+        .struct_type => |st| switch (st.identity orelse return null) {
+            .generic => |identity| identity,
+            .inferred_choice => null,
+        },
+        .array_type => |arr| switch (arr.identity orelse return null) {
+            .generic => |identity| identity,
+            .inferred_choice => null,
+        },
+        else => null,
+    };
+}
+
+fn inferredChoiceIdentityOf(choice_ty: *const sg.ChoiceType) ?*const sg.InferredChoiceIdentity {
+    return switch (choice_ty.identity orelse return null) {
+        .inferred_choice => |identity| identity,
+        .generic => null,
+    };
+}
+
+pub fn isOpenInferredReasonsChoice(choice_ty: *const sg.ChoiceType) bool {
+    const identity = inferredChoiceIdentityOf(choice_ty) orelse return false;
+    return identity.kind == .reasons;
+}
+
+pub fn appendChoiceVariant(
+    choice_ty: *sg.ChoiceType,
+    variant: sg.ChoiceVariant,
+    allocator: *const std.mem.Allocator,
+) err.SemErr!u32 {
+    if (choiceTypeContainsVariant(choice_ty, variant)) |idx| return idx;
+
+    const grown = try allocator.alloc(sg.ChoiceVariant, choice_ty.variants.len + 1);
+    @memcpy(grown[0..choice_ty.variants.len], choice_ty.variants);
+    grown[choice_ty.variants.len] = variant;
+    choice_ty.variants = grown;
+    return @intCast(choice_ty.variants.len - 1);
+}
+
+pub fn genericIdentityArgByName(identity: *const sg.GenericTypeIdentity, name: []const u8) ?sg.GenericIdentityArg {
+    var idx: usize = 0;
+    while (idx < identity.arg_names.len) : (idx += 1) {
+        if (std.mem.eql(u8, identity.arg_names[idx], name)) {
+            return identity.arg_values[idx];
+        }
+    }
+    return null;
+}
+
+fn choiceVariantsEqual(a: sg.ChoiceVariant, b: sg.ChoiceVariant) bool {
+    if (a.option_decl != b.option_decl) return false;
+    if (a.option_decl == null and !std.mem.eql(u8, a.name, b.name)) return false;
+    if (a.payload_type == null and b.payload_type == null) return true;
+    if (a.payload_type == null or b.payload_type == null) return false;
+    return typesExactlyEqual(a.payload_type.?, b.payload_type.?);
+}
+
+fn choiceTypesEqualByVariants(a: *const sg.ChoiceType, b: *const sg.ChoiceType) bool {
+    if (a.variants.len != b.variants.len) return false;
+    for (a.variants, b.variants) |av, bv| {
+        if (!choiceVariantsEqual(av, bv)) return false;
+    }
+    return true;
+}
+
+pub fn choiceTypeContainsVariant(choice_ty: *const sg.ChoiceType, variant: sg.ChoiceVariant) ?u32 {
+    for (choice_ty.variants, 0..) |candidate, idx| {
+        if (choiceVariantsEqual(candidate, variant)) return @intCast(idx);
+    }
+    return null;
+}
+
+// Inclusion relation for choice types: expected accepts actual when it contains
+// every variant that actual can produce.
+pub fn choiceTypeIsSupersetOf(expected: *const sg.ChoiceType, actual: *const sg.ChoiceType) bool {
+    for (actual.variants) |variant| {
+        if (choiceTypeContainsVariant(expected, variant) == null) return false;
+    }
+    return true;
+}
+
+pub fn errableReasonChoiceFromType(ty: sg.Type) ?*const sg.ChoiceType {
+    const errable_choice = switch (ty) {
+        .choice_type => |choice_ty| choice_ty,
+        else => return null,
+    };
+
+    for (errable_choice.variants) |variant| {
+        if (!std.mem.eql(u8, variant.name, "error")) continue;
+        const payload_ty = variant.payload_type orelse return null;
+        const payload_struct = switch (payload_ty) {
+            .struct_type => |st| st,
+            else => return null,
+        };
+        const reason_field = findFieldByName(payload_struct, "reason") orelse return null;
+        return switch (reason_field.ty) {
+            .choice_type => |reason_choice| reason_choice,
+            else => null,
+        };
+    }
+
+    return null;
+}
+
+pub fn isTypeTriviallyCopyable(ty: sg.Type, s: *Scope) bool {
+    if (s.findDeinit(ty) != null) return false;
+
+    return switch (ty) {
+        .builtin => true,
+        .pointer_type => true,
+        .abstract_type => false,
+        .array_type => |arr_info| isTypeTriviallyCopyable(arr_info.element_type.*, s),
+        .struct_type => |st| blk: {
+            for (st.fields) |field| {
+                if (!isTypeTriviallyCopyable(field.ty, s)) break :blk false;
+            }
+            break :blk true;
+        },
+        .choice_type => |ct| blk: {
+            if (ct.layout == .c_enum) break :blk true;
+            for (ct.variants) |variant| {
+                if (variant.payload_type) |payload_ty| {
+                    if (!isTypeTriviallyCopyable(payload_ty, s)) break :blk false;
+                }
+            }
+            break :blk true;
+        },
+    };
+}
+
+pub fn isTypeCopyable(ty: sg.Type, s: *Scope) bool {
+    return isTypeTriviallyCopyable(ty, s) or switch (s.lookupCopyInfo(ty)) {
+        .unique => true,
+        else => false,
+    };
+}
+
+pub fn expressionNeedsCopyForValuePosition(node: *const sg.SGNode) bool {
+    return switch (node.content) {
+        .binding_use,
+        .struct_field_access,
+        .choice_payload_access,
+        .array_index,
+        .dereference,
+        => true,
+        else => false,
+    };
+}
+
+fn appendFunctionSignatureLocal(
+    buf: *std.array_list.Managed(u8),
+    f: *const sg.FunctionDeclaration,
+    s: *Scope,
+) !void {
+    try buf.appendSlice(f.name);
+    try buf.appendSlice(" (");
+    var i: usize = 0;
+    while (i < f.input.fields.len) : (i += 1) {
+        const fld = f.input.fields[i];
+        if (i != 0) try buf.appendSlice(", ");
+        try buf.appendSlice(".");
+        try buf.appendSlice(fld.name);
+        try buf.appendSlice(": ");
+        try appendTypePretty(buf, fld.ty, s);
+    }
+    try buf.appendSlice(") -> (");
+    i = 0;
+    while (i < f.output.fields.len) : (i += 1) {
+        const ofld = f.output.fields[i];
+        if (i != 0) try buf.appendSlice(", ");
+        try buf.appendSlice(".");
+        try buf.appendSlice(ofld.name);
+        try buf.appendSlice(": ");
+        try appendTypePretty(buf, ofld.ty, s);
+    }
+    try buf.appendSlice(")");
+}
+
+fn buildOverloadCandidatesStringLocal(
+    name: []const u8,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+) ![]u8 {
+    var buf = std.array_list.Managed(u8).init(allocator.*);
+    errdefer buf.deinit();
+
+    var cur: ?*Scope = s;
+    var first: bool = true;
+    while (cur) |sc| : (cur = sc.parent) {
+        if (sc.functions.getPtr(name)) |list_ptr| {
+            for (list_ptr.items) |cand| {
+                if (!first) try buf.appendSlice("\n");
+                first = false;
+                try buf.appendSlice("  - ");
+                try appendFunctionSignatureLocal(&buf, cand, s);
+            }
+        }
+    }
+
+    if (first) {
+        try buf.appendSlice("  (none)");
+    }
+
+    return try buf.toOwnedSlice();
+}
+
+pub fn ensureValuePositionAllowed(
+    expr: TypedExpr,
+    loc: tok.Location,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    if (!expressionNeedsCopyForValuePosition(expr.node)) return expr;
+    if (isTypeTriviallyCopyable(expr.ty, s)) return expr;
+
+    switch (s.lookupCopyInfo(expr.ty)) {
+        .unique => |copy_info| {
+            const copy_fn = copy_info.function;
+            const arg_fields = try allocator.alloc(sg.StructValueLiteralField, copy_fn.input.fields.len);
+            for (copy_fn.input.fields, 0..) |field, idx| {
+                arg_fields[idx] = .{
+                    .name = field.name,
+                    .value = if (idx == copy_info.self_field_index)
+                        expr.node
+                    else
+                        field.default_value orelse return error.Reported,
+                };
+            }
+
+            const args_struct = try allocator.create(sg.StructValueLiteral);
+            args_struct.* = .{
+                .fields = arg_fields,
+                .ty = .{ .struct_type = &copy_fn.input },
+                .dispatch_prefix_positional_count = 0,
+            };
+
+            const args_node = try sg.makeSGNode(.{ .struct_value_literal = args_struct }, loc, allocator);
+
+            const fc_ptr = try allocator.create(sg.FunctionCall);
+            fc_ptr.* = .{ .callee = copy_fn, .input = args_node };
+
+            const call_node = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, allocator);
+            return .{ .node = call_node, .ty = functionReturnType(copy_fn) };
+        },
+        .ambiguous => {
+            var actual_fields = [_]sg.StructTypeField{
+                .{ .name = "__arg0", .ty = expr.ty, .default_value = null },
+            };
+            const actual_input = sg.StructType{
+                .fields = actual_fields[0..],
+                .identity = null,
+            };
+            const actual_text = try formatCallInput(&actual_input, s, allocator);
+            defer allocator.free(actual_text);
+            const candidates = try buildOverloadCandidatesStringLocal(
+                "copy",
+                s,
+                allocator,
+            );
+            defer allocator.free(candidates);
+            try diags.add(
+                loc,
+                .semantic,
+                "ambiguous call to 'copy' for arguments {s}. Possible overloads:\n{s}",
+                .{ actual_text, candidates },
+            );
+            return error.Reported;
+        },
+        .none => {},
+    }
+
+    const ty_text = try formatTypeText(expr.ty, s, allocator);
+    defer ty_text.deinit();
+    try diags.add(
+        loc,
+        .semantic,
+        "type '{s}' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'",
+        .{ty_text.bytes},
+    );
+    return error.Reported;
+}
+
+// Structural equality is deliberately narrower than assignment compatibility.
+// Use it only where matching type shape is intended, such as selected
+// anonymous/inferred forms and codegen checks.
+pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
+    return switch (a) {
+        .builtin => |ab| switch (b) {
+            .builtin => |bb| ab == bb,
+            else => false,
+        },
+        .abstract_type => |aat| switch (b) {
+            .abstract_type => |bat| std.mem.eql(u8, aat.name, bat.name),
+            else => false,
+        },
+        .choice_type => |act| switch (b) {
+            .choice_type => |bct| blk: {
+                if (act == bct) break :blk true;
+                if (choiceTypesEqualByVariants(act, bct)) break :blk true;
+                const a_identity = genericIdentityOf(a) orelse break :blk false;
+                const b_identity = genericIdentityOf(b) orelse break :blk false;
+                break :blk genericIdentitiesEqual(a_identity, b_identity);
+            },
+            else => false,
+        },
+
+        .struct_type => |ast| switch (b) {
+            .builtin => false,
+            .abstract_type => false,
+            .choice_type => false,
+
+            .struct_type => |bst| blk: {
+                // Keep for legacy: structural comparison of anonymous structs
+                if (ast.fields.len != bst.fields.len) break :blk false;
+                var i: usize = 0;
+                while (i < ast.fields.len) : (i += 1) {
+                    const fa = ast.fields[i];
+                    const fb = bst.fields[i];
+                    if (!std.mem.eql(u8, fa.name, fb.name)) break :blk false;
+                    if (!typesStructurallyEqual(fa.ty, fb.ty)) break :blk false;
+                }
+                break :blk true;
+            },
+
+            .pointer_type => false,
+            .array_type => false,
+        },
+
+        .pointer_type => |apt_ptr| switch (b) {
+            .pointer_type => |bpt_ptr| blk: {
+                const apt = apt_ptr.*;
+                const bpt = bpt_ptr.*;
+
+                if (apt.mutability != bpt.mutability)
+                    break :blk false;
+
+                const sub_a = apt.child.*;
+                const sub_b = bpt.child.*;
+
+                if (isAny(sub_a) or isAny(sub_b)) break :blk true;
+
+                break :blk typesStructurallyEqual(sub_a, sub_b);
+            },
+            else => false,
+        },
+
+        .array_type => |aat_ptr| switch (b) {
+            .array_type => |bat_ptr| blk_arr: {
+                const aat = aat_ptr.*;
+                const bat = bat_ptr.*;
+                if (aat.length != bat.length) break :blk_arr false;
+                break :blk_arr typesStructurallyEqual(aat.element_type.*, bat.element_type.*);
+            },
+            else => false,
+        },
+    };
+}
+
+// Strict identity check: nominal declarations must be the same declaration or
+// share the same generic identity, and pointer subtypes must match exactly.
+// Generic identity keeps instantiated generic structs, choices, and arrays
+// equal across instantiation paths; it is not a broad structural fallback.
+pub fn typesExactlyEqual(a: sg.Type, b: sg.Type) bool {
+    return switch (a) {
+        .builtin => |ab| switch (b) {
+            .builtin => |bb| ab == bb,
+            else => false,
+        },
+        .abstract_type => |aat| switch (b) {
+            .abstract_type => |bat| std.mem.eql(u8, aat.name, bat.name),
+            else => false,
+        },
+        .choice_type => |act| switch (b) {
+            .choice_type => |bct| blk: {
+                if (act == bct) break :blk true;
+                if (choiceTypesEqualByVariants(act, bct)) break :blk true;
+                const a_identity = genericIdentityOf(a) orelse break :blk false;
+                const b_identity = genericIdentityOf(b) orelse break :blk false;
+                break :blk genericIdentitiesEqual(a_identity, b_identity);
+            },
+            else => false,
+        },
+        .struct_type => |ast| switch (b) {
+            .struct_type => |bst| blk: {
+                if (ast == bst) break :blk true;
+                const a_identity = genericIdentityOf(a) orelse break :blk false;
+                const b_identity = genericIdentityOf(b) orelse break :blk false;
+                break :blk genericIdentitiesEqual(a_identity, b_identity);
+            },
+            else => false,
+        },
+        .pointer_type => |apt_ptr| switch (b) {
+            .pointer_type => |bpt_ptr| blk: {
+                const apt = apt_ptr.*;
+                const bpt = bpt_ptr.*;
+                if (apt.mutability != bpt.mutability) break :blk false;
+                break :blk typesExactlyEqual(apt.child.*, bpt.child.*);
+            },
+            else => false,
+        },
+        .array_type => |aat_ptr| switch (b) {
+            .array_type => |bat_ptr| blk_arr: {
+                const aat = aat_ptr.*;
+                const bat = bat_ptr.*;
+                if (aat_ptr == bat_ptr) break :blk_arr true;
+                if (genericIdentityOf(a)) |a_identity| {
+                    const b_identity = genericIdentityOf(b) orelse break :blk_arr false;
+                    break :blk_arr genericIdentitiesEqual(a_identity, b_identity);
+                }
+                if (aat.length != bat.length) break :blk_arr false;
+                break :blk_arr typesExactlyEqual(aat.element_type.*, bat.element_type.*);
+            },
+            else => false,
+        },
+    };
+}
+
+pub fn isAny(t: sg.Type) bool {
+    return switch (t) {
+        .builtin => |bt| bt == .Any,
+        else => false,
+    };
+}
+
+pub fn isIntegerType(t: sg.Type) bool {
+    return switch (t) {
+        .builtin => |bt| switch (bt) {
+            .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64 => true,
+            else => false,
+        },
+        else => false,
+    };
+}
+
+pub fn pointerToAny(mutability: syn.PointerMutability, allocator: *const std.mem.Allocator) !sg.Type {
+    const child = try allocator.create(sg.Type);
+    child.* = .{ .builtin = .Any };
+
+    const sem_ptr = try allocator.create(sg.PointerType);
+    sem_ptr.* = .{
+        .mutability = mutability,
+        .child = child,
+    };
+
+    return .{ .pointer_type = sem_ptr };
+}
+
+pub fn pointerMutabilityCompatible(expected: syn.PointerMutability, actual: syn.PointerMutability) bool {
+    return switch (expected) {
+        .read_only => true,
+        .read_write => actual == .read_write,
+    };
+}
+
+// Assignment and argument-passing compatibility. Prefer this when checking
+// whether an expression can be used where an expected type is required.
+pub fn typesCompatible(expected: sg.Type, actual: sg.Type) bool {
+    return switch (expected) {
+        .builtin => |eb| switch (actual) {
+            .builtin => |ab| eb == ab,
+            else => false,
+        },
+        .abstract_type => |eat| switch (actual) {
+            .abstract_type => |aat| std.mem.eql(u8, eat.name, aat.name),
+            else => false,
+        },
+        .choice_type => |ect| switch (actual) {
+            .choice_type => |act| ect == act,
+            else => false,
+        },
+        .struct_type => |est| switch (actual) {
+            .struct_type => |ast| blk: {
+                if (est.fields.len != ast.fields.len) break :blk false;
+                var i: usize = 0;
+                while (i < est.fields.len) : (i += 1) {
+                    const ef = est.fields[i];
+                    const af = ast.fields[i];
+                    if (!typesCompatible(ef.ty, af.ty)) break :blk false;
+                }
+                break :blk true;
+            },
+            else => false,
+        },
+        .pointer_type => |ept_ptr| switch (actual) {
+            .pointer_type => |apt_ptr| blk: {
+                const ept = ept_ptr.*;
+                const apt = apt_ptr.*;
+
+                if (!pointerMutabilityCompatible(ept.mutability, apt.mutability))
+                    break :blk false;
+
+                const expected_child = ept.child.*;
+                const actual_child = apt.child.*;
+
+                if (isAny(expected_child) or isAny(actual_child))
+                    break :blk true;
+
+                break :blk typesCompatible(expected_child, actual_child);
+            },
+            else => false,
+        },
+        .array_type => |eat_ptr| switch (actual) {
+            .array_type => |aat_ptr| blk_arr: {
+                const eat = eat_ptr.*;
+                const aat = aat_ptr.*;
+                if (eat.length != aat.length) break :blk_arr false;
+                break :blk_arr typesCompatible(eat.element_type.*, aat.element_type.*);
+            },
+            else => false,
+        },
+    };
+}
+
+pub fn functionReturnType(fn_decl: *sg.FunctionDeclaration) sg.Type {
+    return switch (fn_decl.output.fields.len) {
+        0 => .{ .builtin = .Any },
+        1 => fn_decl.output.fields[0].ty,
+        else => .{ .struct_type = &fn_decl.output },
+    };
+}
+
+pub fn typeNameFor(s: *Scope, t: sg.Type) ?[]const u8 {
+    var cur: ?*Scope = s;
+    while (cur) |sc| : (cur = sc.parent) {
+        var it = sc.types.iterator();
+        while (it.next()) |entry| {
+            const td = entry.value_ptr.*;
+            if (declaredTypeMatches(td.ty, t)) return td.name;
+        }
+    }
+    return null;
+}
+
+pub fn declaredTypeMatches(declared: sg.Type, actual: sg.Type) bool {
+    return switch (declared) {
+        .builtin, .abstract_type => typesExactlyEqual(declared, actual),
+        .struct_type, .choice_type, .array_type => typesExactlyEqual(declared, actual),
+        .pointer_type => false,
+    };
+}
+
+fn appendGenericIdentityArgPretty(
+    buf: *std.array_list.Managed(u8),
+    name: []const u8,
+    arg: sg.GenericIdentityArg,
+    s: *Scope,
+) std.mem.Allocator.Error!void {
+    try buf.appendSlice(".");
+    try buf.appendSlice(name);
+
+    switch (arg) {
+        .type => |ty| {
+            try buf.appendSlice(": ");
+            try appendTypePretty(buf, ty, s);
+        },
+        .comptime_int => |value| {
+            try buf.appendSlice(" = ");
+            var tmp: [32]u8 = undefined;
+            const text = std.fmt.bufPrint(&tmp, "{d}", .{value}) catch unreachable;
+            try buf.appendSlice(text);
+        },
+    }
+}
+
+fn appendGenericIdentityPretty(
+    buf: *std.array_list.Managed(u8),
+    identity: *const sg.GenericTypeIdentity,
+    s: *Scope,
+) std.mem.Allocator.Error!void {
+    try buf.appendSlice(identity.base_name);
+    if (identity.arg_names.len == 0) return;
+
+    try buf.appendSlice("#(");
+    var i: usize = 0;
+    while (i < identity.arg_names.len) : (i += 1) {
+        if (i != 0) try buf.appendSlice(", ");
+        try appendGenericIdentityArgPretty(buf, identity.arg_names[i], identity.arg_values[i], s);
+    }
+    try buf.appendSlice(")");
+}
+
+pub fn builtinFromName(name: []const u8) ?sg.BuiltinType {
+    if (std.mem.eql(u8, name, "Void") or std.mem.eql(u8, name, "void")) return .Void;
+    return std.meta.stringToEnum(sg.BuiltinType, name);
+}
+
+pub fn findFieldByName(st: *const sg.StructType, name: []const u8) ?*const sg.StructTypeField {
+    for (st.fields, 0..) |f, i| {
+        if (std.mem.eql(u8, f.name, name)) return &st.fields[i];
+    }
+    return null;
+}
+
+fn appendType(buf: *std.array_list.Managed(u8), t: sg.Type) !void {
+    switch (t) {
+        .builtin => |bt| {
+            const s = @tagName(bt);
+            try buf.appendSlice(s);
+        },
+        .abstract_type => |at| try buf.appendSlice(at.name),
+        .choice_type => |ct| try buf.appendSlice(if (ct.layout == .c_enum) "CEnum" else "choice"),
+        .pointer_type => |ptr_info_ptr| {
+            const ptr_info = ptr_info_ptr.*;
+            const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
+            try buf.appendSlice(prefix);
+            try appendType(buf, ptr_info.child.*);
+        },
+        .struct_type => |st| {
+            if (st.layout == .c_union) {
+                try buf.appendSlice("CUnion{");
+                var union_i: usize = 0;
+                while (union_i < st.fields.len) : (union_i += 1) {
+                    const fld = st.fields[union_i];
+                    if (union_i != 0) try buf.appendSlice(", ");
+                    try buf.appendSlice(".");
+                    try buf.appendSlice(fld.name);
+                    try buf.appendSlice(": ");
+                    try appendType(buf, fld.ty);
+                }
+                try buf.appendSlice("}");
+                return;
+            }
+            try buf.appendSlice("{");
+            var i: usize = 0;
+            while (i < st.fields.len) : (i += 1) {
+                const fld = st.fields[i];
+                if (i != 0) try buf.appendSlice(", ");
+                try buf.appendSlice(".");
+                try buf.appendSlice(fld.name);
+                try buf.appendSlice(": ");
+                try appendType(buf, fld.ty);
+            }
+            try buf.appendSlice("}");
+        },
+    }
+}
+
+pub fn formatType(t: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) ![]u8 {
+    var buf = std.array_list.Managed(u8).init(allocator.*);
+    errdefer buf.deinit();
+    try appendTypePretty(&buf, t, s);
+    return try buf.toOwnedSlice();
+}
+
+fn formatOwnedText(bytes: []u8, allocator: *const std.mem.Allocator) OwnedText {
+    return .{ .allocator = allocator, .bytes = bytes };
+}
+
+fn formatTypeText(ty: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) !OwnedText {
+    return formatOwnedText(try formatType(ty, s, allocator), allocator);
+}
+
+fn formatTypePairText(expected: sg.Type, actual: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) !TypePairText {
+    return .{
+        .expected = try formatTypeText(expected, s, allocator),
+        .actual = try formatTypeText(actual, s, allocator),
+    };
+}
+
+pub fn appendTypePretty(buf: *std.array_list.Managed(u8), t: sg.Type, s: *Scope) std.mem.Allocator.Error!void {
+    if (typeNameFor(s, t)) |nm| {
+        try buf.appendSlice(nm);
+        return;
+    }
+    if (genericIdentityOf(t)) |identity| {
+        if (std.mem.eql(u8, identity.base_name, "Nullable")) {
+            if (genericIdentityArgByName(identity, "t")) |arg| {
+                switch (arg) {
+                    .type => |inner_ty| {
+                        try buf.appendSlice("?");
+                        try appendTypePretty(buf, inner_ty, s);
+                        return;
+                    },
+                    else => {},
+                }
+            }
+        }
+        if (!std.mem.eql(u8, identity.base_name, "Array")) {
+            try appendGenericIdentityPretty(buf, identity, s);
+            return;
+        }
+    }
+    switch (t) {
+        .builtin => |bt| {
+            const sname = @tagName(bt);
+            try buf.appendSlice(sname);
+        },
+        .abstract_type => |at| try buf.appendSlice(at.name),
+        .choice_type => |ct| try buf.appendSlice(if (ct.layout == .c_enum) "CEnum" else "choice"),
+        .pointer_type => |ptr_info_ptr| {
+            const ptr_info = ptr_info_ptr.*;
+            const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
+            try buf.appendSlice(prefix);
+            try appendTypePretty(buf, ptr_info.child.*, s);
+        },
+        .struct_type => |st| {
+            if (st.layout == .c_union) {
+                try buf.appendSlice("CUnion{...}");
+                return;
+            }
+            // Fallback: avoid expanding anonymous structs in this context
+            try buf.appendSlice("{...}");
+        },
+        .array_type => |arr_ptr| {
+            const arr = arr_ptr.*;
+            var tmp: [32]u8 = undefined;
+            const len_slice = std.fmt.bufPrint(&tmp, "{d}", .{arr.length}) catch "?";
+            try buf.appendSlice("[");
+            try buf.appendSlice(len_slice);
+            try buf.appendSlice("]");
+            try appendTypePretty(buf, arr.element_type.*, s);
+        },
+    }
+}
+
+pub fn formatCallInput(st: *const sg.StructType, s: *Scope, allocator: *const std.mem.Allocator) ![]u8 {
+    var buf = std.array_list.Managed(u8).init(allocator.*);
+    errdefer buf.deinit();
+
+    try buf.appendSlice("(");
+    var i: usize = 0;
+    while (i < st.fields.len) : (i += 1) {
+        const fld = st.fields[i];
+        if (i != 0) try buf.appendSlice(", ");
+        try buf.appendSlice(".");
+        try buf.appendSlice(fld.name);
+        try buf.appendSlice(": ");
+        try appendTypePretty(&buf, fld.ty, s);
+    }
+    try buf.appendSlice(")");
+
+    return try buf.toOwnedSlice();
+}
+
+pub fn computeTypeSize(ty: sg.Type) u64 {
+    return switch (ty) {
+        .builtin => |bt| switch (bt) {
+            .Void => 0,
+            .Int8, .UInt8, .Char, .Bool => 1,
+            .Int16, .UInt16, .Float16 => 2,
+            .Int32, .UInt32, .Float32 => 4,
+            .Int64, .UInt64, .Float64 => 8,
+            .UIntNative => pointer_size_bytes,
+            .Type => pointer_size_bytes,
+            .Any => pointer_size_bytes,
+        },
+        .abstract_type => 0,
+        .choice_type => |ct| blk_choice: {
+            if (ct.layout == .c_enum) {
+                break :blk_choice computeTypeSize(.{ .builtin = .Int32 });
+            }
+            var size: u64 = 0;
+            const tag_align = computeTypeAlignment(.{ .builtin = .Int32 });
+            size = alignForward(size, tag_align);
+            size += computeTypeSize(.{ .builtin = .Int32 });
+            for (ct.variants) |variant| {
+                const payload_ty: sg.Type = variant.payload_type orelse sg.Type{ .builtin = .UInt8 };
+                const payload_align = computeTypeAlignment(payload_ty);
+                size = alignForward(size, payload_align);
+                size += computeTypeSize(payload_ty);
+            }
+            break :blk_choice alignForward(size, computeTypeAlignment(ty));
+        },
+        .pointer_type => pointer_size_bytes,
+        .struct_type => |st| blk: {
+            if (st.layout == .c_union) {
+                var max_field_size: u64 = 0;
+                for (st.fields) |field| {
+                    const field_size = computeTypeSize(field.ty);
+                    if (field_size > max_field_size) max_field_size = field_size;
+                }
+                break :blk alignForward(max_field_size, computeTypeAlignment(.{ .struct_type = st }));
+            }
+            const max_align = computeTypeAlignment(.{ .struct_type = st });
+            var size: u64 = 0;
+            var idx: usize = 0;
+            while (idx < st.fields.len) : (idx += 1) {
+                const fld = st.fields[idx];
+                const field_align = computeTypeAlignment(fld.ty);
+                const field_size = computeTypeSize(fld.ty);
+                size = alignForward(size, field_align);
+                size += field_size;
+            }
+            break :blk alignForward(size, max_align);
+        },
+        .array_type => |arr_ptr| blk_arr: {
+            const elem_size = computeTypeSize(arr_ptr.element_type.*);
+            const len_u64: u64 = @intCast(arr_ptr.length);
+            break :blk_arr elem_size * len_u64;
+        },
+    };
+}
+
+pub fn computeTypeAlignment(ty: sg.Type) u64 {
+    return switch (ty) {
+        .builtin => |bt| switch (bt) {
+            .Void => 1,
+            .Int8, .UInt8, .Char, .Bool => 1,
+            .Int16, .UInt16, .Float16 => 2,
+            .Int32, .UInt32, .Float32 => 4,
+            .Int64, .UInt64, .Float64 => 8,
+            .UIntNative => pointer_alignment_bytes,
+            .Type => pointer_alignment_bytes,
+            .Any => pointer_alignment_bytes,
+        },
+        .abstract_type => 1,
+        .choice_type => |ct| blk_choice: {
+            if (ct.layout == .c_enum) {
+                break :blk_choice computeTypeAlignment(.{ .builtin = .Int32 });
+            }
+            var max_align: u64 = computeTypeAlignment(.{ .builtin = .Int32 });
+            for (ct.variants) |variant| {
+                const payload_ty: sg.Type = variant.payload_type orelse sg.Type{ .builtin = .UInt8 };
+                const payload_align = computeTypeAlignment(payload_ty);
+                if (payload_align > max_align) max_align = payload_align;
+            }
+            break :blk_choice max_align;
+        },
+        .pointer_type => pointer_alignment_bytes,
+        .struct_type => |st| blk: {
+            if (st.layout == .c_union) {
+                var union_max_align: u64 = 1;
+                var union_idx: usize = 0;
+                while (union_idx < st.fields.len) : (union_idx += 1) {
+                    const fld_align = computeTypeAlignment(st.fields[union_idx].ty);
+                    if (fld_align > union_max_align) union_max_align = fld_align;
+                }
+                break :blk if (union_max_align == 0) 1 else union_max_align;
+            }
+            var max_align: u64 = 1;
+            var idx: usize = 0;
+            while (idx < st.fields.len) : (idx += 1) {
+                const fld_align = computeTypeAlignment(st.fields[idx].ty);
+                if (fld_align > max_align) max_align = fld_align;
+            }
+            break :blk if (max_align == 0) 1 else max_align;
+        },
+        .array_type => |arr_ptr| computeTypeAlignment(arr_ptr.element_type.*),
+    };
+}
+
+fn alignForward(value: u64, alignment: u64) u64 {
+    if (alignment <= 1) return value;
+    const mask = alignment - 1;
+    return (value + mask) & ~mask;
+}
+
+pub fn makeIntLiteral(
+    allocator: *const std.mem.Allocator,
+    loc: tok.Location,
+    value: i64,
+    ty: sg.Type,
+) !TypedExpr {
+    const node = try allocator.create(sg.SGNode);
+    node.* = .{
+        .location = loc,
+        .sem_type = ty,
+        .content = .{ .value_literal = .{ .int_literal = value } },
+    };
+    return .{ .node = node, .ty = ty };
+}
+
+pub fn makeTypeLiteral(
+    allocator: *const std.mem.Allocator,
+    loc: tok.Location,
+    ty: sg.Type,
+) !TypedExpr {
+    const type_node = try allocator.create(sg.TypeLiteral);
+    type_node.* = .{ .ty = ty };
+    const node = try allocator.create(sg.SGNode);
+    node.* = .{
+        .location = loc,
+        .sem_type = .{ .builtin = .Type },
+        .content = .{ .type_literal = type_node },
+    };
+    return .{ .node = node, .ty = .{ .builtin = .Type } };
+}
+
+pub fn intLiteralAs(
+    target: sg.BuiltinType,
+    value: i64,
+    loc: tok.Location,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!?TypedExpr {
+    const type_name = @tagName(target);
+    return switch (target) {
+        .Int8, .Int16, .Int32, .Int64 => blk_signed: {
+            const Bounds = struct { min: i64, max: i64 };
+            const bounds: Bounds = switch (target) {
+                .Int8 => .{ .min = @as(i64, std.math.minInt(i8)), .max = @as(i64, std.math.maxInt(i8)) },
+                .Int16 => .{ .min = @as(i64, std.math.minInt(i16)), .max = @as(i64, std.math.maxInt(i16)) },
+                .Int32 => .{ .min = @as(i64, std.math.minInt(i32)), .max = @as(i64, std.math.maxInt(i32)) },
+                .Int64 => .{ .min = std.math.minInt(i64), .max = std.math.maxInt(i64) },
+                else => unreachable,
+            };
+            if (value < bounds.min or value > bounds.max) {
+                try diags.add(
+                    loc,
+                    .semantic,
+                    "integer literal {d} does not fit in '{s}' (min {d}, max {d})",
+                    .{ value, type_name, bounds.min, bounds.max },
+                );
+                return error.Reported;
+            }
+            break :blk_signed try makeIntLiteral(allocator, loc, value, .{ .builtin = target });
+        },
+        .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64 => blk_unsigned: {
+            if (value < 0) {
+                try diags.add(
+                    loc,
+                    .semantic,
+                    "integer literal {d} does not fit in '{s}' (min 0)",
+                    .{ value, type_name },
+                );
+                return error.Reported;
+            }
+            const max_val: u64 = switch (target) {
+                .UIntNative => std.math.maxInt(usize),
+                .UInt8 => std.math.maxInt(u8),
+                .UInt16 => std.math.maxInt(u16),
+                .UInt32 => std.math.maxInt(u32),
+                .UInt64 => std.math.maxInt(u64),
+                else => unreachable,
+            };
+            const unsigned_value: u64 = @intCast(value);
+            if (unsigned_value > max_val) {
+                try diags.add(
+                    loc,
+                    .semantic,
+                    "integer literal {d} does not fit in '{s}' (max {d})",
+                    .{ value, type_name, max_val },
+                );
+                return error.Reported;
+            }
+            break :blk_unsigned try makeIntLiteral(allocator, loc, value, .{ .builtin = target });
+        },
+        else => null,
+    };
+}
+
+fn floatLiteralAs(
+    target: sg.BuiltinType,
+    value: f64,
+    loc: tok.Location,
+    allocator: *const std.mem.Allocator,
+) err.SemErr!?TypedExpr {
+    return switch (target) {
+        .Float16, .Float32, .Float64 => blk: {
+            const node = try allocator.create(sg.SGNode);
+            node.* = .{
+                .location = loc,
+                .content = .{ .value_literal = .{ .float_literal = value } },
+            };
+            break :blk TypedExpr{ .node = node, .ty = .{ .builtin = target } };
+        },
+        else => null,
+    };
+}
+
+pub fn coerceLiteralToBuiltin(
+    target: sg.BuiltinType,
+    expr: TypedExpr,
+    expr_node: *const syn.STNode,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    if (expr.node.content != .value_literal) return expr;
+
+    const lit = expr.node.content.value_literal;
+    switch (lit) {
+        .int_literal => |value| {
+            const maybe = try intLiteralAs(target, value, expr_node.location, allocator, diags);
+            if (maybe) |converted| return converted;
+        },
+        .float_literal => |value| {
+            const maybe = try floatLiteralAs(target, value, expr_node.location, allocator);
+            if (maybe) |converted| return converted;
+        },
+        else => {},
+    }
+    return expr;
+}
+
+pub fn canLiteralCoerceToBuiltin(
+    target: sg.BuiltinType,
+    expr: TypedExpr,
+) bool {
+    if (expr.node.content != .value_literal) return false;
+
+    return switch (expr.node.content.value_literal) {
+        .int_literal => |value| switch (target) {
+            .Int8 => value >= std.math.minInt(i8) and value <= std.math.maxInt(i8),
+            .Int16 => value >= std.math.minInt(i16) and value <= std.math.maxInt(i16),
+            .Int32 => value >= std.math.minInt(i32) and value <= std.math.maxInt(i32),
+            .Int64 => true,
+            .UIntNative => value >= 0 and @as(u64, @intCast(value)) <= std.math.maxInt(usize),
+            .UInt8 => value >= 0 and @as(u64, @intCast(value)) <= std.math.maxInt(u8),
+            .UInt16 => value >= 0 and @as(u64, @intCast(value)) <= std.math.maxInt(u16),
+            .UInt32 => value >= 0 and @as(u64, @intCast(value)) <= std.math.maxInt(u32),
+            .UInt64 => value >= 0,
+            else => false,
+        },
+        .float_literal => switch (target) {
+            .Float16, .Float32, .Float64 => true,
+            else => false,
+        },
+        else => false,
+    };
+}
+
+pub fn canStringLiteralCoerceToPointer(
+    expected: *const sg.PointerType,
+    expr: TypedExpr,
+) bool {
+    if (expected.mutability != .read_only) return false;
+    if (expected.child.* != .builtin or expected.child.*.builtin != .Char) return false;
+    if (expr.node.content != .value_literal) return false;
+
+    return switch (expr.node.content.value_literal) {
+        .string_literal => true,
+        else => false,
+    };
+}
+
+fn coerceStringLiteralToPointer(
+    expected: *const sg.PointerType,
+    expr: TypedExpr,
+) TypedExpr {
+    if (!canStringLiteralCoerceToPointer(expected, expr)) return expr;
+
+    const expected_ty = sg.Type{ .pointer_type = expected };
+    @constCast(expr.node).sem_type = expected_ty;
+    return .{
+        .node = expr.node,
+        .ty = expected_ty,
+    };
+}
+
+pub fn coerceExprToType(
+    expected: sg.Type,
+    expr: TypedExpr,
+    expr_node: *const syn.STNode,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    if (typesExactlyEqual(expected, expr.ty)) return expr;
+
+    return switch (expected) {
+        .array_type => |arr_info| convertListLiteralToArray(expr, arr_info, expr_node.location, s, allocator, diags),
+        .builtin => |bt| try coerceLiteralToBuiltin(bt, expr, expr_node, allocator, diags),
+        .choice_type => |ct| try coerceChoiceLiteral(ct, expr, expr_node, s, allocator, diags),
+        .struct_type => |st| try coerceStructLiteral(st, expr, expr_node, s, allocator, diags),
+        .pointer_type => |pt| coerceStringLiteralToPointer(pt, expr),
+        else => expr,
+    };
+}
+
+fn coerceChoiceLiteral(
+    expected: *const sg.ChoiceType,
+    expr: TypedExpr,
+    expr_node: *const syn.STNode,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    if (expr.ty == .choice_type and (isOpenInferredReasonsChoice(expected) or expected.variants.len == 0)) {
+        for (expr.ty.choice_type.variants) |variant| {
+            _ = try appendChoiceVariant(@constCast(expected), variant, allocator);
+        }
+    }
+
+    if (expr.ty == .choice_type and choiceTypeIsSupersetOf(expected, expr.ty.choice_type)) {
+        return coerceChoiceValue(expected, expr, expr_node, allocator, diags);
+    }
+
+    if (expr.node.content != .choice_literal) return expr;
+
+    const choice_lit = expr.node.content.choice_literal;
+    const variant_name = choice_lit.variant_name;
+    const loc = expr_node.location;
+
+    var qualified_option: ?*const sg.ChoiceOptionDeclaration = null;
+    if (choice_lit.module_qualifier) |module_name| {
+        const module_dir = s.lookupModuleAlias(module_name) orelse {
+            try diags.add(loc, .semantic, "unknown module alias '{s}' in choice literal", .{module_name});
+            return error.Reported;
+        };
+        qualified_option = s.lookupChoiceOptionInModule(module_dir, variant_name) orelse {
+            try diags.add(loc, .semantic, "module '{s}' has no choice option '..{s}'", .{ module_name, variant_name });
+            return error.Reported;
+        };
+        if (std.mem.startsWith(u8, variant_name, "_")) {
+            const requester_dir = std.fs.path.dirname(loc.file) orelse ".";
+            if (!std.mem.eql(u8, requester_dir, module_dir)) {
+                try diags.add(loc, .semantic, "choice option '{s}' is private to its module", .{variant_name});
+                return error.Reported;
+            }
+        }
+    }
+
+    if (isOpenInferredReasonsChoice(expected) or expected.variants.len == 0) {
+        const option_decl = if (qualified_option) |opt|
+            opt
+        else
+            s.lookupChoiceOption(variant_name);
+        if (option_decl) |decl| {
+            _ = try appendChoiceVariant(@constCast(expected), .{
+                .name = variant_name,
+                .value = @intCast(decl.id),
+                .payload_type = null,
+                .option_decl = decl,
+            }, allocator);
+        }
+    }
+
+    for (expected.variants, 0..) |variant, idx| {
+        const variant_matches = if (qualified_option) |opt|
+            variant.option_decl == opt
+        else if (variant.option_decl) |opt|
+            opt == s.lookupChoiceOption(variant_name)
+        else
+            std.mem.eql(u8, variant.name, variant_name);
+        if (variant_matches) {
+            const coerced_payload = if (variant.payload_type) |payload_ty| blk: {
+                if (choice_lit.payload == null) {
+                    try diags.add(
+                        loc,
+                        .semantic,
+                        "choice variant '..{s}' requires a payload",
+                        .{variant_name},
+                    );
+                    return error.Reported;
+                }
+
+                const payload_expr = choice_lit.payload.?;
+                const payload_expr_ty = payload_expr.sem_type orelse return error.InvalidType;
+                const payload_typed = TypedExpr{
+                    .node = @constCast(payload_expr),
+                    .ty = payload_expr_ty,
+                };
+                const coerced = try coerceExprToType(payload_ty, payload_typed, expr_node, s, allocator, diags);
+                break :blk coerced.node;
+            } else blk: {
+                if (choice_lit.payload != null) {
+                    try diags.add(
+                        loc,
+                        .semantic,
+                        "choice variant '..{s}' does not accept a payload",
+                        .{variant_name},
+                    );
+                    return error.Reported;
+                }
+                break :blk null;
+            };
+
+            const typed = try allocator.create(sg.ChoiceLiteral);
+            typed.* = .{
+                .variant_name = variant_name,
+                .choice_type = expected,
+                .variant_index = @intCast(idx),
+                .payload = coerced_payload,
+            };
+
+            const node = try sg.makeSGNode(.{ .choice_literal = typed }, loc, allocator);
+            node.sem_type = .{ .choice_type = expected };
+            return .{ .node = node, .ty = .{ .choice_type = expected } };
+        }
+    }
+
+    const expected_text = try formatTypeText(.{ .choice_type = expected }, s, allocator);
+    defer expected_text.deinit();
+    try diags.add(
+        loc,
+        .semantic,
+        "choice type '{s}' has no variant '..{s}'",
+        .{ expected_text.bytes, variant_name },
+    );
+    return error.Reported;
+}
+
+fn coerceChoiceValue(
+    expected: *const sg.ChoiceType,
+    expr: TypedExpr,
+    expr_node: *const syn.STNode,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    const actual_choice = expr.ty.choice_type;
+    if (!choiceTypeIsSupersetOf(expected, actual_choice)) return expr;
+    if (expr.node.content != .choice_literal) return expr;
+
+    const lit = expr.node.content.choice_literal;
+    const actual_variant = actual_choice.variants[lit.variant_index];
+    const expected_index = choiceTypeContainsVariant(expected, actual_variant) orelse {
+        try diags.add(expr_node.location, .semantic, "choice coercion failed: variant is not part of the destination choice", .{});
+        return error.Reported;
+    };
+
+    const typed = try allocator.create(sg.ChoiceLiteral);
+    typed.* = .{
+        .variant_name = lit.variant_name,
+        .module_qualifier = lit.module_qualifier,
+        .choice_type = expected,
+        .variant_index = expected_index,
+        .payload = lit.payload,
+    };
+
+    const node = try sg.makeSGNode(.{ .choice_literal = typed }, expr_node.location, allocator);
+    node.sem_type = .{ .choice_type = expected };
+    return .{ .node = node, .ty = .{ .choice_type = expected } };
+}
+
+pub fn convertListLiteralToArray(
+    expr: TypedExpr,
+    arr_info: *const sg.ArrayType,
+    loc: tok.Location,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    switch (expr.node.content) {
+        .list_literal => |ll| {
+            if (ll.elements.len != arr_info.length) {
+                try diags.add(
+                    loc,
+                    .semantic,
+                    "array expects {d} elements, but list literal has {d}",
+                    .{ arr_info.length, ll.elements.len },
+                );
+                return error.Reported;
+            }
+
+            const expected_elem_ty = arr_info.element_type.*;
+            for (ll.element_types, 0..) |elem_ty, idx| {
+                if (typesStructurallyEqual(expected_elem_ty, elem_ty)) continue;
+                const pair = try formatTypePairText(expected_elem_ty, elem_ty, s, allocator);
+                defer pair.deinit();
+                try diags.add(
+                    loc,
+                    .semantic,
+                    "array element {d} has type '{s}', expected '{s}'",
+                    .{ idx, pair.actual.bytes, pair.expected.bytes },
+                );
+                return error.Reported;
+            }
+
+            var adjusted_elements = try allocator.alloc(*const sg.SGNode, ll.elements.len);
+            errdefer allocator.free(adjusted_elements);
+            for (ll.elements, 0..) |elem_node, idx| {
+                var elem_expr = TypedExpr{
+                    .node = @constCast(elem_node),
+                    .ty = ll.element_types[idx],
+                };
+                elem_expr = try ensureValuePositionAllowed(elem_expr, loc, s, allocator, diags);
+                adjusted_elements[idx] = elem_expr.node;
+            }
+
+            const arr_lit = try allocator.create(sg.ArrayLiteral);
+            arr_lit.* = .{
+                .elements = adjusted_elements,
+                .element_type = expected_elem_ty,
+                .length = arr_info.length,
+            };
+
+            const node = try allocator.create(sg.SGNode);
+            node.* = .{
+                .location = loc,
+                .content = .{ .array_literal = arr_lit },
+            };
+            return .{ .node = node, .ty = .{ .array_type = arr_info } };
+        },
+        else => {},
+    }
+
+    const pair = try formatTypePairText(.{ .array_type = arr_info }, expr.ty, s, allocator);
+    defer pair.deinit();
+    try diags.add(
+        loc,
+        .semantic,
+        "cannot initialize array of type '{s}' with expression of type '{s}'",
+        .{ pair.expected.bytes, pair.actual.bytes },
+    );
+    return error.Reported;
+}
+
+pub fn coerceStructLiteral(
+    expected: *const sg.StructType,
+    expr: TypedExpr,
+    expr_node: *const syn.STNode,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    if (expected.layout == .c_union) {
+        return coerceUnionLiteral(expected, expr, expr_node, s, allocator, diags);
+    }
+
+    if (expr.node.content != .struct_value_literal) return expr;
+    const lit = expr.node.content.struct_value_literal;
+    const actual_struct = lit.ty.struct_type;
+    const positional_prefix: usize = @min(lit.dispatch_prefix_positional_count, lit.fields.len);
+
+    if (lit.fields.len != actual_struct.fields.len or positional_prefix > expected.fields.len) {
+        return expr;
+    }
+
+    var coerced_fields = try allocator.alloc(sg.StructValueLiteralField, expected.fields.len);
+    errdefer allocator.free(coerced_fields);
+
+    for (lit.fields[positional_prefix..]) |actual_field| {
+        if (findFieldByName(expected, actual_field.name) == null) {
+            allocator.free(coerced_fields);
+            return expr;
+        }
+    }
+
+    var i: usize = 0;
+    while (i < positional_prefix) : (i += 1) {
+        const exp_field = expected.fields[i];
+        const act_field = actual_struct.fields[i];
+        const lit_field = lit.fields[i];
+        const field_node = @constCast(lit_field.value);
+        var field_expr = TypedExpr{
+            .node = field_node,
+            .ty = act_field.ty,
+        };
+        field_expr = try coerceExprToType(exp_field.ty, field_expr, expr_node, s, allocator, diags);
+        if (!typesExactlyEqual(exp_field.ty, field_expr.ty)) {
+            const pair = try formatTypePairText(exp_field.ty, field_expr.ty, s, allocator);
+            defer pair.deinit();
+            try diags.add(
+                expr_node.location,
+                .semantic,
+                "cannot initialize positional field {d} with '{s}' (expected '{s}')",
+                .{ i, pair.actual.bytes, pair.expected.bytes },
+            );
+            allocator.free(coerced_fields);
+            return error.Reported;
+        }
+
+        coerced_fields[i] = .{ .name = exp_field.name, .value = field_expr.node };
+    }
+
+    while (i < expected.fields.len) : (i += 1) {
+        const exp_field = expected.fields[i];
+        const act_field_ptr = findFieldByName(actual_struct, exp_field.name);
+        const lit_field_ptr = findStructValueFieldByName(lit, exp_field.name);
+
+        if (act_field_ptr != null and lit_field_ptr != null) {
+            const act_field = act_field_ptr.?;
+            const lit_field = lit_field_ptr.?;
+            const field_node = @constCast(lit_field.value);
+            var field_expr = TypedExpr{
+                .node = field_node,
+                .ty = act_field.ty,
+            };
+            field_expr = try coerceExprToType(exp_field.ty, field_expr, expr_node, s, allocator, diags);
+            if (!typesExactlyEqual(exp_field.ty, field_expr.ty)) {
+                const pair = try formatTypePairText(exp_field.ty, field_expr.ty, s, allocator);
+                defer pair.deinit();
+                try diags.add(
+                    expr_node.location,
+                    .semantic,
+                    "cannot initialize field '.{s}' with '{s}' (expected '{s}')",
+                    .{ exp_field.name, pair.actual.bytes, pair.expected.bytes },
+                );
+                allocator.free(coerced_fields);
+                return error.Reported;
+            }
+
+            coerced_fields[i] = .{ .name = exp_field.name, .value = field_expr.node };
+            continue;
+        }
+
+        if (exp_field.default_value) |default_node| {
+            coerced_fields[i] = .{ .name = exp_field.name, .value = default_node };
+            continue;
+        }
+
+        if (try synthesizeImplicitFieldValue(exp_field, expr_node.location, allocator)) |synthetic_value| {
+            coerced_fields[i] = .{ .name = exp_field.name, .value = synthetic_value };
+            continue;
+        }
+
+        allocator.free(coerced_fields);
+        return expr;
+    }
+
+    const lit_ptr = try allocator.create(sg.StructValueLiteral);
+    lit_ptr.* = .{
+        .fields = coerced_fields,
+        .ty = .{ .struct_type = expected },
+        .dispatch_prefix_positional_count = lit.dispatch_prefix_positional_count,
+    };
+
+    const node = try allocator.create(sg.SGNode);
+    node.* = .{
+        .location = expr_node.location,
+        .content = .{ .struct_value_literal = lit_ptr },
+    };
+    return .{ .node = node, .ty = .{ .struct_type = expected } };
+}
+
+fn coerceUnionLiteral(
+    expected: *const sg.StructType,
+    expr: TypedExpr,
+    expr_node: *const syn.STNode,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    if (expr.node.content != .struct_value_literal) return expr;
+    const lit = expr.node.content.struct_value_literal;
+    if (lit.dispatch_prefix_positional_count != 0) return expr;
+    if (lit.fields.len != 1) return expr;
+    if (lit.ty != .struct_type) return expr;
+
+    const field = lit.fields[0];
+    const expected_field = findFieldByName(expected, field.name) orelse return expr;
+    const actual_field = findFieldByName(lit.ty.struct_type, field.name) orelse return expr;
+    const field_node = @constCast(field.value);
+    var field_expr = TypedExpr{
+        .node = field_node,
+        .ty = actual_field.ty,
+    };
+    field_expr = try coerceExprToType(expected_field.ty, field_expr, expr_node, s, allocator, diags);
+    if (!typesExactlyEqual(expected_field.ty, field_expr.ty)) {
+        const pair = try formatTypePairText(expected_field.ty, field_expr.ty, s, allocator);
+        defer pair.deinit();
+        try diags.add(
+            expr_node.location,
+            .semantic,
+            "cannot initialize union field '.{s}' with '{s}' (expected '{s}')",
+            .{ expected_field.name, pair.actual.bytes, pair.expected.bytes },
+        );
+        return error.Reported;
+    }
+
+    const coerced_fields = try allocator.alloc(sg.StructValueLiteralField, 1);
+    coerced_fields[0] = .{ .name = expected_field.name, .value = field_expr.node };
+
+    const lit_ptr = try allocator.create(sg.StructValueLiteral);
+    lit_ptr.* = .{
+        .fields = coerced_fields,
+        .ty = .{ .struct_type = expected },
+        .dispatch_prefix_positional_count = 0,
+    };
+
+    const node = try allocator.create(sg.SGNode);
+    node.* = .{
+        .location = expr_node.location,
+        .content = .{ .struct_value_literal = lit_ptr },
+    };
+    return .{ .node = node, .ty = .{ .struct_type = expected } };
+}
+
+pub fn findStructValueFieldByName(lit: *const sg.StructValueLiteral, name: []const u8) ?*const sg.StructValueLiteralField {
+    for (lit.fields) |*field| {
+        if (std.mem.eql(u8, field.name, name)) return field;
+    }
+    return null;
+}
+
+fn synthesizeImplicitFieldValue(
+    field: sg.StructTypeField,
+    loc: tok.Location,
+    allocator: *const std.mem.Allocator,
+) !?*const sg.SGNode {
+    if (!std.mem.eql(u8, field.name, "trace")) return null;
+    const trace_struct = switch (field.ty) {
+        .struct_type => |st| st,
+        else => return null,
+    };
+    const entries_field = findFieldByName(trace_struct, "entries") orelse return null;
+    const entries_struct = switch (entries_field.ty) {
+        .struct_type => |st| st,
+        else => return null,
+    };
+
+    const allocation_field = findFieldByName(entries_struct, "allocation") orelse return null;
+    const length_field = findFieldByName(entries_struct, "length") orelse return null;
+    const capacity_field = findFieldByName(entries_struct, "capacity") orelse return null;
+    const allocation_struct = switch (allocation_field.ty) {
+        .struct_type => |st| st,
+        else => return null,
+    };
+
+    const data_field = findFieldByName(allocation_struct, "data") orelse return null;
+    const size_field = findFieldByName(allocation_struct, "size") orelse return null;
+
+    const zero_native = try makeIntLiteral(allocator, loc, 0, .{ .builtin = .UIntNative });
+    const null_data = try allocator.create(sg.SGNode);
+    null_data.* = .{
+        .location = loc,
+        .sem_type = data_field.ty,
+        .content = .{ .explicit_cast = .{
+            .value = zero_native.node,
+            .target_type = data_field.ty,
+        } },
+    };
+
+    const allocation_fields = try allocator.alloc(sg.StructValueLiteralField, 2);
+    allocation_fields[0] = .{ .name = data_field.name, .value = null_data };
+    allocation_fields[1] = .{ .name = size_field.name, .value = zero_native.node };
+    const allocation_lit = try allocator.create(sg.StructValueLiteral);
+    allocation_lit.* = .{
+        .fields = allocation_fields,
+        .ty = allocation_field.ty,
+        .dispatch_prefix_positional_count = 0,
+    };
+    const allocation_node = try allocator.create(sg.SGNode);
+    allocation_node.* = .{
+        .location = loc,
+        .sem_type = allocation_field.ty,
+        .content = .{ .struct_value_literal = allocation_lit },
+    };
+
+    const entries_fields = try allocator.alloc(sg.StructValueLiteralField, 3);
+    entries_fields[0] = .{ .name = allocation_field.name, .value = allocation_node };
+    entries_fields[1] = .{ .name = length_field.name, .value = zero_native.node };
+    entries_fields[2] = .{ .name = capacity_field.name, .value = zero_native.node };
+    const entries_lit = try allocator.create(sg.StructValueLiteral);
+    entries_lit.* = .{
+        .fields = entries_fields,
+        .ty = entries_field.ty,
+        .dispatch_prefix_positional_count = 0,
+    };
+    const entries_node = try allocator.create(sg.SGNode);
+    entries_node.* = .{
+        .location = loc,
+        .sem_type = entries_field.ty,
+        .content = .{ .struct_value_literal = entries_lit },
+    };
+
+    const trace_fields = try allocator.alloc(sg.StructValueLiteralField, 1);
+    trace_fields[0] = .{ .name = entries_field.name, .value = entries_node };
+    const trace_lit = try allocator.create(sg.StructValueLiteral);
+    trace_lit.* = .{
+        .fields = trace_fields,
+        .ty = field.ty,
+        .dispatch_prefix_positional_count = 0,
+    };
+    const trace_node = try allocator.create(sg.SGNode);
+    trace_node.* = .{
+        .location = loc,
+        .sem_type = field.ty,
+        .content = .{ .struct_value_literal = trace_lit },
+    };
+    return trace_node;
+}
+
+pub fn ensureReadOnlyPointer(expr_node: *const syn.STNode, te: TypedExpr, allocator: *const std.mem.Allocator, diags: *diagnostics.Diagnostics) err.SemErr!TypedExpr {
+    if (te.ty == .pointer_type) return te;
+
+    try ensureAddressableNode(te.node, .read_only, expr_node.location, diags);
+
+    const child_ty = try allocator.create(sg.Type);
+    child_ty.* = te.ty;
+
+    const ptr_info = try allocator.create(sg.PointerType);
+    ptr_info.* = .{ .mutability = .read_only, .child = child_ty };
+
+    const addr_node = try allocator.create(sg.SGNode);
+    addr_node.* = .{
+        .location = expr_node.location,
+        .sem_type = .{ .pointer_type = ptr_info },
+        .content = .{ .address_of = te.node },
+    };
+    return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
+}
+
+pub fn makeAddressablePointer(
+    node: *const sg.SGNode,
+    value_ty: sg.Type,
+    mutability: syn.PointerMutability,
+    loc: tok.Location,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    try ensureAddressableNode(node, mutability, loc, diags);
+
+    const child_ty = try allocator.create(sg.Type);
+    child_ty.* = value_ty;
+
+    const ptr_info = try allocator.create(sg.PointerType);
+    ptr_info.* = .{ .mutability = mutability, .child = child_ty };
+
+    const addr_node = try allocator.create(sg.SGNode);
+    addr_node.* = .{
+        .location = loc,
+        .sem_type = .{ .pointer_type = ptr_info },
+        .content = .{ .address_of = node },
+    };
+    return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
+}
+
+pub fn ensureMutablePointer(
+    expr_node: *const syn.STNode,
+    te: TypedExpr,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    if (te.ty == .pointer_type) {
+        const info = te.ty.pointer_type.*;
+        if (info.mutability != .read_write) {
+            const ptr_str = try formatTypeText(.{ .pointer_type = te.ty.pointer_type }, s, allocator);
+            defer ptr_str.deinit();
+            try diags.add(
+                expr_node.location,
+                .semantic,
+                "cannot assign through pointer '{s}' because it is read-only; use '$&' when acquiring it",
+                .{ptr_str.bytes},
+            );
+            return error.Reported;
+        }
+        return te;
+    }
+
+    try ensureAddressableNode(te.node, .read_write, expr_node.location, diags);
+
+    const child_ty = try allocator.create(sg.Type);
+    child_ty.* = te.ty;
+
+    const ptr_info = try allocator.create(sg.PointerType);
+    ptr_info.* = .{ .mutability = .read_write, .child = child_ty };
+
+    const addr_node = try allocator.create(sg.SGNode);
+    addr_node.* = .{
+        .location = expr_node.location,
+        .sem_type = .{ .pointer_type = ptr_info },
+        .content = .{ .address_of = te.node },
+    };
+    return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
+}
+
+fn ensureAddressableNode(
+    node: *const sg.SGNode,
+    mutability: syn.PointerMutability,
+    loc: tok.Location,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!void {
+    switch (node.content) {
+        .binding_use => |binding| {
+            if (mutability == .read_write and binding.mutability != .variable) {
+                try diags.add(
+                    loc,
+                    .semantic,
+                    "binding '{s}' is immutable; declare it with '::' or use '&{s}'",
+                    .{ binding.name, binding.name },
+                );
+                return error.Reported;
+            }
+            return;
+        },
+        .struct_field_access => |sfa| {
+            return ensureAddressableNode(sfa.struct_value, mutability, loc, diags);
+        },
+        .choice_payload_access => |acc| {
+            return ensureAddressableNode(acc.choice_value, mutability, loc, diags);
+        },
+        .dereference => |deref| {
+            if (mutability == .read_write and deref.pointer_type.mutability != .read_write) {
+                try diags.add(
+                    loc,
+                    .semantic,
+                    "cannot assign through this pointer because it is read-only; use '$&' when acquiring it",
+                    .{},
+                );
+                return error.Reported;
+            }
+            return;
+        },
+        else => {
+            try diags.add(
+                loc,
+                .semantic,
+                "cannot take the address of this expression; only addressable values support '&'",
+                .{},
+            );
+            return error.Reported;
+        },
+    }
+}

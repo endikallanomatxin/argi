@@ -1,0 +1,50 @@
+--
+-- Scratch notes. Keep syntax aligned with the current language even if the
+-- APIs themselves are still provisional.
+--
+
+StaticList#(.t: Type, .n: UIntNative) : Abstract = ()
+
+StaticList#(.t, _) implements List#(.t)
+
+
+StackArray#(.t: Type, .n: UIntNative) : Type = (
+    ---
+    This is a stack allocated array.
+    Similar to the default array in C or zig, when not using malloc.
+    In this language, declaration of a StackArray has to be intentional.
+    ---
+    ._data      : &Byte
+    ._data_type : t
+    ._length    : UIntNative = n
+    ._alignment : Alignment = ..Default
+)
+
+StackArray#(.t: Type, .n: UIntNative) implements StaticList#(.t: t, .n: n)
+StackArray#(.t: Type, .n: UIntNative) implements Indexable#(.t: t)
+StackArray#(.t: Type, .n: UIntNative) implements List#(.t: t)
+
+get[]#(.t: Type, .n: UIntNative)(.self: &StackArray#(.t: t, .n: n), .index: UIntNative) -> (.value: t) := {
+    if index >= n {
+        panic("Index out of bounds")
+    }
+
+    -- Read from index to index + sizeof(t)
+    offset := index * @sizeOf(t)
+    ptr : &t = self&._data + offset
+
+    value = ptr&
+}
+
+
+StaticArray#(.t: Type, .n: UIntNative) : Type = (
+    ---
+    A heap allocated static array
+    ---
+    ._data      : Allocation
+    ._data_type : Type        = t
+    ._length    : UIntNative  = n
+    ._alignment : Alignment   = ..Default
+)
+
+StaticArray#(.t: Type, .n: UIntNative) implements StaticList#(.t: t, .n: n)

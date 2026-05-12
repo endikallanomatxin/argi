@@ -1,0 +1,38 @@
+DummyOutput : Type = (
+    .write_count: Int32 = 0
+    .flush_count: Int32 = 0
+)
+
+write_byte(.self: $&DummyOutput, .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    self& = (
+        .write_count = self&.write_count + 1,
+        .flush_count = self&.flush_count,
+    )
+    result = ..ok(.value = Void())
+}
+
+flush(.self: $&DummyOutput) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+    self& = (
+        .write_count = self&.write_count,
+        .flush_count = self&.flush_count + 1,
+    )
+    result = ..ok(.value = Void())
+}
+
+DummyOutput implements Writer
+
+main(.system: System) -> (.status_code: Int32) := {
+    allocator ::= system.allocator
+    stderr :: DummyOutput = (
+        .write_count = 0,
+        .flush_count = 0,
+    )
+    text ::= String(.length = 1)
+    bytes_set(.string = $&text, .index = 0, .value = 69)
+    view ::= as_view(.self = &text)
+
+    print_error(.stderr = $&stderr, .value = view)
+    flush_error(.stderr = $&stderr)
+
+    status_code = stderr.write_count * 10 + stderr.flush_count
+}

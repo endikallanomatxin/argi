@@ -1,0 +1,67 @@
+DummyInput : Type = (
+    .index: Int32 = 0
+)
+
+read_byte(
+    .self: $&DummyInput,
+) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
+    if self&.index == 0 {
+        self& = (.index = 1)
+        result = ..ok ..ok 65
+        return
+    }
+
+    if self&.index == 1 {
+        self& = (.index = 2)
+        result = ..ok ..ok 66
+        return
+    }
+
+    result = ..ok ..end
+}
+
+DummyInput implements Reader
+
+main() -> (.status_code: Int32) := {
+    raw ::= malloc(.size = 4)
+    if cast#(.to: UIntNative)(.value = raw) == 0 {
+        status_code = 10
+        return
+    }
+
+    buffer ::= array_view#(.t: UInt8)(
+        .data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = raw)),
+        .length = 4,
+    )
+    stdin :: DummyInput = DummyInput()
+    read_result ::= read(.self = $&stdin, .buffer = buffer)
+
+    if is(.value = read_result, .variant = ..ok) {
+    } else {
+        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
+        status_code = 11
+        return
+    }
+
+    copied ::= read_result..ok
+    if copied != 2 {
+        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
+        status_code = 12
+        return
+    }
+
+    if buffer[0] != 65 {
+        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
+        status_code = 13
+        return
+    }
+
+    if buffer[1] != 66 {
+        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
+        status_code = 14
+        return
+    }
+
+    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
+    status_code = 0
+}

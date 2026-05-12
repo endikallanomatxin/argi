@@ -1,0 +1,15 @@
+pub const SemErr = error{
+    SymbolAlreadyDefined,
+    SymbolNotFound,
+    FieldsNotFound,
+    ConstantReassignment,
+    InvalidType,
+    UnknownType,
+    AbstractNeedsDefault,
+    MissingReturnValue,
+    NotYetImplemented,
+    OutOfMemory,
+    OptionalUnwrap,
+    AmbiguousOverload,
+    Reported,
+};

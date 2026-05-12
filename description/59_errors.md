@@ -1,0 +1,259 @@
+# Errors
+
+Dirección aceptada:
+- Propagación y ergonomía en la línea de Zig.
+- Contexto y traza humana acumulable al propagar, en la línea de `anyhow`.
+- La identidad del error ya no es un `Type` arbitrario: es una `choice option`
+  nominal.
+
+## Choice options
+
+Una `choice option` se declara suelta:
+
+```rg
+..file_not_found
+..permission_denied
+..invalid_format
+```
+
+Semántica:
+- Cada declaración define un símbolo nominal.
+- El compilador asigna a cada opción un id numérico único durante la
+  compilación.
+- Ese id es la identidad real de la opción.
+- El texto `..name` solo es la forma de referirse a ella.
+
+No hay autodeclaración por uso:
+- `..file_not_found` en posición de valor referencia una opción existente.
+- Si no existe, es error.
+
+## Open choices
+
+Las opciones se agrupan en `choices` cerrados cuando hace falta tipado o
+exhaustividad.
+
+```rg
+reason : (..file_not_found, ..permission_denied) = ..permission_denied
+```
+
+Un `choice` puede ser:
+- anónimo, como en el ejemplo anterior
+- nombrado, usando un alias o tipo del lenguaje
+
+Los `choices` usados para errores son cerrados y finitos.
+
+## Error values
+
+La traza sigue viviendo dentro del propio error.
+
+```rg
+Error#(.reasons: Choice) : Type = (
+    .reason: reasons
+    .trace: ErrorTrace
+)
+```
+
+Restricciones:
+- `.reason` debe ser un `choice` sin payloads
+- `.trace` mantiene el mecanismo actual de entradas de traza
+
+## Error unions
+
+`Errable` queda definido sobre un conjunto de razones:
+
+```rg
+Errable#(.t: Type, .reasons: Choice) : Type = (
+    ..ok t
+    ..error Error#(.reasons = reasons)
+)
+```
+
+Consecuencias:
+- una función declara el conjunto de razones que puede devolver
+- `!` permite propagar un subconjunto hacia un superset compatible
+- el remapeo de tags entre conjuntos distintos lo hace el compilador/codegen
+
+Ejemplo:
+
+```rg
+..file_not_found
+..permission_denied
+
+read_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found))) := {
+    result = ..error(.reason = ..file_not_found)
+}
+
+load_file() -> (.result: Errable#(.t: Int32, .reasons: (..file_not_found, ..permission_denied))) := {
+    value := read_file()!
+    result = ..ok value
+}
+```
+
+For the common single-result case there is also shorthand syntax:
+
+```rg
+load_file() -> !Int32 := {
+    value := read_file()!
+    result = ..ok value
+}
+```
+
+`-> !T` means a single output binding named `result` whose type is an `Errable`
+returning `T`. In this special form, the compiler infers the reasons from the
+body and closes the return `Errable` after semantic analysis.
+
+The same inference path is also available when the output is written
+explicitly as `Errable#(.t: T)` and omits `.reasons`:
+
+```rg
+load_file() -> (.result: Errable#(.t: Int32)) := {
+    value := read_file()!
+    result = ..ok value
+}
+```
+
+This is currently accepted only in function outputs. Outside function output
+positions, `Errable#(.t: T)` still requires an explicit `.reasons`.
+
+The compiler can also infer a narrower subset of the declared reasons by
+looking at the actual propagation and return sites in the function body. That
+inferred subset is surfaced in tooling hover even when the full declared
+`.reasons` are still written explicitly in source.
+
+En `core`, la misma idea ya se usa para fallos de apertura, de sistema de
+ficheros y de streams:
+
+```rg
+..file_open_failed
+..path_open_failed
+..stream_read_failed
+..stream_write_failed
+..stream_flush_failed
+..stream_close_failed
+..out_of_memory
+
+open_read(.p: $&File, .path: &Char)
+    -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed)))
+
+read_file(.self: &FileSystem, .path: StringView)
+    -> (.result: Errable#(
+        .t: String,
+        .reasons: (..path_open_failed, ..stream_read_failed, ..stream_close_failed, ..out_of_memory),
+    ))
+
+read_byte(.self: $&Reader)
+    -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed)))
+
+write_byte(.self: $&Writer, .byte: UInt8)
+    -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed)))
+```
+
+`read_line()` y `read_file()` ya propagan `..out_of_memory` de forma explícita.
+`read_line()` y `read_file()` delegan ya la creación y el crecimiento del buffer
+en helpers fallibles de `String`.
+
+En `core`, la dirección idiomática para operaciones de crecimiento o reserva ya
+no es:
+- puntero crudo + comparar con `0`
+- `Bool` para decir si la reserva salió bien
+
+Sino:
+- `allocate_fallible(...) -> Errable#(.t: UIntNative, .reasons: (..out_of_memory))`
+- helpers como `string_with_capacity(...)`
+- operaciones de crecimiento que devuelven `Errable#(.t: Void, .reasons: (..out_of_memory))`
+
+Eso ya se aplica en `String` y en las rutas fallibles de `DynamicArray`
+(`push_growing`, `insert_growing`, `dynamic_array_grow_growing`).
+
+EOF sigue fuera del canal de error:
+
+```rg
+ReadByte : Choice = (
+    ..ok UInt8
+    ..end
+)
+```
+
+## Propagation
+
+`!` y `!!`:
+- hacen short-circuit
+- ejecutan `defer`s
+- añaden una entrada a la traza
+- exigen que el `Errable` actual pueda representar todas las razones
+  propagadas
+- pueden usarse tanto en posición de expresión como como sentencia pura, por
+  ejemplo `step()!`, cuando el valor `..ok` no interesa
+
+Hoy ya se usan de forma normal en contextos de expresión comunes:
+- bindings: `value := read_file()!`
+- argumentos de llamada: `use(.x = read_int()!)`
+- condiciones: `if ready()! { ... }`
+- asignaciones: `cached = load()!`
+- sentencias puras: `flush()!`
+
+`!!` además adjunta contexto textual a la entrada de traza.
+
+Dirección actual de la inferencia de reasons:
+- la firma sigue escribiendo el conjunto completo declarado
+- `-> !T` ya permite omitir `.reasons` en el caso especial de un único
+  resultado `result`
+- `Errable#(.t: T)` sin `.reasons` también se acepta ya en outputs de función
+  explícitos
+- semántica calcula un subconjunto inferido a partir de `return`, asignaciones a
+  outputs y propagaciones con `!` / `!!`
+- el hover muestra ese subconjunto inferido para que se pueda consultar sin
+  ruido extra en el código
+- el siguiente paso será permitir omitir `.reasons` en más sitios una vez esta
+  inferencia sea suficientemente robusta también entre módulos
+
+## Exhaustividad
+
+La exhaustividad se chequea contra un `choice` cerrado, no contra una opción
+suelta.
+
+Eso permite:
+- `match` sobre `Errable`
+- chequeos sobre `.reason`
+- remapeo seguro entre subconjuntos y supersets de razones
+
+## Future Ergonomics
+
+Propuesta futura aceptada como dirección de ergonomía, pero todavía no
+implementada:
+
+```argi
+my_thing := fallible() handle value, error {
+    match error.reason {
+        ..file_not_found {
+            value = 0
+        }
+        ..permission_denied {
+            report_trace(.trace = &error.trace)
+            value = 1
+        }
+    }
+}
+```
+
+Semántica esperada:
+- `handle` sería azúcar específica para `Errable`
+- la expresión a la izquierda debe tener tipo `Errable#(.t: T, ...)`
+- `value` sería el slot de resultado común
+- si el `Errable` es `..ok x`, entonces `value = x`
+- si es `..error(...)`, el bloque se ejecuta con `error` bindeado al payload
+  completo del error
+- dentro del bloque se usa `match` normal sobre `error.reason`
+- el bloque no devuelve valor de forma especial; solo asigna a `value`
+- la construcción completa produce `value`
+- el compilador debería exigir que `value` quede asignado en todos los caminos
+  del bloque de error
+
+Motivación:
+- no introduce un `match` nuevo
+- no introduce bloques que devuelvan valor
+- no cambia la semántica de `return`
+- es solo azúcar ergonómica sobre el patrón habitual de consumir un `Errable`
+  localmente y producir un valor final
+- cubre el caso dominante en el que una función quiere manejar un `Errable`
+  localmente en vez de seguir propagándolo

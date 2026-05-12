@@ -1,0 +1,35 @@
+--
+-- Scratch notes. Keep syntax aligned with the current language even if the
+-- API is still provisional.
+--
+
+StructOfArrays#(.t: Type) : Type = (
+    ---
+    It behaves as an array-of-structs for the user but is implemented as a struct-of-arrays
+    It allows for:
+        - More compact memory layout, with less padding.
+        - More efficient caching
+    ---
+    ._base_struct_type : Type = t
+    ._arrays
+    ...
+)
+
+init#(.t: Type)(.p: $&StructOfArrays#(.t: t), .source) -> () := {
+    ...
+}
+
+get[]#(.t: Type)(.self: &StructOfArrays#(.t: t), .i: UIntNative) -> (.value: t) := {
+    ---
+    Return the struct that would be at position i
+    ---
+    ...
+}
+
+...
+
+to_soa#(.t: Type)(.list) -> (.soa: StructOfArrays#(.t: t)) := {
+    -- pensar en cómo referirnos a una colección de structs sin cerrar todavía
+    -- qué abstract exacto debe pedir esta conversión.
+    ...
+}
