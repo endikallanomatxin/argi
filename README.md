@@ -222,3 +222,13 @@ Compiler regression tests for Argi itself still run through Zig:
 ```bash
 zig build test --summary all
 ```
+
+
+## Release status
+
+Argi is currently in the `0.1.x` experimental release series.
+
+The language, compiler API, standard library layout, runtime model and tooling
+are not stable yet. Breaking changes are expected.
+
+See [releases/0.1.0.md](releases/0.1.0.md) for the current release notes.
