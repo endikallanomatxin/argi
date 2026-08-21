@@ -1,617 +1,602 @@
-# On Memory Management
+# Memory Management
 
-This document collects the current reflection about memory management in Argi.
-It is not a closed specification yet. The goal is to clarify:
+This page is the canonical description of Argi's memory-management direction.
+Older design notes remain useful for value/copy/allocation details, but any
+conflicting reference-safety rules are superseded by this document.
 
-- which problems the language wants to solve,
-- which tradeoffs are acceptable,
-- which ideas should be part of the semantic core,
-- and which mechanisms should remain explicit, optional, or postponed.
+The objective is deterministic, allocator-oriented memory management with
+static protection against dangling references, while avoiding user-visible
+lifetime parameters in ordinary source types.
 
 
-## The Core Tension
+## 1. Separate resource semantics from reference safety
 
-Argi does not want its default behavior to be:
+Argi treats these as different concerns:
 
-- so permissive that heap-owning values can be shallow-copied by accident,
-- nor so analysis-heavy that everyday programming revolves around
-  borrow-checker constraints.
+```text
+resource/value semantics
+    copy()
+    ~
+    deinit()
 
-The goal is to preserve freedom and explicit control, while making the default
-semantics act as guardrails against the most common memory-management mistakes.
+reference permissions
+    &T
+    $&T
+    $$&T
 
-The intended direction is:
-
-- strict value semantics,
-- explicit references,
-- automatic destruction,
-- limited but meaningful aliasing checks,
-- and no full borrow checker or user-visible lifetime annotations.
-
-
-## The Main Problems
-
-The language should try to make these problems hard to write by accident:
-
-- shallow copies of owning values,
-- double free,
-- use after free,
-- accidental shared mutation through aliasing,
-- hidden ownership transfer,
-- APIs whose safe use depends on knowing internal representation.
-
-At the same time, it should avoid forcing the user into:
-
-- pervasive lifetime annotations,
-- a global borrow checker mental model,
-- reference-counting overhead everywhere,
-- or a GC-based runtime.
-
-
-## Comparison: Rust, Zig, Argi
-
-### Rust
-
-Rust tries to solve:
-
-- use after free,
-- double free,
-- aliasing with mutation,
-- data races,
-- invalid references.
-
-It does so with:
-
-- ownership by default,
-- move semantics,
-- `&` and `&mut`,
-- compile-time borrow checking,
-- lifetimes,
-- automatic `Drop`.
-
-Strengths:
-
-- very strong guarantees for references and aliasing,
-- excellent prevention of dangling references,
-- good model for complex borrowing once understood.
-
-Costs:
-
-- significant mental overhead,
-- difficult ergonomics in self-referential or graph-like structures,
-- compiler model becomes a central part of everyday programming.
-
-
-### Zig
-
-Zig tries to solve:
-
-- explicit control,
-- predictable cost,
-- simple semantics,
-- allocator-based memory management.
-
-It does so with:
-
-- mostly pass-by-value semantics,
-- explicit pointers,
-- manual or semi-manual destruction patterns,
-- explicit allocators,
-- `defer` / `errdefer`.
-
-Strengths:
-
-- simple operational model,
-- good fit for systems code and compilers,
-- little semantic machinery.
-
-Costs:
-
-- shallow-copy bugs are easy to write,
-- ownership is often a convention rather than a guaranteed property,
-- aliasing and lifetime discipline is largely on the programmer.
-
-
-### Argi
-
-Argi should aim for:
-
-- avoiding shallow-copy surprises,
-- keeping references explicit,
-- keeping destruction automatic at scope exit,
-- enforcing a limited but useful notion of mutable exclusivity,
-- and remaining simpler than Rust.
-
-The working direction is:
-
-- value position means independent value,
-- `copy()` or compile error,
-- `&T` means shared read access,
-- `$&T` means exclusive mutable access,
-- `deinit()` is inserted automatically,
-- no full borrow checker,
-- no user-written lifetimes.
-
-
-## Core Proposed Rules
-
-### 1. Value Position Means Independence
-
-A value is in value position when it is:
-
-- assigned to another variable,
-- passed to a function argument declared as `Type`,
-- stored by value inside another value,
-- returned by value.
-
-The semantic rule should be:
-
-> Using a value in value position means requesting an independent value.
-
-That means:
-
-- if the expression is a temporary value, it can be moved directly,
-- if the expression names an existing value and the type implements `copy()`,
-  the compiler may insert it implicitly,
-- otherwise the operation is a compile error,
-- and the diagnostic should suggest `&`, `$&`, or implementing `copy()`.
-
-For now, a useful working split is:
-
-- temporary values move by default,
-- existing named values copy by default,
-- explicit move from an existing binding uses `~binding`.
-
-
-### Temporary Values vs Existing Values
-
-Not every value position should behave the same internally.
-
-These cases should count as temporary values:
-
-- literals,
-- constructors,
-- results of function calls,
-- intermediate values created while composing calls.
-
-Those values are already independent, so they can flow into value position
-without requiring an extra copy.
-
-By contrast, reusing an existing binding in value position means:
-
-- implicit `copy()` if the type is copyable,
-- or a compile error if it is not.
-
-This is the key rule that keeps value semantics safe without making composed
-expressions unnecessarily expensive.
-
-
-### Explicit Move
-
-Argi should also support an explicit move operation for existing bindings:
-
-- `~x` means transfer the value out of `x`,
-- after that, `x` is consumed and cannot be used again,
-- and `deinit()` should not run for that moved-out state.
-
-This is especially useful when ownership transfer is intended and an implicit
-copy would be either expensive or invalid.
-
-The intended balance is:
-
-- copy remains the default for named values used by value,
-- move remains explicit for named values,
-- but temporary composed values move naturally without extra syntax.
-
-> [!NOTE]
-> It may be tempting to optimize the last implicit copy of a binding into a
-> move when the binding is not used again.
->
-> For now, that should not be part of the model.
-> Once references, views, `keep`, and aliasing are considered, that
-> optimization becomes much more subtle.
-> The language can stay correct and understandable without it, and it can
-> always be reconsidered later as a conservative optimization.
-
-
-### 2. References Are Explicit
-
-The meaning should stay simple:
-
-- `Type`: independent value semantics,
-- `&Type`: shared read access,
-- `$&Type`: exclusive mutable access.
-
-This keeps the user-facing model direct and visible.
-
-
-### 3. Automatic Destruction at Scope Exit
-
-For now, the base rule should be:
-
-- values are automatically deinitialized when they go out of scope.
-
-This is much simpler than trying to move destruction to last use immediately.
-Last-use destruction can remain an optimization for the future.
-
-> [!NOTE]
-> Moving `deinit()` from scope exit to last use may look attractive as an
-> optimization, but it requires substantially more analysis:
-> aliasing, control flow, partial initialization, retained views, early returns,
-> and future mechanisms such as `keep`.
->
-> Because of that, scope-exit destruction may remain the preferred semantic base
-> for a long time, even if some local last-use optimizations become possible.
-
-
-### 4. Mutable Exclusivity Should Be Local and Pragmatic
-
-Argi should not try to reproduce Rust's full borrow checker.
-But it should still reject obvious local misuse.
-
-Minimum useful rule:
-
-- in a single call, if a binding is passed as `$&`, the same binding should not
-  also appear as:
-  - another `$&`,
-  - a `&`,
-  - or a value argument.
-
-This would already eliminate a meaningful class of confusing aliasing bugs
-without introducing global lifetime reasoning.
-
-
-## What Argi Should Not Try to Do
-
-At least in the first stable model, Argi should probably avoid:
-
-- full borrow checking,
-- user-visible lifetime parameters,
-- proving global aliasing properties,
-- making every reference statically lifetime-safe the way Rust does,
-- and making all view-like types automatically reference-counted.
-
-Those would push the language into a much heavier model than the rest of the
-design suggests.
-
-
-## Views: The Real Difficult Problem
-
-The deepest unresolved issue is not mutable aliasing in a single call.
-It is non-owning views.
-
-The problem is:
-
-- an owner exists,
-- a view references its data,
-- the owner dies,
-- the view becomes invalid.
-
-Rust solves this with lifetimes.
-Zig largely leaves this to discipline.
-Argi should likely take a third path.
-
-
-### Proposed Direction for Views
-
-The recommended direction is:
-
-- a normal view is non-owning and lightweight,
-- it does not extend the lifetime of the owner,
-- it should remain cheap and explicit,
-- if the user wants the view to survive independently, that should be an
-  explicit promotion step.
-
-In other words:
-
-- a plain view stays a plain view,
-- retained/shared/kept views should be explicit,
-- and that promotion may use a runtime strategy such as:
-  - reference counting,
-  - arena ownership,
-  - or another explicit manager.
-
-This should not necessarily imply a completely separate family of surface
-types. It may be preferable to express retention through composition,
-promotion, or an explicit wrapper mechanism rather than by proliferating many
-distinct view names.
-
-One candidate mechanism already present in the language design is `keep`.
-
-The intended role of `keep` would be:
-
-- a plain view remains non-owning,
-- if the user wants the viewed data to outlive the original lexical scope,
-  that retention must be requested explicitly,
-- and `keep` becomes the point where lifetime responsibility is transferred to
-  some explicit runtime or manager.
-
-For example, conceptually:
-
-```rg
-my_view := my_array|view(...)
-keep my_array with my_view
+temporal safety
+    provenance
+    invalidation domains
+    liveness
 ```
 
-Or, in a future more explicit form:
+`copy()` creates an independent value according to the type's semantics.
+`~x` transfers responsibility for the same logical value out of `x`.
+`deinit()` ends that responsibility and releases the resources owned by the
+value.
 
-```rg
-keep my_view on rc_heap
-keep my_object on gc_runtime
+Temporal validity is tracked separately by the compiler. Moving responsibility
+does not by itself mean moving the storage to which references point.
+
+
+## 2. Reference permissions
+
+Argi separates reading, mutation, and exclusivity:
+
+```text
+&T
+    shared read access
+
+$&T
+    mutable, aliasable access
+
+$$&T
+    temporary exclusive access
 ```
 
-The exact syntax and return types are still open, but the semantic idea is
-important:
+The important difference from Rust is that mutation does not imply exclusivity.
+A shared `&T` does not globally freeze the referent: another `$&T` may mutate it
+while both references are valid.
 
-- plain views do not keep anything alive,
-- retained views do,
-- and the transition must be explicit.
+For example, this is allowed when `modify` preserves the temporal contract of
+`value`:
 
-> [!IDEA]
-> Igual en muchos casos no hace falta `keep`.
-> Si el problema aparece al intentar devolver una view, quizá la mejor solución
-> sea devolver el valor owner, o un struct que contenga el owner y los datos
-> necesarios para reconstruir la view.
->
-> Eso evitaría el problema de lifetime en vez de gestionarlo explícitamente.
-> Además encaja bien con que al hacer `return` del owner no se le hace `deinit`,
-> porque pasa a formar parte del resultado.
+```rg
+reader := &value
+writer := $&value
 
-The important semantic point is:
+writer | modify()
+reader | inspect()
+```
 
-> A plain view does not keep anything alive.
+Consequently, the compiler must not generally treat `&T` as immutable or
+`$&T` as `noalias`.
 
 
-## Allocation as the Owning Base
+## 3. `$&` preserves the temporal contract; `$$&` may change it
 
-The current direction should be:
+Ordinary aliased mutation is safe only while it preserves the validity
+structure seen by existing references.
 
-- `Allocation` lives in `core`,
-- `Allocation` owns raw heap memory,
-- higher-level owning containers compose it,
-- views remain separate non-owning descriptors.
+The working rule is:
 
-This keeps three concerns separate:
+```text
+$&
+    may mutate data
+    must preserve the object's temporal/provenance contract
 
-- allocation strategy,
-- ownership/copy/deinit behavior,
-- non-owning observation through views.
+$$&
+    may perform an exclusive temporal or invariant transition
+```
 
-In practice, the layering should look roughly like:
+Typical operations that require `$$&` include operations that may:
 
-- `Allocator`
-- `Allocation`
-- owning containers such as `String`, dynamic lists, maps, buffers
-- non-owning views such as `ListViewRO`, `ListViewRW`, and string views
+- destroy or free a referent,
+- remove or replace a logical subobject,
+- clear or truncate storage,
+- reallocate or relocate referenced storage,
+- replace an enum/optional state that owns a referenced subobject,
+- reset an arena/region,
+- change stored reference dependencies to a different temporal domain,
+- or temporarily break an invariant that must not be observable through an
+  alias.
 
-That should help avoid fragmented ad hoc ownership stories across the standard
-library.
+Examples include `free`, `deinit`, `clear`, `remove`, `pop`, `truncate`, and a
+`push` that may reallocate.
 
-
-### Why Not Put RC in All Views?
-
-Making every view implicitly reference-counted would blur the model:
-
-- views would stop being cheap and predictable,
-- costs would become less visible,
-- and the language would mix two lifetime strategies without a clear boundary.
-
-That seems worse than requiring an explicit promotion when shared retention is
-needed.
+This distinction is central to the design: temporal dependencies may live as
+hidden state of values because ordinary `$&` mutation cannot arbitrarily change
+that state. A change to it happens through an exclusive `$$&` transition.
 
 
-## Ownership-Centralized Data Structures
+## 4. References carry hidden provenance
 
-For certain structures, trying to model ownership directly in each node tends
-to become awkward in every language.
+The source language should normally expose only:
 
-This includes:
+```rg
+&T
+$&T
+$$&T
+```
 
-- linked lists,
-- trees with parent references,
-- graphs,
-- ECS-like storages,
-- AST arenas,
-- symbol tables with cross-links,
-- self-referential structures.
+The compiler may reason internally as if a reference also carried a temporal
+refinement:
 
-In Argi, the recommended pattern should be:
+```text
+&T @ alpha
+```
 
-- a central owner holds the memory,
-- inner elements are non-owning,
-- relationships are expressed using:
-  - IDs,
-  - handles,
-  - indices,
-  - or non-owning references/views.
+`alpha` describes the conditions under which the reference continues to denote
+the same valid logical object.
+
+These temporal variables are compiler semantics, not ordinary nominal type
+parameters. The goal is to avoid source types such as:
+
+```text
+&'a T
+Holder<'a>
+Graph<'arena>
+Iterator<'a, T>
+```
+
+while retaining the information needed to prove safety.
+
+
+## 5. Invalidation roots and logical epochs
+
+An invalidation root is the coarse storage/ownership domain whose termination
+can invalidate references into it.
+
+Conceptually:
+
+```text
+p -> R
+```
+
+means that `p` cannot be used after `R` is invalidated.
+
+A root alone is not always precise enough. Logical objects can die while their
+underlying allocation remains alive:
+
+```rg
+p := &vector[3]
+vector | remove($$&_, 3)
+use(p) -- invalid
+```
+
+The vector buffer may still exist, but the old element does not. The checker
+therefore also needs identities/epochs for logical referents or subobjects:
+
+```text
+p -> buffer root / element epoch
+```
+
+Replacing an enum variant, clearing an optional, reusing a pool slot, deleting
+a node, or replacing an inline subobject are the same class of problem.
+
+The exact internal representation is an implementation detail; the semantic
+requirement is that references are tied to the lifetime of the logical object,
+not merely to the lifetime of its bytes.
+
+
+## 6. Allocation defines invalidation granularity
+
+`Allocation` is the natural bridge between allocator semantics and temporal
+safety.
+
+Conceptually, an allocation/storage abstraction must tell the compiler whether
+it introduces its own invalidation domain or follows another one:
+
+```text
+self
+other(storage)
+```
+
+Meaning:
+
+```text
+self
+    this storage owns a distinct temporal domain
+
+other(x)
+    this storage follows the temporal domain of x
+```
+
+This relationship may be resolved transitively. It should be compiler metadata,
+not a first-class `LifetimeRoot` value that users manipulate directly.
+
+This gives two useful extremes.
+
+Independent allocations:
+
+```text
+A -> RA
+B -> RB
+C -> RC
+```
+
+allow independent destruction.
+
+Arenas/regions:
+
+```text
+node A --\
+node B ----> Rarena
+node C --/
+```
+
+intentionally share one coarse invalidation domain. This is especially useful
+for ASTs, graphs, request storage, frames, worlds, and other object families
+that naturally die together.
+
+Coarser roots trade temporal precision for a simpler and cheaper safety model.
+Programs that need independent destruction can choose more granular allocation
+or handle/generation based designs.
+
+
+## 7. Spatial aliasing is separate from temporal provenance
+
+Two references can depend on the same arena while pointing to unrelated nodes.
+Sharing a temporal root does not mean they alias spatially.
+
+The checker therefore needs separate notions of:
+
+```text
+temporal provenance
+    what can invalidate this reference?
+
+spatial provenance / overlap
+    what storage can this reference designate?
+```
+
+An exclusive transition on `nodeA` must not invalidate references to unrelated
+`nodeB` merely because both live in `Rarena`.
+
+Invalidating operations therefore have an invalidation footprint over logical
+places/storage, not simply over a whole root in every case.
+
+
+## 8. Liveness is based on future uses
+
+Reference validity should be use-based rather than tied to the lexical end of a
+scope.
+
+```rg
+p := &array[0]
+use(p)
+
+array | push($$&_, value) -- allowed if p has no future use
+```
+
+but:
+
+```rg
+p := &array[0]
+array | push($$&_, value)
+use(p)                    -- error if push can invalidate p
+```
+
+The core condition is approximately:
+
+```text
+Uses(reference) subset-of Validity(provenance(reference))
+```
+
+This is separate from when owned values are automatically `deinit`-ialized.
+Scope-exit automatic destruction can remain the base resource rule even while
+reference liveness is last-use based.
+
+
+## 9. Temporal dependencies belong to values, not nominal type identity
+
+A type that stores references remains one nominal source type:
+
+```rg
+Holder#(.t: Type) : Type = (
+    .ptr: &t
+)
+```
+
+Two values may nevertheless carry different hidden dependencies:
+
+```text
+h1: Holder    dependencies = {Rstack}
+h2: Holder    dependencies = {Rarena}
+```
+
+Argi should not require `Holder<'a>` in source merely to transport that
+information.
+
+The compiler treats the dependency information as a temporal refinement/state
+attached to the value. Composite values aggregate the dependencies of the
+reference-bearing state they contain.
+
+For dynamic containers the compiler cannot enumerate an unbounded runtime set
+of concrete roots. In those cases it may use a symbolic/common dependency
+envelope internally. This is effectively hidden lifetime polymorphism, but it
+still need not become part of the nominal source type.
+
+
+## 10. Function temporal summaries
+
+Functions must be checkable and reusable without repeatedly re-analyzing every
+callee body. Each function therefore has a compiler-generated temporal summary
+in addition to its ordinary source signature.
 
 Examples:
 
-- `Graph` owns all nodes and edges,
-- `Arena#(Node)` owns all nodes, while edges store `NodeId`,
-- compiler structures own AST/type/symbol storage centrally.
+```rg
+identity(x: &T) -> &T
+```
 
-This avoids distributed ownership, reduces lifetime complexity, and fits well
-with allocator-based design.
+may have:
 
+```text
+return <- x
+```
 
-## Important Optimization Principle
+and:
 
-Even if value semantics mean "copy or error", the implementation should still
-be allowed to optimize.
+```rg
+first(v: &Vector#(.t: T)) -> &T
+```
 
-Important example:
+may have:
 
-- returning by value may semantically mean "independent value",
-- but if the compiler can prove no surviving observable alias or owner needs to
-  coexist, it may elide the actual copy.
+```text
+return <- v.buffer
+```
 
-So the rule should be:
+Mutating functions may describe post-state dependencies and invalidation:
 
-- semantic model: copy,
-- implementation freedom: copy elision when behavior stays identical.
+```text
+self.target.after <- target
+invalidates self.buffer
+```
 
-This is important because otherwise the model could become too expensive in
-practice.
+A summary may contain, as needed:
 
+- return provenance,
+- stored/escaping dependencies,
+- invalidation effects,
+- storage/root effects,
+- post-state temporal dependencies,
+- symbolic provenance variables and relations.
 
-## Tricky Example Areas
+Internally the compiler is free to use constructs equivalent to `alpha`,
+`beta`, unions, outlives constraints, or quantified provenance when necessary.
+The design goal is not to remove lifetime mathematics from the compiler; it is
+to keep it out of ordinary nominal source types and signatures when inference
+is sufficient.
 
-### 1. Heap-owning value types
 
-Examples:
+## 11. Summaries are also the incremental-compilation boundary
 
-- `String`,
-- `DynamicArray`,
-- `HashMap`.
+Callers consume temporal summaries instead of callee bodies:
 
-Rust:
+```text
+first:
+    return <- self.buffer
 
-- good guarantees,
-- explicit `clone()`/move model,
-- but sometimes ownership is heavier than desired.
+foo(v):
+    return first(v)
 
-Zig:
+=> foo:
+    return <- v.buffer
+```
 
-- easy to represent,
-- easy to misuse by copying descriptor structs.
+The compiler should be able to cache independently:
 
-Argi:
+```text
+ordinary/API signature
+temporal summary
+body/codegen
+```
 
-- should be especially strong here,
-- because `copy()` or error directly solves the shallow-copy trap.
+If a function body changes but its temporal summary does not, dependent code
+need not repeat memory-safety analysis solely because of that implementation
+change.
 
+Generic/abstract summaries can remain symbolic and be instantiated/composed
+when concrete implementations become known.
 
-### 2. Mutable + shared aliasing in one call
 
-Conceptual example:
+## 12. Abstract types keep precise provenance through monomorphization
 
-- mutate one argument,
-- read another,
-- both may refer to the same value.
+Abstract types monomorphize by default in Argi. When a concrete implementation
+is known, temporal analysis should use the precise summary of that concrete
+implementation.
 
-Rust:
+```text
+Abstract call
+    + concrete Self
+    -> concrete implementation
+    -> precise temporal summary
+```
 
-- borrow checker rejects invalid combinations.
+The abstract contract does not need to force every statically dispatched call
+through a conservative lifetime envelope.
 
-Zig:
+This is one reason Argi can aim to infer temporal behavior aggressively without
+putting lifetime parameters in ordinary abstract source types.
 
-- usually allowed,
-- correctness depends on programmer discipline.
 
-Argi:
+## 13. Virtual types use a conservative temporal envelope
 
-- should reject the obvious same-binding cases locally,
-- without trying to prove all indirect aliases.
+`Virtual#(Abstract)` deliberately erases concrete implementation information.
+Temporal precision may be erased at the same boundary.
 
+A safe default for a virtual method returning a reference derived from its
+receiver is:
 
-### 3. Returning a view into a local value
+```text
+return <- temporal_envelope(self)
+```
 
-Rust:
+The temporal envelope means everything that must remain valid for the virtual
+object, including transitive hidden dependencies of its erased state. It is not
+merely the storage occupied by the small virtual handle.
 
-- lifetimes usually reject it.
+Concrete implementations are checked to ensure their precise temporal behavior
+fits the public virtual contract.
 
-Zig:
+Therefore virtual safety becomes:
 
-- easy to write accidentally,
-- often dangerous.
+```text
+virtual-safe
+    = type-erasure-safe
+    + provenance-erasure-safe
+```
 
-Argi:
+This intentionally makes dynamic dispatch potentially more conservative than
+monomorphized dispatch. More precise explicit virtual temporal contracts may be
+added only where the default envelope proves too restrictive.
 
-- this remains a hard problem,
-- and plain views should probably stay restricted/non-owning,
-- with explicit promotion mechanisms for retained views.
+The same principle applies to other erasure boundaries such as erased
+callbacks, plugins, and some FFI/ABI surfaces.
 
 
-### 4. Partial initialization with failure
+## 14. Transfer preserves logical identity
 
-Example:
+`~x` transfers responsibility for the same logical value. It does not
+semantically mean "copy these bytes to a new address".
 
-- a type allocates multiple resources in `init`,
-- then one step fails.
+For example:
 
-Rust:
+```rg
+x := Foo(...)
+p := &x.field
 
-- ownership + `Drop` help,
-- though this is still non-trivial.
+y := ~x
+use(p)
+```
 
-Zig:
+The transfer itself should not invalidate `p`.
 
-- `errdefer` handles this pattern very well.
+Conceptually:
 
-Argi:
+```text
+before:
+    x owns O
+    p -> O.field
 
-- this should become one of its stronger areas,
-- especially if `init` can return something like `Errable#(...)`,
-- but only if `init`, initialization state, and auto-`deinit` are modeled more
-  explicitly than they are today.
-- in particular, the language needs a believable story for:
-  - fully initialized values,
-  - partially initialized values,
-  - and failed initialization paths where cleanup may or may not already have
-    happened.
+after:
+    y owns O
+    p -> O.field
+```
 
+Physical relocation is a separate implementation operation.
 
-### 5. Graphs and self-referential structures
 
-Rust:
+## 15. Relocation is allowed only when provenance proves it safe
 
-- safe but often awkward,
-- frequently requires `Rc`, `RefCell`, arenas, or `unsafe`.
+The compiler may relocate a value when that relocation is not observable
+through any live/internal safe reference.
 
-Zig:
+```text
+~x
+    preserves logical identity
 
-- direct and flexible,
-- but easy to misuse.
+physical relocation
+    allowed only if all relevant provenance remains valid
+```
 
-Argi:
+A value with no address-dependent references can move normally. A value with a
+live reference to inline storage, or with a self-reference, may require stable
+storage.
 
-- should prefer ownership-centralized patterns rather than trying to make
-  distributed ownership feel magical.
+This means address stability can often emerge from provenance instead of
+requiring a general source-level `Pin<T>` property.
 
+For returns, container insertion, and self-referential construction, the
+compiler may need in-place construction / destination passing so that the
+object is created directly in storage that will remain stable.
 
-## Current Design Direction
+Containers that store elements inline must respect the same rule: they may not
+silently relocate an element while live provenance depends on that element's
+address. Indirection should be used only where the chosen data structure needs
+it, not imposed universally.
 
-If Argi wants to keep its identity, the likely stable direction is:
 
-- no shallow-copy surprises,
-- no borrow checker everywhere,
-- explicit references,
-- automatic destruction,
-- explicit retention/promotion for non-owning views when needed,
-- centralized ownership for complex graph-like memory shapes.
+## 16. Copying and automatic destruction remain orthogonal
 
-That would make Argi:
+Named values used in value position follow Argi's existing value semantics:
 
-- stricter and safer than Zig in value semantics,
-- much lighter than Rust in lifetime machinery,
-- and still compatible with allocator-oriented systems programming.
+- if the type provides `copy()`, an independent value may be produced,
+- otherwise the programmer must borrow it or transfer it explicitly with `~`.
 
+Automatic `deinit()` remains the normal resource cleanup rule for values that
+still own their resources. A moved-out binding is consumed and is not
+`deinit`-ialized as if it still owned the transferred value.
 
-## Open Questions
+References/dependencies required by a value must remain valid through any
+`deinit()` implementation that may use them.
 
-- Which types are trivially copyable by default?
-- Should `deinit()` be optional for trivially droppable types?
-- How exactly should retained/shared views be expressed?
-- Should `keep` be the main promotion mechanism, or only one of several?
-- How much local exclusivity checking should `$&` perform?
-- What minimal static checks should exist for plain views before they become
-  too restrictive?
-- How should `init(...)->Errable#(...)` interact with initialization state and
-  partial cleanup?
 
+## 17. Concurrency is a separate safety dimension
 
-## Working Recommendation
+Multiple `$&T` aliases can be temporally memory-safe in one thread and still
+race when used concurrently from multiple threads.
 
-For now, the best path seems to be:
+The reference/lifetime system therefore does not by itself solve concurrency.
+Argi needs separate rules for thread transfer/sharing, synchronization, atomics,
+and isolation/capabilities.
 
-1. keep the semantic core small and strict,
-2. implement `copy()` or error before trying advanced moves,
-3. keep `deinit` at scope exit first,
-4. introduce only local mutable exclusivity checks,
-5. treat plain views as non-owning and cheap,
-6. make retained/shared views explicit,
-7. recommend centralized ownership for hard graph-like structures.
+This separation is deliberate: `$&` expresses aliasable mutation, not permission
+for unsynchronized concurrent mutation.
 
-This gives Argi a real memory-management identity without committing too early
-to either Zig's permissiveness or Rust's full lifetime machinery.
+
+## 18. Design target
+
+Argi is not trying to implement a weaker Rust lifetime checker.
+
+The intended decomposition is:
+
+```text
+read access             -> &
+aliasable mutation      -> $&
+exclusive transition    -> $$&
+resource transfer       -> ~
+temporal validity       -> provenance + invalidation analysis
+```
+
+The compiler may internally need sophisticated temporal reasoning, including
+symbolic lifetimes and effects. The user-facing target is nevertheless small:
+
+```rg
+&T
+$&T
+$$&T
+Holder
+Graph
+Iterator#(.t: T)
+```
+
+rather than lifetime parameters as a normal dimension of nominal types.
+
+The success criterion is not that the checker is theoretically simpler than
+Rust's. It is that ordinary safe code remains direct and pointer-friendly while
+most temporal complexity is inferred, summarized, and exposed only through
+useful diagnostics when it matters.
+
+
+## 19. Implementation requirements to validate in 0.2.0
+
+The 0.2.0 implementation should validate this model against representative
+cases rather than attempting every advanced corner case immediately. At
+minimum, it should establish:
+
+- `&`, `$&`, and `$$&` permissions,
+- use-based reference liveness,
+- roots plus logical/subobject invalidation,
+- allocation/arena invalidation domains,
+- value dependency propagation,
+- temporal summaries across function boundaries,
+- transfer without accidental reference invalidation,
+- invalidating container mutations,
+- precise monomorphized abstract calls,
+- and a conservative virtual-reference baseline.
+
+If these mechanisms require temporal information to become routinely explicit
+in source types, the design should be reconsidered rather than silently growing
+a second Rust-like surface syntax.
