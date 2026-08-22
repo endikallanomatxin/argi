@@ -3,7 +3,7 @@ test core_path_regression_slice(.system: System = System()) -> !() := {
         .allocator = system.allocator,
         .view = c_string_as_view(.text = "/tmp/demo/file.txt"),
     )
-    #defer deinit(.self = $&full, .allocator = system.allocator)
+    #defer deinit(.self = $$&full, .allocator = system.allocator)
 
     testing.expect(.condition = is_absolute(.self = &full).ok)!
 

@@ -20,7 +20,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
 
     write_raw ::= malloc(.size = 2)
     if cast#(.to: UIntNative)(.value = write_raw) == 0 {
-        close(.self = $&file)
+        close(.self = $$&file)
         status_code = 3
         return
     }
@@ -37,18 +37,18 @@ main(.system: System = System()) -> (.status_code: Int32) := {
 
     if is(.value = write_result, .variant = ..ok) {
     } else {
-        close(.self = $&file)
+        close(.self = $$&file)
         status_code = 4
         return
     }
 
     if write_result..ok != 2 {
-        close(.self = $&file)
+        close(.self = $$&file)
         status_code = 5
         return
     }
 
-    close(.self = $&file)
+    close(.self = $$&file)
 
     open_result ::= open_read(.self = system.file_sys, .path = path)
     if is(.value = open_result, .variant = ..ok) {
@@ -60,7 +60,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
 
     read_raw ::= malloc(.size = 4)
     if cast#(.to: UIntNative)(.value = read_raw) == 0 {
-        close(.self = $&file)
+        close(.self = $$&file)
         status_code = 7
         return
     }
@@ -71,7 +71,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     )
 
     read_result ::= read(.self = $&file, .buffer = read_buffer)
-    close(.self = $&file)
+    close(.self = $$&file)
 
     if is(.value = read_result, .variant = ..ok) {
     } else {

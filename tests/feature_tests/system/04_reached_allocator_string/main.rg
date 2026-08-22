@@ -30,7 +30,7 @@ main() -> (.status_code: Int32) := {
     )
 
     text ::= String(.length = 3)
-    deinit(.self = $&text)
+    deinit(.self = $$&text)
 
     status_code = allocator.alloc_count * 10 + allocator.dealloc_count
 }

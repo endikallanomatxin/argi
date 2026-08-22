@@ -87,7 +87,7 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
         .index = 0
     )
     buffer ::= String(.allocator = system.allocator, .capacity = 4)
-    into_buffer ::= read_line_into_buffer($&buffer)
+    into_buffer ::= read_line_into_buffer($$&buffer)
     if is(.value = into_buffer, .variant = ..ok) {
     } else {
         status_code = 5
@@ -109,7 +109,7 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
         return
     }
 
-    deinit(.self = $&buffer, .allocator = system.allocator)
+    deinit(.self = $$&buffer, .allocator = system.allocator)
 
     stdin = (
         .index = 0
@@ -137,6 +137,6 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
         return
     }
 
-    deinit(.self = $&line, .allocator = system.allocator)
-    deinit(.self = $&text, .allocator = system.allocator)
+    deinit(.self = $$&line, .allocator = system.allocator)
+    deinit(.self = $$&text, .allocator = system.allocator)
 }

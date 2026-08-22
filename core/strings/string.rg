@@ -113,7 +113,7 @@ init (
 
 deinit (
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .self: $&String,
+    .self: $$&String,
 ) -> () := {
     zero :: UIntNative = 0
     deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
@@ -200,7 +200,7 @@ capacity(
     value = self&.allocation.size - 1
 }
 
-clear(.self: $&String) -> () := {
+clear(.self: $$&String) -> () := {
     self& = (
         .allocation = self&.allocation,
         .length = 0,
@@ -231,7 +231,7 @@ string_growth_capacity(
 }
 
 ensure_capacity(
-    .self: $&String,
+    .self: $$&String,
     .capacity: UIntNative,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> () := {
@@ -263,7 +263,7 @@ ensure_capacity(
 }
 
 ensure_capacity_growing(
-    .self: $&String,
+    .self: $$&String,
     .target_capacity: UIntNative,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -334,7 +334,7 @@ string_append_bytes(
 }
 
 push_byte(
-    .self: $&String,
+    .self: $$&String,
     .byte: UInt8,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -357,7 +357,7 @@ push_byte(
 }
 
 push_c_string(
-    .self: $&String,
+    .self: $$&String,
     .text: &Char,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -382,7 +382,7 @@ push_c_string(
 }
 
 push_view(
-    .self: $&String,
+    .self: $$&String,
     .view: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {

@@ -55,6 +55,6 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    deinit(.self = $&line, .allocator = system.allocator)
+    deinit(.self = $$&line, .allocator = system.allocator)
     status_code = 0
 }

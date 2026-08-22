@@ -19,6 +19,6 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    deinit(.self = $&text)
+    deinit(.self = $$&text)
     status_code = 0
 }

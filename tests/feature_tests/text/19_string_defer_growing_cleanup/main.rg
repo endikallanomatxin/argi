@@ -1,8 +1,8 @@
 helper(.allocator: $&Allocator) -> (.ok: Bool) := {
     text ::= String(.allocator = allocator, .capacity = 1)
-    #defer deinit(.self = $&text, .allocator = allocator)
+    #defer deinit(.self = $$&text, .allocator = allocator)
 
-    match push_byte(.self = $&text, .byte = 65, .allocator = allocator) {
+    match push_byte(.self = $$&text, .byte = 65, .allocator = allocator) {
         ..ok _ {
         }
         ..error _ {

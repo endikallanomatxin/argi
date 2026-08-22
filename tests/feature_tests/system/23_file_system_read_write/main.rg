@@ -63,7 +63,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    deinit(.self = $&read_back)
-    deinit(.self = $&text)
+    deinit(.self = $$&read_back)
+    deinit(.self = $$&text)
     status_code = 0
 }

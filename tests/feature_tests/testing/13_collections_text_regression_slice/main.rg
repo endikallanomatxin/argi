@@ -12,7 +12,7 @@ test collections_text_format_slice(.system: System = System()) -> !() := {
     match text_result {
         ..ok payload {
             text ::= payload
-            #defer deinit(.self = $&text, .allocator = system.allocator)
+            #defer deinit(.self = $$&text, .allocator = system.allocator)
             view ::= as_view(.self = &text)
             testing.expect(.condition = view == "7")!
         }

@@ -65,7 +65,7 @@ init #(.t: Type) (
 
 deinit #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .self: $&DynamicArray#(.t: t)
+    .self: $$&DynamicArray#(.t: t)
 ) -> () := {
     zero :: UIntNative = 0
     deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
@@ -86,7 +86,7 @@ copy #(.t: Type) (
     while i < self.length {
         addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = &self, .offset = i).address
         ptr : &t = cast#(.to: &t)(.value = addr)
-        push#(.t: t)(.allocator = allocator, .self = $&out, .value = ptr&)
+        push#(.t: t)(.allocator = allocator, .self = $$&out, .value = ptr&)
         i = i + 1
     }
 }
@@ -102,7 +102,7 @@ dynamic_array_element_address #(.t: Type) (
 
 dynamic_array_grow #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .array: $&DynamicArray#(.t: t),
+    .array: $$&DynamicArray#(.t: t),
     .min_capacity: UIntNative,
 ) -> () := {
     element_size :: UIntNative = size_of(.type = t)
@@ -142,7 +142,7 @@ dynamic_array_grow #(.t: Type) (
 
 dynamic_array_grow_growing #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .array: $&DynamicArray#(.t: t),
+    .array: $$&DynamicArray#(.t: t),
     .min_capacity: UIntNative,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     element_size :: UIntNative = size_of(.type = t)
@@ -191,7 +191,7 @@ dynamic_array_grow_growing #(.t: Type) (
 
 push #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .self: $&DynamicArray#(.t: t),
+    .self: $$&DynamicArray#(.t: t),
     .value: t,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     one :: UIntNative = 1
@@ -222,7 +222,7 @@ push #(.t: Type) (
 }
 
 pop #(.t: Type) (
-    .self: $&DynamicArray#(.t: t),
+    .self: $$&DynamicArray#(.t: t),
 ) -> (.value: t) := {
     one :: UIntNative = 1
     new_length ::= self&.length - one
@@ -238,7 +238,7 @@ pop #(.t: Type) (
 
 insert #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .self: $&DynamicArray#(.t: t),
+    .self: $$&DynamicArray#(.t: t),
     .i: UIntNative,
     .value: t,
 ) -> () := {
@@ -282,7 +282,7 @@ insert #(.t: Type) (
 
 insert_growing #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .self: $&DynamicArray#(.t: t),
+    .self: $$&DynamicArray#(.t: t),
     .i: UIntNative,
     .value: t,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {

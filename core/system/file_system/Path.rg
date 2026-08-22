@@ -61,7 +61,7 @@ init(
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> () := {
     text :: String = String(.allocator = allocator, .capacity = view.length)
-    pushed ::= push_view(.self = $&text, .view = view)
+    pushed ::= push_view(.self = $$&text, .view = view)
     match pushed {
         ..ok _ {
         }
@@ -81,13 +81,13 @@ path_with_view(
     match created {
         ..ok payload {
             text ::= payload
-            pushed ::= push_view(.self = $&text, .view = view, .allocator = allocator)
+            pushed ::= push_view(.self = $$&text, .view = view, .allocator = allocator)
             match pushed {
                 ..ok _ {
                     result = ..ok (.text = text)
                 }
                 ..error _ {
-                    deinit(.self = $&text, .allocator = allocator)
+                    deinit(.self = $$&text, .allocator = allocator)
                     result = ..error(.reason = ..out_of_memory)
                 }
             }
@@ -99,10 +99,10 @@ path_with_view(
 }
 
 deinit(
-    .self: $&Path,
+    .self: $$&Path,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> () := {
-    deinit(.self = $&self&.text, .allocator = allocator)
+    deinit(.self = $$&self&.text, .allocator = allocator)
 }
 
 copy(
@@ -234,12 +234,12 @@ join_views(
         ..ok payload {
             text ::= payload
 
-            pushed_left ::= push_view(.self = $&text, .view = left&, .allocator = allocator)
+            pushed_left ::= push_view(.self = $$&text, .view = left&, .allocator = allocator)
             match pushed_left {
                 ..ok _ {
                 }
                 ..error _ {
-                    deinit(.self = $&text, .allocator = allocator)
+                    deinit(.self = $$&text, .allocator = allocator)
                     result = ..error(.reason = ..out_of_memory)
                     return
                 }
@@ -248,12 +248,12 @@ join_views(
             if left&.length > 0 and right&.length > 0 {
                 if path_is_separator(.byte = bytes_get(.view = left, .index = left&.length - 1).byte).ok {
                 } else {
-                    pushed_sep ::= push_byte(.self = $&text, .byte = 47, .allocator = allocator)
+                    pushed_sep ::= push_byte(.self = $$&text, .byte = 47, .allocator = allocator)
                     match pushed_sep {
                         ..ok _ {
                         }
                         ..error _ {
-                            deinit(.self = $&text, .allocator = allocator)
+                            deinit(.self = $$&text, .allocator = allocator)
                             result = ..error(.reason = ..out_of_memory)
                             return
                         }
@@ -261,13 +261,13 @@ join_views(
                 }
             }
 
-            pushed_right ::= push_view(.self = $&text, .view = right&, .allocator = allocator)
+            pushed_right ::= push_view(.self = $$&text, .view = right&, .allocator = allocator)
             match pushed_right {
                 ..ok _ {
                     result = ..ok (.text = text)
                 }
                 ..error _ {
-                    deinit(.self = $&text, .allocator = allocator)
+                    deinit(.self = $$&text, .allocator = allocator)
                     result = ..error(.reason = ..out_of_memory)
                 }
             }

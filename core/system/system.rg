@@ -62,6 +62,6 @@ once init(.p: $&System) -> () := {
     p&.ffi = $&p&._storage.ffi
 }
 
-deinit(.self: $&System) -> () := {
-    deinit(.self = self&.terminal)
+deinit(.self: $$&System) -> () := {
+    deinit(.self = $$&self&._storage.terminal)
 }

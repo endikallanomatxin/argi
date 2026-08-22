@@ -27,6 +27,60 @@ arena_min_block_capacity(
     }
 }
 
+-- The arena's block table is private bookkeeping: relocating this table does
+-- not relocate or invalidate any allocation previously returned by the arena.
+-- This low-level helper deliberately uses `$&` and must not be exposed as a
+-- general DynamicArray operation.
+arena_push_block(
+    .self: $&DynamicArray#(.t: Allocation),
+    .allocator: $&CAllocator,
+    .value: Allocation,
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    one :: UIntNative = 1
+    if self&.length == self&.capacity {
+        new_capacity ::= self&.capacity * 2
+        if new_capacity == 0 {
+            new_capacity = one
+        }
+        element_size :: UIntNative = size_of(.type = Allocation)
+        new_bytes ::= new_capacity * element_size
+        allocation_result ::= allocate_fallible(.self = allocator, .size = new_bytes)
+        match allocation_result {
+            ..ok payload {
+                new_data : $&UInt8 = cast#(.to: $&UInt8)(.value = payload)
+                if self&.length > 0 {
+                    used_bytes ::= self&.length * element_size
+                    memcpy_bytes(
+                        .dst = array_view#(.t: UInt8)(.data = new_data, .length = used_bytes),
+                        .src = array_view#(.t: UInt8)(.data = self&.allocation.data, .length = used_bytes),
+                    )
+                }
+                deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
+                self& = (
+                    .allocation = (.data = new_data, .size = new_bytes),
+                    .length = self&.length,
+                    .capacity = new_capacity,
+                )
+            }
+            ..error _ {
+                result = ..error(.reason = ..out_of_memory)
+                return
+            }
+        }
+    }
+
+    element_size :: UIntNative = size_of(.type = Allocation)
+    address ::= cast#(.to: UIntNative)(.value = self&.allocation.data) + self&.length * element_size
+    pointer : $&Allocation = cast#(.to: $&Allocation)(.value = address)
+    pointer& = value
+    self& = (
+        .allocation = self&.allocation,
+        .length = self&.length + one,
+        .capacity = self&.capacity,
+    )
+    result = ..ok Void()
+}
+
 init(
     .p: $&ArenaAllocator,
     .backing_allocator: $&CAllocator = #reach allocator, system.allocator,
@@ -39,7 +93,7 @@ init(
 }
 
 arena_release_blocks(
-    .self: $&ArenaAllocator,
+    .self: $$&ArenaAllocator,
 ) -> () := {
     i :: UIntNative = 0
     while i < self&.blocks.length {
@@ -48,12 +102,12 @@ arena_release_blocks(
         i = i + 1
     }
 
-    deinit(.allocator = self&.backing_allocator, .self = $&self&.blocks)
+    deinit(.allocator = self&.backing_allocator, .self = $$&self&.blocks)
     self&.current_block_offset = 0
 }
 
 reset(
-    .self: $&ArenaAllocator,
+    .self: $$&ArenaAllocator,
 ) -> () := {
     backing_allocator ::= self&.backing_allocator
     block_size ::= self&.block_size
@@ -66,7 +120,7 @@ reset(
 }
 
 deinit(
-    .self: $&ArenaAllocator,
+    .self: $$&ArenaAllocator,
 ) -> () := {
     arena_release_blocks(.self = self)
 }
@@ -93,7 +147,7 @@ allocate(
     if needs_block {
         new_block_size ::= arena_min_block_capacity(.requested = required, .block_size = self&.block_size).capacity
         block_data ::= allocate(.self = self&.backing_allocator, .size = new_block_size)
-        pushed ::= push(
+        pushed ::= arena_push_block(
             .allocator = self&.backing_allocator,
             .self = $&self&.blocks,
             .value = (

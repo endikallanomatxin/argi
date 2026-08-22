@@ -38,7 +38,7 @@ init#(.base_type: Type: Reader)(
 }
 
 deinit#(.base_type: Type: Reader)(
-    .self: $&BufferedReader#(.base_type: base_type),
+    .self: $$&BufferedReader#(.base_type: base_type),
     .allocator: $&CAllocator = #reach allocator, system.allocator,
 ) -> () := {
     deallocate(.self = allocator, .data = self&.buffer, .size = self&.capacity)

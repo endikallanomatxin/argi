@@ -244,7 +244,7 @@ read_file(
 
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 16)
     if is(.value = create_result, .variant = ..error) {
-        _ ::= close(.self = $&file)
+        _ ::= close(.self = $$&file)
         result = ..error(.reason = ..out_of_memory)
         return
     }
@@ -254,7 +254,7 @@ read_file(
         next ::= read_byte(.self = $&file)
         if is(.value = next, .variant = ..error) {
             deallocate(.self = allocator, .data = text.allocation.data, .size = text.allocation.size)
-            _ ::= close(.self = $&file)
+            _ ::= close(.self = $$&file)
             result = ..error(.reason = ..stream_read_failed)
             return
         }
@@ -265,20 +265,20 @@ read_file(
         }
 
         payload ::= next_value..ok
-        grew ::= push_byte(.self = $&text, .byte = payload, .allocator = allocator)
+        grew ::= push_byte(.self = $$&text, .byte = payload, .allocator = allocator)
         match grew {
             ..ok _ {
             }
             ..error _ {
                 deallocate(.self = allocator, .data = text.allocation.data, .size = text.allocation.size)
-                _ ::= close(.self = $&file)
+                _ ::= close(.self = $$&file)
                 result = ..error(.reason = ..out_of_memory)
                 return
             }
         }
     }
 
-    close_result ::= close(.self = $&file)
+    close_result ::= close(.self = $$&file)
     if is(.value = close_result, .variant = ..error) {
         deallocate(.self = allocator, .data = text.allocation.data, .size = text.allocation.size)
         result = ..error(.reason = ..stream_close_failed)
@@ -330,7 +330,7 @@ write_file(
         ..ok _ {
         }
         ..error & err {
-            _ ::= close(.self = $&file)
+            _ ::= close(.self = $$&file)
             if is(.value = err&.reason, .variant = ..stream_write_failed) {
                 result = ..error(.reason = ..stream_write_failed)
             } else {
@@ -345,7 +345,7 @@ write_file(
         ..ok _ {
         }
         ..error & err {
-            _ ::= close(.self = $&file)
+            _ ::= close(.self = $$&file)
             if is(.value = err&.reason, .variant = ..stream_write_failed) {
                 result = ..error(.reason = ..stream_write_failed)
             } else {
@@ -355,7 +355,7 @@ write_file(
         }
     }
 
-    closed ::= close(.self = $&file)
+    closed ::= close(.self = $$&file)
     if is(.value = closed, .variant = ..error) {
         result = ..error(.reason = ..stream_close_failed)
         return

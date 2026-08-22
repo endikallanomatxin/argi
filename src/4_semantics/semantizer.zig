@@ -1720,7 +1720,7 @@ pub const Semantizer = struct {
 
             const ptr_info = try self.allocator.create(sg.PointerType);
             ptr_info.* = .{
-                .mutability = .read_write,
+                .mutability = .exclusive,
                 .child = child_ty,
             };
 
@@ -1743,7 +1743,7 @@ pub const Semantizer = struct {
 
         const ptr_info = try self.allocator.create(sg.PointerType);
         ptr_info.* = .{
-            .mutability = .read_write,
+            .mutability = .exclusive,
             .child = child_ty,
         };
 

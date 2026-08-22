@@ -5,13 +5,13 @@ make_text(
     match created {
         ..ok ~ payload {
             text ::= payload
-            pushed ::= push_byte(.self = $&text, .byte = 65, .allocator = allocator)
+            pushed ::= push_byte(.self = $$&text, .byte = 65, .allocator = allocator)
             match pushed {
                 ..ok _ {
                     result = ..ok text
                 }
                 ..error _ {
-                    deinit(.self = $&text, .allocator = allocator)
+                    deinit(.self = $$&text, .allocator = allocator)
                     result = ..error(.reason = ..out_of_memory)
                 }
             }
@@ -29,10 +29,10 @@ main(.system: System = System()) -> (.status_code: Int32) := {
             text ::= payload
             view ::= as_view(.self = &text)
             if view == "A" {
-                deinit(.self = $&text, .allocator = system.allocator)
+                deinit(.self = $$&text, .allocator = system.allocator)
                 status_code = 0
             } else {
-                deinit(.self = $&text, .allocator = system.allocator)
+                deinit(.self = $$&text, .allocator = system.allocator)
                 status_code = 1
             }
         }

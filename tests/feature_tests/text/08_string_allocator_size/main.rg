@@ -39,7 +39,7 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    deinit(.self = $&text, .allocator = $&allocator)
+    deinit(.self = $$&text, .allocator = $&allocator)
     if allocator.dealloc_count != 1 {
         status_code = 2
         return

@@ -20,6 +20,6 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    deinit(.self = $&home_string, .allocator = system.allocator)
+    deinit(.self = $$&home_string, .allocator = system.allocator)
     status_code = 0
 }

@@ -111,7 +111,7 @@ init_stderr(.p: $&File) -> () := {
     )
 }
 
-close(.self: $&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_close_failed))) := {
+close(.self: $$&File) -> (.result: Errable#(.t: Void, .reasons: (..stream_close_failed))) := {
     if self&.stream_address == 0 {
         result = ..ok Void()
         return

@@ -19,7 +19,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    reset(.self = $&arena)
+    reset(.self = $$&arena)
 
     if arena.blocks.length != 0 {
         status_code = 13
@@ -33,7 +33,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    deinit(.self = $&arena)
+    deinit(.self = $$&arena)
 
     if arena.blocks.length != 0 {
         status_code = 15

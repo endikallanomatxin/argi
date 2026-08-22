@@ -13,8 +13,8 @@ main(.system: System) -> (.status_code: Int32) := {
     array_sum :: Int32 = sum_iterator(.it = $&array_it).sum
 
     dyn :: DynamicArray#(.t: Int32) = DynamicArray#(.t: Int32)(.capacity = 2)
-    dyn | push(.self = $&_, .value = 5)
-    dyn | push(.self = $&_, .value = 7)
+    dyn | push(.self = $$&_, .value = 5)
+    dyn | push(.self = $$&_, .value = 7)
     dynamic_it ::= to_iterator(.value = &dyn)
     dynamic_sum :: Int32 = sum_iterator(.it = $&dynamic_it).sum
 

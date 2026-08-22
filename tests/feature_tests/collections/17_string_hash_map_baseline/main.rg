@@ -1,9 +1,9 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
     map ::= StringHashMap#(.value: Int32)(.capacity = 1)
 
-    put#(.value: Int32)(.self = $&map, .key = "alpha", .value = 1)
-    put#(.value: Int32)(.self = $&map, .key = "beta", .value = 2)
-    put#(.value: Int32)(.self = $&map, .key = "alpha", .value = 7)
+    put#(.value: Int32)(.self = $$&map, .key = "alpha", .value = 1)
+    put#(.value: Int32)(.self = $$&map, .key = "beta", .value = 2)
+    put#(.value: Int32)(.self = $$&map, .key = "alpha", .value = 7)
 
     if has#(.value: Int32)(.self = &map, .key = "alpha").ok {
     } else {
@@ -56,7 +56,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    removed_beta ::= delete#(.value: Int32)(.self = $&map, .key = "beta").value
+    removed_beta ::= delete#(.value: Int32)(.self = $$&map, .key = "beta").value
     match removed_beta {
         ..some payload {
             if payload.value != 2 {
@@ -89,8 +89,8 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         }
     }
 
-    put#(.value: Int32)(.self = $&map, .key = "gamma", .value = 9)
-    removed_gamma ::= delete#(.value: Int32)(.self = $&map, .key = "gamma").value
+    put#(.value: Int32)(.self = $$&map, .key = "gamma", .value = 9)
+    removed_gamma ::= delete#(.value: Int32)(.self = $$&map, .key = "gamma").value
     match removed_gamma {
         ..some payload {
             if payload.value != 9 {
@@ -104,12 +104,12 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         }
     }
 
-    removed_missing ::= delete#(.value: Int32)(.self = $&map, .key = "missing").value
+    removed_missing ::= delete#(.value: Int32)(.self = $$&map, .key = "missing").value
     if removed_missing? {
         status_code = 16
         return
     }
 
-    deinit#(.value: Int32)(.self = $&map)
+    deinit#(.value: Int32)(.self = $$&map)
     status_code = 0
 }

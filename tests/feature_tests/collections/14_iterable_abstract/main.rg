@@ -14,8 +14,8 @@ main(.system: System) -> (.status_code: Int32) := {
     array_sum :: Int32 = sum_iterable(.items = &values).sum
 
     dyn :: DynamicArray#(.t: Int32) = DynamicArray#(.t: Int32)(.capacity = 2)
-    dyn | push(.self = $&_, .value = 2)
-    dyn | push(.self = $&_, .value = 6)
+    dyn | push(.self = $$&_, .value = 2)
+    dyn | push(.self = $$&_, .value = 6)
     dynamic_sum :: Int32 = sum_iterable(.items = &dyn).sum
 
     if array_sum != 12 {

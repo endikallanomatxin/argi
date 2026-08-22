@@ -1,11 +1,11 @@
 main(.system: System) -> (.status_code: Int32) := {
     allocator ::= system.allocator
     dyn :: DynamicArray#(.t: Int32) = DynamicArray#(.t: Int32)(.capacity = 2)
-    #defer deinit(.self = $&dyn)
+    #defer deinit(.self = $$&dyn)
 
-    push(.self = $&dyn, .value = 10)
-    push(.self = $&dyn, .value = 20)
-    push(.self = $&dyn, .value = 30)
+    push(.self = $$&dyn, .value = 10)
+    push(.self = $$&dyn, .value = 20)
+    push(.self = $$&dyn, .value = 30)
 
     it ::= to_iterator(.value = &dyn)
     sum :: Int32 = 0

@@ -7,12 +7,12 @@ main(.system: System) -> (.status_code: Int32) := {
     insert_offset :: UIntNative = 1
 
     arr :: DynamicArray#(.t: Int32) = DynamicArray#(.t: Int32)(.capacity = initial_capacity)
-    #defer deinit(.self = $&arr)
+    #defer deinit(.self = $$&arr)
 
-    push(.self = $&arr, .value = 10)
-    push(.self = $&arr, .value = 20)
-    insert(.self = $&arr, .i = insert_offset, .value = 15)
-    push(.self = $&arr, .value = 30)
+    push(.self = $$&arr, .value = 10)
+    push(.self = $$&arr, .value = 20)
+    insert(.self = $$&arr, .i = insert_offset, .value = 15)
+    push(.self = $$&arr, .value = 30)
 
     if arr.length != 4 {
         status_code = 1
@@ -57,7 +57,7 @@ main(.system: System) -> (.status_code: Int32) := {
         return
     }
 
-    last :: Int32 = pop(.self = $&arr).value
+    last :: Int32 = pop(.self = $$&arr).value
     if last != 30 {
         status_code = 8
         return

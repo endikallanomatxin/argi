@@ -24,7 +24,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     }
 
     flush(.self = $&output_writer)
-    deinit(.self = $&input_reader, .allocator = system.allocator)
-    deinit(.self = $&output_writer, .allocator = system.allocator)
+    deinit(.self = $$&input_reader, .allocator = system.allocator)
+    deinit(.self = $$&output_writer, .allocator = system.allocator)
     status_code = 0
 }

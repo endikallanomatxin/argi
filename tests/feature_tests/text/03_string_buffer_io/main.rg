@@ -1,7 +1,7 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
     buffer ::= String(.allocator = system.allocator, .capacity = 8)
 
-    match push_byte(.self = $&buffer, .byte = 79) {
+    match push_byte(.self = $$&buffer, .byte = 79) {
         ..ok _ {
         }
         ..error _ {
@@ -10,7 +10,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         }
     }
 
-    match push_byte(.self = $&buffer, .byte = 75) {
+    match push_byte(.self = $$&buffer, .byte = 75) {
         ..ok _ {
         }
         ..error _ {
@@ -36,6 +36,6 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    deinit(.self = $&buffer, .allocator = system.allocator)
+    deinit(.self = $$&buffer, .allocator = system.allocator)
     status_code = 0
 }

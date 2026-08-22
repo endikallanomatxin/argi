@@ -69,7 +69,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
                 status_code = 8
                 return
             }
-            deinit(.self = $&joined, .allocator = system.allocator)
+            deinit(.self = $$&joined, .allocator = system.allocator)
         }
         ..error _ {
             status_code = 9
@@ -77,8 +77,8 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         }
     }
 
-    deinit(.self = $&child, .allocator = system.allocator)
-    deinit(.self = $&base, .allocator = system.allocator)
-    deinit(.self = $&full, .allocator = system.allocator)
+    deinit(.self = $$&child, .allocator = system.allocator)
+    deinit(.self = $$&base, .allocator = system.allocator)
+    deinit(.self = $$&full, .allocator = system.allocator)
     status_code = 0
 }

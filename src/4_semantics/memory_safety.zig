@@ -118,7 +118,7 @@ pub const MemorySafetyAnalyzer = struct {
             .move_value => |inner| try self.analyzeNode(inner, state),
             .function_call => |call| {
                 try self.analyzeNode(call.input, state);
-                try self.recordDirectCallInvalidations(call, node, state);
+                try self.recordConservativeCallInvalidations(call, node, state);
             },
             .code_block => |block| try self.analyzeCodeBlock(block, state),
             .struct_value_literal => |value| for (value.fields) |field| try self.analyzeNode(field.value, state),
@@ -427,13 +427,15 @@ pub const MemorySafetyAnalyzer = struct {
         }
     }
 
-    fn recordDirectCallInvalidations(
+    /// Until a precise summary is available, an exclusive parameter may
+    /// transition any identity inside its argument envelope. Mutable and
+    /// read-only parameters never imply invalidation merely by being called.
+    fn recordConservativeCallInvalidations(
         self: *MemorySafetyAnalyzer,
         call: *const sg.FunctionCall,
         call_node: *const sg.SGNode,
         state: *FunctionState,
     ) !void {
-        if (!std.mem.eql(u8, call.callee.name, "deinit")) return;
         if (call.input.content != .struct_value_literal) return;
 
         const input = call.input.content.struct_value_literal;

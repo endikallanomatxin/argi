@@ -61,19 +61,19 @@ once init(
 }
 
 deinit(
-    .self: $&Terminal,
+    .self: $$&Terminal,
     .allocator: $&CAllocator = #reach allocator, system.allocator,
 ) -> () := {
-    deinit(.self = self&.stdin_reader, .allocator = allocator)
-    deinit(.self = self&.stdout_writer, .allocator = allocator)
-    deinit(.self = self&.stderr_writer, .allocator = allocator)
-    close(.self = self&.stdin_file)
-    close(.self = self&.stdout_file)
-    close(.self = self&.stderr_file)
+    deinit(.self = $$&self&._storage.stdin_reader, .allocator = allocator)
+    deinit(.self = $$&self&._storage.stdout_writer, .allocator = allocator)
+    deinit(.self = $$&self&._storage.stderr_writer, .allocator = allocator)
+    close(.self = $$&self&._storage.stdin_file)
+    close(.self = $$&self&._storage.stdout_file)
+    close(.self = $$&self&._storage.stderr_file)
 }
 
 read_line_into_buffer(
-    .buffer: $&String,
+    .buffer: $$&String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .stdin: $&Reader = #reach stdin, terminal.stdin, system.terminal.stdin,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_read_failed))) := {
@@ -136,7 +136,7 @@ read_line(
     while 1 == 1 {
         next ::= read_byte(.self = stdin)
         if is(.value = next, .variant = ..error) {
-            deinit(.self = $&line, .allocator = allocator)
+            deinit(.self = $$&line, .allocator = allocator)
             result = ..error(.reason = ..stream_read_failed)
             return
         }
@@ -144,7 +144,7 @@ read_line(
         next_value ::= next..ok
         if is(.value = next_value, .variant = ..end) {
             if line.length == 0 {
-                deinit(.self = $&line, .allocator = allocator)
+                deinit(.self = $$&line, .allocator = allocator)
                 result = ..ok ..end
                 return
             }
@@ -159,12 +159,12 @@ read_line(
             return
         }
 
-        grew ::= push_byte(.self = $&line, .byte = payload, .allocator = allocator)
+        grew ::= push_byte(.self = $$&line, .byte = payload, .allocator = allocator)
         match grew {
             ..ok _ {
             }
             ..error _ {
-                deinit(.self = $&line, .allocator = allocator)
+                deinit(.self = $$&line, .allocator = allocator)
                 result = ..error(.reason = ..out_of_memory)
                 return
             }

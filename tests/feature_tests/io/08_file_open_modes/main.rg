@@ -8,7 +8,7 @@ main() -> (.status_code: Int32) := {
         status_code = 1
         return
     }
-    close(.self = $&read_file)
+    close(.self = $$&read_file)
 
     write_file ::= File(.stream_address = 0, .should_close = 0 == 1)
     write_result ::= open_write(.p = $&write_file, .path = path)
@@ -17,7 +17,7 @@ main() -> (.status_code: Int32) := {
         status_code = 2
         return
     }
-    close(.self = $&write_file)
+    close(.self = $$&write_file)
 
     append_file ::= File(.stream_address = 0, .should_close = 0 == 1)
     append_result ::= open_append(.p = $&append_file, .path = path)
@@ -26,7 +26,7 @@ main() -> (.status_code: Int32) := {
         status_code = 3
         return
     }
-    close(.self = $&append_file)
+    close(.self = $$&append_file)
 
     status_code = 0
 }

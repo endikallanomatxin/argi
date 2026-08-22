@@ -40,7 +40,7 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    close_result ::= close(.self = $&file)
+    close_result ::= close(.self = $$&file)
     if is(.value = close_result, .variant = ..ok) {
     } else {
         status_code = 7

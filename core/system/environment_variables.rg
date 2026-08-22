@@ -27,7 +27,7 @@ get(
 ) -> (.value: ?StringView) := {
     c_key ::= as_c_string(.self = key, .allocator = allocator)
     found ::= environment_variables_get_c_string(.key = c_key.text)
-    deinit(.self = $&c_key.storage, .allocator = allocator)
+    deinit(.self = $$&c_key.storage, .allocator = allocator)
     if found? {
         payload ::= found..some
         value = ..some(.value = payload.value)

@@ -98,10 +98,15 @@ string_hash_map_prepare_buckets(
     .capacity: UIntNative,
 ) -> () := {
     init#(.t: UIntNative)(.p = buckets, .allocator = allocator, .capacity = capacity)
+    buckets& = (
+        .allocation = buckets&.allocation,
+        .length = capacity,
+        .capacity = buckets&.capacity,
+    )
 
     i :: UIntNative = 0
     while i < capacity {
-        push#(.t: UIntNative)(.allocator = allocator, .self = buckets, .value = 0)
+        buckets&[i] = 0
         i = i + 1
     }
 }
@@ -122,15 +127,15 @@ init#(.value: Type) (
 
 deinit#(.value: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .self: $&StringHashMap#(.value: value),
+    .self: $$&StringHashMap#(.value: value),
 ) -> () := {
-    deinit#(.t: UIntNative)(.allocator = allocator, .self = $&self&.buckets)
-    deinit#(.t: StringHashMapEntry#(.value: value))(.allocator = allocator, .self = $&self&.entries)
+    deinit#(.t: UIntNative)(.allocator = allocator, .self = $$&self&.buckets)
+    deinit#(.t: StringHashMapEntry#(.value: value))(.allocator = allocator, .self = $$&self&.entries)
 }
 
 string_hash_map_rehash#(.value: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .self: $&StringHashMap#(.value: value),
+    .self: $$&StringHashMap#(.value: value),
     .bucket_count: UIntNative,
 ) -> () := {
     old_bucket_count ::= self&.buckets.length
@@ -138,7 +143,7 @@ string_hash_map_rehash#(.value: Type) (
         return
     }
 
-    deinit#(.t: UIntNative)(.allocator = allocator, .self = $&self&.buckets)
+    deinit#(.t: UIntNative)(.allocator = allocator, .self = $$&self&.buckets)
     string_hash_map_prepare_buckets(.allocator = allocator, .buckets = $&self&.buckets, .capacity = bucket_count)
 
     i :: UIntNative = 0
@@ -192,7 +197,7 @@ string_hash_map_find_entry_index#(.value: Type) (
 
 put#(.value: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .self: $&StringHashMap#(.value: value),
+    .self: $$&StringHashMap#(.value: value),
     .key: &StringView,
     .value: value,
 ) -> () := {
@@ -225,7 +230,7 @@ put#(.value: Type) (
     head ::= self&.buckets[bucket_index]
     push#(.t: StringHashMapEntry#(.value: value))(
         .allocator = allocator,
-        .self = $&self&.entries,
+        .self = $$&self&.entries,
         .value = (
             .key = key&,
             .value = value,
@@ -237,7 +242,7 @@ put#(.value: Type) (
 
 put#(.value: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .self: $&StringHashMap#(.value: value),
+    .self: $$&StringHashMap#(.value: value),
     .key: &Char,
     .value: value,
 ) -> () := {
@@ -247,7 +252,7 @@ put#(.value: Type) (
 
 put#(.value: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .self: $&StringHashMap#(.value: value),
+    .self: $$&StringHashMap#(.value: value),
     .key: &String,
     .value: value,
 ) -> () := {
@@ -312,7 +317,7 @@ has#(.value: Type) (
 }
 
 string_hash_map_retarget_entry_index#(.value: Type) (
-    .self: $&StringHashMap#(.value: value),
+    .self: $$&StringHashMap#(.value: value),
     .entry: &StringHashMapEntry#(.value: value),
     .old_index: UIntNative,
     .new_index: UIntNative,
@@ -344,7 +349,7 @@ string_hash_map_retarget_entry_index#(.value: Type) (
 }
 
 delete#(.value: Type) (
-    .self: $&StringHashMap#(.value: value),
+    .self: $$&StringHashMap#(.value: value),
     .key: &StringView,
 ) -> (.value: ?value) := {
     if self&.buckets.length == 0 {
@@ -374,7 +379,7 @@ delete#(.value: Type) (
 
             deleted_value ::= entry.value
             last_index ::= self&.entries.length - 1
-            last_entry ::= pop#(.t: StringHashMapEntry#(.value: value))(.self = $&self&.entries)
+            last_entry ::= pop#(.t: StringHashMapEntry#(.value: value))(.self = $$&self&.entries)
 
             if current_index != last_index {
                 self&.entries[current_index] = last_entry
@@ -398,7 +403,7 @@ delete#(.value: Type) (
 }
 
 delete#(.value: Type) (
-    .self: $&StringHashMap#(.value: value),
+    .self: $$&StringHashMap#(.value: value),
     .key: &Char,
 ) -> (.value: ?value) := {
     key_view ::= string_hash_map_key_view(.key = key)
@@ -406,7 +411,7 @@ delete#(.value: Type) (
 }
 
 delete#(.value: Type) (
-    .self: $&StringHashMap#(.value: value),
+    .self: $$&StringHashMap#(.value: value),
     .key: &String,
 ) -> (.value: ?value) := {
     key_view ::= string_hash_map_key_view(.key = key)

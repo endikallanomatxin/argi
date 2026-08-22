@@ -621,7 +621,7 @@ fn compileResolvedPlan(
 
     // 5. Semántica ────────────────────────────────────────────────────────
     const semantizing_start = nowNs(io);
-    const sg = pipeline.semantize() catch {
+    const sg = pipeline.semantize() catch |err| {
         timings.semantizing_ns = elapsedSince(io, semantizing_start);
         if (flags.show_token_list) printTokenList(pipeline.tokens.items);
         if (pipeline.syntax_ctx) |*syntax_ctx| {
@@ -631,6 +631,9 @@ fn compileResolvedPlan(
             if (flags.show_semantic_graph) semantizer_ctx.printSG();
         }
         dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
+        if (!diagnostics.hasErrors()) {
+            std.debug.print("frontend failed during semantizing or memory-safety analysis: {s}\n", .{@errorName(err)});
+        }
         return error.CompilationFailed;
     };
     timings.semantizing_ns = elapsedSince(io, semantizing_start);
@@ -655,13 +658,16 @@ fn compileResolvedPlan(
         return err;
     };
     defer gen.deinit();
-    const module = gen.generate() catch {
+    const module = gen.generate() catch |err| {
         timings.codegen_ns = elapsedSince(io, codegen_start);
         if (flags.show_token_list) printTokenList(pipeline.tokens.items);
         if (pipeline.sem_ctx) |*semantizer_ctx| {
             if (flags.show_semantic_graph) semantizer_ctx.printSG();
         }
         dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
+        if (!diagnostics.hasErrors()) {
+            std.debug.print("codegen failed: {s}\n", .{@errorName(err)});
+        }
         return error.CompilationFailed;
     };
     timings.codegen_ns = elapsedSince(io, codegen_start);

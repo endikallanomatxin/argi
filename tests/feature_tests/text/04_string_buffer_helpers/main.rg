@@ -10,18 +10,15 @@ init(
 }
 
 deinit(
-    .self: $&DummyWriter,
+    .self: $$&DummyWriter,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> () := {
-    deinit(.self = $&self&.bytes, .allocator = allocator)
+    deinit(.self = $$&self&.bytes, .allocator = allocator)
 }
 
 write_byte(.self: $&DummyWriter, .byte: UInt8, .allocator: $&Allocator) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    pushed ::= push_byte(.self = $&self&.bytes, .byte = byte, .allocator = allocator)
-    if is(.value = pushed, .variant = ..error) {
-        result = ..error(.reason = ..stream_write_failed)
-        return
-    }
+    _ ::= allocator
+    string_append_byte(.self = $&self&.bytes, .byte = byte)
     result = ..ok(.value = Void())
 }
 
@@ -31,7 +28,7 @@ flush(.self: $&DummyWriter) -> (.result: Errable#(.t: Void, .reasons: (..stream_
 
 main(.system: System = System()) -> (.status_code: Int32) := {
     buffer ::= String(.allocator = system.allocator, .capacity = 16)
-    match push_c_string(.self = $&buffer, .text = "OK") {
+    match push_c_string(.self = $$&buffer, .text = "OK") {
         ..ok _ {
         }
         ..error _ {
@@ -74,7 +71,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    deinit(.self = $&buffer, .allocator = system.allocator)
-    deinit(.self = $&writer, .allocator = system.allocator)
+    deinit(.self = $$&buffer, .allocator = system.allocator)
+    deinit(.self = $$&writer, .allocator = system.allocator)
     status_code = 0
 }

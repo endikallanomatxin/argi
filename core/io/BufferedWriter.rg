@@ -36,7 +36,7 @@ init#(.base_type: Type: Writer)(
 }
 
 deinit#(.base_type: Type: Writer)(
-    .self: $&BufferedWriter#(.base_type: base_type),
+    .self: $$&BufferedWriter#(.base_type: base_type),
     .allocator: $&CAllocator = #reach allocator, system.allocator,
 ) -> () := {
     buffered_writer_flush(.self = self)

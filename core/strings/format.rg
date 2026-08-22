@@ -71,7 +71,7 @@ decimal_digit_byte_i32(
 }
 
 format_unsigned_decimal_into_u64(
-    .out: $&String,
+    .out: $$&String,
     .value: UInt64,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -92,12 +92,12 @@ format_unsigned_decimal_into_u64(
 
             while current > 0 {
                 digit ::= current % 10
-                pushed ::= push_byte(.self = $&reversed, .byte = decimal_digit_byte_u32(.digit = digit).byte, .allocator = allocator)
+                pushed ::= push_byte(.self = $$&reversed, .byte = decimal_digit_byte_u32(.digit = digit).byte, .allocator = allocator)
                 match pushed {
                     ..ok _ {
                     }
                     ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
+                        deinit(.self = $$&reversed, .allocator = allocator)
                         result = ..error(.reason = ..out_of_memory)
                         return
                     }
@@ -117,21 +117,21 @@ format_unsigned_decimal_into_u64(
                     ..ok _ {
                     }
                     ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
+                        deinit(.self = $$&reversed, .allocator = allocator)
                         result = ..error(.reason = ..out_of_memory)
                         return
                     }
                 }
             }
 
-            deinit(.self = $&reversed, .allocator = allocator)
+            deinit(.self = $$&reversed, .allocator = allocator)
             result = ..ok Void()
         }
     }
 }
 
 format_unsigned_decimal_into_u32(
-    .out: $&String,
+    .out: $$&String,
     .value: UInt32,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -152,12 +152,12 @@ format_unsigned_decimal_into_u32(
 
             while current > 0 {
                 digit ::= current % 10
-                pushed ::= push_byte(.self = $&reversed, .byte = decimal_digit_byte_u32(.digit = digit).byte, .allocator = allocator)
+                pushed ::= push_byte(.self = $$&reversed, .byte = decimal_digit_byte_u32(.digit = digit).byte, .allocator = allocator)
                 match pushed {
                     ..ok _ {
                     }
                     ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
+                        deinit(.self = $$&reversed, .allocator = allocator)
                         result = ..error(.reason = ..out_of_memory)
                         return
                     }
@@ -177,21 +177,21 @@ format_unsigned_decimal_into_u32(
                     ..ok _ {
                     }
                     ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
+                        deinit(.self = $$&reversed, .allocator = allocator)
                         result = ..error(.reason = ..out_of_memory)
                         return
                     }
                 }
             }
 
-            deinit(.self = $&reversed, .allocator = allocator)
+            deinit(.self = $$&reversed, .allocator = allocator)
             result = ..ok Void()
         }
     }
 }
 
 format_signed_decimal_into_i64(
-    .out: $&String,
+    .out: $$&String,
     .value: Int64,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -216,7 +216,7 @@ format_signed_decimal_into_i64(
                     ..ok _ {
                     }
                     ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
+                        deinit(.self = $$&reversed, .allocator = allocator)
                         result = ..error(.reason = ..out_of_memory)
                         return
                     }
@@ -230,7 +230,7 @@ format_signed_decimal_into_i64(
                 }
 
                 pushed ::= push_byte(
-                    .self = $&reversed,
+                    .self = $$&reversed,
                     .byte = decimal_digit_byte_i32(.digit = remainder).byte,
                     .allocator = allocator,
                 )
@@ -238,7 +238,7 @@ format_signed_decimal_into_i64(
                     ..ok _ {
                     }
                     ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
+                        deinit(.self = $$&reversed, .allocator = allocator)
                         result = ..error(.reason = ..out_of_memory)
                         return
                     }
@@ -258,21 +258,21 @@ format_signed_decimal_into_i64(
                     ..ok _ {
                     }
                     ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
+                        deinit(.self = $$&reversed, .allocator = allocator)
                         result = ..error(.reason = ..out_of_memory)
                         return
                     }
                 }
             }
 
-            deinit(.self = $&reversed, .allocator = allocator)
+            deinit(.self = $$&reversed, .allocator = allocator)
             result = ..ok Void()
         }
     }
 }
 
 format_signed_decimal_into_i32(
-    .out: $&String,
+    .out: $$&String,
     .value: Int32,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -297,7 +297,7 @@ format_signed_decimal_into_i32(
                     ..ok _ {
                     }
                     ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
+                        deinit(.self = $$&reversed, .allocator = allocator)
                         result = ..error(.reason = ..out_of_memory)
                         return
                     }
@@ -311,7 +311,7 @@ format_signed_decimal_into_i32(
                 }
 
                 pushed ::= push_byte(
-                    .self = $&reversed,
+                    .self = $$&reversed,
                     .byte = decimal_digit_byte_i32(.digit = remainder).byte,
                     .allocator = allocator,
                 )
@@ -319,7 +319,7 @@ format_signed_decimal_into_i32(
                     ..ok _ {
                     }
                     ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
+                        deinit(.self = $$&reversed, .allocator = allocator)
                         result = ..error(.reason = ..out_of_memory)
                         return
                     }
@@ -339,21 +339,21 @@ format_signed_decimal_into_i32(
                     ..ok _ {
                     }
                     ..error _ {
-                        deinit(.self = $&reversed, .allocator = allocator)
+                        deinit(.self = $$&reversed, .allocator = allocator)
                         result = ..error(.reason = ..out_of_memory)
                         return
                     }
                 }
             }
 
-            deinit(.self = $&reversed, .allocator = allocator)
+            deinit(.self = $$&reversed, .allocator = allocator)
             result = ..ok Void()
         }
     }
 }
 
 format_into(
-    .out: $&String,
+    .out: $$&String,
     .value: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -361,7 +361,7 @@ format_into(
 }
 
 format_into(
-    .out: $&String,
+    .out: $$&String,
     .value: Bool,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -373,7 +373,7 @@ format_into(
 }
 
 format_into(
-    .out: $&String,
+    .out: $$&String,
     .value: UInt64,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -381,7 +381,7 @@ format_into(
 }
 
 format_into(
-    .out: $&String,
+    .out: $$&String,
     .value: UInt32,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -389,7 +389,7 @@ format_into(
 }
 
 format_into(
-    .out: $&String,
+    .out: $$&String,
     .value: Int64,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -397,7 +397,7 @@ format_into(
 }
 
 format_into(
-    .out: $&String,
+    .out: $$&String,
     .value: Int32,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
@@ -412,13 +412,13 @@ format(
     match create_result {
         ..ok ~ payload {
             out ::= payload
-            pushed ::= push_view(.self = $&out, .view = value, .allocator = allocator)
+            pushed ::= push_view(.self = $$&out, .view = value, .allocator = allocator)
             match pushed {
                 ..ok _ {
                     result = ..ok out
                 }
                 ..error _ {
-                    deinit(.self = $&out, .allocator = allocator)
+                    deinit(.self = $$&out, .allocator = allocator)
                     result = ..error(.reason = ..out_of_memory)
                 }
             }
@@ -437,13 +437,13 @@ format(
     match create_result {
         ..ok ~ payload {
             out ::= payload
-            pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
+            pushed ::= format_into(.out = $$&out, .value = value, .allocator = allocator)
             match pushed {
                 ..ok _ {
                     result = ..ok out
                 }
                 ..error _ {
-                    deinit(.self = $&out, .allocator = allocator)
+                    deinit(.self = $$&out, .allocator = allocator)
                     result = ..error(.reason = ..out_of_memory)
                 }
             }
@@ -462,13 +462,13 @@ format(
     match create_result {
         ..ok ~ payload {
             out ::= payload
-            pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
+            pushed ::= format_into(.out = $$&out, .value = value, .allocator = allocator)
             match pushed {
                 ..ok _ {
                     result = ..ok out
                 }
                 ..error _ {
-                    deinit(.self = $&out, .allocator = allocator)
+                    deinit(.self = $$&out, .allocator = allocator)
                     result = ..error(.reason = ..out_of_memory)
                 }
             }
@@ -487,13 +487,13 @@ format(
     match create_result {
         ..ok ~ payload {
             out ::= payload
-            pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
+            pushed ::= format_into(.out = $$&out, .value = value, .allocator = allocator)
             match pushed {
                 ..ok _ {
                     result = ..ok out
                 }
                 ..error _ {
-                    deinit(.self = $&out, .allocator = allocator)
+                    deinit(.self = $$&out, .allocator = allocator)
                     result = ..error(.reason = ..out_of_memory)
                 }
             }
@@ -512,13 +512,13 @@ format(
     match create_result {
         ..ok ~ payload {
             out ::= payload
-            pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
+            pushed ::= format_into(.out = $$&out, .value = value, .allocator = allocator)
             match pushed {
                 ..ok _ {
                     result = ..ok out
                 }
                 ..error _ {
-                    deinit(.self = $&out, .allocator = allocator)
+                    deinit(.self = $$&out, .allocator = allocator)
                     result = ..error(.reason = ..out_of_memory)
                 }
             }
@@ -537,13 +537,13 @@ format(
     match create_result {
         ..ok ~ payload {
             out ::= payload
-            pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
+            pushed ::= format_into(.out = $$&out, .value = value, .allocator = allocator)
             match pushed {
                 ..ok _ {
                     result = ..ok out
                 }
                 ..error _ {
-                    deinit(.self = $&out, .allocator = allocator)
+                    deinit(.self = $$&out, .allocator = allocator)
                     result = ..error(.reason = ..out_of_memory)
                 }
             }

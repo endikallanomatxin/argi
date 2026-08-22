@@ -27,8 +27,8 @@ exercise(
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> () := {
     arr ::= DynamicArray#(.t: Int32)(.capacity = 1)
-    push(.self = $&arr, .value = 10)
-    push(.self = $&arr, .value = 20)
+    push(.self = $$&arr, .value = 10)
+    push(.self = $$&arr, .value = 20)
 }
 
 main() -> (.status_code: Int32) := {

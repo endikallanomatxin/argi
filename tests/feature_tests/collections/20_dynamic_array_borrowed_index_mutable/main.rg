@@ -1,9 +1,9 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
     arr ::= DynamicArray#(.t: Int32)(.capacity = 2)
-    #defer deinit(.self = $&arr, .allocator = system.allocator)
+    #defer deinit(.self = $$&arr, .allocator = system.allocator)
 
-    push(.self = $&arr, .value = 10, .allocator = system.allocator)
-    push(.self = $&arr, .value = 20, .allocator = system.allocator)
+    push(.self = $$&arr, .value = 10, .allocator = system.allocator)
+    push(.self = $$&arr, .value = 20, .allocator = system.allocator)
 
     first_ptr : $&Int32 = $&arr[0]
     first_ptr& = 99
