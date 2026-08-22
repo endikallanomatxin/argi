@@ -374,7 +374,9 @@ pub const FunctionDeclaration = struct {
     output: StructType, // Named return params
     body: ?*const CodeBlock,
     uses_inferred_error_reasons: bool = false,
+    input_bindings: []const *const BindingDeclaration = &.{},
     output_bindings: []const *const BindingDeclaration = &.{},
+    temporal_summary: ?*const TemporalSummary = null,
     inferred_error_reasons: ?*const ChoiceType = null,
 
     pub fn isExtern(self: *const FunctionDeclaration) bool {
@@ -390,6 +392,32 @@ pub const FunctionDeclaration = struct {
         regular,
         abstract_contract,
     };
+};
+
+/// Compiler-internal temporal contract inferred from a concrete function body.
+/// Paths use semantic field/index projections and deliberately do not appear in
+/// source-level function types.
+pub const TemporalSummary = struct {
+    return_dependencies: []const ReturnDependency = &.{},
+    invalidations: []const InvalidationFootprint = &.{},
+};
+
+pub const TemporalProjection = union(enum) {
+    field: u32,
+    choice_payload: u32,
+    array_index: ?i64,
+    dereference,
+};
+
+pub const ReturnDependency = struct {
+    output_path: []const TemporalProjection,
+    input_index: u32,
+    input_path: []const TemporalProjection,
+};
+
+pub const InvalidationFootprint = struct {
+    input_index: u32,
+    input_path: []const TemporalProjection,
 };
 
 pub const TestDeclaration = struct {
