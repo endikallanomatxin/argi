@@ -2973,6 +2973,7 @@ pub const CodeGenerator = struct {
                 break :blk sem_types.effectiveStructFieldType(base_ty.struct_type.fields[sfa.field_index]);
             },
             .choice_payload_access => |acc| acc.payload_type,
+            .array_index => |access| access.element_type,
             .dereference => |d| d.ty,
             else => CodegenError.InvalidType,
         };
@@ -3023,6 +3024,19 @@ pub const CodeGenerator = struct {
                 );
                 const payload_ty_ref = try self.toLLVMType(acc.payload_type);
                 break :blk .{ .value_ref = payload_ptr, .type_ref = c.LLVMPointerType(payload_ty_ref, 0), .sem_type = null };
+            },
+            .array_index => |access| blk: {
+                const array_ptr = (try self.visitNode(access.array_ptr)) orelse return CodegenError.ValueNotFound;
+                const index = (try self.visitNode(access.index)) orelse return CodegenError.ValueNotFound;
+                const index_value = try self.expectNativeIndex(index);
+                const array_ty_ref = try self.toLLVMType(.{ .array_type = access.array_type });
+                const element_ptr = try self.genArrayElementPointer(array_ptr, array_ty_ref, index_value);
+                const element_ty_ref = try self.toLLVMType(access.element_type);
+                break :blk .{
+                    .value_ref = element_ptr,
+                    .type_ref = c.LLVMPointerType(element_ty_ref, 0),
+                    .sem_type = null,
+                };
             },
             .dereference => |d| blk: {
                 const ptr_tv = (try self.visitNode(d.pointer)) orelse return CodegenError.ValueNotFound;

@@ -8,6 +8,7 @@ const source_files = @import("../1_base/source_files.zig");
 const log = std.log.scoped(.semantizer);
 
 const typ = @import("types.zig");
+const temporal_place = @import("temporal_place.zig");
 const abs = @import("abstracts.zig");
 const gen = @import("generics.zig");
 const Scope = @import("scope.zig").Scope;
@@ -55,7 +56,7 @@ const CallAccessMode = enum {
 const CallBindingAccess = struct {
     root_name: []const u8,
     mode: CallAccessMode,
-    access_node: *const sg.SGNode,
+    place: temporal_place.Place,
 };
 
 const ReachFunctionContext = struct {
@@ -2381,6 +2382,7 @@ pub const Semantizer = struct {
                 }
             },
             .struct_field_access => {},
+            .array_index => {},
             .dereference => |deref| {
                 if (!typ.pointerMutabilityCompatible(mutability, deref.pointer_type.mutability)) {
                     try self.diags.add(
@@ -6790,29 +6792,24 @@ pub const Semantizer = struct {
         self: *Semantizer,
         field_value: *const sg.SGNode,
         field_ty: sg.Type,
-    ) ?CallBindingAccess {
-        _ = self;
+    ) !?CallBindingAccess {
         return switch (field_value.content) {
-            .binding_use => |binding| .{
-                .root_name = binding.name,
-                .mode = .value,
-                .access_node = field_value,
-            },
+            .binding_use,
             .struct_field_access,
             .choice_payload_access,
             .array_index,
             .dereference,
             => blk: {
-                const root_name = extractBindingRootName(field_value) orelse break :blk null;
+                const place = try temporal_place.Place.fromNode(field_value, self.allocator) orelse break :blk null;
                 break :blk .{
-                    .root_name = root_name,
+                    .root_name = place.root.name,
                     .mode = .value,
-                    .access_node = field_value,
+                    .place = place,
                 };
             },
             .address_of => |inner| blk: {
                 if (field_ty != .pointer_type) break :blk null;
-                const root_name = extractBindingRootName(inner) orelse break :blk null;
+                const place = try temporal_place.Place.fromNode(inner, self.allocator) orelse break :blk null;
 
                 const mode: CallAccessMode = switch (field_ty.pointer_type.mutability) {
                     .read_only => .read,
@@ -6820,72 +6817,12 @@ pub const Semantizer = struct {
                     .exclusive => .write,
                 };
                 break :blk .{
-                    .root_name = root_name,
+                    .root_name = place.root.name,
                     .mode = mode,
-                    .access_node = inner,
+                    .place = place,
                 };
             },
             else => null,
-        };
-    }
-
-    fn extractBindingRootName(node: *const sg.SGNode) ?[]const u8 {
-        return switch (node.content) {
-            .binding_use => |binding| binding.name,
-            .struct_field_access => |acc| extractBindingRootName(acc.struct_value),
-            .choice_payload_access => |acc| extractBindingRootName(acc.choice_value),
-            .array_index => |acc| extractBindingRootName(acc.array_ptr),
-            .dereference => |deref| extractBindingRootName(deref.pointer),
-            else => null,
-        };
-    }
-
-    fn indexNodesMayAlias(left: *const sg.SGNode, right: *const sg.SGNode) bool {
-        if (left.content == .value_literal and right.content == .value_literal) {
-            const l = left.content.value_literal;
-            const r = right.content.value_literal;
-            if (l == .int_literal and r == .int_literal) {
-                return l.int_literal == r.int_literal;
-            }
-        }
-
-        return true;
-    }
-
-    fn accessNodesMayAlias(left: *const sg.SGNode, right: *const sg.SGNode) bool {
-        return switch (left.content) {
-            .binding_use => switch (right.content) {
-                .binding_use => std.mem.eql(u8, left.content.binding_use.name, right.content.binding_use.name),
-                .struct_field_access => accessNodesMayAlias(left, right.content.struct_field_access.struct_value),
-                .choice_payload_access => accessNodesMayAlias(left, right.content.choice_payload_access.choice_value),
-                .array_index => accessNodesMayAlias(left, right.content.array_index.array_ptr),
-                .dereference => false,
-                else => false,
-            },
-            .struct_field_access => |lacc| switch (right.content) {
-                .binding_use => accessNodesMayAlias(lacc.struct_value, right),
-                .struct_field_access => |racc| lacc.field_index == racc.field_index and accessNodesMayAlias(lacc.struct_value, racc.struct_value),
-                else => false,
-            },
-            .choice_payload_access => |lacc| switch (right.content) {
-                .binding_use => accessNodesMayAlias(lacc.choice_value, right),
-                .choice_payload_access => |racc| lacc.variant_index == racc.variant_index and accessNodesMayAlias(lacc.choice_value, racc.choice_value),
-                else => false,
-            },
-            .array_index => |lacc| switch (right.content) {
-                .binding_use => accessNodesMayAlias(lacc.array_ptr, right),
-                .array_index => |racc| accessNodesMayAlias(lacc.array_ptr, racc.array_ptr) and indexNodesMayAlias(lacc.index, racc.index),
-                .dereference => accessNodesMayAlias(lacc.array_ptr, right),
-                else => false,
-            },
-            .dereference => |lderef| switch (right.content) {
-                .dereference => |rderef| accessNodesMayAlias(lderef.pointer, rderef.pointer),
-                .struct_field_access => accessNodesMayAlias(left, right.content.struct_field_access.struct_value),
-                .choice_payload_access => accessNodesMayAlias(left, right.content.choice_payload_access.choice_value),
-                .array_index => accessNodesMayAlias(left, right.content.array_index.array_ptr),
-                else => false,
-            },
-            else => false,
         };
     }
 
@@ -6915,13 +6852,12 @@ pub const Semantizer = struct {
 
         var i: usize = 0;
         while (i < input_value.fields.len) : (i += 1) {
-            const left = self.extractCallBindingAccess(input_value.fields[i].value, input_ty.fields[i].ty) orelse continue;
+            const left = (try self.extractCallBindingAccess(input_value.fields[i].value, input_ty.fields[i].ty)) orelse continue;
 
             var j: usize = i + 1;
             while (j < input_value.fields.len) : (j += 1) {
-                const right = self.extractCallBindingAccess(input_value.fields[j].value, input_ty.fields[j].ty) orelse continue;
-                if (!std.mem.eql(u8, left.root_name, right.root_name)) continue;
-                if (!accessNodesMayAlias(left.access_node, right.access_node)) continue;
+                const right = (try self.extractCallBindingAccess(input_value.fields[j].value, input_ty.fields[j].ty)) orelse continue;
+                if (!temporal_place.Place.mayOverlap(left.place, right.place)) continue;
                 if (!callModesConflict(left.mode, right.mode)) continue;
 
                 try self.diags.add(

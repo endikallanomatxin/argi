@@ -2881,6 +2881,19 @@ test "feature_tests/ownership/26_distinct_fields_do_not_alias_same_call" {
     try runExpect(test_path, 7);
 }
 
+test "feature_tests/ownership/43_distinct_literal_indices_do_not_alias" {
+    const test_path = "tests/feature_tests/ownership/43_distinct_literal_indices_do_not_alias";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/44X_dynamic_index_may_alias" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/44X_dynamic_index_may_alias",
+        "binding 'values' cannot be passed as '$$&' and '$$&' in the same call to 'mix'",
+    );
+}
+
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
     try buildExpectFailExact("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
         \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:

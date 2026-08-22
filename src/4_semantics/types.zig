@@ -1777,6 +1777,12 @@ fn ensureAddressableNode(
         .choice_payload_access => |acc| {
             return ensureAddressableNode(acc.choice_value, mutability, loc, diags);
         },
+        .array_index => |access| {
+            return ensureAddressableNode(access.array_ptr, mutability, loc, diags);
+        },
+        .address_of => |inner| {
+            return ensureAddressableNode(inner, mutability, loc, diags);
+        },
         .dereference => |deref| {
             if (!pointerMutabilityCompatible(mutability, deref.pointer_type.mutability)) {
                 try diags.add(
