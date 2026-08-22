@@ -40,6 +40,20 @@ pub const Place = struct {
         return true;
     }
 
+    /// Invalidation is directional. Replacing a field invalidates identities
+    /// rooted in that field, but it does not replace the enclosing object.
+    /// Invalidating the enclosing object, on the other hand, invalidates every
+    /// captured subobject identity below it.
+    pub fn isInvalidatedBy(captured: Place, footprint: Place) bool {
+        if (captured.root != footprint.root) return false;
+
+        const shared_len = @min(captured.projections.len, footprint.projections.len);
+        for (captured.projections[0..shared_len], footprint.projections[0..shared_len]) |captured_projection, footprint_projection| {
+            if (!projectionsMayOverlap(captured_projection, footprint_projection)) return false;
+        }
+        return footprint.projections.len <= captured.projections.len;
+    }
+
     pub fn eql(left: Place, right: Place) bool {
         if (left.root != right.root) return false;
         if (left.projections.len != right.projections.len) return false;

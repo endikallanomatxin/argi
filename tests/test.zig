@@ -2966,6 +2966,32 @@ test "feature_tests/ownership/55_mutable_call_preserves_temporal_identity" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/56X_stored_reference_use_after_deinit" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/56X_stored_reference_use_after_deinit",
+        "reference 'holder' is no longer valid; it refers to 'resource'",
+    );
+}
+
+test "feature_tests/ownership/57_independent_value_field_after_dependency_invalidation" {
+    const test_path = "tests/feature_tests/ownership/57_independent_value_field_after_dependency_invalidation";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/58_array_reference_dependencies" {
+    const test_path = "tests/feature_tests/ownership/58_array_reference_dependencies";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/59X_array_reference_dependency_invalid" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/59X_array_reference_dependency_invalid",
+        "reference 'pointers' is no longer valid; it refers to 'first'",
+    );
+}
+
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
     try buildExpectFailExact("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
         \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:

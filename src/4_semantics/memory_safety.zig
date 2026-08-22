@@ -7,6 +7,7 @@ const temporal_place = @import("temporal_place.zig");
 const CapturedPlace = struct {
     place: temporal_place.Place,
     capture_sequence: u64,
+    value_path: []const temporal_place.Projection = &.{},
 };
 
 const ReferenceFact = struct {
@@ -125,10 +126,9 @@ pub const MemorySafetyAnalyzer = struct {
             .list_literal => |value| for (value.elements) |element| try self.analyzeNode(element, state),
             .array_literal => |value| for (value.elements) |element| try self.analyzeNode(element, state),
             .choice_literal => |value| if (value.payload) |payload| try self.analyzeNode(payload, state),
-            .struct_field_access => |access| try self.analyzeNode(access.struct_value, state),
-            .choice_payload_access => |access| try self.analyzeNode(access.choice_value, state),
+            .struct_field_access, .choice_payload_access => try self.validateExpressionUse(node, state),
             .array_index => |access| {
-                try self.analyzeNode(access.array_ptr, state);
+                try self.validateExpressionUse(node, state);
                 try self.analyzeNode(access.index, state);
             },
             .dereference => |access| try self.analyzeNode(access.pointer, state),
@@ -353,7 +353,10 @@ pub const MemorySafetyAnalyzer = struct {
         for (right.captured) |candidate| {
             var found = false;
             for (captured.items) |existing| {
-                if (candidate.capture_sequence == existing.capture_sequence and temporal_place.Place.eql(candidate.place, existing.place)) {
+                if (candidate.capture_sequence == existing.capture_sequence and
+                    temporal_place.Place.eql(candidate.place, existing.place) and
+                    valuePathsEqual(candidate.value_path, existing.value_path))
+                {
                     found = true;
                     break;
                 }
@@ -380,7 +383,7 @@ pub const MemorySafetyAnalyzer = struct {
         self: *MemorySafetyAnalyzer,
         value: *const sg.SGNode,
         state: *const FunctionState,
-    ) !?ReferenceFact {
+    ) anyerror!?ReferenceFact {
         return switch (value.content) {
             .address_of => |target| blk: {
                 const place = try temporal_place.Place.fromNode(target, self.allocator) orelse break :blk null;
@@ -393,7 +396,125 @@ pub const MemorySafetyAnalyzer = struct {
             },
             .binding_use => |binding| state.references.get(binding),
             .move_value => |inner| try self.referenceFactFromValue(inner, state),
+            .struct_value_literal => |struct_value| try self.factFromStructValue(struct_value, state),
+            .array_literal => |array_value| try self.factFromNodeList(array_value.elements, state),
+            .list_literal => |list_value| try self.factFromNodeList(list_value.elements, state),
+            .choice_literal => |choice_value| if (choice_value.payload) |payload|
+                try self.factFromProjectedValue(payload, .{ .choice_payload = choice_value.variant_index }, state)
+            else
+                null,
+            .struct_field_access => |access| try self.factFromSelectedValue(
+                access.struct_value,
+                .{ .field = access.field_index },
+                state,
+            ),
+            .choice_payload_access => |access| try self.factFromSelectedValue(
+                access.choice_value,
+                .{ .choice_payload = access.variant_index },
+                state,
+            ),
+            .array_index => |access| try self.factFromSelectedValue(
+                access.array_ptr,
+                .{ .array_index = constantIndex(access.index) },
+                state,
+            ),
             else => null,
+        };
+    }
+
+    fn factFromStructValue(
+        self: *MemorySafetyAnalyzer,
+        value: *const sg.StructValueLiteral,
+        state: *const FunctionState,
+    ) anyerror!?ReferenceFact {
+        var captured = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
+        defer captured.deinit();
+        for (value.fields, 0..) |field, index| {
+            if (try self.factFromProjectedValue(field.value, .{ .field = @intCast(index) }, state)) |fact| {
+                try captured.appendSlice(fact.captured);
+            }
+        }
+        if (captured.items.len == 0) return null;
+        return .{ .captured = try captured.toOwnedSlice() };
+    }
+
+    fn factFromNodeList(
+        self: *MemorySafetyAnalyzer,
+        values: []const *const sg.SGNode,
+        state: *const FunctionState,
+    ) anyerror!?ReferenceFact {
+        var captured = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
+        defer captured.deinit();
+        for (values, 0..) |value, index| {
+            if (try self.factFromProjectedValue(value, .{ .array_index = @intCast(index) }, state)) |fact| {
+                try captured.appendSlice(fact.captured);
+            }
+        }
+        if (captured.items.len == 0) return null;
+        return .{ .captured = try captured.toOwnedSlice() };
+    }
+
+    fn factFromProjectedValue(
+        self: *MemorySafetyAnalyzer,
+        value: *const sg.SGNode,
+        projection: temporal_place.Projection,
+        state: *const FunctionState,
+    ) anyerror!?ReferenceFact {
+        const fact = try self.referenceFactFromValue(value, state) orelse return null;
+        const captured = try self.allocator.alloc(CapturedPlace, fact.captured.len);
+        for (fact.captured, 0..) |dependency, index| {
+            const value_path = try self.allocator.alloc(temporal_place.Projection, dependency.value_path.len + 1);
+            value_path[0] = projection;
+            @memcpy(value_path[1..], dependency.value_path);
+            captured[index] = dependency;
+            captured[index].value_path = value_path;
+        }
+        return .{ .captured = captured };
+    }
+
+    fn factFromSelectedValue(
+        self: *MemorySafetyAnalyzer,
+        raw_container: *const sg.SGNode,
+        projection: temporal_place.Projection,
+        state: *const FunctionState,
+    ) anyerror!?ReferenceFact {
+        const container = if (raw_container.content == .address_of)
+            raw_container.content.address_of
+        else
+            raw_container;
+        const fact = try self.referenceFactFromValue(container, state) orelse return null;
+        var captured = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
+        defer captured.deinit();
+
+        for (fact.captured) |dependency| {
+            if (dependency.value_path.len == 0) continue;
+            if (!valueProjectionsMatch(dependency.value_path[0], projection)) continue;
+            var selected = dependency;
+            selected.value_path = try self.allocator.dupe(temporal_place.Projection, dependency.value_path[1..]);
+            try captured.append(selected);
+        }
+        if (captured.items.len == 0) return null;
+        return .{ .captured = try captured.toOwnedSlice() };
+    }
+
+    fn valueProjectionsMatch(left: temporal_place.Projection, right: temporal_place.Projection) bool {
+        return switch (left) {
+            .field => |left_index| switch (right) {
+                .field => |right_index| left_index == right_index,
+                else => false,
+            },
+            .choice_payload => |left_index| switch (right) {
+                .choice_payload => |right_index| left_index == right_index,
+                else => false,
+            },
+            .array_index => |left_index| switch (right) {
+                .array_index => |right_index| left_index == null or right_index == null or left_index.? == right_index.?,
+                else => false,
+            },
+            .dereference => switch (right) {
+                .dereference => true,
+                else => false,
+            },
         };
     }
 
@@ -404,17 +525,37 @@ pub const MemorySafetyAnalyzer = struct {
         state: *const FunctionState,
     ) !void {
         const fact = state.references.get(binding) orelse return;
+        try self.validateFact(binding.name, fact, use_node, state);
+    }
+
+    fn validateExpressionUse(
+        self: *MemorySafetyAnalyzer,
+        value: *const sg.SGNode,
+        state: *const FunctionState,
+    ) !void {
+        const fact = try self.referenceFactFromValue(value, state) orelse return;
+        const label = (try temporal_place.Place.fromNode(value, self.allocator)) orelse return;
+        try self.validateFact(label.root.name, fact, value, state);
+    }
+
+    fn validateFact(
+        self: *MemorySafetyAnalyzer,
+        label: []const u8,
+        fact: ReferenceFact,
+        use_node: *const sg.SGNode,
+        state: *const FunctionState,
+    ) !void {
         for (fact.captured) |captured| {
             for (state.invalidations.items) |invalidation| {
                 if (invalidation.sequence <= captured.capture_sequence) continue;
-                if (!temporal_place.Place.mayOverlap(captured.place, invalidation.place)) continue;
+                if (!temporal_place.Place.isInvalidatedBy(captured.place, invalidation.place)) continue;
                 if (self.reported_uses.contains(use_node)) return;
                 try self.diags.add(
                     use_node.location,
                     .semantic,
                     "reference '{s}' is no longer valid; it refers to '{s}', which was invalidated at {s}:{d}:{d}",
                     .{
-                        binding.name,
+                        label,
                         captured.place.root.name,
                         invalidation.location.file,
                         invalidation.location.line,
@@ -467,5 +608,16 @@ pub const MemorySafetyAnalyzer = struct {
         if (node.content != .value_literal) return null;
         if (node.content.value_literal != .int_literal) return null;
         return node.content.value_literal.int_literal;
+    }
+
+    fn valuePathsEqual(
+        left: []const temporal_place.Projection,
+        right: []const temporal_place.Projection,
+    ) bool {
+        if (left.len != right.len) return false;
+        for (left, right) |left_projection, right_projection| {
+            if (!std.meta.eql(left_projection, right_projection)) return false;
+        }
+        return true;
     }
 };
