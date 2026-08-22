@@ -400,6 +400,7 @@ pub const FunctionDeclaration = struct {
 pub const TemporalSummary = struct {
     return_dependencies: []const ReturnDependency = &.{},
     invalidations: []const InvalidationFootprint = &.{},
+    return_roots: []const ReturnStorageRoot = &.{},
 };
 
 pub const TemporalProjection = union(enum) {
@@ -418,6 +419,19 @@ pub const ReturnDependency = struct {
 pub const InvalidationFootprint = struct {
     input_index: u32,
     input_path: []const TemporalProjection,
+};
+
+pub const ReturnStorageRoot = struct {
+    output_path: []const TemporalProjection,
+    source: Source,
+
+    pub const Source = union(enum) {
+        fresh,
+        input: struct {
+            index: u32,
+            path: []const TemporalProjection,
+        },
+    };
 };
 
 pub const TestDeclaration = struct {

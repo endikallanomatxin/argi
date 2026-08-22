@@ -3025,6 +3025,19 @@ test "feature_tests/ownership/64X_composed_temporal_summaries" {
     );
 }
 
+test "feature_tests/ownership/65X_arena_reset_invalidates_allocations" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/65X_arena_reset_invalidates_allocations",
+        "reference 'pointer' is no longer valid; it refers to 'arena'",
+    );
+}
+
+test "feature_tests/ownership/66_arena_allocations_before_reset" {
+    const test_path = "tests/feature_tests/ownership/66_arena_allocations_before_reset";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
     try buildExpectFailExact("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
         \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:

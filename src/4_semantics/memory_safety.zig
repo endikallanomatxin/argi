@@ -58,6 +58,7 @@ pub const MemorySafetyAnalyzer = struct {
     diags: *diagnostics.Diagnostics,
     analyzed_functions: std.AutoHashMap(*const sg.FunctionDeclaration, void),
     reported_uses: std.AutoHashMap(*const sg.SGNode, void),
+    fresh_storage_roots: std.AutoHashMap(*const sg.FunctionCall, *const sg.BindingDeclaration),
     next_sequence: u64 = 1,
     inferring_summaries: bool = false,
 
@@ -70,12 +71,14 @@ pub const MemorySafetyAnalyzer = struct {
             .diags = diags,
             .analyzed_functions = std.AutoHashMap(*const sg.FunctionDeclaration, void).init(allocator.*),
             .reported_uses = std.AutoHashMap(*const sg.SGNode, void).init(allocator.*),
+            .fresh_storage_roots = std.AutoHashMap(*const sg.FunctionCall, *const sg.BindingDeclaration).init(allocator.*),
         };
     }
 
     pub fn deinit(self: *MemorySafetyAnalyzer) void {
         self.analyzed_functions.deinit();
         self.reported_uses.deinit();
+        self.fresh_storage_roots.deinit();
     }
 
     pub fn analyze(self: *MemorySafetyAnalyzer, nodes: []const *sg.SGNode) !void {
@@ -541,7 +544,10 @@ pub const MemorySafetyAnalyzer = struct {
         defer captured.deinit();
 
         for (fact.captured) |dependency| {
-            if (dependency.value_path.len == 0) continue;
+            if (dependency.value_path.len == 0) {
+                try captured.append(dependency);
+                continue;
+            }
             if (!valueProjectionsMatch(dependency.value_path[0], projection)) continue;
             var selected = dependency;
             selected.value_path = try self.allocator.dupe(temporal_place.Projection, dependency.value_path[1..]);
@@ -572,8 +578,39 @@ pub const MemorySafetyAnalyzer = struct {
                 try captured.append(mapped);
             }
         }
+        for (summary.return_roots) |root| {
+            const place = switch (root.source) {
+                .fresh => try self.freshStoragePlace(call),
+                .input => |source| blk: {
+                    if (source.index >= fields.len) continue;
+                    const actual_fact = try self.referenceFactFromValue(fields[source.index].value, state) orelse continue;
+                    if (actual_fact.captured.len == 0) continue;
+                    break :blk try appendSummaryPath(actual_fact.captured[0].place, source.path, self.allocator);
+                },
+            };
+            try captured.append(.{
+                .place = place,
+                .capture_sequence = self.next_sequence - 1,
+                .value_path = try temporalPathToPlacePath(root.output_path, self.allocator),
+            });
+        }
         if (captured.items.len == 0) return null;
         return .{ .captured = try captured.toOwnedSlice() };
+    }
+
+    fn freshStoragePlace(self: *MemorySafetyAnalyzer, call: *const sg.FunctionCall) !temporal_place.Place {
+        if (self.fresh_storage_roots.get(call)) |root| return .{ .root = root, .projections = &.{} };
+        const root = try self.allocator.create(sg.BindingDeclaration);
+        root.* = .{
+            .name = "$fresh allocation",
+            .location = call.callee.location,
+            .origin_file = call.callee.location.file,
+            .mutability = .constant,
+            .ty = .{ .builtin = .Any },
+            .initialization = null,
+        };
+        try self.fresh_storage_roots.put(call, root);
+        return .{ .root = root, .projections = &.{} };
     }
 
     fn valueProjectionsMatch(left: temporal_place.Projection, right: temporal_place.Projection) bool {
@@ -724,7 +761,9 @@ pub const MemorySafetyAnalyzer = struct {
 
         var invalidations = std.array_list.Managed(sg.InvalidationFootprint).init(self.allocator.*);
         defer invalidations.deinit();
-        if (std.mem.eql(u8, function.name, "deinit")) {
+        const invalidates_envelope = std.mem.eql(u8, function.name, "deinit") or
+            (std.mem.eql(u8, function.name, "reset") and std.mem.indexOf(u8, function.location.file, "/ArenaAllocator.rg") != null);
+        if (invalidates_envelope) {
             for (function.input.fields, 0..) |field, input_index| {
                 if (field.ty == .pointer_type and field.ty.pointer_type.mutability == .exclusive) {
                     try invalidations.append(.{
@@ -743,9 +782,24 @@ pub const MemorySafetyAnalyzer = struct {
         }
 
         const summary = try self.allocator.create(sg.TemporalSummary);
+        var return_roots: []const sg.ReturnStorageRoot = &.{};
+        if (std.mem.eql(u8, function.name, "allocate") and
+            std.mem.indexOf(u8, function.location.file, "/core/memory/heap_allocation/") != null)
+        {
+            const roots = try self.allocator.alloc(sg.ReturnStorageRoot, 1);
+            roots[0] = .{
+                .output_path = &.{},
+                .source = if (std.mem.indexOf(u8, function.location.file, "/ArenaAllocator.rg") != null)
+                    .{ .input = .{ .index = 0, .path = &.{} } }
+                else
+                    .fresh,
+            };
+            return_roots = roots;
+        }
         summary.* = .{
             .return_dependencies = try return_dependencies.toOwnedSlice(),
             .invalidations = try invalidations.toOwnedSlice(),
+            .return_roots = return_roots,
         };
         @constCast(function).temporal_summary = summary;
     }
@@ -869,13 +923,25 @@ pub const MemorySafetyAnalyzer = struct {
     fn temporalSummariesEqual(left: ?*const sg.TemporalSummary, right: ?*const sg.TemporalSummary) bool {
         if (left == null or right == null) return left == right;
         if (left.?.return_dependencies.len != right.?.return_dependencies.len or
-            left.?.invalidations.len != right.?.invalidations.len) return false;
+            left.?.invalidations.len != right.?.invalidations.len or
+            left.?.return_roots.len != right.?.return_roots.len) return false;
         for (left.?.return_dependencies, right.?.return_dependencies) |a, b| {
             if (a.input_index != b.input_index or !summaryPathsEqual(a.output_path, b.output_path) or
                 !summaryPathsEqual(a.input_path, b.input_path)) return false;
         }
         for (left.?.invalidations, right.?.invalidations) |a, b| {
             if (a.input_index != b.input_index or !summaryPathsEqual(a.input_path, b.input_path)) return false;
+        }
+        for (left.?.return_roots, right.?.return_roots) |a, b| {
+            if (!summaryPathsEqual(a.output_path, b.output_path)) return false;
+            switch (a.source) {
+                .fresh => if (b.source != .fresh) return false,
+                .input => |a_input| switch (b.source) {
+                    .fresh => return false,
+                    .input => |b_input| if (a_input.index != b_input.index or
+                        !summaryPathsEqual(a_input.path, b_input.path)) return false,
+                },
+            }
         }
         return true;
     }
