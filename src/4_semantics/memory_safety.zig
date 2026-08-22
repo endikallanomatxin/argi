@@ -6,16 +6,17 @@ const temporal_place = @import("temporal_place.zig");
 
 const CapturedPlace = struct {
     place: temporal_place.Place,
-    invalidation_cursor: usize,
+    capture_sequence: u64,
 };
 
 const ReferenceFact = struct {
-    captured: CapturedPlace,
+    captured: []const CapturedPlace,
 };
 
 const Invalidation = struct {
     place: temporal_place.Place,
     location: @import("../2_tokens/token.zig").Location,
+    sequence: u64,
 };
 
 const FunctionState = struct {
@@ -33,6 +34,16 @@ const FunctionState = struct {
         self.references.deinit();
         self.invalidations.deinit();
     }
+
+    fn clone(self: *const FunctionState, allocator: std.mem.Allocator) !FunctionState {
+        var result = FunctionState.init(allocator);
+        errdefer result.deinit();
+
+        var reference_it = self.references.iterator();
+        while (reference_it.next()) |entry| try result.references.put(entry.key_ptr.*, entry.value_ptr.*);
+        try result.invalidations.appendSlice(self.invalidations.items);
+        return result;
+    }
 };
 
 /// Runs after semantizing has produced complete function bodies and before any
@@ -44,6 +55,8 @@ pub const MemorySafetyAnalyzer = struct {
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
     analyzed_functions: std.AutoHashMap(*const sg.FunctionDeclaration, void),
+    reported_uses: std.AutoHashMap(*const sg.SGNode, void),
+    next_sequence: u64 = 1,
 
     pub fn init(
         allocator: *const std.mem.Allocator,
@@ -53,11 +66,13 @@ pub const MemorySafetyAnalyzer = struct {
             .allocator = allocator,
             .diags = diags,
             .analyzed_functions = std.AutoHashMap(*const sg.FunctionDeclaration, void).init(allocator.*),
+            .reported_uses = std.AutoHashMap(*const sg.SGNode, void).init(allocator.*),
         };
     }
 
     pub fn deinit(self: *MemorySafetyAnalyzer) void {
         self.analyzed_functions.deinit();
+        self.reported_uses.deinit();
     }
 
     pub fn analyze(self: *MemorySafetyAnalyzer, nodes: []const *sg.SGNode) !void {
@@ -93,6 +108,10 @@ pub const MemorySafetyAnalyzer = struct {
             },
             .binding_assignment => |assignment| {
                 try self.analyzeNode(assignment.value, state);
+                try self.recordInvalidation(.{
+                    .root = assignment.sym_id,
+                    .projections = &.{},
+                }, node.location, state);
                 try self.updateReferenceFact(assignment.sym_id, assignment.value, state);
             },
             .binding_use => |binding| try self.validateReferenceUse(binding, node, state),
@@ -118,14 +137,39 @@ pub const MemorySafetyAnalyzer = struct {
                 try self.analyzeNode(store.array_ptr, state);
                 try self.analyzeNode(store.index, state);
                 try self.analyzeNode(store.value, state);
+                if (try temporal_place.Place.fromNode(store.array_ptr, self.allocator)) |base_place| {
+                    const place = try temporal_place.Place.withProjection(
+                        base_place,
+                        .{ .array_index = constantIndex(store.index) },
+                        self.allocator,
+                    );
+                    try self.recordInvalidation(place, node.location, state);
+                }
             },
             .struct_field_store => |store| {
                 try self.analyzeNode(store.struct_ptr, state);
                 try self.analyzeNode(store.value, state);
+                if (try temporal_place.Place.fromNode(store.struct_ptr, self.allocator)) |base_place| {
+                    const place = try temporal_place.Place.withProjection(
+                        base_place,
+                        .{ .field = store.field_index },
+                        self.allocator,
+                    );
+                    try self.recordInvalidation(place, node.location, state);
+                }
             },
             .pointer_assignment => |assignment| {
                 try self.analyzeNode(assignment.pointer, state);
                 try self.analyzeNode(assignment.value, state);
+                if (assignment.pointer.sem_type) |pointer_ty| {
+                    if (pointer_ty == .pointer_type and pointer_ty.pointer_type.mutability == .exclusive) {
+                        if (try self.referenceFactFromValue(assignment.pointer, state)) |fact| {
+                            for (fact.captured) |captured| {
+                                try self.recordInvalidation(captured.place, node.location, state);
+                            }
+                        }
+                    }
+                }
             },
             .binary_operation => |operation| {
                 try self.analyzeNode(operation.left, state);
@@ -139,29 +183,10 @@ pub const MemorySafetyAnalyzer = struct {
                 try self.analyzeNode(operation.left, state);
                 try self.analyzeNode(operation.right, state);
             },
-            .if_statement => |statement| {
-                try self.analyzeNode(statement.condition, state);
-                try self.analyzeCodeBlock(statement.then_block, state);
-                if (statement.else_block) |else_block| try self.analyzeCodeBlock(else_block, state);
-            },
-            .while_statement => |statement| {
-                try self.analyzeNode(statement.condition, state);
-                try self.analyzeCodeBlock(statement.body, state);
-            },
-            .for_statement => |statement| {
-                if (statement.init) |initializer| try self.analyzeNode(initializer, state);
-                try self.analyzeNode(statement.condition, state);
-                try self.analyzeCodeBlock(statement.body, state);
-                if (statement.increment) |increment| try self.analyzeNode(increment, state);
-            },
-            .switch_statement => |statement| {
-                try self.analyzeNode(statement.expression, state);
-                for (statement.cases) |case| {
-                    try self.analyzeNode(case.value, state);
-                    try self.analyzeCodeBlock(case.body, state);
-                }
-                if (statement.default_case) |default_case| try self.analyzeCodeBlock(default_case, state);
-            },
+            .if_statement => |statement| try self.analyzeIf(statement, state),
+            .while_statement => |statement| try self.analyzeWhile(statement, state),
+            .for_statement => |statement| try self.analyzeFor(statement, state),
+            .switch_statement => |statement| try self.analyzeSwitch(statement, state),
             .return_statement => |statement| {
                 if (statement.expression) |expression| try self.analyzeNode(expression, state);
                 for (statement.cleanup_nodes) |cleanup| try self.analyzeNode(cleanup, state);
@@ -199,6 +224,145 @@ pub const MemorySafetyAnalyzer = struct {
         }
     }
 
+    fn analyzeIf(self: *MemorySafetyAnalyzer, statement: *const sg.IfStatement, state: *FunctionState) !void {
+        try self.analyzeNode(statement.condition, state);
+
+        var then_state = try state.clone(self.allocator.*);
+        defer then_state.deinit();
+        try self.analyzeCodeBlock(statement.then_block, &then_state);
+
+        var else_state = try state.clone(self.allocator.*);
+        defer else_state.deinit();
+        if (statement.else_block) |else_block| try self.analyzeCodeBlock(else_block, &else_state);
+
+        const merged = try self.mergeStates(&then_state, &else_state);
+        state.deinit();
+        state.* = merged;
+    }
+
+    fn analyzeWhile(self: *MemorySafetyAnalyzer, statement: *const sg.WhileStatement, state: *FunctionState) !void {
+        try self.analyzeNode(statement.condition, state);
+
+        var one_iteration = try state.clone(self.allocator.*);
+        defer one_iteration.deinit();
+        try self.analyzeCodeBlock(statement.body, &one_iteration);
+
+        var merged = try self.mergeStates(state, &one_iteration);
+        errdefer merged.deinit();
+
+        // A second iteration exposes uses made stale by the preceding one.
+        var next_iteration = try merged.clone(self.allocator.*);
+        defer next_iteration.deinit();
+        try self.analyzeNode(statement.condition, &next_iteration);
+        try self.analyzeCodeBlock(statement.body, &next_iteration);
+
+        const fixed_point = try self.mergeStates(&merged, &next_iteration);
+        merged.deinit();
+        state.deinit();
+        state.* = fixed_point;
+    }
+
+    fn analyzeFor(self: *MemorySafetyAnalyzer, statement: *const sg.ForStatement, state: *FunctionState) !void {
+        if (statement.init) |initializer| try self.analyzeNode(initializer, state);
+        try self.analyzeNode(statement.condition, state);
+
+        var one_iteration = try state.clone(self.allocator.*);
+        defer one_iteration.deinit();
+        try self.analyzeCodeBlock(statement.body, &one_iteration);
+        if (statement.increment) |increment| try self.analyzeNode(increment, &one_iteration);
+
+        var merged = try self.mergeStates(state, &one_iteration);
+        errdefer merged.deinit();
+        var next_iteration = try merged.clone(self.allocator.*);
+        defer next_iteration.deinit();
+        try self.analyzeNode(statement.condition, &next_iteration);
+        try self.analyzeCodeBlock(statement.body, &next_iteration);
+        if (statement.increment) |increment| try self.analyzeNode(increment, &next_iteration);
+
+        const fixed_point = try self.mergeStates(&merged, &next_iteration);
+        merged.deinit();
+        state.deinit();
+        state.* = fixed_point;
+    }
+
+    fn analyzeSwitch(self: *MemorySafetyAnalyzer, statement: *const sg.SwitchStatement, state: *FunctionState) !void {
+        try self.analyzeNode(statement.expression, state);
+        var merged = try state.clone(self.allocator.*);
+        errdefer merged.deinit();
+
+        for (statement.cases) |case| {
+            var branch = try state.clone(self.allocator.*);
+            defer branch.deinit();
+            try self.analyzeNode(case.value, &branch);
+            try self.analyzeCodeBlock(case.body, &branch);
+
+            const next_merged = try self.mergeStates(&merged, &branch);
+            merged.deinit();
+            merged = next_merged;
+        }
+        if (statement.default_case) |default_case| {
+            var branch = try state.clone(self.allocator.*);
+            defer branch.deinit();
+            try self.analyzeCodeBlock(default_case, &branch);
+
+            const next_merged = try self.mergeStates(&merged, &branch);
+            merged.deinit();
+            merged = next_merged;
+        }
+
+        state.deinit();
+        state.* = merged;
+    }
+
+    fn mergeStates(
+        self: *MemorySafetyAnalyzer,
+        left: *const FunctionState,
+        right: *const FunctionState,
+    ) !FunctionState {
+        var merged = try left.clone(self.allocator.*);
+        errdefer merged.deinit();
+
+        for (right.invalidations.items) |invalidation| {
+            var found = false;
+            for (merged.invalidations.items) |existing| {
+                if (existing.sequence == invalidation.sequence) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) try merged.invalidations.append(invalidation);
+        }
+
+        var reference_it = right.references.iterator();
+        while (reference_it.next()) |entry| {
+            if (merged.references.get(entry.key_ptr.*)) |left_fact| {
+                const combined = try self.mergeReferenceFacts(left_fact, entry.value_ptr.*);
+                try merged.references.put(entry.key_ptr.*, combined);
+            } else {
+                try merged.references.put(entry.key_ptr.*, entry.value_ptr.*);
+            }
+        }
+        return merged;
+    }
+
+    fn mergeReferenceFacts(self: *MemorySafetyAnalyzer, left: ReferenceFact, right: ReferenceFact) !ReferenceFact {
+        var captured = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
+        defer captured.deinit();
+        try captured.appendSlice(left.captured);
+
+        for (right.captured) |candidate| {
+            var found = false;
+            for (captured.items) |existing| {
+                if (candidate.capture_sequence == existing.capture_sequence and temporal_place.Place.eql(candidate.place, existing.place)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) try captured.append(candidate);
+        }
+        return .{ .captured = try captured.toOwnedSlice() };
+    }
+
     fn updateReferenceFact(
         self: *MemorySafetyAnalyzer,
         binding: *const sg.BindingDeclaration,
@@ -220,10 +384,12 @@ pub const MemorySafetyAnalyzer = struct {
         return switch (value.content) {
             .address_of => |target| blk: {
                 const place = try temporal_place.Place.fromNode(target, self.allocator) orelse break :blk null;
-                break :blk .{ .captured = .{
+                const captured = try self.allocator.alloc(CapturedPlace, 1);
+                captured[0] = .{
                     .place = place,
-                    .invalidation_cursor = state.invalidations.items.len,
-                } };
+                    .capture_sequence = self.next_sequence - 1,
+                };
+                break :blk .{ .captured = captured };
             },
             .binding_use => |binding| state.references.get(binding),
             .move_value => |inner| try self.referenceFactFromValue(inner, state),
@@ -238,21 +404,26 @@ pub const MemorySafetyAnalyzer = struct {
         state: *const FunctionState,
     ) !void {
         const fact = state.references.get(binding) orelse return;
-        for (state.invalidations.items[fact.captured.invalidation_cursor..]) |invalidation| {
-            if (!temporal_place.Place.mayOverlap(fact.captured.place, invalidation.place)) continue;
-            try self.diags.add(
-                use_node.location,
-                .semantic,
-                "reference '{s}' is no longer valid; it refers to '{s}', which was invalidated at {s}:{d}:{d}",
-                .{
-                    binding.name,
-                    fact.captured.place.root.name,
-                    invalidation.location.file,
-                    invalidation.location.line,
-                    invalidation.location.column,
-                },
-            );
-            return;
+        for (fact.captured) |captured| {
+            for (state.invalidations.items) |invalidation| {
+                if (invalidation.sequence <= captured.capture_sequence) continue;
+                if (!temporal_place.Place.mayOverlap(captured.place, invalidation.place)) continue;
+                if (self.reported_uses.contains(use_node)) return;
+                try self.diags.add(
+                    use_node.location,
+                    .semantic,
+                    "reference '{s}' is no longer valid; it refers to '{s}', which was invalidated at {s}:{d}:{d}",
+                    .{
+                        binding.name,
+                        captured.place.root.name,
+                        invalidation.location.file,
+                        invalidation.location.line,
+                        invalidation.location.column,
+                    },
+                );
+                try self.reported_uses.put(use_node, {});
+                return;
+            }
         }
     }
 
@@ -272,10 +443,27 @@ pub const MemorySafetyAnalyzer = struct {
             if (parameter.ty != .pointer_type or parameter.ty.pointer_type.mutability != .exclusive) continue;
             if (field.value.content != .address_of) continue;
             const place = try temporal_place.Place.fromNode(field.value.content.address_of, self.allocator) orelse continue;
-            try state.invalidations.append(.{
-                .place = place,
-                .location = call_node.location,
-            });
+            try self.recordInvalidation(place, call_node.location, state);
         }
+    }
+
+    fn recordInvalidation(
+        self: *MemorySafetyAnalyzer,
+        place: temporal_place.Place,
+        location: @import("../2_tokens/token.zig").Location,
+        state: *FunctionState,
+    ) !void {
+        try state.invalidations.append(.{
+            .place = place,
+            .location = location,
+            .sequence = self.next_sequence,
+        });
+        self.next_sequence += 1;
+    }
+
+    fn constantIndex(node: *const sg.SGNode) ?i64 {
+        if (node.content != .value_literal) return null;
+        if (node.content.value_literal != .int_literal) return null;
+        return node.content.value_literal.int_literal;
     }
 };

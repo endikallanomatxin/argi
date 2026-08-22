@@ -39,6 +39,26 @@ pub const Place = struct {
         // A place overlaps every one of its subobjects.
         return true;
     }
+
+    pub fn eql(left: Place, right: Place) bool {
+        if (left.root != right.root) return false;
+        if (left.projections.len != right.projections.len) return false;
+        for (left.projections, right.projections) |left_projection, right_projection| {
+            if (!std.meta.eql(left_projection, right_projection)) return false;
+        }
+        return true;
+    }
+
+    pub fn withProjection(
+        place: Place,
+        projection: Projection,
+        allocator: *const std.mem.Allocator,
+    ) !Place {
+        const projections = try allocator.alloc(Projection, place.projections.len + 1);
+        @memcpy(projections[0..place.projections.len], place.projections);
+        projections[place.projections.len] = projection;
+        return .{ .root = place.root, .projections = projections };
+    }
 };
 
 fn collectReverse(

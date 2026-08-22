@@ -5835,7 +5835,7 @@ pub const Semantizer = struct {
         const asg = try self.allocator.create(sg.Assignment);
         asg.* = .{ .sym_id = b, .value = rhs.node };
 
-        const n = try sg.makeSGNode(.{ .binding_assignment = asg }, undefined, self.allocator);
+        const n = try sg.makeSGNode(.{ .binding_assignment = asg }, a.name.location, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -6132,7 +6132,7 @@ pub const Semantizer = struct {
                 .index = idx_te.node,
                 .element_type = elem_ty,
                 .array_type = arr_type_ptr,
-            } }, undefined, self.allocator);
+            } }, ia.value.*.location, self.allocator);
             return .{ .node = node, .ty = elem_ty };
         }
 
@@ -6352,7 +6352,7 @@ pub const Semantizer = struct {
                 .value = value_expr.node,
                 .element_type = elem_ty,
                 .array_type = arr_type_ptr,
-            } }, undefined, self.allocator);
+            } }, ia.target.*.location, self.allocator);
             try s.nodes.append(node);
             return .{ .node = node, .ty = .{ .builtin = .Any } };
         }
@@ -11685,7 +11685,7 @@ pub const Semantizer = struct {
                 .value = rhs.node,
             };
 
-            const node = try sg.makeSGNode(.{ .struct_field_store = store }, undefined, self.allocator);
+            const node = try sg.makeSGNode(.{ .struct_field_store = store }, pa.target.*.location, self.allocator);
             try s.nodes.append(node);
             return .{ .node = node, .ty = .{ .builtin = .Any } };
         }
@@ -11725,7 +11725,7 @@ pub const Semantizer = struct {
         const n = try sg.makeSGNode(.{ .pointer_assignment = .{
             .pointer = deref_sg.pointer,
             .value = rhs.node,
-        } }, undefined, self.allocator);
+        } }, pa.target.*.location, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }

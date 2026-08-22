@@ -2907,6 +2907,52 @@ test "feature_tests/ownership/46X_reference_use_after_deinit" {
     );
 }
 
+test "feature_tests/ownership/47X_conditional_invalidation" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/47X_conditional_invalidation",
+        "reference 'pointer' is no longer valid; it refers to 'resource'",
+    );
+}
+
+test "feature_tests/ownership/48_branch_local_invalidation" {
+    const test_path = "tests/feature_tests/ownership/48_branch_local_invalidation";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/49X_loop_carried_invalidation" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/49X_loop_carried_invalidation",
+        "reference 'pointer' is no longer valid; it refers to 'resource'",
+    );
+}
+
+test "feature_tests/ownership/50_independent_field_replacement" {
+    const test_path = "tests/feature_tests/ownership/50_independent_field_replacement";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/51X_referenced_field_replacement" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/51X_referenced_field_replacement",
+        "reference 'pointer' is no longer valid; it refers to 'pair'",
+    );
+}
+
+test "feature_tests/ownership/52_array_subobject_replacement" {
+    const test_path = "tests/feature_tests/ownership/52_array_subobject_replacement";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/53X_array_element_replacement" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/53X_array_element_replacement",
+        "reference 'pointer' is no longer valid; it refers to 'values'",
+    );
+}
+
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
     try buildExpectFailExact("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
         \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
