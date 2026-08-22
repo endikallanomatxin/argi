@@ -3038,6 +3038,19 @@ test "feature_tests/ownership/66_arena_allocations_before_reset" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/67_transfer_preserves_temporal_identity" {
+    const test_path = "tests/feature_tests/ownership/67_transfer_preserves_temporal_identity";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/68X_address_dependent_call_transfer" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/68X_address_dependent_call_transfer",
+        "cannot relocate address-dependent value 'node'",
+    );
+}
+
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
     try buildExpectFailExact("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
         \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:

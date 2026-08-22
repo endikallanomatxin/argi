@@ -956,6 +956,40 @@ pub const CodeGenerator = struct {
             try self.ensureGlobalBindingInitialized(b);
             return;
         } else {
+            if (b.initialization) |initialization| {
+                if (initialization.content == .move_value and initialization.content.move_value.content == .binding_use) {
+                    const source_binding = initialization.content.move_value.content.binding_use;
+                    const source = self.current_scope.lookup(source_binding.name) orelse return CodegenError.SymbolNotFound;
+                    if (source.sem_type == null or !sem_types.typesExactlyEqual(source.sem_type.?, b.ty))
+                        return CodegenError.InvalidType;
+
+                    // A transfer changes the responsible binding, not the
+                    // temporal identity or address of the object. Reusing the
+                    // source alloca keeps existing references attached to the
+                    // transferred value and avoids a hidden relocation.
+                    source.initialized = false;
+                    const cname = try self.dupZ(b.name);
+                    try self.current_scope.symbols.put(b.name, .{
+                        .cname = cname,
+                        .mutability = b.mutability,
+                        .type_ref = source.type_ref,
+                        .ref = source.ref,
+                        .sem_type = b.ty,
+                        .initialized = true,
+                    });
+                    try self.binding_storage.put(b, .{
+                        .ref = source.ref,
+                        .type_ref = source.type_ref,
+                        .sem_type = b.ty,
+                    });
+                    try self.binding_storage_by_name.put(b.name, .{
+                        .ref = source.ref,
+                        .type_ref = source.type_ref,
+                        .sem_type = b.ty,
+                    });
+                    return;
+                }
+            }
             if (b.initialization) |n|
                 init_tv = try self.visitNode(n);
 

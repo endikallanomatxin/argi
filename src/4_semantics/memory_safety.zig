@@ -134,7 +134,10 @@ pub const MemorySafetyAnalyzer = struct {
         switch (node.content) {
             .binding_declaration => |binding| {
                 if (binding.initialization) |initialization| {
-                    try self.analyzeNode(initialization, state);
+                    if (initialization.content == .move_value)
+                        try self.analyzeNode(initialization.content.move_value, state)
+                    else
+                        try self.analyzeNode(initialization, state);
                     try self.updateReferenceFact(binding, initialization, state);
                 }
             },
@@ -147,7 +150,10 @@ pub const MemorySafetyAnalyzer = struct {
                 try self.updateReferenceFact(assignment.sym_id, assignment.value, state);
             },
             .binding_use => |binding| try self.validateReferenceUse(binding, node, state),
-            .move_value => |inner| try self.analyzeNode(inner, state),
+            .move_value => |inner| {
+                try self.analyzeNode(inner, state);
+                try self.validateMoveRelocation(inner, node, state);
+            },
             .function_call => |call| {
                 try self.analyzeNode(call.input, state);
                 try self.recordConservativeCallInvalidations(call, node, state);
@@ -187,6 +193,7 @@ pub const MemorySafetyAnalyzer = struct {
                         self.allocator,
                     );
                     try self.recordInvalidation(place, node.location, state);
+                    try self.updateStoredFieldFact(base_place.root, store.field_index, store.value, state);
                 }
             },
             .pointer_assignment => |assignment| {
@@ -419,6 +426,53 @@ pub const MemorySafetyAnalyzer = struct {
             try state.references.put(binding, fact);
         } else {
             _ = state.references.remove(binding);
+        }
+    }
+
+    fn updateStoredFieldFact(
+        self: *MemorySafetyAnalyzer,
+        binding: *const sg.BindingDeclaration,
+        field_index: u32,
+        value: *const sg.SGNode,
+        state: *FunctionState,
+    ) !void {
+        var captured = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
+        defer captured.deinit();
+        if (state.references.get(binding)) |existing| {
+            for (existing.captured) |dependency| {
+                if (dependency.value_path.len > 0 and dependency.value_path[0] == .field and
+                    dependency.value_path[0].field == field_index) continue;
+                try captured.append(dependency);
+            }
+        }
+        if (try self.factFromProjectedValue(value, .{ .field = field_index }, state)) |replacement| {
+            try captured.appendSlice(replacement.captured);
+        }
+        if (captured.items.len == 0) {
+            _ = state.references.remove(binding);
+        } else {
+            try state.references.put(binding, .{ .captured = try captured.toOwnedSlice() });
+        }
+    }
+
+    fn validateMoveRelocation(
+        self: *MemorySafetyAnalyzer,
+        inner: *const sg.SGNode,
+        move_node: *const sg.SGNode,
+        state: *const FunctionState,
+    ) !void {
+        if (self.inferring_summaries or inner.content != .binding_use) return;
+        const binding = inner.content.binding_use;
+        const fact = state.references.get(binding) orelse return;
+        for (fact.captured) |dependency| {
+            if (dependency.place.root != binding) continue;
+            try self.diags.add(
+                move_node.location,
+                .semantic,
+                "cannot relocate address-dependent value '{s}'; transfer it into local backing storage or construct the destination in place",
+                .{binding.name},
+            );
+            return;
         }
     }
 
