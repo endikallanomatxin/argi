@@ -740,13 +740,17 @@ pub const MemorySafetyAnalyzer = struct {
                 if (invalidation.sequence <= captured.capture_sequence) continue;
                 if (!temporal_place.Place.isInvalidatedBy(captured.place, invalidation.place)) continue;
                 if (self.reported_uses.contains(use_node)) return;
+                const captured_text = try self.formatPlace(captured.place);
+                const invalidated_text = try self.formatPlace(invalidation.place);
                 try self.diags.add(
                     use_node.location,
                     .semantic,
-                    "reference '{s}' is no longer valid; it refers to '{s}', which was invalidated at {s}:{d}:{d}",
+                    "reference '{s}' is no longer valid; it refers to '{s}' at place '{s}', which was invalidated as '{s}' at {s}:{d}:{d}",
                     .{
                         label,
                         captured.place.root.name,
+                        captured_text,
+                        invalidated_text,
                         invalidation.location.file,
                         invalidation.location.line,
                         invalidation.location.column,
@@ -756,6 +760,43 @@ pub const MemorySafetyAnalyzer = struct {
                 return;
             }
         }
+    }
+
+    fn formatPlace(self: *MemorySafetyAnalyzer, place: temporal_place.Place) ![]const u8 {
+        var text = try std.fmt.allocPrint(self.allocator.*, "{s}", .{place.root.name});
+        var current_type = place.root.ty;
+        for (place.projections) |projection| switch (projection) {
+            .dereference => {
+                if (current_type == .pointer_type) current_type = current_type.pointer_type.child.*;
+            },
+            .field => |field_index| {
+                if (current_type == .pointer_type) current_type = current_type.pointer_type.child.*;
+                if (current_type == .struct_type and field_index < current_type.struct_type.fields.len) {
+                    const field = current_type.struct_type.fields[field_index];
+                    text = try std.fmt.allocPrint(self.allocator.*, "{s}.{s}", .{ text, field.name });
+                    current_type = typ.effectiveStructFieldType(field);
+                } else {
+                    text = try std.fmt.allocPrint(self.allocator.*, "{s}.#{d}", .{ text, field_index });
+                }
+            },
+            .choice_payload => |variant_index| {
+                if (current_type == .choice_type and variant_index < current_type.choice_type.variants.len) {
+                    const variant = current_type.choice_type.variants[variant_index];
+                    text = try std.fmt.allocPrint(self.allocator.*, "{s}..{s}", .{ text, variant.name });
+                    if (variant.payload_type) |payload_type| current_type = payload_type;
+                } else {
+                    text = try std.fmt.allocPrint(self.allocator.*, "{s}..#{d}", .{ text, variant_index });
+                }
+            },
+            .array_index => |index| {
+                text = if (index) |known|
+                    try std.fmt.allocPrint(self.allocator.*, "{s}[{d}]", .{ text, known })
+                else
+                    try std.fmt.allocPrint(self.allocator.*, "{s}[*]", .{text});
+                if (current_type == .array_type) current_type = current_type.array_type.element_type.*;
+            },
+        };
+        return text;
     }
 
     /// Until a precise summary is available, an exclusive parameter may

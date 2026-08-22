@@ -2949,7 +2949,7 @@ test "feature_tests/ownership/52_array_subobject_replacement" {
 test "feature_tests/ownership/53X_array_element_replacement" {
     try buildExpectFail(
         "tests/feature_tests/ownership/53X_array_element_replacement",
-        "reference 'pointer' is no longer valid; it refers to 'values'",
+        "reference 'pointer' is no longer valid; it refers to 'values' at place 'values[1]'",
     );
 }
 
