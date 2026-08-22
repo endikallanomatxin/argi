@@ -1694,7 +1694,7 @@ pub const Semantizer = struct {
                 for (list_ptr.items) |cand| {
                     for (cand.input.fields) |field| {
                         if (field.ty != .pointer_type) continue;
-                        if (field.ty.pointer_type.mutability != .read_write) continue;
+                        if (!typ.pointerCanWrite(field.ty.pointer_type.mutability)) continue;
                         try candidate_names.put(field.name, {});
                     }
                 }
@@ -1704,7 +1704,7 @@ pub const Semantizer = struct {
                     for (tmpl.input.fields) |field| {
                         const field_ty = field.type.?;
                         if (field_ty != .pointer_type) continue;
-                        if (field_ty.pointer_type.mutability != .read_write) continue;
+                        if (!typ.pointerCanWrite(field_ty.pointer_type.mutability)) continue;
                         try candidate_names.put(field.name.string, {});
                     }
                 }
@@ -2370,7 +2370,7 @@ pub const Semantizer = struct {
 
         switch (inner.node.content) {
             .binding_use => |binding| {
-                if (mutability == .read_write and binding.mutability != .variable) {
+                if (typ.pointerCanWrite(mutability) and binding.mutability != .variable) {
                     try self.diags.add(
                         loc,
                         .semantic,
@@ -2382,7 +2382,7 @@ pub const Semantizer = struct {
             },
             .struct_field_access => {},
             .dereference => |deref| {
-                if (mutability == .read_write and deref.pointer_type.mutability != .read_write) {
+                if (!typ.pointerMutabilityCompatible(mutability, deref.pointer_type.mutability)) {
                     try self.diags.add(
                         loc,
                         .semantic,
@@ -6282,11 +6282,13 @@ pub const Semantizer = struct {
         const operator_name = switch (mutability) {
             .read_only => "operator get_ro_pointer[]",
             .read_write => "operator get_rw_pointer[]",
+            .exclusive => "operator get_rw_pointer[]",
         };
 
         const self_expr = switch (mutability) {
             .read_only => try typ.ensureReadOnlyPointer(ia.value, base, self.allocator, self.diags),
             .read_write => try typ.ensureMutablePointer(ia.value, base, s, self.allocator, self.diags),
+            .exclusive => try typ.ensureExclusivePointer(ia.value, base, s, self.allocator, self.diags),
         };
 
         return self.lowerIndexedOperatorCall(
@@ -6763,7 +6765,7 @@ pub const Semantizer = struct {
 
         for (chosen.input.fields[0..positional_prefix], 0..) |expected_field, idx| {
             if (expected_field.ty != .pointer_type) continue;
-            if (expected_field.ty.pointer_type.mutability != .read_write) continue;
+            if (!typ.pointerCanWrite(expected_field.ty.pointer_type.mutability)) continue;
 
             const arg_node = input_value.fields[idx].value;
             if (arg_node.content != .address_of) continue;
@@ -6774,7 +6776,7 @@ pub const Semantizer = struct {
 
         for (chosen.input.fields[positional_prefix..]) |expected_field| {
             if (expected_field.ty != .pointer_type) continue;
-            if (expected_field.ty.pointer_type.mutability != .read_write) continue;
+            if (!typ.pointerCanWrite(expected_field.ty.pointer_type.mutability)) continue;
 
             const actual_field = findStructValueFieldByNameFrom(input_value.fields, positional_prefix, expected_field.name) orelse continue;
             if (actual_field.value.content != .address_of) continue;
@@ -6814,7 +6816,8 @@ pub const Semantizer = struct {
 
                 const mode: CallAccessMode = switch (field_ty.pointer_type.mutability) {
                     .read_only => .read,
-                    .read_write => .write,
+                    .read_write => .read,
+                    .exclusive => .write,
                 };
                 break :blk .{
                     .root_name = root_name,
@@ -6894,7 +6897,7 @@ pub const Semantizer = struct {
         return switch (mode) {
             .value => "value",
             .read => "&",
-            .write => "$&",
+            .write => "$$&",
         };
     }
 
@@ -7540,7 +7543,7 @@ pub const Semantizer = struct {
             else => return null,
         };
         const binding = binding_use_node.content.binding_use;
-        if (expected.pointer_type.mutability == .read_write and binding.mutability != .variable) {
+        if (typ.pointerCanWrite(expected.pointer_type.mutability) and binding.mutability != .variable) {
             return null;
         }
 
@@ -7626,6 +7629,7 @@ pub const Semantizer = struct {
             const ptr_expr = switch (expected.pointer_type.mutability) {
                 .read_only => try typ.ensureReadOnlyPointer(expr_node, actual, self.allocator, self.diags),
                 .read_write => try typ.ensureMutablePointer(expr_node, actual, s, self.allocator, self.diags),
+                .exclusive => try typ.ensureExclusivePointer(expr_node, actual, s, self.allocator, self.diags),
             };
             if (typ.typesCompatible(expected, ptr_expr.ty)) return ptr_expr;
         }
@@ -8415,6 +8419,7 @@ pub const Semantizer = struct {
                 switch (ptr_info.mutability) {
                     .read_only => try buf.appendSlice("&"),
                     .read_write => try buf.appendSlice("$&"),
+                    .exclusive => try buf.appendSlice("$$&"),
                 }
                 try self.appendTemplateTypePretty(buf, ptr_info.child.*, tmpl);
             },
@@ -8482,6 +8487,7 @@ pub const Semantizer = struct {
                 switch (ptr_info.mutability) {
                     .read_only => try buf.appendSlice("&"),
                     .read_write => try buf.appendSlice("$&"),
+                    .exclusive => try buf.appendSlice("$$&"),
                 }
                 try self.appendSyntaxTypePretty(buf, ptr_info.child.*);
             },
@@ -9024,7 +9030,7 @@ pub const Semantizer = struct {
                     if (first.ty != .pointer_type) continue;
 
                     const ptr_info = first.ty.pointer_type.*;
-                    if (ptr_info.mutability != .read_write) continue;
+                    if (!typ.pointerCanWrite(ptr_info.mutability)) continue;
                     if (!typ.typesStructurallyEqual(ptr_info.child.*, ty)) continue;
 
                     return true;
@@ -9049,7 +9055,7 @@ pub const Semantizer = struct {
         if (first.ty != .pointer_type) return false;
 
         const ptr_info = first.ty.pointer_type.*;
-        if (ptr_info.mutability != .read_write) return false;
+        if (!typ.pointerCanWrite(ptr_info.mutability)) return false;
         return typ.typesStructurallyEqual(ptr_info.child.*, ty);
     }
 
@@ -11099,7 +11105,7 @@ pub const Semantizer = struct {
         const iterable_name = try self.makeSyntheticName("iterable");
         const iterator_name = try self.makeSyntheticName("iterator");
         const iterable_direct_ok = iterable_ty == .pointer_type and
-            (!iterable_needs_mutability or iterable_ty.pointer_type.mutability == .read_write) and
+            (!iterable_needs_mutability or typ.pointerCanWrite(iterable_ty.pointer_type.mutability)) and
             abs.typeImplementsAbstract(iterable_abstract_name, iterable_ty.pointer_type.child.*, s);
 
         const iterable_ident = if (iterable_copyable and f.iterable.*.content != .identifier)
@@ -11508,6 +11514,7 @@ pub const Semantizer = struct {
         return switch (addr.mutability) {
             .read_only => try typ.ensureReadOnlyPointer(addr.value, te, self.allocator, self.diags),
             .read_write => try typ.ensureMutablePointer(addr.value, te, s, self.allocator, self.diags),
+            .exclusive => try typ.ensureExclusivePointer(addr.value, te, s, self.allocator, self.diags),
         };
     }
 
@@ -11754,7 +11761,7 @@ pub const Semantizer = struct {
 
         rhs = try typ.coerceExprToType(deref_sg.ty, rhs, pa.value, s, self.allocator, self.diags);
 
-        if (deref_sg.pointer_type.*.mutability != .read_write) {
+        if (!typ.pointerCanWrite(deref_sg.pointer_type.*.mutability)) {
             const ptr_ty: sg.Type = .{ .pointer_type = deref_sg.pointer_type };
             const ptr_str = try self.formatTypeText(ptr_ty, s);
             defer ptr_str.deinit();

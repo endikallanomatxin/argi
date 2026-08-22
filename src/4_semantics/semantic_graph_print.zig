@@ -15,6 +15,7 @@ fn typeToString(t: sem.Type) []const u8 {
         .pointer_type => |ptr| switch (ptr.*.mutability) {
             .read_only => "&",
             .read_write => "$&",
+            .exclusive => "$$&",
         },
         .array_type => "array",
     };

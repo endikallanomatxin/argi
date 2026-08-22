@@ -1657,31 +1657,16 @@ test "feature_tests/ownership/08X_noncopyable_output_binding" {
     );
 }
 
-test "feature_tests/ownership/09X_mutable_and_read_alias_same_call" {
-    try buildExpectFailExact("tests/feature_tests/ownership/09X_mutable_and_read_alias_same_call",
-        \\tests/feature_tests/ownership/09X_mutable_and_read_alias_same_call/main.rg:5:8: error: binding 'value' cannot be passed as '$&' and '&' in the same call to 'mix'
-        \\      mix(.target = $&value, .reader = &value)
-        \\         ^
-        \\
-    );
+test "feature_tests/ownership/09_mutable_and_read_alias_same_call" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/09_mutable_and_read_alias_same_call");
 }
 
-test "feature_tests/ownership/10X_mutable_and_value_alias_same_call" {
-    try buildExpectFailExact("tests/feature_tests/ownership/10X_mutable_and_value_alias_same_call",
-        \\tests/feature_tests/ownership/10X_mutable_and_value_alias_same_call/main.rg:5:8: error: binding 'value' cannot be passed as '$&' and 'value' in the same call to 'mix'
-        \\      mix(.target = $&value, .snapshot = value)
-        \\         ^
-        \\
-    );
+test "feature_tests/ownership/10_mutable_and_value_alias_same_call" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/10_mutable_and_value_alias_same_call");
 }
 
-test "feature_tests/ownership/11X_double_mutable_alias_same_call" {
-    try buildExpectFailExact("tests/feature_tests/ownership/11X_double_mutable_alias_same_call",
-        \\tests/feature_tests/ownership/11X_double_mutable_alias_same_call/main.rg:5:8: error: binding 'value' cannot be passed as '$&' and '$&' in the same call to 'mix'
-        \\      mix(.left = $&value, .right = $&value)
-        \\         ^
-        \\
-    );
+test "feature_tests/ownership/11_double_mutable_alias_same_call" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/11_double_mutable_alias_same_call");
 }
 
 test "feature_tests/ownership/12_copy_function_value_positions" {
@@ -2851,21 +2836,42 @@ test "feature_tests/ownership/23_named_struct_auto_deinit" {
     try runExpect(test_path, 11);
 }
 
-test "feature_tests/ownership/24X_mutable_and_read_field_alias_same_call" {
-    try buildExpectFailExact("tests/feature_tests/ownership/24X_mutable_and_read_field_alias_same_call",
-        \\tests/feature_tests/ownership/24X_mutable_and_read_field_alias_same_call/main.rg:13:8: error: binding 'pair' cannot be passed as '$&' and '&' in the same call to 'mix'
-        \\      mix(.target = $&pair.left, .reader = &pair.left)
+test "feature_tests/ownership/24_mutable_and_read_field_alias_same_call" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/24_mutable_and_read_field_alias_same_call");
+}
+
+test "feature_tests/ownership/25_mutable_and_value_field_alias_same_call" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/25_mutable_and_value_field_alias_same_call");
+}
+
+test "feature_tests/ownership/39_exclusive_reference_permissions" {
+    const test_path = "tests/feature_tests/ownership/39_exclusive_reference_permissions";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/40X_exclusive_and_read_alias_same_call" {
+    try buildExpectFailExact("tests/feature_tests/ownership/40X_exclusive_and_read_alias_same_call",
+        \\tests/feature_tests/ownership/40X_exclusive_and_read_alias_same_call/main.rg:5:8: error: binding 'value' cannot be passed as '$$&' and '&' in the same call to 'mix'
+        \\      mix(.target = $$&value, .reader = &value)
         \\         ^
         \\
     );
 }
 
-test "feature_tests/ownership/25X_mutable_and_value_field_alias_same_call" {
-    try buildExpectFailExact("tests/feature_tests/ownership/25X_mutable_and_value_field_alias_same_call",
-        \\tests/feature_tests/ownership/25X_mutable_and_value_field_alias_same_call/main.rg:13:8: error: binding 'pair' cannot be passed as '$&' and 'value' in the same call to 'mix'
-        \\      mix(.target = $&pair.left, .snapshot = pair.left)
+test "feature_tests/ownership/41X_double_exclusive_alias_same_call" {
+    try buildExpectFailExact("tests/feature_tests/ownership/41X_double_exclusive_alias_same_call",
+        \\tests/feature_tests/ownership/41X_double_exclusive_alias_same_call/main.rg:5:8: error: binding 'value' cannot be passed as '$$&' and '$$&' in the same call to 'mix'
+        \\      mix(.left = $$&value, .right = $$&value)
         \\         ^
         \\
+    );
+}
+
+test "feature_tests/ownership/42X_mutable_cannot_upgrade_to_exclusive" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/42X_mutable_cannot_upgrade_to_exclusive",
+        "no overload of 'consume' accepts arguments (.value: $&Int32)",
     );
 }
 

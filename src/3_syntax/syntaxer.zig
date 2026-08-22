@@ -377,8 +377,13 @@ pub const Syntaxer = struct {
                 mutability = .read_write;
                 self.advanceOne();
 
+                if (self.tokenIs(.dollar)) {
+                    mutability = .exclusive;
+                    self.advanceOne();
+                }
+
                 if (!self.tokenIs(.ampersand)) {
-                    try self.diags.add(op_loc, .syntax, "expected '&' after '$' for mutable pointer type", .{});
+                    try self.diags.add(op_loc, .syntax, "expected '&' after reference permission prefix", .{});
                     return SyntaxerError.ExpectedAmpersand;
                 }
                 op_loc = self.tokenLocation();
@@ -1126,8 +1131,13 @@ pub const Syntaxer = struct {
                 mutability = .read_write;
                 self.advanceOne();
 
+                if (self.tokenIs(.dollar)) {
+                    mutability = .exclusive;
+                    self.advanceOne();
+                }
+
                 if (!self.tokenIs(.ampersand)) {
-                    try self.diags.add(op_loc, .syntax, "expected '&' after '$' for mutable pointer", .{});
+                    try self.diags.add(op_loc, .syntax, "expected '&' after reference permission prefix", .{});
                     return SyntaxerError.ExpectedAmpersand;
                 }
                 op_loc = self.tokenLocation();

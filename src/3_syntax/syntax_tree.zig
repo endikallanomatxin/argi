@@ -77,6 +77,7 @@ pub const Content = union(enum) {
 pub const PointerMutability = enum {
     read_only,
     read_write,
+    exclusive,
 };
 
 pub const Type = union(enum) {
