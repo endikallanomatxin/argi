@@ -2894,6 +2894,19 @@ test "feature_tests/ownership/44X_dynamic_index_may_alias" {
     );
 }
 
+test "feature_tests/ownership/45_reference_last_use_before_deinit" {
+    const test_path = "tests/feature_tests/ownership/45_reference_last_use_before_deinit";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/46X_reference_use_after_deinit" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/46X_reference_use_after_deinit",
+        "reference 'pointer' is no longer valid; it refers to 'resource'",
+    );
+}
+
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
     try buildExpectFailExact("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
         \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:

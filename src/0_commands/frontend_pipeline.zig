@@ -47,6 +47,7 @@ pub const FrontendPipeline = struct {
     }
 
     pub fn deinit(self: *FrontendPipeline) void {
+        if (self.memory_safety_ctx) |*ctx| ctx.deinit();
         self.tokens.deinit();
     }
 
