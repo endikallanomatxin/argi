@@ -676,7 +676,11 @@ pub const CodeGenerator = struct {
             },
             .pointer_type => |ptr_info_ptr| {
                 const ptr_info = ptr_info_ptr.*;
-                const prefix = if (ptr_info.mutability == .read_write) "prw_" else "pro_";
+                const prefix = switch (ptr_info.mutability) {
+                    .read_only => "pro_",
+                    .read_write => "prw_",
+                    .exclusive => "pex_",
+                };
                 try buf.appendSlice(prefix);
                 try self.encodeType(buf, ptr_info.child.*);
             },
@@ -1174,14 +1178,43 @@ pub const CodeGenerator = struct {
 
         const is_float = lhs.type_ref == c.LLVMFloatType();
         const use_unsigned = isUnsignedBuiltin(lhs.sem_type);
-        const value_ref = switch (co.operator) {
-            .equal => if (is_float) c.LLVMConstFCmp(c.LLVMRealOEQ, lhs.value_ref, rhs.value_ref) else c.LLVMConstICmp(c.LLVMIntEQ, lhs.value_ref, rhs.value_ref),
-            .not_equal => if (is_float) c.LLVMConstFCmp(c.LLVMRealONE, lhs.value_ref, rhs.value_ref) else c.LLVMConstICmp(c.LLVMIntNE, lhs.value_ref, rhs.value_ref),
-            .less_than => if (is_float) c.LLVMConstFCmp(c.LLVMRealOLT, lhs.value_ref, rhs.value_ref) else if (use_unsigned) c.LLVMConstICmp(c.LLVMIntULT, lhs.value_ref, rhs.value_ref) else c.LLVMConstICmp(c.LLVMIntSLT, lhs.value_ref, rhs.value_ref),
-            .greater_than => if (is_float) c.LLVMConstFCmp(c.LLVMRealOGT, lhs.value_ref, rhs.value_ref) else if (use_unsigned) c.LLVMConstICmp(c.LLVMIntUGT, lhs.value_ref, rhs.value_ref) else c.LLVMConstICmp(c.LLVMIntSGT, lhs.value_ref, rhs.value_ref),
-            .less_than_or_equal => if (is_float) c.LLVMConstFCmp(c.LLVMRealOLE, lhs.value_ref, rhs.value_ref) else if (use_unsigned) c.LLVMConstICmp(c.LLVMIntULE, lhs.value_ref, rhs.value_ref) else c.LLVMConstICmp(c.LLVMIntSLE, lhs.value_ref, rhs.value_ref),
-            .greater_than_or_equal => if (is_float) c.LLVMConstFCmp(c.LLVMRealOGE, lhs.value_ref, rhs.value_ref) else if (use_unsigned) c.LLVMConstICmp(c.LLVMIntUGE, lhs.value_ref, rhs.value_ref) else c.LLVMConstICmp(c.LLVMIntSGE, lhs.value_ref, rhs.value_ref),
+        const result = if (is_float) blk: {
+            var lhs_loses_info: c.LLVMBool = 0;
+            var rhs_loses_info: c.LLVMBool = 0;
+            const left = c.LLVMConstRealGetDouble(lhs.value_ref, &lhs_loses_info);
+            const right = c.LLVMConstRealGetDouble(rhs.value_ref, &rhs_loses_info);
+            break :blk switch (co.operator) {
+                .equal => left == right,
+                .not_equal => left != right,
+                .less_than => left < right,
+                .greater_than => left > right,
+                .less_than_or_equal => left <= right,
+                .greater_than_or_equal => left >= right,
+            };
+        } else if (use_unsigned) blk: {
+            const left = c.LLVMConstIntGetZExtValue(lhs.value_ref);
+            const right = c.LLVMConstIntGetZExtValue(rhs.value_ref);
+            break :blk switch (co.operator) {
+                .equal => left == right,
+                .not_equal => left != right,
+                .less_than => left < right,
+                .greater_than => left > right,
+                .less_than_or_equal => left <= right,
+                .greater_than_or_equal => left >= right,
+            };
+        } else blk: {
+            const left = c.LLVMConstIntGetSExtValue(lhs.value_ref);
+            const right = c.LLVMConstIntGetSExtValue(rhs.value_ref);
+            break :blk switch (co.operator) {
+                .equal => left == right,
+                .not_equal => left != right,
+                .less_than => left < right,
+                .greater_than => left > right,
+                .less_than_or_equal => left <= right,
+                .greater_than_or_equal => left >= right,
+            };
         };
+        const value_ref = c.LLVMConstInt(c.LLVMInt1Type(), @intFromBool(result), 0);
         return .{ .value_ref = value_ref, .type_ref = c.LLVMInt1Type(), .sem_type = .{ .builtin = .Bool } };
     }
 
@@ -1190,10 +1223,13 @@ pub const CodeGenerator = struct {
         const rhs = try self.genGlobalConstant(lo.right);
         if (lhs.type_ref != c.LLVMInt1Type() or rhs.type_ref != c.LLVMInt1Type()) return CodegenError.InvalidType;
 
-        const value_ref = switch (lo.operator) {
-            .and_ => c.LLVMConstAnd(lhs.value_ref, rhs.value_ref),
-            .or_ => c.LLVMConstOr(lhs.value_ref, rhs.value_ref),
+        const left = c.LLVMConstIntGetZExtValue(lhs.value_ref) != 0;
+        const right = c.LLVMConstIntGetZExtValue(rhs.value_ref) != 0;
+        const result = switch (lo.operator) {
+            .and_ => left and right,
+            .or_ => left or right,
         };
+        const value_ref = c.LLVMConstInt(c.LLVMInt1Type(), @intFromBool(result), 0);
         return .{ .value_ref = value_ref, .type_ref = c.LLVMInt1Type(), .sem_type = .{ .builtin = .Bool } };
     }
 
@@ -1202,16 +1238,13 @@ pub const CodeGenerator = struct {
         if (tv.type_ref == target_ty_ref) return tv;
 
         if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMIntegerTypeKind and c.LLVMGetTypeKind(target_ty_ref) == c.LLVMIntegerTypeKind) {
+            const is_unsigned = isUnsignedBuiltin(tv.sem_type);
+            const value: u64 = if (is_unsigned)
+                c.LLVMConstIntGetZExtValue(tv.value_ref)
+            else
+                @bitCast(c.LLVMConstIntGetSExtValue(tv.value_ref));
             return .{
-                .value_ref = c.LLVMConstIntCast(tv.value_ref, target_ty_ref, if (isUnsignedBuiltin(tv.sem_type)) 0 else 1),
-                .type_ref = target_ty_ref,
-                .sem_type = tv.sem_type,
-            };
-        }
-
-        if (c.LLVMGetTypeKind(tv.type_ref) == c.LLVMFloatTypeKind and c.LLVMGetTypeKind(target_ty_ref) == c.LLVMFloatTypeKind) {
-            return .{
-                .value_ref = c.LLVMConstFPCast(tv.value_ref, target_ty_ref),
+                .value_ref = c.LLVMConstInt(target_ty_ref, value, @intFromBool(!is_unsigned)),
                 .type_ref = target_ty_ref,
                 .sem_type = tv.sem_type,
             };
@@ -1537,7 +1570,7 @@ pub const CodeGenerator = struct {
             for (cand.input.fields, 0..) |field, idx| {
                 if (field.ty != .pointer_type) continue;
                 const ptr_info = field.ty.pointer_type.*;
-                if (ptr_info.mutability != .read_write) continue;
+                if (!sem_types.pointerCanWrite(ptr_info.mutability)) continue;
                 if (!sem_types.typesStructurallyEqual(ptr_info.child.*, ty)) continue;
 
                 var other_fields_have_defaults = true;
