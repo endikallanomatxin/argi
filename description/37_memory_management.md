@@ -89,6 +89,28 @@ $$&
     may perform an exclusive temporal or invariant transition
 ```
 
+`$$&` is an exclusive-access capability, not a statement that no other
+reference value to the same storage exists. Other aliases may remain dormant
+while the exclusive access is active. What is forbidden is any overlapping
+access through those aliases during the exclusive window.
+
+Conceptually:
+
+```text
+shared alias exists ------------------------------->
+
+                 $$& exclusive window
+                 |-----------------|
+                 no overlapping access
+
+                                      shared alias may resume
+```
+
+After the exclusive window ends, a dormant alias may be used again only if its
+temporal provenance is still valid. The exclusive access itself does not make
+old aliases dangling; an invalidating operation performed through that access
+may do so.
+
 Typical operations that require `$$&` include operations that may:
 
 - destroy or free a referent,
@@ -126,8 +148,30 @@ refinement:
 &T @ alpha
 ```
 
-`alpha` describes the conditions under which the reference continues to denote
-the same valid logical object.
+`alpha` identifies the temporal provenance on which the reference depends.
+Provenance and validity are distinct concepts: the provenance of a reference
+normally remains the same even after it becomes invalid. Validity is a
+point-in-program check that the logical identity/epoch captured by that
+provenance is still current.
+
+Conceptually:
+
+```text
+p captures R @ epoch 7
+
+before invalidation:
+    current(R) == 7
+    valid(p) = true
+
+after invalidation:
+    current(R) != 7
+    valid(p) = false
+
+origin(p) is still R
+```
+
+Reference permission is separate again: `&`, `$&`, and `$$&` say what access is
+allowed, not whether the referenced logical identity is still alive.
 
 These temporal variables are compiler semantics, not ordinary nominal type
 parameters. The goal is to avoid source types such as:
@@ -153,7 +197,29 @@ Conceptually:
 p -> R
 ```
 
-means that `p` cannot be used after `R` is invalidated.
+means that `p` cannot be used after the captured identity of `R` is invalidated.
+
+Invalidation is the central temporal operation. `deinit()` is one important way
+to invalidate storage, but the same model covers `remove`, `clear`, `reset`,
+subobject replacement, variant changes, pool-slot reuse, and relocation when it
+changes the storage identity observed by references.
+
+The checker can therefore be understood in terms of a small core rule:
+
+```text
+reference creation
+    captures a logical temporal identity
+
+invalidation
+    ends or advances that identity
+
+reference use
+    requires the captured identity to still be current
+```
+
+Automatic `deinit()` insertion is then one consumer of the same analysis: the
+compiler may end a resource's identity once doing so cannot invalidate any
+future safe use.
 
 A root alone is not always precise enough. Logical objects can die while their
 underlying allocation remains alive:
@@ -254,6 +320,11 @@ An exclusive transition on `nodeA` must not invalidate references to unrelated
 
 Invalidating operations therefore have an invalidation footprint over logical
 places/storage, not simply over a whole root in every case.
+
+The same spatial model defines exclusive-access conflicts. While a `$$&`
+capability is active, no other execution path may access a place whose spatial
+footprint may overlap its exclusive footprint. Disjoint fields or objects need
+not conflict merely because they share a temporal root.
 
 
 ## 8. Liveness is based on future uses
@@ -536,14 +607,38 @@ References/dependencies required by a value must remain valid through any
 ## 17. Concurrency is a separate safety dimension
 
 Multiple `$&T` aliases can be temporally memory-safe in one thread and still
-race when used concurrently from multiple threads.
+race when used concurrently from multiple threads. `$&` therefore does not by
+itself authorize unsynchronized cross-thread mutation.
 
-The reference/lifetime system therefore does not by itself solve concurrency.
-Argi needs separate rules for thread transfer/sharing, synchronization, atomics,
-and isolation/capabilities.
+`$$&T`, however, is intended to be usable as an exclusive capability across
+execution contexts. It may be transferred to another thread/task when the type
+is otherwise safe to transfer, provided the language can enforce that no
+overlapping access occurs anywhere while that exclusive window is active.
+Existing aliases may remain stored but are suspended from access during that
+window.
 
-This separation is deliberate: `$&` expresses aliasable mutation, not permission
-for unsynchronized concurrent mutation.
+For structured concurrency this can look conceptually like:
+
+```text
+parent aliases dormant
+        |
+        | transfer $$& capability
+        v
+worker has exclusive access
+        |
+        | worker/join ends exclusive window
+        v
+parent aliases may resume if still temporally valid
+```
+
+If the worker invalidates storage, old aliases remain invalid after the window
+ends; if it performs only non-invalidating exclusive mutation, they may resume.
+Thus concurrency reuses the same separation between exclusive access and
+temporal validity.
+
+Argi still needs separate rules/capabilities for cross-thread sharing,
+synchronization, atomics, and type-level transfer/share safety. The lifetime
+system alone does not make arbitrary `$&T` aliases race-free.
 
 
 ## 18. Design target
@@ -587,15 +682,21 @@ cases rather than attempting every advanced corner case immediately. At
 minimum, it should establish:
 
 - `&`, `$&`, and `$$&` permissions,
+- `$$&` exclusivity over accesses rather than mere alias existence,
 - use-based reference liveness,
+- explicit separation of provenance from current validity,
 - roots plus logical/subobject invalidation,
+- invalidation as the common model behind `deinit`, replacement, removal,
+  reset, and relocation,
 - allocation/arena invalidation domains,
 - value dependency propagation,
 - temporal summaries across function boundaries,
 - transfer without accidental reference invalidation,
 - invalidating container mutations,
 - precise monomorphized abstract calls,
-- and a conservative virtual-reference baseline.
+- a conservative virtual-reference baseline,
+- and a path for transferring `$$&` exclusive access across structured
+  concurrency boundaries.
 
 If these mechanisms require temporal information to become routinely explicit
 in source types, the design should be reconsidered rather than silently growing
