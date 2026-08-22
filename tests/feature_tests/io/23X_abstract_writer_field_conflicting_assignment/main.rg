@@ -33,14 +33,14 @@ Holder : Type = (
 )
 
 set_first(
-    .p: $&Holder,
+    .p: $$&Holder,
     .writer: $&FirstWriter,
 ) -> () := {
     p&.writer = writer
 }
 
 set_second(
-    .p: $&Holder,
+    .p: $$&Holder,
     .writer: $&SecondWriter,
 ) -> () := {
     p&.writer = writer
@@ -51,8 +51,8 @@ main() -> (.status_code: Int32) := {
     second :: SecondWriter = SecondWriter()
     holder :: Holder
 
-    set_first(.p = $&holder, .writer = $&first)
-    set_second(.p = $&holder, .writer = $&second)
+    set_first(.p = $$&holder, .writer = $&first)
+    set_second(.p = $$&holder, .writer = $&second)
 
     status_code = 0
 }

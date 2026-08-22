@@ -6332,6 +6332,20 @@ pub const Semantizer = struct {
             const arr_type_ptr = base.ty.array_type;
             const elem_ty = arr_type_ptr.*.element_type.*;
 
+            if (typ.typeMayCarryTemporalDependencies(elem_ty)) {
+                if (accessPermission(base.node)) |permission| {
+                    if (permission != .exclusive and !allowsTrustedTemporalTransition(s)) {
+                        try self.diags.add(
+                            ia.target.*.location,
+                            .semantic,
+                            "changing temporal dependencies of an array element requires '$$&' access; '$&' may only preserve them",
+                            .{},
+                        );
+                        return error.Reported;
+                    }
+                }
+            }
+
             if (!typ.typesStructurallyEqual(elem_ty, value_expr.ty)) {
                 const pair = try self.formatTypePairText(elem_ty, value_expr.ty, s);
                 defer pair.deinit();
@@ -11665,6 +11679,23 @@ pub const Semantizer = struct {
             try self.recordAbstractFieldStorageType(struct_type, field_index, rhs.ty, pa.value.*.location, s);
             const field_ty = typ.effectiveStructFieldType(struct_type.fields[field_index]);
 
+            if (typ.typeMayCarryTemporalDependencies(field_ty)) {
+                if (accessPermission(base.node)) |permission| {
+                    if (permission != .exclusive and
+                        !fieldStorePreservesTemporalDependencies(sf, rhs.node) and
+                        !allowsTrustedTemporalTransition(s))
+                    {
+                        try self.diags.add(
+                            pa.target.*.location,
+                            .semantic,
+                            "changing temporal dependencies of field '.{s}' requires '$$&' access; '$&' may only preserve them",
+                            .{sf.field_name},
+                        );
+                        return error.Reported;
+                    }
+                }
+            }
+
             if (!typ.typesExactlyEqual(field_ty, rhs.ty)) {
                 const pair = try self.formatTypePairText(field_ty, rhs.ty, s);
                 defer pair.deinit();
@@ -11694,6 +11725,21 @@ pub const Semantizer = struct {
 
         const tgt_te = try self.visitNode(pa.target.*, s);
         const deref_sg = tgt_te.node.content.dereference;
+
+        if (typ.typeMayCarryTemporalDependencies(deref_sg.ty) and
+            deref_sg.pointer_type.mutability != .exclusive and
+            !assignmentPreservesTemporalDependencies(tgt_te.node, rhs.node, deref_sg.ty) and
+            !allowsExclusiveRawStorageInitialization(deref_sg.pointer, s) and
+            !allowsTrustedTemporalTransition(s))
+        {
+            try self.diags.add(
+                pa.target.*.location,
+                .semantic,
+                "changing temporal dependencies through a pointer requires '$$&' access; '$&' may only preserve them",
+                .{},
+            );
+            return error.Reported;
+        }
 
         rhs = try typ.coerceExprToType(deref_sg.ty, rhs, pa.value, s, self.allocator, self.diags);
 
@@ -11728,6 +11774,131 @@ pub const Semantizer = struct {
         } }, pa.target.*.location, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn accessPermission(node: *const sg.SGNode) ?syn.PointerMutability {
+        return switch (node.content) {
+            .dereference => |dereference| dereference.pointer_type.mutability,
+            .struct_field_access => |access| accessPermission(access.struct_value),
+            .choice_payload_access => |access| accessPermission(access.choice_value),
+            .array_index => |access| accessPermission(access.array_ptr),
+            .address_of => |inner| accessPermission(inner),
+            else => null,
+        };
+    }
+
+    fn allowsTrustedTemporalTransition(s: *const Scope) bool {
+        const function = s.current_fn orelse return false;
+        // Initializers establish the first temporal refinement before the
+        // value becomes observable; they do not transition an existing one.
+        if (std.mem.eql(u8, function.name, "init")) return true;
+        // Arena block-table relocation is compiler-recognized low-level
+        // bookkeeping. It does not relocate allocations returned by the arena
+        // and is the only safe `$&` temporal transition in Core.
+        return std.mem.eql(u8, function.name, "arena_push_block");
+    }
+
+    fn allowsExclusiveRawStorageInitialization(pointer: *const sg.SGNode, s: *const Scope) bool {
+        const function = s.current_fn orelse return false;
+        // Core currently crosses its low-level storage boundary by round-tripping
+        // addresses through UIntNative. Until raw-pointer provenance is modeled,
+        // stores reached through those trusted casts cannot be related back to
+        // the owning container precisely.
+        const is_core = std.mem.indexOf(u8, function.location.file, "/core/") != null;
+        return is_core and nodeComesFromExplicitCast(pointer, 0);
+    }
+
+    fn nodeComesFromExplicitCast(node: *const sg.SGNode, depth: usize) bool {
+        if (depth >= 16) return false;
+        return switch (node.content) {
+            .explicit_cast => true,
+            .binding_use => |binding| binding.initialization != null and
+                nodeComesFromExplicitCast(binding.initialization.?, depth + 1),
+            else => false,
+        };
+    }
+
+    fn fieldStorePreservesTemporalDependencies(
+        target: *const sg.StructFieldAccess,
+        value: *const sg.SGNode,
+    ) bool {
+        if (value.content != .struct_field_access) return false;
+        const source = value.content.struct_field_access;
+        return source.field_index == target.field_index and
+            accessNodesEquivalent(source.struct_value, target.struct_value);
+    }
+
+    fn assignmentPreservesTemporalDependencies(
+        target: *const sg.SGNode,
+        value: *const sg.SGNode,
+        value_type: sg.Type,
+    ) bool {
+        if (accessNodesEquivalent(target, value)) return true;
+        if (value_type != .struct_type or value.content != .struct_value_literal) return false;
+
+        const literal = value.content.struct_value_literal;
+        if (literal.fields.len != value_type.struct_type.fields.len) return false;
+        for (value_type.struct_type.fields, 0..) |field, index| {
+            const field_type = typ.effectiveStructFieldType(field);
+            if (!typ.typeMayCarryTemporalDependencies(field_type)) continue;
+            const field_value = literal.fields[index].value;
+            if (field_value.content != .struct_field_access) return false;
+            const access = field_value.content.struct_field_access;
+            if (access.field_index != index) return false;
+            if (!accessNodesEquivalent(access.struct_value, target)) return false;
+        }
+        return true;
+    }
+
+    fn accessNodesEquivalent(left: *const sg.SGNode, right: *const sg.SGNode) bool {
+        return accessNodesEquivalentAtDepth(left, right, 0);
+    }
+
+    fn accessNodesEquivalentAtDepth(
+        left: *const sg.SGNode,
+        right: *const sg.SGNode,
+        depth: usize,
+    ) bool {
+        if (depth >= 32) return false;
+        return switch (left.content) {
+            .binding_use => |left_binding| switch (right.content) {
+                .binding_use => |right_binding| left_binding == right_binding or
+                    (left_binding.initialization != null and accessNodesEquivalentAtDepth(left_binding.initialization.?, right, depth + 1)) or
+                    (right_binding.initialization != null and accessNodesEquivalentAtDepth(left, right_binding.initialization.?, depth + 1)),
+                else => left_binding.initialization != null and
+                    accessNodesEquivalentAtDepth(left_binding.initialization.?, right, depth + 1),
+            },
+            .dereference => |left_dereference| switch (right.content) {
+                .dereference => |right_dereference| accessNodesEquivalentAtDepth(left_dereference.pointer, right_dereference.pointer, depth + 1),
+                .binding_use => |right_binding| right_binding.initialization != null and
+                    accessNodesEquivalentAtDepth(left, right_binding.initialization.?, depth + 1),
+                else => false,
+            },
+            .struct_field_access => |left_access| switch (right.content) {
+                .struct_field_access => |right_access| left_access.field_index == right_access.field_index and
+                    accessNodesEquivalentAtDepth(left_access.struct_value, right_access.struct_value, depth + 1),
+                else => false,
+            },
+            .choice_payload_access => |left_access| switch (right.content) {
+                .choice_payload_access => |right_access| left_access.variant_index == right_access.variant_index and
+                    accessNodesEquivalentAtDepth(left_access.choice_value, right_access.choice_value, depth + 1),
+                else => false,
+            },
+            .array_index => |left_access| switch (right.content) {
+                .array_index => |right_access| left_access.index == right_access.index and
+                    accessNodesEquivalentAtDepth(left_access.array_ptr, right_access.array_ptr, depth + 1),
+                else => false,
+            },
+            .address_of => |left_inner| switch (right.content) {
+                .address_of => |right_inner| accessNodesEquivalentAtDepth(left_inner, right_inner, depth + 1),
+                else => false,
+            },
+            else => switch (right.content) {
+                .binding_use => |right_binding| right_binding.initialization != null and
+                    accessNodesEquivalentAtDepth(left, right_binding.initialization.?, depth + 1),
+                else => false,
+            },
+        };
     }
 
     fn extractTypeArgument(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!sg.Type {

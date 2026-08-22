@@ -534,6 +534,31 @@ pub fn pointerCanWrite(mutability: syn.PointerMutability) bool {
     return mutability != .read_only;
 }
 
+/// Nominal types do not encode provenance, but their shape tells us whether a
+/// runtime value may carry hidden temporal dependencies. Replacing such a
+/// value through `$&` would change the referent's temporal refinement.
+pub fn typeMayCarryTemporalDependencies(ty: sg.Type) bool {
+    return switch (ty) {
+        .pointer_type, .abstract_type => true,
+        .struct_type => |struct_type| blk: {
+            for (struct_type.fields) |field| {
+                if (typeMayCarryTemporalDependencies(effectiveStructFieldType(field))) break :blk true;
+            }
+            break :blk false;
+        },
+        .choice_type => |choice_type| blk: {
+            for (choice_type.variants) |variant| {
+                if (variant.payload_type) |payload_type| {
+                    if (typeMayCarryTemporalDependencies(payload_type)) break :blk true;
+                }
+            }
+            break :blk false;
+        },
+        .array_type => |array_type| typeMayCarryTemporalDependencies(array_type.element_type.*),
+        .builtin => false,
+    };
+}
+
 // Assignment and argument-passing compatibility. Prefer this when checking
 // whether an expression can be used where an expected type is required.
 pub fn typesCompatible(expected: sg.Type, actual: sg.Type) bool {
