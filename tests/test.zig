@@ -3051,6 +3051,13 @@ test "feature_tests/ownership/68X_address_dependent_call_transfer" {
     );
 }
 
+test "feature_tests/ownership/69X_abstract_concrete_temporal_summary" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/69X_abstract_concrete_temporal_summary",
+        "reference 'pointer' is no longer valid; it refers to 'resource'",
+    );
+}
+
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
     try buildExpectFailExact("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
         \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:

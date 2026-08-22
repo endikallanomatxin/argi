@@ -9943,15 +9943,19 @@ pub const Semantizer = struct {
             });
         }
 
-        for (in_struct_ptr.fields) |fld| {
+        const input_bindings = try self.allocator.alloc(*const sg.BindingDeclaration, in_struct_ptr.fields.len);
+        for (in_struct_ptr.fields, 0..) |fld, index| {
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{ .name = fld.name, .location = tmpl.location, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
             try child.bindings.put(fld.name, bd);
+            input_bindings[index] = bd;
         }
-        for (out_struct_ptr.fields) |fld| {
+        const output_bindings = try self.allocator.alloc(*const sg.BindingDeclaration, out_struct_ptr.fields.len);
+        for (out_struct_ptr.fields, 0..) |fld, index| {
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{ .name = fld.name, .location = tmpl.location, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
             try child.bindings.put(fld.name, bd);
+            output_bindings[index] = bd;
         }
 
         var body_cb: ?*sg.CodeBlock = null;
@@ -9968,6 +9972,8 @@ pub const Semantizer = struct {
         }
 
         fn_ptr.input = in_struct_ptr.*;
+        fn_ptr.input_bindings = input_bindings;
+        fn_ptr.output_bindings = output_bindings;
         fn_ptr.body = body_cb;
 
         try s.appendFunction(name, fn_ptr);

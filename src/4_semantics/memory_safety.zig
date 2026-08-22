@@ -57,6 +57,7 @@ pub const MemorySafetyAnalyzer = struct {
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
     analyzed_functions: std.AutoHashMap(*const sg.FunctionDeclaration, void),
+    summarizing_functions: std.AutoHashMap(*const sg.FunctionDeclaration, void),
     reported_uses: std.AutoHashMap(*const sg.SGNode, void),
     fresh_storage_roots: std.AutoHashMap(*const sg.FunctionCall, *const sg.BindingDeclaration),
     next_sequence: u64 = 1,
@@ -70,6 +71,7 @@ pub const MemorySafetyAnalyzer = struct {
             .allocator = allocator,
             .diags = diags,
             .analyzed_functions = std.AutoHashMap(*const sg.FunctionDeclaration, void).init(allocator.*),
+            .summarizing_functions = std.AutoHashMap(*const sg.FunctionDeclaration, void).init(allocator.*),
             .reported_uses = std.AutoHashMap(*const sg.SGNode, void).init(allocator.*),
             .fresh_storage_roots = std.AutoHashMap(*const sg.FunctionCall, *const sg.BindingDeclaration).init(allocator.*),
         };
@@ -77,6 +79,7 @@ pub const MemorySafetyAnalyzer = struct {
 
     pub fn deinit(self: *MemorySafetyAnalyzer) void {
         self.analyzed_functions.deinit();
+        self.summarizing_functions.deinit();
         self.reported_uses.deinit();
         self.fresh_storage_roots.deinit();
     }
@@ -105,6 +108,9 @@ pub const MemorySafetyAnalyzer = struct {
 
     fn inferFunctionSummaryPass(self: *MemorySafetyAnalyzer, function: *const sg.FunctionDeclaration) !bool {
         const body = function.body orelse return false;
+        if (self.summarizing_functions.contains(function)) return false;
+        try self.summarizing_functions.put(function, {});
+        defer _ = self.summarizing_functions.remove(function);
         const previous = function.temporal_summary;
         var state = FunctionState.init(self.allocator.*);
         defer state.deinit();
@@ -163,8 +169,19 @@ pub const MemorySafetyAnalyzer = struct {
             .list_literal => |value| for (value.elements) |element| try self.analyzeNode(element, state),
             .array_literal => |value| for (value.elements) |element| try self.analyzeNode(element, state),
             .choice_literal => |value| if (value.payload) |payload| try self.analyzeNode(payload, state),
-            .struct_field_access, .choice_payload_access => try self.validateExpressionUse(node, state),
+            .struct_field_access => |access| {
+                if (access.struct_value.content == .dereference)
+                    try self.analyzeNode(access.struct_value, state);
+                try self.validateExpressionUse(node, state);
+            },
+            .choice_payload_access => |access| {
+                if (access.choice_value.content == .dereference)
+                    try self.analyzeNode(access.choice_value, state);
+                try self.validateExpressionUse(node, state);
+            },
             .array_index => |access| {
+                if (access.array_ptr.content == .dereference)
+                    try self.analyzeNode(access.array_ptr, state);
                 try self.validateExpressionUse(node, state);
                 try self.analyzeNode(access.index, state);
             },
@@ -586,6 +603,7 @@ pub const MemorySafetyAnalyzer = struct {
             for (pointer_fact.captured, 0..) |dependency, index| {
                 captured[index] = dependency;
                 captured[index].place = try temporal_place.Place.withProjection(dependency.place, projection, self.allocator);
+                captured[index].capture_sequence = self.next_sequence - 1;
             }
             return .{ .captured = captured };
         }
@@ -616,6 +634,7 @@ pub const MemorySafetyAnalyzer = struct {
         call: *const sg.FunctionCall,
         state: *const FunctionState,
     ) anyerror!?ReferenceFact {
+        _ = try self.inferFunctionSummaryPass(call.callee);
         const summary = call.callee.temporal_summary orelse return null;
         if (call.input.content != .struct_value_literal) return null;
         const fields = call.input.content.struct_value_literal.fields;
@@ -751,6 +770,7 @@ pub const MemorySafetyAnalyzer = struct {
         if (call.input.content != .struct_value_literal) return;
 
         const input = call.input.content.struct_value_literal;
+        _ = try self.inferFunctionSummaryPass(call.callee);
         if (call.callee.temporal_summary) |summary| {
             for (summary.invalidations) |invalidation| {
                 if (invalidation.input_index >= input.fields.len) continue;
