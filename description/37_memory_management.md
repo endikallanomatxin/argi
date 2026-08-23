@@ -446,6 +446,20 @@ allocate(.self: $&Arena, .size: UIntNative)
     -> (.data: $&UInt8) #returns_follow(data, self) := { ... }
 ```
 
+Owned storage hidden inside a value can be named precisely without making all
+of the value's borrowed dependencies part of the invalidation domain:
+
+```rg
+deinit(.self: $$&String) -> ()
+    #invalidates(self)
+    #invalidates_dependency(self, allocation.data) := { ... }
+```
+
+`#invalidates(self)` ends references to the value's own storage.
+`#invalidates_dependency(self, allocation.data)` additionally ends references
+to the storage root held at that value path. Other hidden dependencies, such as
+a borrowed allocator or underlying stream, remain valid.
+
 `#trusted_temporal` authorizes an implementation to establish or replace hidden
 dependencies through `$&`, principally during initialization. `#raw_boundary`
 marks code whose pointer-to-integer operations prevent the checker from

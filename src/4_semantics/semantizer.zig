@@ -4998,6 +4998,34 @@ pub const Semantizer = struct {
             };
         }
 
+        var invalidates_dependencies = try self.allocator.alloc(sg.InvalidationFootprint, contract.invalidates_dependencies.len);
+        for (contract.invalidates_dependencies, 0..) |dependency, index| {
+            const input_index = self.structFieldIndexByName(input, dependency.input_name) orelse {
+                try self.diags.add(location, .semantic, "temporal contract references unknown input '.{s}'", .{dependency.input_name});
+                return error.Reported;
+            };
+            var current_type = typ.effectiveStructFieldType(input.fields[input_index]);
+            if (current_type == .pointer_type) current_type = current_type.pointer_type.child.*;
+            var value_path = try self.allocator.alloc(sg.TemporalProjection, dependency.value_path.len);
+            for (dependency.value_path, 0..) |field_name, path_index| {
+                if (current_type != .struct_type) {
+                    try self.diags.add(location, .semantic, "temporal dependency path '.{s}' requires a struct value", .{field_name});
+                    return error.Reported;
+                }
+                const field_index = self.structFieldIndexByName(current_type.struct_type.*, field_name) orelse {
+                    try self.diags.add(location, .semantic, "temporal dependency path references unknown field '.{s}'", .{field_name});
+                    return error.Reported;
+                };
+                value_path[path_index] = .{ .field = field_index };
+                current_type = typ.effectiveStructFieldType(current_type.struct_type.fields[field_index]);
+            }
+            invalidates_dependencies[index] = .{
+                .input_index = input_index,
+                .input_value_path = value_path,
+                .input_path = &.{},
+            };
+        }
+
         var return_root: ?sg.TemporalContract.ReturnRoot = null;
         if (contract.return_root) |root| {
             const output_index = self.structFieldIndexByName(output, root.output_name) orelse {
@@ -5018,6 +5046,7 @@ pub const Semantizer = struct {
 
         return .{
             .invalidates_inputs = invalidates,
+            .invalidates_dependencies = invalidates_dependencies,
             .return_root = return_root,
             .trusted_transitions = contract.trusted_transitions,
             .raw_boundary = contract.raw_boundary,

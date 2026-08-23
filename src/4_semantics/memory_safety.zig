@@ -1427,6 +1427,7 @@ pub const MemorySafetyAnalyzer = struct {
                 .input_path = &.{},
             });
         }
+        try invalidations.appendSlice(function.temporal_contract.invalidates_dependencies);
         for (state.invalidations.items) |invalidation| {
             const source = self.inputDependencySource(function, invalidation.place.root) orelse continue;
             try invalidations.append(.{

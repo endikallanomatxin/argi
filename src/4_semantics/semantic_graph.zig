@@ -399,6 +399,7 @@ pub const FunctionDeclaration = struct {
 
 pub const TemporalContract = struct {
     invalidates_inputs: []const u32 = &.{},
+    invalidates_dependencies: []const InvalidationFootprint = &.{},
     return_root: ?ReturnRoot = null,
     trusted_transitions: bool = false,
     raw_boundary: bool = false,

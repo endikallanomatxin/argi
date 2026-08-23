@@ -128,7 +128,7 @@ init#(.value: Type) (
 deinit#(.value: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $$&StringHashMap#(.value: value),
-) -> () #invalidates(self) := {
+) -> () #invalidates(self) #invalidates_dependency(self, buckets.allocation.data) #invalidates_dependency(self, entries.allocation.data) := {
     deinit#(.t: UIntNative)(.allocator = allocator, .self = $$&self&.buckets)
     deinit#(.t: StringHashMapEntry#(.value: value))(.allocator = allocator, .self = $$&self&.entries)
 }

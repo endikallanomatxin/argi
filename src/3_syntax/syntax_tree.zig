@@ -180,9 +180,15 @@ pub const FunctionDeclaration = struct {
 
 pub const TemporalContract = struct {
     invalidates_inputs: []const []const u8 = &.{},
+    invalidates_dependencies: []const DependencyInvalidation = &.{},
     return_root: ?ReturnRoot = null,
     trusted_transitions: bool = false,
     raw_boundary: bool = false,
+
+    pub const DependencyInvalidation = struct {
+        input_name: []const u8,
+        value_path: []const []const u8,
+    };
 
     pub const ReturnRoot = struct {
         output_name: []const u8,

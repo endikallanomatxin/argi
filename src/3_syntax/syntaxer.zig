@@ -1445,6 +1445,8 @@ pub const Syntaxer = struct {
     fn parseTemporalContract(self: *Syntaxer) SyntaxerError!syn.TemporalContract {
         var invalidates = std.array_list.Managed([]const u8).init(self.allocator);
         defer invalidates.deinit();
+        var invalidates_dependencies = std.array_list.Managed(syn.TemporalContract.DependencyInvalidation).init(self.allocator);
+        defer invalidates_dependencies.deinit();
         var contract = syn.TemporalContract{};
 
         while (self.tokenIs(.hash)) {
@@ -1463,6 +1465,21 @@ pub const Syntaxer = struct {
 
             if (std.mem.eql(u8, directive, "invalidates")) {
                 try invalidates.append(try self.parseIdentifier());
+            } else if (std.mem.eql(u8, directive, "invalidates_dependency")) {
+                const input_name = try self.parseIdentifier();
+                if (!self.tokenIs(.comma)) return SyntaxerError.ExpectedComma;
+                self.advanceOne();
+                var value_path = std.array_list.Managed([]const u8).init(self.allocator);
+                defer value_path.deinit();
+                try value_path.append(try self.parseIdentifier());
+                while (self.tokenIs(.dot)) {
+                    self.advanceOne();
+                    try value_path.append(try self.parseIdentifier());
+                }
+                try invalidates_dependencies.append(.{
+                    .input_name = input_name,
+                    .value_path = try value_path.toOwnedSlice(),
+                });
             } else if (std.mem.eql(u8, directive, "returns_fresh")) {
                 contract.return_root = .{
                     .output_name = try self.parseIdentifier(),
@@ -1485,6 +1502,7 @@ pub const Syntaxer = struct {
         }
 
         contract.invalidates_inputs = try invalidates.toOwnedSlice();
+        contract.invalidates_dependencies = try invalidates_dependencies.toOwnedSlice();
         return contract;
     }
 

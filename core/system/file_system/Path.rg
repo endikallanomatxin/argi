@@ -101,7 +101,7 @@ path_with_view(
 deinit(
     .self: $$&Path,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> () #invalidates(self) := {
+) -> () #invalidates(self) #invalidates_dependency(self, text.allocation.data) := {
     deinit(.self = $$&self&.text, .allocator = allocator)
 }
 

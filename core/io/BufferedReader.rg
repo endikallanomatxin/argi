@@ -40,7 +40,7 @@ init#(.base_type: Type: Reader)(
 deinit#(.base_type: Type: Reader)(
     .self: $$&BufferedReader#(.base_type: base_type),
     .allocator: $&CAllocator = #reach allocator, system.allocator,
-) -> () #invalidates(self) := {
+) -> () #invalidates(self) #invalidates_dependency(self, buffer) := {
     deallocate(.self = allocator, .data = self&.buffer, .size = self&.capacity)
     self& = (
         .base = self&.base,

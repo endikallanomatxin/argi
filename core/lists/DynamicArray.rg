@@ -66,7 +66,7 @@ init #(.t: Type) (
 deinit #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $$&DynamicArray#(.t: t)
-) -> () #invalidates(self) := {
+) -> () #invalidates(self) #invalidates_dependency(self, allocation.data) := {
     zero :: UIntNative = 0
     deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
     self& = (
