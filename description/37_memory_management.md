@@ -492,6 +492,15 @@ symbolic dependency while summaries are inferred, so it also composes through
 ordinary `StringView -> StringView` functions. Only `.data` becomes stale;
 copied metadata such as `.length` remains independently usable.
 
+Explicit raw return contracts register the aggregate shapes and scalar paths
+that can carry hidden provenance. Summary inputs of those shapes receive
+symbolic dependencies at the registered paths; unrelated integers remain
+ordinary values. At a call, symbolic effects are instantiated with the actual
+value's facts. Consequently `$&StringView` may rewrite ordinary metadata or
+preserve the existing `.data` dependency, but changing `.data` from one
+concrete root to another is rejected unless the function declares
+`$$&StringView`.
+
 Initializer summaries are applied to the stable destination created for the
 new value. Consequently, a fresh root written through the implicit `.p`
 parameter remains fresh in the constructed aggregate instead of disappearing
@@ -533,7 +542,11 @@ carrying provenance. A contract can replace those defaults with a fresh or
 followed storage root.
 Core extern declarations whose result is independent from their pointer inputs,
 such as `getenv`, state that root explicitly instead of inheriting the default
-input envelope.
+input envelope. Raw file-handle constructors similarly mark `fopen`/`fdopen`
+results as independent roots and place `$&` out-parameter initialization behind
+explicit trusted/raw contracts. Arena allocation uses a trusted internal
+transition for block bookkeeping while its public returned storage continues to
+follow the stable arena envelope.
 
 Internally the compiler is free to use constructs equivalent to `alpha`,
 `beta`, unions, outlives constraints, or quantified provenance when necessary.

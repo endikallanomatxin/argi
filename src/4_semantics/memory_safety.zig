@@ -32,6 +32,11 @@ const InputDependencySource = struct {
     value_path: []const temporal_place.Projection,
 };
 
+const DependencyCarrierShape = struct {
+    ty: sg.Type,
+    path: []const sg.TemporalProjection,
+};
+
 const FunctionState = struct {
     references: std.AutoHashMap(*const sg.BindingDeclaration, ReferenceFact),
     invalidations: std.array_list.Managed(Invalidation),
@@ -75,6 +80,7 @@ pub const MemorySafetyAnalyzer = struct {
     fresh_storage_roots: std.AutoHashMap(*const sg.FunctionCall, *const sg.BindingDeclaration),
     fresh_value_roots: std.AutoHashMap(*const sg.SGNode, *const sg.BindingDeclaration),
     symbolic_input_roots: std.AutoHashMap(*const sg.BindingDeclaration, SymbolicInputRoot),
+    dependency_carrier_shapes: std.array_list.Managed(DependencyCarrierShape),
     next_sequence: u64 = 1,
     inferring_summaries: bool = false,
     stable_call_input_depth: usize = 0,
@@ -93,6 +99,7 @@ pub const MemorySafetyAnalyzer = struct {
             .fresh_storage_roots = std.AutoHashMap(*const sg.FunctionCall, *const sg.BindingDeclaration).init(allocator.*),
             .fresh_value_roots = std.AutoHashMap(*const sg.SGNode, *const sg.BindingDeclaration).init(allocator.*),
             .symbolic_input_roots = std.AutoHashMap(*const sg.BindingDeclaration, SymbolicInputRoot).init(allocator.*),
+            .dependency_carrier_shapes = std.array_list.Managed(DependencyCarrierShape).init(allocator.*),
         };
     }
 
@@ -103,6 +110,7 @@ pub const MemorySafetyAnalyzer = struct {
         self.fresh_storage_roots.deinit();
         self.fresh_value_roots.deinit();
         self.symbolic_input_roots.deinit();
+        self.dependency_carrier_shapes.deinit();
     }
 
     pub fn analyze(self: *MemorySafetyAnalyzer, nodes: []const *sg.SGNode) !void {
@@ -113,6 +121,8 @@ pub const MemorySafetyAnalyzer = struct {
             .test_declaration => |test_decl| try functions.append(test_decl.function),
             else => {},
         };
+
+        try self.collectDependencyCarrierShapes(functions.items);
 
         self.inferring_summaries = true;
         defer self.inferring_summaries = false;
@@ -132,6 +142,37 @@ pub const MemorySafetyAnalyzer = struct {
         self.inferring_summaries = false;
 
         for (functions.items) |function| try self.analyzeFunction(function);
+    }
+
+    fn collectDependencyCarrierShapes(
+        self: *MemorySafetyAnalyzer,
+        functions: []const *const sg.FunctionDeclaration,
+    ) !void {
+        for (functions) |function| {
+            for (function.temporal_contract.return_dependencies) |dependency| {
+                if (dependency.output_path.len == 0) continue;
+                const output_index = switch (dependency.output_path[0]) {
+                    .field => |index| index,
+                    else => continue,
+                };
+                if (output_index >= function.output.fields.len) continue;
+                const output_type = typ.effectiveStructFieldType(function.output.fields[output_index]);
+                const carrier_path = dependency.output_path[1..];
+                var exists = false;
+                for (self.dependency_carrier_shapes.items) |shape| {
+                    if (typ.typesStructurallyEqual(shape.ty, output_type) and
+                        summaryPathsEqual(shape.path, carrier_path))
+                    {
+                        exists = true;
+                        break;
+                    }
+                }
+                if (!exists) try self.dependency_carrier_shapes.append(.{
+                    .ty = output_type,
+                    .path = try self.allocator.dupe(sg.TemporalProjection, carrier_path),
+                });
+            }
+        }
     }
 
     fn inferFunctionSummaryPass(self: *MemorySafetyAnalyzer, function: *const sg.FunctionDeclaration) !bool {
@@ -258,6 +299,7 @@ pub const MemorySafetyAnalyzer = struct {
                 self.stable_call_input_depth += 1;
                 try self.analyzeNode(call.input, state);
                 self.stable_call_input_depth -= 1;
+                try self.validateCallDependencyTransitions(call, node, state);
                 try self.recordConservativeCallInvalidations(call, node, state);
                 try self.refreshTransitionedCallInputs(call, state);
                 try self.applyCallDependencyTransitions(call, state);
@@ -1554,6 +1596,90 @@ pub const MemorySafetyAnalyzer = struct {
         }
     }
 
+    /// Source types do not reveal every hidden dependency (raw addresses are a
+    /// common example), so the final `$&`/`$$&` decision for such transitions
+    /// is made with the caller's concrete facts. A mutable contract may update
+    /// ordinary data, but it cannot replace a temporal refinement.
+    fn validateCallDependencyTransitions(
+        self: *MemorySafetyAnalyzer,
+        call: *const sg.FunctionCall,
+        call_node: *const sg.SGNode,
+        state: *const FunctionState,
+    ) !void {
+        if (self.inferring_summaries or call.input.content != .struct_value_literal) return;
+        if (call.callee.temporal_contract.trusted_transitions or call.callee.temporal_contract.raw_boundary) return;
+        if (call.callee.temporal_summary == null) _ = try self.inferFunctionSummaryPass(call.callee);
+        const summary = call.callee.temporal_summary orelse return;
+        const fields = call.input.content.struct_value_literal.fields;
+
+        for (summary.dependency_transitions) |transition| {
+            if (transition.target_input_index >= fields.len or
+                transition.target_input_index >= call.callee.input.fields.len) continue;
+            const parameter_type = typ.effectiveStructFieldType(call.callee.input.fields[transition.target_input_index]);
+            if (parameter_type != .pointer_type or parameter_type.pointer_type.mutability != .read_write) continue;
+
+            const target_aggregate = try self.referenceFactFromValue(fields[transition.target_input_index].value, state);
+            const target_fact = if (target_aggregate) |fact|
+                try self.selectInputFactAtSummaryValuePath(
+                    call.callee,
+                    transition.target_input_index,
+                    fact,
+                    transition.target_path,
+                )
+            else
+                ReferenceFact{ .captured = &.{} };
+
+            var source_captured = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
+            defer source_captured.deinit();
+            switch (transition.source) {
+                .fresh => try source_captured.append(.{
+                    .place = try self.freshStoragePlace(call),
+                    .capture_sequence = self.next_sequence - 1,
+                }),
+                .input => |source| if (source.index < fields.len) {
+                    if (try self.referenceFactFromValue(fields[source.index].value, state)) |aggregate| {
+                        const selected = try self.selectInputFactAtSummaryValuePath(
+                            call.callee,
+                            source.index,
+                            aggregate,
+                            source.value_path,
+                        );
+                        for (selected.captured) |captured| {
+                            var mapped = captured;
+                            mapped.place = try appendSummaryPath(captured.place, source.path, self.allocator);
+                            try source_captured.append(mapped);
+                        }
+                    }
+                },
+            }
+
+            if (referenceFactsHaveSamePlaces(target_fact, .{ .captured = source_captured.items })) continue;
+            try self.diags.add(
+                call_node.location,
+                .semantic,
+                "call changes temporal dependencies of mutable input '.{s}'; declare the parameter '$$&'",
+                .{call.callee.input.fields[transition.target_input_index].name},
+            );
+            try self.reported_uses.put(call_node, {});
+            return;
+        }
+    }
+
+    fn referenceFactsHaveSamePlaces(left: ReferenceFact, right: ReferenceFact) bool {
+        if (left.captured.len != right.captured.len) return false;
+        for (left.captured) |candidate| {
+            var found = false;
+            for (right.captured) |other| {
+                if (temporal_place.Place.eql(candidate.place, other.place)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) return false;
+        }
+        return true;
+    }
+
     /// The exclusive reference used to perform a whole-referent transition
     /// follows the referent into its new epoch. Other references retain their
     /// earlier capture sequence and are rejected on subsequent use.
@@ -1633,6 +1759,7 @@ pub const MemorySafetyAnalyzer = struct {
         captured: *std.array_list.Managed(CapturedPlace),
     ) !void {
         if (depth >= 8) return;
+        try self.seedDeclaredTypeDependencies(function, input_index, value_type, value_path, captured);
         switch (value_type) {
             .pointer_type => |pointer_type| {
                 const root = try self.allocator.create(sg.BindingDeclaration);
@@ -1666,7 +1793,6 @@ pub const MemorySafetyAnalyzer = struct {
             },
             .abstract_type => try self.seedOpaqueInputDependency(function, input_index, value_path, captured),
             .struct_type => |struct_type| {
-                try self.seedOpaqueInputDependency(function, input_index, value_path, captured);
                 for (struct_type.fields, 0..) |field, field_index| {
                     const child_path = try appendValueProjection(value_path, .{ .field = @intCast(field_index) }, self.allocator);
                     try self.seedTypeDependencies(
@@ -1680,7 +1806,6 @@ pub const MemorySafetyAnalyzer = struct {
                 }
             },
             .choice_type => |choice_type| {
-                try self.seedOpaqueInputDependency(function, input_index, value_path, captured);
                 for (choice_type.variants, 0..) |variant, variant_index| {
                     const payload_type = variant.payload_type orelse continue;
                     const child_path = try appendValueProjection(value_path, .{ .choice_payload = @intCast(variant_index) }, self.allocator);
@@ -1688,11 +1813,32 @@ pub const MemorySafetyAnalyzer = struct {
                 }
             },
             .array_type => |array_type| {
-                try self.seedOpaqueInputDependency(function, input_index, value_path, captured);
                 const child_path = try appendValueProjection(value_path, .{ .array_index = null }, self.allocator);
                 try self.seedTypeDependencies(function, input_index, array_type.element_type.*, child_path, depth + 1, captured);
             },
             .builtin => {},
+        }
+    }
+
+    fn seedDeclaredTypeDependencies(
+        self: *MemorySafetyAnalyzer,
+        function: *const sg.FunctionDeclaration,
+        input_index: usize,
+        value_type: sg.Type,
+        value_path: []const temporal_place.Projection,
+        captured: *std.array_list.Managed(CapturedPlace),
+    ) !void {
+        for (self.dependency_carrier_shapes.items) |shape| {
+            if (!typ.typesStructurallyEqual(shape.ty, value_type)) continue;
+            const full_path = try self.allocator.alloc(
+                temporal_place.Projection,
+                value_path.len + shape.path.len,
+            );
+            @memcpy(full_path[0..value_path.len], value_path);
+            for (shape.path, 0..) |projection, index| {
+                full_path[value_path.len + index] = toPlaceProjection(projection);
+            }
+            try self.seedOpaqueInputDependency(function, input_index, full_path, captured);
         }
     }
 

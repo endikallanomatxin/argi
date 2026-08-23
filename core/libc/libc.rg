@@ -4,8 +4,8 @@ getchar ( ) -> ( .character : Int32 ) : ExternFunction
 puts ( .string : &Char ) -> () : ExternFunction
 strlen ( .string : &Char ) -> ( .length : UIntNative ) : ExternFunction
 getenv ( .name : &Char ) -> ( .value : &Char ) #returns_fresh(value) : ExternFunction
-fdopen ( .fd : Int32, .mode : &Char ) -> ( .stream : &Any ) : ExternFunction
-fopen ( .path : &Char, .mode : &Char ) -> ( .stream : &Any ) : ExternFunction
+fdopen ( .fd : Int32, .mode : &Char ) -> ( .stream : &Any ) #returns_fresh(stream) : ExternFunction
+fopen ( .path : &Char, .mode : &Char ) -> ( .stream : &Any ) #returns_fresh(stream) : ExternFunction
 fclose ( .stream : &Any ) -> ( .status : Int32 ) : ExternFunction
 fflush ( .stream : &Any ) -> ( .status : Int32 ) : ExternFunction
 fread ( .buffer : $&UInt8, .size : UIntNative, .count : UIntNative, .stream : &Any ) -> ( .count : UIntNative ) : ExternFunction

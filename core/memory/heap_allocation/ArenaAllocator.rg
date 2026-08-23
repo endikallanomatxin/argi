@@ -128,7 +128,7 @@ deinit(
 allocate(
     .self: $&ArenaAllocator,
     .size: UIntNative,
-) -> (.data: $&UInt8) #returns_follow(data, self) := {
+) -> (.data: $&UInt8) #returns_follow(data, self) #trusted_temporal := {
     required ::= size
     if required == 0 {
         required = 1
