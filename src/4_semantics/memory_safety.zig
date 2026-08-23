@@ -840,11 +840,7 @@ pub const MemorySafetyAnalyzer = struct {
                 .{ .field = 0 },
                 state,
             ),
-            .virtual_call => |virtual_call| if (virtual_call.output_type.fields.len == 1 and
-                typ.typeMayCarryTemporalDependencies(virtual_call.output_type.fields[0].ty))
-                try self.referenceFactFromValue(virtual_call.handle, state)
-            else
-                null,
+            .virtual_call => |virtual_call| try self.factFromVirtualCall(virtual_call, state),
             .struct_value_literal => |struct_value| try self.factFromStructValue(struct_value, state),
             .array_literal => |array_value| try self.factFromNodeList(array_value.elements, state),
             .list_literal => |list_value| try self.factFromNodeList(list_value.elements, state),
@@ -872,6 +868,42 @@ pub const MemorySafetyAnalyzer = struct {
             .type_initializer => |initializer| try self.factFromTypeInitializer(value, initializer, state),
             else => null,
         };
+    }
+
+    /// Virtual dispatch deliberately erases the concrete return summary. Every
+    /// dependency-carrying output therefore follows the handle's full temporal
+    /// envelope, including fields of a multi-output result.
+    fn factFromVirtualCall(
+        self: *MemorySafetyAnalyzer,
+        call: *const sg.VirtualCall,
+        state: *const FunctionState,
+    ) anyerror!?ReferenceFact {
+        const envelope = try self.referenceFactFromValue(call.handle, state) orelse return null;
+        var captured = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
+        defer captured.deinit();
+
+        if (call.output_type.fields.len == 1) {
+            if (!typ.typeMayCarryTemporalDependencies(call.output_type.fields[0].ty)) return null;
+            for (envelope.captured) |dependency| {
+                var mapped = dependency;
+                mapped.value_path = &.{};
+                try captured.append(mapped);
+            }
+        } else {
+            for (call.output_type.fields, 0..) |field, field_index| {
+                if (!typ.typeMayCarryTemporalDependencies(typ.effectiveStructFieldType(field))) continue;
+                for (envelope.captured) |dependency| {
+                    var mapped = dependency;
+                    const output_path = try self.allocator.alloc(temporal_place.Projection, 1);
+                    output_path[0] = .{ .field = @intCast(field_index) };
+                    mapped.value_path = output_path;
+                    try captured.append(mapped);
+                }
+            }
+        }
+
+        if (captured.items.len == 0) return null;
+        return .{ .captured = try captured.toOwnedSlice() };
     }
 
     fn factFromTypeInitializer(

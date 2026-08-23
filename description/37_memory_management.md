@@ -587,7 +587,9 @@ hidden dependencies to the Virtual value. A reference returned by an indirect
 method follows that entire envelope. A `$&Self` virtual call preserves it;
 `$$&Self` conservatively invalidates it. Thus dispatch cannot recover concrete
 precision accidentally, but neither pointer erasure nor the vtable boundary can
-hide an invalidation.
+hide an invalidation. For multi-output methods, this envelope is attached to
+each dependency-carrying output field independently; ordinary value outputs do
+not acquire a spurious dependency.
 
 Because the baseline handle exposes mutable backing storage, `to_virtual`
 requires at least a mutable reference. Accepting `&T` here would erase the

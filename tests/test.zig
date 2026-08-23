@@ -3159,6 +3159,19 @@ test "feature_tests/polymorphism/32X_virtual_rejects_exclusive_permission_upgrad
     );
 }
 
+test "feature_tests/polymorphism/33X_virtual_multi_output_temporal_envelope" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/33X_virtual_multi_output_temporal_envelope",
+        "reference 'pointer' is no longer valid",
+    );
+}
+
+test "feature_tests/polymorphism/34_virtual_multi_output_value_independence" {
+    const test_path = "tests/feature_tests/polymorphism/34_virtual_multi_output_value_independence";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/ownership/83X_dynamic_array_element_deinit_invalidation" {
     try buildExpectFail(
         "tests/feature_tests/ownership/83X_dynamic_array_element_deinit_invalidation",
