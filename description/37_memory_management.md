@@ -589,10 +589,11 @@ method follows that entire envelope. A `$&Self` virtual call preserves it;
 precision accidentally, but neither pointer erasure nor the vtable boundary can
 hide an invalidation.
 
-Because the baseline handle can dispatch `$&Self` and `$$&Self` requirements,
-`to_virtual` requires at least a mutable reference. Accepting `&T` here would
-erase the read-only restriction and permit a later exclusive dispatch through
-the handle.
+Because the baseline handle exposes mutable backing storage, `to_virtual`
+requires at least a mutable reference. Accepting `&T` here would erase the
+read-only restriction. When any Abstract requirement accepts `$$&Self`, the
+constructor instead requires `$$&T`; a `$&T` cannot be erased and later
+recovered as an exclusive capability through dispatch.
 
 Therefore virtual safety becomes:
 

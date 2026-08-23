@@ -6841,13 +6841,35 @@ pub const Semantizer = struct {
             try self.diags.add(input.fields[0].value.location, .semantic, "to_virtual '.value' must be a reference", .{});
             return error.Reported;
         }
-        if (value.ty.pointer_type.mutability == .read_only) {
-            try self.diags.add(
-                input.fields[0].value.location,
-                .semantic,
-                "to_virtual requires a mutable reference because Virtual handles may dispatch mutable or exclusive methods",
-                .{},
-            );
+        var required_permission: syn.PointerMutability = .read_write;
+        const abstract_info = s.lookupAbstractInfo(abstract_type.name) orelse return error.SymbolNotFound;
+        for (abstract_info.requirements) |requirement| {
+            for (requirement.input_pointer_self_indices) |self_index| {
+                if (self_index >= requirement.input.fields.len) continue;
+                const self_type = requirement.input.fields[self_index].ty;
+                if (self_type == .pointer_type and self_type.pointer_type.mutability == .exclusive) {
+                    required_permission = .exclusive;
+                    break;
+                }
+            }
+            if (required_permission == .exclusive) break;
+        }
+        if (!typ.pointerMutabilityCompatible(required_permission, value.ty.pointer_type.mutability)) {
+            if (required_permission == .exclusive) {
+                try self.diags.add(
+                    input.fields[0].value.location,
+                    .semantic,
+                    "to_virtual requires an exclusive reference because this Abstract contains an exclusive Self method",
+                    .{},
+                );
+            } else {
+                try self.diags.add(
+                    input.fields[0].value.location,
+                    .semantic,
+                    "to_virtual requires a mutable reference because Virtual exposes mutable backing storage",
+                    .{},
+                );
+            }
             return error.Reported;
         }
         const concrete_type = value.ty.pointer_type.child.*;
@@ -6863,7 +6885,6 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const abstract_info = s.lookupAbstractInfo(abstract_type.name) orelse return error.SymbolNotFound;
         var methods = try self.allocator.alloc(*const sg.FunctionDeclaration, abstract_info.requirements.len);
         for (abstract_info.requirements, 0..) |*requirement, index| {
             const expected_input = try abs.buildExpectedInputWithConcrete(requirement, concrete_type, self.allocator);

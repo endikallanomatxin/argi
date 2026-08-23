@@ -1,5 +1,5 @@
 Resettable : Abstract = (
-    reset(.self: $$&Self) -> ()
+    reset(.self: $&Self) -> ()
 )
 
 Resource : Type = (
@@ -8,13 +8,13 @@ Resource : Type = (
 
 Resource implements Resettable
 
-reset(.self: $$&Resource) -> () := {
+reset(.self: $&Resource) -> () := {
     self&.value = 0
 }
 
 main() -> (.status_code: Int32) := {
     resource :: Resource = (.value = 42)
     erased ::= to_virtual#(.abstract: Resettable)(.value = &resource)
-    reset(.self = $$&erased)
+    reset(.self = $&erased)
     status_code = 0
 }

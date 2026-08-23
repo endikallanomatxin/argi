@@ -3152,6 +3152,13 @@ test "feature_tests/polymorphism/31X_virtual_rejects_permission_upgrade" {
     );
 }
 
+test "feature_tests/polymorphism/32X_virtual_rejects_exclusive_permission_upgrade" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/32X_virtual_rejects_exclusive_permission_upgrade",
+        "to_virtual requires an exclusive reference",
+    );
+}
+
 test "feature_tests/ownership/83X_dynamic_array_element_deinit_invalidation" {
     try buildExpectFail(
         "tests/feature_tests/ownership/83X_dynamic_array_element_deinit_invalidation",
