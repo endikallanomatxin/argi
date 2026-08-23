@@ -1744,12 +1744,14 @@ pub const MemorySafetyAnalyzer = struct {
             if (index >= function.input.fields.len) break;
             var captured = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
             defer captured.deinit();
+            var type_stack = std.array_list.Managed(sg.Type).init(self.allocator.*);
+            defer type_stack.deinit();
             try self.seedTypeDependencies(
                 function,
                 index,
                 function.input.fields[index].ty,
                 &.{},
-                0,
+                &type_stack,
                 &captured,
             );
             if (captured.items.len > 0)
@@ -1763,11 +1765,22 @@ pub const MemorySafetyAnalyzer = struct {
         input_index: usize,
         value_type: sg.Type,
         value_path: []const temporal_place.Projection,
-        depth: usize,
+        type_stack: *std.array_list.Managed(sg.Type),
         captured: *std.array_list.Managed(CapturedPlace),
     ) !void {
-        if (depth >= 8) return;
         try self.seedDeclaredTypeDependencies(function, input_index, value_type, value_path, captured);
+        if (typeHasLayoutIdentity(value_type)) {
+            for (type_stack.items) |ancestor| {
+                if (!sameLayoutIdentity(ancestor, value_type)) continue;
+                // Recursive pointee graphs have no finite set of value paths.
+                // Collapse the recursive tail to an opaque dependency envelope
+                // instead of treating it as dependency-free.
+                try self.seedOpaqueInputDependency(function, input_index, value_path, captured);
+                return;
+            }
+            try type_stack.append(value_type);
+            defer _ = type_stack.pop();
+        }
         switch (value_type) {
             .pointer_type => |pointer_type| {
                 const root = try self.allocator.create(sg.BindingDeclaration);
@@ -1790,14 +1803,10 @@ pub const MemorySafetyAnalyzer = struct {
                     .capture_sequence = self.next_sequence - 1,
                     .value_path = stable_path,
                 });
-                try self.seedTypeDependencies(
-                    function,
-                    input_index,
-                    pointer_type.child.*,
-                    value_path,
-                    depth + 1,
-                    captured,
-                );
+                // The pointer value is a dependency carrier, while fields
+                // reached through its pointee can carry further dependencies.
+                // The recursion stack above bounds cyclic pointee graphs.
+                try self.seedTypeDependencies(function, input_index, pointer_type.child.*, value_path, type_stack, captured);
             },
             .abstract_type => try self.seedOpaqueInputDependency(function, input_index, value_path, captured),
             .struct_type => |struct_type| {
@@ -1808,7 +1817,7 @@ pub const MemorySafetyAnalyzer = struct {
                         input_index,
                         typ.effectiveStructFieldType(field),
                         child_path,
-                        depth + 1,
+                        type_stack,
                         captured,
                     );
                 }
@@ -1817,15 +1826,32 @@ pub const MemorySafetyAnalyzer = struct {
                 for (choice_type.variants, 0..) |variant, variant_index| {
                     const payload_type = variant.payload_type orelse continue;
                     const child_path = try appendValueProjection(value_path, .{ .choice_payload = @intCast(variant_index) }, self.allocator);
-                    try self.seedTypeDependencies(function, input_index, payload_type, child_path, depth + 1, captured);
+                    try self.seedTypeDependencies(function, input_index, payload_type, child_path, type_stack, captured);
                 }
             },
             .array_type => |array_type| {
                 const child_path = try appendValueProjection(value_path, .{ .array_index = null }, self.allocator);
-                try self.seedTypeDependencies(function, input_index, array_type.element_type.*, child_path, depth + 1, captured);
+                try self.seedTypeDependencies(function, input_index, array_type.element_type.*, child_path, type_stack, captured);
             },
             .builtin => {},
         }
+    }
+
+    fn typeHasLayoutIdentity(value_type: sg.Type) bool {
+        return switch (value_type) {
+            .pointer_type, .struct_type, .choice_type, .array_type => true,
+            else => false,
+        };
+    }
+
+    fn sameLayoutIdentity(left: sg.Type, right: sg.Type) bool {
+        return switch (left) {
+            .pointer_type => |value| right == .pointer_type and value == right.pointer_type,
+            .struct_type => |value| right == .struct_type and value == right.struct_type,
+            .choice_type => |value| right == .choice_type and value == right.choice_type,
+            .array_type => |value| right == .array_type and value == right.array_type,
+            else => false,
+        };
     }
 
     fn seedDeclaredTypeDependencies(

@@ -3091,6 +3091,19 @@ test "feature_tests/ownership/103_loop_dependency_fixed_point_preserves_unrelate
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/104X_deep_aggregate_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/104X_deep_aggregate_dependency",
+        "reference 'pointer' is no longer valid; it refers to 'resource'",
+    );
+}
+
+test "feature_tests/ownership/105_deep_aggregate_unrelated_invalidation" {
+    const test_path = "tests/feature_tests/ownership/105_deep_aggregate_unrelated_invalidation";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/ownership/74X_extern_exclusive_invalidation" {
     try buildExpectFail(
         "tests/feature_tests/ownership/74X_extern_exclusive_invalidation",
