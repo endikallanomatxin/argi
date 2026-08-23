@@ -3165,6 +3165,20 @@ test "feature_tests/ownership/84_fresh_dependency_transition_contract" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/85X_dynamic_array_growth_invalidates_element" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/85X_dynamic_array_growth_invalidates_element",
+        "reference 'pointer' is no longer valid",
+    );
+}
+
+test "feature_tests/ownership/86X_fresh_dependency_contract_requires_boundary" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/86X_fresh_dependency_contract_requires_boundary",
+        "#sets_dependency_fresh requires #raw_boundary or #trusted_temporal",
+    );
+}
+
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
     try buildExpectFailExact("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
         \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:

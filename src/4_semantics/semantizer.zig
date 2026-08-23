@@ -4990,6 +4990,18 @@ pub const Semantizer = struct {
         output: sg.StructType,
         location: tok.Location,
     ) SemErr!sg.TemporalContract {
+        if (contract.fresh_dependency_transitions.len > 0 and
+            !contract.raw_boundary and !contract.trusted_transitions)
+        {
+            try self.diags.add(
+                location,
+                .semantic,
+                "#sets_dependency_fresh requires #raw_boundary or #trusted_temporal",
+                .{},
+            );
+            return error.Reported;
+        }
+
         var invalidates = try self.allocator.alloc(u32, contract.invalidates_inputs.len);
         for (contract.invalidates_inputs, 0..) |name, index| {
             invalidates[index] = self.structFieldIndexByName(input, name) orelse {

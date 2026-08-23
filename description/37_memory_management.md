@@ -481,7 +481,16 @@ at the initializer boundary.
 When a raw or fallible implementation cannot expose that post-state through
 ordinary values, `#sets_dependency_fresh(self, allocation.data)` states the
 same transition explicitly. It is an auditable boundary contract, not a
-lifetime parameter in the nominal type.
+lifetime parameter in the nominal type. The directive is accepted only on a
+`#raw_boundary` or `#trusted_temporal` function, so ordinary safe code cannot
+assert a fresh identity without declaring the trust boundary.
+
+Operations whose runtime path may replace owned storage publish a conservative
+dependency footprint. For example, `DynamicArray.push($$&self, ...)` invalidates
+`self.allocation.data`: when capacity is available this may reject an alias that
+would happen to remain valid in that execution, but every accepted program is
+safe on the reallocating path as well. More precise conditional effects can be
+added without changing the source reference types.
 
 `#trusted_temporal` authorizes an implementation to establish or replace hidden
 dependencies through `$&`, principally during initialization. `#raw_boundary`

@@ -193,7 +193,7 @@ push #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $$&DynamicArray#(.t: t),
     .value: t,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) #raw_boundary := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) #invalidates_dependency(self, allocation.data) #raw_boundary := {
     one :: UIntNative = 1
     offset ::= self&.length
 
