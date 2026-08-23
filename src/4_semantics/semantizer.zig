@@ -4478,6 +4478,7 @@ pub const Semantizer = struct {
                 .input = f.input,
                 .output = f.output,
                 .body = f.body,
+                .temporal_contract = f.temporal_contract,
             });
             // Return a no-op node for generic template
             const noop = try self.makeNoopNode(loc);
@@ -4569,6 +4570,7 @@ pub const Semantizer = struct {
             try output_bindings.append(bd);
         }
         const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
+        const temporal_contract = try self.resolveTemporalContract(f.temporal_contract, in_struct_ptr.*, out_struct, loc);
         const output_binding_slice = try output_bindings.toOwnedSlice();
         out_fields.deinit();
         output_bindings.deinit();
@@ -4591,6 +4593,7 @@ pub const Semantizer = struct {
                 cand.uses_inferred_error_reasons = uses_inferred_error_reasons;
                 cand.input_bindings = input_binding_slice;
                 cand.output_bindings = output_binding_slice;
+                cand.temporal_contract = temporal_contract;
                 break :blk cand;
             }
 
@@ -4607,6 +4610,7 @@ pub const Semantizer = struct {
                 .uses_inferred_error_reasons = uses_inferred_error_reasons,
                 .input_bindings = input_binding_slice,
                 .output_bindings = output_binding_slice,
+                .temporal_contract = temporal_contract,
             };
 
             if (p.functions.getPtr(f.name.string)) |list_ptr| {
@@ -4713,6 +4717,7 @@ pub const Semantizer = struct {
                 .input = f.input,
                 .output = f.output,
                 .body = f.body,
+                .temporal_contract = f.temporal_contract,
             });
             return null;
         }
@@ -4802,6 +4807,7 @@ pub const Semantizer = struct {
         const output_binding_slice = try output_bindings.toOwnedSlice();
         const input_binding_slice = try input_bindings.toOwnedSlice();
         const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
+        const temporal_contract = try self.resolveTemporalContract(f.temporal_contract, in_struct_ptr.*, out_struct, loc);
 
         const fn_ptr = blk: {
             if (existing_fn) |cand| {
@@ -4811,6 +4817,7 @@ pub const Semantizer = struct {
                 cand.uses_inferred_error_reasons = uses_inferred_error_reasons;
                 cand.input_bindings = input_binding_slice;
                 cand.output_bindings = output_binding_slice;
+                cand.temporal_contract = temporal_contract;
                 break :blk cand;
             }
 
@@ -4827,6 +4834,7 @@ pub const Semantizer = struct {
                 .uses_inferred_error_reasons = uses_inferred_error_reasons,
                 .input_bindings = input_binding_slice,
                 .output_bindings = output_binding_slice,
+                .temporal_contract = temporal_contract,
             };
 
             if (p.functions.getPtr(f.name.string)) |list_ptr| {
@@ -4969,6 +4977,55 @@ pub const Semantizer = struct {
             if (field.default_value != null) return true;
         }
         return false;
+    }
+
+    fn resolveTemporalContract(
+        self: *Semantizer,
+        contract: syn.TemporalContract,
+        input: sg.StructType,
+        output: sg.StructType,
+        location: tok.Location,
+    ) SemErr!sg.TemporalContract {
+        var invalidates = try self.allocator.alloc(u32, contract.invalidates_inputs.len);
+        for (contract.invalidates_inputs, 0..) |name, index| {
+            invalidates[index] = self.structFieldIndexByName(input, name) orelse {
+                try self.diags.add(location, .semantic, "temporal contract references unknown input '.{s}'", .{name});
+                return error.Reported;
+            };
+        }
+
+        var return_root: ?sg.TemporalContract.ReturnRoot = null;
+        if (contract.return_root) |root| {
+            const output_index = self.structFieldIndexByName(output, root.output_name) orelse {
+                try self.diags.add(location, .semantic, "temporal contract references unknown output '.{s}'", .{root.output_name});
+                return error.Reported;
+            };
+            return_root = .{
+                .output_index = output_index,
+                .source = switch (root.source) {
+                    .fresh => .fresh,
+                    .follows_input => |name| .{ .follows_input = self.structFieldIndexByName(input, name) orelse {
+                        try self.diags.add(location, .semantic, "temporal contract references unknown input '.{s}'", .{name});
+                        return error.Reported;
+                    } },
+                },
+            };
+        }
+
+        return .{
+            .invalidates_inputs = invalidates,
+            .return_root = return_root,
+            .trusted_transitions = contract.trusted_transitions,
+            .raw_boundary = contract.raw_boundary,
+        };
+    }
+
+    fn structFieldIndexByName(self: *Semantizer, struct_type: sg.StructType, name: []const u8) ?u32 {
+        _ = self;
+        for (struct_type.fields, 0..) |field, index| {
+            if (std.mem.eql(u8, field.name, name)) return @intCast(index);
+        }
+        return null;
     }
 
     fn semantizePreparedFunctionBody(
@@ -5798,6 +5855,7 @@ pub const Semantizer = struct {
             .input = .{ .fields = rewritten_input_fields },
             .output = f.output,
             .body = f.body,
+            .temporal_contract = f.temporal_contract,
         };
         try p.appendGenericFunctionTemplate(f.name.string, template);
 
@@ -9925,6 +9983,12 @@ pub const Semantizer = struct {
             .input = in_struct_ptr.*,
             .output = out_struct_ptr.*,
             .body = null,
+            .temporal_contract = try self.resolveTemporalContract(
+                tmpl.temporal_contract,
+                in_struct_ptr.*,
+                out_struct_ptr.*,
+                tmpl.location,
+            ),
         };
 
         var child = try Scope.init(self.allocator, s, s.current_fn);
@@ -11812,23 +11876,12 @@ pub const Semantizer = struct {
 
     fn allowsTrustedTemporalTransition(s: *const Scope) bool {
         const function = s.current_fn orelse return false;
-        // Initializers establish the first temporal refinement before the
-        // value becomes observable; they do not transition an existing one.
-        if (std.mem.eql(u8, function.name, "init")) return true;
-        // Arena block-table relocation is compiler-recognized low-level
-        // bookkeeping. It does not relocate allocations returned by the arena
-        // and is the only safe `$&` temporal transition in Core.
-        return std.mem.eql(u8, function.name, "arena_push_block");
+        return function.temporal_contract.trusted_transitions;
     }
 
     fn allowsExclusiveRawStorageInitialization(pointer: *const sg.SGNode, s: *const Scope) bool {
         const function = s.current_fn orelse return false;
-        // Core currently crosses its low-level storage boundary by round-tripping
-        // addresses through UIntNative. Until raw-pointer provenance is modeled,
-        // stores reached through those trusted casts cannot be related back to
-        // the owning container precisely.
-        const is_core = std.mem.indexOf(u8, function.location.file, "/core/") != null;
-        return is_core and nodeComesFromExplicitCast(pointer, 0);
+        return function.temporal_contract.raw_boundary and nodeComesFromExplicitCast(pointer, 0);
     }
 
     fn nodeComesFromExplicitCast(node: *const sg.SGNode, depth: usize) bool {

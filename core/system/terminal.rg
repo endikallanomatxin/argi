@@ -28,7 +28,7 @@ Terminal : Type = (
 once init(
     .p: $&Terminal,
     .allocator: $&CAllocator = #reach allocator, system.allocator,
-) -> () := {
+) -> () #trusted_temporal := {
     init_stdin(.p = $&p&._storage.stdin_file)
     init_stdout(.p = $&p&._storage.stdout_file)
     init_stderr(.p = $&p&._storage.stderr_file)
@@ -63,7 +63,7 @@ once init(
 deinit(
     .self: $$&Terminal,
     .allocator: $&CAllocator = #reach allocator, system.allocator,
-) -> () := {
+) -> () #invalidates(self) := {
     deinit(.self = $$&self&._storage.stdin_reader, .allocator = allocator)
     deinit(.self = $$&self&._storage.stdout_writer, .allocator = allocator)
     deinit(.self = $$&self&._storage.stderr_writer, .allocator = allocator)

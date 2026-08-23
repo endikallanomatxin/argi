@@ -55,7 +55,7 @@ init(
 allocate(
     .self: $&PageAllocator,
     .size: UIntNative,
-) -> (.data: $&UInt8) := {
+) -> (.data: $&UInt8) #returns_fresh(data) := {
     page_size ::= page_allocator_page_size(.self = self).size
     aligned_size ::= page_allocator_round_up(.size = size, .alignment = page_size).rounded
     raw ::= aligned_alloc(.alignment = page_size, .size = aligned_size)

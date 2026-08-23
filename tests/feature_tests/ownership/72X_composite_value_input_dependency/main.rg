@@ -6,7 +6,7 @@ Holder : Type = (
     .pointer: &Resource
 )
 
-deinit(.self: $$&Resource) -> () := {}
+deinit(.self: $$&Resource) -> () #invalidates(self) := {}
 
 get_value(.holder: Holder) -> (.result: &Resource) := {
     result = holder.pointer

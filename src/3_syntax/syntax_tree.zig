@@ -173,8 +173,26 @@ pub const FunctionDeclaration = struct {
     generic_params_struct: ?StructTypeLiteral,
     input: StructTypeLiteral, // Arguments
     output: StructTypeLiteral, // Named return params
+    temporal_contract: TemporalContract = .{},
     body: ?*STNode, // CodeBlock
     // If it has no body, it is an extern function.
+};
+
+pub const TemporalContract = struct {
+    invalidates_inputs: []const []const u8 = &.{},
+    return_root: ?ReturnRoot = null,
+    trusted_transitions: bool = false,
+    raw_boundary: bool = false,
+
+    pub const ReturnRoot = struct {
+        output_name: []const u8,
+        source: Source,
+
+        pub const Source = union(enum) {
+            fresh,
+            follows_input: []const u8,
+        };
+    };
 };
 
 pub const TestDeclaration = struct {

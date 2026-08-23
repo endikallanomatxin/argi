@@ -8,6 +8,7 @@ const diagnostic = @import("../1_base/diagnostic.zig");
 pub const SyntaxerError = error{
     ExpectedIdentifier,
     ExpectedColon,
+    ExpectedComma,
     ExpectedEqual,
     ExpectedIntLiteral,
     ExpectedLeftParen,
@@ -1400,6 +1401,7 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
         self.advanceOne();
         const output = try self.parseFunctionOutputType();
+        const temporal_contract = try self.parseTemporalContract();
         if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
         self.advanceOne();
 
@@ -1414,6 +1416,7 @@ pub const Syntaxer = struct {
                         .generic_params_struct = generic_params_struct,
                         .input = input,
                         .output = output,
+                        .temporal_contract = temporal_contract,
                         .body = null,
                     };
                     return try self.makeNode(.{ .function_declaration = ef }, id_loc);
@@ -1433,9 +1436,56 @@ pub const Syntaxer = struct {
             .generic_params_struct = generic_params_struct,
             .input = input,
             .output = output,
+            .temporal_contract = temporal_contract,
             .body = body,
         };
         return try self.makeNode(.{ .function_declaration = fn_decl }, id_loc);
+    }
+
+    fn parseTemporalContract(self: *Syntaxer) SyntaxerError!syn.TemporalContract {
+        var invalidates = std.array_list.Managed([]const u8).init(self.allocator);
+        defer invalidates.deinit();
+        var contract = syn.TemporalContract{};
+
+        while (self.tokenIs(.hash)) {
+            self.advanceOne();
+            const directive = try self.parseIdentifier();
+            if (std.mem.eql(u8, directive, "trusted_temporal")) {
+                contract.trusted_transitions = true;
+                continue;
+            }
+            if (std.mem.eql(u8, directive, "raw_boundary")) {
+                contract.raw_boundary = true;
+                continue;
+            }
+            if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+            self.advanceOne();
+
+            if (std.mem.eql(u8, directive, "invalidates")) {
+                try invalidates.append(try self.parseIdentifier());
+            } else if (std.mem.eql(u8, directive, "returns_fresh")) {
+                contract.return_root = .{
+                    .output_name = try self.parseIdentifier(),
+                    .source = .fresh,
+                };
+            } else if (std.mem.eql(u8, directive, "returns_follow")) {
+                const output_name = try self.parseIdentifier();
+                if (!self.tokenIs(.comma)) return SyntaxerError.ExpectedComma;
+                self.advanceOne();
+                contract.return_root = .{
+                    .output_name = output_name,
+                    .source = .{ .follows_input = try self.parseIdentifier() },
+                };
+            } else {
+                return SyntaxerError.ExpectedDeclarationOrAssignment;
+            }
+
+            if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
+            self.advanceOne();
+        }
+
+        contract.invalidates_inputs = try invalidates.toOwnedSlice();
+        return contract;
     }
 
     fn parseTestDeclaration(self: *Syntaxer) SyntaxerError!*syn.STNode {

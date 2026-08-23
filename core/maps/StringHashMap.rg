@@ -96,7 +96,7 @@ string_hash_map_prepare_buckets(
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .buckets: $&DynamicArray#(.t: UIntNative),
     .capacity: UIntNative,
-) -> () := {
+) -> () #trusted_temporal := {
     init#(.t: UIntNative)(.p = buckets, .allocator = allocator, .capacity = capacity)
     buckets& = (
         .allocation = buckets&.allocation,
@@ -115,7 +115,7 @@ init#(.value: Type) (
     .p: $&StringHashMap#(.value: value),
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .capacity: UIntNative = 8,
-) -> () := {
+) -> () #trusted_temporal := {
     bucket_capacity ::= capacity
     if bucket_capacity == 0 {
         bucket_capacity = 1
@@ -128,7 +128,7 @@ init#(.value: Type) (
 deinit#(.value: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $$&StringHashMap#(.value: value),
-) -> () := {
+) -> () #invalidates(self) := {
     deinit#(.t: UIntNative)(.allocator = allocator, .self = $$&self&.buckets)
     deinit#(.t: StringHashMapEntry#(.value: value))(.allocator = allocator, .self = $$&self&.entries)
 }

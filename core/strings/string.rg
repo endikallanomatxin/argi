@@ -74,7 +74,7 @@ init (
     .p: $&String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .length: UIntNative,
-) -> () := {
+) -> () #trusted_temporal := {
     allocation_size ::= length + 1
     data ::= allocate(.self = allocator, .size = allocation_size)
     p& = (
@@ -91,7 +91,7 @@ init (
     .p: $&String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .capacity: UIntNative,
-) -> () := {
+) -> () #trusted_temporal := {
     actual_capacity ::= capacity
     one :: UIntNative = 1
 
@@ -114,7 +114,7 @@ init (
 deinit (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $$&String,
-) -> () := {
+) -> () #invalidates(self) := {
     zero :: UIntNative = 0
     deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
     self& = (

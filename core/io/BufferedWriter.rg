@@ -19,7 +19,7 @@ init#(.base_type: Type: Writer)(
     .allocator: $&CAllocator = #reach allocator, system.allocator,
     .base: $&base_type,
     .capacity: UIntNative,
-) -> () := {
+) -> () #trusted_temporal := {
     actual_capacity ::= capacity
     one :: UIntNative = 1
 
@@ -38,7 +38,7 @@ init#(.base_type: Type: Writer)(
 deinit#(.base_type: Type: Writer)(
     .self: $$&BufferedWriter#(.base_type: base_type),
     .allocator: $&CAllocator = #reach allocator, system.allocator,
-) -> () := {
+) -> () #invalidates(self) := {
     buffered_writer_flush(.self = self)
     deallocate(.self = allocator, .data = self&.buffer, .size = self&.capacity)
     self& = (

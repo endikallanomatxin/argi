@@ -128,7 +128,6 @@ pub const MemorySafetyAnalyzer = struct {
     }
 
     fn inferFunctionSummaryPass(self: *MemorySafetyAnalyzer, function: *const sg.FunctionDeclaration) !bool {
-        const body = function.body orelse return false;
         if (self.summarizing_functions.contains(function)) return false;
         try self.summarizing_functions.put(function, {});
         defer _ = self.summarizing_functions.remove(function);
@@ -136,7 +135,7 @@ pub const MemorySafetyAnalyzer = struct {
         var state = FunctionState.init(self.allocator.*);
         defer state.deinit();
         try self.seedInputDependencies(function, &state);
-        try self.analyzeCodeBlock(body, &state);
+        if (function.body) |body| try self.analyzeCodeBlock(body, &state);
         try self.inferTemporalSummary(function, &state);
         return !temporalSummariesEqual(previous, function.temporal_summary);
     }
@@ -843,6 +842,29 @@ pub const MemorySafetyAnalyzer = struct {
         return .{ .captured = try captured.toOwnedSlice() };
     }
 
+    fn selectInputFactAtSummaryValuePath(
+        self: *MemorySafetyAnalyzer,
+        function: *const sg.FunctionDeclaration,
+        input_index: usize,
+        fact: ReferenceFact,
+        summary_path: []const sg.TemporalProjection,
+    ) !ReferenceFact {
+        if (summary_path.len != 0 or input_index >= function.input.fields.len)
+            return self.selectFactAtSummaryValuePath(fact, summary_path);
+        const input_type = typ.effectiveStructFieldType(function.input.fields[input_index]);
+        if (input_type != .pointer_type) return fact;
+
+        // A pointer input's empty value path denotes the referent itself. Any
+        // non-empty value paths describe hidden dependencies stored inside the
+        // referent and must not be folded into an envelope invalidation.
+        var captured = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
+        defer captured.deinit();
+        for (fact.captured) |dependency| {
+            if (dependency.value_path.len == 0) try captured.append(dependency);
+        }
+        return .{ .captured = try captured.toOwnedSlice() };
+    }
+
     fn selectFactAtPlaceValuePath(
         self: *MemorySafetyAnalyzer,
         fact: ReferenceFact,
@@ -886,7 +908,12 @@ pub const MemorySafetyAnalyzer = struct {
         for (summary.return_dependencies) |dependency| {
             if (dependency.input_index >= fields.len) continue;
             const aggregate_fact = try self.referenceFactFromValue(fields[dependency.input_index].value, state) orelse continue;
-            const actual_fact = try self.selectFactAtSummaryValuePath(aggregate_fact, dependency.input_value_path);
+            const actual_fact = try self.selectInputFactAtSummaryValuePath(
+                call.callee,
+                dependency.input_index,
+                aggregate_fact,
+                dependency.input_value_path,
+            );
             for (actual_fact.captured) |actual| {
                 var mapped = actual;
                 mapped.place = try appendSummaryPath(actual.place, dependency.input_path, self.allocator);
@@ -1060,7 +1087,9 @@ pub const MemorySafetyAnalyzer = struct {
                 if (invalidation.input_index >= input.fields.len) continue;
                 const actual = input.fields[invalidation.input_index].value;
                 const aggregate_fact = try self.referenceFactFromValue(actual, state) orelse continue;
-                const actual_fact = try self.selectFactAtSummaryValuePath(
+                const actual_fact = try self.selectInputFactAtSummaryValuePath(
+                    call.callee,
+                    invalidation.input_index,
                     aggregate_fact,
                     invalidation.input_value_path,
                 );
@@ -1096,7 +1125,9 @@ pub const MemorySafetyAnalyzer = struct {
             if (transition.target_input_index >= fields.len or transition.source_input_index >= fields.len) continue;
             const target_fact = try self.referenceFactFromValue(fields[transition.target_input_index].value, state) orelse continue;
             const aggregate_source_fact = try self.referenceFactFromValue(fields[transition.source_input_index].value, state) orelse continue;
-            const source_fact = try self.selectFactAtSummaryValuePath(
+            const source_fact = try self.selectInputFactAtSummaryValuePath(
+                call.callee,
+                transition.source_input_index,
                 aggregate_source_fact,
                 transition.source_input_value_path,
             );
@@ -1249,6 +1280,23 @@ pub const MemorySafetyAnalyzer = struct {
                 });
             }
         }
+        // An extern implementation cannot be inspected. Unless a return-root
+        // contract gives the result independent storage, conservatively let
+        // every dependency-carrying result follow every such input.
+        if (function.body == null and function.temporal_contract.return_root == null) {
+            for (function.output.fields, 0..) |output, output_index| {
+                if (!typ.typeMayCarryTemporalDependencies(typ.effectiveStructFieldType(output))) continue;
+                for (function.input.fields, 0..) |input, input_index| {
+                    if (!typ.typeMayCarryTemporalDependencies(typ.effectiveStructFieldType(input))) continue;
+                    try return_dependencies.append(.{
+                        .output_path = try self.summaryFieldPath(@intCast(output_index)),
+                        .input_index = @intCast(input_index),
+                        .input_value_path = &.{},
+                        .input_path = &.{},
+                    });
+                }
+            }
+        }
 
         var dependency_transitions = std.array_list.Managed(sg.DependencyTransition).init(self.allocator.*);
         defer dependency_transitions.deinit();
@@ -1269,17 +1317,12 @@ pub const MemorySafetyAnalyzer = struct {
 
         var invalidations = std.array_list.Managed(sg.InvalidationFootprint).init(self.allocator.*);
         defer invalidations.deinit();
-        const invalidates_envelope = std.mem.eql(u8, function.name, "deinit") or
-            (std.mem.eql(u8, function.name, "reset") and std.mem.indexOf(u8, function.location.file, "/ArenaAllocator.rg") != null);
-        if (invalidates_envelope) {
-            for (function.input.fields, 0..) |field, input_index| {
-                if (field.ty == .pointer_type and field.ty.pointer_type.mutability == .exclusive) {
-                    try invalidations.append(.{
-                        .input_index = @intCast(input_index),
-                        .input_path = &.{},
-                    });
-                }
-            }
+        for (function.temporal_contract.invalidates_inputs) |input_index| {
+            try invalidations.append(.{
+                .input_index = input_index,
+                .input_value_path = &.{},
+                .input_path = &.{},
+            });
         }
         for (state.invalidations.items) |invalidation| {
             const source = self.inputDependencySource(function, invalidation.place.root) orelse continue;
@@ -1289,19 +1332,38 @@ pub const MemorySafetyAnalyzer = struct {
                 .input_path = try normalizedSummaryPath(invalidation.place.projections, self.allocator),
             });
         }
+        // An exclusive input without an explicit or inferable footprint keeps
+        // the safe external-boundary default: its whole envelope may change.
+        // Precise bodies and source contracts replace this fallback.
+        if (function.body == null) {
+            for (function.input.fields, 0..) |input, input_index| {
+                const input_type = typ.effectiveStructFieldType(input);
+                if (input_type != .pointer_type or input_type.pointer_type.mutability != .exclusive) continue;
+                var has_footprint = false;
+                for (invalidations.items) |invalidation| {
+                    if (invalidation.input_index == input_index) {
+                        has_footprint = true;
+                        break;
+                    }
+                }
+                if (!has_footprint) try invalidations.append(.{
+                    .input_index = @intCast(input_index),
+                    .input_value_path = &.{},
+                    .input_path = &.{},
+                });
+            }
+        }
 
         const summary = try self.allocator.create(sg.TemporalSummary);
         var return_roots: []const sg.ReturnStorageRoot = &.{};
-        if (std.mem.eql(u8, function.name, "allocate") and
-            std.mem.indexOf(u8, function.location.file, "/core/memory/heap_allocation/") != null)
-        {
+        if (function.temporal_contract.return_root) |root_contract| {
             const roots = try self.allocator.alloc(sg.ReturnStorageRoot, 1);
             roots[0] = .{
-                .output_path = &.{},
-                .source = if (std.mem.indexOf(u8, function.location.file, "/ArenaAllocator.rg") != null)
-                    .{ .input = .{ .index = 0, .path = &.{} } }
-                else
-                    .fresh,
+                .output_path = try self.summaryFieldPath(root_contract.output_index),
+                .source = switch (root_contract.source) {
+                    .fresh => .fresh,
+                    .follows_input => |input_index| .{ .input = .{ .index = input_index, .path = &.{} } },
+                },
             };
             return_roots = roots;
         }

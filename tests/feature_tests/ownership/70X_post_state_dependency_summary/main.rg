@@ -6,7 +6,7 @@ Holder : Type = (
     .pointer: &Resource
 )
 
-deinit(.self: $$&Resource) -> () := {}
+deinit(.self: $$&Resource) -> () #invalidates(self) := {}
 
 replace(.self: $$&Holder, .next: &Resource) -> () := {
     self&.pointer = next

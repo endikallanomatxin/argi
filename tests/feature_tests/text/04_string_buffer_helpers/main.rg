@@ -5,7 +5,7 @@ DummyWriter : Type = (
 init(
     .p: $&DummyWriter,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> () := {
+) -> () #trusted_temporal := {
     p&.bytes = String(.allocator = allocator, .capacity = 16)
 }
 

@@ -23,7 +23,7 @@ Holder : Type = (
 init(
     .p: $&Holder,
     .writer: $&DummyWriter,
-) -> () := {
+) -> () #trusted_temporal := {
     p&.writer = writer
 }
 

@@ -2,7 +2,7 @@ Resource : Type = (
     .value: Int32
 )
 
-deinit(.self: $$&Resource) -> () := {}
+deinit(.self: $$&Resource) -> () #invalidates(self) := {}
 read(.value: &Resource) -> () := {}
 
 main() -> (.status_code: Int32) := {

@@ -376,6 +376,7 @@ pub const FunctionDeclaration = struct {
     uses_inferred_error_reasons: bool = false,
     input_bindings: []const *const BindingDeclaration = &.{},
     output_bindings: []const *const BindingDeclaration = &.{},
+    temporal_contract: TemporalContract = .{},
     temporal_summary: ?*const TemporalSummary = null,
     inferred_error_reasons: ?*const ChoiceType = null,
 
@@ -391,6 +392,23 @@ pub const FunctionDeclaration = struct {
     pub const GenericDispatchKind = enum {
         regular,
         abstract_contract,
+    };
+};
+
+pub const TemporalContract = struct {
+    invalidates_inputs: []const u32 = &.{},
+    return_root: ?ReturnRoot = null,
+    trusted_transitions: bool = false,
+    raw_boundary: bool = false,
+
+    pub const ReturnRoot = struct {
+        output_index: u32,
+        source: Source,
+
+        pub const Source = union(enum) {
+            fresh,
+            follows_input: u32,
+        };
     };
 };
 

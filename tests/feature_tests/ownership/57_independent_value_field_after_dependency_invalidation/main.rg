@@ -7,7 +7,7 @@ Holder : Type = (
     .tag: Int32
 )
 
-deinit(.self: $$&Resource) -> () := {}
+deinit(.self: $$&Resource) -> () #invalidates(self) := {}
 
 main() -> (.status_code: Int32) := {
     resource :: Resource = (.value = 1)

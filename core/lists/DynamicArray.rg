@@ -42,7 +42,7 @@ init #(.t: Type) (
     .p: $&DynamicArray#(.t: t),
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .capacity: UIntNative,
-) -> () := {
+) -> () #trusted_temporal := {
     element_size :: UIntNative = size_of(.type = t)
     actual_capacity ::= capacity
     zero :: UIntNative = 0
@@ -66,7 +66,7 @@ init #(.t: Type) (
 deinit #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $$&DynamicArray#(.t: t)
-) -> () := {
+) -> () #invalidates(self) := {
     zero :: UIntNative = 0
     deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
     self& = (
@@ -193,7 +193,7 @@ push #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $$&DynamicArray#(.t: t),
     .value: t,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) #raw_boundary := {
     one :: UIntNative = 1
     offset ::= self&.length
 
@@ -370,7 +370,7 @@ operator set[] #(.t: Type) (
     .self: $&DynamicArray#(.t: t),
     .index: UIntNative,
     .value: t,
-) -> () := {
+) -> () #raw_boundary := {
     addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
     ptr : $&t = cast#(.to: $&t)(.value = addr)
     ptr& = value

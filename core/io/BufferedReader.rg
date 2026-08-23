@@ -20,7 +20,7 @@ init#(.base_type: Type: Reader)(
     .allocator: $&CAllocator = #reach allocator, system.allocator,
     .base: $&base_type,
     .capacity: UIntNative,
-) -> () := {
+) -> () #trusted_temporal := {
     actual_capacity ::= capacity
     one :: UIntNative = 1
 
@@ -40,7 +40,7 @@ init#(.base_type: Type: Reader)(
 deinit#(.base_type: Type: Reader)(
     .self: $$&BufferedReader#(.base_type: base_type),
     .allocator: $&CAllocator = #reach allocator, system.allocator,
-) -> () := {
+) -> () #invalidates(self) := {
     deallocate(.self = allocator, .data = self&.buffer, .size = self&.capacity)
     self& = (
         .base = self&.base,

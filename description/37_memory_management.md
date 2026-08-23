@@ -434,6 +434,31 @@ A summary may contain, as needed:
 - post-state temporal dependencies,
 - symbolic provenance variables and relations.
 
+Most summaries are inferred. Functions whose implementation is unavailable or
+whose storage behavior crosses through raw addresses may state the small part
+that cannot be recovered from the body:
+
+```rg
+release(.self: $$&Arena) -> () #invalidates(self) := { ... }
+allocate(.self: $&CAllocator, .size: UIntNative)
+    -> (.data: $&UInt8) #returns_fresh(data) := { ... }
+allocate(.self: $&Arena, .size: UIntNative)
+    -> (.data: $&UInt8) #returns_follow(data, self) := { ... }
+```
+
+`#trusted_temporal` authorizes an implementation to establish or replace hidden
+dependencies through `$&`, principally during initialization. `#raw_boundary`
+marks code whose pointer-to-integer operations prevent the checker from
+reconstructing a store's provenance. Both are auditable unsafe boundaries, not
+general permission shortcuts: ordinary code should use inferred summaries and
+`$$&` for temporal transitions.
+
+An extern function without a precise contract is handled conservatively. An
+exclusive input may have its whole referent envelope invalidated, and a result
+capable of carrying provenance is assumed to depend on every input capable of
+carrying provenance. A contract can replace those defaults with a fresh or
+followed storage root.
+
 Internally the compiler is free to use constructs equivalent to `alpha`,
 `beta`, unions, outlives constraints, or quantified provenance when necessary.
 The design goal is not to remove lifetime mathematics from the compiler; it is

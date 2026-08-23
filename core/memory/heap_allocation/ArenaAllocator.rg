@@ -35,7 +35,7 @@ arena_push_block(
     .self: $&DynamicArray#(.t: Allocation),
     .allocator: $&CAllocator,
     .value: Allocation,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) #trusted_temporal #raw_boundary := {
     one :: UIntNative = 1
     if self&.length == self&.capacity {
         new_capacity ::= self&.capacity * 2
@@ -85,7 +85,7 @@ init(
     .p: $&ArenaAllocator,
     .backing_allocator: $&CAllocator = #reach allocator, system.allocator,
     .block_size: UIntNative = 4096,
-) -> () := {
+) -> () #trusted_temporal := {
     p&.backing_allocator = backing_allocator
     init#(.t: Allocation)(.p = $&p&.blocks, .allocator = backing_allocator, .capacity = 4)
     p&.block_size = arena_min_block_capacity(.requested = 1, .block_size = block_size).capacity
@@ -94,7 +94,7 @@ init(
 
 arena_release_blocks(
     .self: $$&ArenaAllocator,
-) -> () := {
+) -> () #invalidates(self) := {
     i :: UIntNative = 0
     while i < self&.blocks.length {
         block : &Allocation = &self&.blocks[i]
@@ -108,7 +108,7 @@ arena_release_blocks(
 
 reset(
     .self: $$&ArenaAllocator,
-) -> () := {
+) -> () #invalidates(self) := {
     backing_allocator ::= self&.backing_allocator
     block_size ::= self&.block_size
 
@@ -121,14 +121,14 @@ reset(
 
 deinit(
     .self: $$&ArenaAllocator,
-) -> () := {
+) -> () #invalidates(self) := {
     arena_release_blocks(.self = self)
 }
 
 allocate(
     .self: $&ArenaAllocator,
     .size: UIntNative,
-) -> (.data: $&UInt8) := {
+) -> (.data: $&UInt8) #returns_follow(data, self) := {
     required ::= size
     if required == 0 {
         required = 1
