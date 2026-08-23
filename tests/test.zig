@@ -3259,6 +3259,33 @@ test "feature_tests/ownership/95X_string_growth_invalidates_elements" {
     );
 }
 
+test "feature_tests/ownership/96X_string_view_tracks_raw_address_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/96X_string_view_tracks_raw_address_dependency",
+        "reference 'view' is no longer valid",
+    );
+}
+
+test "feature_tests/ownership/97X_raw_view_copy_preserves_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/97X_raw_view_copy_preserves_dependency",
+        "reference 'copied' is no longer valid",
+    );
+}
+
+test "feature_tests/ownership/98X_raw_view_interprocedural_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/98X_raw_view_interprocedural_dependency",
+        "reference 'returned' is no longer valid",
+    );
+}
+
+test "feature_tests/ownership/99_raw_view_length_is_independent" {
+    const test_path = "tests/feature_tests/ownership/99_raw_view_length_is_independent";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
     try buildExpectFailExact("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
         \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:

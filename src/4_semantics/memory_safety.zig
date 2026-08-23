@@ -291,7 +291,7 @@ pub const MemorySafetyAnalyzer = struct {
                 try self.analyzeNode(access.index, state);
             },
             .dereference => |access| try self.analyzeNode(access.pointer, state),
-            .address_of => {},
+            .address_of => |inner| try self.validateConcreteAddressUse(inner, state),
             .array_store => |store| {
                 try self.analyzeNode(store.array_ptr, state);
                 try self.analyzeNode(store.index, state);
@@ -875,9 +875,6 @@ pub const MemorySafetyAnalyzer = struct {
         value: *const sg.SGNode,
         state: *const FunctionState,
     ) anyerror!?ReferenceFact {
-        if (value.sem_type) |value_type| {
-            if (!typ.typeMayCarryTemporalDependencies(value_type)) return null;
-        }
         return switch (value.content) {
             .address_of => |target| blk: {
                 const place = try temporal_place.Place.fromNode(target, self.allocator) orelse break :blk null;
@@ -1200,7 +1197,10 @@ pub const MemorySafetyAnalyzer = struct {
             for (actual_fact.captured) |actual| {
                 var mapped = actual;
                 mapped.place = try appendSummaryPath(actual.place, dependency.input_path, self.allocator);
-                mapped.value_path = try temporalPathToPlacePath(dependency.output_path, self.allocator);
+                mapped.value_path = try temporalPathToPlacePath(
+                    callOutputValuePath(call.callee, dependency.output_path),
+                    self.allocator,
+                );
                 try captured.append(mapped);
             }
         }
@@ -1217,11 +1217,27 @@ pub const MemorySafetyAnalyzer = struct {
             try captured.append(.{
                 .place = place,
                 .capture_sequence = self.next_sequence - 1,
-                .value_path = try temporalPathToPlacePath(root.output_path, self.allocator),
+                .value_path = try temporalPathToPlacePath(
+                    callOutputValuePath(call.callee, root.output_path),
+                    self.allocator,
+                ),
             });
         }
         if (captured.items.len == 0) return null;
         return .{ .captured = try captured.toOwnedSlice() };
+    }
+
+    fn callOutputValuePath(
+        function: *const sg.FunctionDeclaration,
+        output_path: []const sg.TemporalProjection,
+    ) []const sg.TemporalProjection {
+        if (function.output.fields.len == 1 and output_path.len > 0) {
+            return switch (output_path[0]) {
+                .field => |index| if (index == 0) output_path[1..] else output_path,
+                else => output_path,
+            };
+        }
+        return output_path;
     }
 
     fn freshStoragePlace(self: *MemorySafetyAnalyzer, call: *const sg.FunctionCall) !temporal_place.Place {
@@ -1303,6 +1319,27 @@ pub const MemorySafetyAnalyzer = struct {
         try self.validateFact(label.root.name, fact, value, state);
     }
 
+    /// Passing an aggregate by reference may expose hidden raw-address
+    /// dependencies to the callee. Symbolic seeds describe an unknown caller
+    /// envelope while inferring a reusable body and are not themselves runtime
+    /// values; concrete captured roots must already be live.
+    fn validateConcreteAddressUse(
+        self: *MemorySafetyAnalyzer,
+        value: *const sg.SGNode,
+        state: *const FunctionState,
+    ) !void {
+        const fact = try self.referenceFactFromValue(value, state) orelse return;
+        var concrete = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
+        defer concrete.deinit();
+        for (fact.captured) |captured| {
+            if (self.symbolic_input_roots.contains(captured.place.root)) continue;
+            try concrete.append(captured);
+        }
+        if (concrete.items.len == 0) return;
+        const label = (try temporal_place.Place.fromNode(value, self.allocator)) orelse return;
+        try self.validateFact(label.root.name, .{ .captured = concrete.items }, value, state);
+    }
+
     fn validateProjectionContainerUse(
         self: *MemorySafetyAnalyzer,
         container: *const sg.SGNode,
@@ -1343,6 +1380,11 @@ pub const MemorySafetyAnalyzer = struct {
     ) !void {
         if (self.inferring_summaries) return;
         for (fact.captured) |captured| {
+            // Symbolic roots are placeholders used to infer a reusable
+            // summary, not runtime identities of this generic body. Concrete
+            // caller facts are checked when the summary is applied.
+            if (self.symbolic_input_roots.contains(captured.place.root) or
+                std.mem.startsWith(u8, captured.place.root.name, "$symbolic ")) continue;
             for (state.invalidations.items) |invalidation| {
                 if (invalidation.sequence <= captured.capture_sequence) continue;
                 if (!temporal_place.Place.isInvalidatedBy(captured.place, invalidation.place)) continue;
@@ -1622,50 +1664,69 @@ pub const MemorySafetyAnalyzer = struct {
                     captured,
                 );
             },
-            .abstract_type => {
-                const root = try self.allocator.create(sg.BindingDeclaration);
-                root.* = .{
-                    .name = "$symbolic abstract dependency",
-                    .location = function.location,
-                    .origin_file = function.location.file,
-                    .mutability = .constant,
-                    .ty = .{ .builtin = .Any },
-                    .initialization = null,
-                };
-                const stable_path = try self.allocator.dupe(temporal_place.Projection, value_path);
-                try self.symbolic_input_roots.put(root, .{
-                    .function = function,
-                    .input_index = input_index,
-                    .value_path = stable_path,
-                });
-                try captured.append(.{
-                    .place = .{ .root = root, .projections = &.{} },
-                    .capture_sequence = self.next_sequence - 1,
-                    .value_path = stable_path,
-                });
+            .abstract_type => try self.seedOpaqueInputDependency(function, input_index, value_path, captured),
+            .struct_type => |struct_type| {
+                try self.seedOpaqueInputDependency(function, input_index, value_path, captured);
+                for (struct_type.fields, 0..) |field, field_index| {
+                    const child_path = try appendValueProjection(value_path, .{ .field = @intCast(field_index) }, self.allocator);
+                    try self.seedTypeDependencies(
+                        function,
+                        input_index,
+                        typ.effectiveStructFieldType(field),
+                        child_path,
+                        depth + 1,
+                        captured,
+                    );
+                }
             },
-            .struct_type => |struct_type| for (struct_type.fields, 0..) |field, field_index| {
-                const child_path = try appendValueProjection(value_path, .{ .field = @intCast(field_index) }, self.allocator);
-                try self.seedTypeDependencies(
-                    function,
-                    input_index,
-                    typ.effectiveStructFieldType(field),
-                    child_path,
-                    depth + 1,
-                    captured,
-                );
-            },
-            .choice_type => |choice_type| for (choice_type.variants, 0..) |variant, variant_index| {
-                const payload_type = variant.payload_type orelse continue;
-                const child_path = try appendValueProjection(value_path, .{ .choice_payload = @intCast(variant_index) }, self.allocator);
-                try self.seedTypeDependencies(function, input_index, payload_type, child_path, depth + 1, captured);
+            .choice_type => |choice_type| {
+                try self.seedOpaqueInputDependency(function, input_index, value_path, captured);
+                for (choice_type.variants, 0..) |variant, variant_index| {
+                    const payload_type = variant.payload_type orelse continue;
+                    const child_path = try appendValueProjection(value_path, .{ .choice_payload = @intCast(variant_index) }, self.allocator);
+                    try self.seedTypeDependencies(function, input_index, payload_type, child_path, depth + 1, captured);
+                }
             },
             .array_type => |array_type| {
+                try self.seedOpaqueInputDependency(function, input_index, value_path, captured);
                 const child_path = try appendValueProjection(value_path, .{ .array_index = null }, self.allocator);
                 try self.seedTypeDependencies(function, input_index, array_type.element_type.*, child_path, depth + 1, captured);
             },
             .builtin => {},
         }
+    }
+
+    /// Aggregate source types intentionally do not enumerate hidden
+    /// provenance. Seed one symbolic envelope dependency so summaries remain
+    /// polymorphic over a caller value that acquired provenance through a raw
+    /// contract, even when its nominal fields contain no references.
+    fn seedOpaqueInputDependency(
+        self: *MemorySafetyAnalyzer,
+        function: *const sg.FunctionDeclaration,
+        input_index: usize,
+        value_path: []const temporal_place.Projection,
+        captured: *std.array_list.Managed(CapturedPlace),
+    ) !void {
+        const root = try self.allocator.create(sg.BindingDeclaration);
+        root.* = .{
+            .name = "$symbolic aggregate dependency",
+            .location = function.location,
+            .origin_file = function.location.file,
+            .mutability = .constant,
+            .ty = .{ .builtin = .Any },
+            .initialization = null,
+        };
+        const stable_path = try self.allocator.dupe(temporal_place.Projection, value_path);
+        try self.symbolic_input_roots.put(root, .{
+            .function = function,
+            .input_index = input_index,
+            .value_path = stable_path,
+        });
+        try captured.append(.{
+            .place = .{ .root = root, .projections = &.{} },
+            .capture_sequence = self.next_sequence - 1,
+            .value_path = stable_path,
+        });
     }
 
     fn inferTemporalSummary(

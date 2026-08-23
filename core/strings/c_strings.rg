@@ -70,7 +70,7 @@ as_c_string(
 
 as_view(
     .self: &Char,
-) -> (.view: StringView) := {
+) -> (.view: StringView) #returns_dependency(view.data, self) #raw_boundary := {
     view = (
         .data = cast#(.to: UIntNative)(.value = self),
         .length = strlen(.string = self).length,

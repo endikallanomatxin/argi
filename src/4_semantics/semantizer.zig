@@ -5044,6 +5044,21 @@ pub const Semantizer = struct {
                 try self.diags.add(location, .semantic, "temporal contract references unknown output '.{s}'", .{dependency.output_name});
                 return error.Reported;
             };
+            var output_type = typ.effectiveStructFieldType(output.fields[output_index]);
+            var output_path = try self.allocator.alloc(sg.TemporalProjection, dependency.output_value_path.len + 1);
+            output_path[0] = .{ .field = output_index };
+            for (dependency.output_value_path, 0..) |field_name, path_index| {
+                if (output_type != .struct_type) {
+                    try self.diags.add(location, .semantic, "temporal dependency output path '.{s}' requires a struct value", .{field_name});
+                    return error.Reported;
+                }
+                const field_index = self.structFieldIndexByName(output_type.struct_type.*, field_name) orelse {
+                    try self.diags.add(location, .semantic, "temporal dependency output path references unknown field '.{s}'", .{field_name});
+                    return error.Reported;
+                };
+                output_path[path_index + 1] = .{ .field = field_index };
+                output_type = typ.effectiveStructFieldType(output_type.struct_type.fields[field_index]);
+            }
             const input_index = self.structFieldIndexByName(input, dependency.input_name) orelse {
                 try self.diags.add(location, .semantic, "temporal contract references unknown input '.{s}'", .{dependency.input_name});
                 return error.Reported;
@@ -5063,8 +5078,6 @@ pub const Semantizer = struct {
                 value_path[path_index] = .{ .field = field_index };
                 current_type = typ.effectiveStructFieldType(current_type.struct_type.fields[field_index]);
             }
-            const output_path = try self.allocator.alloc(sg.TemporalProjection, 1);
-            output_path[0] = .{ .field = output_index };
             return_dependencies[index] = .{
                 .output_path = output_path,
                 .input_index = input_index,

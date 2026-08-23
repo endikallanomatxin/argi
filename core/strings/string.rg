@@ -182,7 +182,7 @@ bytes_set (
 
 as_view(
     .self: &String,
-) -> (.view: StringView) := {
+) -> (.view: StringView) #returns_dependency(view.data, self, allocation.data) #raw_boundary := {
     view = (
         .data = cast#(.to: UIntNative)(.value = self&.allocation.data),
         .length = self&.length,
@@ -424,7 +424,7 @@ c_string_length(
 
 c_string_as_view(
     .text: &Char,
-) -> (.view: StringView) := {
+) -> (.view: StringView) #returns_dependency(view.data, text) #raw_boundary := {
     view = (
         .data = cast#(.to: UIntNative)(.value = text),
         .length = c_string_length(.text = text).length,

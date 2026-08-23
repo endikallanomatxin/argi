@@ -1486,20 +1486,28 @@ pub const Syntaxer = struct {
                 });
             } else if (std.mem.eql(u8, directive, "returns_dependency")) {
                 const output_name = try self.parseIdentifier();
+                var output_value_path = std.array_list.Managed([]const u8).init(self.allocator);
+                defer output_value_path.deinit();
+                while (self.tokenIs(.dot)) {
+                    self.advanceOne();
+                    try output_value_path.append(try self.parseIdentifier());
+                }
                 if (!self.tokenIs(.comma)) return SyntaxerError.ExpectedComma;
                 self.advanceOne();
                 const input_name = try self.parseIdentifier();
-                if (!self.tokenIs(.comma)) return SyntaxerError.ExpectedComma;
-                self.advanceOne();
                 var value_path = std.array_list.Managed([]const u8).init(self.allocator);
                 defer value_path.deinit();
-                try value_path.append(try self.parseIdentifier());
-                while (self.tokenIs(.dot)) {
+                if (self.tokenIs(.comma)) {
                     self.advanceOne();
                     try value_path.append(try self.parseIdentifier());
+                    while (self.tokenIs(.dot)) {
+                        self.advanceOne();
+                        try value_path.append(try self.parseIdentifier());
+                    }
                 }
                 try return_dependencies.append(.{
                     .output_name = output_name,
+                    .output_value_path = try output_value_path.toOwnedSlice(),
                     .input_name = input_name,
                     .value_path = try value_path.toOwnedSlice(),
                 });

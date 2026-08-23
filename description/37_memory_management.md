@@ -473,6 +473,25 @@ operator get_ro_pointer[](.self: &DynamicArray, .index: UIntNative)
 This keeps element pointers attached to the allocation root even when their
 implementation computes the address through an integer.
 
+The output side may also name a nested field, and the input dependency path may
+be empty:
+
+```rg
+as_view(.self: &String) -> (.view: StringView)
+    #returns_dependency(view.data, self, allocation.data)
+    #raw_boundary := { ... }
+
+as_view(.self: &Char) -> (.view: StringView)
+    #returns_dependency(view.data, self)
+    #raw_boundary := { ... }
+```
+
+This lets a raw address field carry hidden provenance even though its nominal
+type is `UIntNative`. Copies preserve it, and aggregate inputs receive an opaque
+symbolic dependency while summaries are inferred, so it also composes through
+ordinary `StringView -> StringView` functions. Only `.data` becomes stale;
+copied metadata such as `.length` remains independently usable.
+
 Initializer summaries are applied to the stable destination created for the
 new value. Consequently, a fresh root written through the implicit `.p`
 parameter remains fresh in the constructed aggregate instead of disappearing
@@ -512,6 +531,9 @@ exclusive input may have its whole referent envelope invalidated, and a result
 capable of carrying provenance is assumed to depend on every input capable of
 carrying provenance. A contract can replace those defaults with a fresh or
 followed storage root.
+Core extern declarations whose result is independent from their pointer inputs,
+such as `getenv`, state that root explicitly instead of inheriting the default
+input envelope.
 
 Internally the compiler is free to use constructs equivalent to `alpha`,
 `beta`, unions, outlives constraints, or quantified provenance when necessary.

@@ -194,6 +194,7 @@ pub const TemporalContract = struct {
 
     pub const DependencyReturn = struct {
         output_name: []const u8,
+        output_value_path: []const []const u8,
         input_name: []const u8,
         value_path: []const []const u8,
     };
