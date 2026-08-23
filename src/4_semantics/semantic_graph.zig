@@ -421,6 +421,13 @@ pub const TemporalSummary = struct {
     dependency_transitions: []const DependencyTransition = &.{},
     invalidations: []const InvalidationFootprint = &.{},
     return_roots: []const ReturnStorageRoot = &.{},
+    address_dependent_outputs: []const AddressDependentOutput = &.{},
+};
+
+pub const AddressDependentOutput = struct {
+    output_index: u32,
+    value_path: []const TemporalProjection,
+    target_path: []const TemporalProjection,
 };
 
 pub const DependencyTransition = struct {

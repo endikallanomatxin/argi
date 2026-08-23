@@ -603,9 +603,16 @@ storage.
 
 Internal calls pass the addresses of their input storage. A consuming
 `~value` argument can therefore reuse the caller's backing storage instead of
-being copied through an LLVM aggregate. Return values and container placement
-still need their own destination-passing lowering before the same guarantee can
-be extended to those positions.
+being copied through an LLVM aggregate. Outputs are also passed as destination
+addresses. Direct binding initialization, assignment, field storage, array
+storage and pointer storage can therefore construct a returned value in its
+final location.
+
+Function summaries record when an output contains references into its own
+destination. Such a result may use the direct destination forms above, but is
+rejected when embedded in a larger value expression that would first materialize
+and then relocate it. The recorded dependency paths are remapped to the caller's
+destination so later subobject invalidations remain visible to the checker.
 
 This means address stability can often emerge from provenance instead of
 requiring a general source-level `Pin<T>` property.

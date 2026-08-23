@@ -3099,6 +3099,26 @@ test "feature_tests/ownership/75X_extern_return_dependency" {
     );
 }
 
+test "feature_tests/ownership/76_destination_passed_self_reference" {
+    const test_path = "tests/feature_tests/ownership/76_destination_passed_self_reference";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/77X_address_dependent_result_requires_destination" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/77X_address_dependent_result_requires_destination",
+        "address-dependent result of 'make_node' requires a stable destination",
+    );
+}
+
+test "feature_tests/ownership/78X_destination_return_dependency_invalidation" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/78X_destination_return_dependency_invalidation",
+        "reference 'pointer' is no longer valid",
+    );
+}
+
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
     try buildExpectFailExact("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
         \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
