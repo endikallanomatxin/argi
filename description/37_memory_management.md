@@ -536,6 +536,13 @@ merely the storage occupied by the small virtual handle.
 Concrete implementations are checked to ensure their precise temporal behavior
 fits the public virtual contract.
 
+The implemented baseline attaches the erased data reference and all of its
+hidden dependencies to the Virtual value. A reference returned by an indirect
+method follows that entire envelope. A `$&Self` virtual call preserves it;
+`$$&Self` conservatively invalidates it. Thus dispatch cannot recover concrete
+precision accidentally, but neither pointer erasure nor the vtable boundary can
+hide an invalidation.
+
 Therefore virtual safety becomes:
 
 ```text

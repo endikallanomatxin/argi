@@ -255,6 +255,14 @@ pub const MemorySafetyAnalyzer = struct {
                 try self.validateCallResultRelocation(call, node);
             },
             .virtualize => |virtualize| try self.analyzeNode(virtualize.value, state),
+            .virtual_call => |virtual_call| {
+                try self.analyzeNode(virtual_call.input, state);
+                if (virtual_call.self_permission == .exclusive) {
+                    if (try self.referenceFactFromValue(virtual_call.handle, state)) |fact| {
+                        for (fact.captured) |captured| try self.recordInvalidation(captured.place, node.location, state);
+                    }
+                }
+            },
             .code_block => |block| try self.analyzeCodeBlock(block, state),
             .struct_value_literal => |value| for (value.fields) |field| try self.analyzeNode(field.value, state),
             .list_literal => |value| for (value.elements) |element| try self.analyzeNode(element, state),
@@ -783,6 +791,11 @@ pub const MemorySafetyAnalyzer = struct {
                 .{ .field = 0 },
                 state,
             ),
+            .virtual_call => |virtual_call| if (virtual_call.output_type.fields.len == 1 and
+                typ.typeMayCarryTemporalDependencies(virtual_call.output_type.fields[0].ty))
+                try self.referenceFactFromValue(virtual_call.handle, state)
+            else
+                null,
             .struct_value_literal => |struct_value| try self.factFromStructValue(struct_value, state),
             .array_literal => |array_value| try self.factFromNodeList(array_value.elements, state),
             .list_literal => |list_value| try self.factFromNodeList(list_value.elements, state),

@@ -1225,6 +1225,7 @@ pub const Semantizer = struct {
                 try self.collectFunctionReasonsFromNode(fn_decl, call.input, collected);
             },
             .virtualize => |virtualize| try self.collectFunctionReasonsFromNode(fn_decl, virtualize.value, collected),
+            .virtual_call => |virtual_call| try self.collectFunctionReasonsFromNode(fn_decl, virtual_call.input, collected),
             .nullable_unwrap_or => |unwrap| {
                 try self.collectFunctionReasonsFromNode(fn_decl, unwrap.nullable_value, collected);
                 try self.collectFunctionReasonsFromNode(fn_decl, unwrap.fallback_value, collected);
@@ -2040,6 +2041,7 @@ pub const Semantizer = struct {
                 try self.walkFunctionOnceReachability(call.callee, node.location, state);
             },
             .virtualize => |virtualize| try self.walkNodeOnceReachability(current_fn, virtualize.value, state),
+            .virtual_call => |virtual_call| try self.walkNodeOnceReachability(current_fn, virtual_call.input, state),
             .code_block => |block| {
                 try self.walkCodeBlockOnceReachability(current_fn, block, state);
             },
@@ -6746,12 +6748,35 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
+        const abstract_info = s.lookupAbstractInfo(abstract_type.name) orelse return error.SymbolNotFound;
+        var methods = try self.allocator.alloc(*const sg.FunctionDeclaration, abstract_info.requirements.len);
+        for (abstract_info.requirements, 0..) |*requirement, index| {
+            const expected_input = try abs.buildExpectedInputWithConcrete(requirement, concrete_type, self.allocator);
+            methods[index] = abs.resolveOverload(
+                requirement.name,
+                .{ .struct_type = expected_input },
+                s,
+            ) catch |err| switch (err) {
+                error.SymbolNotFound, error.AmbiguousOverload => {
+                    try self.diags.add(
+                        call.callee_loc,
+                        .semantic,
+                        "cannot build Virtual vtable for '{s}': requirement '{s}' has no unique concrete implementation",
+                        .{ abstract_type.name, requirement.name },
+                    );
+                    return error.Reported;
+                },
+                else => return err,
+            };
+        }
+
         const virtualize = try self.allocator.create(sg.Virtualize);
         virtualize.* = .{
             .value = value.node,
             .concrete_type = concrete_type,
             .abstract_type = abstract_type,
             .virtual_type = virtual_type.struct_type,
+            .methods = methods,
         };
         const node = try sg.makeSGNode(.{ .virtualize = virtualize }, call.callee_loc, self.allocator);
         node.sem_type = virtual_type;
@@ -6819,6 +6844,7 @@ pub const Semantizer = struct {
         if (call.module_qualifier != null and std.mem.eql(u8, call.module_qualifier.?, "testing") and std.mem.eql(u8, call.callee, "expect_error")) {
             return try self.handleTestingExpectErrorBuiltin(call, tv_in, s);
         }
+        if (try self.tryHandleVirtualCall(call, tv_in, s)) |virtual_call| return virtual_call;
         if (typ.builtinFromName(call.callee)) |builtin_ty| {
             if (builtin_ty == .Void) {
                 if (tv_in.ty != .struct_type or tv_in.ty.struct_type.fields.len != 0) {
@@ -6928,6 +6954,99 @@ pub const Semantizer = struct {
         const result_ty = typ.functionReturnType(chosen);
 
         return .{ .node = n, .ty = result_ty };
+    }
+
+    fn virtualAbstractType(ty: sg.Type) ?*const sg.AbstractType {
+        const value_type = if (ty == .pointer_type) ty.pointer_type.child.* else ty;
+        if (value_type != .struct_type) return null;
+        const identity = value_type.struct_type.identity orelse return null;
+        const generic = switch (identity) {
+            .generic => |generic| generic,
+            else => return null,
+        };
+        if (!std.mem.eql(u8, generic.base_name, "Virtual") or generic.arg_values.len != 1) return null;
+        return switch (generic.arg_values[0]) {
+            .type => |abstract_type| if (abstract_type == .abstract_type) abstract_type.abstract_type else null,
+            else => null,
+        };
+    }
+
+    fn containsU32Index(indices: []const u32, index: usize) bool {
+        for (indices) |candidate| if (candidate == index) return true;
+        return false;
+    }
+
+    fn tryHandleVirtualCall(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        input: typ.TypedExpr,
+        s: *Scope,
+    ) SemErr!?typ.TypedExpr {
+        if (call.module_qualifier != null or call.type_arguments != null or call.type_arguments_struct != null) return null;
+        if (input.ty != .struct_type or input.node.content != .struct_value_literal) return null;
+
+        const input_type = input.ty.struct_type;
+        const input_value = input.node.content.struct_value_literal;
+        for (input_type.fields, 0..) |actual_field, self_index| {
+            const abstract_type = virtualAbstractType(actual_field.ty) orelse continue;
+            if (actual_field.ty != .pointer_type) continue;
+            const info = s.lookupAbstractInfo(abstract_type.name) orelse return error.SymbolNotFound;
+
+            for (info.requirements, 0..) |*requirement, method_index| {
+                if (!std.mem.eql(u8, requirement.name, call.callee)) continue;
+                if (!containsU32Index(requirement.input_pointer_self_indices, self_index)) continue;
+                if (requirement.input_self_indices.len != 0 or
+                    requirement.output_self_indices.len != 0 or
+                    requirement.output_pointer_self_indices.len != 0)
+                {
+                    try self.diags.add(call.callee_loc, .semantic, "Abstract method '{s}' is not virtual-safe because Self escapes by value or output", .{call.callee});
+                    return error.Reported;
+                }
+                if (requirement.input.fields.len != input_type.fields.len) continue;
+
+                var compatible = true;
+                for (requirement.input.fields, 0..) |expected_field, field_index| {
+                    if (!std.mem.eql(u8, expected_field.name, input_type.fields[field_index].name)) {
+                        compatible = false;
+                        break;
+                    }
+                    if (field_index == self_index) {
+                        if (expected_field.ty != .pointer_type or
+                            !typ.pointerMutabilityCompatible(expected_field.ty.pointer_type.mutability, actual_field.ty.pointer_type.mutability))
+                        {
+                            compatible = false;
+                            break;
+                        }
+                    } else if (!typ.typesCompatible(expected_field.ty, input_type.fields[field_index].ty)) {
+                        compatible = false;
+                        break;
+                    }
+                }
+                if (!compatible) continue;
+
+                const virtual_call = try self.allocator.create(sg.VirtualCall);
+                virtual_call.* = .{
+                    .handle = input_value.fields[self_index].value,
+                    .input = input.node,
+                    .self_input_index = @intCast(self_index),
+                    .method_index = @intCast(method_index),
+                    .method_count = @intCast(info.requirements.len),
+                    .method_name = requirement.name,
+                    .input_type = &requirement.input,
+                    .output_type = &requirement.output,
+                    .self_permission = requirement.input.fields[self_index].ty.pointer_type.mutability,
+                };
+                const node = try sg.makeSGNode(.{ .virtual_call = virtual_call }, call.callee_loc, self.allocator);
+                const result_type: sg.Type = switch (requirement.output.fields.len) {
+                    0 => .{ .builtin = .Any },
+                    1 => requirement.output.fields[0].ty,
+                    else => .{ .struct_type = &requirement.output },
+                };
+                node.sem_type = result_type;
+                return .{ .node = node, .ty = result_type };
+            }
+        }
+        return null;
     }
 
     fn handleNullableUnwrapCall(

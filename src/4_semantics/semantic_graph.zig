@@ -46,6 +46,7 @@ pub const Content = union(enum) {
 
     function_call: *FunctionCall,
     virtualize: *const Virtualize,
+    virtual_call: *const VirtualCall,
     code_block: *CodeBlock,
     value_literal: ValueLiteral,
     choice_literal: *const ChoiceLiteral,
@@ -528,6 +529,19 @@ pub const Virtualize = struct {
     concrete_type: Type,
     abstract_type: *const AbstractType,
     virtual_type: *const StructType,
+    methods: []const *const FunctionDeclaration,
+};
+
+pub const VirtualCall = struct {
+    handle: *const SGNode,
+    input: *const SGNode,
+    self_input_index: u32,
+    method_index: u32,
+    method_count: u32,
+    method_name: []const u8,
+    input_type: *const StructType,
+    output_type: *const StructType,
+    self_permission: syn.PointerMutability,
 };
 
 pub const ReachDirective = struct {

@@ -3244,6 +3244,26 @@ test "feature_tests/polymorphism/27X_virtual_temporal_envelope" {
     );
 }
 
+test "feature_tests/polymorphism/28X_virtual_exclusive_invalidation" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/28X_virtual_exclusive_invalidation",
+        "reference 'pointer' is no longer valid",
+    );
+}
+
+test "feature_tests/polymorphism/29_virtual_heterogeneous_dispatch" {
+    const test_path = "tests/feature_tests/polymorphism/29_virtual_heterogeneous_dispatch";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/polymorphism/30X_virtual_rejects_self_output" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/30X_virtual_rejects_self_output",
+        "is not virtual-safe because Self escapes by value or output",
+    );
+}
+
 test "feature_tests/text/10_string_view_c_string_storage" {
     const test_path = "tests/feature_tests/text/10_string_view_c_string_storage";
     try expectSuccessfulBuild(test_path);

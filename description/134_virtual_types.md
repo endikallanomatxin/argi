@@ -31,19 +31,26 @@ Un método del `Abstract` es **virtual-safe** si, tras el borrado de tipo:
 
 ```argi
 Virtual#(.abstract: Abstract) : Type = (
-  .allocator: &Allocator
-  .data_ptr : &Any        -- fat pointer al dato
-  .vtable   : &VTable#(abstract)
-  .meta     : Meta        -- type_id, drop_fn, flags, storage, etc.
+  .data   : $&Any
+  .vtable : &Any
 )
 ```
 
-The compiler baseline represents `Virtual#(.abstract: A)` as the identified fat
-pointer `{ data, vtable }`. `to_virtual#(.abstract: A)(.value = ref)` verifies
-that the concrete referent implements `A`, erases its data pointer, and carries
-the referent as the handle's conservative temporal envelope. The vtable slot is
-reserved in the ABI; generation of method thunks and indirect dispatch is the
-remaining step before Virtual is usable for calls.
+The compiler represents `Virtual#(.abstract: A)` as the identified fat pointer
+`{ data, vtable }`. `to_virtual#(.abstract: A)(.value = ref)` verifies that the
+concrete referent implements `A`, erases its data pointer, and constructs a
+vtable ordered by the requirements in `A`.
+
+Calls using `&Virtual`, `$&Virtual`, or `$$&Virtual` as the requirement's `Self`
+argument are lowered to an indirect call through that vtable. Argi's internal
+storage-address ABI already gives every concrete implementation an erased,
+layout-compatible call shape, so no copying thunk is required for supported
+virtual-safe signatures. Primitive/POD/reference inputs and outputs, multiple
+outputs, and heterogeneous collections of one Virtual type share this path.
+
+The current handle is borrowed: it does not allocate or own the concrete value.
+An owning Virtual form can add allocator/drop metadata later without changing
+the dispatch or temporal-envelope rules.
 
 Pointer casts through `Any` preserve provenance. Erasing and recovering the
 data pointer therefore cannot hide use-after-invalidation from the temporal
@@ -52,35 +59,34 @@ checker.
 ## Creación
 
 ```argi
-s : Rectangle = (1, 2)
-vs := s | to_virtual(_, Shape, system.allocator)
+s :: Rectangle = (1, 2)
+vs ::= to_virtual#(.abstract: Shape)(.value = $&s)
 ```
 
 ## Uso
 
 ```argi
-do_something (v: Virtual#(Shape)) -> () := {
-  v.vtable.draw(v.data_ptr)        -- call virtual-safe method
+do_something(.v: &Virtual#(.abstract: Shape)) -> () := {
+  draw(.self = v) -- indirect call through Shape's vtable
 }
 ```
 
-O más ergonómico y compatible:
-
-```argi
-do_something (v: Shape) -> () := {
-  draw(v)
-}
-```
-
-> [!CHECK] Es buena idea que Virtual#(Abstract) cumpla Abstract?
-> Lo hace muy cómodo. Hay que valorar si trae alguna complicación.
+`Virtual#(.abstract: Shape)` satisfies the virtual-safe callable surface of
+`Shape`; ordinary `Shape` inputs remain statically monomorphized.
 
 
 ## Interoperabilidad y ABI
 
-Pensar en como customizar el funcionamiento de Virtual para que encaje bien con distintos escenarios:
+The vtable order is the declaration order of the Abstract requirements. A
+method is rejected at the call site when `Self` escapes by value or through an
+output. Generic/free-Abstract signatures and multiple dispatch remain outside
+the virtual-safe subset.
 
-- Especificación del orden de las funciones.
+Future ABI customization may cover:
+
+- stable exported vtable layouts,
+- owning/drop metadata,
+- plugin and cross-module ABI versioning.
 - ...
 
 

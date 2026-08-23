@@ -123,6 +123,7 @@ pub const CodeGenerator = struct {
     runtime_argc_global: ?llvm.c.LLVMValueRef = null,
     runtime_argv_global: ?llvm.c.LLVMValueRef = null,
     string_literal_counter: u32 = 0,
+    virtual_table_counter: u32 = 0,
 
     loop_stack: std.array_list.Managed(LoopContext),
     binding_storage: std.AutoHashMap(*const sem.BindingDeclaration, BindingStorage),
@@ -424,6 +425,10 @@ pub const CodeGenerator = struct {
             },
             .virtualize => |virtualize| self.genVirtualize(virtualize) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating Virtual value: {s}", .{@errorName(e)});
+                return e;
+            },
+            .virtual_call => |virtual_call| self.genVirtualCall(virtual_call) catch |e| {
+                try self.diags.add(n.location, .codegen, "error generating Virtual call: {s}", .{@errorName(e)});
                 return e;
             },
             .struct_value_literal => |sl| self.genStructValueLiteral(sl) catch |e| {
@@ -2355,13 +2360,136 @@ pub const CodeGenerator = struct {
     fn genVirtualize(self: *CodeGenerator, virtualize: *const sem.Virtualize) CodegenError!TypedValue {
         const value = (try self.visitNode(virtualize.value)) orelse return CodegenError.ValueNotFound;
         if (c.LLVMGetTypeKind(value.type_ref) != c.LLVMPointerTypeKind) return CodegenError.InvalidType;
+
+        const opaque_pointer = c.LLVMPointerType(c.LLVMInt8Type(), 0);
+        var vtable_fields = try self.allocator.alloc(llvm.c.LLVMTypeRef, virtualize.methods.len);
+        var method_values = try self.allocator.alloc(llvm.c.LLVMValueRef, virtualize.methods.len);
+        for (virtualize.methods, 0..) |method, index| {
+            vtable_fields[index] = opaque_pointer;
+            const key = try self.functionSymbolKey(method);
+            var method_symbol = self.global_scope.lookup(key);
+            if (method_symbol == null) {
+                const input_type = try self.internalInputABIType(method);
+                const output_type = try self.internalOutputABIType(method);
+                var parameters = [_]llvm.c.LLVMTypeRef{ input_type, output_type };
+                const function_type = c.LLVMFunctionType(c.LLVMVoidType(), &parameters, 2, 0);
+                const name = try self.dupZ(key);
+                const function = c.LLVMAddFunction(self.module, name.ptr, function_type);
+                try self.global_scope.symbols.put(key, .{
+                    .cname = name,
+                    .mutability = .constant,
+                    .type_ref = function_type,
+                    .ref = function,
+                    .sem_type = null,
+                });
+                method_symbol = self.global_scope.lookup(key);
+            }
+            method_values[index] = method_symbol.?.ref;
+        }
+        const vtable_type = c.LLVMStructType(
+            if (vtable_fields.len == 0) null else vtable_fields.ptr,
+            @intCast(vtable_fields.len),
+            0,
+        );
+        const table_name_text = try std.fmt.allocPrint(self.allocator.*, "__argi_vtable_{d}", .{self.virtual_table_counter});
+        self.virtual_table_counter += 1;
+        const table_name = try self.dupZ(table_name_text);
+        const table = c.LLVMAddGlobal(self.module, vtable_type, table_name.ptr);
+        const initializer = c.LLVMConstNamedStruct(
+            vtable_type,
+            if (method_values.len == 0) null else method_values.ptr,
+            @intCast(method_values.len),
+        );
+        c.LLVMSetInitializer(table, initializer);
+        c.LLVMSetGlobalConstant(table, 1);
+
         const virtual_sem_type = sem.Type{ .struct_type = virtualize.virtual_type };
         const virtual_llvm_type = try self.toLLVMType(virtual_sem_type);
         var result = c.LLVMGetUndef(virtual_llvm_type);
         result = c.LLVMBuildInsertValue(self.builder, result, value.value_ref, 0, "virtual.data");
-        const vtable_type = c.LLVMStructGetTypeAtIndex(virtual_llvm_type, 1);
-        result = c.LLVMBuildInsertValue(self.builder, result, c.LLVMConstNull(vtable_type), 1, "virtual.vtable");
+        result = c.LLVMBuildInsertValue(self.builder, result, table, 1, "virtual.vtable");
         return .{ .value_ref = result, .type_ref = virtual_llvm_type, .sem_type = virtual_sem_type };
+    }
+
+    fn virtualAddressAggregateType(self: *CodeGenerator, count: usize) !llvm.c.LLVMTypeRef {
+        const opaque_pointer = c.LLVMPointerType(c.LLVMInt8Type(), 0);
+        const fields = try self.allocator.alloc(llvm.c.LLVMTypeRef, count);
+        for (fields) |*field| field.* = opaque_pointer;
+        return c.LLVMStructType(if (count == 0) null else fields.ptr, @intCast(count), 0);
+    }
+
+    fn genVirtualCall(self: *CodeGenerator, virtual_call: *const sem.VirtualCall) CodegenError!?TypedValue {
+        if (virtual_call.input.content != .struct_value_literal) return CodegenError.InvalidType;
+        const fields = virtual_call.input.content.struct_value_literal.fields;
+        if (virtual_call.self_input_index >= fields.len) return CodegenError.InvalidType;
+
+        const handle = (try self.visitNode(virtual_call.handle)) orelse return CodegenError.ValueNotFound;
+        if (c.LLVMGetTypeKind(handle.type_ref) != c.LLVMPointerTypeKind) return CodegenError.InvalidType;
+        const handle_type = try self.toLLVMType(handle.sem_type.?.pointer_type.child.*);
+        const data_address = c.LLVMBuildStructGEP2(self.builder, handle_type, handle.value_ref, 0, "virtual.data.addr");
+        const vtable_address = c.LLVMBuildStructGEP2(self.builder, handle_type, handle.value_ref, 1, "virtual.vtable.addr");
+        const opaque_pointer = c.LLVMPointerType(c.LLVMInt8Type(), 0);
+        const data = c.LLVMBuildLoad2(self.builder, opaque_pointer, data_address, "virtual.data");
+        const vtable = c.LLVMBuildLoad2(self.builder, opaque_pointer, vtable_address, "virtual.vtable");
+
+        const vtable_type = try self.virtualAddressAggregateType(virtual_call.method_count);
+        const method_address = c.LLVMBuildStructGEP2(
+            self.builder,
+            vtable_type,
+            vtable,
+            virtual_call.method_index,
+            "virtual.method.addr",
+        );
+        const method = c.LLVMBuildLoad2(self.builder, opaque_pointer, method_address, "virtual.method");
+
+        const input_abi_type = try self.virtualAddressAggregateType(fields.len);
+        var input_aggregate = c.LLVMGetUndef(input_abi_type);
+        for (fields, 0..) |field, index| {
+            const storage = if (index == virtual_call.self_input_index) blk: {
+                const pointer_storage = c.LLVMBuildAlloca(self.builder, opaque_pointer, "virtual.self.storage");
+                _ = c.LLVMBuildStore(self.builder, data, pointer_storage);
+                break :blk pointer_storage;
+            } else blk: {
+                const argument = (try self.visitNode(field.value)) orelse return CodegenError.ValueNotFound;
+                const argument_storage = c.LLVMBuildAlloca(self.builder, argument.type_ref, "virtual.arg.storage");
+                _ = c.LLVMBuildStore(self.builder, argument.value_ref, argument_storage);
+                break :blk argument_storage;
+            };
+            input_aggregate = c.LLVMBuildInsertValue(self.builder, input_aggregate, storage, @intCast(index), "virtual.arg");
+        }
+
+        const output_abi_type = try self.virtualAddressAggregateType(virtual_call.output_type.fields.len);
+        var output_aggregate = c.LLVMGetUndef(output_abi_type);
+        var output_storage = try self.allocator.alloc(llvm.c.LLVMValueRef, virtual_call.output_type.fields.len);
+        for (virtual_call.output_type.fields, 0..) |field, index| {
+            const field_type = try self.toLLVMType(field.ty);
+            output_storage[index] = c.LLVMBuildAlloca(self.builder, field_type, "virtual.out.storage");
+            output_aggregate = c.LLVMBuildInsertValue(self.builder, output_aggregate, output_storage[index], @intCast(index), "virtual.out");
+        }
+
+        var parameters = [_]llvm.c.LLVMTypeRef{ input_abi_type, output_abi_type };
+        const method_type = c.LLVMFunctionType(c.LLVMVoidType(), &parameters, 2, 0);
+        var arguments = [_]llvm.c.LLVMValueRef{ input_aggregate, output_aggregate };
+        _ = c.LLVMBuildCall2(self.builder, method_type, method, &arguments, 2, "");
+
+        switch (virtual_call.output_type.fields.len) {
+            0 => return null,
+            1 => {
+                const output_type = try self.toLLVMType(virtual_call.output_type.fields[0].ty);
+                const output = c.LLVMBuildLoad2(self.builder, output_type, output_storage[0], "virtual.out.load");
+                return .{ .value_ref = output, .type_ref = output_type, .sem_type = virtual_call.output_type.fields[0].ty };
+            },
+            else => {
+                const result_type = try self.toLLVMType(.{ .struct_type = virtual_call.output_type });
+                var result = c.LLVMGetUndef(result_type);
+                for (virtual_call.output_type.fields, 0..) |field, index| {
+                    const field_type = try self.toLLVMType(field.ty);
+                    const output = c.LLVMBuildLoad2(self.builder, field_type, output_storage[index], "virtual.out.load");
+                    result = c.LLVMBuildInsertValue(self.builder, result, output, @intCast(index), "virtual.out.pack");
+                }
+                return .{ .value_ref = result, .type_ref = result_type, .sem_type = .{ .struct_type = virtual_call.output_type } };
+            },
+        }
     }
 
     fn genFunctionCallWithDestination(
