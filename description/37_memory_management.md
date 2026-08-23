@@ -669,6 +669,13 @@ addresses. Direct binding initialization, assignment, field storage, array
 storage and pointer storage can therefore construct a returned value in its
 final location.
 
+The memory-safety pass mirrors that lowering. A self-dependent output is
+remapped to the exact destination `Place` for bindings, fields, array elements,
+and indirect `$$&` stores. Replacing a whole referent invalidates the old
+referent epoch, not the independent objects mentioned by its former hidden
+dependencies; the exclusive destination capability is then refreshed to the
+new post-state.
+
 Function summaries record when an output contains references into its own
 destination. Such a result may use the direct destination forms above, but is
 rejected when embedded in a larger value expression that would first materialize

@@ -303,6 +303,7 @@ pub const MemorySafetyAnalyzer = struct {
                         self.allocator,
                     );
                     try self.recordInvalidation(place, node.location, state);
+                    try self.updateStoredPlaceFact(place, store.value, state);
                 }
             },
             .struct_field_store => |store| {
@@ -315,7 +316,7 @@ pub const MemorySafetyAnalyzer = struct {
                         self.allocator,
                     );
                     try self.recordInvalidation(place, node.location, state);
-                    try self.updateStoredFieldFact(base_place.root, store.field_index, store.value, state);
+                    try self.updateStoredPlaceFact(place, store.value, state);
                 }
             },
             .pointer_assignment => |assignment| {
@@ -325,6 +326,7 @@ pub const MemorySafetyAnalyzer = struct {
                     if (pointer_ty == .pointer_type and pointer_ty.pointer_type.mutability == .exclusive) {
                         if (try self.referenceFactFromValue(assignment.pointer, state)) |fact| {
                             for (fact.captured) |captured| {
+                                if (captured.value_path.len != 0) continue;
                                 if (assignment.value.content == .struct_value_literal and pointer_ty.pointer_type.child.* == .struct_type) {
                                     for (assignment.value.content.struct_value_literal.fields, 0..) |field, field_index| {
                                         if (fieldCopiesSameReferentField(field.value, assignment.pointer, @intCast(field_index))) continue;
@@ -626,25 +628,9 @@ pub const MemorySafetyAnalyzer = struct {
     ) !void {
         var captured = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
         defer captured.deinit();
-        if (try self.referenceFactFromValue(value, state)) |fact| {
+        const destination = temporal_place.Place{ .root = binding, .projections = &.{} };
+        if (try self.referenceFactForStableDestination(value, destination, state)) |fact| {
             try captured.appendSlice(fact.captured);
-        }
-        if (value.content == .function_call and value.content.function_call.callee.output.fields.len == 1) {
-            const call = value.content.function_call;
-            if (call.callee.temporal_summary == null) _ = try self.inferFunctionSummaryPass(call.callee);
-            if (call.callee.temporal_summary) |summary| {
-                for (summary.address_dependent_outputs) |dependency| {
-                    if (dependency.output_index != 0) continue;
-                    try captured.append(.{
-                        .place = .{
-                            .root = binding,
-                            .projections = try temporalPathToPlacePath(dependency.target_path, self.allocator),
-                        },
-                        .capture_sequence = self.next_sequence - 1,
-                        .value_path = try temporalPathToPlacePath(dependency.value_path, self.allocator),
-                    });
-                }
-            }
         }
         if (captured.items.len > 0) {
             try state.references.put(binding, .{ .captured = try captured.toOwnedSlice() });
@@ -653,30 +639,21 @@ pub const MemorySafetyAnalyzer = struct {
         }
     }
 
-    fn updateStoredFieldFact(
+    fn updateStoredPlaceFact(
         self: *MemorySafetyAnalyzer,
-        binding: *const sg.BindingDeclaration,
-        field_index: u32,
+        destination: temporal_place.Place,
         value: *const sg.SGNode,
         state: *FunctionState,
     ) !void {
-        var captured = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
-        defer captured.deinit();
-        if (state.references.get(binding)) |existing| {
-            for (existing.captured) |dependency| {
-                if (dependency.value_path.len > 0 and dependency.value_path[0] == .field and
-                    dependency.value_path[0].field == field_index) continue;
-                try captured.append(dependency);
-            }
-        }
-        if (try self.factFromProjectedValue(value, .{ .field = field_index }, state)) |replacement| {
-            try captured.appendSlice(replacement.captured);
-        }
-        if (captured.items.len == 0) {
-            _ = state.references.remove(binding);
-        } else {
-            try state.references.put(binding, .{ .captured = try captured.toOwnedSlice() });
-        }
+        const replacement = try self.referenceFactForStableDestination(value, destination, state) orelse
+            ReferenceFact{ .captured = &.{} };
+        try self.replaceDependenciesAtValuePath(
+            destination.root,
+            placeValuePath(destination),
+            replacement,
+            &.{},
+            state,
+        );
     }
 
     /// A direct `p& = value` replaces the dependencies stored in `p`'s
@@ -692,17 +669,63 @@ pub const MemorySafetyAnalyzer = struct {
         defer captured.deinit();
         if (state.references.get(pointer_binding)) |existing| {
             for (existing.captured) |dependency| {
-                if (dependency.value_path.len == 0) try captured.append(dependency);
+                if (dependency.value_path.len != 0) continue;
+                var refreshed = dependency;
+                refreshed.capture_sequence = self.next_sequence - 1;
+                try captured.append(refreshed);
+
+                const replacement = try self.referenceFactForStableDestination(value, dependency.place, state) orelse
+                    ReferenceFact{ .captured = &.{} };
+                try captured.appendSlice(replacement.captured);
+                try self.replaceDependenciesAtValuePath(
+                    dependency.place.root,
+                    placeValuePath(dependency.place),
+                    replacement,
+                    &.{},
+                    state,
+                );
             }
-        }
-        if (try self.referenceFactFromValue(value, state)) |replacement| {
-            try captured.appendSlice(replacement.captured);
         }
         if (captured.items.len == 0) {
             _ = state.references.remove(pointer_binding);
         } else {
             try state.references.put(pointer_binding, .{ .captured = try captured.toOwnedSlice() });
         }
+    }
+
+    fn placeValuePath(place: temporal_place.Place) []const temporal_place.Projection {
+        if (place.projections.len > 0 and place.projections[0] == .dereference)
+            return place.projections[1..];
+        return place.projections;
+    }
+
+    fn referenceFactForStableDestination(
+        self: *MemorySafetyAnalyzer,
+        value: *const sg.SGNode,
+        destination: temporal_place.Place,
+        state: *const FunctionState,
+    ) anyerror!?ReferenceFact {
+        var captured = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
+        defer captured.deinit();
+        if (try self.referenceFactFromValue(value, state)) |fact| try captured.appendSlice(fact.captured);
+
+        if (value.content == .function_call and value.content.function_call.callee.output.fields.len == 1) {
+            const call = value.content.function_call;
+            if (call.callee.temporal_summary == null) _ = try self.inferFunctionSummaryPass(call.callee);
+            if (call.callee.temporal_summary) |summary| {
+                for (summary.address_dependent_outputs) |dependency| {
+                    if (dependency.output_index != 0) continue;
+                    try captured.append(.{
+                        .place = try appendSummaryPath(destination, dependency.target_path, self.allocator),
+                        .capture_sequence = self.next_sequence - 1,
+                        .value_path = try temporalPathToPlacePath(dependency.value_path, self.allocator),
+                    });
+                }
+            }
+        }
+
+        if (captured.items.len == 0) return null;
+        return .{ .captured = try captured.toOwnedSlice() };
     }
 
     fn replaceDependenciesAtValuePath(
