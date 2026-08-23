@@ -3131,6 +3131,19 @@ test "feature_tests/ownership/109X_raw_extern_requires_boundary" {
     );
 }
 
+test "feature_tests/ownership/110X_interprocedural_dependency_transition_conservative" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/110X_interprocedural_dependency_transition_conservative",
+        "reference 'holder' is no longer valid; it refers to 'second'",
+    );
+}
+
+test "feature_tests/ownership/111_interprocedural_dependency_transition_unrelated" {
+    const test_path = "tests/feature_tests/ownership/111_interprocedural_dependency_transition_unrelated";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/ownership/74X_extern_exclusive_invalidation" {
     try buildExpectFail(
         "tests/feature_tests/ownership/74X_extern_exclusive_invalidation",

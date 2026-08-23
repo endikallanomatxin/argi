@@ -238,6 +238,7 @@ pub const MemorySafetyAnalyzer = struct {
         const summary = try self.allocator.create(sg.TemporalSummary);
         summary.* = .{
             .is_widened = true,
+            .unknown_dependency_transitions = true,
             .return_dependencies = try returns.toOwnedSlice(),
             .dependency_transitions = &.{},
             .invalidations = try invalidations.toOwnedSlice(),
@@ -1533,6 +1534,14 @@ pub const MemorySafetyAnalyzer = struct {
         const input = call.input.content.struct_value_literal;
         if (call.callee.temporal_summary == null) _ = try self.inferFunctionSummaryPass(call.callee);
         if (call.callee.temporal_summary) |summary| {
+            if (summary.unknown_dependency_transitions) {
+                for (input.fields) |field| {
+                    const fact = try self.referenceFactFromValue(field.value, state) orelse continue;
+                    for (fact.captured) |captured| {
+                        try self.recordInvalidation(captured.place, call_node.location, state);
+                    }
+                }
+            }
             for (summary.invalidations) |invalidation| {
                 if (invalidation.input_index >= input.fields.len) continue;
                 const actual = input.fields[invalidation.input_index].value;
@@ -2317,6 +2326,7 @@ pub const MemorySafetyAnalyzer = struct {
     fn temporalSummariesEqual(left: ?*const sg.TemporalSummary, right: ?*const sg.TemporalSummary) bool {
         if (left == null or right == null) return left == right;
         if (left.?.is_widened != right.?.is_widened) return false;
+        if (left.?.unknown_dependency_transitions != right.?.unknown_dependency_transitions) return false;
         if (left.?.return_dependencies.len != right.?.return_dependencies.len or
             left.?.dependency_transitions.len != right.?.dependency_transitions.len or
             left.?.invalidations.len != right.?.invalidations.len or

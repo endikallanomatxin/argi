@@ -382,6 +382,12 @@ The compiler treats the dependency information as a temporal refinement/state
 attached to the value. Composite values aggregate the dependencies of the
 reference-bearing state they contain.
 
+That aggregation follows the complete finite by-value layout. Implementations
+must not drop a dependency merely because it occurs below a fixed nesting
+depth. Recursive pointee graphs may be cycle-detected and collapsed to an
+opaque dependency envelope, but the collapse is conservative: it means an
+unknown dependency, never no dependency.
+
 For dynamic containers the compiler cannot enumerate an unbounded runtime set
 of concrete roots. In those cases it may use a symbolic/common dependency
 envelope internally. This is effectively hidden lifetime polymorphism, but it
@@ -433,6 +439,13 @@ A summary may contain, as needed:
 - storage/root effects,
 - post-state temporal dependencies,
 - symbolic provenance variables and relations.
+
+Summary and loop inference use conservative fixed points. A loop header joins
+the entry state on every iteration, representing zero or more executions:
+`H(n+1) = join(entry, body(Hn))`. If summary inference requires widening, an
+unknown dependency-transition envelope is retained. Widening may reject more
+programs, but it must never erase a possible post-state transition and thereby
+accept an unsafe one.
 
 Most summaries are inferred. Functions whose implementation is unavailable or
 whose storage behavior crosses through raw addresses may state the small part
@@ -534,6 +547,13 @@ marks code whose pointer-to-integer operations prevent the checker from
 reconstructing a store's provenance. Both are auditable unsafe boundaries, not
 general permission shortcuts: ordinary code should use inferred summaries and
 `$$&` for temporal transitions.
+
+Reconstituting a pointer from `UIntNative` requires one of those boundaries.
+Likewise, raw extern allocation/deallocation primitives are callable only from
+raw or trusted code. Safe Core wrappers remain ordinary call targets and expose
+fresh roots and exact invalidations through their temporal contracts; callers
+cannot use a freed allocation merely because its address passed through an
+integer representation.
 
 An extern function without a precise contract is handled conservatively. An
 exclusive input may have its whole referent envelope invalidated, and a result

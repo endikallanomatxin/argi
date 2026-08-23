@@ -423,6 +423,10 @@ pub const TemporalContract = struct {
 /// source-level function types.
 pub const TemporalSummary = struct {
     is_widened: bool = false,
+    // Set when fixed-point inference cannot retain a finite set of precise
+    // post-state transitions. Callers must treat every dependency-carrying
+    // input as potentially transitioned.
+    unknown_dependency_transitions: bool = false,
     return_dependencies: []const ReturnDependency = &.{},
     dependency_transitions: []const DependencyTransition = &.{},
     invalidations: []const InvalidationFootprint = &.{},
