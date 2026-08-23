@@ -601,6 +601,12 @@ A value with no address-dependent references can move normally. A value with a
 live reference to inline storage, or with a self-reference, may require stable
 storage.
 
+Internal calls pass the addresses of their input storage. A consuming
+`~value` argument can therefore reuse the caller's backing storage instead of
+being copied through an LLVM aggregate. Return values and container placement
+still need their own destination-passing lowering before the same guarantee can
+be extended to those positions.
+
 This means address stability can often emerge from provenance instead of
 requiring a general source-level `Pin<T>` property.
 

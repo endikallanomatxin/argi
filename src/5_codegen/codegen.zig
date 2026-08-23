@@ -740,6 +740,21 @@ pub const CodeGenerator = struct {
         return try self.mangledNameFor(f);
     }
 
+    /// Internal calls pass an aggregate of storage addresses. A transferred
+    /// argument can therefore keep using its original backing storage instead
+    /// of being copied through an LLVM value aggregate at the call boundary.
+    fn internalInputABIType(self: *CodeGenerator, f: *const sem.FunctionDeclaration) !llvm.c.LLVMTypeRef {
+        var fields = try self.allocator.alloc(llvm.c.LLVMTypeRef, f.input.fields.len);
+        for (f.input.fields, 0..) |field, index| {
+            fields[index] = c.LLVMPointerType(try self.toLLVMType(field.ty), 0);
+        }
+        return c.LLVMStructType(
+            if (fields.len == 0) null else fields.ptr,
+            @intCast(fields.len),
+            0,
+        );
+    }
+
     fn genFunction(self: *CodeGenerator, f: *sem.FunctionDeclaration) !void {
         const prev_fn = self.current_fn_decl;
         self.current_fn_decl = f;
@@ -766,7 +781,7 @@ pub const CodeGenerator = struct {
             return_ty = sig.ret_ty;
             uses_sret = sig.sret;
         } else {
-            const input_ty = try self.toLLVMType(.{ .struct_type = &f.input });
+            const input_ty = try self.internalInputABIType(f);
             return_ty = try self.toLLVMType(.{ .struct_type = &f.output });
             fn_ty = c.LLVMFunctionType(
                 return_ty,
@@ -840,29 +855,27 @@ pub const CodeGenerator = struct {
         self.current_return_type = return_ty;
         defer self.current_return_type = prev_rt;
 
-        // registrar parámetros de entrada
-        for (f.input.fields) |fld| {
-            const bd = sem.BindingDeclaration{
-                .name = fld.name,
-                .location = f.location,
-                .origin_file = f.location.file,
-                .mutability = syn.Mutability.constant,
-                .ty = fld.ty,
-                .initialization = null,
-            };
-            self.genBindingDecl(&bd) catch |err| {
-                try self.diags.add(f.location, .codegen, "error generating input binding '{s}' in function {s}: {s}", .{ fld.name, f.name, @errorName(err) });
-                return err;
-            };
-        }
-
-        // extraer struct-input
+        // Each input binding directly aliases the storage selected by the
+        // caller. Non-transfer arguments use caller-owned temporary storage;
+        // `~binding` reuses the binding's existing storage.
         const param_agg = c.LLVMGetParam(fn_ref, 0);
         for (f.input.fields, 0..) |fld, i| {
-            const sym = self.current_scope.lookup(fld.name).?;
-            const v = c.LLVMBuildExtractValue(self.builder, param_agg, @intCast(i), "arg");
-            _ = c.LLVMBuildStore(self.builder, v, sym.ref);
-            sym.initialized = true;
+            const storage = c.LLVMBuildExtractValue(self.builder, param_agg, @intCast(i), "arg.storage");
+            const cname = try self.dupZ(fld.name);
+            const field_ty = try self.toLLVMType(fld.ty);
+            try self.current_scope.symbols.put(fld.name, .{
+                .cname = cname,
+                .mutability = syn.Mutability.constant,
+                .type_ref = field_ty,
+                .ref = storage,
+                .sem_type = fld.ty,
+                .initialized = true,
+            });
+            try self.binding_storage_by_name.put(fld.name, .{
+                .ref = storage,
+                .type_ref = field_ty,
+                .sem_type = fld.ty,
+            });
         }
 
         // registrar parámetros de salida
@@ -1465,7 +1478,7 @@ pub const CodeGenerator = struct {
         const key_name = try self.functionSymbolKey(deinit_fn);
         var fn_sym_opt = self.global_scope.lookup(key_name);
         if (fn_sym_opt == null) {
-            const in_ty = try self.toLLVMType(.{ .struct_type = &deinit_fn.input });
+            const in_ty = try self.internalInputABIType(deinit_fn);
             const out_ty = try self.toLLVMType(.{ .struct_type = &deinit_fn.output });
             var params = try self.allocator.alloc(llvm.c.LLVMTypeRef, 1);
             defer self.allocator.free(params);
@@ -1491,7 +1504,7 @@ pub const CodeGenerator = struct {
         const llvm_arg_ty = try self.toLLVMType(arg_sem_ty);
         if (c.LLVMTypeOf(ptr) != llvm_arg_ty) return CodegenError.InvalidType;
 
-        const input_ty = try self.toLLVMType(.{ .struct_type = &deinit_fn.input });
+        const input_ty = try self.internalInputABIType(deinit_fn);
         var arg_struct = c.LLVMGetUndef(input_ty);
         const input_fields = if (input_override) |input_node|
             switch (input_node.content) {
@@ -1522,7 +1535,10 @@ pub const CodeGenerator = struct {
                 const tv = (self.visitNode(default_node) catch return) orelse return;
                 break :blk tv.value_ref;
             };
-            arg_struct = c.LLVMBuildInsertValue(self.builder, arg_struct, field_value, @intCast(idx), "autodeinit.arg");
+            const field_type = try self.toLLVMType(field.ty);
+            const field_storage = c.LLVMBuildAlloca(self.builder, field_type, "autodeinit.arg.storage");
+            _ = c.LLVMBuildStore(self.builder, field_value, field_storage);
+            arg_struct = c.LLVMBuildInsertValue(self.builder, arg_struct, field_storage, @intCast(idx), "autodeinit.arg");
         }
 
         var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, 1);
@@ -2242,6 +2258,34 @@ pub const CodeGenerator = struct {
     }
 
     // ────────────────────────────────────────── call ──
+    fn genInternalCallInput(self: *CodeGenerator, callee: *const sem.FunctionDeclaration, input: *const sem.SGNode) CodegenError!llvm.c.LLVMValueRef {
+        if (input.content != .struct_value_literal) return CodegenError.InvalidType;
+        const literal = input.content.struct_value_literal;
+        if (literal.fields.len != callee.input.fields.len) return CodegenError.InvalidType;
+
+        const abi_type = try self.internalInputABIType(callee);
+        var aggregate = c.LLVMGetUndef(abi_type);
+        for (literal.fields, 0..) |field, index| {
+            const storage = if (field.value.content == .move_value and field.value.content.move_value.content == .binding_use) blk: {
+                const binding = field.value.content.move_value.content.binding_use;
+                const source = self.current_scope.lookup(binding.name) orelse return CodegenError.SymbolNotFound;
+                if (source.sem_type == null or !sem_types.typesExactlyEqual(source.sem_type.?, callee.input.fields[index].ty))
+                    return CodegenError.InvalidType;
+                source.initialized = false;
+                break :blk source.ref;
+            } else blk: {
+                const value = (try self.visitNode(field.value)) orelse return CodegenError.ValueNotFound;
+                const expected_type = try self.toLLVMType(callee.input.fields[index].ty);
+                if (value.type_ref != expected_type) return CodegenError.InvalidType;
+                const temporary = c.LLVMBuildAlloca(self.builder, expected_type, "call.arg.storage");
+                _ = c.LLVMBuildStore(self.builder, value.value_ref, temporary);
+                break :blk temporary;
+            };
+            aggregate = c.LLVMBuildInsertValue(self.builder, aggregate, storage, @intCast(index), "call.arg");
+        }
+        return aggregate;
+    }
+
     fn genFunctionCall(self: *CodeGenerator, fc: *const sem.FunctionCall) CodegenError!?TypedValue {
         const key_name = try self.functionSymbolKey(fc.callee);
         const callee_decl = fc.callee;
@@ -2252,7 +2296,7 @@ pub const CodeGenerator = struct {
         if (!is_extern) {
             if (sym_opt == null) {
                 // Create a forward declaration for internal function not yet emitted (e.g., monomorphized later)
-                const in_ty = try self.toLLVMType(.{ .struct_type = &callee_decl.input });
+                const in_ty = try self.internalInputABIType(callee_decl);
                 const out_ty = try self.toLLVMType(.{ .struct_type = &callee_decl.output });
                 const fnty = c.LLVMFunctionType(out_ty, blk: {
                     var a = try self.allocator.alloc(llvm.c.LLVMTypeRef, 1);
@@ -2269,7 +2313,7 @@ pub const CodeGenerator = struct {
             const ret_ty = c.LLVMGetReturnType(fn_ty);
 
             var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, 1);
-            argv[0] = (try self.visitNode(fc.input)).?.value_ref;
+            argv[0] = try self.genInternalCallInput(callee_decl, fc.input);
 
             const call_name = if (ret_ty == c.LLVMVoidType()) "" else "call";
             const call_val = c.LLVMBuildCall2(
@@ -2365,9 +2409,12 @@ pub const CodeGenerator = struct {
         if (user_field_count > 0 and args_tv_opt == null)
             return CodegenError.ValueNotFound;
 
-        const init_input_ty_ref = try self.toLLVMType(.{ .struct_type = &ti.init_fn.input });
+        const init_input_ty_ref = try self.internalInputABIType(ti.init_fn);
         var agg = c.LLVMGetUndef(init_input_ty_ref);
-        agg = c.LLVMBuildInsertValue(self.builder, agg, storage, 0, "ctor.arg.p");
+        const destination_pointer_type = try self.toLLVMType(ti.init_fn.input.fields[0].ty);
+        const destination_pointer_storage = c.LLVMBuildAlloca(self.builder, destination_pointer_type, "ctor.arg.p.storage");
+        _ = c.LLVMBuildStore(self.builder, storage, destination_pointer_storage);
+        agg = c.LLVMBuildInsertValue(self.builder, agg, destination_pointer_storage, 0, "ctor.arg.p");
 
         if (user_field_count > 0) {
             const args_tv = args_tv_opt.?;
@@ -2379,10 +2426,13 @@ pub const CodeGenerator = struct {
                     @intCast(i),
                     "ctor.arg.extract",
                 );
+                const field_type = try self.toLLVMType(ti.init_fn.input.fields[i + 1].ty);
+                const field_storage = c.LLVMBuildAlloca(self.builder, field_type, "ctor.arg.storage");
+                _ = c.LLVMBuildStore(self.builder, extracted, field_storage);
                 agg = c.LLVMBuildInsertValue(
                     self.builder,
                     agg,
-                    extracted,
+                    field_storage,
                     @intCast(i + 1),
                     "ctor.arg.insert",
                 );
@@ -2392,7 +2442,7 @@ pub const CodeGenerator = struct {
         const key_name = try self.functionSymbolKey(ti.init_fn);
         var sym_opt = self.global_scope.lookup(key_name);
         if (sym_opt == null) {
-            const in_ty_ref = init_input_ty_ref;
+            const in_ty_ref = try self.internalInputABIType(ti.init_fn);
             const out_ty_ref = try self.toLLVMType(.{ .struct_type = &ti.init_fn.output });
             const fnty = c.LLVMFunctionType(
                 out_ty_ref,
@@ -3299,9 +3349,12 @@ pub const CodeGenerator = struct {
         const init_fn = self.findZeroArgInitForType(ty) orelse return CodegenError.ValueNotFound;
         const result_ty_ref = try self.toLLVMType(ty);
         const storage = c.LLVMBuildAlloca(self.builder, result_ty_ref, "main.ctor.tmp");
-        const init_input_ty_ref = try self.toLLVMType(.{ .struct_type = &init_fn.input });
+        const init_input_ty_ref = try self.internalInputABIType(init_fn);
         var agg = c.LLVMGetUndef(init_input_ty_ref);
-        agg = c.LLVMBuildInsertValue(self.builder, agg, storage, 0, "main.ctor.arg.p");
+        const pointer_type = try self.toLLVMType(init_fn.input.fields[0].ty);
+        const pointer_storage = c.LLVMBuildAlloca(self.builder, pointer_type, "main.ctor.arg.p.storage");
+        _ = c.LLVMBuildStore(self.builder, storage, pointer_storage);
+        agg = c.LLVMBuildInsertValue(self.builder, agg, pointer_storage, 0, "main.ctor.arg.p");
 
         const key_name = try self.functionSymbolKey(init_fn);
         const fn_sym = self.global_scope.lookup(key_name) orelse return CodegenError.SymbolNotFound;
@@ -3589,13 +3642,15 @@ pub const CodeGenerator = struct {
         const argv_native = c.LLVMBuildPtrToInt(self.builder, argv_param, native_uint_ty, "argv.native");
         _ = c.LLVMBuildStore(self.builder, argv_native, self.runtime_argv_global.?);
 
-        var input_agg = c.LLVMGetUndef(try self.toLLVMType(.{ .struct_type = &user_main.input }));
+        var input_agg = c.LLVMGetUndef(try self.internalInputABIType(user_main));
         for (user_main.input.fields, 0..) |field, idx| {
             const field_tv = try self.genEntryInputFieldValue(field);
+            const field_storage = c.LLVMBuildAlloca(self.builder, field_tv.type_ref, "main.arg.storage");
+            _ = c.LLVMBuildStore(self.builder, field_tv.value_ref, field_storage);
             input_agg = c.LLVMBuildInsertValue(
                 self.builder,
                 input_agg,
-                field_tv.value_ref,
+                field_storage,
                 @intCast(idx),
                 "main.default",
             );
@@ -3641,10 +3696,12 @@ pub const CodeGenerator = struct {
         const argv_native = c.LLVMBuildPtrToInt(self.builder, argv_param, native_uint_ty, "argv.native");
         _ = c.LLVMBuildStore(self.builder, argv_native, self.runtime_argv_global.?);
 
-        var input_agg = c.LLVMGetUndef(try self.toLLVMType(.{ .struct_type = &user_test.input }));
+        var input_agg = c.LLVMGetUndef(try self.internalInputABIType(user_test));
         for (user_test.input.fields, 0..) |field, idx| {
             const field_tv = try self.genEntryInputFieldValue(field);
-            input_agg = c.LLVMBuildInsertValue(self.builder, input_agg, field_tv.value_ref, @intCast(idx), "test.default");
+            const field_storage = c.LLVMBuildAlloca(self.builder, field_tv.type_ref, "test.arg.storage");
+            _ = c.LLVMBuildStore(self.builder, field_tv.value_ref, field_storage);
+            input_agg = c.LLVMBuildInsertValue(self.builder, input_agg, field_storage, @intCast(idx), "test.default");
         }
 
         var argv = try self.allocator.alloc(llvm.c.LLVMValueRef, 1);
@@ -3691,8 +3748,11 @@ pub const CodeGenerator = struct {
                 const trace_alloca = c.LLVMBuildAlloca(self.builder, try self.toLLVMType(trace_ty), "test.trace.addr");
                 _ = c.LLVMBuildStore(self.builder, trace_value, trace_alloca);
 
-                var report_input = c.LLVMGetUndef(try self.toLLVMType(.{ .struct_type = &report_trace_fn.input }));
-                report_input = c.LLVMBuildInsertValue(self.builder, report_input, trace_alloca, 0, "test.report.trace");
+                var report_input = c.LLVMGetUndef(try self.internalInputABIType(report_trace_fn));
+                const trace_pointer_type = try self.toLLVMType(report_trace_fn.input.fields[0].ty);
+                const trace_pointer_storage = c.LLVMBuildAlloca(self.builder, trace_pointer_type, "test.report.trace.storage");
+                _ = c.LLVMBuildStore(self.builder, trace_alloca, trace_pointer_storage);
+                report_input = c.LLVMBuildInsertValue(self.builder, report_input, trace_pointer_storage, 0, "test.report.trace");
 
                 var report_args = [_]llvm.c.LLVMValueRef{report_input};
                 _ = c.LLVMBuildCall2(self.builder, report_sym.type_ref, report_sym.ref, &report_args, 1, "");

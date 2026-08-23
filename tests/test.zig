@@ -3044,11 +3044,10 @@ test "feature_tests/ownership/67_transfer_preserves_temporal_identity" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/68X_address_dependent_call_transfer" {
-    try buildExpectFail(
-        "tests/feature_tests/ownership/68X_address_dependent_call_transfer",
-        "cannot relocate address-dependent value 'node'",
-    );
+test "feature_tests/ownership/68_address_dependent_call_transfer" {
+    const test_path = "tests/feature_tests/ownership/68_address_dependent_call_transfer";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
 }
 
 test "feature_tests/ownership/69X_abstract_concrete_temporal_summary" {

@@ -74,6 +74,7 @@ pub const MemorySafetyAnalyzer = struct {
     symbolic_input_roots: std.AutoHashMap(*const sg.BindingDeclaration, SymbolicInputRoot),
     next_sequence: u64 = 1,
     inferring_summaries: bool = false,
+    stable_call_input_depth: usize = 0,
 
     pub fn init(
         allocator: *const std.mem.Allocator,
@@ -228,7 +229,9 @@ pub const MemorySafetyAnalyzer = struct {
                 try self.validateMoveRelocation(inner, node, state);
             },
             .function_call => |call| {
+                self.stable_call_input_depth += 1;
                 try self.analyzeNode(call.input, state);
+                self.stable_call_input_depth -= 1;
                 try self.recordConservativeCallInvalidations(call, node, state);
                 try self.applyCallDependencyTransitions(call, state);
             },
@@ -658,7 +661,7 @@ pub const MemorySafetyAnalyzer = struct {
         move_node: *const sg.SGNode,
         state: *const FunctionState,
     ) !void {
-        if (self.inferring_summaries or inner.content != .binding_use) return;
+        if (self.inferring_summaries or self.stable_call_input_depth > 0 or inner.content != .binding_use) return;
         const binding = inner.content.binding_use;
         const fact = state.references.get(binding) orelse return;
         for (fact.captured) |dependency| {
