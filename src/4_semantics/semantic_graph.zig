@@ -45,6 +45,7 @@ pub const Content = union(enum) {
     auto_deinit_binding: *AutoDeinitBinding,
 
     function_call: *FunctionCall,
+    virtualize: *const Virtualize,
     code_block: *CodeBlock,
     value_literal: ValueLiteral,
     choice_literal: *const ChoiceLiteral,
@@ -520,6 +521,13 @@ pub const AutoDeinitField = struct {
 pub const FunctionCall = struct {
     callee: *const FunctionDeclaration,
     input: *const SGNode, // Arguments
+};
+
+pub const Virtualize = struct {
+    value: *const SGNode,
+    concrete_type: Type,
+    abstract_type: *const AbstractType,
+    virtual_type: *const StructType,
 };
 
 pub const ReachDirective = struct {

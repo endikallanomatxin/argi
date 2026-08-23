@@ -422,6 +422,10 @@ pub const CodeGenerator = struct {
                 try self.diags.add(n.location, .codegen, "error generating function call: {s}", .{@errorName(e)});
                 return e;
             },
+            .virtualize => |virtualize| self.genVirtualize(virtualize) catch |e| {
+                try self.diags.add(n.location, .codegen, "error generating Virtual value: {s}", .{@errorName(e)});
+                return e;
+            },
             .struct_value_literal => |sl| self.genStructValueLiteral(sl) catch |e| {
                 try self.diags.add(n.location, .codegen, "error generating struct value literal: {s}", .{@errorName(e)});
                 return e;
@@ -2348,6 +2352,18 @@ pub const CodeGenerator = struct {
         return self.genFunctionCallWithDestination(fc, null);
     }
 
+    fn genVirtualize(self: *CodeGenerator, virtualize: *const sem.Virtualize) CodegenError!TypedValue {
+        const value = (try self.visitNode(virtualize.value)) orelse return CodegenError.ValueNotFound;
+        if (c.LLVMGetTypeKind(value.type_ref) != c.LLVMPointerTypeKind) return CodegenError.InvalidType;
+        const virtual_sem_type = sem.Type{ .struct_type = virtualize.virtual_type };
+        const virtual_llvm_type = try self.toLLVMType(virtual_sem_type);
+        var result = c.LLVMGetUndef(virtual_llvm_type);
+        result = c.LLVMBuildInsertValue(self.builder, result, value.value_ref, 0, "virtual.data");
+        const vtable_type = c.LLVMStructGetTypeAtIndex(virtual_llvm_type, 1);
+        result = c.LLVMBuildInsertValue(self.builder, result, c.LLVMConstNull(vtable_type), 1, "virtual.vtable");
+        return .{ .value_ref = result, .type_ref = virtual_llvm_type, .sem_type = virtual_sem_type };
+    }
+
     fn genFunctionCallWithDestination(
         self: *CodeGenerator,
         fc: *const sem.FunctionCall,
@@ -3265,6 +3281,9 @@ pub const CodeGenerator = struct {
         if (source_is_int and target_is_ptr) {
             const casted = c.LLVMBuildIntToPtr(self.builder, value_tv.value_ref, target_ty, "int.to.ptr");
             return .{ .value_ref = casted, .type_ref = target_ty, .sem_type = ec.target_type };
+        }
+        if (source_is_ptr and target_is_ptr) {
+            return .{ .value_ref = value_tv.value_ref, .type_ref = target_ty, .sem_type = ec.target_type };
         }
 
         return CodegenError.InvalidType;

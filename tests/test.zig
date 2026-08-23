@@ -3231,6 +3231,19 @@ test "feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous"
     );
 }
 
+test "feature_tests/polymorphism/26_virtual_type_representation" {
+    const test_path = "tests/feature_tests/polymorphism/26_virtual_type_representation";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/polymorphism/27X_virtual_temporal_envelope" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/27X_virtual_temporal_envelope",
+        "reference 'pointer' is no longer valid",
+    );
+}
+
 test "feature_tests/text/10_string_view_c_string_storage" {
     const test_path = "tests/feature_tests/text/10_string_view_c_string_storage";
     try expectSuccessfulBuild(test_path);

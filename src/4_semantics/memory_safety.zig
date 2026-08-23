@@ -254,6 +254,7 @@ pub const MemorySafetyAnalyzer = struct {
                 try self.applyCallDependencyTransitions(call, state);
                 try self.validateCallResultRelocation(call, node);
             },
+            .virtualize => |virtualize| try self.analyzeNode(virtualize.value, state),
             .code_block => |block| try self.analyzeCodeBlock(block, state),
             .struct_value_literal => |value| for (value.fields) |field| try self.analyzeNode(field.value, state),
             .list_literal => |value| for (value.elements) |element| try self.analyzeNode(element, state),
@@ -776,6 +777,12 @@ pub const MemorySafetyAnalyzer = struct {
             },
             .binding_use => |binding| state.references.get(binding),
             .move_value => |inner| try self.referenceFactFromValue(inner, state),
+            .explicit_cast => |cast| try self.referenceFactFromValue(cast.value, state),
+            .virtualize => |virtualize| try self.factFromProjectedValue(
+                virtualize.value,
+                .{ .field = 0 },
+                state,
+            ),
             .struct_value_literal => |struct_value| try self.factFromStructValue(struct_value, state),
             .array_literal => |array_value| try self.factFromNodeList(array_value.elements, state),
             .list_literal => |list_value| try self.factFromNodeList(list_value.elements, state),

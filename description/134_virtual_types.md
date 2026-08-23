@@ -38,6 +38,17 @@ Virtual#(.abstract: Abstract) : Type = (
 )
 ```
 
+The compiler baseline represents `Virtual#(.abstract: A)` as the identified fat
+pointer `{ data, vtable }`. `to_virtual#(.abstract: A)(.value = ref)` verifies
+that the concrete referent implements `A`, erases its data pointer, and carries
+the referent as the handle's conservative temporal envelope. The vtable slot is
+reserved in the ABI; generation of method thunks and indirect dispatch is the
+remaining step before Virtual is usable for calls.
+
+Pointer casts through `Any` preserve provenance. Erasing and recovering the
+data pointer therefore cannot hide use-after-invalidation from the temporal
+checker.
+
 ## Creación
 
 ```argi
