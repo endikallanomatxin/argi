@@ -6764,6 +6764,15 @@ pub const Semantizer = struct {
             try self.diags.add(input.fields[0].value.location, .semantic, "to_virtual '.value' must be a reference", .{});
             return error.Reported;
         }
+        if (value.ty.pointer_type.mutability == .read_only) {
+            try self.diags.add(
+                input.fields[0].value.location,
+                .semantic,
+                "to_virtual requires a mutable reference because Virtual handles may dispatch mutable or exclusive methods",
+                .{},
+            );
+            return error.Reported;
+        }
         const concrete_type = value.ty.pointer_type.child.*;
         if (!abs.typeImplementsAbstract(abstract_type.name, concrete_type, s)) {
             const concrete_text = try self.formatTypeText(concrete_type, s);

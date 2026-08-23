@@ -71,6 +71,7 @@ pub const MemorySafetyAnalyzer = struct {
     summarizing_functions: std.AutoHashMap(*const sg.FunctionDeclaration, void),
     reported_uses: std.AutoHashMap(*const sg.SGNode, void),
     fresh_storage_roots: std.AutoHashMap(*const sg.FunctionCall, *const sg.BindingDeclaration),
+    fresh_value_roots: std.AutoHashMap(*const sg.SGNode, *const sg.BindingDeclaration),
     symbolic_input_roots: std.AutoHashMap(*const sg.BindingDeclaration, SymbolicInputRoot),
     next_sequence: u64 = 1,
     inferring_summaries: bool = false,
@@ -88,6 +89,7 @@ pub const MemorySafetyAnalyzer = struct {
             .summarizing_functions = std.AutoHashMap(*const sg.FunctionDeclaration, void).init(allocator.*),
             .reported_uses = std.AutoHashMap(*const sg.SGNode, void).init(allocator.*),
             .fresh_storage_roots = std.AutoHashMap(*const sg.FunctionCall, *const sg.BindingDeclaration).init(allocator.*),
+            .fresh_value_roots = std.AutoHashMap(*const sg.SGNode, *const sg.BindingDeclaration).init(allocator.*),
             .symbolic_input_roots = std.AutoHashMap(*const sg.BindingDeclaration, SymbolicInputRoot).init(allocator.*),
         };
     }
@@ -97,6 +99,7 @@ pub const MemorySafetyAnalyzer = struct {
         self.summarizing_functions.deinit();
         self.reported_uses.deinit();
         self.fresh_storage_roots.deinit();
+        self.fresh_value_roots.deinit();
         self.symbolic_input_roots.deinit();
     }
 
@@ -335,6 +338,13 @@ pub const MemorySafetyAnalyzer = struct {
                             }
                         }
                     }
+                }
+                if (assignment.pointer.content == .binding_use) {
+                    try self.updateDirectPointerReferentFact(
+                        assignment.pointer.content.binding_use,
+                        assignment.value,
+                        state,
+                    );
                 }
             },
             .binary_operation => |operation| {
@@ -656,6 +666,32 @@ pub const MemorySafetyAnalyzer = struct {
         }
     }
 
+    /// A direct `p& = value` replaces the dependencies stored in `p`'s
+    /// referent while retaining the symbolic identity denoted by `p` itself.
+    /// This is what lets initializer post-state flow into function summaries.
+    fn updateDirectPointerReferentFact(
+        self: *MemorySafetyAnalyzer,
+        pointer_binding: *const sg.BindingDeclaration,
+        value: *const sg.SGNode,
+        state: *FunctionState,
+    ) !void {
+        var captured = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
+        defer captured.deinit();
+        if (state.references.get(pointer_binding)) |existing| {
+            for (existing.captured) |dependency| {
+                if (dependency.value_path.len == 0) try captured.append(dependency);
+            }
+        }
+        if (try self.referenceFactFromValue(value, state)) |replacement| {
+            try captured.appendSlice(replacement.captured);
+        }
+        if (captured.items.len == 0) {
+            _ = state.references.remove(pointer_binding);
+        } else {
+            try state.references.put(pointer_binding, .{ .captured = try captured.toOwnedSlice() });
+        }
+    }
+
     fn replaceDependenciesAtValuePath(
         self: *MemorySafetyAnalyzer,
         binding: *const sg.BindingDeclaration,
@@ -820,8 +856,54 @@ pub const MemorySafetyAnalyzer = struct {
             ),
             .dereference => |access| try self.referenceFactFromValue(access.pointer, state),
             .function_call => |call| try self.factFromCall(call, state),
+            .type_initializer => |initializer| try self.factFromTypeInitializer(value, initializer, state),
             else => null,
         };
+    }
+
+    fn factFromTypeInitializer(
+        self: *MemorySafetyAnalyzer,
+        node: *const sg.SGNode,
+        initializer: sg.TypeInitializer,
+        state: *const FunctionState,
+    ) anyerror!?ReferenceFact {
+        if (initializer.init_fn.temporal_summary == null) _ = try self.inferFunctionSummaryPass(initializer.init_fn);
+        const summary = initializer.init_fn.temporal_summary orelse return null;
+        if (initializer.args.content != .struct_value_literal) return null;
+        const fields = initializer.args.content.struct_value_literal.fields;
+        var captured = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
+        defer captured.deinit();
+
+        for (summary.dependency_transitions) |transition| {
+            if (transition.target_input_index != 0) continue;
+            const source_fact: ReferenceFact = switch (transition.source) {
+                .fresh => .{ .captured = &.{.{
+                    .place = try self.freshValueStoragePlace(node),
+                    .capture_sequence = self.next_sequence - 1,
+                }} },
+                .input => |source| blk: {
+                    if (source.index == 0 or source.index - 1 >= fields.len) continue;
+                    const aggregate = try self.referenceFactFromValue(fields[source.index - 1].value, state) orelse continue;
+                    break :blk try self.selectInputFactAtSummaryValuePath(
+                        initializer.init_fn,
+                        source.index,
+                        aggregate,
+                        source.value_path,
+                    );
+                },
+            };
+            for (source_fact.captured) |dependency| {
+                var mapped = dependency;
+                mapped.place = try appendSummaryPath(mapped.place, switch (transition.source) {
+                    .fresh => &.{},
+                    .input => |source| source.path,
+                }, self.allocator);
+                mapped.value_path = try temporalPathToPlacePath(transition.target_path, self.allocator);
+                try captured.append(mapped);
+            }
+        }
+        if (captured.items.len == 0) return null;
+        return .{ .captured = try captured.toOwnedSlice() };
     }
 
     fn factFromStructValue(
@@ -1050,6 +1132,29 @@ pub const MemorySafetyAnalyzer = struct {
         return .{ .root = root, .projections = &.{} };
     }
 
+    fn freshValueStoragePlace(self: *MemorySafetyAnalyzer, node: *const sg.SGNode) !temporal_place.Place {
+        if (self.fresh_value_roots.get(node)) |root| return .{ .root = root, .projections = &.{} };
+        const root = try self.allocator.create(sg.BindingDeclaration);
+        root.* = .{
+            .name = "$fresh initialized storage",
+            .location = node.location,
+            .origin_file = node.location.file,
+            .mutability = .constant,
+            .ty = .{ .builtin = .Any },
+            .initialization = null,
+        };
+        try self.fresh_value_roots.put(node, root);
+        return .{ .root = root, .projections = &.{} };
+    }
+
+    fn isFreshStorageRoot(self: *const MemorySafetyAnalyzer, root: *const sg.BindingDeclaration) bool {
+        var iterator = self.fresh_storage_roots.valueIterator();
+        while (iterator.next()) |candidate| {
+            if (candidate.* == root) return true;
+        }
+        return false;
+    }
+
     fn valueProjectionsMatch(left: temporal_place.Projection, right: temporal_place.Projection) bool {
         return switch (left) {
             .field => |left_index| switch (right) {
@@ -1216,15 +1321,24 @@ pub const MemorySafetyAnalyzer = struct {
         const fields = call.input.content.struct_value_literal.fields;
 
         for (summary.dependency_transitions) |transition| {
-            if (transition.target_input_index >= fields.len or transition.source_input_index >= fields.len) continue;
+            if (transition.target_input_index >= fields.len) continue;
             const target_fact = try self.referenceFactFromValue(fields[transition.target_input_index].value, state) orelse continue;
-            const aggregate_source_fact = try self.referenceFactFromValue(fields[transition.source_input_index].value, state) orelse continue;
-            const source_fact = try self.selectInputFactAtSummaryValuePath(
-                call.callee,
-                transition.source_input_index,
-                aggregate_source_fact,
-                transition.source_input_value_path,
-            );
+            const source_fact: ReferenceFact = switch (transition.source) {
+                .fresh => .{ .captured = &.{.{
+                    .place = try self.freshStoragePlace(call),
+                    .capture_sequence = self.next_sequence - 1,
+                }} },
+                .input => |source| blk: {
+                    if (source.index >= fields.len) continue;
+                    const aggregate = try self.referenceFactFromValue(fields[source.index].value, state) orelse continue;
+                    break :blk try self.selectInputFactAtSummaryValuePath(
+                        call.callee,
+                        source.index,
+                        aggregate,
+                        source.value_path,
+                    );
+                },
+            };
 
             for (target_fact.captured) |target| {
                 const target_prefix = try concatenatePlaceAndSummaryPaths(
@@ -1236,7 +1350,10 @@ pub const MemorySafetyAnalyzer = struct {
                     target.place.root,
                     target_prefix,
                     source_fact,
-                    transition.source_path,
+                    switch (transition.source) {
+                        .fresh => &.{},
+                        .input => |source| source.path,
+                    },
                     state,
                 );
             }
@@ -1407,13 +1524,16 @@ pub const MemorySafetyAnalyzer = struct {
             const fact = state.references.get(target_binding) orelse continue;
             for (fact.captured) |captured| {
                 if (captured.value_path.len == 0) continue;
-                const source = self.inputDependencySource(function, captured.place.root) orelse continue;
+                const source = self.inputDependencySource(function, captured.place.root);
+                if (source == null and !self.isFreshStorageRoot(captured.place.root)) continue;
                 try dependency_transitions.append(.{
                     .target_input_index = @intCast(target_input_index),
                     .target_path = try placePathToTemporalPath(captured.value_path, self.allocator),
-                    .source_input_index = @intCast(source.input_index),
-                    .source_input_value_path = try placePathToTemporalPath(source.value_path, self.allocator),
-                    .source_path = try normalizedSummaryPath(captured.place.projections, self.allocator),
+                    .source = if (source) |input_source| .{ .input = .{
+                        .index = @intCast(input_source.input_index),
+                        .value_path = try placePathToTemporalPath(input_source.value_path, self.allocator),
+                        .path = try normalizedSummaryPath(captured.place.projections, self.allocator),
+                    } } else .fresh,
                 });
             }
         }
@@ -1667,11 +1787,17 @@ pub const MemorySafetyAnalyzer = struct {
                 !summaryPathsEqual(a.input_path, b.input_path)) return false;
         }
         for (left.?.dependency_transitions, right.?.dependency_transitions) |a, b| {
-            if (a.target_input_index != b.target_input_index or
-                a.source_input_index != b.source_input_index or
-                !summaryPathsEqual(a.target_path, b.target_path) or
-                !summaryPathsEqual(a.source_input_value_path, b.source_input_value_path) or
-                !summaryPathsEqual(a.source_path, b.source_path)) return false;
+            if (a.target_input_index != b.target_input_index or !summaryPathsEqual(a.target_path, b.target_path) or
+                std.meta.activeTag(a.source) != std.meta.activeTag(b.source)) return false;
+            switch (a.source) {
+                .fresh => {},
+                .input => |a_source| {
+                    const b_source = b.source.input;
+                    if (a_source.index != b_source.index or
+                        !summaryPathsEqual(a_source.value_path, b_source.value_path) or
+                        !summaryPathsEqual(a_source.path, b_source.path)) return false;
+                },
+            }
         }
         for (left.?.invalidations, right.?.invalidations) |a, b| {
             if (a.input_index != b.input_index or

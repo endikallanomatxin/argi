@@ -460,6 +460,11 @@ deinit(.self: $$&String) -> ()
 to the storage root held at that value path. Other hidden dependencies, such as
 a borrowed allocator or underlying stream, remain valid.
 
+Initializer summaries are applied to the stable destination created for the
+new value. Consequently, a fresh root written through the implicit `.p`
+parameter remains fresh in the constructed aggregate instead of disappearing
+at the initializer boundary.
+
 `#trusted_temporal` authorizes an implementation to establish or replace hidden
 dependencies through `$&`, principally during initialization. `#raw_boundary`
 marks code whose pointer-to-integer operations prevent the checker from
@@ -556,6 +561,11 @@ method follows that entire envelope. A `$&Self` virtual call preserves it;
 `$$&Self` conservatively invalidates it. Thus dispatch cannot recover concrete
 precision accidentally, but neither pointer erasure nor the vtable boundary can
 hide an invalidation.
+
+Because the baseline handle can dispatch `$&Self` and `$$&Self` requirements,
+`to_virtual` requires at least a mutable reference. Accepting `&T` here would
+erase the read-only restriction and permit a later exclusive dispatch through
+the handle.
 
 Therefore virtual safety becomes:
 

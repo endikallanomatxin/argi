@@ -436,9 +436,16 @@ pub const AddressDependentOutput = struct {
 pub const DependencyTransition = struct {
     target_input_index: u32,
     target_path: []const TemporalProjection,
-    source_input_index: u32,
-    source_input_value_path: []const TemporalProjection = &.{},
-    source_path: []const TemporalProjection,
+    source: Source,
+
+    pub const Source = union(enum) {
+        fresh,
+        input: struct {
+            index: u32,
+            value_path: []const TemporalProjection = &.{},
+            path: []const TemporalProjection,
+        },
+    };
 };
 
 pub const TemporalProjection = union(enum) {

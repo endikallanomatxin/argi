@@ -3132,6 +3132,26 @@ test "feature_tests/ownership/80_dependency_invalidation_preserves_other_borrows
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/81X_initializer_fresh_post_state" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/81X_initializer_fresh_post_state",
+        "reference 'pointer' is no longer valid",
+    );
+}
+
+test "feature_tests/ownership/82_owned_buffer_deinit_preserves_allocator" {
+    const test_path = "tests/feature_tests/ownership/82_owned_buffer_deinit_preserves_allocator";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/polymorphism/31X_virtual_rejects_permission_upgrade" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/31X_virtual_rejects_permission_upgrade",
+        "to_virtual requires a mutable reference",
+    );
+}
+
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
     try buildExpectFailExact("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
         \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
