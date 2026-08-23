@@ -398,9 +398,19 @@ pub const FunctionDeclaration = struct {
 /// Paths use semantic field/index projections and deliberately do not appear in
 /// source-level function types.
 pub const TemporalSummary = struct {
+    is_widened: bool = false,
     return_dependencies: []const ReturnDependency = &.{},
+    dependency_transitions: []const DependencyTransition = &.{},
     invalidations: []const InvalidationFootprint = &.{},
     return_roots: []const ReturnStorageRoot = &.{},
+};
+
+pub const DependencyTransition = struct {
+    target_input_index: u32,
+    target_path: []const TemporalProjection,
+    source_input_index: u32,
+    source_input_value_path: []const TemporalProjection = &.{},
+    source_path: []const TemporalProjection,
 };
 
 pub const TemporalProjection = union(enum) {
@@ -413,11 +423,13 @@ pub const TemporalProjection = union(enum) {
 pub const ReturnDependency = struct {
     output_path: []const TemporalProjection,
     input_index: u32,
+    input_value_path: []const TemporalProjection = &.{},
     input_path: []const TemporalProjection,
 };
 
 pub const InvalidationFootprint = struct {
     input_index: u32,
+    input_value_path: []const TemporalProjection = &.{},
     input_path: []const TemporalProjection,
 };
 

@@ -3058,6 +3058,34 @@ test "feature_tests/ownership/69X_abstract_concrete_temporal_summary" {
     );
 }
 
+test "feature_tests/ownership/70X_post_state_dependency_summary" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/70X_post_state_dependency_summary",
+        "reference 'holder' is no longer valid; it refers to 'second'",
+    );
+}
+
+test "feature_tests/ownership/71X_composite_pointer_input_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/71X_composite_pointer_input_dependency",
+        "reference 'pointer' is no longer valid; it refers to 'resource'",
+    );
+}
+
+test "feature_tests/ownership/72X_composite_value_input_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/72X_composite_value_input_dependency",
+        "reference 'returned' is no longer valid; it refers to 'resource'",
+    );
+}
+
+test "feature_tests/ownership/73X_loop_dependency_fixed_point" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/73X_loop_dependency_fixed_point",
+        "reference 'first' is no longer valid; it refers to 'victim'",
+    );
+}
+
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
     try buildExpectFailExact("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
         \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
