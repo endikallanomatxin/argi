@@ -200,7 +200,7 @@ capacity(
     value = self&.allocation.size - 1
 }
 
-clear(.self: $$&String) -> () := {
+clear(.self: $$&String) -> () #invalidates_dependency(self, allocation.data) := {
     self& = (
         .allocation = self&.allocation,
         .length = 0,
@@ -234,7 +234,7 @@ ensure_capacity(
     .self: $$&String,
     .capacity: UIntNative,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> () := {
+) -> () #invalidates_dependency(self, allocation.data) #sets_dependency_fresh(self, allocation.data) #raw_boundary := {
     current_capacity ::= capacity(.self = self).value
     if current_capacity >= capacity {
         return
@@ -266,7 +266,7 @@ ensure_capacity_growing(
     .self: $$&String,
     .target_capacity: UIntNative,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) #invalidates_dependency(self, allocation.data) #sets_dependency_fresh(self, allocation.data) #raw_boundary := {
     current_capacity ::= capacity(.self = self).value
     if current_capacity >= target_capacity {
         result = ..ok Void()
@@ -337,7 +337,7 @@ push_byte(
     .self: $$&String,
     .byte: UInt8,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) #invalidates_dependency(self, allocation.data) #sets_dependency_fresh(self, allocation.data) #raw_boundary := {
     if has_space(.self = self).ok {
     } else {
         next_capacity ::= string_growth_capacity(.self = self, .min_capacity = self&.length + 1).value
@@ -360,7 +360,7 @@ push_c_string(
     .self: $$&String,
     .text: &Char,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) #invalidates_dependency(self, allocation.data) #sets_dependency_fresh(self, allocation.data) #raw_boundary := {
     append_length ::= c_string_length(.text = text).length
     target_capacity ::= self&.length + append_length
     growth_result ::= ensure_capacity_growing(.self = self, .target_capacity = target_capacity, .allocator = allocator)
@@ -385,7 +385,7 @@ push_view(
     .self: $$&String,
     .view: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) #invalidates_dependency(self, allocation.data) #sets_dependency_fresh(self, allocation.data) #raw_boundary := {
     target_capacity ::= self&.length + view.length
     growth_result ::= ensure_capacity_growing(.self = self, .target_capacity = target_capacity, .allocator = allocator)
     match growth_result {

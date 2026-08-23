@@ -535,7 +535,7 @@ pub const MemorySafetyAnalyzer = struct {
         var reference_it = right.references.iterator();
         while (reference_it.next()) |entry| {
             if (merged.references.get(entry.key_ptr.*)) |left_fact| {
-                const combined = try self.mergeReferenceFacts(left_fact, entry.value_ptr.*);
+                const combined = try self.mergeReferenceFacts(left_fact, entry.value_ptr.*, left, right);
                 try merged.references.put(entry.key_ptr.*, combined);
             } else {
                 try merged.references.put(entry.key_ptr.*, entry.value_ptr.*);
@@ -544,18 +544,33 @@ pub const MemorySafetyAnalyzer = struct {
         return merged;
     }
 
-    fn mergeReferenceFacts(self: *MemorySafetyAnalyzer, left: ReferenceFact, right: ReferenceFact) !ReferenceFact {
+    fn mergeReferenceFacts(
+        self: *MemorySafetyAnalyzer,
+        left: ReferenceFact,
+        right: ReferenceFact,
+        left_state: *const FunctionState,
+        right_state: *const FunctionState,
+    ) !ReferenceFact {
         var captured = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
         defer captured.deinit();
-        try captured.appendSlice(left.captured);
+        for (left.captured) |candidate| {
+            try captured.append(correlateBranchCapture(candidate, right, left_state, right_state));
+        }
 
-        for (right.captured) |candidate| {
+        for (right.captured) |raw_candidate| {
+            const candidate = correlateBranchCapture(raw_candidate, left, right_state, left_state);
             var found = false;
-            for (captured.items) |existing| {
-                if (candidate.capture_sequence == existing.capture_sequence and
-                    temporal_place.Place.eql(candidate.place, existing.place) and
+            for (captured.items) |*existing| {
+                if (temporal_place.Place.eql(candidate.place, existing.place) and
                     valuePathsEqual(candidate.value_path, existing.value_path))
                 {
+                    // The same binding capability may cross a conditional
+                    // transition on only one branch. The refreshed capture is
+                    // the post-state for that branch, while the older capture
+                    // remains valid on the untouched branch; retaining both
+                    // would cross-correlate the transition's invalidation with
+                    // the untouched state and create a false dangling use.
+                    existing.capture_sequence = @max(existing.capture_sequence, candidate.capture_sequence);
                     found = true;
                     break;
                 }
@@ -563,6 +578,33 @@ pub const MemorySafetyAnalyzer = struct {
             if (!found) try captured.append(candidate);
         }
         return .{ .captured = try captured.toOwnedSlice() };
+    }
+
+    fn correlateBranchCapture(
+        candidate: CapturedPlace,
+        opposite_fact: ReferenceFact,
+        own_state: *const FunctionState,
+        opposite_state: *const FunctionState,
+    ) CapturedPlace {
+        for (opposite_fact.captured) |opposite| {
+            if (temporal_place.Place.eql(candidate.place, opposite.place) and
+                valuePathsEqual(candidate.value_path, opposite.value_path)) return candidate;
+        }
+
+        var correlated = candidate;
+        for (opposite_state.invalidations.items) |invalidation| {
+            if (stateContainsInvalidation(own_state, invalidation)) continue;
+            if (!temporal_place.Place.isInvalidatedBy(candidate.place, invalidation.place)) continue;
+            correlated.capture_sequence = @max(correlated.capture_sequence, invalidation.sequence);
+        }
+        return correlated;
+    }
+
+    fn stateContainsInvalidation(state: *const FunctionState, candidate: Invalidation) bool {
+        for (state.invalidations.items) |invalidation| {
+            if (invalidation.sequence == candidate.sequence) return true;
+        }
+        return false;
     }
 
     fn functionStatesEquivalent(left: *const FunctionState, right: *const FunctionState) bool {

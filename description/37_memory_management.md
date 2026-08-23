@@ -492,6 +492,14 @@ would happen to remain valid in that execution, but every accepted program is
 safe on the reallocating path as well. More precise conditional effects can be
 added without changing the source reference types.
 
+The same rule applies to logical element lifetime. `String.clear` advances its
+buffer dependency even though it can retain the physical allocation, while
+`ensure_capacity*` and `push_*` publish both invalidation and the fresh
+post-state of a possibly replaced buffer. At a control-flow join, a receiver
+capability renewed on one branch remains usable on that branch and its untouched
+pre-state remains usable on the other; independent aliases are not renewed and
+therefore still diagnose the branch on which they became stale.
+
 `#trusted_temporal` authorizes an implementation to establish or replace hidden
 dependencies through `$&`, principally during initialization. `#raw_boundary`
 marks code whose pointer-to-integer operations prevent the checker from
