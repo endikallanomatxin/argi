@@ -479,14 +479,16 @@ pub const MemorySafetyAnalyzer = struct {
             defer iteration.deinit();
             try self.analyzeNode(statement.condition, &iteration);
             try self.analyzeCodeBlock(statement.body, &iteration);
-            if (functionStatesEquivalent(&fixed_point, &iteration)) {
+            var next_header = try self.mergeStates(&entry, &iteration);
+            defer next_header.deinit();
+            if (functionStatesEquivalent(&fixed_point, &next_header)) {
                 fixed_point.deinit();
-                fixed_point = try iteration.clone(self.allocator.*);
+                fixed_point = try next_header.clone(self.allocator.*);
                 converged = true;
                 break;
             }
             fixed_point.deinit();
-            fixed_point = try iteration.clone(self.allocator.*);
+            fixed_point = try next_header.clone(self.allocator.*);
         }
         if (!converged) try self.widenLoopState(&fixed_point, statement.condition.location);
         const exit_state = try self.mergeStates(&entry, &fixed_point);
@@ -508,14 +510,16 @@ pub const MemorySafetyAnalyzer = struct {
             try self.analyzeNode(statement.condition, &iteration);
             try self.analyzeCodeBlock(statement.body, &iteration);
             if (statement.increment) |increment| try self.analyzeNode(increment, &iteration);
-            if (functionStatesEquivalent(&fixed_point, &iteration)) {
+            var next_header = try self.mergeStates(&entry, &iteration);
+            defer next_header.deinit();
+            if (functionStatesEquivalent(&fixed_point, &next_header)) {
                 fixed_point.deinit();
-                fixed_point = try iteration.clone(self.allocator.*);
+                fixed_point = try next_header.clone(self.allocator.*);
                 converged = true;
                 break;
             }
             fixed_point.deinit();
-            fixed_point = try iteration.clone(self.allocator.*);
+            fixed_point = try next_header.clone(self.allocator.*);
         }
         if (!converged) try self.widenLoopState(&fixed_point, statement.condition.location);
         const exit_state = try self.mergeStates(&entry, &fixed_point);
@@ -565,8 +569,12 @@ pub const MemorySafetyAnalyzer = struct {
 
         for (right.invalidations.items) |invalidation| {
             var found = false;
-            for (merged.invalidations.items) |existing| {
-                if (existing.sequence == invalidation.sequence) {
+            for (merged.invalidations.items) |*existing| {
+                if (temporal_place.Place.eql(existing.place, invalidation.place) and
+                    existing.location.offset == invalidation.location.offset and
+                    std.mem.eql(u8, existing.location.file, invalidation.location.file))
+                {
+                    existing.sequence = @max(existing.sequence, invalidation.sequence);
                     found = true;
                     break;
                 }
@@ -2094,10 +2102,19 @@ pub const MemorySafetyAnalyzer = struct {
         location: @import("../2_tokens/token.zig").Location,
         state: *FunctionState,
     ) !void {
-        for (state.invalidations.items) |existing| {
+        for (state.invalidations.items) |*existing| {
             if (temporal_place.Place.eql(existing.place, place) and
                 existing.location.offset == location.offset and
-                std.mem.eql(u8, existing.location.file, location.file)) return;
+                std.mem.eql(u8, existing.location.file, location.file))
+            {
+                // Reaching the same statement through another loop iteration
+                // denotes a later logical epoch. Keep one finite-domain entry
+                // for the statement, but advance its ordering identity so a
+                // later capture cannot be mistaken for predating it.
+                existing.sequence = self.next_sequence;
+                self.next_sequence += 1;
+                return;
+            }
         }
         try state.invalidations.append(.{
             .place = place,

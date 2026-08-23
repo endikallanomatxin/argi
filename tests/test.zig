@@ -3081,8 +3081,14 @@ test "feature_tests/ownership/72X_composite_value_input_dependency" {
 test "feature_tests/ownership/73X_loop_dependency_fixed_point" {
     try buildExpectFail(
         "tests/feature_tests/ownership/73X_loop_dependency_fixed_point",
-        "reference 'first' is no longer valid; it refers to 'victim'",
+        "reference 'first' is no longer valid; it refers to 'two'",
     );
+}
+
+test "feature_tests/ownership/103_loop_dependency_fixed_point_preserves_unrelated" {
+    const test_path = "tests/feature_tests/ownership/103_loop_dependency_fixed_point_preserves_unrelated";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
 }
 
 test "feature_tests/ownership/74X_extern_exclusive_invalidation" {
