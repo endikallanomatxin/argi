@@ -23,7 +23,7 @@ array_view#(.t: Type)(
 array_view_from_address#(.t: Type)(
     .address: UIntNative,
     .length: UIntNative,
-) -> (.array: ArrayView#(.t: t)) := {
+) -> (.array: ArrayView#(.t: t)) #raw_boundary := {
     data : $&t = cast#(.to: $&t)(.value = address)
     array = array_view#(.t: t)(.data = data, .length = length)
 }
@@ -40,7 +40,7 @@ array_view_element_address#(.t: Type)(
 operator get[]#(.t: Type)(
     .self: &ArrayView#(.t: t),
     .index: UIntNative,
-) -> (.value: t) := {
+) -> (.value: t) #trusted_temporal := {
     ptr : &t = cast#(.to: &t)(.value = array_view_element_address#(.t: t)(.self = self, .index = index).address)
     value = ptr&
 }
@@ -49,7 +49,7 @@ operator set[]#(.t: Type)(
     .self: $&ArrayView#(.t: t),
     .index: UIntNative,
     .value: t,
-) -> () := {
+) -> () #trusted_temporal := {
     ptr : $&t = cast#(.to: $&t)(.value = array_view_element_address#(.t: t)(.self = self, .index = index).address)
     ptr& = value
 }

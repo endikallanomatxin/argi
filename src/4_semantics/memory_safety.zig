@@ -214,6 +214,7 @@ pub const MemorySafetyAnalyzer = struct {
                 .input_index = @intCast(input_index),
                 .input_value_path = &.{},
                 .input_path = &.{},
+                .refreshes_input = true,
             });
         }
 
@@ -638,7 +639,27 @@ pub const MemorySafetyAnalyzer = struct {
     ) CapturedPlace {
         for (opposite_fact.captured) |opposite| {
             if (temporal_place.Place.eql(candidate.place, opposite.place) and
-                valuePathsEqual(candidate.value_path, opposite.value_path)) return candidate;
+                valuePathsEqual(candidate.value_path, opposite.value_path))
+            {
+                var has_replacement = false;
+                for (opposite_fact.captured) |replacement| {
+                    if (valuePathsEqual(candidate.value_path, replacement.value_path) and
+                        !temporal_place.Place.eql(candidate.place, replacement.place))
+                    {
+                        has_replacement = true;
+                        break;
+                    }
+                }
+                if (!has_replacement) return candidate;
+
+                var correlated = candidate;
+                for (opposite_state.invalidations.items) |invalidation| {
+                    if (stateContainsInvalidation(own_state, invalidation)) continue;
+                    if (!temporal_place.Place.isInvalidatedBy(candidate.place, invalidation.place)) continue;
+                    correlated.capture_sequence = @max(correlated.capture_sequence, invalidation.sequence);
+                }
+                return correlated;
+            }
         }
 
         var correlated = candidate;
@@ -1700,11 +1721,37 @@ pub const MemorySafetyAnalyzer = struct {
         const summary = call.callee.temporal_summary orelse return;
         const fields = call.input.content.struct_value_literal.fields;
         for (summary.invalidations) |invalidation| {
-            if (invalidation.input_path.len != 0 or invalidation.input_index >= fields.len) continue;
+            if (invalidation.input_index >= fields.len) continue;
             const actual = fields[invalidation.input_index].value;
+            var has_dependency_transition = false;
+            for (summary.dependency_transitions) |transition| {
+                if (transition.target_input_index == invalidation.input_index) {
+                    has_dependency_transition = true;
+                    break;
+                }
+            }
+            if (!invalidation.refreshes_input and !has_dependency_transition) continue;
+            if (invalidation.input_path.len != 0) {
+                const binding = if (actual.content == .binding_use)
+                    actual.content.binding_use
+                else if (actual.content == .address_of)
+                    (try temporal_place.Place.fromNode(actual.content.address_of, self.allocator) orelse continue).root
+                else
+                    continue;
+                const existing = state.references.get(binding) orelse continue;
+                const refreshed = try self.allocator.dupe(CapturedPlace, existing.captured);
+                for (refreshed) |*captured| captured.capture_sequence = self.next_sequence;
+                self.next_sequence += 1;
+                try state.references.put(binding, .{ .captured = refreshed });
+                continue;
+            }
             if (invalidation.input_value_path.len == 0) {
-                if (actual.content != .binding_use) continue;
-                const binding = actual.content.binding_use;
+                const binding = if (actual.content == .binding_use)
+                    actual.content.binding_use
+                else if (actual.content == .address_of)
+                    (try temporal_place.Place.fromNode(actual.content.address_of, self.allocator) orelse continue).root
+                else
+                    continue;
                 const existing = state.references.get(binding) orelse continue;
                 const refreshed = try self.allocator.dupe(CapturedPlace, existing.captured);
                 for (refreshed) |*captured| {
@@ -2019,15 +2066,29 @@ pub const MemorySafetyAnalyzer = struct {
                 .input_index = input_index,
                 .input_value_path = &.{},
                 .input_path = &.{},
+                .refreshes_input = input_index < function.input_bindings.len and
+                    function.input_bindings[input_index].ty == .pointer_type and
+                    function.input_bindings[input_index].ty.pointer_type.mutability == .exclusive,
             });
         }
-        try invalidations.appendSlice(function.temporal_contract.invalidates_dependencies);
+        for (function.temporal_contract.invalidates_dependencies) |contract_invalidation| {
+            var resolved = contract_invalidation;
+            if (resolved.input_index < function.input_bindings.len) {
+                const input_type = function.input_bindings[resolved.input_index].ty;
+                resolved.refreshes_input = input_type == .pointer_type and
+                    input_type.pointer_type.mutability == .exclusive;
+            }
+            try invalidations.append(resolved);
+        }
         for (state.invalidations.items) |invalidation| {
             const source = self.inputDependencySource(function, invalidation.place.root) orelse continue;
             try invalidations.append(.{
                 .input_index = @intCast(source.input_index),
                 .input_value_path = try placePathToTemporalPath(source.value_path, self.allocator),
                 .input_path = try normalizedSummaryPath(invalidation.place.projections, self.allocator),
+                .refreshes_input = source.input_index < function.input_bindings.len and
+                    function.input_bindings[source.input_index].ty == .pointer_type and
+                    function.input_bindings[source.input_index].ty.pointer_type.mutability == .exclusive,
             });
         }
         // An exclusive input without an explicit or inferable footprint keeps
@@ -2280,7 +2341,7 @@ pub const MemorySafetyAnalyzer = struct {
             }
         }
         for (left.?.invalidations, right.?.invalidations) |a, b| {
-            if (a.input_index != b.input_index or
+            if (a.input_index != b.input_index or a.refreshes_input != b.refreshes_input or
                 !summaryPathsEqual(a.input_value_path, b.input_value_path) or
                 !summaryPathsEqual(a.input_path, b.input_path)) return false;
         }

@@ -1,4 +1,4 @@
-main () -> (.status_code: Int32) := {
+main () -> (.status_code: Int32) #trusted_temporal := {
     puts(.string="Hello world!")
 
     size :: UIntNative = 14

@@ -4598,6 +4598,7 @@ pub const Semantizer = struct {
                 cand.input_bindings = input_binding_slice;
                 cand.output_bindings = output_binding_slice;
                 cand.temporal_contract = temporal_contract;
+                cand.declared_extern = f.body == null;
                 break :blk cand;
             }
 
@@ -4611,6 +4612,7 @@ pub const Semantizer = struct {
                 .input = in_struct_ptr.*,
                 .output = out_struct,
                 .body = null,
+                .declared_extern = f.body == null,
                 .uses_inferred_error_reasons = uses_inferred_error_reasons,
                 .input_bindings = input_binding_slice,
                 .output_bindings = output_binding_slice,
@@ -4822,6 +4824,7 @@ pub const Semantizer = struct {
                 cand.input_bindings = input_binding_slice;
                 cand.output_bindings = output_binding_slice;
                 cand.temporal_contract = temporal_contract;
+                cand.declared_extern = f.body == null;
                 break :blk cand;
             }
 
@@ -4835,6 +4838,7 @@ pub const Semantizer = struct {
                 .input = in_struct_ptr.*,
                 .output = out_struct,
                 .body = null,
+                .declared_extern = f.body == null,
                 .uses_inferred_error_reasons = uses_inferred_error_reasons,
                 .input_bindings = input_binding_slice,
                 .output_bindings = output_binding_slice,
@@ -5035,6 +5039,8 @@ pub const Semantizer = struct {
                 .input_index = input_index,
                 .input_value_path = value_path,
                 .input_path = &.{},
+                .refreshes_input = input.fields[input_index].ty == .pointer_type and
+                    input.fields[input_index].ty.pointer_type.mutability == .exclusive,
             };
         }
 
@@ -7091,6 +7097,20 @@ pub const Semantizer = struct {
                 return err;
             },
         };
+        if (chosen.declared_extern and chosen.temporal_contract.raw_boundary) {
+            const function = s.current_fn;
+            if (function == null or (!function.?.temporal_contract.raw_boundary and
+                !function.?.temporal_contract.trusted_transitions))
+            {
+                try self.diags.add(
+                    call.callee_loc,
+                    .semantic,
+                    "raw extern operation '{s}' requires #raw_boundary or #trusted_temporal",
+                    .{call.callee},
+                );
+                return error.Reported;
+            }
+        }
         const coerced_input = try self.coerceCallInputToExpected(&chosen.input, tv_in, call.input, s);
         try self.checkCallBindingExclusivity(call.callee, coerced_input, call.input.*.location);
         self.cancelExplicitDeinitAutoCleanup(chosen, coerced_input, s);
@@ -12522,6 +12542,20 @@ pub const Semantizer = struct {
         const target_is_native_uint = target_ty == .builtin and target_ty.builtin == .UIntNative;
 
         const compatible_pointer_cast = source_is_ptr and target_is_ptr and typ.typesCompatible(target_ty, value_te.ty);
+        if (source_is_native_uint and target_is_ptr) {
+            const function = s.current_fn;
+            if (function == null or (!function.?.temporal_contract.raw_boundary and
+                !function.?.temporal_contract.trusted_transitions))
+            {
+                try self.diags.add(
+                    call.input.*.location,
+                    .semantic,
+                    "reconstituting a pointer from UIntNative requires #raw_boundary or #trusted_temporal",
+                    .{},
+                );
+                return error.Reported;
+            }
+        }
         if (!((source_is_ptr and target_is_native_uint) or (source_is_native_uint and target_is_ptr) or compatible_pointer_cast)) {
             const pair = try self.formatTypePairText(target_ty, value_te.ty, s);
             defer pair.deinit();

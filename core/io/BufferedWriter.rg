@@ -57,7 +57,7 @@ buffered_writer_byte_address#(.base_type: Type: Writer)(
     address = base + index
 }
 
-buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) #trusted_temporal := {
     i :: UIntNative = 0
     while i < self&.length {
         addr :: UIntNative = buffered_writer_byte_address(.self = self, .index = i).address
@@ -97,7 +97,7 @@ buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_
     result = ..ok Void()
 }
 
-write_byte#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type), .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+write_byte#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type), .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) #trusted_temporal := {
     addr :: UIntNative = buffered_writer_byte_address(.self = self, .index = self&.length).address
     ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
     ptr& = byte

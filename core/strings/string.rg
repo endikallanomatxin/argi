@@ -42,7 +42,7 @@ string_with_length(
 string_with_capacity(
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .capacity: UIntNative,
-) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) #trusted_temporal := {
     actual_capacity ::= capacity
     one :: UIntNative = 1
 
@@ -164,7 +164,7 @@ string_byte_address (
 bytes_get (
     .string: &String,
     .index: UIntNative,
-) -> (.byte: UInt8) := {
+) -> (.byte: UInt8) #trusted_temporal := {
     addr :: UIntNative = string_byte_address(.string = string, .index = index).address
     ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
     byte = ptr&
@@ -174,7 +174,7 @@ bytes_set (
     .string: $&String,
     .index: UIntNative,
     .value: UInt8,
-) -> () := {
+) -> () #trusted_temporal := {
     addr :: UIntNative = string_byte_address(.string = string, .index = index).address
     ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
     ptr& = value
@@ -407,7 +407,7 @@ push_view(
 
 c_string_length(
     .text: &Char,
-) -> (.length: UIntNative) := {
+) -> (.length: UIntNative) #trusted_temporal := {
     length = 0
     c_length :: UIntNative = 0
     while 1 == 1 {

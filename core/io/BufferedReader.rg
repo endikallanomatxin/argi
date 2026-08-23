@@ -59,7 +59,7 @@ buffered_reader_byte_address#(.base_type: Type: Reader)(
     address = base + index
 }
 
-read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_type)) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
+read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_type)) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) #trusted_temporal := {
     if self&.start < self&.end {
         addr :: UIntNative = buffered_reader_byte_address(.self = self, .index = self&.start).address
         ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)

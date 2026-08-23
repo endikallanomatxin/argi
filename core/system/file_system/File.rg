@@ -41,7 +41,7 @@ file_open_mode_c_string(
     text = "ab"
 }
 
-file_stream_pointer(.self: &File) -> (.stream: &Any) := {
+file_stream_pointer(.self: &File) -> (.stream: &Any) #trusted_temporal := {
     stream = cast#(.to: &Any)(.value = self&.stream_address)
 }
 

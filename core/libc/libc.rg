@@ -17,11 +17,11 @@ rename ( .old_path : &Char, .new_path : &Char ) -> ( .status : Int32 ) : ExternF
 access ( .path : &Char, .mode : Int32 ) -> ( .status : Int32 ) : ExternFunction
 
 -- Memory management
-alloca ( .size : UIntNative ) -> ( .pointer: $&Any ) : ExternFunction
-malloc ( .size : UIntNative ) -> ( .pointer: $&Any ) : ExternFunction
-aligned_alloc ( .alignment : UIntNative, .size : UIntNative ) -> ( .pointer: $&Any ) : ExternFunction
+alloca ( .size : UIntNative ) -> ( .pointer: $&Any ) #returns_fresh(pointer) #raw_boundary : ExternFunction
+malloc ( .size : UIntNative ) -> ( .pointer: $&Any ) #returns_fresh(pointer) #raw_boundary : ExternFunction
+aligned_alloc ( .alignment : UIntNative, .size : UIntNative ) -> ( .pointer: $&Any ) #returns_fresh(pointer) #raw_boundary : ExternFunction
 getpagesize ( ) -> ( .size : UIntNative ) : ExternFunction
-free ( .pointer: &Any ) -> () : ExternFunction
+free ( .pointer: &Any ) -> () #invalidates(pointer) #raw_boundary : ExternFunction
 memcpy ( .dst  : $&Any, .src : &Any, .n : UIntNative ) -> () : ExternFunction
 
 fread_into(
@@ -51,7 +51,7 @@ fwrite_from(
 memcpy_bytes(
     .dst: ArrayView#(.t: UInt8),
     .src: ArrayView#(.t: UInt8),
-) -> () := {
+) -> () #trusted_temporal := {
     memcpy(
         .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = dst.data)),
         .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = src.data)),

@@ -3104,6 +3104,33 @@ test "feature_tests/ownership/105_deep_aggregate_unrelated_invalidation" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/106_allocator_before_deallocate" {
+    const test_path = "tests/feature_tests/ownership/106_allocator_before_deallocate";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/107X_allocator_use_after_deallocate" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/107X_allocator_use_after_deallocate",
+        "reference 'data' is no longer valid",
+    );
+}
+
+test "feature_tests/ownership/108X_raw_address_reconstitution" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/108X_raw_address_reconstitution",
+        "reconstituting a pointer from UIntNative requires #raw_boundary or #trusted_temporal",
+    );
+}
+
+test "feature_tests/ownership/109X_raw_extern_requires_boundary" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/109X_raw_extern_requires_boundary",
+        "raw extern operation 'malloc' requires #raw_boundary or #trusted_temporal",
+    );
+}
+
 test "feature_tests/ownership/74X_extern_exclusive_invalidation" {
     try buildExpectFail(
         "tests/feature_tests/ownership/74X_extern_exclusive_invalidation",

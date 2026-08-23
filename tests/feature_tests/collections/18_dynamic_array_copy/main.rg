@@ -1,4 +1,4 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System = System()) -> (.status_code: Int32) #trusted_temporal := {
     arr ::= DynamicArray#(.t: Int32)(.capacity = 1)
     #defer deinit(.self = $$&arr, .allocator = system.allocator)
 

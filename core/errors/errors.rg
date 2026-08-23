@@ -18,7 +18,7 @@ Error#(.reasons: Type) : Type = (
 write_trace_text(
     .text: &Char,
     .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
-) -> () := {
+) -> () #trusted_temporal := {
     i :: UIntNative = 0
     while 1 == 1 {
         addr :: UIntNative = cast#(.to: UIntNative)(.value = text) + i

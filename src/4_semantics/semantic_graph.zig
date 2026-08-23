@@ -375,6 +375,7 @@ pub const FunctionDeclaration = struct {
     input: StructType, // Arguments
     output: StructType, // Named return params
     body: ?*const CodeBlock,
+    declared_extern: bool = false,
     uses_inferred_error_reasons: bool = false,
     input_bindings: []const *const BindingDeclaration = &.{},
     output_bindings: []const *const BindingDeclaration = &.{},
@@ -468,6 +469,7 @@ pub const InvalidationFootprint = struct {
     input_index: u32,
     input_value_path: []const TemporalProjection = &.{},
     input_path: []const TemporalProjection,
+    refreshes_input: bool = false,
 };
 
 pub const ReturnStorageRoot = struct {

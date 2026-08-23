@@ -10,13 +10,13 @@ from_literal(
 
 as_c_string(
     .self: &String,
-) -> (.text: &Char) := {
+) -> (.text: &Char) #returns_dependency(text, self, allocation.data) #trusted_temporal := {
     text = cast#(.to: &Char)(.value = cast#(.to: UIntNative)(.value = self&.allocation.data))
 }
 
 string_view_has_c_string_layout(
     .self: &StringView,
-) -> (.ok: Bool) := {
+) -> (.ok: Bool) #trusted_temporal := {
     i :: UIntNative = 0
     while i < self&.length {
         if bytes_get(.view = self, .index = i).byte == 0 {
@@ -37,7 +37,7 @@ as_c_string(
 ) -> (
     .text: &Char,
     .storage: Allocation,
-) := {
+) #trusted_temporal := {
     if string_view_has_c_string_layout(.self = &self).ok {
         zero :: UIntNative = 0
         text = cast#(.to: &Char)(.value = self.data)
