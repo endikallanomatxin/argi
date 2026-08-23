@@ -5026,6 +5026,69 @@ pub const Semantizer = struct {
             };
         }
 
+        var return_dependencies = try self.allocator.alloc(sg.ReturnDependency, contract.return_dependencies.len);
+        for (contract.return_dependencies, 0..) |dependency, index| {
+            const output_index = self.structFieldIndexByName(output, dependency.output_name) orelse {
+                try self.diags.add(location, .semantic, "temporal contract references unknown output '.{s}'", .{dependency.output_name});
+                return error.Reported;
+            };
+            const input_index = self.structFieldIndexByName(input, dependency.input_name) orelse {
+                try self.diags.add(location, .semantic, "temporal contract references unknown input '.{s}'", .{dependency.input_name});
+                return error.Reported;
+            };
+            var current_type = typ.effectiveStructFieldType(input.fields[input_index]);
+            if (current_type == .pointer_type) current_type = current_type.pointer_type.child.*;
+            var value_path = try self.allocator.alloc(sg.TemporalProjection, dependency.value_path.len);
+            for (dependency.value_path, 0..) |field_name, path_index| {
+                if (current_type != .struct_type) {
+                    try self.diags.add(location, .semantic, "temporal dependency path '.{s}' requires a struct value", .{field_name});
+                    return error.Reported;
+                }
+                const field_index = self.structFieldIndexByName(current_type.struct_type.*, field_name) orelse {
+                    try self.diags.add(location, .semantic, "temporal dependency path references unknown field '.{s}'", .{field_name});
+                    return error.Reported;
+                };
+                value_path[path_index] = .{ .field = field_index };
+                current_type = typ.effectiveStructFieldType(current_type.struct_type.fields[field_index]);
+            }
+            const output_path = try self.allocator.alloc(sg.TemporalProjection, 1);
+            output_path[0] = .{ .field = output_index };
+            return_dependencies[index] = .{
+                .output_path = output_path,
+                .input_index = input_index,
+                .input_value_path = value_path,
+                .input_path = &.{},
+            };
+        }
+
+        var dependency_transitions = try self.allocator.alloc(sg.DependencyTransition, contract.fresh_dependency_transitions.len);
+        for (contract.fresh_dependency_transitions, 0..) |transition, index| {
+            const input_index = self.structFieldIndexByName(input, transition.input_name) orelse {
+                try self.diags.add(location, .semantic, "temporal contract references unknown input '.{s}'", .{transition.input_name});
+                return error.Reported;
+            };
+            var current_type = typ.effectiveStructFieldType(input.fields[input_index]);
+            if (current_type == .pointer_type) current_type = current_type.pointer_type.child.*;
+            var target_path = try self.allocator.alloc(sg.TemporalProjection, transition.value_path.len);
+            for (transition.value_path, 0..) |field_name, path_index| {
+                if (current_type != .struct_type) {
+                    try self.diags.add(location, .semantic, "temporal dependency path '.{s}' requires a struct value", .{field_name});
+                    return error.Reported;
+                }
+                const field_index = self.structFieldIndexByName(current_type.struct_type.*, field_name) orelse {
+                    try self.diags.add(location, .semantic, "temporal dependency path references unknown field '.{s}'", .{field_name});
+                    return error.Reported;
+                };
+                target_path[path_index] = .{ .field = field_index };
+                current_type = typ.effectiveStructFieldType(current_type.struct_type.fields[field_index]);
+            }
+            dependency_transitions[index] = .{
+                .target_input_index = input_index,
+                .target_path = target_path,
+                .source = .fresh,
+            };
+        }
+
         var return_root: ?sg.TemporalContract.ReturnRoot = null;
         if (contract.return_root) |root| {
             const output_index = self.structFieldIndexByName(output, root.output_name) orelse {
@@ -5047,6 +5110,8 @@ pub const Semantizer = struct {
         return .{
             .invalidates_inputs = invalidates,
             .invalidates_dependencies = invalidates_dependencies,
+            .return_dependencies = return_dependencies,
+            .dependency_transitions = dependency_transitions,
             .return_root = return_root,
             .trusted_transitions = contract.trusted_transitions,
             .raw_boundary = contract.raw_boundary,

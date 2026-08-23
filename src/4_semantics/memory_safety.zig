@@ -35,6 +35,7 @@ const InputDependencySource = struct {
 const FunctionState = struct {
     references: std.AutoHashMap(*const sg.BindingDeclaration, ReferenceFact),
     invalidations: std.array_list.Managed(Invalidation),
+    can_continue: bool = true,
 
     fn init(allocator: std.mem.Allocator) FunctionState {
         return .{
@@ -55,6 +56,7 @@ const FunctionState = struct {
         var reference_it = self.references.iterator();
         while (reference_it.next()) |entry| try result.references.put(entry.key_ptr.*, entry.value_ptr.*);
         try result.invalidations.appendSlice(self.invalidations.items);
+        result.can_continue = self.can_continue;
         return result;
     }
 };
@@ -221,8 +223,11 @@ pub const MemorySafetyAnalyzer = struct {
     }
 
     fn analyzeCodeBlock(self: *MemorySafetyAnalyzer, block: *const sg.CodeBlock, state: *FunctionState) anyerror!void {
-        for (block.nodes) |node| try self.analyzeNode(node, state);
-        if (block.ret_val) |value| try self.analyzeNode(value, state);
+        for (block.nodes) |node| {
+            if (!state.can_continue) break;
+            try self.analyzeNode(node, state);
+        }
+        if (state.can_continue) if (block.ret_val) |value| try self.analyzeNode(value, state);
     }
 
     fn analyzeNode(self: *MemorySafetyAnalyzer, node: *const sg.SGNode, state: *FunctionState) anyerror!void {
@@ -254,6 +259,7 @@ pub const MemorySafetyAnalyzer = struct {
                 try self.analyzeNode(call.input, state);
                 self.stable_call_input_depth -= 1;
                 try self.recordConservativeCallInvalidations(call, node, state);
+                try self.refreshTransitionedCallInputs(call, state);
                 try self.applyCallDependencyTransitions(call, state);
                 try self.validateCallResultRelocation(call, node);
             },
@@ -272,18 +278,15 @@ pub const MemorySafetyAnalyzer = struct {
             .array_literal => |value| for (value.elements) |element| try self.analyzeNode(element, state),
             .choice_literal => |value| if (value.payload) |payload| try self.analyzeNode(payload, state),
             .struct_field_access => |access| {
-                if (access.struct_value.content == .dereference)
-                    try self.analyzeNode(access.struct_value, state);
+                try self.validateProjectionContainerUse(access.struct_value, node, state);
                 try self.validateExpressionUse(node, state);
             },
             .choice_payload_access => |access| {
-                if (access.choice_value.content == .dereference)
-                    try self.analyzeNode(access.choice_value, state);
+                try self.validateProjectionContainerUse(access.choice_value, node, state);
                 try self.validateExpressionUse(node, state);
             },
             .array_index => |access| {
-                if (access.array_ptr.content == .dereference)
-                    try self.analyzeNode(access.array_ptr, state);
+                try self.validateProjectionContainerUse(access.array_ptr, node, state);
                 try self.validateExpressionUse(node, state);
                 try self.analyzeNode(access.index, state);
             },
@@ -316,7 +319,7 @@ pub const MemorySafetyAnalyzer = struct {
                 }
             },
             .pointer_assignment => |assignment| {
-                try self.analyzeNode(assignment.pointer, state);
+                try self.validatePointerTargetUse(assignment.pointer, state);
                 try self.analyzeValueIntoStableDestination(assignment.value, state);
                 if (assignment.pointer.sem_type) |pointer_ty| {
                     if (pointer_ty == .pointer_type and pointer_ty.pointer_type.mutability == .exclusive) {
@@ -366,6 +369,7 @@ pub const MemorySafetyAnalyzer = struct {
             .return_statement => |statement| {
                 if (statement.expression) |expression| try self.analyzeNode(expression, state);
                 for (statement.cleanup_nodes) |cleanup| try self.analyzeNode(cleanup, state);
+                state.can_continue = false;
             },
             .nullable_unwrap_or => |unwrap| {
                 try self.analyzeNode(unwrap.nullable_value, state);
@@ -377,12 +381,16 @@ pub const MemorySafetyAnalyzer = struct {
             },
             .error_propagation => |propagation| {
                 try self.analyzeNode(propagation.errable_value, state);
-                for (propagation.cleanup_nodes) |cleanup| try self.analyzeNode(cleanup, state);
+                var error_state = try state.clone(self.allocator.*);
+                defer error_state.deinit();
+                for (propagation.cleanup_nodes) |cleanup| try self.analyzeNode(cleanup, &error_state);
             },
             .error_context => |context| {
                 try self.analyzeNode(context.errable_value, state);
                 try self.analyzeNode(context.context, state);
-                for (context.cleanup_nodes) |cleanup| try self.analyzeNode(cleanup, state);
+                var error_state = try state.clone(self.allocator.*);
+                defer error_state.deinit();
+                for (context.cleanup_nodes) |cleanup| try self.analyzeNode(cleanup, &error_state);
             },
             .explicit_cast => |cast| try self.analyzeNode(cast.value, state),
             .type_initializer => |initializer| try self.analyzeNode(initializer.args, state),
@@ -427,19 +435,20 @@ pub const MemorySafetyAnalyzer = struct {
             defer iteration.deinit();
             try self.analyzeNode(statement.condition, &iteration);
             try self.analyzeCodeBlock(statement.body, &iteration);
-            const next = try self.mergeStates(&entry, &iteration);
-            if (functionStatesEquivalent(&fixed_point, &next)) {
+            if (functionStatesEquivalent(&fixed_point, &iteration)) {
                 fixed_point.deinit();
-                fixed_point = next;
+                fixed_point = try iteration.clone(self.allocator.*);
                 converged = true;
                 break;
             }
             fixed_point.deinit();
-            fixed_point = next;
+            fixed_point = try iteration.clone(self.allocator.*);
         }
         if (!converged) try self.widenLoopState(&fixed_point, statement.condition.location);
+        const exit_state = try self.mergeStates(&entry, &fixed_point);
+        fixed_point.deinit();
         state.deinit();
-        state.* = fixed_point;
+        state.* = exit_state;
     }
 
     fn analyzeFor(self: *MemorySafetyAnalyzer, statement: *const sg.ForStatement, state: *FunctionState) !void {
@@ -455,19 +464,20 @@ pub const MemorySafetyAnalyzer = struct {
             try self.analyzeNode(statement.condition, &iteration);
             try self.analyzeCodeBlock(statement.body, &iteration);
             if (statement.increment) |increment| try self.analyzeNode(increment, &iteration);
-            const next = try self.mergeStates(&entry, &iteration);
-            if (functionStatesEquivalent(&fixed_point, &next)) {
+            if (functionStatesEquivalent(&fixed_point, &iteration)) {
                 fixed_point.deinit();
-                fixed_point = next;
+                fixed_point = try iteration.clone(self.allocator.*);
                 converged = true;
                 break;
             }
             fixed_point.deinit();
-            fixed_point = next;
+            fixed_point = try iteration.clone(self.allocator.*);
         }
         if (!converged) try self.widenLoopState(&fixed_point, statement.condition.location);
+        const exit_state = try self.mergeStates(&entry, &fixed_point);
+        fixed_point.deinit();
         state.deinit();
-        state.* = fixed_point;
+        state.* = exit_state;
     }
 
     fn analyzeSwitch(self: *MemorySafetyAnalyzer, statement: *const sg.SwitchStatement, state: *FunctionState) !void {
@@ -504,6 +514,8 @@ pub const MemorySafetyAnalyzer = struct {
         left: *const FunctionState,
         right: *const FunctionState,
     ) !FunctionState {
+        if (!left.can_continue) return right.clone(self.allocator.*);
+        if (!right.can_continue) return left.clone(self.allocator.*);
         var merged = try left.clone(self.allocator.*);
         errdefer merged.deinit();
 
@@ -552,7 +564,8 @@ pub const MemorySafetyAnalyzer = struct {
     }
 
     fn functionStatesEquivalent(left: *const FunctionState, right: *const FunctionState) bool {
-        if (left.references.count() != right.references.count() or
+        if (left.can_continue != right.can_continue or
+            left.references.count() != right.references.count() or
             left.invalidations.items.len != right.invalidations.items.len) return false;
         var references = left.references.iterator();
         while (references.next()) |entry| {
@@ -977,10 +990,7 @@ pub const MemorySafetyAnalyzer = struct {
         defer captured.deinit();
 
         for (fact.captured) |dependency| {
-            if (dependency.value_path.len == 0) {
-                try captured.append(dependency);
-                continue;
-            }
+            if (dependency.value_path.len == 0) continue;
             if (!valueProjectionsMatch(dependency.value_path[0], projection)) continue;
             var selected = dependency;
             selected.value_path = try self.allocator.dupe(temporal_place.Projection, dependency.value_path[1..]);
@@ -1196,6 +1206,37 @@ pub const MemorySafetyAnalyzer = struct {
         try self.validateFact(label.root.name, fact, value, state);
     }
 
+    fn validateProjectionContainerUse(
+        self: *MemorySafetyAnalyzer,
+        container: *const sg.SGNode,
+        use_node: *const sg.SGNode,
+        state: *const FunctionState,
+    ) !void {
+        const fact = try self.referenceFactFromValue(container, state) orelse return;
+        var direct = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
+        defer direct.deinit();
+        for (fact.captured) |captured| {
+            if (captured.value_path.len == 0) try direct.append(captured);
+        }
+        const label = (try temporal_place.Place.fromNode(container, self.allocator)) orelse return;
+        try self.validateFact(label.root.name, .{ .captured = direct.items }, use_node, state);
+    }
+
+    fn validatePointerTargetUse(
+        self: *MemorySafetyAnalyzer,
+        pointer: *const sg.SGNode,
+        state: *const FunctionState,
+    ) !void {
+        const fact = try self.referenceFactFromValue(pointer, state) orelse return;
+        var direct = std.array_list.Managed(CapturedPlace).init(self.allocator.*);
+        defer direct.deinit();
+        for (fact.captured) |captured| {
+            if (captured.value_path.len == 0) try direct.append(captured);
+        }
+        const label = (try temporal_place.Place.fromNode(pointer, self.allocator)) orelse return;
+        try self.validateFact(label.root.name, .{ .captured = direct.items }, pointer, state);
+    }
+
     fn validateFact(
         self: *MemorySafetyAnalyzer,
         label: []const u8,
@@ -1322,7 +1363,7 @@ pub const MemorySafetyAnalyzer = struct {
 
         for (summary.dependency_transitions) |transition| {
             if (transition.target_input_index >= fields.len) continue;
-            const target_fact = try self.referenceFactFromValue(fields[transition.target_input_index].value, state) orelse continue;
+            const target_value = fields[transition.target_input_index].value;
             const source_fact: ReferenceFact = switch (transition.source) {
                 .fresh => .{ .captured = &.{.{
                     .place = try self.freshStoragePlace(call),
@@ -1340,14 +1381,18 @@ pub const MemorySafetyAnalyzer = struct {
                 },
             };
 
-            for (target_fact.captured) |target| {
+            if (target_value.content == .binding_use or target_value.content == .address_of) {
+                const target = if (target_value.content == .binding_use)
+                    temporal_place.Place{ .root = target_value.content.binding_use, .projections = &.{} }
+                else
+                    try temporal_place.Place.fromNode(target_value.content.address_of, self.allocator) orelse continue;
                 const target_prefix = try concatenatePlaceAndSummaryPaths(
-                    target.place.projections,
+                    target.projections,
                     transition.target_path,
                     self.allocator,
                 );
                 try self.replaceDependenciesAtValuePath(
-                    target.place.root,
+                    target.root,
                     target_prefix,
                     source_fact,
                     switch (transition.source) {
@@ -1356,7 +1401,64 @@ pub const MemorySafetyAnalyzer = struct {
                     },
                     state,
                 );
+                continue;
             }
+
+            const target_fact = try self.referenceFactFromValue(target_value, state) orelse continue;
+            for (target_fact.captured) |target| {
+                const target_prefix = try concatenatePlaceAndSummaryPaths(target.place.projections, transition.target_path, self.allocator);
+                try self.replaceDependenciesAtValuePath(target.place.root, target_prefix, source_fact, switch (transition.source) {
+                    .fresh => &.{},
+                    .input => |source| source.path,
+                }, state);
+            }
+        }
+    }
+
+    /// The exclusive reference used to perform a whole-referent transition
+    /// follows the referent into its new epoch. Other references retain their
+    /// earlier capture sequence and are rejected on subsequent use.
+    fn refreshTransitionedCallInputs(
+        self: *MemorySafetyAnalyzer,
+        call: *const sg.FunctionCall,
+        state: *FunctionState,
+    ) !void {
+        if (call.input.content != .struct_value_literal) return;
+        const summary = call.callee.temporal_summary orelse return;
+        const fields = call.input.content.struct_value_literal.fields;
+        for (summary.invalidations) |invalidation| {
+            if (invalidation.input_path.len != 0 or invalidation.input_index >= fields.len) continue;
+            const actual = fields[invalidation.input_index].value;
+            if (invalidation.input_value_path.len == 0) {
+                if (actual.content != .binding_use) continue;
+                const binding = actual.content.binding_use;
+                const existing = state.references.get(binding) orelse continue;
+                const refreshed = try self.allocator.dupe(CapturedPlace, existing.captured);
+                for (refreshed) |*captured| {
+                    if (captured.value_path.len == 0) captured.capture_sequence = self.next_sequence;
+                }
+                self.next_sequence += 1;
+                try state.references.put(binding, .{ .captured = refreshed });
+                continue;
+            }
+
+            const target = if (actual.content == .binding_use)
+                temporal_place.Place{ .root = actual.content.binding_use, .projections = &.{} }
+            else if (actual.content == .address_of)
+                try temporal_place.Place.fromNode(actual.content.address_of, self.allocator) orelse continue
+            else
+                continue;
+            const target_path = try concatenatePlaceAndSummaryPaths(
+                target.projections,
+                invalidation.input_value_path,
+                self.allocator,
+            );
+            const replacement = ReferenceFact{ .captured = &.{.{
+                .place = try self.freshStoragePlace(call),
+                .capture_sequence = self.next_sequence,
+            }} };
+            self.next_sequence += 1;
+            try self.replaceDependenciesAtValuePath(target.root, target_path, replacement, &.{}, state);
         }
     }
 
@@ -1476,11 +1578,20 @@ pub const MemorySafetyAnalyzer = struct {
     ) !void {
         var return_dependencies = std.array_list.Managed(sg.ReturnDependency).init(self.allocator.*);
         defer return_dependencies.deinit();
+        try return_dependencies.appendSlice(function.temporal_contract.return_dependencies);
+        var return_roots = std.array_list.Managed(sg.ReturnStorageRoot).init(self.allocator.*);
+        defer return_roots.deinit();
         var address_dependent_outputs = std.array_list.Managed(sg.AddressDependentOutput).init(self.allocator.*);
         defer address_dependent_outputs.deinit();
         for (function.output_bindings, 0..) |binding, output_index| {
             const fact = state.references.get(binding) orelse continue;
             for (fact.captured) |captured| {
+                if (self.isFreshStorageRoot(captured.place.root)) {
+                    const output_path = try self.allocator.alloc(sg.TemporalProjection, captured.value_path.len + 1);
+                    output_path[0] = .{ .field = @intCast(output_index) };
+                    for (captured.value_path, 0..) |projection, index| output_path[index + 1] = toSummaryProjection(projection);
+                    try return_roots.append(.{ .output_path = output_path, .source = .fresh });
+                }
                 if (captured.place.root == binding) {
                     try address_dependent_outputs.append(.{
                         .output_index = @intCast(output_index),
@@ -1520,12 +1631,37 @@ pub const MemorySafetyAnalyzer = struct {
 
         var dependency_transitions = std.array_list.Managed(sg.DependencyTransition).init(self.allocator.*);
         defer dependency_transitions.deinit();
+        try dependency_transitions.appendSlice(function.temporal_contract.dependency_transitions);
         for (function.input_bindings, 0..) |target_binding, target_input_index| {
             const fact = state.references.get(target_binding) orelse continue;
             for (fact.captured) |captured| {
                 if (captured.value_path.len == 0) continue;
+                var has_explicit_transition = false;
+                for (function.temporal_contract.dependency_transitions) |transition| {
+                    if (transition.target_input_index == target_input_index and
+                        placeAndSummaryPathsEqual(captured.value_path, transition.target_path))
+                    {
+                        has_explicit_transition = true;
+                        break;
+                    }
+                }
+                if (has_explicit_transition) continue;
                 const source = self.inputDependencySource(function, captured.place.root);
                 if (source == null and !self.isFreshStorageRoot(captured.place.root)) continue;
+                if (source) |input_source| {
+                    var invalidated_same_dependency = false;
+                    for (function.temporal_contract.invalidates_dependencies) |invalidation| {
+                        if (invalidation.input_index == target_input_index and
+                            input_source.input_index == target_input_index and
+                            placeAndSummaryPathsEqual(captured.value_path, invalidation.input_value_path) and
+                            valuePathsEqual(captured.value_path, input_source.value_path))
+                        {
+                            invalidated_same_dependency = true;
+                            break;
+                        }
+                    }
+                    if (invalidated_same_dependency) continue;
+                }
                 try dependency_transitions.append(.{
                     .target_input_index = @intCast(target_input_index),
                     .target_path = try placePathToTemporalPath(captured.value_path, self.allocator),
@@ -1579,23 +1715,20 @@ pub const MemorySafetyAnalyzer = struct {
         }
 
         const summary = try self.allocator.create(sg.TemporalSummary);
-        var return_roots: []const sg.ReturnStorageRoot = &.{};
         if (function.temporal_contract.return_root) |root_contract| {
-            const roots = try self.allocator.alloc(sg.ReturnStorageRoot, 1);
-            roots[0] = .{
+            try return_roots.append(.{
                 .output_path = try self.summaryFieldPath(root_contract.output_index),
                 .source = switch (root_contract.source) {
                     .fresh => .fresh,
                     .follows_input => |input_index| .{ .input = .{ .index = input_index, .path = &.{} } },
                 },
-            };
-            return_roots = roots;
+            });
         }
         summary.* = .{
             .return_dependencies = try return_dependencies.toOwnedSlice(),
             .dependency_transitions = try dependency_transitions.toOwnedSlice(),
             .invalidations = try invalidations.toOwnedSlice(),
-            .return_roots = return_roots,
+            .return_roots = try return_roots.toOwnedSlice(),
             .address_dependent_outputs = try address_dependent_outputs.toOwnedSlice(),
         };
         @constCast(function).temporal_summary = summary;
@@ -1826,6 +1959,15 @@ pub const MemorySafetyAnalyzer = struct {
     fn summaryPathsEqual(left: []const sg.TemporalProjection, right: []const sg.TemporalProjection) bool {
         if (left.len != right.len) return false;
         for (left, right) |a, b| if (!std.meta.eql(a, b)) return false;
+        return true;
+    }
+
+    fn placeAndSummaryPathsEqual(
+        left: []const temporal_place.Projection,
+        right: []const sg.TemporalProjection,
+    ) bool {
+        if (left.len != right.len) return false;
+        for (left, right) |a, b| if (!std.meta.eql(a, toPlaceProjection(b))) return false;
         return true;
     }
 };

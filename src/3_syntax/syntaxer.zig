@@ -1447,6 +1447,10 @@ pub const Syntaxer = struct {
         defer invalidates.deinit();
         var invalidates_dependencies = std.array_list.Managed(syn.TemporalContract.DependencyInvalidation).init(self.allocator);
         defer invalidates_dependencies.deinit();
+        var return_dependencies = std.array_list.Managed(syn.TemporalContract.DependencyReturn).init(self.allocator);
+        defer return_dependencies.deinit();
+        var fresh_dependency_transitions = std.array_list.Managed(syn.TemporalContract.FreshDependencyTransition).init(self.allocator);
+        defer fresh_dependency_transitions.deinit();
         var contract = syn.TemporalContract{};
 
         while (self.tokenIs(.hash)) {
@@ -1480,6 +1484,40 @@ pub const Syntaxer = struct {
                     .input_name = input_name,
                     .value_path = try value_path.toOwnedSlice(),
                 });
+            } else if (std.mem.eql(u8, directive, "returns_dependency")) {
+                const output_name = try self.parseIdentifier();
+                if (!self.tokenIs(.comma)) return SyntaxerError.ExpectedComma;
+                self.advanceOne();
+                const input_name = try self.parseIdentifier();
+                if (!self.tokenIs(.comma)) return SyntaxerError.ExpectedComma;
+                self.advanceOne();
+                var value_path = std.array_list.Managed([]const u8).init(self.allocator);
+                defer value_path.deinit();
+                try value_path.append(try self.parseIdentifier());
+                while (self.tokenIs(.dot)) {
+                    self.advanceOne();
+                    try value_path.append(try self.parseIdentifier());
+                }
+                try return_dependencies.append(.{
+                    .output_name = output_name,
+                    .input_name = input_name,
+                    .value_path = try value_path.toOwnedSlice(),
+                });
+            } else if (std.mem.eql(u8, directive, "sets_dependency_fresh")) {
+                const input_name = try self.parseIdentifier();
+                if (!self.tokenIs(.comma)) return SyntaxerError.ExpectedComma;
+                self.advanceOne();
+                var value_path = std.array_list.Managed([]const u8).init(self.allocator);
+                defer value_path.deinit();
+                try value_path.append(try self.parseIdentifier());
+                while (self.tokenIs(.dot)) {
+                    self.advanceOne();
+                    try value_path.append(try self.parseIdentifier());
+                }
+                try fresh_dependency_transitions.append(.{
+                    .input_name = input_name,
+                    .value_path = try value_path.toOwnedSlice(),
+                });
             } else if (std.mem.eql(u8, directive, "returns_fresh")) {
                 contract.return_root = .{
                     .output_name = try self.parseIdentifier(),
@@ -1503,6 +1541,8 @@ pub const Syntaxer = struct {
 
         contract.invalidates_inputs = try invalidates.toOwnedSlice();
         contract.invalidates_dependencies = try invalidates_dependencies.toOwnedSlice();
+        contract.return_dependencies = try return_dependencies.toOwnedSlice();
+        contract.fresh_dependency_transitions = try fresh_dependency_transitions.toOwnedSlice();
         return contract;
     }
 

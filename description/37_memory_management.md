@@ -460,10 +460,28 @@ deinit(.self: $$&String) -> ()
 to the storage root held at that value path. Other hidden dependencies, such as
 a borrowed allocator or underlying stream, remain valid.
 
+Raw pointer-producing helpers can state that their result follows a hidden
+dependency rather than the aggregate's inline storage:
+
+```rg
+operator get_ro_pointer[](.self: &DynamicArray, .index: UIntNative)
+    -> (.value: &T)
+    #returns_dependency(value, self, allocation.data)
+    #raw_boundary := { ... }
+```
+
+This keeps element pointers attached to the allocation root even when their
+implementation computes the address through an integer.
+
 Initializer summaries are applied to the stable destination created for the
 new value. Consequently, a fresh root written through the implicit `.p`
 parameter remains fresh in the constructed aggregate instead of disappearing
 at the initializer boundary.
+
+When a raw or fallible implementation cannot expose that post-state through
+ordinary values, `#sets_dependency_fresh(self, allocation.data)` states the
+same transition explicitly. It is an auditable boundary contract, not a
+lifetime parameter in the nominal type.
 
 `#trusted_temporal` authorizes an implementation to establish or replace hidden
 dependencies through `$&`, principally during initialization. `#raw_boundary`
