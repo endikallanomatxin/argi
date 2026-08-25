@@ -2900,6 +2900,12 @@ test "feature_tests/ownership/38X_ambiguous_copy_struct_field" {
     );
 }
 
+test "feature_tests/ownership/39_stable_field_reference_survives_replacement" {
+    const test_path = "tests/feature_tests/ownership/39_stable_field_reference_survives_replacement";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/ownership/29_string_view_is_copyable" {
     const test_path = "tests/feature_tests/ownership/29_string_view_is_copyable";
     try expectSuccessfulBuild(test_path);
