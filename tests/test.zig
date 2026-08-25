@@ -2925,6 +2925,15 @@ test "feature_tests/ownership/42X_reference_use_after_root_end" {
     );
 }
 
+test "feature_tests/ownership/53X_pointer_inputs_may_alias" {
+    try buildExpectFailExact("tests/feature_tests/ownership/53X_pointer_inputs_may_alias",
+        \\tests/feature_tests/ownership/53X_pointer_inputs_may_alias/main.rg:1:1: error: reference depends on a root that has ended
+        \\  invalidate_then_read(
+        \\  ^
+        \\
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

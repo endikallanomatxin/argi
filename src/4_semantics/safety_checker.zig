@@ -83,9 +83,17 @@ pub const SafetyChecker = struct {
         if (std.mem.indexOf(u8, function.location.file, "core/") != null) return;
         var state = FunctionState.init(self.allocator.*);
         defer state.deinit();
+        // Argi pointer parameters may alias. Until a call-site proof can
+        // partition them, one shared root conservatively represents any
+        // temporal invalidation observable through compatible inputs.
+        var pointer_input_root: ?facts.RootId = null;
         for (function.input_bindings) |binding| {
             if (binding.ty == .pointer_type) {
-                const root = try state.tracker.establish(.fresh);
+                const root = pointer_input_root orelse blk: {
+                    const established = try state.tracker.establish(.fresh);
+                    pointer_input_root = established;
+                    break :blk established;
+                };
                 try self.setPlace(&state, .{ .root = binding }, .initialized, .{ .dependencies = try self.oneDependency(root) });
             } else {
                 try self.setPlace(&state, .{ .root = binding }, .initialized, .{});
