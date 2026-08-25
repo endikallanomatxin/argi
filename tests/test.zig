@@ -2916,6 +2916,15 @@ test "feature_tests/ownership/41_raw_pointer_establish_inherit" {
     try expectSuccessfulBuild(test_path);
 }
 
+test "feature_tests/ownership/42X_reference_use_after_root_end" {
+    try buildExpectFailExact("tests/feature_tests/ownership/42X_reference_use_after_root_end",
+        \\tests/feature_tests/ownership/42X_reference_use_after_root_end/main.rg:1:1: error: reference depends on a root that has ended
+        \\  main(.system: System) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
 test "feature_tests/ownership/29_string_view_is_copyable" {
     const test_path = "tests/feature_tests/ownership/29_string_view_is_copyable";
     try expectSuccessfulBuild(test_path);

@@ -23,6 +23,7 @@ pub const SafetyChecker = struct {
     }
 
     pub fn analyze(self: *SafetyChecker, nodes: []const *sg.SGNode) !void {
+        const diagnostic_count = self.diagnostics.list.items.len;
         var functions = std.array_list.Managed(*const sg.FunctionDeclaration).init(self.allocator.*);
         defer functions.deinit();
         for (nodes) |node| switch (node.content) {
@@ -38,6 +39,209 @@ pub const SafetyChecker = struct {
             for (functions.items) |function| changed = (try self.infer(function)) or changed;
             if (!changed) break;
         }
+        for (functions.items) |function| try self.validateFunction(function);
+        if (self.diagnostics.list.items.len != diagnostic_count) return error.Reported;
+    }
+
+    const FunctionState = struct {
+        tracker: facts.Tracker,
+        values: std.AutoHashMap(*const sg.BindingDeclaration, facts.ValueFacts),
+        storage_roots: std.AutoHashMap(*const sg.BindingDeclaration, facts.RootId),
+
+        fn init(allocator: std.mem.Allocator) FunctionState {
+            return .{
+                .tracker = facts.Tracker.init(allocator),
+                .values = std.AutoHashMap(*const sg.BindingDeclaration, facts.ValueFacts).init(allocator),
+                .storage_roots = std.AutoHashMap(*const sg.BindingDeclaration, facts.RootId).init(allocator),
+            };
+        }
+
+        fn deinit(self: *FunctionState) void {
+            self.tracker.deinit();
+            self.values.deinit();
+            self.storage_roots.deinit();
+        }
+    };
+
+    fn validateFunction(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !void {
+        const body = function.body orelse return;
+        if (function.origin_kind != .declared) return;
+        if (isRootingPrimitive(function.name)) return;
+        if (std.mem.indexOf(u8, function.location.file, "/core/") != null) return;
+        var state = FunctionState.init(self.allocator.*);
+        defer state.deinit();
+        for (function.input_bindings) |binding| {
+            if (binding.ty == .pointer_type) {
+                const root = try state.tracker.establish(.fresh);
+                try state.values.put(binding, .{ .dependencies = try self.oneDependency(root) });
+            }
+        }
+        try self.validateBlock(function, body, &state);
+    }
+
+    fn validateBlock(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        block: *const sg.CodeBlock,
+        state: *FunctionState,
+    ) !void {
+        for (block.nodes) |node| switch (node.content) {
+            .binding_declaration => |binding| {
+                const value = if (binding.initialization) |initialization|
+                    try self.evaluate(function, initialization, state)
+                else
+                    facts.ValueFacts{};
+                try state.values.put(binding, value);
+            },
+            .binding_assignment => |assignment| try state.values.put(
+                assignment.sym_id,
+                try self.evaluate(function, assignment.value, state),
+            ),
+            .function_call, .dereference, .explicit_cast => _ = try self.evaluate(function, node, state),
+            .if_statement => |statement| {
+                _ = try self.evaluate(function, statement.condition, state);
+                try self.validateBlock(function, statement.then_block, state);
+                if (statement.else_block) |else_block| try self.validateBlock(function, else_block, state);
+            },
+            .while_statement => |statement| {
+                _ = try self.evaluate(function, statement.condition, state);
+                try self.validateBlock(function, statement.body, state);
+            },
+            .for_statement => |statement| {
+                if (statement.init) |initialization| _ = try self.evaluate(function, initialization, state);
+                _ = try self.evaluate(function, statement.condition, state);
+                try self.validateBlock(function, statement.body, state);
+                if (statement.increment) |increment| _ = try self.evaluate(function, increment, state);
+            },
+            .return_statement => |statement| if (statement.expression) |expression| {
+                _ = try self.evaluate(function, expression, state);
+            },
+            else => {},
+        };
+    }
+
+    fn evaluate(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        state: *FunctionState,
+    ) anyerror!facts.ValueFacts {
+        return switch (node.content) {
+            .binding_use => |binding| state.values.get(binding) orelse .{},
+            .move_value => |value| blk: {
+                const result = try self.evaluate(function, value, state);
+                if (value.content == .binding_use) try state.values.put(value.content.binding_use, .{});
+                break :blk result;
+            },
+            .address_of => |value| .{ .dependencies = try self.oneDependency(try self.storageRoot(value, state)) },
+            .dereference => |dereference| blk: {
+                const pointer = try self.evaluate(function, dereference.pointer, state);
+                if (!state.tracker.dependenciesAreAlive(pointer)) {
+                    try self.diagnostics.add(function.location, .semantic, "reference depends on a root that has ended", .{});
+                }
+                break :blk facts.ValueFacts{};
+            },
+            .struct_value_literal => |literal| try self.aggregate(function, literal.fields, state),
+            .struct_field_access => |access| try self.evaluate(function, access.struct_value, state),
+            .explicit_cast => |cast| try self.evaluate(function, cast.value, state),
+            .function_call => |call| try self.evaluateCall(function, call, state),
+            .binary_operation => |operation| blk: {
+                _ = try self.evaluate(function, operation.left, state);
+                _ = try self.evaluate(function, operation.right, state);
+                break :blk .{};
+            },
+            .comparison => |comparison| blk: {
+                _ = try self.evaluate(function, comparison.left, state);
+                _ = try self.evaluate(function, comparison.right, state);
+                break :blk .{};
+            },
+            .logical_operation => |operation| blk: {
+                _ = try self.evaluate(function, operation.left, state);
+                _ = try self.evaluate(function, operation.right, state);
+                break :blk .{};
+            },
+            else => .{},
+        };
+    }
+
+    fn evaluateCall(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        call: *const sg.FunctionCall,
+        state: *FunctionState,
+    ) anyerror!facts.ValueFacts {
+        var arguments: []const sg.StructValueLiteralField = &.{};
+        if (call.input.content == .struct_value_literal) arguments = call.input.content.struct_value_literal.fields;
+        if (std.mem.eql(u8, call.callee.name, "deallocate") and arguments.len > 1) {
+            const data = try self.evaluate(function, arguments[1].value, state);
+            for (data.dependencies) |dependency| state.tracker.end(dependency.root);
+            return .{};
+        }
+        const summary = self.summaries.get(call.callee) orelse return .{};
+        for (summary.deinitializes_inputs) |index| {
+            if (index >= arguments.len) continue;
+            if (rootBinding(arguments[index].value)) |binding| {
+                if (state.values.get(binding)) |value| {
+                    for (value.cleanup_responsibilities) |responsibility| state.tracker.end(responsibility.root);
+                }
+                try state.values.put(binding, .{});
+            }
+        }
+        if (summary.outputs.len != 1) return .{};
+        return switch (summary.outputs[0]) {
+            .independent => .{},
+            .fresh => blk: {
+                const root = try state.tracker.establish(.fresh);
+                break :blk .{
+                    .dependencies = try self.oneDependency(root),
+                    .cleanup_responsibilities = try self.oneResponsibility(root),
+                };
+            },
+            .depends_on_input, .transfers_input => |index| if (index < arguments.len)
+                try self.evaluate(function, arguments[index].value, state)
+            else
+                .{},
+        };
+    }
+
+    fn aggregate(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        fields: []const sg.StructValueLiteralField,
+        state: *FunctionState,
+    ) anyerror!facts.ValueFacts {
+        var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
+        var responsibilities = std.array_list.Managed(facts.CleanupResponsibility).init(self.allocator.*);
+        for (fields) |field| {
+            const value = try self.evaluate(function, field.value, state);
+            try dependencies.appendSlice(value.dependencies);
+            try responsibilities.appendSlice(value.cleanup_responsibilities);
+        }
+        return .{
+            .dependencies = try dependencies.toOwnedSlice(),
+            .cleanup_responsibilities = try responsibilities.toOwnedSlice(),
+        };
+    }
+
+    fn storageRoot(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) !facts.RootId {
+        _ = self;
+        const binding = rootBinding(node) orelse return state.tracker.establish(.fresh);
+        if (state.storage_roots.get(binding)) |root| return root;
+        const root = try state.tracker.establish(.fresh);
+        try state.storage_roots.put(binding, root);
+        return root;
+    }
+
+    fn oneDependency(self: *SafetyChecker, root: facts.RootId) ![]const facts.ReferenceDependency {
+        const result = try self.allocator.alloc(facts.ReferenceDependency, 1);
+        result[0] = .{ .root = root };
+        return result;
+    }
+
+    fn oneResponsibility(self: *SafetyChecker, root: facts.RootId) ![]const facts.CleanupResponsibility {
+        const result = try self.allocator.alloc(facts.CleanupResponsibility, 1);
+        result[0] = .{ .root = root };
+        return result;
     }
 
     fn ensureEmptySummary(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !void {
@@ -56,9 +260,46 @@ pub const SafetyChecker = struct {
         const previous = self.summaries.get(function).?;
         const outputs = try self.allocator.dupe(facts.OutputEffect, previous.outputs);
         try self.inferBlock(function, body, outputs);
-        if (effectsEqual(previous.outputs, outputs)) return false;
-        try self.summaries.put(function, .{ .outputs = outputs });
+        var deinitialized = std.array_list.Managed(u32).init(self.allocator.*);
+        try self.inferDeinitializedInputs(function, body, &deinitialized);
+        const deinitialized_slice = try deinitialized.toOwnedSlice();
+        if (effectsEqual(previous.outputs, outputs) and
+            std.mem.eql(u32, previous.deinitializes_inputs, deinitialized_slice)) return false;
+        try self.summaries.put(function, .{
+            .outputs = outputs,
+            .deinitializes_inputs = deinitialized_slice,
+        });
         return true;
+    }
+
+    fn inferDeinitializedInputs(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        block: *const sg.CodeBlock,
+        result: *std.array_list.Managed(u32),
+    ) !void {
+        for (block.nodes) |node| switch (node.content) {
+            .function_call => |call| {
+                if (call.input.content != .struct_value_literal) continue;
+                const arguments = call.input.content.struct_value_literal.fields;
+                if (std.mem.eql(u8, call.callee.name, "deallocate")) {
+                    if (arguments.len > 1) try appendEffectInput(self.inferExpression(function, arguments[1].value), result);
+                    continue;
+                }
+                const summary = self.summaries.get(call.callee) orelse continue;
+                for (summary.deinitializes_inputs) |callee_index| {
+                    if (callee_index < arguments.len)
+                        try appendEffectInput(self.inferExpression(function, arguments[callee_index].value), result);
+                }
+            },
+            .if_statement => |statement| {
+                try self.inferDeinitializedInputs(function, statement.then_block, result);
+                if (statement.else_block) |else_block| try self.inferDeinitializedInputs(function, else_block, result);
+            },
+            .while_statement => |statement| try self.inferDeinitializedInputs(function, statement.body, result),
+            .for_statement => |statement| try self.inferDeinitializedInputs(function, statement.body, result),
+            else => {},
+        };
     }
 
     fn replaceSingleOutput(
@@ -114,6 +355,7 @@ pub const SafetyChecker = struct {
                 else => |effect| effect,
             },
             .address_of => |value| self.inferExpression(function, value),
+            .dereference => |value| self.inferExpression(function, value.pointer),
             .struct_field_access => |access| self.inferExpression(function, access.struct_value),
             .explicit_cast => |cast| self.inferExpression(function, cast.value),
             .function_call => |call| self.inferCall(function, call),
@@ -151,4 +393,29 @@ fn effectsEqual(left: []const facts.OutputEffect, right: []const facts.OutputEff
     if (left.len != right.len) return false;
     for (left, right) |a, b| if (!std.meta.eql(a, b)) return false;
     return true;
+}
+
+fn appendEffectInput(effect: facts.OutputEffect, result: *std.array_list.Managed(u32)) !void {
+    const index = switch (effect) {
+        .depends_on_input, .transfers_input => |input| input,
+        else => return,
+    };
+    for (result.items) |existing| if (existing == index) return;
+    try result.append(index);
+}
+
+fn isRootingPrimitive(name: []const u8) bool {
+    return std.mem.eql(u8, name, "establish_fresh_reference") or
+        std.mem.eql(u8, name, "establish_inherited_reference");
+}
+
+fn rootBinding(node: *const sg.SGNode) ?*const sg.BindingDeclaration {
+    return switch (node.content) {
+        .binding_use => |binding| binding,
+        .struct_field_access => |access| rootBinding(access.struct_value),
+        .array_index => |index| rootBinding(index.array_ptr),
+        .dereference => |dereference| rootBinding(dereference.pointer),
+        .address_of => |value| rootBinding(value),
+        else => null,
+    };
 }
