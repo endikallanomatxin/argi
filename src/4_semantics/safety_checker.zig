@@ -46,12 +46,14 @@ pub const SafetyChecker = struct {
     const FunctionState = struct {
         tracker: facts.Tracker,
         values: std.AutoHashMap(*const sg.BindingDeclaration, facts.ValueFacts),
+        initializedness: std.AutoHashMap(*const sg.BindingDeclaration, @import("value_state.zig").Initializedness),
         storage_roots: std.AutoHashMap(*const sg.BindingDeclaration, facts.RootId),
 
         fn init(allocator: std.mem.Allocator) FunctionState {
             return .{
                 .tracker = facts.Tracker.init(allocator),
                 .values = std.AutoHashMap(*const sg.BindingDeclaration, facts.ValueFacts).init(allocator),
+                .initializedness = std.AutoHashMap(*const sg.BindingDeclaration, @import("value_state.zig").Initializedness).init(allocator),
                 .storage_roots = std.AutoHashMap(*const sg.BindingDeclaration, facts.RootId).init(allocator),
             };
         }
@@ -59,6 +61,7 @@ pub const SafetyChecker = struct {
         fn deinit(self: *FunctionState) void {
             self.tracker.deinit();
             self.values.deinit();
+            self.initializedness.deinit();
             self.storage_roots.deinit();
         }
     };
@@ -92,11 +95,12 @@ pub const SafetyChecker = struct {
                 else
                     facts.ValueFacts{};
                 try state.values.put(binding, value);
+                try state.initializedness.put(binding, .initialized);
             },
-            .binding_assignment => |assignment| try state.values.put(
-                assignment.sym_id,
-                try self.evaluate(function, assignment.value, state),
-            ),
+            .binding_assignment => |assignment| {
+                try state.values.put(assignment.sym_id, try self.evaluate(function, assignment.value, state));
+                try state.initializedness.put(assignment.sym_id, .initialized);
+            },
             .function_call, .dereference, .explicit_cast => _ = try self.evaluate(function, node, state),
             .if_statement => |statement| {
                 _ = try self.evaluate(function, statement.condition, state);
@@ -127,10 +131,23 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) anyerror!facts.ValueFacts {
         return switch (node.content) {
-            .binding_use => |binding| state.values.get(binding) orelse .{},
+            .binding_use => |binding| blk: {
+                if (state.initializedness.get(binding)) |initializedness| {
+                    if (initializedness != .initialized) {
+                        try self.diagnostics.add(function.location, .semantic, "binding '{s}' is {s} and cannot be used", .{
+                            binding.name,
+                            @tagName(initializedness),
+                        });
+                    }
+                }
+                break :blk state.values.get(binding) orelse .{};
+            },
             .move_value => |value| blk: {
                 const result = try self.evaluate(function, value, state);
-                if (value.content == .binding_use) try state.values.put(value.content.binding_use, .{});
+                if (value.content == .binding_use) {
+                    try state.values.put(value.content.binding_use, .{});
+                    try state.initializedness.put(value.content.binding_use, .moved);
+                }
                 break :blk result;
             },
             .address_of => |value| .{ .dependencies = try self.oneDependency(try self.storageRoot(value, state)) },
@@ -191,6 +208,7 @@ pub const SafetyChecker = struct {
                     for (value.cleanup_responsibilities) |responsibility| state.tracker.end(responsibility.root);
                 }
                 try state.values.put(binding, .{});
+                try state.initializedness.put(binding, .deinitialized);
             }
         }
         if (summary.outputs.len != 1) return .{};

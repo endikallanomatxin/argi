@@ -2947,6 +2947,10 @@ test "feature_tests/ownership/45X_cross_root_cycle_stale_edge" {
     );
 }
 
+test "feature_tests/ownership/46_deinitialized_place_can_be_replaced" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/46_deinitialized_place_can_be_replaced");
+}
+
 test "feature_tests/ownership/29_string_view_is_copyable" {
     const test_path = "tests/feature_tests/ownership/29_string_view_is_copyable";
     try expectSuccessfulBuild(test_path);
