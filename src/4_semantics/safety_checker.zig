@@ -350,19 +350,13 @@ pub const SafetyChecker = struct {
             if (call.callee.safety_primitive == .establish_allocation)
                 try self.diagnostics.add(function.location, .semantic, "allocation root establishment is restricted to compiler-owned storage boundaries", .{});
         }
-        if (std.mem.eql(u8, call.callee.name, "deallocate") and arguments.len > 1) {
-            const data = argument_values[1];
-            for (data.dependencies) |dependency| state.tracker.end(dependency.root);
-            return .{};
-        }
         if (call.callee.body == null and call.callee.output.fields.len == 1 and
             call.callee.output.fields[0].ty == .pointer_type)
             return .{ .foreign_storage = true };
         const summary = self.summaries.get(call.callee) orelse return .{};
         for (summary.ends_input_roots) |index| {
             if (index >= arguments.len) continue;
-            const target = argument_values[index].referenced_place orelse
-                try self.resolvePlace(arguments[index].value, state);
+            const target = argument_values[index].referenced_place;
             if (target) |storage| {
                 if (self.getPlace(state, storage)) |place_facts| {
                     for (place_facts.value.owned_roots) |owned_root| state.tracker.end(owned_root);
@@ -370,10 +364,19 @@ pub const SafetyChecker = struct {
                     remaining.owned_roots = &.{};
                     try self.setPlace(state, storage, .initialized, remaining);
                 }
+            } else {
+                // Unknown pointee: conservatively invalidate the shared input
+                // lifetime so aliases cannot continue reading through it.
+                for (argument_values[index].dependencies) |dependency| state.tracker.end(dependency.root);
             }
         }
         for (summary.deinitializes_inputs) |index| {
             if (index >= arguments.len) continue;
+            if (arguments[index].value.content == .address_of and
+                arguments[index].value.content.address_of.content == .binding_use)
+            {
+                @constCast(call).consumes_auto_deinit = arguments[index].value.content.address_of.content.binding_use;
+            }
             const target = argument_values[index].referenced_place orelse
                 try self.resolvePlace(arguments[index].value, state);
             if (target) |storage|
@@ -831,6 +834,15 @@ pub const SafetyChecker = struct {
         try self.inferBlock(function, body, outputs);
         var deinitialized = std.array_list.Managed(u32).init(self.allocator.*);
         try self.inferDeinitializedInputs(function, body, &deinitialized);
+        if (function.is_deinit) {
+            for (function.input.fields, 0..) |input_field, index| {
+                if (!std.mem.eql(u8, input_field.name, "self") or input_field.ty != .pointer_type or
+                    input_field.ty.pointer_type.mutability != .read_write) continue;
+                if (std.mem.indexOfScalar(u32, deinitialized.items, @intCast(index)) == null)
+                    try deinitialized.append(@intCast(index));
+                break;
+            }
+        }
         const deinitialized_slice = try deinitialized.toOwnedSlice();
         if (effectsEqual(previous.outputs, outputs) and
             std.mem.eql(u32, previous.ends_input_roots, deinitialized_slice) and
@@ -866,13 +878,6 @@ pub const SafetyChecker = struct {
             .function_call => |call| {
                 if (call.input.content != .struct_value_literal) continue;
                 const arguments = call.input.content.struct_value_literal.fields;
-                if (std.mem.eql(u8, call.callee.name, "deallocate")) {
-                    if (arguments.len > 1) {
-                        const effect = try self.inferExpression(function, arguments[1].value);
-                        try setEffectInputState(effect, states, true);
-                    }
-                    continue;
-                }
                 const summary = self.summaries.get(call.callee) orelse continue;
                 for (summary.ends_input_roots) |callee_index| {
                     if (callee_index < arguments.len)

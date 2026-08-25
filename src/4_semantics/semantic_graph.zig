@@ -365,6 +365,9 @@ pub const FunctionDeclaration = struct {
     location: tok.Location,
     origin_kind: OriginKind = .declared,
     safety_primitive: SafetyPrimitive = .none,
+    /// Compiler-resolved destructor identity. The safety checker consumes this
+    /// tag and never infers temporal effects from the callee's spelling.
+    is_deinit: bool = false,
     // Generic instantiations from abstract-contract templates must stay
     // distinct from regular generic instantiations even when they collapse to
     // the same concrete callable shape. Call resolution and reuse of existing

@@ -839,6 +839,7 @@ pub const Semantizer = struct {
             .name = decl.name.string,
             .location = loc,
             .safety_primitive = safetyPrimitiveForDeclaration(decl.name.string, loc.file),
+            .is_deinit = std.mem.eql(u8, decl.name.string, "deinit"),
             .is_once = decl.is_once,
             .is_test = is_test,
             .input = in_struct_ptr.*,
@@ -4624,6 +4625,7 @@ pub const Semantizer = struct {
                 .name = f.name.string,
                 .location = loc,
                 .safety_primitive = safetyPrimitiveForDeclaration(f.name.string, loc.file),
+                .is_deinit = std.mem.eql(u8, f.name.string, "deinit"),
                 .is_once = f.is_once,
                 .is_test = is_test,
                 .input = in_struct_ptr.*,
@@ -4845,6 +4847,7 @@ pub const Semantizer = struct {
                 .name = f.name.string,
                 .location = loc,
                 .safety_primitive = safetyPrimitiveForDeclaration(f.name.string, loc.file),
+                .is_deinit = std.mem.eql(u8, f.name.string, "deinit"),
                 .is_once = f.is_once,
                 .is_test = is_test,
                 .input = in_struct_ptr.*,
@@ -6996,7 +6999,7 @@ pub const Semantizer = struct {
         coerced_input: typ.TypedExpr,
         s: *Scope,
     ) ?*const sg.BindingDeclaration {
-        if (!std.mem.eql(u8, chosen.name, "deinit")) return null;
+        if (!chosen.is_deinit) return null;
         if (coerced_input.node.content != .struct_value_literal) return null;
 
         const input_value = coerced_input.node.content.struct_value_literal;
@@ -10200,6 +10203,7 @@ pub const Semantizer = struct {
             .location = tmpl.location,
             .origin_kind = .generic_instantiation,
             .safety_primitive = safetyPrimitiveForDeclaration(tmpl.name, tmpl.location.file),
+            .is_deinit = std.mem.eql(u8, tmpl.name, "deinit"),
             .generic_dispatch_kind = switch (tmpl.dispatch_kind) {
                 .regular => .regular,
                 .abstract_contract => .abstract_contract,
