@@ -2925,6 +2925,28 @@ test "feature_tests/ownership/42X_reference_use_after_root_end" {
     );
 }
 
+test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
+    try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
+        \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended
+        \\  main(.system: System) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/44_cross_root_cycle_survivor_remains_usable" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/44_cross_root_cycle_survivor_remains_usable");
+}
+
+test "feature_tests/ownership/45X_cross_root_cycle_stale_edge" {
+    try buildExpectFailExact("tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge",
+        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:3:1: error: reference depends on a root that has ended
+        \\  main(.system: System) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
 test "feature_tests/ownership/29_string_view_is_copyable" {
     const test_path = "tests/feature_tests/ownership/29_string_view_is_copyable";
     try expectSuccessfulBuild(test_path);

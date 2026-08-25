@@ -23,10 +23,16 @@ pub const CleanupResponsibility = struct {
 pub const ValueFacts = struct {
     dependencies: []const ReferenceDependency = &.{},
     cleanup_responsibilities: []const CleanupResponsibility = &.{},
+    fields: []const FieldFacts = &.{},
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
         return .{ .dependencies = self.dependencies };
     }
+};
+
+pub const FieldFacts = struct {
+    index: u32,
+    value: *const ValueFacts,
 };
 
 pub const PlaceFacts = struct {

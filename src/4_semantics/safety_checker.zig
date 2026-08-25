@@ -142,7 +142,13 @@ pub const SafetyChecker = struct {
                 break :blk facts.ValueFacts{};
             },
             .struct_value_literal => |literal| try self.aggregate(function, literal.fields, state),
-            .struct_field_access => |access| try self.evaluate(function, access.struct_value, state),
+            .struct_field_access => |access| blk: {
+                const aggregate_value = try self.evaluate(function, access.struct_value, state);
+                for (aggregate_value.fields) |field| {
+                    if (field.index == access.field_index) break :blk field.value.*;
+                }
+                break :blk aggregate_value;
+            },
             .explicit_cast => |cast| try self.evaluate(function, cast.value, state),
             .function_call => |call| try self.evaluateCall(function, call, state),
             .binary_operation => |operation| blk: {
@@ -212,14 +218,19 @@ pub const SafetyChecker = struct {
     ) anyerror!facts.ValueFacts {
         var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
         var responsibilities = std.array_list.Managed(facts.CleanupResponsibility).init(self.allocator.*);
-        for (fields) |field| {
+        var field_facts = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
+        for (fields, 0..) |field, index| {
             const value = try self.evaluate(function, field.value, state);
             try dependencies.appendSlice(value.dependencies);
             try responsibilities.appendSlice(value.cleanup_responsibilities);
+            const stored = try self.allocator.create(facts.ValueFacts);
+            stored.* = value;
+            try field_facts.append(.{ .index = @intCast(index), .value = stored });
         }
         return .{
             .dependencies = try dependencies.toOwnedSlice(),
             .cleanup_responsibilities = try responsibilities.toOwnedSlice(),
+            .fields = try field_facts.toOwnedSlice(),
         };
     }
 
@@ -283,7 +294,10 @@ pub const SafetyChecker = struct {
                 if (call.input.content != .struct_value_literal) continue;
                 const arguments = call.input.content.struct_value_literal.fields;
                 if (std.mem.eql(u8, call.callee.name, "deallocate")) {
-                    if (arguments.len > 1) try appendEffectInput(self.inferExpression(function, arguments[1].value), result);
+                    if (arguments.len > 1) {
+                        const effect = self.inferExpression(function, arguments[1].value);
+                        try appendEffectInput(effect, result);
+                    }
                     continue;
                 }
                 const summary = self.summaries.get(call.callee) orelse continue;
@@ -346,7 +360,7 @@ pub const SafetyChecker = struct {
         node: *const sg.SGNode,
     ) facts.OutputEffect {
         return switch (node.content) {
-            .binding_use => |binding| if (bindingIndex(function.input_bindings, binding)) |index|
+            .binding_use => |binding| if (inputIndex(function, binding)) |index|
                 .{ .depends_on_input = @intCast(index) }
             else
                 .independent,
@@ -385,7 +399,17 @@ pub const SafetyChecker = struct {
 };
 
 fn bindingIndex(bindings: []const *const sg.BindingDeclaration, target: *const sg.BindingDeclaration) ?usize {
-    for (bindings, 0..) |binding, index| if (binding == target) return index;
+    for (bindings, 0..) |binding, index| {
+        if (binding == target or std.mem.eql(u8, binding.name, target.name)) return index;
+    }
+    return null;
+}
+
+fn inputIndex(function: *const sg.FunctionDeclaration, target: *const sg.BindingDeclaration) ?usize {
+    if (bindingIndex(function.input_bindings, target)) |index| return index;
+    for (function.input.fields, 0..) |field, index| {
+        if (std.mem.eql(u8, field.name, target.name)) return index;
+    }
     return null;
 }
 

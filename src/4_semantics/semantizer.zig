@@ -4860,6 +4860,7 @@ pub const Semantizer = struct {
         child.current_fn = fn_ptr;
 
         const input_struct_ptr = try self.allocator.create(sg.StructType);
+        var prepared_input_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
         if (!functionHasAnyDefaults(f.input.fields)) {
             input_struct_ptr.* = .{ .fields = fn_ptr.input.fields };
             for (f.input.fields, 0..) |fld, idx| {
@@ -4873,7 +4874,10 @@ pub const Semantizer = struct {
                     .initialization = null,
                 };
                 try child.bindings.put(fld.name.string, bd);
+                try prepared_input_bindings.append(bd);
             }
+            fn_ptr.input_bindings = try prepared_input_bindings.toOwnedSlice();
+            prepared_input_bindings.deinit();
             fn_ptr.input = input_struct_ptr.*;
             pending.prepared_scope = child;
             pending.prepared_input_struct = input_struct_ptr;
@@ -4903,8 +4907,11 @@ pub const Semantizer = struct {
                 .initialization = dvp,
             };
             try child.bindings.put(fld.name.string, bd);
+            try prepared_input_bindings.append(bd);
         }
 
+        fn_ptr.input_bindings = try prepared_input_bindings.toOwnedSlice();
+        prepared_input_bindings.deinit();
         fn_ptr.input = input_struct_ptr.*;
         pending.prepared_scope = child;
         pending.prepared_input_struct = input_struct_ptr;
