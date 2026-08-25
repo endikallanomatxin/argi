@@ -225,6 +225,14 @@ pub fn typeImplementsAbstract(
     if (candidate == .abstract_type and std.mem.eql(u8, candidate.abstract_type.name, abs_name)) {
         return true;
     }
+    if (typ.genericIdentityOf(candidate)) |identity| {
+        if (std.mem.eql(u8, identity.base_name, "Virtual") and identity.arg_values.len == 1) {
+            switch (identity.arg_values[0]) {
+                .type => |abstract_type| if (abstract_type == .abstract_type and std.mem.eql(u8, abstract_type.abstract_type.name, abs_name)) return true,
+                else => {},
+            }
+        }
+    }
 
     var cur: ?*Scope = s;
     while (cur) |sc| : (cur = sc.parent) {

@@ -407,6 +407,10 @@ pub const SafetyPrimitive = enum {
     read_reference,
     end_root,
     null_reference,
+    arena_init,
+    arena_allocate,
+    arena_reset,
+    arena_deinit,
 };
 
 pub const TestDeclaration = struct {

@@ -52,6 +52,7 @@ pub const InputDependency = struct {
     input_index: u32,
     projections: []const place.Projection = &.{},
     transfers_cleanup: bool = false,
+    depends_on_cleanup_root: bool = false,
 };
 
 pub const OutputFieldEffect = struct {

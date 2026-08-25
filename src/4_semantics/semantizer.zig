@@ -14,6 +14,12 @@ const Scope = @import("scope.zig").Scope;
 const SemErr = @import("errors.zig").SemErr;
 
 fn safetyPrimitiveForDeclaration(name: []const u8, file: []const u8) sg.SafetyPrimitive {
+    if (std.mem.endsWith(u8, file, "core/memory/heap_allocation/ArenaAllocator.rg")) {
+        if (std.mem.eql(u8, name, "init")) return .arena_init;
+        if (std.mem.eql(u8, name, "allocate")) return .arena_allocate;
+        if (std.mem.eql(u8, name, "reset")) return .arena_reset;
+        if (std.mem.eql(u8, name, "deinit")) return .arena_deinit;
+    }
     if (!std.mem.endsWith(u8, file, "core/memory/heap_allocation/RawPointer.rg")) return .none;
     const Entry = struct { name: []const u8, primitive: sg.SafetyPrimitive };
     const entries = [_]Entry{

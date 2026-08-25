@@ -83,7 +83,7 @@ pub const SafetyChecker = struct {
     fn validateFunction(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !void {
         const body = function.body orelse return;
         if (function.origin_kind != .declared) return;
-        if (function.safety_primitive != .none) return;
+        if (primitiveHasOpaqueBody(function.safety_primitive)) return;
         var state = FunctionState.init(self.allocator.*);
         defer state.deinit();
         for (function.input_bindings) |binding| {
@@ -280,6 +280,15 @@ pub const SafetyChecker = struct {
                 break :blk .{};
             },
             .function_call => |call| try self.evaluateCall(function, call, state),
+            .type_initializer => |initializer| blk: {
+                const call = sg.FunctionCall{ .callee = initializer.init_fn, .input = initializer.args };
+                _ = try self.evaluateCall(function, &call, state);
+                if (initializer.args.content == .struct_value_literal and initializer.args.content.struct_value_literal.fields.len != 0) {
+                    const first = initializer.args.content.struct_value_literal.fields[0].value;
+                    if (try self.resolvePlace(first, state)) |storage| if (self.getPlace(state, storage)) |initialized| break :blk initialized.value;
+                }
+                break :blk .{};
+            },
             .virtualize => |virtualize| try self.evaluate(function, virtualize.value, state),
             .virtual_call => |call| try self.evaluate(function, call.input, state),
             .binary_operation => |operation| blk: {
@@ -312,6 +321,41 @@ pub const SafetyChecker = struct {
         const argument_values = try self.allocator.alloc(facts.ValueFacts, arguments.len);
         for (arguments, 0..) |argument, index| {
             argument_values[index] = self.copyReferenceValue(argument.value, try self.evaluate(function, argument.value, state));
+        }
+        switch (call.callee.safety_primitive) {
+            .arena_init => {
+                if (arguments.len != 0) if (try self.resolvePlace(arguments[0].value, state)) |storage| {
+                    const root = try state.tracker.establish(.fresh);
+                    try self.setPlace(state, storage, .initialized, .{ .cleanup_responsibilities = try self.oneResponsibility(root) });
+                };
+                return .{};
+            },
+            .arena_allocate => {
+                if (arguments.len != 0) if (try self.resolvePlace(arguments[0].value, state)) |storage| {
+                    if (self.getPlace(state, storage)) |arena| {
+                        const dependencies = try self.allocator.alloc(facts.ReferenceDependency, arena.value.cleanup_responsibilities.len);
+                        for (arena.value.cleanup_responsibilities, 0..) |responsibility, index| dependencies[index] = .{ .root = responsibility.root };
+                        return .{ .dependencies = dependencies };
+                    }
+                };
+                return .{};
+            },
+            .arena_reset => {
+                if (arguments.len != 0) if (try self.resolvePlace(arguments[0].value, state)) |storage| {
+                    if (self.getPlace(state, storage)) |arena| for (arena.value.cleanup_responsibilities) |responsibility| state.tracker.end(responsibility.root);
+                    const root = try state.tracker.establish(.fresh);
+                    try self.setPlace(state, storage, .initialized, .{ .cleanup_responsibilities = try self.oneResponsibility(root) });
+                };
+                return .{};
+            },
+            .arena_deinit => {
+                if (arguments.len != 0) if (try self.resolvePlace(arguments[0].value, state)) |storage| {
+                    if (self.getPlace(state, storage)) |arena| for (arena.value.cleanup_responsibilities) |responsibility| state.tracker.end(responsibility.root);
+                    try self.setPlace(state, storage, .deinitialized, .{});
+                };
+                return .{};
+            },
+            else => {},
         }
         if (call.callee.safety_primitive == .end_root) {
             if (argument_values.len == 0 or argument_values[0].cleanup_responsibilities.len == 0) {
@@ -362,6 +406,11 @@ pub const SafetyChecker = struct {
             if (dependency.input_index >= arguments.len) continue;
             var input = arguments[dependency.input_index];
             input = projectValueFacts(input, dependency.projections);
+            if (dependency.depends_on_cleanup_root) {
+                const roots = try self.allocator.alloc(facts.ReferenceDependency, input.cleanup_responsibilities.len);
+                for (input.cleanup_responsibilities, 0..) |responsibility, index| roots[index] = .{ .root = responsibility.root };
+                input = .{ .dependencies = roots };
+            }
             if (!dependency.transfers_cleanup) input.cleanup_responsibilities = &.{};
             result = try self.mergeValueFacts(result, input);
         }
@@ -743,6 +792,7 @@ pub const SafetyChecker = struct {
             .array_index => |index| try self.inferProjection(function, index.array_ptr, if (staticIndex(index.index)) |value| .{ .static_index = value } else .dynamic_index),
             .explicit_cast => |cast| try self.inferExpression(function, cast.value),
             .function_call => |call| try self.inferCall(function, call),
+            .type_initializer => |initializer| try self.inferCall(function, &.{ .callee = initializer.init_fn, .input = initializer.args }),
             .virtualize => |virtualize| try self.inferExpression(function, virtualize.value),
             .virtual_call => |call| try self.inferExpression(function, call.input),
             else => .{},
@@ -775,6 +825,12 @@ pub const SafetyChecker = struct {
             => self.inputOutputEffect(0, &.{}),
             .end_root => .{},
             .null_reference => .{},
+            .arena_allocate => blk: {
+                const effect = try self.inputOutputEffect(0, &.{});
+                @constCast(effect.input_dependencies)[0].depends_on_cleanup_root = true;
+                break :blk effect;
+            },
+            .arena_init, .arena_reset, .arena_deinit => .{},
         };
     }
 
@@ -967,7 +1023,7 @@ fn appendResponsibility(list: *std.array_list.Managed(facts.CleanupResponsibilit
 
 fn appendInputDependency(list: *std.array_list.Managed(facts.InputDependency), dependency: facts.InputDependency) !void {
     for (list.items) |existing| {
-        if (existing.input_index != dependency.input_index or existing.transfers_cleanup != dependency.transfers_cleanup) continue;
+        if (existing.input_index != dependency.input_index or existing.transfers_cleanup != dependency.transfers_cleanup or existing.depends_on_cleanup_root != dependency.depends_on_cleanup_root) continue;
         if (projectionsEqual(existing.projections, dependency.projections)) return;
     }
     try list.append(dependency);
@@ -983,7 +1039,7 @@ fn outputEffectEqual(left: facts.OutputEffect, right: facts.OutputEffect) bool {
     if (left.fresh != right.fresh or left.integer_address != right.integer_address) return false;
     if (left.input_dependencies.len != right.input_dependencies.len or left.fields.len != right.fields.len) return false;
     for (left.input_dependencies, right.input_dependencies) |a, b| {
-        if (a.input_index != b.input_index or a.transfers_cleanup != b.transfers_cleanup or !projectionsEqual(a.projections, b.projections)) return false;
+        if (a.input_index != b.input_index or a.transfers_cleanup != b.transfers_cleanup or a.depends_on_cleanup_root != b.depends_on_cleanup_root or !projectionsEqual(a.projections, b.projections)) return false;
     }
     for (left.fields, right.fields) |a, b| {
         if (a.index != b.index or !outputEffectEqual(a.value.*, b.value.*)) return false;
@@ -1007,5 +1063,21 @@ fn staticIndex(node: *const sg.SGNode) ?usize {
     return switch (node.content.value_literal) {
         .int_literal => |index| if (index >= 0) @intCast(index) else null,
         else => null,
+    };
+}
+
+fn primitiveHasOpaqueBody(primitive: sg.SafetyPrimitive) bool {
+    return switch (primitive) {
+        .establish_fresh_reference,
+        .establish_inherited_reference,
+        .reference_offset,
+        .mutable_reference_offset,
+        .reinterpret_reference,
+        .mutable_reinterpret_reference,
+        .read_reference,
+        .end_root,
+        .null_reference,
+        => true,
+        .none, .arena_init, .arena_allocate, .arena_reset, .arena_deinit => false,
     };
 }

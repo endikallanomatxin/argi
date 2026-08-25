@@ -2791,6 +2791,12 @@ test "feature_tests/system/34_file_block_short_read" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/system/35_arena_page_allocator_backing" {
+    const test_path = "tests/feature_tests/system/35_arena_page_allocator_backing";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/polymorphism/20_generic_abstract_bound_syntax" {
     const test_path = "tests/feature_tests/polymorphism/20_generic_abstract_bound_syntax";
     try expectSuccessfulBuild(test_path);
@@ -3016,6 +3022,27 @@ test "feature_tests/ownership/54_move_transfers_cleanup_authority" {
 
 test "feature_tests/ownership/55_user_deallocate_has_no_temporal_effect" {
     const test_path = "tests/feature_tests/ownership/55_user_deallocate_has_no_temporal_effect";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/56_arena_individual_deallocate_keeps_root" {
+    const test_path = "tests/feature_tests/ownership/56_arena_individual_deallocate_keeps_root";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/57X_arena_reset_ends_group_root" {
+    try buildExpectFailExact("tests/feature_tests/ownership/57X_arena_reset_ends_group_root",
+        \\tests/feature_tests/ownership/57X_arena_reset_ends_group_root/main.rg:1:1: error: reference depends on a root that has ended
+        \\  main(.system: System) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/58_arena_reset_establishes_new_root" {
+    const test_path = "tests/feature_tests/ownership/58_arena_reset_establishes_new_root";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
