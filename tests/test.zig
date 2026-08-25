@@ -2906,6 +2906,16 @@ test "feature_tests/ownership/39_stable_field_reference_survives_replacement" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/40_raw_pointer_establish_fresh" {
+    const test_path = "tests/feature_tests/ownership/40_raw_pointer_establish_fresh";
+    try expectSuccessfulBuild(test_path);
+}
+
+test "feature_tests/ownership/41_raw_pointer_establish_inherit" {
+    const test_path = "tests/feature_tests/ownership/41_raw_pointer_establish_inherit";
+    try expectSuccessfulBuild(test_path);
+}
+
 test "feature_tests/ownership/29_string_view_is_copyable" {
     const test_path = "tests/feature_tests/ownership/29_string_view_is_copyable";
     try expectSuccessfulBuild(test_path);
