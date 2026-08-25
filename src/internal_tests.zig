@@ -3,6 +3,7 @@ const link = @import("5_codegen/link.zig");
 const lsp = @import("0_commands/lsp.zig");
 const tokenizer = @import("2_tokens/tokenizer.zig");
 const safety_facts = @import("4_semantics/safety_facts.zig");
+const safety_checker = @import("4_semantics/safety_checker.zig");
 
 test {
     _ = source_files;
@@ -10,4 +11,5 @@ test {
     _ = lsp;
     _ = tokenizer;
     _ = safety_facts;
+    _ = safety_checker;
 }
