@@ -2934,6 +2934,19 @@ test "feature_tests/ownership/53X_pointer_inputs_may_alias" {
     );
 }
 
+test "feature_tests/ownership/54_deinit_through_alias_reinitialize" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/54_deinit_through_alias_reinitialize");
+}
+
+test "feature_tests/ownership/55X_deinit_through_alias_read" {
+    try buildExpectFailExact("tests/feature_tests/ownership/55X_deinit_through_alias_read",
+        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:1:1: error: place rooted at 'allocation' is deinitialized and cannot be used
+        \\  main(.system: System) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

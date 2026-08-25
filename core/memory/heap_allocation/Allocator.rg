@@ -75,9 +75,4 @@ deinit(
     if self&.size > 0 {
         deallocate(.self = allocator, .data = self&.data, .size = self&.size)
     }
-
-    self& = (
-        .data = self&.data,
-        .size = 0,
-    )
 }

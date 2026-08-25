@@ -324,7 +324,9 @@ pub const SafetyChecker = struct {
         const summary = self.summaries.get(call.callee) orelse return .{};
         for (summary.ends_input_roots) |index| {
             if (index >= arguments.len) continue;
-            if (try self.resolvePlace(arguments[index].value, state)) |storage| {
+            const target = argument_values[index].referenced_place orelse
+                try self.resolvePlace(arguments[index].value, state);
+            if (target) |storage| {
                 if (self.getPlace(state, storage)) |place_facts| {
                     for (place_facts.value.owned_roots) |owned_root| state.tracker.end(owned_root);
                     var remaining = place_facts.value;
@@ -332,6 +334,13 @@ pub const SafetyChecker = struct {
                     try self.setPlace(state, storage, .initialized, remaining);
                 }
             }
+        }
+        for (summary.deinitializes_inputs) |index| {
+            if (index >= arguments.len) continue;
+            const target = argument_values[index].referenced_place orelse
+                try self.resolvePlace(arguments[index].value, state);
+            if (target) |storage|
+                try self.setPlace(state, storage, .deinitialized, .{});
         }
         if (summary.outputs.len != 1) return .{};
         return self.instantiateOutput(summary.outputs[0], argument_values, state);
@@ -769,10 +778,12 @@ pub const SafetyChecker = struct {
         try self.inferDeinitializedInputs(function, body, &deinitialized);
         const deinitialized_slice = try deinitialized.toOwnedSlice();
         if (effectsEqual(previous.outputs, outputs) and
-            std.mem.eql(u32, previous.ends_input_roots, deinitialized_slice)) return false;
+            std.mem.eql(u32, previous.ends_input_roots, deinitialized_slice) and
+            std.mem.eql(u32, previous.deinitializes_inputs, deinitialized_slice)) return false;
         try self.summaries.put(function, .{
             .outputs = outputs,
             .ends_input_roots = deinitialized_slice,
+            .deinitializes_inputs = deinitialized_slice,
         });
         return true;
     }
@@ -783,6 +794,19 @@ pub const SafetyChecker = struct {
         block: *const sg.CodeBlock,
         result: *std.array_list.Managed(u32),
     ) !void {
+        var states = std.AutoHashMap(u32, bool).init(self.allocator.*);
+        defer states.deinit();
+        try self.inferInputInitializedness(function, block, &states);
+        var iterator = states.iterator();
+        while (iterator.next()) |entry| if (entry.value_ptr.*) try result.append(entry.key_ptr.*);
+    }
+
+    fn inferInputInitializedness(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        block: *const sg.CodeBlock,
+        states: *std.AutoHashMap(u32, bool),
+    ) !void {
         for (block.nodes) |node| switch (node.content) {
             .function_call => |call| {
                 if (call.input.content != .struct_value_literal) continue;
@@ -790,22 +814,44 @@ pub const SafetyChecker = struct {
                 if (std.mem.eql(u8, call.callee.name, "deallocate")) {
                     if (arguments.len > 1) {
                         const effect = try self.inferExpression(function, arguments[1].value);
-                        try appendEffectInput(effect, result);
+                        try setEffectInputState(effect, states, true);
                     }
                     continue;
                 }
                 const summary = self.summaries.get(call.callee) orelse continue;
                 for (summary.ends_input_roots) |callee_index| {
                     if (callee_index < arguments.len)
-                        try appendEffectInput(try self.inferExpression(function, arguments[callee_index].value), result);
+                        try setEffectInputState(try self.inferExpression(function, arguments[callee_index].value), states, true);
                 }
             },
-            .if_statement => |statement| {
-                try self.inferDeinitializedInputs(function, statement.then_block, result);
-                if (statement.else_block) |else_block| try self.inferDeinitializedInputs(function, else_block, result);
+            .pointer_assignment => |assignment| {
+                try setEffectInputState(try self.inferExpression(function, assignment.pointer), states, false);
             },
-            .while_statement => |statement| try self.inferDeinitializedInputs(function, statement.body, result),
-            .for_statement => |statement| try self.inferDeinitializedInputs(function, statement.body, result),
+            .if_statement => |statement| {
+                var then_states = try cloneInputStates(states, self.allocator.*);
+                defer then_states.deinit();
+                try self.inferInputInitializedness(function, statement.then_block, &then_states);
+                var else_states = try cloneInputStates(states, self.allocator.*);
+                defer else_states.deinit();
+                if (statement.else_block) |else_block| try self.inferInputInitializedness(function, else_block, &else_states);
+                try joinInputStates(states, &then_states, &else_states);
+            },
+            .while_statement => |statement| {
+                var body_states = try cloneInputStates(states, self.allocator.*);
+                defer body_states.deinit();
+                try self.inferInputInitializedness(function, statement.body, &body_states);
+                var entry_states = try cloneInputStates(states, self.allocator.*);
+                defer entry_states.deinit();
+                try joinInputStates(states, &entry_states, &body_states);
+            },
+            .for_statement => |statement| {
+                var body_states = try cloneInputStates(states, self.allocator.*);
+                defer body_states.deinit();
+                try self.inferInputInitializedness(function, statement.body, &body_states);
+                var entry_states = try cloneInputStates(states, self.allocator.*);
+                defer entry_states.deinit();
+                try joinInputStates(states, &entry_states, &body_states);
+            },
             else => {},
         };
     }
@@ -1101,6 +1147,36 @@ fn appendEffectInput(effect: facts.OutputEffect, result: *std.array_list.Managed
         if (found) continue;
         try result.append(dependency.input_index);
     }
+}
+
+fn setEffectInputState(
+    effect: facts.OutputEffect,
+    states: *std.AutoHashMap(u32, bool),
+    deinitialized: bool,
+) !void {
+    for (effect.input_dependencies) |dependency|
+        try states.put(dependency.input_index, deinitialized);
+}
+
+fn cloneInputStates(source: *const std.AutoHashMap(u32, bool), allocator: std.mem.Allocator) !std.AutoHashMap(u32, bool) {
+    var result = std.AutoHashMap(u32, bool).init(allocator);
+    var iterator = source.iterator();
+    while (iterator.next()) |entry| try result.put(entry.key_ptr.*, entry.value_ptr.*);
+    return result;
+}
+
+fn joinInputStates(
+    destination: *std.AutoHashMap(u32, bool),
+    left: *const std.AutoHashMap(u32, bool),
+    right: *const std.AutoHashMap(u32, bool),
+) !void {
+    destination.clearRetainingCapacity();
+    var left_iterator = left.iterator();
+    while (left_iterator.next()) |entry|
+        try destination.put(entry.key_ptr.*, entry.value_ptr.* or (right.get(entry.key_ptr.*) orelse false));
+    var right_iterator = right.iterator();
+    while (right_iterator.next()) |entry| if (!destination.contains(entry.key_ptr.*))
+        try destination.put(entry.key_ptr.*, entry.value_ptr.*);
 }
 
 fn projectValueFacts(value: facts.ValueFacts, projections: []const place.Projection) facts.ValueFacts {
