@@ -3173,6 +3173,27 @@ test "feature_tests/polymorphism/28_virtual_foundation" {
     try run(test_path);
 }
 
+test "feature_tests/polymorphism/29X_virtual_dependency_escape" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/29X_virtual_dependency_escape",
+        "function output cannot depend on a local storage root that ends before return",
+    );
+}
+
+test "feature_tests/polymorphism/30X_virtual_dependency_union" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/30X_virtual_dependency_union",
+        "function output cannot depend on a local storage root that ends before return",
+    );
+}
+
+test "feature_tests/polymorphism/31X_virtual_incompatible_deinit" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/31X_virtual_incompatible_deinit",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+    );
+}
+
 test "feature_tests/text/10_string_view_c_string_storage" {
     const test_path = "tests/feature_tests/text/10_string_view_c_string_storage";
     try expectSuccessfulBuild(test_path);

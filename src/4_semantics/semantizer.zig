@@ -3406,6 +3406,12 @@ pub const Semantizer = struct {
         };
         info.requirements = requirements;
         info.param_names = generic_params;
+        const virtual_methods = try self.allocator.alloc(*sg.VirtualMethodRegistry, requirements.len);
+        for (virtual_methods) |*registry| {
+            registry.* = try self.allocator.create(sg.VirtualMethodRegistry);
+            registry.*.* = .{ .implementations = std.array_list.Managed(*const sg.FunctionDeclaration).init(self.allocator.*) };
+        }
+        info.virtual_methods = virtual_methods;
 
         const td = if (s.types.get(ad.name.string)) |existing| blk: {
             if (existing.ty != .abstract_type) return error.SymbolAlreadyDefined;
@@ -6706,7 +6712,16 @@ pub const Semantizer = struct {
                 },
                 else => return err,
             };
+            var known = false;
+            for (abstract_info.virtual_methods[index].implementations.items) |implementation| {
+                if (implementation == methods[index]) {
+                    known = true;
+                    break;
+                }
+            }
+            if (!known) try abstract_info.virtual_methods[index].implementations.append(methods[index]);
         }
+        try self.registerKnownVirtualImplementations(abstract_info, s);
         const virtualize = try self.allocator.create(sg.Virtualize);
         virtualize.* = .{
             .value = value.node,
@@ -6714,10 +6729,40 @@ pub const Semantizer = struct {
             .abstract_type = abstract_type,
             .virtual_type = virtual_type.struct_type,
             .methods = methods,
+            .safety_methods = abstract_info.virtual_methods,
+            .location = call.callee_loc,
         };
         const node = try sg.makeSGNode(.{ .virtualize = virtualize }, call.callee_loc, self.allocator);
         node.sem_type = virtual_type;
         return .{ .node = node, .ty = virtual_type };
+    }
+
+    fn registerKnownVirtualImplementations(
+        self: *Semantizer,
+        abstract_info: *abs.AbstractInfo,
+        s: *Scope,
+    ) SemErr!void {
+        var current: ?*Scope = s;
+        while (current) |scope| : (current = scope.parent) {
+            const entries = scope.abstract_impls.get(abstract_info.name) orelse continue;
+            for (entries.items) |entry| {
+                for (abstract_info.requirements, 0..) |*requirement, method_index| {
+                    const expected_input = try abs.buildExpectedInputWithConcrete(requirement, entry.ty, self.allocator);
+                    const implementation = abs.resolveOverload(requirement.name, .{ .struct_type = expected_input }, s) catch |err| switch (err) {
+                        error.SymbolNotFound, error.AmbiguousOverload => continue,
+                        else => return err,
+                    };
+                    var known = false;
+                    for (abstract_info.virtual_methods[method_index].implementations.items) |candidate| {
+                        if (candidate == implementation) {
+                            known = true;
+                            break;
+                        }
+                    }
+                    if (!known) try abstract_info.virtual_methods[method_index].implementations.append(implementation);
+                }
+            }
+        }
     }
 
     fn handleCall(
@@ -6959,6 +7004,7 @@ pub const Semantizer = struct {
                     .input_type = &requirement.input,
                     .output_type = &requirement.output,
                     .self_permission = requirement.input.fields[self_index].ty.pointer_type.mutability,
+                    .safety_methods = info.virtual_methods[method_index],
                 };
                 const node = try sg.makeSGNode(.{ .virtual_call = virtual_call }, call.callee_loc, self.allocator);
                 const result_type: sg.Type = switch (requirement.output.fields.len) {

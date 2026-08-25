@@ -11,17 +11,23 @@ pub const SafetyChecker = struct {
     allocator: *const std.mem.Allocator,
     diagnostics: *diagnostics.Diagnostics,
     summaries: std.AutoHashMap(*const sg.FunctionDeclaration, facts.FunctionSummary),
+    virtual_summaries: std.AutoHashMap(*const sg.VirtualMethodRegistry, facts.FunctionSummary),
+    invalid_virtual_summaries: std.AutoHashMap(*const sg.VirtualMethodRegistry, void),
 
     pub fn init(allocator: *const std.mem.Allocator, diags: *diagnostics.Diagnostics) SafetyChecker {
         return .{
             .allocator = allocator,
             .diagnostics = diags,
             .summaries = std.AutoHashMap(*const sg.FunctionDeclaration, facts.FunctionSummary).init(allocator.*),
+            .virtual_summaries = std.AutoHashMap(*const sg.VirtualMethodRegistry, facts.FunctionSummary).init(allocator.*),
+            .invalid_virtual_summaries = std.AutoHashMap(*const sg.VirtualMethodRegistry, void).init(allocator.*),
         };
     }
 
     pub fn deinit(self: *SafetyChecker) void {
         self.summaries.deinit();
+        self.virtual_summaries.deinit();
+        self.invalid_virtual_summaries.deinit();
     }
 
     pub fn analyze(self: *SafetyChecker, nodes: []const *sg.SGNode) !void {
@@ -37,10 +43,14 @@ pub const SafetyChecker = struct {
         for (functions.items) |function| try self.ensureEmptySummary(function);
         const limit = @max(functions.items.len + 1, 1);
         for (0..limit) |_| {
+            self.virtual_summaries.clearRetainingCapacity();
+            self.invalid_virtual_summaries.clearRetainingCapacity();
             var changed = false;
             for (functions.items) |function| changed = (try self.infer(function)) or changed;
             if (!changed) break;
         }
+        self.virtual_summaries.clearRetainingCapacity();
+        self.invalid_virtual_summaries.clearRetainingCapacity();
         for (functions.items) |function| try self.validateFunction(function);
         if (self.diagnostics.list.items.len != diagnostic_count) return error.Reported;
     }
@@ -158,7 +168,7 @@ pub const SafetyChecker = struct {
                     try self.addStoredOwnershipEdges(function, state, pointer, value);
                     if (pointer.referenced_place) |target| try self.setPlace(state, target, .initialized, value);
                 },
-                .function_call, .dereference, .explicit_cast, .struct_field_access, .array_index => _ = try self.evaluate(function, node, state),
+                .function_call, .virtual_call, .dereference, .explicit_cast, .struct_field_access, .array_index => _ = try self.evaluate(function, node, state),
                 .if_statement => |statement| {
                     _ = try self.evaluate(function, statement.condition, state);
                     var then_state = try state.clone(self.allocator.*);
@@ -321,8 +331,8 @@ pub const SafetyChecker = struct {
                 break :blk .{};
             },
             .function_call => |call| try self.evaluateCall(function, call, state),
-            .virtualize => |virtualize| try self.evaluate(function, virtualize.value, state),
-            .virtual_call => |call| try self.evaluate(function, call.input, state),
+            .virtualize => |virtualize| try self.evaluateVirtualize(function, virtualize, state),
+            .virtual_call => |call| try self.evaluateVirtualCall(function, call, state),
             .binary_operation => |operation| blk: {
                 _ = try self.evaluate(function, operation.left, state);
                 _ = try self.evaluate(function, operation.right, state);
@@ -393,6 +403,84 @@ pub const SafetyChecker = struct {
         }
         if (summary.outputs.len != 1) return .{};
         return self.instantiateOutput(summary.outputs[0], argument_values, state);
+    }
+
+    fn evaluateVirtualCall(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        call: *const sg.VirtualCall,
+        state: *FunctionState,
+    ) anyerror!facts.ValueFacts {
+        if (call.input.content != .struct_value_literal) return .{};
+        const arguments = call.input.content.struct_value_literal.fields;
+        const argument_values = try self.allocator.alloc(facts.ValueFacts, arguments.len);
+        for (arguments, 0..) |argument, index| argument_values[index] = try self.evaluate(function, argument.value, state);
+        const summary = try self.virtualSummary(call.safety_methods) orelse {
+            if (self.invalid_virtual_summaries.contains(call.safety_methods))
+                try self.diagnostics.add(call.input.location, .semantic, "virtual method '{s}' has incompatible safety effects across implementations", .{call.method_name});
+            return .{};
+        };
+        for (summary.deinitializes_inputs) |index| {
+            if (index >= arguments.len) continue;
+            if (arguments[index].value.content == .address_of and
+                rootBinding(arguments[index].value.content.address_of) != null)
+            {
+                @constCast(call).consumes_auto_deinit = arguments[index].value.content.address_of;
+            }
+        }
+        try self.applyInputEffects(summary, arguments, argument_values, state);
+        if (summary.outputs.len != 1) return .{};
+        return self.instantiateOutput(summary.outputs[0], argument_values, state);
+    }
+
+    fn evaluateVirtualize(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        virtualize: *const sg.Virtualize,
+        state: *FunctionState,
+    ) !facts.ValueFacts {
+        for (virtualize.safety_methods) |registry| {
+            _ = try self.virtualSummary(registry);
+            if (self.invalid_virtual_summaries.contains(registry)) {
+                try self.diagnostics.add(
+                    virtualize.location,
+                    .semantic,
+                    "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+                    .{},
+                );
+                break;
+            }
+        }
+        return self.evaluate(function, virtualize.value, state);
+    }
+
+    fn applyInputEffects(
+        self: *SafetyChecker,
+        summary: facts.FunctionSummary,
+        arguments: []const sg.StructValueLiteralField,
+        argument_values: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !void {
+        for (summary.ends_input_roots) |index| {
+            if (index >= arguments.len) continue;
+            const target = argument_values[index].referenced_place;
+            if (target) |storage| {
+                if (self.getPlace(state, storage)) |place_facts| {
+                    for (place_facts.value.owned_roots) |owned_root| state.tracker.end(owned_root);
+                    var remaining = place_facts.value;
+                    remaining.owned_roots = &.{};
+                    try self.setPlace(state, storage, .initialized, remaining);
+                }
+            } else {
+                for (argument_values[index].dependencies) |dependency| state.tracker.end(dependency.root);
+            }
+        }
+        for (summary.deinitializes_inputs) |index| {
+            if (index >= arguments.len) continue;
+            const target = argument_values[index].referenced_place orelse
+                try self.resolvePlace(arguments[index].value, state);
+            if (target) |storage| try self.setPlace(state, storage, .deinitialized, .{});
+        }
     }
 
     fn instantiateOutput(
@@ -938,6 +1026,89 @@ pub const SafetyChecker = struct {
         try self.summaries.put(function, .{ .outputs = outputs });
     }
 
+    fn virtualSummary(self: *SafetyChecker, registry: *const sg.VirtualMethodRegistry) !?facts.FunctionSummary {
+        if (self.invalid_virtual_summaries.contains(registry)) return null;
+        if (self.virtual_summaries.get(registry)) |summary| return summary;
+        if (registry.implementations.items.len == 0) return null;
+
+        var merged = self.summaries.get(registry.implementations.items[0]) orelse return null;
+        for (registry.implementations.items[1..]) |implementation| {
+            const next = self.summaries.get(implementation) orelse return null;
+            merged = (try self.mergeVirtualFunctionSummary(merged, next)) orelse {
+                try self.invalid_virtual_summaries.put(registry, {});
+                return null;
+            };
+        }
+        try self.virtual_summaries.put(registry, merged);
+        return merged;
+    }
+
+    fn mergeVirtualFunctionSummary(
+        self: *SafetyChecker,
+        left: facts.FunctionSummary,
+        right: facts.FunctionSummary,
+    ) !?facts.FunctionSummary {
+        if (!std.mem.eql(u32, left.ends_input_roots, right.ends_input_roots) or
+            !std.mem.eql(u32, left.deinitializes_inputs, right.deinitializes_inputs) or
+            left.outputs.len != right.outputs.len) return null;
+
+        var fresh_map = std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource).init(self.allocator.*);
+        defer fresh_map.deinit();
+        const outputs = try self.allocator.alloc(facts.OutputEffect, left.outputs.len);
+        for (left.outputs, right.outputs, 0..) |left_output, right_output, index| {
+            outputs[index] = (try self.mergeVirtualOutputEffect(left_output, right_output, &fresh_map)) orelse return null;
+        }
+        return .{
+            .outputs = outputs,
+            .ends_input_roots = left.ends_input_roots,
+            .deinitializes_inputs = left.deinitializes_inputs,
+        };
+    }
+
+    fn mergeVirtualOutputEffect(
+        self: *SafetyChecker,
+        left: facts.OutputEffect,
+        right: facts.OutputEffect,
+        fresh_map: *std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource),
+    ) !?facts.OutputEffect {
+        if (left.integer_address != right.integer_address or
+            left.foreign_storage != right.foreign_storage or
+            left.storage_authority != right.storage_authority or
+            left.fresh_dependencies.len != right.fresh_dependencies.len or
+            left.fresh_owned_roots.len != right.fresh_owned_roots.len or
+            left.fields.len != right.fields.len) return null;
+
+        if (!try alignFreshSources(left.fresh_dependencies, right.fresh_dependencies, fresh_map) or
+            !try alignFreshSources(left.fresh_owned_roots, right.fresh_owned_roots, fresh_map)) return null;
+
+        var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator.*);
+        for (left.input_dependencies) |dependency| try appendInputDependency(&dependencies, dependency);
+        for (right.input_dependencies) |dependency| {
+            if (dependency.transfers_ownership and !containsInputDependency(left.input_dependencies, dependency)) return null;
+            try appendInputDependency(&dependencies, dependency);
+        }
+        for (left.input_dependencies) |dependency| {
+            if (dependency.transfers_ownership and !containsInputDependency(right.input_dependencies, dependency)) return null;
+        }
+
+        const fields = try self.allocator.alloc(facts.OutputFieldEffect, left.fields.len);
+        for (left.fields, right.fields, 0..) |left_field, right_field, index| {
+            if (left_field.index != right_field.index) return null;
+            const value = try self.allocator.create(facts.OutputEffect);
+            value.* = (try self.mergeVirtualOutputEffect(left_field.value.*, right_field.value.*, fresh_map)) orelse return null;
+            fields[index] = .{ .index = left_field.index, .value = value };
+        }
+        return .{
+            .input_dependencies = try dependencies.toOwnedSlice(),
+            .fields = fields,
+            .fresh_dependencies = left.fresh_dependencies,
+            .fresh_owned_roots = left.fresh_owned_roots,
+            .integer_address = left.integer_address,
+            .foreign_storage = left.foreign_storage,
+            .storage_authority = left.storage_authority,
+        };
+    }
+
     fn infer(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !bool {
         if (function.safety_primitive != .none)
             return self.replaceSingleOutput(function, try self.primitiveOutputEffect(function.safety_primitive, @intFromPtr(function)));
@@ -992,6 +1163,15 @@ pub const SafetyChecker = struct {
                 if (call.input.content != .struct_value_literal) continue;
                 const arguments = call.input.content.struct_value_literal.fields;
                 const summary = self.summaries.get(call.callee) orelse continue;
+                for (summary.ends_input_roots) |callee_index| {
+                    if (callee_index < arguments.len)
+                        try setEffectInputState(try self.inferExpression(function, arguments[callee_index].value), states, true);
+                }
+            },
+            .virtual_call => |call| {
+                if (call.input.content != .struct_value_literal) continue;
+                const summary = try self.virtualSummary(call.safety_methods) orelse continue;
+                const arguments = call.input.content.struct_value_literal.fields;
                 for (summary.ends_input_roots) |callee_index| {
                     if (callee_index < arguments.len)
                         try setEffectInputState(try self.inferExpression(function, arguments[callee_index].value), states, true);
@@ -1086,7 +1266,7 @@ pub const SafetyChecker = struct {
             .explicit_cast => |cast| try self.inferExpression(function, cast.value),
             .function_call => |call| try self.inferCall(function, call),
             .virtualize => |virtualize| try self.inferExpression(function, virtualize.value),
-            .virtual_call => |call| try self.inferExpression(function, call.input),
+            .virtual_call => |call| try self.inferVirtualCall(function, call),
             else => .{},
         };
     }
@@ -1096,6 +1276,12 @@ pub const SafetyChecker = struct {
         const callee_summary = self.summaries.get(call.callee) orelse return .{};
         if (callee_summary.outputs.len != 1 or call.input.content != .struct_value_literal) return .{};
         return self.substituteOutput(function, callee_summary.outputs[0], call.input.content.struct_value_literal.fields);
+    }
+
+    fn inferVirtualCall(self: *SafetyChecker, function: *const sg.FunctionDeclaration, call: *const sg.VirtualCall) !facts.OutputEffect {
+        const summary = try self.virtualSummary(call.safety_methods) orelse return .{};
+        if (summary.outputs.len != 1 or call.input.content != .struct_value_literal) return .{};
+        return self.substituteOutput(function, summary.outputs[0], call.input.content.struct_value_literal.fields);
     }
 
     fn inputOutputEffect(self: *SafetyChecker, input_index: u32, projections: []const place.Projection) !facts.OutputEffect {
@@ -1239,6 +1425,34 @@ fn bindingIndex(bindings: []const *const sg.BindingDeclaration, target: *const s
         if (binding == target or std.mem.eql(u8, binding.name, target.name)) return index;
     }
     return null;
+}
+
+fn alignFreshSources(
+    canonical: []const facts.FreshRootSource,
+    candidate: []const facts.FreshRootSource,
+    mapping: *std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource),
+) !bool {
+    for (canonical, candidate) |canonical_source, candidate_source| {
+        if (mapping.get(candidate_source)) |existing| {
+            if (existing != canonical_source) return false;
+        } else {
+            var iterator = mapping.iterator();
+            while (iterator.next()) |entry| {
+                if (entry.value_ptr.* == canonical_source and entry.key_ptr.* != candidate_source) return false;
+            }
+            try mapping.put(candidate_source, canonical_source);
+        }
+    }
+    return true;
+}
+
+fn containsInputDependency(haystack: []const facts.InputDependency, needle: facts.InputDependency) bool {
+    for (haystack) |candidate| {
+        if (candidate.input_index == needle.input_index and
+            candidate.transfers_ownership == needle.transfers_ownership and
+            projectionsEqual(candidate.projections, needle.projections)) return true;
+    }
+    return false;
 }
 
 fn findPlace(places: []const facts.PlaceFacts, storage: place.Place) ?*const facts.PlaceFacts {
@@ -1501,4 +1715,78 @@ fn staticIndex(node: *const sg.SGNode) ?usize {
         .int_literal => |index| if (index >= 0) @intCast(index) else null,
         else => null,
     };
+}
+
+test "virtual summaries require exact ownership and align fresh root roles" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    const left_source: facts.FreshRootSource = 11;
+    const right_source: facts.FreshRootSource = 29;
+    const compatible = try checker.mergeVirtualFunctionSummary(
+        .{ .outputs = &.{.{
+            .fresh_dependencies = &.{left_source},
+            .fresh_owned_roots = &.{left_source},
+        }} },
+        .{ .outputs = &.{.{
+            .fresh_dependencies = &.{right_source},
+            .fresh_owned_roots = &.{right_source},
+        }} },
+    );
+    try std.testing.expect(compatible != null);
+    try std.testing.expectEqual(left_source, compatible.?.outputs[0].fresh_dependencies[0]);
+    try std.testing.expectEqual(left_source, compatible.?.outputs[0].fresh_owned_roots[0]);
+
+    const incompatible = try checker.mergeVirtualFunctionSummary(
+        .{ .outputs = &.{.{ .fresh_owned_roots = &.{left_source} }} },
+        .{ .outputs = &.{.{}} },
+    );
+    try std.testing.expect(incompatible == null);
+}
+
+test "virtual summaries require exact ownership transfer and deinitialization" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    const transfer = facts.InputDependency{ .input_index = 0, .transfers_ownership = true };
+    const transfer_mismatch = try checker.mergeVirtualFunctionSummary(
+        .{ .outputs = &.{.{ .input_dependencies = &.{transfer} }} },
+        .{ .outputs = &.{.{}} },
+    );
+    try std.testing.expect(transfer_mismatch == null);
+
+    const deinit_mismatch = try checker.mergeVirtualFunctionSummary(
+        .{ .outputs = &.{.{}}, .ends_input_roots = &.{0}, .deinitializes_inputs = &.{0} },
+        .{ .outputs = &.{.{}} },
+    );
+    try std.testing.expect(deinit_mismatch == null);
+}
+
+test "virtual summaries widen dependencies but require exact provenance" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    const from_self = facts.InputDependency{ .input_index = 0 };
+    const from_other = facts.InputDependency{ .input_index = 1 };
+    const widened = try checker.mergeVirtualFunctionSummary(
+        .{ .outputs = &.{.{ .input_dependencies = &.{from_self} }} },
+        .{ .outputs = &.{.{ .input_dependencies = &.{ from_self, from_other } }} },
+    );
+    try std.testing.expect(widened != null);
+    try std.testing.expectEqual(@as(usize, 2), widened.?.outputs[0].input_dependencies.len);
+
+    const provenance_mismatch = try checker.mergeVirtualFunctionSummary(
+        .{ .outputs = &.{.{ .storage_authority = true }} },
+        .{ .outputs = &.{.{}} },
+    );
+    try std.testing.expect(provenance_mismatch == null);
 }

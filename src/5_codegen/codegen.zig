@@ -2387,6 +2387,7 @@ pub const CodeGenerator = struct {
         const method_type = c.LLVMFunctionType(output_type, &parameters, 1, 0);
         var arguments = [_]llvm.c.LLVMValueRef{input_value};
         const output = c.LLVMBuildCall2(self.builder, method_type, method, &arguments, 1, "virtual.call");
+        self.markAutoDeinitNodeConsumed(virtual_call.consumes_auto_deinit);
         return switch (virtual_call.output_type.fields.len) {
             0 => null,
             1 => .{
@@ -2512,7 +2513,11 @@ pub const CodeGenerator = struct {
     }
 
     fn markAutoDeinitConsumed(self: *CodeGenerator, fc: *const sem.FunctionCall) void {
-        const target = fc.consumes_auto_deinit orelse return;
+        self.markAutoDeinitNodeConsumed(fc.consumes_auto_deinit);
+    }
+
+    fn markAutoDeinitNodeConsumed(self: *CodeGenerator, consumed: ?*const sem.SGNode) void {
+        const target = consumed orelse return;
         const drop_state = self.dropStateForNode(target) orelse return;
         self.storeDropState(drop_state, false);
     }

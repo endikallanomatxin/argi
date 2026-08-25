@@ -477,6 +477,15 @@ pub const Virtualize = struct {
     abstract_type: *const AbstractType,
     virtual_type: *const StructType,
     methods: []const *const FunctionDeclaration,
+    safety_methods: []const *VirtualMethodRegistry,
+    location: tok.Location,
+};
+
+/// Compiler-owned open-world-within-the-module registry. Abstract conformance
+/// supplies the known concrete declarations; `to_virtual` also records its
+/// selected implementation. Safety runs only after semantizing closes the set.
+pub const VirtualMethodRegistry = struct {
+    implementations: std.array_list.Managed(*const FunctionDeclaration),
 };
 
 pub const VirtualCall = struct {
@@ -489,6 +498,8 @@ pub const VirtualCall = struct {
     input_type: *const StructType,
     output_type: *const StructType,
     self_permission: syn.PointerMutability,
+    safety_methods: *const VirtualMethodRegistry,
+    consumes_auto_deinit: ?*const SGNode = null,
 };
 
 pub const ReachDirective = struct {

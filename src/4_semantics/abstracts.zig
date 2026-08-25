@@ -32,6 +32,7 @@ pub const AbstractInfo = struct {
     name: []const u8,
     requirements: []const AbstractFunctionReqSem,
     param_names: []const []const u8,
+    virtual_methods: []const *sg.VirtualMethodRegistry = &.{},
 };
 pub const AbstractImplEntry = struct {
     ty: sg.Type,
