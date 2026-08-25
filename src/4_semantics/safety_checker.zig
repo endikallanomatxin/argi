@@ -337,7 +337,6 @@ pub const SafetyChecker = struct {
         if (effect.fresh) {
             const root = try state.tracker.establish(.fresh);
             result.dependencies = try self.oneDependency(root);
-            result.owned_roots = try self.oneOwnedRoot(root);
         }
         for (effect.input_dependencies) |dependency| {
             if (dependency.input_index >= arguments.len) continue;
