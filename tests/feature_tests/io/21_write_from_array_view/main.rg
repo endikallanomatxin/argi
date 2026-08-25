@@ -21,14 +21,11 @@ flush(
 DummyOutput implements Writer
 
 main() -> (.status_code: Int32) := {
-    raw ::= malloc(.size = 3)
-    if cast#(.to: UIntNative)(.value = raw) == 0 {
-        status_code = 10
-        return
-    }
+    allocator :: CAllocator = CAllocator()
+    allocation ::= allocate_owned(.self = $&allocator, .size = 3)
 
     buffer ::= array_view#(.t: UInt8)(
-        .data = establish_fresh_reference#(.t: UInt8)(.raw = raw_pointer#(.t: UInt8)(.address = cast#(.to: UIntNative)(.value = raw))).reference,
+        .data = allocation.data,
         .length = 3,
     )
     buffer[0] = 2
@@ -39,7 +36,6 @@ main() -> (.status_code: Int32) := {
         .write_count = 0,
     )
     write_result ::= write(.self = $&stdout, .buffer = buffer)
-    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
 
     if is(.value = write_result, .variant = ..ok) {
     } else {

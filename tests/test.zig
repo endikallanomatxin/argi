@@ -1419,13 +1419,8 @@ test "feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param" {
     );
 }
 
-test "feature_tests/pointers/06X_explicit_pointer_casts" {
-    try buildExpectFailExact("tests/feature_tests/pointers/06X_explicit_pointer_casts",
-        \\tests/feature_tests/pointers/06X_explicit_pointer_casts/main.rg:1:1: error: raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
-        \\  main () -> (.status_code: Int32) := {
-        \\  ^
-        \\
-    );
+test "feature_tests/pointers/06_explicit_pointer_casts" {
+    try expectSuccessfulBuild("tests/feature_tests/pointers/06_explicit_pointer_casts");
 }
 
 test "feature_tests/pointers/07X_pointer_arithmetic_requires_cast" {
@@ -2911,7 +2906,7 @@ test "feature_tests/ownership/39_stable_field_reference_survives_replacement" {
 
 test "feature_tests/ownership/40_raw_pointer_establish_fresh" {
     try buildExpectFailExact("tests/feature_tests/ownership/40_raw_pointer_establish_fresh",
-        \\tests/feature_tests/ownership/40_raw_pointer_establish_fresh/main.rg:1:1: error: raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
+        \\tests/feature_tests/ownership/40_raw_pointer_establish_fresh/main.rg:1:1: error: fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
         \\  main() -> (.status_code: Int32) := {
         \\  ^
         \\
@@ -2919,12 +2914,7 @@ test "feature_tests/ownership/40_raw_pointer_establish_fresh" {
 }
 
 test "feature_tests/ownership/41_raw_pointer_establish_inherit" {
-    try buildExpectFailExact("tests/feature_tests/ownership/41_raw_pointer_establish_inherit",
-        \\tests/feature_tests/ownership/41_raw_pointer_establish_inherit/main.rg:1:1: error: raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
-        \\  main() -> (.status_code: Int32) := {
-        \\  ^
-        \\
-    );
+    try expectSuccessfulBuild("tests/feature_tests/ownership/41_raw_pointer_establish_inherit");
 }
 
 test "feature_tests/ownership/42X_reference_use_after_root_end" {
@@ -2991,6 +2981,33 @@ test "feature_tests/ownership/59X_branch_deinit_then_use" {
 
 test "feature_tests/ownership/60_partial_field_move_cleanup" {
     try expectSuccessfulBuild("tests/feature_tests/ownership/60_partial_field_move_cleanup");
+}
+
+test "feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root" {
+    try buildExpectFailExact("tests/feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root",
+        \\tests/feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root/main.rg:1:1: error: fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip" {
+    try buildExpectFailExact("tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip",
+        \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/63X_malloc_direct_safe_cast" {
+    try buildExpectFailExact("tests/feature_tests/ownership/63X_malloc_direct_safe_cast",
+        \\tests/feature_tests/ownership/63X_malloc_direct_safe_cast/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
 }
 
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {

@@ -28,6 +28,8 @@ fn safetyPrimitiveForDeclaration(name: []const u8, file: []const u8) sg.SafetyPr
         for (raw_pointer_entries) |entry| if (std.mem.eql(u8, name, entry.name)) return entry.primitive;
     if (std.mem.endsWith(u8, file, "core/memory/heap_allocation/Allocator.rg") and
         std.mem.eql(u8, name, "establish_allocation")) return .establish_allocation;
+    if (std.mem.endsWith(u8, file, "core/libc/libc.rg") and std.mem.eql(u8, name, "malloc"))
+        return .raw_allocated_storage;
     return .none;
 }
 
@@ -3499,6 +3501,7 @@ pub const Semantizer = struct {
             };
             if (concrete_direct) |concrete_ty| {
                 try s.appendAbstractImpl(abstract_name, .{ .ty = concrete_ty, .location = loc });
+                self.markAllocatorAllocateImplementation(abstract_name, concrete_ty, s);
                 const n = try self.makeNoopNode(loc);
                 try s.nodes.append(n);
                 return .{ .node = n, .ty = .{ .builtin = .Any } };
@@ -3533,10 +3536,24 @@ pub const Semantizer = struct {
         // Defer conformance checks until call sites or a validation pass.
 
         try s.appendAbstractImpl(abstract_name, .{ .ty = concrete_ty, .location = loc });
+        self.markAllocatorAllocateImplementation(abstract_name, concrete_ty, s);
 
         const n = try self.makeNoopNode(loc);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn markAllocatorAllocateImplementation(self: *Semantizer, abstract_name: []const u8, concrete_ty: sg.Type, s: *Scope) void {
+        _ = self;
+        if (!std.mem.eql(u8, abstract_name, "Allocator")) return;
+        const candidates = s.functions.getPtr("allocate") orelse return;
+        for (candidates.items) |candidate| {
+            for (candidate.input.fields) |field| {
+                if (!std.mem.eql(u8, field.name, "self") or field.ty != .pointer_type) continue;
+                if (typ.typesExactlyEqual(field.ty.pointer_type.child.*, concrete_ty))
+                    candidate.is_allocator_allocate = true;
+            }
+        }
     }
 
     fn handleAbstractDefault(

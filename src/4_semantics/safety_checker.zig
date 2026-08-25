@@ -300,9 +300,11 @@ pub const SafetyChecker = struct {
                     break :blk facts.ValueFacts{
                         .integer_address = true,
                         .foreign_storage = value.foreign_storage or value.dependencies.len == 0,
+                        .storage_authority = value.storage_authority,
                     };
                 if (target_is_reference and !target_is_raw_any and
-                    (source_is_integer or value.integer_address) and !value.foreign_storage)
+                    (source_is_integer or value.integer_address) and
+                    !(value.storage_authority and function.is_allocator_allocate))
                 {
                     try self.diagnostics.add(function.location, .semantic, "an integer address cannot establish a safe reference; use RawPointer and explicit root establishment", .{});
                 }
@@ -340,16 +342,13 @@ pub const SafetyChecker = struct {
         if (call.input.content == .struct_value_literal) arguments = call.input.content.struct_value_literal.fields;
         const argument_values = try self.allocator.alloc(facts.ValueFacts, arguments.len);
         for (arguments, 0..) |argument, index| argument_values[index] = try self.evaluate(function, argument.value, state);
-        if (call.callee.safety_primitive == .establish_fresh_reference or
-            call.callee.safety_primitive == .establish_inherited_reference or
-            call.callee.safety_primitive == .establish_allocation)
-        {
-            const has_foreign_storage = argument_values.len != 0 and argument_values[0].foreign_storage;
-            if (!has_foreign_storage and call.callee.safety_primitive != .establish_allocation)
-                try self.diagnostics.add(function.location, .semantic, "raw-to-safe reference establishment is restricted to compiler-owned storage boundaries", .{});
-            if (call.callee.safety_primitive == .establish_allocation)
-                try self.diagnostics.add(function.location, .semantic, "allocation root establishment is restricted to compiler-owned storage boundaries", .{});
-        }
+        if (call.callee.safety_primitive == .raw_allocated_storage)
+            return .{ .foreign_storage = true, .storage_authority = true };
+        if (call.callee.safety_primitive == .establish_fresh_reference)
+            try self.diagnostics.add(function.location, .semantic, "fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries", .{});
+        if (call.callee.safety_primitive == .establish_allocation and
+            (argument_values.len == 0 or !argument_values[0].storage_authority))
+            try self.diagnostics.add(function.location, .semantic, "allocation root establishment requires storage returned by an authorized allocator boundary", .{});
         if (call.callee.body == null and call.callee.output.fields.len == 1 and
             call.callee.output.fields[0].ty == .pointer_type)
             return .{ .foreign_storage = true };
@@ -436,6 +435,7 @@ pub const SafetyChecker = struct {
         }
         result.integer_address = effect.integer_address;
         result.foreign_storage = result.foreign_storage or effect.foreign_storage;
+        result.storage_authority = result.storage_authority or effect.storage_authority;
         return result;
     }
 
@@ -484,6 +484,7 @@ pub const SafetyChecker = struct {
             .fields = try fields.toOwnedSlice(),
             .integer_address = left.integer_address or right.integer_address,
             .foreign_storage = left.foreign_storage or right.foreign_storage,
+            .storage_authority = left.storage_authority or right.storage_authority,
             .referenced_place = if (left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?))
                 left.referenced_place
             else
@@ -607,6 +608,7 @@ pub const SafetyChecker = struct {
         var field_facts = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
         var contains_integer_address = false;
         var contains_foreign_storage = false;
+        var contains_storage_authority = false;
         for (fields, 0..) |field, index| {
             const value = try self.evaluate(function, field.value, state);
             try dependencies.appendSlice(value.dependencies);
@@ -616,6 +618,7 @@ pub const SafetyChecker = struct {
             try field_facts.append(.{ .index = @intCast(index), .value = stored });
             contains_integer_address = contains_integer_address or value.integer_address;
             contains_foreign_storage = contains_foreign_storage or value.foreign_storage;
+            contains_storage_authority = contains_storage_authority or value.storage_authority;
         }
         return .{
             .dependencies = try dependencies.toOwnedSlice(),
@@ -623,6 +626,7 @@ pub const SafetyChecker = struct {
             .fields = try field_facts.toOwnedSlice(),
             .integer_address = contains_integer_address,
             .foreign_storage = contains_foreign_storage,
+            .storage_authority = contains_storage_authority,
         };
     }
 
@@ -1060,6 +1064,7 @@ pub const SafetyChecker = struct {
             .establish_fresh_reference => .{ .fresh_dependencies = try self.oneFreshSource(source) },
             .establish_inherited_reference => self.inputOutputEffect(1, &.{}),
             .establish_allocation => self.ownedAllocationEffect(source),
+            .raw_allocated_storage => .{ .foreign_storage = true, .storage_authority = true },
             .reference_offset,
             .mutable_reference_offset,
             .reinterpret_reference,
@@ -1132,6 +1137,7 @@ pub const SafetyChecker = struct {
             .fresh_owned_roots = effect.fresh_owned_roots,
             .integer_address = effect.integer_address,
             .foreign_storage = effect.foreign_storage,
+            .storage_authority = effect.storage_authority,
         };
     }
 
@@ -1146,6 +1152,7 @@ pub const SafetyChecker = struct {
             .fresh_owned_roots = effect.fresh_owned_roots,
             .integer_address = effect.integer_address,
             .foreign_storage = effect.foreign_storage,
+            .storage_authority = effect.storage_authority,
         };
         for (effect.input_dependencies) |dependency| {
             if (dependency.input_index >= arguments.len) continue;
@@ -1176,6 +1183,7 @@ pub const SafetyChecker = struct {
             .fresh_owned_roots = try self.mergeFreshSources(left.fresh_owned_roots, right.fresh_owned_roots),
             .integer_address = left.integer_address or right.integer_address,
             .foreign_storage = left.foreign_storage or right.foreign_storage,
+            .storage_authority = left.storage_authority or right.storage_authority,
         };
     }
 };
@@ -1265,6 +1273,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     if (left.integer_address != right.integer_address or
         left.foreign_storage != right.foreign_storage or
+        left.storage_authority != right.storage_authority or
         left.dependencies.len != right.dependencies.len or
         left.owned_roots.len != right.owned_roots.len or
         left.fields.len != right.fields.len) return false;
@@ -1384,6 +1393,7 @@ fn projectionsEqual(left: []const place.Projection, right: []const place.Project
 fn outputEffectEqual(left: facts.OutputEffect, right: facts.OutputEffect) bool {
     if (left.integer_address != right.integer_address or
         left.foreign_storage != right.foreign_storage or
+        left.storage_authority != right.storage_authority or
         !std.mem.eql(facts.FreshRootSource, left.fresh_dependencies, right.fresh_dependencies) or
         !std.mem.eql(facts.FreshRootSource, left.fresh_owned_roots, right.fresh_owned_roots)) return false;
     if (left.input_dependencies.len != right.input_dependencies.len or left.fields.len != right.fields.len) return false;

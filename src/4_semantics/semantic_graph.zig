@@ -368,6 +368,10 @@ pub const FunctionDeclaration = struct {
     /// Compiler-resolved destructor identity. The safety checker consumes this
     /// tag and never infers temporal effects from the callee's spelling.
     is_deinit: bool = false,
+    /// Proven implementation of Allocator.allocate. Only these declarations
+    /// may turn raw allocated-storage provenance into the legacy safe pointer
+    /// required by the current Allocator contract.
+    is_allocator_allocate: bool = false,
     // Generic instantiations from abstract-contract templates must stay
     // distinct from regular generic instantiations even when they collapse to
     // the same concrete callable shape. Call resolution and reuse of existing
@@ -404,6 +408,7 @@ pub const SafetyPrimitive = enum {
     establish_fresh_reference,
     establish_inherited_reference,
     establish_allocation,
+    raw_allocated_storage,
     reference_offset,
     mutable_reference_offset,
     reinterpret_reference,

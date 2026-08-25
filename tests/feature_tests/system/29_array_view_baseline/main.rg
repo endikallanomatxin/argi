@@ -1,11 +1,7 @@
 main() -> (.status_code: Int32) := {
-    raw ::= malloc(.size = 16)
-    if cast#(.to: UIntNative)(.value = raw) == 0 {
-        status_code = 10
-        return
-    }
-
-    data ::= establish_fresh_reference#(.t: Int32)(.raw = raw_pointer#(.t: Int32)(.address = cast#(.to: UIntNative)(.value = raw))).reference
+    allocator :: CAllocator = CAllocator()
+    allocation ::= allocate_owned(.self = $&allocator, .size = 16)
+    data ::= mutable_reinterpret_reference#(.from: UInt8, .to: Int32)(.base = allocation.data).reference
     values ::= array_view#(.t: Int32)(.data = data, .length = 4)
 
     values[0] = 3
@@ -24,5 +20,4 @@ main() -> (.status_code: Int32) := {
     }
 
     status_code = values[1] + values[2]
-    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
 }

@@ -1,24 +1,14 @@
 main() -> (.status_code: Int32) := {
-    src_raw ::= malloc(.size = 4)
-    dst_raw ::= malloc(.size = 4)
-
-    if cast#(.to: UIntNative)(.value = src_raw) == 0 {
-        status_code = 10
-        return
-    }
-
-    if cast#(.to: UIntNative)(.value = dst_raw) == 0 {
-        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = src_raw)))
-        status_code = 11
-        return
-    }
+    allocator :: CAllocator = CAllocator()
+    src_allocation ::= allocate_owned(.self = $&allocator, .size = 4)
+    dst_allocation ::= allocate_owned(.self = $&allocator, .size = 4)
 
     src ::= array_view#(.t: UInt8)(
-        .data = establish_fresh_reference#(.t: UInt8)(.raw = raw_pointer#(.t: UInt8)(.address = cast#(.to: UIntNative)(.value = src_raw))).reference,
+        .data = src_allocation.data,
         .length = 4,
     )
     dst ::= array_view#(.t: UInt8)(
-        .data = establish_fresh_reference#(.t: UInt8)(.raw = raw_pointer#(.t: UInt8)(.address = cast#(.to: UIntNative)(.value = dst_raw))).reference,
+        .data = dst_allocation.data,
         .length = 4,
     )
 
@@ -47,6 +37,4 @@ main() -> (.status_code: Int32) := {
         }
     }
 
-    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = src_raw)))
-    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = dst_raw)))
 }

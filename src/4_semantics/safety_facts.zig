@@ -22,6 +22,7 @@ pub const ValueFacts = struct {
     fields: []const FieldFacts = &.{},
     integer_address: bool = false,
     foreign_storage: bool = false,
+    storage_authority: bool = false,
     referenced_place: ?place.Place = null,
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
@@ -29,6 +30,7 @@ pub const ValueFacts = struct {
             .dependencies = self.dependencies,
             .integer_address = self.integer_address,
             .foreign_storage = self.foreign_storage,
+            .storage_authority = self.storage_authority,
             .referenced_place = self.referenced_place,
         };
     }
@@ -75,6 +77,7 @@ pub const OutputEffect = struct {
     fresh_owned_roots: []const FreshRootSource = &.{},
     integer_address: bool = false,
     foreign_storage: bool = false,
+    storage_authority: bool = false,
 };
 
 pub const FunctionSummary = struct {
