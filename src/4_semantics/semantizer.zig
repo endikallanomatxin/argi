@@ -4525,6 +4525,7 @@ pub const Semantizer = struct {
         // ── entrada
         var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         var input_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
+        defer input_bindings.deinit();
         for (f.input.fields) |fld| {
             const ty = self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| return err;
             const dvp = if (fld.default_value) |n|
@@ -4559,6 +4560,7 @@ pub const Semantizer = struct {
         // ── salida
         var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         var output_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
+        defer output_bindings.deinit();
         var uses_inferred_error_reasons = false;
         for (f.output.fields) |fld| {
             const ty = if (self.inferableErrableInnerTypeFromOutput(fld.type.?)) |inner| blk: {
@@ -10203,15 +10205,19 @@ pub const Semantizer = struct {
             });
         }
 
+        var input_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
         for (in_struct_ptr.fields) |fld| {
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{ .name = fld.name, .location = tmpl.location, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
             try child.bindings.put(fld.name, bd);
+            try input_bindings.append(bd);
         }
+        var output_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
         for (out_struct_ptr.fields) |fld| {
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{ .name = fld.name, .location = tmpl.location, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
             try child.bindings.put(fld.name, bd);
+            try output_bindings.append(bd);
         }
 
         var body_cb: ?*sg.CodeBlock = null;
@@ -10228,6 +10234,8 @@ pub const Semantizer = struct {
         }
 
         fn_ptr.input = in_struct_ptr.*;
+        fn_ptr.input_bindings = try input_bindings.toOwnedSlice();
+        fn_ptr.output_bindings = try output_bindings.toOwnedSlice();
         fn_ptr.body = body_cb;
 
         try s.appendFunction(name, fn_ptr);

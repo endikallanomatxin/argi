@@ -78,7 +78,6 @@ pub const SafetyChecker = struct {
 
     fn validateFunction(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !void {
         const body = function.body orelse return;
-        if (function.origin_kind != .declared) return;
         if (function.safety_primitive != .none) return;
         if (std.mem.indexOf(u8, function.location.file, "core/") != null) return;
         var state = FunctionState.init(self.allocator.*);
