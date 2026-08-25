@@ -1175,10 +1175,37 @@ pub const CodeGenerator = struct {
         const value_ref = switch (bo.operator) {
             .addition => c.LLVMConstAdd(lhs.value_ref, rhs.value_ref),
             .subtraction => c.LLVMConstSub(lhs.value_ref, rhs.value_ref),
-            .multiplication => c.LLVMConstMul(lhs.value_ref, rhs.value_ref),
+            // LLVM 21 removed LLVMConstMul from the C API. Global
+            // initializers reaching this path are scalar literals, so fold the
+            // product directly and materialize the resulting constant.
+            .multiplication => try foldGlobalConstantMultiplication(lhs, rhs),
             else => return CodegenError.InvalidType,
         };
         return .{ .value_ref = value_ref, .type_ref = lhs.type_ref, .sem_type = lhs.sem_type };
+    }
+
+    fn foldGlobalConstantMultiplication(lhs: TypedValue, rhs: TypedValue) CodegenError!llvm.c.LLVMValueRef {
+        return switch (c.LLVMGetTypeKind(lhs.type_ref)) {
+            c.LLVMIntegerTypeKind => c.LLVMConstInt(
+                lhs.type_ref,
+                c.LLVMConstIntGetZExtValue(lhs.value_ref) *% c.LLVMConstIntGetZExtValue(rhs.value_ref),
+                0,
+            ),
+            c.LLVMHalfTypeKind,
+            c.LLVMFloatTypeKind,
+            c.LLVMDoubleTypeKind,
+            c.LLVMX86_FP80TypeKind,
+            c.LLVMFP128TypeKind,
+            c.LLVMPPC_FP128TypeKind,
+            => blk: {
+                var lhs_loses_info: c.LLVMBool = 0;
+                var rhs_loses_info: c.LLVMBool = 0;
+                const left = c.LLVMConstRealGetDouble(lhs.value_ref, &lhs_loses_info);
+                const right = c.LLVMConstRealGetDouble(rhs.value_ref, &rhs_loses_info);
+                break :blk c.LLVMConstReal(lhs.type_ref, left * right);
+            },
+            else => CodegenError.InvalidType,
+        };
     }
 
     fn genGlobalComparison(self: *CodeGenerator, co: *const sem.Comparison) CodegenError!TypedValue {
