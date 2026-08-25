@@ -1,23 +1,25 @@
 # Memory management
 
 Argi combines ordinary value semantics with explicit references and structural
-temporal checking. Storage, validity, dependencies, and cleanup are separate
-concepts; no reference qualifier encodes all four.
+temporal checking. The checker has three fundamental kinds of fact: places are
+stable structural storage, roots are temporal validity domains, and values can
+depend on or own roots. Physical allocation remains a separate runtime concern;
+no reference qualifier encodes all of these properties.
 
 ## Values, copy, and move
 
-A value contains its fields, references, temporal dependencies, and cleanup
-responsibilities. Named values used by value request a semantically independent
+A value contains its fields, references, temporal dependencies, and owned
+roots. Named values used by value request a semantically independent
 value. Trivial values copy directly. Resource types provide `copy` when
 independence requires work. Its allocators are ordinary arguments: explicit
 arguments have priority and omitted defaults may resolve through `#reach`.
 
-Copying a reference or non-owning view copies its dependency, never a cleanup
-responsibility. An owning copy creates independent resources and roots rather
-than duplicating responsibility for an existing root.
+Copying a reference or non-owning view copies its dependency, never root
+ownership. An owning copy creates independent resources and roots rather than
+duplicating ownership of an existing root.
 
 `~value` moves the complete value out of its place. The source becomes moved;
-the destination receives its dependencies and responsibilities. Roots keep
+the destination receives its dependencies and owned roots. Roots keep
 their identity. A moved source cannot be used or cleaned a second time.
 
 ## References
@@ -63,30 +65,37 @@ The reference graph permits aliases, cycles, and cross-root cycles. Ending one
 root invalidates only uses that depend on it; independent fields and objects in
 other live roots remain usable.
 
-## Cleanup responsibilities
+## Root ownership
 
-A cleanup responsibility is the unique obligation or capability that cleans an
-independent resource and, where appropriate, ends its fresh root. It is not the
-root. A value may carry zero, one, or several responsibilities while any number
-of aliases merely depend on the roots.
+A value that owns a root is the unique logical owner responsible for ending it
+as part of cleanup. A value may own zero, one, or several roots while any number
+of aliases merely depend on those roots. Freshness only creates an independent
+temporal identity: it does not choose an owner. Stack roots may be controlled by
+the compiler, heap roots by an Allocation value, arena roots by an arena value,
+and foreign roots may have no Argi value owner.
 
-Move transfers responsibilities. Reference copy does not. The responsibility
-structure is deterministic and acyclic, independently of the arbitrary
-reference graph. Argi does not infer destruction order from reference cycles or
-provide implicit tracing, reference counting, or SCC destruction.
+Each root has at most one value owner. Move transfers ownership; reference copy
+does not. Root ownership is acyclic and therefore forms a forest, independently
+of the arbitrary dependency graph. Argi does not infer destruction order from
+reference cycles or provide implicit tracing, reference counting, or SCC
+destruction.
 
 ## Deinitialization and replacement
 
-`deinit` tears down resources carried by the current value and may leave its
-place deinitialized. It does not inherently end the place's root. Effects come
-from the body and summaries of called operations, not from the function name.
+`deinit` tears down resources carried by the current value, consumes its owned
+roots, ends them at the appropriate point in cleanup, and leaves its place
+deinitialized. It does not inherently end the place's storage root. Effects
+come from the body and summaries of called operations, not from the function
+name. A mutable reference never owns a root, but it may reach a place whose
+current value does; cleanup through that reference consumes ownership from the
+value in the place.
 
-An independently backed String carries responsibility for its buffer. An
-arena-backed String does not carry responsibility for the arena, so cleaning
+An independently backed String owns its buffer root. An arena-backed String
+does not own the arena root, so cleaning
 that String cannot end the arena.
 
-`AutoDeinitBinding` and `AutoDeinitField` enumerate statically located
-responsibilities on normal and error exits. They do not claim to enumerate
+`AutoDeinitBinding` and `AutoDeinitField` enumerate statically located owned
+roots on normal and error exits. They do not claim to enumerate
 arbitrary runtime allocations. Arena-inherited storage can be cleaned in bulk;
 external fresh resources need an enumerable owner or individual cleanup.
 
@@ -99,9 +108,9 @@ implicitly.
 
 A small privileged boundary establishes `&T` or `$&T`:
 
-- fresh establishment creates a root and its responsibility;
-- inherited establishment attaches to an existing root without acquiring its
-  responsibility.
+- fresh establishment creates a root without implicitly assigning ownership;
+- inherited establishment attaches to an existing root without acquiring
+  ownership.
 
 Rooting is decided before safe aliases escape. Storage is not dynamically
 re-rooted by discovering every alias.
@@ -135,7 +144,7 @@ machinery.
 ## Interprocedural checking
 
 After semantizing, the compiler infers summaries from function bodies. They can
-describe output dependencies, fresh outputs, responsibility transfer,
+describe output dependencies, fresh outputs, ownership transfer,
 root-ending operations, deinitialized inputs, replacement, and conservative
 dynamic-slot invalidation. Calls compose these facts; branches and loops use
 conservative joins and fixed points.
