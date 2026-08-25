@@ -2993,6 +2993,12 @@ test "feature_tests/ownership/51X_loop_may_move_value" {
     );
 }
 
+test "feature_tests/ownership/52_user_primitive_name_has_no_authority" {
+    const test_path = "tests/feature_tests/ownership/52_user_primitive_name_has_no_authority";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/ownership/29_string_view_is_copyable" {
     const test_path = "tests/feature_tests/ownership/29_string_view_is_copyable";
     try expectSuccessfulBuild(test_path);

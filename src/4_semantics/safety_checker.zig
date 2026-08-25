@@ -79,7 +79,7 @@ pub const SafetyChecker = struct {
     fn validateFunction(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !void {
         const body = function.body orelse return;
         if (function.origin_kind != .declared) return;
-        if (isRootingPrimitive(function.name)) return;
+        if (function.safety_primitive != .none) return;
         if (std.mem.indexOf(u8, function.location.file, "core/") != null) return;
         var state = FunctionState.init(self.allocator.*);
         defer state.deinit();
@@ -602,10 +602,8 @@ pub const SafetyChecker = struct {
     }
 
     fn infer(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !bool {
-        if (std.mem.eql(u8, function.name, "establish_fresh_reference"))
-            return self.replaceSingleOutput(function, .{ .fresh = true });
-        if (std.mem.eql(u8, function.name, "establish_inherited_reference"))
-            return self.replaceSingleOutput(function, try self.inputOutputEffect(1, &.{}));
+        if (function.safety_primitive != .none)
+            return self.replaceSingleOutput(function, try self.primitiveOutputEffect(function.safety_primitive));
         const body = function.body orelse return false;
         const previous = self.summaries.get(function).?;
         const outputs = try self.allocator.dupe(facts.OutputEffect, previous.outputs);
@@ -718,7 +716,7 @@ pub const SafetyChecker = struct {
     }
 
     fn inferCall(self: *SafetyChecker, function: *const sg.FunctionDeclaration, call: *const sg.FunctionCall) !facts.OutputEffect {
-        if (std.mem.eql(u8, call.callee.name, "establish_fresh_reference")) return .{ .fresh = true };
+        if (call.callee.safety_primitive != .none) return self.primitiveOutputEffect(call.callee.safety_primitive);
         const callee_summary = self.summaries.get(call.callee) orelse return .{};
         if (callee_summary.outputs.len != 1 or call.input.content != .struct_value_literal) return .{};
         return self.substituteOutput(function, callee_summary.outputs[0], call.input.content.struct_value_literal.fields);
@@ -728,6 +726,20 @@ pub const SafetyChecker = struct {
         const dependencies = try self.allocator.alloc(facts.InputDependency, 1);
         dependencies[0] = .{ .input_index = input_index, .projections = projections };
         return .{ .input_dependencies = dependencies };
+    }
+
+    fn primitiveOutputEffect(self: *SafetyChecker, primitive: sg.SafetyPrimitive) !facts.OutputEffect {
+        return switch (primitive) {
+            .none => .{},
+            .establish_fresh_reference => .{ .fresh = true },
+            .establish_inherited_reference => self.inputOutputEffect(1, &.{}),
+            .reference_offset,
+            .mutable_reference_offset,
+            .reinterpret_reference,
+            .mutable_reinterpret_reference,
+            .read_reference,
+            => self.inputOutputEffect(0, &.{}),
+        };
     }
 
     fn withCleanupTransfer(self: *SafetyChecker, effect: facts.OutputEffect) facts.OutputEffect {
@@ -936,11 +948,6 @@ fn outputEffectEqual(left: facts.OutputEffect, right: facts.OutputEffect) bool {
         if (a.index != b.index or !outputEffectEqual(a.value.*, b.value.*)) return false;
     }
     return true;
-}
-
-fn isRootingPrimitive(name: []const u8) bool {
-    return std.mem.eql(u8, name, "establish_fresh_reference") or
-        std.mem.eql(u8, name, "establish_inherited_reference");
 }
 
 fn rootBinding(node: *const sg.SGNode) ?*const sg.BindingDeclaration {

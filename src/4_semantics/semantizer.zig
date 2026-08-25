@@ -13,6 +13,22 @@ const gen = @import("generics.zig");
 const Scope = @import("scope.zig").Scope;
 const SemErr = @import("errors.zig").SemErr;
 
+fn safetyPrimitiveForDeclaration(name: []const u8, file: []const u8) sg.SafetyPrimitive {
+    if (!std.mem.endsWith(u8, file, "core/memory/heap_allocation/RawPointer.rg")) return .none;
+    const Entry = struct { name: []const u8, primitive: sg.SafetyPrimitive };
+    const entries = [_]Entry{
+        .{ .name = "establish_fresh_reference", .primitive = .establish_fresh_reference },
+        .{ .name = "establish_inherited_reference", .primitive = .establish_inherited_reference },
+        .{ .name = "reference_offset", .primitive = .reference_offset },
+        .{ .name = "mutable_reference_offset", .primitive = .mutable_reference_offset },
+        .{ .name = "reinterpret_reference", .primitive = .reinterpret_reference },
+        .{ .name = "mutable_reinterpret_reference", .primitive = .mutable_reinterpret_reference },
+        .{ .name = "read_reference", .primitive = .read_reference },
+    };
+    for (entries) |entry| if (std.mem.eql(u8, name, entry.name)) return entry.primitive;
+    return .none;
+}
+
 fn nowNs(io: std.Io) i96 {
     return std.Io.Timestamp.now(io, .boot).nanoseconds;
 }
@@ -820,6 +836,7 @@ pub const Semantizer = struct {
             .id = self.freshFunctionId(),
             .name = decl.name.string,
             .location = loc,
+            .safety_primitive = safetyPrimitiveForDeclaration(decl.name.string, loc.file),
             .is_once = decl.is_once,
             .is_test = is_test,
             .input = in_struct_ptr.*,
@@ -4602,6 +4619,7 @@ pub const Semantizer = struct {
                 .id = self.freshFunctionId(),
                 .name = f.name.string,
                 .location = loc,
+                .safety_primitive = safetyPrimitiveForDeclaration(f.name.string, loc.file),
                 .is_once = f.is_once,
                 .is_test = is_test,
                 .input = in_struct_ptr.*,
@@ -4822,6 +4840,7 @@ pub const Semantizer = struct {
                 .id = self.freshFunctionId(),
                 .name = f.name.string,
                 .location = loc,
+                .safety_primitive = safetyPrimitiveForDeclaration(f.name.string, loc.file),
                 .is_once = f.is_once,
                 .is_test = is_test,
                 .input = in_struct_ptr.*,
@@ -10157,6 +10176,7 @@ pub const Semantizer = struct {
             .name = tmpl.name,
             .location = tmpl.location,
             .origin_kind = .generic_instantiation,
+            .safety_primitive = safetyPrimitiveForDeclaration(tmpl.name, tmpl.location.file),
             .generic_dispatch_kind = switch (tmpl.dispatch_kind) {
                 .regular => .regular,
                 .abstract_contract => .abstract_contract,

@@ -364,6 +364,7 @@ pub const FunctionDeclaration = struct {
     name: []const u8,
     location: tok.Location,
     origin_kind: OriginKind = .declared,
+    safety_primitive: SafetyPrimitive = .none,
     // Generic instantiations from abstract-contract templates must stay
     // distinct from regular generic instantiations even when they collapse to
     // the same concrete callable shape. Call resolution and reuse of existing
@@ -393,6 +394,17 @@ pub const FunctionDeclaration = struct {
         regular,
         abstract_contract,
     };
+};
+
+pub const SafetyPrimitive = enum {
+    none,
+    establish_fresh_reference,
+    establish_inherited_reference,
+    reference_offset,
+    mutable_reference_offset,
+    reinterpret_reference,
+    mutable_reinterpret_reference,
+    read_reference,
 };
 
 pub const TestDeclaration = struct {
