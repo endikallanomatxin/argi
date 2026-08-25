@@ -2989,6 +2989,10 @@ test "feature_tests/ownership/59X_branch_deinit_then_use" {
     );
 }
 
+test "feature_tests/ownership/60_partial_field_move_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/60_partial_field_move_cleanup");
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

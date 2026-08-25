@@ -30,7 +30,15 @@ const Symbol = struct {
     ref: llvm.c.LLVMValueRef, // alloca ó función
     sem_type: ?sem.Type = null,
     initialized: bool = false, // para bindings
-    needs_deinit_ref: llvm.c.LLVMValueRef = null,
+    drop_state: ?*DropState = null,
+};
+
+/// Runtime cleanup state mirrors structural Places. Aggregate nodes are only
+/// containers; each deinitializable leaf has its own flag so partial moves and
+/// field replacement do not affect sibling cleanup obligations.
+const DropState = struct {
+    flag_ref: llvm.c.LLVMValueRef,
+    fields: []DropState = &.{},
 };
 
 const TypedValue = struct {
@@ -950,6 +958,42 @@ pub const CodeGenerator = struct {
     }
 
     // ────────────────────────────────────────── bindings ──
+    fn buildDropState(self: *CodeGenerator, ty: sem.Type, entry_builder: llvm.c.LLVMBuilderRef) !*DropState {
+        const state = try self.allocator.create(DropState);
+        state.* = .{ .flag_ref = c.LLVMBuildAlloca(entry_builder, c.LLVMInt1Type(), "needs.deinit") };
+        if (ty == .struct_type) {
+            const fields = try self.allocator.alloc(DropState, ty.struct_type.fields.len);
+            for (ty.struct_type.fields, 0..) |field, index| {
+                const child = try self.buildDropState(field.ty, entry_builder);
+                fields[index] = child.*;
+            }
+            state.fields = fields;
+        }
+        return state;
+    }
+
+    fn storeDropState(self: *CodeGenerator, state: *const DropState, enabled: bool) void {
+        _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), if (enabled) 1 else 0, 0), state.flag_ref);
+        for (state.fields) |*field| self.storeDropState(field, enabled);
+    }
+
+    fn dropStateForNode(self: *CodeGenerator, node: *const sem.SGNode) ?*DropState {
+        return switch (node.content) {
+            .binding_use => |binding| blk: {
+                const symbol = self.current_scope.lookup(binding.name) orelse break :blk null;
+                break :blk symbol.drop_state;
+            },
+            .address_of => |inner| self.dropStateForNode(inner),
+            .dereference => |deref| self.dropStateForNode(deref.pointer),
+            .struct_field_access => |access| blk: {
+                const parent = self.dropStateForNode(access.struct_value) orelse break :blk null;
+                if (access.field_index >= parent.fields.len) break :blk null;
+                break :blk &parent.fields[access.field_index];
+            },
+            else => null,
+        };
+    }
+
     fn genBindingDecl(self: *CodeGenerator, b: *const sem.BindingDeclaration) !void {
         const is_global = self.current_scope.parent == null;
         if (!is_global and self.current_scope.lookupLocal(b.name) != null)
@@ -982,7 +1026,7 @@ pub const CodeGenerator = struct {
             }
 
             storage = c.LLVMBuildAlloca(tmp_builder, llvm_decl_ty, cname.ptr);
-            const needs_deinit_ref = c.LLVMBuildAlloca(tmp_builder, c.LLVMInt1Type(), "needs.deinit");
+            const drop_state = try self.buildDropState(b.ty, tmp_builder);
             try self.current_scope.symbols.put(b.name, .{
                 .cname = cname,
                 .mutability = b.mutability,
@@ -990,9 +1034,9 @@ pub const CodeGenerator = struct {
                 .ref = storage,
                 .sem_type = b.ty,
                 .initialized = init_tv != null,
-                .needs_deinit_ref = needs_deinit_ref,
+                .drop_state = drop_state,
             });
-            _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), if (init_tv != null) 1 else 0, 0), needs_deinit_ref);
+            self.storeDropState(drop_state, init_tv != null);
             try self.binding_storage.put(b, .{
                 .ref = storage,
                 .type_ref = llvm_decl_ty,
@@ -1349,16 +1393,18 @@ pub const CodeGenerator = struct {
     }
 
     fn genMoveValue(self: *CodeGenerator, inner: *const sem.SGNode) !TypedValue {
-        if (inner.content != .binding_use)
-            return (try self.visitNode(inner)) orelse CodegenError.ValueNotFound;
+        if (inner.content != .binding_use) {
+            const value = (try self.visitNode(inner)) orelse return CodegenError.ValueNotFound;
+            if (self.dropStateForNode(inner)) |drop_state| self.storeDropState(drop_state, false);
+            return value;
+        }
         const binding = inner.content.binding_use;
         const sym = self.current_scope.lookup(binding.name) orelse
             return CodegenError.SymbolNotFound;
 
         const val = c.LLVMBuildLoad2(self.builder, sym.type_ref, sym.ref, sym.cname.ptr);
         sym.initialized = false;
-        if (sym.needs_deinit_ref != null)
-            _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), 0, 0), sym.needs_deinit_ref);
+        if (sym.drop_state) |drop_state| self.storeDropState(drop_state, false);
         return .{ .value_ref = val, .type_ref = sym.type_ref, .sem_type = sym.sem_type };
     }
 
@@ -1408,27 +1454,13 @@ pub const CodeGenerator = struct {
     fn genAutoDeinitBinding(self: *CodeGenerator, adb: *const sem.AutoDeinitBinding) !void {
         if (self.current_scope.lookup(adb.binding.name)) |sym| {
             if (!sym.initialized) return;
-
-            const current_bb = c.LLVMGetInsertBlock(self.builder);
-            const function = c.LLVMGetBasicBlockParent(current_bb);
-            const cleanup_bb = c.LLVMAppendBasicBlock(function, "autodeinit.run");
-            const continue_bb = c.LLVMAppendBasicBlock(function, "autodeinit.done");
-            const needs_deinit = c.LLVMBuildLoad2(self.builder, c.LLVMInt1Type(), sym.needs_deinit_ref, "needs.deinit");
-            _ = c.LLVMBuildCondBr(self.builder, needs_deinit, cleanup_bb, continue_bb);
-            c.LLVMPositionBuilderAtEnd(self.builder, cleanup_bb);
-            _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), 0, 0), sym.needs_deinit_ref);
+            const drop_state = sym.drop_state orelse return;
 
             if (adb.deinit_fn) |deinit_fn| {
-                const input_node = adb.input orelse return CodegenError.InvalidType;
-                const call = try self.allocator.create(sem.FunctionCall);
-                call.* = .{ .callee = deinit_fn, .input = @constCast(input_node) };
-                const call_node = try sem.makeSGNode(.{ .function_call = call }, deinit_fn.location, self.allocator);
-                _ = try self.visitNode(call_node);
+                try self.genConditionalAutoDeinitCall(sym.ref, deinit_fn, adb.input, adb.self_field_index, drop_state);
             } else {
-                try self.genAutoDeinitPointer(sym.ref, adb.binding.ty, null, null, 0, adb.fields);
+                try self.genAutoDeinitPointer(sym.ref, adb.binding.ty, null, null, 0, adb.fields, drop_state);
             }
-            _ = c.LLVMBuildBr(self.builder, continue_bb);
-            c.LLVMPositionBuilderAtEnd(self.builder, continue_bb);
             return;
         }
 
@@ -1443,14 +1475,15 @@ pub const CodeGenerator = struct {
         input_override: ?*const sem.SGNode,
         self_field_index: u32,
         fields: []const sem.AutoDeinitField,
+        drop_state: *DropState,
     ) !void {
         if (deinit_fn_override) |deinit_fn| {
-            return self.genAutoDeinitCall(ptr, deinit_fn, input_override, self_field_index);
+            return self.genConditionalAutoDeinitCall(ptr, deinit_fn, input_override, self_field_index, drop_state);
         }
 
         if (fields.len == 0) {
             if (self.findDeinitInAst(sem_ty)) |deinit_info| {
-                return self.genAutoDeinitCall(ptr, deinit_info.function, null, deinit_info.self_field_index);
+                return self.genConditionalAutoDeinitCall(ptr, deinit_info.function, null, deinit_info.self_field_index, drop_state);
             }
             return;
         }
@@ -1469,11 +1502,33 @@ pub const CodeGenerator = struct {
                         field.field_index,
                         "autodeinit.field",
                     );
-                    try self.genAutoDeinitPointer(field_ptr, field_ty, field.deinit_fn, field.input, field.self_field_index, field.fields);
+                    if (field.field_index >= drop_state.fields.len) return CodegenError.InvalidType;
+                    try self.genAutoDeinitPointer(field_ptr, field_ty, field.deinit_fn, field.input, field.self_field_index, field.fields, &drop_state.fields[field.field_index]);
                 }
             },
             else => return CodegenError.InvalidType,
         }
+    }
+
+    fn genConditionalAutoDeinitCall(
+        self: *CodeGenerator,
+        ptr: llvm.c.LLVMValueRef,
+        deinit_fn: *const sem.FunctionDeclaration,
+        input_override: ?*const sem.SGNode,
+        self_field_index: u32,
+        drop_state: *DropState,
+    ) !void {
+        const current_bb = c.LLVMGetInsertBlock(self.builder);
+        const function = c.LLVMGetBasicBlockParent(current_bb);
+        const cleanup_bb = c.LLVMAppendBasicBlock(function, "autodeinit.run");
+        const continue_bb = c.LLVMAppendBasicBlock(function, "autodeinit.done");
+        const needs_deinit = c.LLVMBuildLoad2(self.builder, c.LLVMInt1Type(), drop_state.flag_ref, "needs.deinit");
+        _ = c.LLVMBuildCondBr(self.builder, needs_deinit, cleanup_bb, continue_bb);
+        c.LLVMPositionBuilderAtEnd(self.builder, cleanup_bb);
+        _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), 0, 0), drop_state.flag_ref);
+        try self.genAutoDeinitCall(ptr, deinit_fn, input_override, self_field_index);
+        _ = c.LLVMBuildBr(self.builder, continue_bb);
+        c.LLVMPositionBuilderAtEnd(self.builder, continue_bb);
     }
 
     fn genAutoDeinitCall(
@@ -1677,8 +1732,7 @@ pub const CodeGenerator = struct {
 
         _ = c.LLVMBuildStore(self.builder, rhs_val, sym_ptr.*.ref);
         sym_ptr.*.initialized = true;
-        if (sym_ptr.*.needs_deinit_ref != null)
-            _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), 1, 0), sym_ptr.*.needs_deinit_ref);
+        if (sym_ptr.*.drop_state) |drop_state| self.storeDropState(drop_state, true);
         return .{ .value_ref = rhs_val, .type_ref = sym_ptr.*.type_ref, .sem_type = sym_ptr.*.sem_type };
     }
 
@@ -2458,10 +2512,9 @@ pub const CodeGenerator = struct {
     }
 
     fn markAutoDeinitConsumed(self: *CodeGenerator, fc: *const sem.FunctionCall) void {
-        const binding = fc.consumes_auto_deinit orelse return;
-        const sym = self.current_scope.lookup(binding.name) orelse return;
-        if (sym.needs_deinit_ref == null) return;
-        _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), 0, 0), sym.needs_deinit_ref);
+        const target = fc.consumes_auto_deinit orelse return;
+        const drop_state = self.dropStateForNode(target) orelse return;
+        self.storeDropState(drop_state, false);
     }
 
     fn genTypeInitializerInto(self: *CodeGenerator, ti: *const sem.TypeInitializer, storage: llvm.c.LLVMValueRef) CodegenError!void {
@@ -3071,6 +3124,10 @@ pub const CodeGenerator = struct {
                 sf.field_index,
                 "field.ptr",
             );
+        const field_drop_state = if (self.dropStateForNode(sf.struct_ptr)) |parent|
+            if (sf.field_index < parent.fields.len) &parent.fields[sf.field_index] else null
+        else
+            null;
 
         if (sf.value.content == .type_initializer) {
             const ti = sf.value.content.type_initializer;
@@ -3079,6 +3136,7 @@ pub const CodeGenerator = struct {
             if (field_ty_ref != init_ty_ref)
                 return CodegenError.InvalidType;
             try self.genTypeInitializerInto(&ti, field_ptr);
+            if (field_drop_state) |state| self.storeDropState(state, true);
             return;
         }
 
@@ -3089,6 +3147,7 @@ pub const CodeGenerator = struct {
             return CodegenError.InvalidType;
 
         _ = c.LLVMBuildStore(self.builder, value_tv.value_ref, field_ptr);
+        if (field_drop_state) |state| self.storeDropState(state, true);
     }
 
     // ────────────────────────────────────────── address-of ──

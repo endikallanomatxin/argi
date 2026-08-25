@@ -6862,7 +6862,7 @@ pub const Semantizer = struct {
             },
         };
         const coerced_input = try self.coerceCallInputToExpected(&chosen.input, tv_in, call.input, s);
-        const consumed_auto_deinit = self.explicitDeinitAutoCleanupBinding(chosen, coerced_input, s);
+        const consumed_auto_deinit = self.explicitDeinitAutoCleanupTarget(chosen, coerced_input, s);
 
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
         fc_ptr.* = .{
@@ -6993,12 +6993,12 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = nullable_info.some_value_type };
     }
 
-    fn explicitDeinitAutoCleanupBinding(
+    fn explicitDeinitAutoCleanupTarget(
         self: *Semantizer,
         chosen: *sg.FunctionDeclaration,
         coerced_input: typ.TypedExpr,
         s: *Scope,
-    ) ?*const sg.BindingDeclaration {
+    ) ?*const sg.SGNode {
         if (!chosen.is_deinit) return null;
         if (coerced_input.node.content != .struct_value_literal) return null;
 
@@ -7012,9 +7012,8 @@ pub const Semantizer = struct {
             const arg_node = input_value.fields[idx].value;
             if (arg_node.content != .address_of) continue;
             const inner = arg_node.content.address_of;
-            if (inner.content != .binding_use) continue;
-            if (self.hasAutoDeinitForBinding(inner.content.binding_use, s))
-                return inner.content.binding_use;
+            const binding = cleanupRootBinding(inner) orelse continue;
+            if (self.hasAutoDeinitForBinding(binding, s)) return inner;
         }
 
         for (chosen.input.fields[positional_prefix..]) |expected_field| {
@@ -7024,9 +7023,8 @@ pub const Semantizer = struct {
             const actual_field = findStructValueFieldByNameFrom(input_value.fields, positional_prefix, expected_field.name) orelse continue;
             if (actual_field.value.content != .address_of) continue;
             const inner = actual_field.value.content.address_of;
-            if (inner.content != .binding_use) continue;
-            if (self.hasAutoDeinitForBinding(inner.content.binding_use, s))
-                return inner.content.binding_use;
+            const binding = cleanupRootBinding(inner) orelse continue;
+            if (self.hasAutoDeinitForBinding(binding, s)) return inner;
         }
         return null;
     }
@@ -12960,6 +12958,7 @@ pub const Semantizer = struct {
                     .binding = binding,
                     .deinit_fn = resolved.function,
                     .input = resolved.input.node,
+                    .self_field_index = resolved.self_field_index,
                     .fields = &.{},
                 };
 
@@ -13036,6 +13035,17 @@ pub const Semantizer = struct {
         }
     }
 };
+
+fn cleanupRootBinding(node: *const sg.SGNode) ?*const sg.BindingDeclaration {
+    return switch (node.content) {
+        .binding_use => |binding| binding,
+        .address_of => |inner| cleanupRootBinding(inner),
+        .dereference => |deref| cleanupRootBinding(deref.pointer),
+        .struct_field_access => |access| cleanupRootBinding(access.struct_value),
+        .array_index => |index| cleanupRootBinding(index.array_ptr),
+        else => null,
+    };
+}
 
 fn buildStructuralAutoDeinitFields(
     sema: *Semantizer,

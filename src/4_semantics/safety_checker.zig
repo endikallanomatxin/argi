@@ -373,9 +373,9 @@ pub const SafetyChecker = struct {
         for (summary.deinitializes_inputs) |index| {
             if (index >= arguments.len) continue;
             if (arguments[index].value.content == .address_of and
-                arguments[index].value.content.address_of.content == .binding_use)
+                rootBinding(arguments[index].value.content.address_of) != null)
             {
-                @constCast(call).consumes_auto_deinit = arguments[index].value.content.address_of.content.binding_use;
+                @constCast(call).consumes_auto_deinit = arguments[index].value.content.address_of;
             }
             const target = argument_values[index].referenced_place orelse
                 try self.resolvePlace(arguments[index].value, state);
@@ -652,6 +652,16 @@ pub const SafetyChecker = struct {
         initializedness: value_state.Initializedness,
         value: facts.ValueFacts,
     ) !void {
+        if (storage.projections.len != 0) {
+            const root_storage = place.Place{ .root = storage.root };
+            if (self.getPlace(state, root_storage)) |root_place| {
+                root_place.value = try self.replaceProjectedValue(
+                    root_place.value,
+                    storage.projections,
+                    if (initializedness == .initialized) value else .{},
+                );
+            }
+        }
         if (self.getPlace(state, storage)) |existing| {
             existing.initializedness = initializedness;
             existing.value = value;
@@ -670,6 +680,59 @@ pub const SafetyChecker = struct {
                 }
             }
         }
+    }
+
+    fn replaceProjectedValue(
+        self: *SafetyChecker,
+        container: facts.ValueFacts,
+        projections: []const place.Projection,
+        replacement: facts.ValueFacts,
+    ) !facts.ValueFacts {
+        if (projections.len == 0) return replacement;
+        const field_index = switch (projections[0]) {
+            .field => |index| index,
+            else => return container,
+        };
+        const old_field = findField(container.fields, field_index) orelse return container;
+
+        var direct_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        for (container.owned_roots) |root| {
+            var belongs_to_field = false;
+            for (container.fields) |field| if (valueContainsOwnedRoot(field.value.*, root)) {
+                belongs_to_field = true;
+                break;
+            };
+            if (!belongs_to_field) try appendOwnedRoot(&direct_roots, root);
+        }
+        var direct_dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
+        for (container.dependencies) |dependency| {
+            var belongs_to_field = false;
+            for (container.fields) |field| if (valueDependsOnRoot(field.value.*, dependency.root)) {
+                belongs_to_field = true;
+                break;
+            };
+            if (!belongs_to_field) try appendDependency(&direct_dependencies, dependency);
+        }
+
+        const fields = try self.allocator.alloc(facts.FieldFacts, container.fields.len);
+        for (container.fields, 0..) |field, index| {
+            if (field.index != field_index) {
+                fields[index] = field;
+                continue;
+            }
+            const stored = try self.allocator.create(facts.ValueFacts);
+            stored.* = try self.replaceProjectedValue(old_field.value.*, projections[1..], replacement);
+            fields[index] = .{ .index = field.index, .value = stored };
+        }
+        for (fields) |field| {
+            for (field.value.owned_roots) |root| try appendOwnedRoot(&direct_roots, root);
+            for (field.value.dependencies) |dependency| try appendDependency(&direct_dependencies, dependency);
+        }
+        var result = container;
+        result.fields = fields;
+        result.owned_roots = try direct_roots.toOwnedSlice();
+        result.dependencies = try direct_dependencies.toOwnedSlice();
+        return result;
     }
 
     fn requireInitialized(self: *SafetyChecker, function: *const sg.FunctionDeclaration, place_facts: *const facts.PlaceFacts) !void {
@@ -1142,6 +1205,12 @@ fn containsRoot(roots: []const facts.RootId, target: facts.RootId) bool {
 fn valueContainsOwnedRoot(value: facts.ValueFacts, target: facts.RootId) bool {
     if (containsRoot(value.owned_roots, target)) return true;
     for (value.fields) |field| if (valueContainsOwnedRoot(field.value.*, target)) return true;
+    return false;
+}
+
+fn valueDependsOnRoot(value: facts.ValueFacts, target: facts.RootId) bool {
+    for (value.dependencies) |dependency| if (dependency.root == target) return true;
+    for (value.fields) |field| if (valueDependsOnRoot(field.value.*, target)) return true;
     return false;
 }
 
