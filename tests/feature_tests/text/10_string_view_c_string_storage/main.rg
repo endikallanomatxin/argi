@@ -30,11 +30,11 @@ main() -> (.status_code: Int32) := {
     )
 
     literal ::= from_literal(.data = "abc")
-    base_addr :: UIntNative = cast#(.to: UIntNative)(.value = literal)
+    data ::= reinterpret_reference#(.from: Char, .to: UInt8)(.base = literal).reference
 
     if 1 == 1 {
         borrowed_view : StringView = (
-            .data = base_addr,
+            .data = data,
             .length = 3,
         )
         borrowed ::= as_c_string(.self = borrowed_view, .allocator = $&allocator)
@@ -55,7 +55,7 @@ main() -> (.status_code: Int32) := {
 
     if 1 == 1 {
         copied_view : StringView = (
-            .data = base_addr,
+            .data = data,
             .length = 2,
         )
         copied ::= as_c_string(.self = copied_view, .allocator = $&allocator)
