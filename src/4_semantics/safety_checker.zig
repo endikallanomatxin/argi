@@ -270,19 +270,55 @@ pub const SafetyChecker = struct {
             }
         }
         if (summary.outputs.len != 1) return .{};
-        return switch (summary.outputs[0]) {
-            .independent => .{},
-            .fresh => blk: {
-                const root = try state.tracker.establish(.fresh);
-                break :blk .{
-                    .dependencies = try self.oneDependency(root),
-                    .cleanup_responsibilities = try self.oneResponsibility(root),
-                };
-            },
-            .depends_on_input, .transfers_input => |index| if (index < arguments.len)
-                try self.evaluate(function, arguments[index].value, state)
-            else
-                .{},
+        return self.instantiateOutput(function, summary.outputs[0], arguments, state);
+    }
+
+    fn instantiateOutput(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        effect: facts.OutputEffect,
+        arguments: []const sg.StructValueLiteralField,
+        state: *FunctionState,
+    ) !facts.ValueFacts {
+        var result: facts.ValueFacts = .{};
+        if (effect.fresh) {
+            const root = try state.tracker.establish(.fresh);
+            result.dependencies = try self.oneDependency(root);
+            result.cleanup_responsibilities = try self.oneResponsibility(root);
+        }
+        for (effect.input_dependencies) |dependency| {
+            if (dependency.input_index >= arguments.len) continue;
+            var input = try self.evaluate(function, arguments[dependency.input_index].value, state);
+            input = projectValueFacts(input, dependency.projections);
+            if (!dependency.transfers_cleanup) input.cleanup_responsibilities = &.{};
+            result = try self.mergeValueFacts(result, input);
+        }
+        if (effect.fields.len != 0) {
+            const fields = try self.allocator.alloc(facts.FieldFacts, effect.fields.len);
+            for (effect.fields, 0..) |field, index| {
+                const value = try self.allocator.create(facts.ValueFacts);
+                value.* = try self.instantiateOutput(function, field.value.*, arguments, state);
+                fields[index] = .{ .index = field.index, .value = value };
+                result = try self.mergeValueFacts(result, value.*);
+            }
+            result.fields = fields;
+        }
+        result.integer_address = effect.integer_address;
+        return result;
+    }
+
+    fn mergeValueFacts(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts) !facts.ValueFacts {
+        var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
+        for (left.dependencies) |dependency| try appendDependency(&dependencies, dependency);
+        for (right.dependencies) |dependency| try appendDependency(&dependencies, dependency);
+        var responsibilities = std.array_list.Managed(facts.CleanupResponsibility).init(self.allocator.*);
+        for (left.cleanup_responsibilities) |responsibility| try appendResponsibility(&responsibilities, responsibility);
+        for (right.cleanup_responsibilities) |responsibility| try appendResponsibility(&responsibilities, responsibility);
+        return .{
+            .dependencies = try dependencies.toOwnedSlice(),
+            .cleanup_responsibilities = try responsibilities.toOwnedSlice(),
+            .integer_address = left.integer_address or right.integer_address,
+            .referenced_place = left.referenced_place orelse right.referenced_place,
         };
     }
 
@@ -415,15 +451,15 @@ pub const SafetyChecker = struct {
     fn ensureEmptySummary(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !void {
         if (self.summaries.contains(function)) return;
         const outputs = try self.allocator.alloc(facts.OutputEffect, function.output.fields.len);
-        @memset(outputs, .independent);
+        @memset(outputs, .{});
         try self.summaries.put(function, .{ .outputs = outputs });
     }
 
     fn infer(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !bool {
         if (std.mem.eql(u8, function.name, "establish_fresh_reference"))
-            return self.replaceSingleOutput(function, .fresh);
+            return self.replaceSingleOutput(function, .{ .fresh = true });
         if (std.mem.eql(u8, function.name, "establish_inherited_reference"))
-            return self.replaceSingleOutput(function, .{ .depends_on_input = 1 });
+            return self.replaceSingleOutput(function, try self.inputOutputEffect(1, &.{}));
         const body = function.body orelse return false;
         const previous = self.summaries.get(function).?;
         const outputs = try self.allocator.dupe(facts.OutputEffect, previous.outputs);
@@ -452,7 +488,7 @@ pub const SafetyChecker = struct {
                 const arguments = call.input.content.struct_value_literal.fields;
                 if (std.mem.eql(u8, call.callee.name, "deallocate")) {
                     if (arguments.len > 1) {
-                        const effect = self.inferExpression(function, arguments[1].value);
+                        const effect = try self.inferExpression(function, arguments[1].value);
                         try appendEffectInput(effect, result);
                     }
                     continue;
@@ -460,7 +496,7 @@ pub const SafetyChecker = struct {
                 const summary = self.summaries.get(call.callee) orelse continue;
                 for (summary.ends_input_roots) |callee_index| {
                     if (callee_index < arguments.len)
-                        try appendEffectInput(self.inferExpression(function, arguments[callee_index].value), result);
+                        try appendEffectInput(try self.inferExpression(function, arguments[callee_index].value), result);
                 }
             },
             .if_statement => |statement| {
@@ -495,7 +531,7 @@ pub const SafetyChecker = struct {
         for (block.nodes) |node| switch (node.content) {
             .binding_assignment => |assignment| {
                 const output_index = bindingIndex(function.output_bindings, assignment.sym_id) orelse continue;
-                outputs[output_index] = self.inferExpression(function, assignment.value);
+                outputs[output_index] = try self.inferExpression(function, assignment.value);
             },
             .if_statement => |statement| {
                 try self.inferBlock(function, statement.then_block, outputs);
@@ -515,45 +551,124 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         node: *const sg.SGNode,
-    ) facts.OutputEffect {
+    ) anyerror!facts.OutputEffect {
         return switch (node.content) {
             .binding_use => |binding| if (inputIndex(function, binding)) |index|
-                .{ .depends_on_input = @intCast(index) }
+                try self.inputOutputEffect(@intCast(index), &.{})
             else
-                .independent,
-            .move_value => |value| switch (self.inferExpression(function, value)) {
-                .depends_on_input => |index| .{ .transfers_input = index },
-                else => |effect| effect,
-            },
-            .address_of => |value| self.inferExpression(function, value),
-            .dereference => |value| self.inferExpression(function, value.pointer),
-            .struct_field_access => |access| self.inferExpression(function, access.struct_value),
-            .explicit_cast => |cast| self.inferExpression(function, cast.value),
-            .function_call => |call| self.inferCall(function, call),
-            .virtualize => |virtualize| self.inferExpression(function, virtualize.value),
-            .virtual_call => |call| self.inferExpression(function, call.input),
-            else => .independent,
+                .{},
+            .move_value => |value| self.withCleanupTransfer(try self.inferExpression(function, value)),
+            .address_of => |value| try self.withoutCleanupTransfer(try self.inferExpression(function, value)),
+            .dereference => |value| try self.inferExpression(function, value.pointer),
+            .struct_value_literal => |literal| try self.inferAggregate(function, literal.fields),
+            .struct_field_access => |access| try self.inferProjection(function, access.struct_value, .{ .field = access.field_index }),
+            .array_index => |index| try self.inferProjection(function, index.array_ptr, if (staticIndex(index.index)) |value| .{ .static_index = value } else .dynamic_index),
+            .explicit_cast => |cast| try self.inferExpression(function, cast.value),
+            .function_call => |call| try self.inferCall(function, call),
+            .virtualize => |virtualize| try self.inferExpression(function, virtualize.value),
+            .virtual_call => |call| try self.inferExpression(function, call.input),
+            else => .{},
         };
     }
 
-    fn inferCall(self: *SafetyChecker, function: *const sg.FunctionDeclaration, call: *const sg.FunctionCall) facts.OutputEffect {
-        if (std.mem.eql(u8, call.callee.name, "establish_fresh_reference")) return .fresh;
-        const callee_summary = self.summaries.get(call.callee) orelse return .independent;
-        if (callee_summary.outputs.len != 1) return .independent;
-        const effect = callee_summary.outputs[0];
-        const input_index = switch (effect) {
-            .depends_on_input => |index| index,
-            .transfers_input => |index| index,
-            else => return effect,
+    fn inferCall(self: *SafetyChecker, function: *const sg.FunctionDeclaration, call: *const sg.FunctionCall) !facts.OutputEffect {
+        if (std.mem.eql(u8, call.callee.name, "establish_fresh_reference")) return .{ .fresh = true };
+        const callee_summary = self.summaries.get(call.callee) orelse return .{};
+        if (callee_summary.outputs.len != 1 or call.input.content != .struct_value_literal) return .{};
+        return self.substituteOutput(function, callee_summary.outputs[0], call.input.content.struct_value_literal.fields);
+    }
+
+    fn inputOutputEffect(self: *SafetyChecker, input_index: u32, projections: []const place.Projection) !facts.OutputEffect {
+        const dependencies = try self.allocator.alloc(facts.InputDependency, 1);
+        dependencies[0] = .{ .input_index = input_index, .projections = projections };
+        return .{ .input_dependencies = dependencies };
+    }
+
+    fn withCleanupTransfer(self: *SafetyChecker, effect: facts.OutputEffect) facts.OutputEffect {
+        _ = self;
+        for (effect.input_dependencies) |*dependency| @constCast(dependency).transfers_cleanup = true;
+        return effect;
+    }
+
+    fn withoutCleanupTransfer(self: *SafetyChecker, effect: facts.OutputEffect) !facts.OutputEffect {
+        const dependencies = try self.allocator.dupe(facts.InputDependency, effect.input_dependencies);
+        for (dependencies) |*dependency| dependency.transfers_cleanup = false;
+        var result = effect;
+        result.input_dependencies = dependencies;
+        return result;
+    }
+
+    fn inferAggregate(self: *SafetyChecker, function: *const sg.FunctionDeclaration, fields: []const sg.StructValueLiteralField) !facts.OutputEffect {
+        const output_fields = try self.allocator.alloc(facts.OutputFieldEffect, fields.len);
+        var result: facts.OutputEffect = .{};
+        for (fields, 0..) |field, index| {
+            const value = try self.allocator.create(facts.OutputEffect);
+            value.* = try self.inferExpression(function, field.value);
+            output_fields[index] = .{ .index = @intCast(index), .value = value };
+            result = try self.mergeOutputEffects(result, value.*);
+        }
+        result.fields = output_fields;
+        return result;
+    }
+
+    fn inferProjection(self: *SafetyChecker, function: *const sg.FunctionDeclaration, base_node: *const sg.SGNode, projection: place.Projection) !facts.OutputEffect {
+        return self.projectOutputEffect(try self.inferExpression(function, base_node), projection);
+    }
+
+    fn projectOutputEffect(self: *SafetyChecker, effect: facts.OutputEffect, projection: place.Projection) !facts.OutputEffect {
+        if (projection == .field) {
+            for (effect.fields) |field| if (field.index == projection.field) return field.value.*;
+        }
+        const dependencies = try self.allocator.alloc(facts.InputDependency, effect.input_dependencies.len);
+        for (effect.input_dependencies, 0..) |dependency, index| {
+            const projections = try self.allocator.alloc(place.Projection, dependency.projections.len + 1);
+            @memcpy(projections[0..dependency.projections.len], dependency.projections);
+            projections[dependency.projections.len] = projection;
+            dependencies[index] = dependency;
+            dependencies[index].projections = projections;
+        }
+        return .{
+            .input_dependencies = dependencies,
+            .fresh = effect.fresh,
+            .integer_address = effect.integer_address,
         };
-        if (call.input.content != .struct_value_literal or input_index >= call.input.content.struct_value_literal.fields.len)
-            return .independent;
-        const argument = call.input.content.struct_value_literal.fields[input_index].value;
-        const caller_effect = self.inferExpression(function, argument);
-        return if (effect == .transfers_input) switch (caller_effect) {
-            .depends_on_input => |index| .{ .transfers_input = index },
-            else => caller_effect,
-        } else caller_effect;
+    }
+
+    fn substituteOutput(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        effect: facts.OutputEffect,
+        arguments: []const sg.StructValueLiteralField,
+    ) !facts.OutputEffect {
+        var result: facts.OutputEffect = .{ .fresh = effect.fresh, .integer_address = effect.integer_address };
+        for (effect.input_dependencies) |dependency| {
+            if (dependency.input_index >= arguments.len) continue;
+            var argument = try self.inferExpression(function, arguments[dependency.input_index].value);
+            for (dependency.projections) |projection| argument = try self.projectOutputEffect(argument, projection);
+            if (dependency.transfers_cleanup) argument = self.withCleanupTransfer(argument) else argument = try self.withoutCleanupTransfer(argument);
+            result = try self.mergeOutputEffects(result, argument);
+        }
+        if (effect.fields.len != 0) {
+            const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
+            for (effect.fields, 0..) |field, index| {
+                const value = try self.allocator.create(facts.OutputEffect);
+                value.* = try self.substituteOutput(function, field.value.*, arguments);
+                fields[index] = .{ .index = field.index, .value = value };
+            }
+            result.fields = fields;
+        }
+        return result;
+    }
+
+    fn mergeOutputEffects(self: *SafetyChecker, left: facts.OutputEffect, right: facts.OutputEffect) !facts.OutputEffect {
+        var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator.*);
+        for (left.input_dependencies) |dependency| try appendInputDependency(&dependencies, dependency);
+        for (right.input_dependencies) |dependency| try appendInputDependency(&dependencies, dependency);
+        return .{
+            .input_dependencies = try dependencies.toOwnedSlice(),
+            .fresh = left.fresh or right.fresh,
+            .integer_address = left.integer_address or right.integer_address,
+        };
     }
 };
 
@@ -574,17 +689,76 @@ fn inputIndex(function: *const sg.FunctionDeclaration, target: *const sg.Binding
 
 fn effectsEqual(left: []const facts.OutputEffect, right: []const facts.OutputEffect) bool {
     if (left.len != right.len) return false;
-    for (left, right) |a, b| if (!std.meta.eql(a, b)) return false;
+    for (left, right) |a, b| if (!outputEffectEqual(a, b)) return false;
     return true;
 }
 
 fn appendEffectInput(effect: facts.OutputEffect, result: *std.array_list.Managed(u32)) !void {
-    const index = switch (effect) {
-        .depends_on_input, .transfers_input => |input| input,
-        else => return,
+    for (effect.input_dependencies) |dependency| {
+        var found = false;
+        for (result.items) |existing| if (existing == dependency.input_index) {
+            found = true;
+            break;
+        };
+        if (found) continue;
+        try result.append(dependency.input_index);
+    }
+}
+
+fn projectValueFacts(value: facts.ValueFacts, projections: []const place.Projection) facts.ValueFacts {
+    var current = value;
+    for (projections) |projection| switch (projection) {
+        .field => |index| {
+            for (current.fields) |field| if (field.index == index) {
+                current = field.value.*;
+                break;
+            };
+        },
+        .static_index => |index| {
+            for (current.fields) |field| if (field.index == index) {
+                current = field.value.*;
+                break;
+            };
+        },
+        .dynamic_index, .dereference => {},
     };
-    for (result.items) |existing| if (existing == index) return;
-    try result.append(index);
+    return current;
+}
+
+fn appendDependency(list: *std.array_list.Managed(facts.ReferenceDependency), dependency: facts.ReferenceDependency) !void {
+    for (list.items) |existing| if (existing.root == dependency.root) return;
+    try list.append(dependency);
+}
+
+fn appendResponsibility(list: *std.array_list.Managed(facts.CleanupResponsibility), responsibility: facts.CleanupResponsibility) !void {
+    for (list.items) |existing| if (existing.root == responsibility.root) return;
+    try list.append(responsibility);
+}
+
+fn appendInputDependency(list: *std.array_list.Managed(facts.InputDependency), dependency: facts.InputDependency) !void {
+    for (list.items) |existing| {
+        if (existing.input_index != dependency.input_index or existing.transfers_cleanup != dependency.transfers_cleanup) continue;
+        if (projectionsEqual(existing.projections, dependency.projections)) return;
+    }
+    try list.append(dependency);
+}
+
+fn projectionsEqual(left: []const place.Projection, right: []const place.Projection) bool {
+    if (left.len != right.len) return false;
+    for (left, right) |a, b| if (!a.eql(b)) return false;
+    return true;
+}
+
+fn outputEffectEqual(left: facts.OutputEffect, right: facts.OutputEffect) bool {
+    if (left.fresh != right.fresh or left.integer_address != right.integer_address) return false;
+    if (left.input_dependencies.len != right.input_dependencies.len or left.fields.len != right.fields.len) return false;
+    for (left.input_dependencies, right.input_dependencies) |a, b| {
+        if (a.input_index != b.input_index or a.transfers_cleanup != b.transfers_cleanup or !projectionsEqual(a.projections, b.projections)) return false;
+    }
+    for (left.fields, right.fields) |a, b| {
+        if (a.index != b.index or !outputEffectEqual(a.value.*, b.value.*)) return false;
+    }
+    return true;
 }
 
 fn isRootingPrimitive(name: []const u8) bool {

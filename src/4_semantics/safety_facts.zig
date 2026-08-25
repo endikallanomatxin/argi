@@ -48,11 +48,24 @@ pub const RootEstablishment = union(enum) {
     inherit: RootId,
 };
 
-pub const OutputEffect = union(enum) {
-    independent,
-    depends_on_input: u32,
-    fresh,
-    transfers_input: u32,
+pub const InputDependency = struct {
+    input_index: u32,
+    projections: []const place.Projection = &.{},
+    transfers_cleanup: bool = false,
+};
+
+pub const OutputFieldEffect = struct {
+    index: u32,
+    value: *const OutputEffect,
+};
+
+/// Symbolic ValueFacts for a function output. Input dependencies retain their
+/// structural path until a call instantiates them with the caller's facts.
+pub const OutputEffect = struct {
+    input_dependencies: []const InputDependency = &.{},
+    fields: []const OutputFieldEffect = &.{},
+    fresh: bool = false,
+    integer_address: bool = false,
 };
 
 pub const FunctionSummary = struct {
