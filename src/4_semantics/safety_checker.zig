@@ -140,7 +140,7 @@ pub const SafetyChecker = struct {
                     var else_state = try state.clone(self.allocator.*);
                     defer else_state.deinit();
                     if (statement.else_block) |else_block| try self.validateBlock(function, else_block, &else_state);
-                    try self.joinStates(state, &then_state, &else_state);
+                    try self.joinStates(function, state, &then_state, &else_state);
                 },
                 .while_statement => |statement| {
                     _ = try self.evaluate(function, statement.condition, state);
@@ -165,7 +165,7 @@ pub const SafetyChecker = struct {
                         try self.validateBlock(function, case.body, &branch);
                         if (joined) |*joined_state| {
                             var combined = try state.clone(self.allocator.*);
-                            try self.joinStates(&combined, joined_state, &branch);
+                            try self.joinStates(function, &combined, joined_state, &branch);
                             joined_state.deinit();
                             joined_state.* = combined;
                         } else joined = try branch.clone(self.allocator.*);
@@ -176,13 +176,13 @@ pub const SafetyChecker = struct {
                         try self.validateBlock(function, default_case, &branch);
                         if (joined) |*joined_state| {
                             var combined = try state.clone(self.allocator.*);
-                            try self.joinStates(&combined, joined_state, &branch);
+                            try self.joinStates(function, &combined, joined_state, &branch);
                             joined_state.deinit();
                             joined_state.* = combined;
                         } else joined = try branch.clone(self.allocator.*);
                     } else if (joined) |*joined_state| {
                         var combined = try state.clone(self.allocator.*);
-                        try self.joinStates(&combined, joined_state, state);
+                        try self.joinStates(function, &combined, joined_state, state);
                         joined_state.deinit();
                         joined_state.* = combined;
                     }
@@ -397,13 +397,57 @@ pub const SafetyChecker = struct {
         };
     }
 
+    /// Dependencies widen at a join, but linear ownership is retained only
+    /// when both incoming paths put the same root at the same structural value.
+    fn joinValueFacts(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts) !facts.ValueFacts {
+        var result = try self.mergeValueFacts(left, right);
+        var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        for (left.owned_roots) |root| if (containsRoot(right.owned_roots, root))
+            try owned_roots.append(root);
+        result.owned_roots = try owned_roots.toOwnedSlice();
+
+        const fields = try self.allocator.alloc(facts.FieldFacts, result.fields.len);
+        for (result.fields, 0..) |field, index| {
+            const stored = try self.allocator.create(facts.ValueFacts);
+            const left_field = findField(left.fields, field.index);
+            const right_field = findField(right.fields, field.index);
+            if (left_field != null and right_field != null) {
+                stored.* = try self.joinValueFacts(left_field.?.value.*, right_field.?.value.*);
+            } else {
+                stored.* = try self.withoutOwnership(field.value.*);
+            }
+            fields[index] = .{ .index = field.index, .value = stored };
+        }
+        result.fields = fields;
+        return result;
+    }
+
+    fn withoutOwnership(self: *SafetyChecker, value: facts.ValueFacts) !facts.ValueFacts {
+        var result = value;
+        result.owned_roots = &.{};
+        const fields = try self.allocator.alloc(facts.FieldFacts, value.fields.len);
+        for (value.fields, 0..) |field, index| {
+            const stored = try self.allocator.create(facts.ValueFacts);
+            stored.* = try self.withoutOwnership(field.value.*);
+            fields[index] = .{ .index = field.index, .value = stored };
+        }
+        result.fields = fields;
+        return result;
+    }
+
     fn copyState(self: *SafetyChecker, destination: *FunctionState, source: *const FunctionState) !void {
         const replacement = try source.clone(self.allocator.*);
         destination.deinit();
         destination.* = replacement;
     }
 
-    fn joinStates(self: *SafetyChecker, destination: *FunctionState, left: *const FunctionState, right: *const FunctionState) !void {
+    fn joinStates(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        destination: *FunctionState,
+        left: *const FunctionState,
+        right: *const FunctionState,
+    ) !void {
         if (!left.reachable) return self.copyState(destination, right);
         if (!right.reachable) return self.copyState(destination, left);
         var joined = FunctionState.init(self.allocator.*);
@@ -418,8 +462,11 @@ pub const SafetyChecker = struct {
         for (left.places.items) |left_place| {
             var merged = left_place;
             if (findPlace(right.places.items, left_place.storage)) |right_place| {
+                if (!ownershipShapeEqual(left_place.value, right_place.value)) {
+                    try self.diagnostics.add(function.location, .semantic, "root ownership must have one structural location after control-flow join", .{});
+                }
                 merged.initializedness = joinInitializedness(left_place.initializedness, right_place.initializedness);
-                merged.value = try self.mergeValueFacts(left_place.value, right_place.value);
+                merged.value = try self.joinValueFacts(left_place.value, right_place.value);
             }
             try joined.places.append(merged);
         }
@@ -455,7 +502,7 @@ pub const SafetyChecker = struct {
                 if (increment) |node| _ = try self.evaluate(function, node, &iteration);
             }
             var next = try entry.clone(self.allocator.*);
-            try self.joinStates(&next, &entry, &iteration);
+            try self.joinStates(function, &next, &entry, &iteration);
             if (statesEqual(&current, &next)) {
                 try self.copyState(state, &next);
                 next.deinit();
@@ -839,6 +886,28 @@ fn bindingIndex(bindings: []const *const sg.BindingDeclaration, target: *const s
 fn findPlace(places: []const facts.PlaceFacts, storage: place.Place) ?*const facts.PlaceFacts {
     for (places) |*candidate| if (candidate.storage.eql(storage)) return candidate;
     return null;
+}
+
+fn findField(fields: []const facts.FieldFacts, index: u32) ?facts.FieldFacts {
+    for (fields) |field| if (field.index == index) return field;
+    return null;
+}
+
+fn containsRoot(roots: []const facts.RootId, target: facts.RootId) bool {
+    for (roots) |root| if (root == target) return true;
+    return false;
+}
+
+fn ownershipShapeEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.owned_roots.len != right.owned_roots.len) return false;
+    for (left.owned_roots) |root| if (!containsRoot(right.owned_roots, root)) return false;
+    if (left.owned_roots.len == 0) return true;
+    if (left.fields.len != right.fields.len) return false;
+    for (left.fields) |left_field| {
+        const right_field = findField(right.fields, left_field.index) orelse return false;
+        if (!ownershipShapeEqual(left_field.value.*, right_field.value.*)) return false;
+    }
+    return true;
 }
 
 fn joinInitializedness(left: value_state.Initializedness, right: value_state.Initializedness) value_state.Initializedness {
