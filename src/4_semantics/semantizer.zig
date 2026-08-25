@@ -1223,6 +1223,8 @@ pub const Semantizer = struct {
             .function_call => |call| {
                 try self.collectFunctionReasonsFromNode(fn_decl, call.input, collected);
             },
+            .virtualize => |virtualize| try self.collectFunctionReasonsFromNode(fn_decl, virtualize.value, collected),
+            .virtual_call => |virtual_call| try self.collectFunctionReasonsFromNode(fn_decl, virtual_call.input, collected),
             .nullable_unwrap_or => |unwrap| {
                 try self.collectFunctionReasonsFromNode(fn_decl, unwrap.nullable_value, collected);
                 try self.collectFunctionReasonsFromNode(fn_decl, unwrap.fallback_value, collected);
@@ -2037,6 +2039,8 @@ pub const Semantizer = struct {
                 }
                 try self.walkFunctionOnceReachability(call.callee, node.location, state);
             },
+            .virtualize => |virtualize| try self.walkNodeOnceReachability(current_fn, virtualize.value, state),
+            .virtual_call => |virtual_call| try self.walkNodeOnceReachability(current_fn, virtual_call.input, state),
             .code_block => |block| {
                 try self.walkCodeBlockOnceReachability(current_fn, block, state);
             },
@@ -5532,8 +5536,54 @@ pub const Semantizer = struct {
         if (std.mem.eql(u8, g.base_name.string, "Array")) {
             return try self.resolveArrayTypeFromGenericArgs(g.base_name.location, g.args, s, subst);
         }
+        if (std.mem.eql(u8, g.base_name.string, "Virtual")) {
+            return try self.resolveVirtualTypeFromGenericArgs(g.base_name.location, g.args, s);
+        }
 
         return null;
+    }
+
+    fn resolveVirtualTypeFromGenericArgs(
+        self: *Semantizer,
+        location: tok.Location,
+        args: syn.StructTypeLiteral,
+        s: *Scope,
+    ) SemErr!sg.Type {
+        if (args.fields.len != 1 or !std.mem.eql(u8, args.fields[0].name.string, "abstract")) {
+            try self.diags.add(location, .semantic, "Virtual expects exactly '.abstract: <Abstract>'", .{});
+            return error.Reported;
+        }
+        const abstract_syntax = args.fields[0].type orelse return error.InvalidType;
+        const abstract_name = switch (abstract_syntax) {
+            .type_name => |name| name.string,
+            else => return error.InvalidType,
+        };
+        if (s.lookupAbstractInfo(abstract_name) == null) {
+            try self.diags.add(args.fields[0].name.location, .semantic, "'{s}' is not an Abstract type", .{abstract_name});
+            return error.Reported;
+        }
+        const abstract_decl = s.lookupType(abstract_name) orelse return error.UnknownType;
+        if (abstract_decl.ty != .abstract_type) return error.InvalidType;
+
+        const any_type = try self.allocator.create(sg.Type);
+        any_type.* = .{ .builtin = .Any };
+        const data_pointer = try self.allocator.create(sg.PointerType);
+        data_pointer.* = .{ .mutability = .read_write, .child = any_type };
+        const vtable_pointer = try self.allocator.create(sg.PointerType);
+        vtable_pointer.* = .{ .mutability = .read_only, .child = any_type };
+        const fields = try self.allocator.alloc(sg.StructTypeField, 2);
+        fields[0] = .{ .name = "data", .ty = .{ .pointer_type = data_pointer } };
+        fields[1] = .{ .name = "vtable", .ty = .{ .pointer_type = vtable_pointer } };
+
+        const arg_names = try self.allocator.alloc([]const u8, 1);
+        arg_names[0] = "abstract";
+        const arg_values = try self.allocator.alloc(sg.GenericIdentityArg, 1);
+        arg_values[0] = .{ .type = abstract_decl.ty };
+        const identity = try self.allocator.create(sg.GenericTypeIdentity);
+        identity.* = .{ .base_name = "Virtual", .arg_names = arg_names, .arg_values = arg_values };
+        const virtual_type = try self.allocator.create(sg.StructType);
+        virtual_type.* = .{ .fields = fields, .identity = .{ .generic = identity } };
+        return .{ .struct_type = virtual_type };
     }
 
     fn resolveExplicitGenericArg(
@@ -6564,6 +6614,68 @@ pub const Semantizer = struct {
     }
 
     //──────────────────────────────────────────────────── FUNCTION CALL
+    fn handleToVirtual(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!typ.TypedExpr {
+        const type_args = call.type_arguments_struct orelse {
+            try self.diags.add(call.callee_loc, .semantic, "to_virtual requires '#(.abstract: <Abstract>)'", .{});
+            return error.Reported;
+        };
+        const virtual_syntax = syn.Type{ .generic_type_instantiation = .{
+            .base_name = .{ .string = "Virtual", .location = call.callee_loc },
+            .args = type_args,
+        } };
+        const virtual_type = try self.resolveTypePreservingAbstracts(virtual_syntax, s);
+        if (virtual_type != .struct_type) return error.InvalidType;
+        const identity = virtual_type.struct_type.identity orelse return error.InvalidType;
+        const abstract_type = switch (identity) {
+            .generic => |generic| switch (generic.arg_values[0]) {
+                .type => |abstract_sem_type| if (abstract_sem_type == .abstract_type)
+                    abstract_sem_type.abstract_type
+                else
+                    return error.InvalidType,
+                else => return error.InvalidType,
+            },
+            else => return error.InvalidType,
+        };
+        if (call.input.content != .struct_value_literal) return error.InvalidType;
+        const input = call.input.content.struct_value_literal;
+        if (input.fields.len != 1 or !std.mem.eql(u8, input.fields[0].name.string, "value")) return error.InvalidType;
+        const value = try self.visitNode(input.fields[0].value.*, s);
+        if (value.ty != .pointer_type) {
+            try self.diags.add(input.fields[0].value.location, .semantic, "to_virtual '.value' must be a reference", .{});
+            return error.Reported;
+        }
+        const concrete_type = value.ty.pointer_type.child.*;
+        if (!abs.typeImplementsAbstract(abstract_type.name, concrete_type, s)) {
+            const concrete_text = try self.formatTypeText(concrete_type, s);
+            defer concrete_text.deinit();
+            try self.diags.add(input.fields[0].value.location, .semantic, "type '{s}' does not implement Abstract '{s}'", .{ concrete_text.bytes, abstract_type.name });
+            return error.Reported;
+        }
+        const abstract_info = s.lookupAbstractInfo(abstract_type.name) orelse return error.SymbolNotFound;
+        const methods = try self.allocator.alloc(*const sg.FunctionDeclaration, abstract_info.requirements.len);
+        for (abstract_info.requirements, 0..) |*requirement, index| {
+            const expected_input = try abs.buildExpectedInputWithConcrete(requirement, concrete_type, self.allocator);
+            methods[index] = abs.resolveOverload(requirement.name, .{ .struct_type = expected_input }, s) catch |err| switch (err) {
+                error.SymbolNotFound, error.AmbiguousOverload => {
+                    try self.diags.add(call.callee_loc, .semantic, "cannot build Virtual vtable for '{s}': requirement '{s}' has no unique concrete implementation", .{ abstract_type.name, requirement.name });
+                    return error.Reported;
+                },
+                else => return err,
+            };
+        }
+        const virtualize = try self.allocator.create(sg.Virtualize);
+        virtualize.* = .{
+            .value = value.node,
+            .concrete_type = concrete_type,
+            .abstract_type = abstract_type,
+            .virtual_type = virtual_type.struct_type,
+            .methods = methods,
+        };
+        const node = try sg.makeSGNode(.{ .virtualize = virtualize }, call.callee_loc, self.allocator);
+        node.sem_type = virtual_type;
+        return .{ .node = node, .ty = virtual_type };
+    }
+
     fn handleCall(
         self: *Semantizer,
         call: syn.FunctionCall,
@@ -6581,6 +6693,11 @@ pub const Semantizer = struct {
             };
         if (std.mem.eql(u8, call.callee, "cast"))
             return self.handleCastBuiltin(call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                else => err,
+            };
+        if (std.mem.eql(u8, call.callee, "to_virtual"))
+            return self.handleToVirtual(call, s) catch |err| switch (err) {
                 error.Reported => return err,
                 else => err,
             };
@@ -6698,6 +6815,7 @@ pub const Semantizer = struct {
         }
 
         if (tv_in.ty != .struct_type) return error.InvalidType;
+        if (try self.tryHandleVirtualCall(call, tv_in, s)) |virtual_call| return virtual_call;
 
         const chosen = self.resolveRegularCallCallee(call, tv_in, s, call.input.*.location) catch |err| switch (err) {
             error.AmbiguousOverload => {
@@ -6727,6 +6845,75 @@ pub const Semantizer = struct {
         const result_ty = typ.functionReturnType(chosen);
 
         return .{ .node = n, .ty = result_ty };
+    }
+
+    fn virtualAbstractType(ty: sg.Type) ?*const sg.AbstractType {
+        const value_type = if (ty == .pointer_type) ty.pointer_type.child.* else ty;
+        if (value_type != .struct_type) return null;
+        const identity = value_type.struct_type.identity orelse return null;
+        const generic = switch (identity) { .generic => |value| value, else => return null };
+        if (!std.mem.eql(u8, generic.base_name, "Virtual") or generic.arg_values.len != 1) return null;
+        return switch (generic.arg_values[0]) {
+            .type => |abstract_type| if (abstract_type == .abstract_type) abstract_type.abstract_type else null,
+            else => null,
+        };
+    }
+
+    fn containsU32Index(indices: []const u32, index: usize) bool {
+        for (indices) |candidate| if (candidate == index) return true;
+        return false;
+    }
+
+    fn tryHandleVirtualCall(self: *Semantizer, call: syn.FunctionCall, input: typ.TypedExpr, s: *Scope) SemErr!?typ.TypedExpr {
+        if (call.module_qualifier != null or call.type_arguments != null or call.type_arguments_struct != null) return null;
+        if (input.ty != .struct_type or input.node.content != .struct_value_literal) return null;
+        const input_type = input.ty.struct_type;
+        for (input_type.fields, 0..) |actual_field, self_index| {
+            const abstract_type = virtualAbstractType(actual_field.ty) orelse continue;
+            if (actual_field.ty != .pointer_type) continue;
+            const info = s.lookupAbstractInfo(abstract_type.name) orelse return error.SymbolNotFound;
+            for (info.requirements, 0..) |*requirement, method_index| {
+                if (!std.mem.eql(u8, requirement.name, call.callee)) continue;
+                if (!containsU32Index(requirement.input_pointer_self_indices, self_index)) continue;
+                if (requirement.input_self_indices.len != 0 or requirement.output_self_indices.len != 0 or requirement.output_pointer_self_indices.len != 0) {
+                    try self.diags.add(call.callee_loc, .semantic, "Abstract method '{s}' is not virtual-safe because Self escapes by value or output", .{call.callee});
+                    return error.Reported;
+                }
+                if (requirement.input.fields.len != input_type.fields.len) continue;
+                var compatible = true;
+                for (requirement.input.fields, 0..) |expected_field, field_index| {
+                    if (!std.mem.eql(u8, expected_field.name, input_type.fields[field_index].name)) { compatible = false; break; }
+                    if (field_index == self_index) {
+                        if (expected_field.ty != .pointer_type or !typ.pointerMutabilityCompatible(expected_field.ty.pointer_type.mutability, actual_field.ty.pointer_type.mutability)) { compatible = false; break; }
+                    }
+                }
+                if (!compatible) continue;
+                const coerced_input = try self.coerceCallInputToExpected(&requirement.input, input, call.input, s);
+                if (coerced_input.node.content != .struct_value_literal) return error.InvalidType;
+                const coerced_value = coerced_input.node.content.struct_value_literal;
+                const virtual_call = try self.allocator.create(sg.VirtualCall);
+                virtual_call.* = .{
+                    .handle = coerced_value.fields[self_index].value,
+                    .input = coerced_input.node,
+                    .self_input_index = @intCast(self_index),
+                    .method_index = @intCast(method_index),
+                    .method_count = @intCast(info.requirements.len),
+                    .method_name = requirement.name,
+                    .input_type = &requirement.input,
+                    .output_type = &requirement.output,
+                    .self_permission = requirement.input.fields[self_index].ty.pointer_type.mutability,
+                };
+                const node = try sg.makeSGNode(.{ .virtual_call = virtual_call }, call.callee_loc, self.allocator);
+                const result_type: sg.Type = switch (requirement.output.fields.len) {
+                    0 => .{ .builtin = .Any },
+                    1 => requirement.output.fields[0].ty,
+                    else => .{ .struct_type = &requirement.output },
+                };
+                node.sem_type = result_type;
+                return .{ .node = node, .ty = result_type };
+            }
+        }
+        return null;
     }
 
     fn handleNullableUnwrapCall(
@@ -11954,7 +12141,8 @@ pub const Semantizer = struct {
         const source_is_native_uint = value_te.ty == .builtin and value_te.ty.builtin == .UIntNative;
         const target_is_native_uint = target_ty == .builtin and target_ty.builtin == .UIntNative;
 
-        if (!((source_is_ptr and target_is_native_uint) or (source_is_native_uint and target_is_ptr))) {
+        const compatible_pointer_cast = source_is_ptr and target_is_ptr and typ.typesCompatible(target_ty, value_te.ty);
+        if (!((source_is_ptr and target_is_native_uint) or (source_is_native_uint and target_is_ptr) or compatible_pointer_cast)) {
             const pair = try self.formatTypePairText(target_ty, value_te.ty, s);
             defer pair.deinit();
             try self.diags.add(

@@ -110,9 +110,11 @@ allocate(
     }
 
     active_block : &Allocation = &self&.blocks[self&.blocks.length - 1]
-    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = active_block&.data) + self&.current_block_offset
+    data = mutable_reference_offset#(.t: UInt8)(
+        .base = active_block&.data,
+        .elements = self&.current_block_offset,
+    ).reference
     self&.current_block_offset = self&.current_block_offset + required
-    data = cast#(.to: $&UInt8)(.value = raw_addr)
 }
 
 deallocate(

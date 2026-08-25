@@ -511,7 +511,7 @@ pub fn ensureConformance(info: *AbstractInfo, concrete: sg.Type, s: *Scope, allo
     }
 }
 
-fn buildExpectedInputWithConcrete(rq: *const AbstractFunctionReqSem, concrete: sg.Type, allocator: *const std.mem.Allocator) !*sg.StructType {
+pub fn buildExpectedInputWithConcrete(rq: *const AbstractFunctionReqSem, concrete: sg.Type, allocator: *const std.mem.Allocator) !*sg.StructType {
     var fields = try allocator.alloc(sg.StructTypeField, rq.input.fields.len);
     for (rq.input.fields, 0..) |f, i| {
         const is_self = containsIndex(rq.input_self_indices, @intCast(i));

@@ -182,6 +182,8 @@ pub const SafetyChecker = struct {
                 break :blk .{};
             },
             .function_call => |call| try self.evaluateCall(function, call, state),
+            .virtualize => |virtualize| try self.evaluate(function, virtualize.value, state),
+            .virtual_call => |call| try self.evaluate(function, call.input, state),
             .binary_operation => |operation| blk: {
                 _ = try self.evaluate(function, operation.left, state);
                 _ = try self.evaluate(function, operation.right, state);
@@ -407,6 +409,8 @@ pub const SafetyChecker = struct {
             .struct_field_access => |access| self.inferExpression(function, access.struct_value),
             .explicit_cast => |cast| self.inferExpression(function, cast.value),
             .function_call => |call| self.inferCall(function, call),
+            .virtualize => |virtualize| self.inferExpression(function, virtualize.value),
+            .virtual_call => |call| self.inferExpression(function, call.input),
             else => .independent,
         };
     }

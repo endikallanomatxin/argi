@@ -3022,6 +3022,24 @@ test "feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous"
     );
 }
 
+test "feature_tests/polymorphism/26_virtual_abstract_dispatch" {
+    const test_path = "tests/feature_tests/polymorphism/26_virtual_abstract_dispatch";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/polymorphism/27_virtual_allocator_dispatch" {
+    const test_path = "tests/feature_tests/polymorphism/27_virtual_allocator_dispatch";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/polymorphism/28_virtual_foundation" {
+    const test_path = "tests/feature_tests/polymorphism/28_virtual_foundation";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
 test "feature_tests/text/10_string_view_c_string_storage" {
     const test_path = "tests/feature_tests/text/10_string_view_c_string_storage";
     try expectSuccessfulBuild(test_path);
