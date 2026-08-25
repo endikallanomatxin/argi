@@ -7,6 +7,7 @@ pub const RootId = enum(u32) { _ };
 pub const Root = struct {
     id: RootId,
     state: enum { alive, maybe_alive, dead } = .alive,
+    owned_resource: bool = false,
 };
 
 pub const ReferenceDependency = struct {

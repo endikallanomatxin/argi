@@ -46,8 +46,10 @@ pub const SafetyChecker = struct {
     }
 
     const FunctionState = struct {
+        const OwnershipEdge = struct { owner: facts.RootId, owned: facts.RootId };
         tracker: facts.Tracker,
         places: std.array_list.Managed(facts.PlaceFacts),
+        ownership_edges: std.array_list.Managed(OwnershipEdge),
         storage_roots: std.AutoHashMap(*const sg.BindingDeclaration, facts.RootId),
         reachable: bool = true,
         ownership_conflict_reported: bool = false,
@@ -56,6 +58,7 @@ pub const SafetyChecker = struct {
             return .{
                 .tracker = facts.Tracker.init(allocator),
                 .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
+                .ownership_edges = std.array_list.Managed(OwnershipEdge).init(allocator),
                 .storage_roots = std.AutoHashMap(*const sg.BindingDeclaration, facts.RootId).init(allocator),
             };
         }
@@ -63,6 +66,7 @@ pub const SafetyChecker = struct {
         fn deinit(self: *FunctionState) void {
             self.tracker.deinit();
             self.places.deinit();
+            self.ownership_edges.deinit();
             self.storage_roots.deinit();
         }
 
@@ -70,6 +74,7 @@ pub const SafetyChecker = struct {
             var result = FunctionState.init(allocator);
             try result.tracker.roots.appendSlice(self.tracker.roots.items);
             try result.places.appendSlice(self.places.items);
+            try result.ownership_edges.appendSlice(self.ownership_edges.items);
             var roots = self.storage_roots.iterator();
             while (roots.next()) |entry| try result.storage_roots.put(entry.key_ptr.*, entry.value_ptr.*);
             result.reachable = self.reachable;
@@ -130,23 +135,28 @@ pub const SafetyChecker = struct {
                     try self.setPlace(state, storage, .deinitialized, .{});
                 },
                 .struct_field_store => |store| {
-                    _ = try self.evaluate(function, store.struct_ptr, state);
+                    const pointer = try self.evaluate(function, store.struct_ptr, state);
                     const target = try self.projectedPlace(try self.resolvePlace(store.struct_ptr, state) orelse continue, .{ .field = store.field_index });
-                    try self.setPlace(state, target, .initialized, try self.evaluate(function, store.value, state));
+                    const value = try self.evaluate(function, store.value, state);
+                    try self.addStoredOwnershipEdges(function, state, pointer, value);
+                    try self.setPlace(state, target, .initialized, value);
                 },
                 .array_store => |store| {
-                    _ = try self.evaluate(function, store.array_ptr, state);
+                    const pointer = try self.evaluate(function, store.array_ptr, state);
                     const projection: place.Projection = if (staticIndex(store.index)) |index|
                         .{ .static_index = index }
                     else
                         .dynamic_index;
                     const target = try self.projectedPlace(try self.resolvePlace(store.array_ptr, state) orelse continue, projection);
-                    try self.setPlace(state, target, .initialized, try self.evaluate(function, store.value, state));
+                    const value = try self.evaluate(function, store.value, state);
+                    try self.addStoredOwnershipEdges(function, state, pointer, value);
+                    try self.setPlace(state, target, .initialized, value);
                 },
                 .pointer_assignment => |assignment| {
                     const pointer = try self.evaluate(function, assignment.pointer, state);
-                    if (pointer.referenced_place) |target|
-                        try self.setPlace(state, target, .initialized, try self.evaluate(function, assignment.value, state));
+                    const value = try self.evaluate(function, assignment.value, state);
+                    try self.addStoredOwnershipEdges(function, state, pointer, value);
+                    if (pointer.referenced_place) |target| try self.setPlace(state, target, .initialized, value);
                 },
                 .function_call, .dereference, .explicit_cast, .struct_field_access, .array_index => _ = try self.evaluate(function, node, state),
                 .if_statement => |statement| {
@@ -413,6 +423,7 @@ pub const SafetyChecker = struct {
         var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
         for (effect.fresh_owned_roots) |source| {
             const root = try self.instantiateFreshRoot(source, state, fresh_roots);
+            state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
             try appendOwnedRoot(&owned_roots, root);
         }
         result.owned_roots = try owned_roots.toOwnedSlice();
@@ -542,7 +553,9 @@ pub const SafetyChecker = struct {
                 left_state
             else
                 .maybe_alive;
-            try joined.tracker.roots.append(.{ .id = id, .state = root_state });
+            const left_owned = index < left.tracker.roots.items.len and left.tracker.roots.items[index].owned_resource;
+            const right_owned = index < right.tracker.roots.items.len and right.tracker.roots.items[index].owned_resource;
+            try joined.tracker.roots.append(.{ .id = id, .state = root_state, .owned_resource = left_owned or right_owned });
         }
         for (left.places.items) |left_place| {
             var merged = left_place;
@@ -555,6 +568,8 @@ pub const SafetyChecker = struct {
         for (right.places.items) |right_place| {
             if (findPlace(left.places.items, right_place.storage) == null) try joined.places.append(right_place);
         }
+        for (left.ownership_edges.items) |edge| try appendOwnershipEdge(&joined.ownership_edges, edge);
+        for (right.ownership_edges.items) |edge| try appendOwnershipEdge(&joined.ownership_edges, edge);
         var left_roots = left.storage_roots.iterator();
         while (left_roots.next()) |entry| try joined.storage_roots.put(entry.key_ptr.*, entry.value_ptr.*);
         var right_roots = right.storage_roots.iterator();
@@ -772,6 +787,37 @@ pub const SafetyChecker = struct {
                 return;
             }
         }
+    }
+
+    fn addStoredOwnershipEdges(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        state: *FunctionState,
+        destination: facts.ValueFacts,
+        stored: facts.ValueFacts,
+    ) !void {
+        for (destination.dependencies) |dependency| {
+            const owner_index = @intFromEnum(dependency.root);
+            if (owner_index >= state.tracker.roots.items.len or
+                !state.tracker.roots.items[owner_index].owned_resource) continue;
+            for (stored.owned_roots) |owned_root| {
+                if (dependency.root == owned_root or self.ownershipPathExists(state, owned_root, dependency.root)) {
+                    try self.diagnostics.add(function.location, .semantic, "root ownership must be acyclic", .{});
+                    continue;
+                }
+                try appendOwnershipEdge(&state.ownership_edges, .{ .owner = dependency.root, .owned = owned_root });
+            }
+        }
+    }
+
+    fn ownershipPathExists(
+        self: *SafetyChecker,
+        state: *const FunctionState,
+        from: facts.RootId,
+        target: facts.RootId,
+    ) bool {
+        _ = self;
+        return ownershipPathExistsFrom(state, from, target, state.tracker.roots.items.len);
     }
 
     fn rejectEscapingLocalRoots(
@@ -1222,6 +1268,28 @@ fn valueDependsOnRoot(value: facts.ValueFacts, target: facts.RootId) bool {
     return false;
 }
 
+fn appendOwnershipEdge(
+    edges: *std.array_list.Managed(SafetyChecker.FunctionState.OwnershipEdge),
+    candidate: SafetyChecker.FunctionState.OwnershipEdge,
+) !void {
+    for (edges.items) |edge| if (edge.owner == candidate.owner and edge.owned == candidate.owned) return;
+    try edges.append(candidate);
+}
+
+fn ownershipPathExistsFrom(
+    state: *const SafetyChecker.FunctionState,
+    current: facts.RootId,
+    target: facts.RootId,
+    remaining: usize,
+) bool {
+    if (current == target) return true;
+    if (remaining == 0) return false;
+    for (state.ownership_edges.items) |edge| {
+        if (edge.owner == current and ownershipPathExistsFrom(state, edge.owned, target, remaining - 1)) return true;
+    }
+    return false;
+}
+
 fn isLocalStorageRoot(
     function: *const sg.FunctionDeclaration,
     state: *const SafetyChecker.FunctionState,
@@ -1261,11 +1329,21 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
     if (left.reachable != right.reachable or
         left.ownership_conflict_reported != right.ownership_conflict_reported or
         left.tracker.roots.items.len != right.tracker.roots.items.len or
-        left.places.items.len != right.places.items.len) return false;
-    for (left.tracker.roots.items, right.tracker.roots.items) |a, b| if (a.state != b.state) return false;
+        left.places.items.len != right.places.items.len or
+        left.ownership_edges.items.len != right.ownership_edges.items.len) return false;
+    for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
+        if (a.state != b.state or a.owned_resource != b.owned_resource) return false;
     for (left.places.items) |left_place| {
         const right_place = findPlace(right.places.items, left_place.storage) orelse return false;
         if (left_place.initializedness != right_place.initializedness or !valueFactsEqual(left_place.value, right_place.value)) return false;
+    }
+    for (left.ownership_edges.items) |edge| {
+        var found = false;
+        for (right.ownership_edges.items) |other| if (edge.owner == other.owner and edge.owned == other.owned) {
+            found = true;
+            break;
+        };
+        if (!found) return false;
     }
     return true;
 }

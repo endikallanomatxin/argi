@@ -3010,6 +3010,15 @@ test "feature_tests/ownership/63X_malloc_direct_safe_cast" {
     );
 }
 
+test "feature_tests/ownership/64X_owned_root_cycle" {
+    try buildExpectFailExact("tests/feature_tests/ownership/64X_owned_root_cycle",
+        \\tests/feature_tests/ownership/64X_owned_root_cycle/main.rg:1:1: error: root ownership must be acyclic
+        \\  main(.system: System) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended
