@@ -4502,6 +4502,7 @@ pub const Semantizer = struct {
         var child = try Scope.init(self.allocator, p, null);
         // ── entrada
         var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
+        var input_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
         for (f.input.fields) |fld| {
             const ty = self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| return err;
             const dvp = if (fld.default_value) |n|
@@ -4525,10 +4526,13 @@ pub const Semantizer = struct {
                 .initialization = dvp,
             };
             try child.bindings.put(fld.name.string, bd);
+            try input_bindings.append(bd);
         }
         const in_struct_ptr = try self.allocator.create(sg.StructType);
         in_struct_ptr.* = .{ .fields = try in_fields.toOwnedSlice() };
         in_fields.deinit();
+        const input_binding_slice = try input_bindings.toOwnedSlice();
+        input_bindings.deinit();
 
         // ── salida
         var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
@@ -4583,6 +4587,7 @@ pub const Semantizer = struct {
                 cand.output = out_struct;
                 cand.is_test = is_test;
                 cand.uses_inferred_error_reasons = uses_inferred_error_reasons;
+                cand.input_bindings = input_binding_slice;
                 cand.output_bindings = output_binding_slice;
                 break :blk cand;
             }
@@ -4598,6 +4603,7 @@ pub const Semantizer = struct {
                 .output = out_struct,
                 .body = null,
                 .uses_inferred_error_reasons = uses_inferred_error_reasons,
+                .input_bindings = input_binding_slice,
                 .output_bindings = output_binding_slice,
             };
 
@@ -4724,6 +4730,8 @@ pub const Semantizer = struct {
         var child = try Scope.init(self.allocator, p, null);
         var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         defer in_fields.deinit();
+        var input_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
+        defer input_bindings.deinit();
         for (f.input.fields) |*fld| {
             const field_ty = &fld.type.?;
             const ty = try self.resolveCachedSignatureType(field_ty, .preserving_abstracts, &child);
@@ -4744,6 +4752,7 @@ pub const Semantizer = struct {
                 .initialization = null,
             };
             try child.bindings.put(fld.name.string, bd);
+            try input_bindings.append(bd);
         }
         const in_struct_ptr = try self.allocator.create(sg.StructType);
         in_struct_ptr.* = .{ .fields = try in_fields.toOwnedSlice() };
@@ -4789,6 +4798,7 @@ pub const Semantizer = struct {
         }
 
         const output_binding_slice = try output_bindings.toOwnedSlice();
+        const input_binding_slice = try input_bindings.toOwnedSlice();
         const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
 
         const fn_ptr = blk: {
@@ -4797,6 +4807,7 @@ pub const Semantizer = struct {
                 cand.output = out_struct;
                 cand.is_test = is_test;
                 cand.uses_inferred_error_reasons = uses_inferred_error_reasons;
+                cand.input_bindings = input_binding_slice;
                 cand.output_bindings = output_binding_slice;
                 break :blk cand;
             }
@@ -4812,6 +4823,7 @@ pub const Semantizer = struct {
                 .output = out_struct,
                 .body = null,
                 .uses_inferred_error_reasons = uses_inferred_error_reasons,
+                .input_bindings = input_binding_slice,
                 .output_bindings = output_binding_slice,
             };
 

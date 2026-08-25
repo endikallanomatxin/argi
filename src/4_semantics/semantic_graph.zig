@@ -374,6 +374,7 @@ pub const FunctionDeclaration = struct {
     output: StructType, // Named return params
     body: ?*const CodeBlock,
     uses_inferred_error_reasons: bool = false,
+    input_bindings: []const *const BindingDeclaration = &.{},
     output_bindings: []const *const BindingDeclaration = &.{},
     inferred_error_reasons: ?*const ChoiceType = null,
 
