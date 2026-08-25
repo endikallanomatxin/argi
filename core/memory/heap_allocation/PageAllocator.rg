@@ -59,7 +59,9 @@ allocate(
     page_size ::= page_allocator_page_size(.self = self).size
     aligned_size ::= page_allocator_round_up(.size = size, .alignment = page_size).rounded
     raw ::= aligned_alloc(.alignment = page_size, .size = aligned_size)
-    data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = raw))
+    data = establish_fresh_reference#(.t: UInt8)(
+        .raw = raw_pointer#(.t: UInt8)(.address = cast#(.to: UIntNative)(.value = raw)),
+    ).reference
 }
 
 deallocate(

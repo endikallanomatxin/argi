@@ -406,6 +406,7 @@ pub const SafetyPrimitive = enum {
     mutable_reinterpret_reference,
     read_reference,
     end_root,
+    null_reference,
 };
 
 pub const TestDeclaration = struct {

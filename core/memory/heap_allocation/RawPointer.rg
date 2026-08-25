@@ -53,3 +53,8 @@ mutable_reference_offset#(.t: Type)(
 
 end_root#(.t: Type)(.resource: $&t) -> () := {
 }
+
+null_reference#(.t: Type)() -> (.reference: $&t) := {
+    address :: UIntNative = 0
+    reference = cast#(.to: $&t)(.value = address)
+}

@@ -11,7 +11,9 @@ from_literal(
 as_c_string(
     .self: &String,
 ) -> (.text: &Char) := {
-    text = cast#(.to: &Char)(.value = cast#(.to: UIntNative)(.value = self&.allocation.data))
+    text = reinterpret_reference#(.from: UInt8, .to: Char)(
+        .base = read_reference#(.t: UInt8)(.base = self&.allocation.data).reference,
+    ).reference
 }
 
 string_view_has_c_string_layout(
@@ -38,10 +40,9 @@ as_c_string(
     .storage: Allocation,
 ) := {
     if string_view_has_c_string_layout(.self = &self).ok {
-        zero :: UIntNative = 0
         text = reinterpret_reference#(.from: UInt8, .to: Char)(.base = self.data).reference
         storage = (
-            .data = cast#(.to: $&UInt8)(.value = zero),
+            .data = null_reference#(.t: UInt8)().reference,
             .size = 0,
         )
         return

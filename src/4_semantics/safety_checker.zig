@@ -84,7 +84,6 @@ pub const SafetyChecker = struct {
         const body = function.body orelse return;
         if (function.origin_kind != .declared) return;
         if (function.safety_primitive != .none) return;
-        if (std.mem.indexOf(u8, function.location.file, "core/") != null) return;
         var state = FunctionState.init(self.allocator.*);
         defer state.deinit();
         for (function.input_bindings) |binding| {
@@ -775,6 +774,7 @@ pub const SafetyChecker = struct {
             .read_reference,
             => self.inputOutputEffect(0, &.{}),
             .end_root => .{},
+            .null_reference => .{},
         };
     }
 

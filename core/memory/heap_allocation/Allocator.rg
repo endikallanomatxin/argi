@@ -27,7 +27,9 @@ init(.p: $&CAllocator) -> () := {
 allocate(.self: $&CAllocator, .size: UIntNative) -> (.data: $&UInt8) := {
     allocation ::= malloc(.size = size)
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = allocation)
-    data = cast#(.to: $&UInt8)(.value = raw_addr)
+    data = establish_fresh_reference#(.t: UInt8)(
+        .raw = raw_pointer#(.t: UInt8)(.address = raw_addr),
+    ).reference
 }
 
 deallocate(.self: $&CAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
