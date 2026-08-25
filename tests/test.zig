@@ -2975,6 +2975,24 @@ test "feature_tests/ownership/49X_structural_field_use_after_move" {
     );
 }
 
+test "feature_tests/ownership/50X_branch_may_move_value" {
+    try buildExpectFailExact("tests/feature_tests/ownership/50X_branch_may_move_value",
+        \\tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:4:1: error: place rooted at 'pair' is moved and cannot be used
+        \\  main(.condition: Bool = false) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/51X_loop_may_move_value" {
+    try buildExpectFailExact("tests/feature_tests/ownership/51X_loop_may_move_value",
+        \\tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:4:1: error: place rooted at 'pair' is moved and cannot be used
+        \\  main(.condition: Bool = false) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
 test "feature_tests/ownership/29_string_view_is_copyable" {
     const test_path = "tests/feature_tests/ownership/29_string_view_is_copyable";
     try expectSuccessfulBuild(test_path);

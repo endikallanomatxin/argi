@@ -49,6 +49,7 @@ pub const SafetyChecker = struct {
         tracker: facts.Tracker,
         places: std.array_list.Managed(facts.PlaceFacts),
         storage_roots: std.AutoHashMap(*const sg.BindingDeclaration, facts.RootId),
+        reachable: bool = true,
 
         fn init(allocator: std.mem.Allocator) FunctionState {
             return .{
@@ -62,6 +63,16 @@ pub const SafetyChecker = struct {
             self.tracker.deinit();
             self.places.deinit();
             self.storage_roots.deinit();
+        }
+
+        fn clone(self: *const FunctionState, allocator: std.mem.Allocator) !FunctionState {
+            var result = FunctionState.init(allocator);
+            try result.tracker.roots.appendSlice(self.tracker.roots.items);
+            try result.places.appendSlice(self.places.items);
+            var roots = self.storage_roots.iterator();
+            while (roots.next()) |entry| try result.storage_roots.put(entry.key_ptr.*, entry.value_ptr.*);
+            result.reachable = self.reachable;
+            return result;
         }
     };
 
@@ -88,58 +99,99 @@ pub const SafetyChecker = struct {
         function: *const sg.FunctionDeclaration,
         block: *const sg.CodeBlock,
         state: *FunctionState,
-    ) !void {
-        for (block.nodes) |node| switch (node.content) {
-            .binding_declaration => |binding| {
-                const value = if (binding.initialization) |initialization|
-                    try self.evaluate(function, initialization, state)
-                else
-                    facts.ValueFacts{};
-                try self.setPlace(state, .{ .root = binding }, .initialized, value);
-            },
-            .binding_assignment => |assignment| {
-                try self.setPlace(state, .{ .root = assignment.sym_id }, .initialized, try self.evaluate(function, assignment.value, state));
-            },
-            .struct_field_store => |store| {
-                _ = try self.evaluate(function, store.struct_ptr, state);
-                const target = try self.projectedPlace(try self.resolvePlace(store.struct_ptr, state) orelse continue, .{ .field = store.field_index });
-                try self.setPlace(state, target, .initialized, try self.evaluate(function, store.value, state));
-            },
-            .array_store => |store| {
-                _ = try self.evaluate(function, store.array_ptr, state);
-                const projection: place.Projection = if (staticIndex(store.index)) |index|
-                    .{ .static_index = index }
-                else
-                    .dynamic_index;
-                const target = try self.projectedPlace(try self.resolvePlace(store.array_ptr, state) orelse continue, projection);
-                try self.setPlace(state, target, .initialized, try self.evaluate(function, store.value, state));
-            },
-            .pointer_assignment => |assignment| {
-                const pointer = try self.evaluate(function, assignment.pointer, state);
-                if (pointer.referenced_place) |target|
-                    try self.setPlace(state, target, .initialized, try self.evaluate(function, assignment.value, state));
-            },
-            .function_call, .dereference, .explicit_cast, .struct_field_access, .array_index => _ = try self.evaluate(function, node, state),
-            .if_statement => |statement| {
-                _ = try self.evaluate(function, statement.condition, state);
-                try self.validateBlock(function, statement.then_block, state);
-                if (statement.else_block) |else_block| try self.validateBlock(function, else_block, state);
-            },
-            .while_statement => |statement| {
-                _ = try self.evaluate(function, statement.condition, state);
-                try self.validateBlock(function, statement.body, state);
-            },
-            .for_statement => |statement| {
-                if (statement.init) |initialization| _ = try self.evaluate(function, initialization, state);
-                _ = try self.evaluate(function, statement.condition, state);
-                try self.validateBlock(function, statement.body, state);
-                if (statement.increment) |increment| _ = try self.evaluate(function, increment, state);
-            },
-            .return_statement => |statement| if (statement.expression) |expression| {
-                _ = try self.evaluate(function, expression, state);
-            },
-            else => {},
-        };
+    ) anyerror!void {
+        for (block.nodes) |node| {
+            switch (node.content) {
+                .binding_declaration => |binding| {
+                    const value = if (binding.initialization) |initialization|
+                        try self.evaluate(function, initialization, state)
+                    else
+                        facts.ValueFacts{};
+                    try self.setPlace(state, .{ .root = binding }, .initialized, value);
+                },
+                .binding_assignment => |assignment| {
+                    try self.setPlace(state, .{ .root = assignment.sym_id }, .initialized, try self.evaluate(function, assignment.value, state));
+                },
+                .struct_field_store => |store| {
+                    _ = try self.evaluate(function, store.struct_ptr, state);
+                    const target = try self.projectedPlace(try self.resolvePlace(store.struct_ptr, state) orelse continue, .{ .field = store.field_index });
+                    try self.setPlace(state, target, .initialized, try self.evaluate(function, store.value, state));
+                },
+                .array_store => |store| {
+                    _ = try self.evaluate(function, store.array_ptr, state);
+                    const projection: place.Projection = if (staticIndex(store.index)) |index|
+                        .{ .static_index = index }
+                    else
+                        .dynamic_index;
+                    const target = try self.projectedPlace(try self.resolvePlace(store.array_ptr, state) orelse continue, projection);
+                    try self.setPlace(state, target, .initialized, try self.evaluate(function, store.value, state));
+                },
+                .pointer_assignment => |assignment| {
+                    const pointer = try self.evaluate(function, assignment.pointer, state);
+                    if (pointer.referenced_place) |target|
+                        try self.setPlace(state, target, .initialized, try self.evaluate(function, assignment.value, state));
+                },
+                .function_call, .dereference, .explicit_cast, .struct_field_access, .array_index => _ = try self.evaluate(function, node, state),
+                .if_statement => |statement| {
+                    _ = try self.evaluate(function, statement.condition, state);
+                    var then_state = try state.clone(self.allocator.*);
+                    defer then_state.deinit();
+                    try self.validateBlock(function, statement.then_block, &then_state);
+                    var else_state = try state.clone(self.allocator.*);
+                    defer else_state.deinit();
+                    if (statement.else_block) |else_block| try self.validateBlock(function, else_block, &else_state);
+                    try self.joinStates(state, &then_state, &else_state);
+                },
+                .while_statement => |statement| {
+                    _ = try self.evaluate(function, statement.condition, state);
+                    try self.validateLoop(function, statement.body, state, null);
+                },
+                .for_statement => |statement| {
+                    if (statement.init) |initialization| _ = try self.evaluate(function, initialization, state);
+                    _ = try self.evaluate(function, statement.condition, state);
+                    try self.validateLoop(function, statement.body, state, statement.increment);
+                },
+                .return_statement => |statement| if (statement.expression) |expression| {
+                    _ = try self.evaluate(function, expression, state);
+                    state.reachable = false;
+                },
+                .switch_statement => |statement| {
+                    _ = try self.evaluate(function, statement.expression, state);
+                    var joined: ?FunctionState = null;
+                    defer if (joined) |*joined_state| joined_state.deinit();
+                    for (statement.cases) |case| {
+                        var branch = try state.clone(self.allocator.*);
+                        defer branch.deinit();
+                        try self.validateBlock(function, case.body, &branch);
+                        if (joined) |*joined_state| {
+                            var combined = try state.clone(self.allocator.*);
+                            try self.joinStates(&combined, joined_state, &branch);
+                            joined_state.deinit();
+                            joined_state.* = combined;
+                        } else joined = try branch.clone(self.allocator.*);
+                    }
+                    if (statement.default_case) |default_case| {
+                        var branch = try state.clone(self.allocator.*);
+                        defer branch.deinit();
+                        try self.validateBlock(function, default_case, &branch);
+                        if (joined) |*joined_state| {
+                            var combined = try state.clone(self.allocator.*);
+                            try self.joinStates(&combined, joined_state, &branch);
+                            joined_state.deinit();
+                            joined_state.* = combined;
+                        } else joined = try branch.clone(self.allocator.*);
+                    } else if (joined) |*joined_state| {
+                        var combined = try state.clone(self.allocator.*);
+                        try self.joinStates(&combined, joined_state, state);
+                        joined_state.deinit();
+                        joined_state.* = combined;
+                    }
+                    if (joined) |*joined_state| try self.copyState(state, joined_state);
+                },
+                else => {},
+            }
+            if (!state.reachable) return;
+        }
     }
 
     fn evaluate(
@@ -252,8 +304,10 @@ pub const SafetyChecker = struct {
     ) anyerror!facts.ValueFacts {
         var arguments: []const sg.StructValueLiteralField = &.{};
         if (call.input.content == .struct_value_literal) arguments = call.input.content.struct_value_literal.fields;
+        const argument_values = try self.allocator.alloc(facts.ValueFacts, arguments.len);
+        for (arguments, 0..) |argument, index| argument_values[index] = try self.evaluate(function, argument.value, state);
         if (std.mem.eql(u8, call.callee.name, "deallocate") and arguments.len > 1) {
-            const data = try self.evaluate(function, arguments[1].value, state);
+            const data = argument_values[1];
             for (data.dependencies) |dependency| state.tracker.end(dependency.root);
             return .{};
         }
@@ -270,14 +324,13 @@ pub const SafetyChecker = struct {
             }
         }
         if (summary.outputs.len != 1) return .{};
-        return self.instantiateOutput(function, summary.outputs[0], arguments, state);
+        return self.instantiateOutput(summary.outputs[0], argument_values, state);
     }
 
     fn instantiateOutput(
         self: *SafetyChecker,
-        function: *const sg.FunctionDeclaration,
         effect: facts.OutputEffect,
-        arguments: []const sg.StructValueLiteralField,
+        arguments: []const facts.ValueFacts,
         state: *FunctionState,
     ) !facts.ValueFacts {
         var result: facts.ValueFacts = .{};
@@ -288,7 +341,7 @@ pub const SafetyChecker = struct {
         }
         for (effect.input_dependencies) |dependency| {
             if (dependency.input_index >= arguments.len) continue;
-            var input = try self.evaluate(function, arguments[dependency.input_index].value, state);
+            var input = arguments[dependency.input_index];
             input = projectValueFacts(input, dependency.projections);
             if (!dependency.transfers_cleanup) input.cleanup_responsibilities = &.{};
             result = try self.mergeValueFacts(result, input);
@@ -297,7 +350,7 @@ pub const SafetyChecker = struct {
             const fields = try self.allocator.alloc(facts.FieldFacts, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
                 const value = try self.allocator.create(facts.ValueFacts);
-                value.* = try self.instantiateOutput(function, field.value.*, arguments, state);
+                value.* = try self.instantiateOutput(field.value.*, arguments, state);
                 fields[index] = .{ .index = field.index, .value = value };
                 result = try self.mergeValueFacts(result, value.*);
             }
@@ -314,12 +367,105 @@ pub const SafetyChecker = struct {
         var responsibilities = std.array_list.Managed(facts.CleanupResponsibility).init(self.allocator.*);
         for (left.cleanup_responsibilities) |responsibility| try appendResponsibility(&responsibilities, responsibility);
         for (right.cleanup_responsibilities) |responsibility| try appendResponsibility(&responsibilities, responsibility);
+        var fields = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
+        for (left.fields) |left_field| {
+            var merged = left_field.value.*;
+            for (right.fields) |right_field| if (right_field.index == left_field.index) {
+                merged = try self.mergeValueFacts(merged, right_field.value.*);
+                break;
+            };
+            const stored = try self.allocator.create(facts.ValueFacts);
+            stored.* = merged;
+            try fields.append(.{ .index = left_field.index, .value = stored });
+        }
+        for (right.fields) |right_field| {
+            var found = false;
+            for (left.fields) |left_field| if (left_field.index == right_field.index) {
+                found = true;
+                break;
+            };
+            if (!found) try fields.append(right_field);
+        }
         return .{
             .dependencies = try dependencies.toOwnedSlice(),
             .cleanup_responsibilities = try responsibilities.toOwnedSlice(),
+            .fields = try fields.toOwnedSlice(),
             .integer_address = left.integer_address or right.integer_address,
-            .referenced_place = left.referenced_place orelse right.referenced_place,
+            .referenced_place = if (left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?))
+                left.referenced_place
+            else
+                null,
         };
+    }
+
+    fn copyState(self: *SafetyChecker, destination: *FunctionState, source: *const FunctionState) !void {
+        const replacement = try source.clone(self.allocator.*);
+        destination.deinit();
+        destination.* = replacement;
+    }
+
+    fn joinStates(self: *SafetyChecker, destination: *FunctionState, left: *const FunctionState, right: *const FunctionState) !void {
+        if (!left.reachable) return self.copyState(destination, right);
+        if (!right.reachable) return self.copyState(destination, left);
+        var joined = FunctionState.init(self.allocator.*);
+        errdefer joined.deinit();
+        const root_count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);
+        for (0..root_count) |index| {
+            const id: facts.RootId = @enumFromInt(index);
+            const left_dead = index < left.tracker.roots.items.len and left.tracker.roots.items[index].state == .dead;
+            const right_dead = index < right.tracker.roots.items.len and right.tracker.roots.items[index].state == .dead;
+            try joined.tracker.roots.append(.{ .id = id, .state = if (left_dead or right_dead) .dead else .alive });
+        }
+        for (left.places.items) |left_place| {
+            var merged = left_place;
+            if (findPlace(right.places.items, left_place.storage)) |right_place| {
+                merged.initializedness = joinInitializedness(left_place.initializedness, right_place.initializedness);
+                merged.value = try self.mergeValueFacts(left_place.value, right_place.value);
+            }
+            try joined.places.append(merged);
+        }
+        for (right.places.items) |right_place| {
+            if (findPlace(left.places.items, right_place.storage) == null) try joined.places.append(right_place);
+        }
+        var left_roots = left.storage_roots.iterator();
+        while (left_roots.next()) |entry| try joined.storage_roots.put(entry.key_ptr.*, entry.value_ptr.*);
+        var right_roots = right.storage_roots.iterator();
+        while (right_roots.next()) |entry| if (!joined.storage_roots.contains(entry.key_ptr.*))
+            try joined.storage_roots.put(entry.key_ptr.*, entry.value_ptr.*);
+        joined.reachable = true;
+        destination.deinit();
+        destination.* = joined;
+    }
+
+    fn validateLoop(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        body: *const sg.CodeBlock,
+        state: *FunctionState,
+        increment: ?*const sg.SGNode,
+    ) !void {
+        var entry = try state.clone(self.allocator.*);
+        defer entry.deinit();
+        var current = try state.clone(self.allocator.*);
+        defer current.deinit();
+        for (0..8) |_| {
+            var iteration = try current.clone(self.allocator.*);
+            defer iteration.deinit();
+            try self.validateBlock(function, body, &iteration);
+            if (iteration.reachable) {
+                if (increment) |node| _ = try self.evaluate(function, node, &iteration);
+            }
+            var next = try entry.clone(self.allocator.*);
+            try self.joinStates(&next, &entry, &iteration);
+            if (statesEqual(&current, &next)) {
+                try self.copyState(state, &next);
+                next.deinit();
+                return;
+            }
+            current.deinit();
+            current = next;
+        }
+        try self.copyState(state, &current);
     }
 
     fn aggregate(
@@ -677,6 +823,37 @@ fn bindingIndex(bindings: []const *const sg.BindingDeclaration, target: *const s
         if (binding == target or std.mem.eql(u8, binding.name, target.name)) return index;
     }
     return null;
+}
+
+fn findPlace(places: []const facts.PlaceFacts, storage: place.Place) ?*const facts.PlaceFacts {
+    for (places) |*candidate| if (candidate.storage.eql(storage)) return candidate;
+    return null;
+}
+
+fn joinInitializedness(left: value_state.Initializedness, right: value_state.Initializedness) value_state.Initializedness {
+    if (left == right) return left;
+    if (left == .moved or right == .moved) return .moved;
+    return .deinitialized;
+}
+
+fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChecker.FunctionState) bool {
+    if (left.reachable != right.reachable or left.tracker.roots.items.len != right.tracker.roots.items.len or left.places.items.len != right.places.items.len) return false;
+    for (left.tracker.roots.items, right.tracker.roots.items) |a, b| if (a.state != b.state) return false;
+    for (left.places.items) |left_place| {
+        const right_place = findPlace(right.places.items, left_place.storage) orelse return false;
+        if (left_place.initializedness != right_place.initializedness or !valueFactsEqual(left_place.value, right_place.value)) return false;
+    }
+    return true;
+}
+
+fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
+    if (left.integer_address != right.integer_address or left.dependencies.len != right.dependencies.len or left.cleanup_responsibilities.len != right.cleanup_responsibilities.len or left.fields.len != right.fields.len) return false;
+    for (left.dependencies, right.dependencies) |a, b| if (a.root != b.root) return false;
+    for (left.cleanup_responsibilities, right.cleanup_responsibilities) |a, b| if (a.root != b.root) return false;
+    if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
+    if (left.referenced_place) |left_place| if (!left_place.eql(right.referenced_place.?)) return false;
+    for (left.fields, right.fields) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
+    return true;
 }
 
 fn inputIndex(function: *const sg.FunctionDeclaration, target: *const sg.BindingDeclaration) ?usize {
