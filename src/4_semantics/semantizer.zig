@@ -8,6 +8,7 @@ const source_files = @import("../1_base/source_files.zig");
 const log = std.log.scoped(.semantizer);
 
 const typ = @import("types.zig");
+const temporal_place = @import("temporal_place.zig");
 const abs = @import("abstracts.zig");
 const gen = @import("generics.zig");
 const Scope = @import("scope.zig").Scope;
@@ -55,7 +56,7 @@ const CallAccessMode = enum {
 const CallBindingAccess = struct {
     root_name: []const u8,
     mode: CallAccessMode,
-    access_node: *const sg.SGNode,
+    place: temporal_place.Place,
 };
 
 const ReachFunctionContext = struct {
@@ -1223,6 +1224,8 @@ pub const Semantizer = struct {
             .function_call => |call| {
                 try self.collectFunctionReasonsFromNode(fn_decl, call.input, collected);
             },
+            .virtualize => |virtualize| try self.collectFunctionReasonsFromNode(fn_decl, virtualize.value, collected),
+            .virtual_call => |virtual_call| try self.collectFunctionReasonsFromNode(fn_decl, virtual_call.input, collected),
             .nullable_unwrap_or => |unwrap| {
                 try self.collectFunctionReasonsFromNode(fn_decl, unwrap.nullable_value, collected);
                 try self.collectFunctionReasonsFromNode(fn_decl, unwrap.fallback_value, collected);
@@ -1694,7 +1697,7 @@ pub const Semantizer = struct {
                 for (list_ptr.items) |cand| {
                     for (cand.input.fields) |field| {
                         if (field.ty != .pointer_type) continue;
-                        if (field.ty.pointer_type.mutability != .read_write) continue;
+                        if (!typ.pointerCanWrite(field.ty.pointer_type.mutability)) continue;
                         try candidate_names.put(field.name, {});
                     }
                 }
@@ -1704,7 +1707,7 @@ pub const Semantizer = struct {
                     for (tmpl.input.fields) |field| {
                         const field_ty = field.type.?;
                         if (field_ty != .pointer_type) continue;
-                        if (field_ty.pointer_type.mutability != .read_write) continue;
+                        if (!typ.pointerCanWrite(field_ty.pointer_type.mutability)) continue;
                         try candidate_names.put(field.name.string, {});
                     }
                 }
@@ -1719,7 +1722,7 @@ pub const Semantizer = struct {
 
             const ptr_info = try self.allocator.create(sg.PointerType);
             ptr_info.* = .{
-                .mutability = .read_write,
+                .mutability = .cleanup,
                 .child = child_ty,
             };
 
@@ -1742,7 +1745,7 @@ pub const Semantizer = struct {
 
         const ptr_info = try self.allocator.create(sg.PointerType);
         ptr_info.* = .{
-            .mutability = .read_write,
+            .mutability = .cleanup,
             .child = child_ty,
         };
 
@@ -2037,6 +2040,8 @@ pub const Semantizer = struct {
                 }
                 try self.walkFunctionOnceReachability(call.callee, node.location, state);
             },
+            .virtualize => |virtualize| try self.walkNodeOnceReachability(current_fn, virtualize.value, state),
+            .virtual_call => |virtual_call| try self.walkNodeOnceReachability(current_fn, virtual_call.input, state),
             .code_block => |block| {
                 try self.walkCodeBlockOnceReachability(current_fn, block, state);
             },
@@ -2370,7 +2375,7 @@ pub const Semantizer = struct {
 
         switch (inner.node.content) {
             .binding_use => |binding| {
-                if (mutability == .read_write and binding.mutability != .variable) {
+                if (typ.pointerCanWrite(mutability) and binding.mutability != .variable) {
                     try self.diags.add(
                         loc,
                         .semantic,
@@ -2381,8 +2386,9 @@ pub const Semantizer = struct {
                 }
             },
             .struct_field_access => {},
+            .array_index => {},
             .dereference => |deref| {
-                if (mutability == .read_write and deref.pointer_type.mutability != .read_write) {
+                if (!typ.pointerMutabilityCompatible(mutability, deref.pointer_type.mutability)) {
                     try self.diags.add(
                         loc,
                         .semantic,
@@ -4476,6 +4482,7 @@ pub const Semantizer = struct {
                 .input = f.input,
                 .output = f.output,
                 .body = f.body,
+                .temporal_contract = f.temporal_contract,
             });
             // Return a no-op node for generic template
             const noop = try self.makeNoopNode(loc);
@@ -4502,6 +4509,7 @@ pub const Semantizer = struct {
         var child = try Scope.init(self.allocator, p, null);
         // ── entrada
         var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
+        var input_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
         for (f.input.fields) |fld| {
             const ty = self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| return err;
             const dvp = if (fld.default_value) |n|
@@ -4525,10 +4533,13 @@ pub const Semantizer = struct {
                 .initialization = dvp,
             };
             try child.bindings.put(fld.name.string, bd);
+            try input_bindings.append(bd);
         }
         const in_struct_ptr = try self.allocator.create(sg.StructType);
         in_struct_ptr.* = .{ .fields = try in_fields.toOwnedSlice() };
         in_fields.deinit();
+        const input_binding_slice = try input_bindings.toOwnedSlice();
+        input_bindings.deinit();
 
         // ── salida
         var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
@@ -4563,6 +4574,7 @@ pub const Semantizer = struct {
             try output_bindings.append(bd);
         }
         const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
+        const temporal_contract = try self.resolveTemporalContract(f.temporal_contract, in_struct_ptr.*, out_struct, loc);
         const output_binding_slice = try output_bindings.toOwnedSlice();
         out_fields.deinit();
         output_bindings.deinit();
@@ -4583,7 +4595,10 @@ pub const Semantizer = struct {
                 cand.output = out_struct;
                 cand.is_test = is_test;
                 cand.uses_inferred_error_reasons = uses_inferred_error_reasons;
+                cand.input_bindings = input_binding_slice;
                 cand.output_bindings = output_binding_slice;
+                cand.temporal_contract = temporal_contract;
+                cand.declared_extern = f.body == null;
                 break :blk cand;
             }
 
@@ -4597,8 +4612,11 @@ pub const Semantizer = struct {
                 .input = in_struct_ptr.*,
                 .output = out_struct,
                 .body = null,
+                .declared_extern = f.body == null,
                 .uses_inferred_error_reasons = uses_inferred_error_reasons,
+                .input_bindings = input_binding_slice,
                 .output_bindings = output_binding_slice,
+                .temporal_contract = temporal_contract,
             };
 
             if (p.functions.getPtr(f.name.string)) |list_ptr| {
@@ -4705,6 +4723,7 @@ pub const Semantizer = struct {
                 .input = f.input,
                 .output = f.output,
                 .body = f.body,
+                .temporal_contract = f.temporal_contract,
             });
             return null;
         }
@@ -4724,6 +4743,8 @@ pub const Semantizer = struct {
         var child = try Scope.init(self.allocator, p, null);
         var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
         defer in_fields.deinit();
+        var input_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
+        defer input_bindings.deinit();
         for (f.input.fields) |*fld| {
             const field_ty = &fld.type.?;
             const ty = try self.resolveCachedSignatureType(field_ty, .preserving_abstracts, &child);
@@ -4744,6 +4765,7 @@ pub const Semantizer = struct {
                 .initialization = null,
             };
             try child.bindings.put(fld.name.string, bd);
+            try input_bindings.append(bd);
         }
         const in_struct_ptr = try self.allocator.create(sg.StructType);
         in_struct_ptr.* = .{ .fields = try in_fields.toOwnedSlice() };
@@ -4789,7 +4811,9 @@ pub const Semantizer = struct {
         }
 
         const output_binding_slice = try output_bindings.toOwnedSlice();
+        const input_binding_slice = try input_bindings.toOwnedSlice();
         const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
+        const temporal_contract = try self.resolveTemporalContract(f.temporal_contract, in_struct_ptr.*, out_struct, loc);
 
         const fn_ptr = blk: {
             if (existing_fn) |cand| {
@@ -4797,7 +4821,10 @@ pub const Semantizer = struct {
                 cand.output = out_struct;
                 cand.is_test = is_test;
                 cand.uses_inferred_error_reasons = uses_inferred_error_reasons;
+                cand.input_bindings = input_binding_slice;
                 cand.output_bindings = output_binding_slice;
+                cand.temporal_contract = temporal_contract;
+                cand.declared_extern = f.body == null;
                 break :blk cand;
             }
 
@@ -4811,8 +4838,11 @@ pub const Semantizer = struct {
                 .input = in_struct_ptr.*,
                 .output = out_struct,
                 .body = null,
+                .declared_extern = f.body == null,
                 .uses_inferred_error_reasons = uses_inferred_error_reasons,
+                .input_bindings = input_binding_slice,
                 .output_bindings = output_binding_slice,
+                .temporal_contract = temporal_contract,
             };
 
             if (p.functions.getPtr(f.name.string)) |list_ptr| {
@@ -4846,6 +4876,7 @@ pub const Semantizer = struct {
         const child = try self.allocator.create(Scope);
         child.* = try Scope.init(self.allocator, p, null);
         child.current_fn = fn_ptr;
+        const input_bindings = try self.allocator.alloc(*const sg.BindingDeclaration, f.input.fields.len);
 
         const input_struct_ptr = try self.allocator.create(sg.StructType);
         if (!functionHasAnyDefaults(f.input.fields)) {
@@ -4861,8 +4892,10 @@ pub const Semantizer = struct {
                     .initialization = null,
                 };
                 try child.bindings.put(fld.name.string, bd);
+                input_bindings[idx] = bd;
             }
             fn_ptr.input = input_struct_ptr.*;
+            fn_ptr.input_bindings = input_bindings;
             pending.prepared_scope = child;
             pending.prepared_input_struct = input_struct_ptr;
             return;
@@ -4891,9 +4924,11 @@ pub const Semantizer = struct {
                 .initialization = dvp,
             };
             try child.bindings.put(fld.name.string, bd);
+            input_bindings[idx] = bd;
         }
 
         fn_ptr.input = input_struct_ptr.*;
+        fn_ptr.input_bindings = input_bindings;
         pending.prepared_scope = child;
         pending.prepared_input_struct = input_struct_ptr;
     }
@@ -4950,6 +4985,176 @@ pub const Semantizer = struct {
             if (field.default_value != null) return true;
         }
         return false;
+    }
+
+    fn resolveTemporalContract(
+        self: *Semantizer,
+        contract: syn.TemporalContract,
+        input: sg.StructType,
+        output: sg.StructType,
+        location: tok.Location,
+    ) SemErr!sg.TemporalContract {
+        if (contract.fresh_dependency_transitions.len > 0 and
+            !contract.raw_boundary and !contract.trusted_transitions)
+        {
+            try self.diags.add(
+                location,
+                .semantic,
+                "#sets_dependency_fresh requires #raw_boundary or #trusted_temporal",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        var invalidates = try self.allocator.alloc(u32, contract.invalidates_inputs.len);
+        for (contract.invalidates_inputs, 0..) |name, index| {
+            invalidates[index] = self.structFieldIndexByName(input, name) orelse {
+                try self.diags.add(location, .semantic, "temporal contract references unknown input '.{s}'", .{name});
+                return error.Reported;
+            };
+        }
+
+        var invalidates_dependencies = try self.allocator.alloc(sg.InvalidationFootprint, contract.invalidates_dependencies.len);
+        for (contract.invalidates_dependencies, 0..) |dependency, index| {
+            const input_index = self.structFieldIndexByName(input, dependency.input_name) orelse {
+                try self.diags.add(location, .semantic, "temporal contract references unknown input '.{s}'", .{dependency.input_name});
+                return error.Reported;
+            };
+            var current_type = typ.effectiveStructFieldType(input.fields[input_index]);
+            if (current_type == .pointer_type) current_type = current_type.pointer_type.child.*;
+            var value_path = try self.allocator.alloc(sg.TemporalProjection, dependency.value_path.len);
+            for (dependency.value_path, 0..) |field_name, path_index| {
+                if (current_type != .struct_type) {
+                    try self.diags.add(location, .semantic, "temporal dependency path '.{s}' requires a struct value", .{field_name});
+                    return error.Reported;
+                }
+                const field_index = self.structFieldIndexByName(current_type.struct_type.*, field_name) orelse {
+                    try self.diags.add(location, .semantic, "temporal dependency path references unknown field '.{s}'", .{field_name});
+                    return error.Reported;
+                };
+                value_path[path_index] = .{ .field = field_index };
+                current_type = typ.effectiveStructFieldType(current_type.struct_type.fields[field_index]);
+            }
+            invalidates_dependencies[index] = .{
+                .input_index = input_index,
+                .input_value_path = value_path,
+                .input_path = &.{},
+                .refreshes_input = input.fields[input_index].ty == .pointer_type and
+                    input.fields[input_index].ty.pointer_type.mutability == .cleanup,
+            };
+        }
+
+        var return_dependencies = try self.allocator.alloc(sg.ReturnDependency, contract.return_dependencies.len);
+        for (contract.return_dependencies, 0..) |dependency, index| {
+            const output_index = self.structFieldIndexByName(output, dependency.output_name) orelse {
+                try self.diags.add(location, .semantic, "temporal contract references unknown output '.{s}'", .{dependency.output_name});
+                return error.Reported;
+            };
+            var output_type = typ.effectiveStructFieldType(output.fields[output_index]);
+            var output_path = try self.allocator.alloc(sg.TemporalProjection, dependency.output_value_path.len + 1);
+            output_path[0] = .{ .field = output_index };
+            for (dependency.output_value_path, 0..) |field_name, path_index| {
+                if (output_type != .struct_type) {
+                    try self.diags.add(location, .semantic, "temporal dependency output path '.{s}' requires a struct value", .{field_name});
+                    return error.Reported;
+                }
+                const field_index = self.structFieldIndexByName(output_type.struct_type.*, field_name) orelse {
+                    try self.diags.add(location, .semantic, "temporal dependency output path references unknown field '.{s}'", .{field_name});
+                    return error.Reported;
+                };
+                output_path[path_index + 1] = .{ .field = field_index };
+                output_type = typ.effectiveStructFieldType(output_type.struct_type.fields[field_index]);
+            }
+            const input_index = self.structFieldIndexByName(input, dependency.input_name) orelse {
+                try self.diags.add(location, .semantic, "temporal contract references unknown input '.{s}'", .{dependency.input_name});
+                return error.Reported;
+            };
+            var current_type = typ.effectiveStructFieldType(input.fields[input_index]);
+            if (current_type == .pointer_type) current_type = current_type.pointer_type.child.*;
+            var value_path = try self.allocator.alloc(sg.TemporalProjection, dependency.value_path.len);
+            for (dependency.value_path, 0..) |field_name, path_index| {
+                if (current_type != .struct_type) {
+                    try self.diags.add(location, .semantic, "temporal dependency path '.{s}' requires a struct value", .{field_name});
+                    return error.Reported;
+                }
+                const field_index = self.structFieldIndexByName(current_type.struct_type.*, field_name) orelse {
+                    try self.diags.add(location, .semantic, "temporal dependency path references unknown field '.{s}'", .{field_name});
+                    return error.Reported;
+                };
+                value_path[path_index] = .{ .field = field_index };
+                current_type = typ.effectiveStructFieldType(current_type.struct_type.fields[field_index]);
+            }
+            return_dependencies[index] = .{
+                .output_path = output_path,
+                .input_index = input_index,
+                .input_value_path = value_path,
+                .input_path = &.{},
+            };
+        }
+
+        var dependency_transitions = try self.allocator.alloc(sg.DependencyTransition, contract.fresh_dependency_transitions.len);
+        for (contract.fresh_dependency_transitions, 0..) |transition, index| {
+            const input_index = self.structFieldIndexByName(input, transition.input_name) orelse {
+                try self.diags.add(location, .semantic, "temporal contract references unknown input '.{s}'", .{transition.input_name});
+                return error.Reported;
+            };
+            var current_type = typ.effectiveStructFieldType(input.fields[input_index]);
+            if (current_type == .pointer_type) current_type = current_type.pointer_type.child.*;
+            var target_path = try self.allocator.alloc(sg.TemporalProjection, transition.value_path.len);
+            for (transition.value_path, 0..) |field_name, path_index| {
+                if (current_type != .struct_type) {
+                    try self.diags.add(location, .semantic, "temporal dependency path '.{s}' requires a struct value", .{field_name});
+                    return error.Reported;
+                }
+                const field_index = self.structFieldIndexByName(current_type.struct_type.*, field_name) orelse {
+                    try self.diags.add(location, .semantic, "temporal dependency path references unknown field '.{s}'", .{field_name});
+                    return error.Reported;
+                };
+                target_path[path_index] = .{ .field = field_index };
+                current_type = typ.effectiveStructFieldType(current_type.struct_type.fields[field_index]);
+            }
+            dependency_transitions[index] = .{
+                .target_input_index = input_index,
+                .target_path = target_path,
+                .source = .fresh,
+            };
+        }
+
+        var return_root: ?sg.TemporalContract.ReturnRoot = null;
+        if (contract.return_root) |root| {
+            const output_index = self.structFieldIndexByName(output, root.output_name) orelse {
+                try self.diags.add(location, .semantic, "temporal contract references unknown output '.{s}'", .{root.output_name});
+                return error.Reported;
+            };
+            return_root = .{
+                .output_index = output_index,
+                .source = switch (root.source) {
+                    .fresh => .fresh,
+                    .follows_input => |name| .{ .follows_input = self.structFieldIndexByName(input, name) orelse {
+                        try self.diags.add(location, .semantic, "temporal contract references unknown input '.{s}'", .{name});
+                        return error.Reported;
+                    } },
+                },
+            };
+        }
+
+        return .{
+            .invalidates_inputs = invalidates,
+            .invalidates_dependencies = invalidates_dependencies,
+            .return_dependencies = return_dependencies,
+            .dependency_transitions = dependency_transitions,
+            .return_root = return_root,
+            .trusted_transitions = contract.trusted_transitions,
+            .raw_boundary = contract.raw_boundary,
+        };
+    }
+
+    fn structFieldIndexByName(self: *Semantizer, struct_type: sg.StructType, name: []const u8) ?u32 {
+        _ = self;
+        for (struct_type.fields, 0..) |field, index| {
+            if (std.mem.eql(u8, field.name, name)) return @intCast(index);
+        }
+        return null;
     }
 
     fn semantizePreparedFunctionBody(
@@ -5513,8 +5718,64 @@ pub const Semantizer = struct {
         if (std.mem.eql(u8, g.base_name.string, "Array")) {
             return try self.resolveArrayTypeFromGenericArgs(g.base_name.location, g.args, s, subst);
         }
+        if (std.mem.eql(u8, g.base_name.string, "Virtual")) {
+            return try self.resolveVirtualTypeFromGenericArgs(g.base_name.location, g.args, s, subst);
+        }
 
         return null;
+    }
+
+    fn resolveVirtualTypeFromGenericArgs(
+        self: *Semantizer,
+        location: tok.Location,
+        args: syn.StructTypeLiteral,
+        s: *Scope,
+        subst: ?*const GenericSubst,
+    ) SemErr!sg.Type {
+        _ = subst;
+        if (args.fields.len != 1 or !std.mem.eql(u8, args.fields[0].name.string, "abstract")) {
+            try self.diags.add(location, .semantic, "Virtual expects exactly '.abstract: <Abstract>'", .{});
+            return error.Reported;
+        }
+        const abstract_syntax = args.fields[0].type orelse {
+            try self.diags.add(args.fields[0].name.location, .semantic, "Virtual '.abstract' expects an Abstract type", .{});
+            return error.Reported;
+        };
+        const abstract_name = switch (abstract_syntax) {
+            .type_name => |name| name.string,
+            else => {
+                try self.diags.add(args.fields[0].name.location, .semantic, "Virtual currently requires a named non-generic Abstract", .{});
+                return error.Reported;
+            },
+        };
+        if (s.lookupAbstractInfo(abstract_name) == null) {
+            try self.diags.add(args.fields[0].name.location, .semantic, "'{s}' is not an Abstract type", .{abstract_name});
+            return error.Reported;
+        }
+        const abstract_decl = s.lookupType(abstract_name) orelse return error.UnknownType;
+        if (abstract_decl.ty != .abstract_type) return error.InvalidType;
+
+        const any_type = try self.allocator.create(sg.Type);
+        any_type.* = .{ .builtin = .Any };
+        const data_pointer = try self.allocator.create(sg.PointerType);
+        data_pointer.* = .{ .mutability = .read_write, .child = any_type };
+        const vtable_pointer = try self.allocator.create(sg.PointerType);
+        vtable_pointer.* = .{ .mutability = .read_only, .child = any_type };
+
+        const fields = try self.allocator.alloc(sg.StructTypeField, 2);
+        fields[0] = .{ .name = "data", .ty = .{ .pointer_type = data_pointer } };
+        fields[1] = .{ .name = "vtable", .ty = .{ .pointer_type = vtable_pointer } };
+
+        const arg_names = try self.allocator.alloc([]const u8, 1);
+        arg_names[0] = "abstract";
+        const arg_values = try self.allocator.alloc(sg.GenericIdentityArg, 1);
+        arg_values[0] = .{ .type = abstract_decl.ty };
+        const identity = try self.allocator.create(sg.GenericTypeIdentity);
+        identity.* = .{ .base_name = "Virtual", .arg_names = arg_names, .arg_values = arg_values };
+
+        const virtual_type = try self.allocator.create(sg.StructType);
+        virtual_type.* = .{ .fields = fields, .identity = .{ .generic = identity } };
+        return .{ .struct_type = virtual_type };
     }
 
     fn resolveExplicitGenericArg(
@@ -5779,6 +6040,7 @@ pub const Semantizer = struct {
             .input = .{ .fields = rewritten_input_fields },
             .output = f.output,
             .body = f.body,
+            .temporal_contract = f.temporal_contract,
         };
         try p.appendGenericFunctionTemplate(f.name.string, template);
 
@@ -5833,7 +6095,7 @@ pub const Semantizer = struct {
         const asg = try self.allocator.create(sg.Assignment);
         asg.* = .{ .sym_id = b, .value = rhs.node };
 
-        const n = try sg.makeSGNode(.{ .binding_assignment = asg }, undefined, self.allocator);
+        const n = try sg.makeSGNode(.{ .binding_assignment = asg }, a.name.location, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -6130,7 +6392,7 @@ pub const Semantizer = struct {
                 .index = idx_te.node,
                 .element_type = elem_ty,
                 .array_type = arr_type_ptr,
-            } }, undefined, self.allocator);
+            } }, ia.value.*.location, self.allocator);
             return .{ .node = node, .ty = elem_ty };
         }
 
@@ -6282,11 +6544,13 @@ pub const Semantizer = struct {
         const operator_name = switch (mutability) {
             .read_only => "operator get_ro_pointer[]",
             .read_write => "operator get_rw_pointer[]",
+            .cleanup => "operator get_rw_pointer[]",
         };
 
         const self_expr = switch (mutability) {
             .read_only => try typ.ensureReadOnlyPointer(ia.value, base, self.allocator, self.diags),
             .read_write => try typ.ensureMutablePointer(ia.value, base, s, self.allocator, self.diags),
+            .cleanup => try typ.ensureCleanupPointer(ia.value, base, s, self.allocator, self.diags),
         };
 
         return self.lowerIndexedOperatorCall(
@@ -6348,7 +6612,7 @@ pub const Semantizer = struct {
                 .value = value_expr.node,
                 .element_type = elem_ty,
                 .array_type = arr_type_ptr,
-            } }, undefined, self.allocator);
+            } }, ia.target.*.location, self.allocator);
             try s.nodes.append(node);
             return .{ .node = node, .ty = .{ .builtin = .Any } };
         }
@@ -6545,6 +6809,121 @@ pub const Semantizer = struct {
     }
 
     //──────────────────────────────────────────────────── FUNCTION CALL
+    fn handleToVirtual(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!typ.TypedExpr {
+        const type_args = call.type_arguments_struct orelse {
+            try self.diags.add(call.callee_loc, .semantic, "to_virtual requires '#(.abstract: <Abstract>)'", .{});
+            return error.Reported;
+        };
+        const virtual_syntax = syn.Type{ .generic_type_instantiation = .{
+            .base_name = .{ .string = "Virtual", .location = call.callee_loc },
+            .args = type_args,
+        } };
+        const virtual_type = try self.resolveTypePreservingAbstracts(virtual_syntax, s);
+        if (virtual_type != .struct_type) return error.InvalidType;
+        const identity = virtual_type.struct_type.identity orelse return error.InvalidType;
+        const abstract_type = switch (identity) {
+            .generic => |generic| switch (generic.arg_values[0]) {
+                .type => |abstract_sem_type| if (abstract_sem_type == .abstract_type)
+                    abstract_sem_type.abstract_type
+                else
+                    return error.InvalidType,
+                else => return error.InvalidType,
+            },
+            else => return error.InvalidType,
+        };
+
+        if (call.input.content != .struct_value_literal) {
+            try self.diags.add(call.input.location, .semantic, "to_virtual expects '.value = <pointer>'", .{});
+            return error.Reported;
+        }
+        const input = call.input.content.struct_value_literal;
+        if (input.fields.len != 1 or !std.mem.eql(u8, input.fields[0].name.string, "value")) {
+            try self.diags.add(call.input.location, .semantic, "to_virtual expects a single '.value' argument", .{});
+            return error.Reported;
+        }
+        const value = try self.visitNode(input.fields[0].value.*, s);
+        if (value.ty != .pointer_type) {
+            try self.diags.add(input.fields[0].value.location, .semantic, "to_virtual '.value' must be a reference", .{});
+            return error.Reported;
+        }
+        var required_permission: syn.PointerMutability = .read_write;
+        const abstract_info = s.lookupAbstractInfo(abstract_type.name) orelse return error.SymbolNotFound;
+        for (abstract_info.requirements) |requirement| {
+            for (requirement.input_pointer_self_indices) |self_index| {
+                if (self_index >= requirement.input.fields.len) continue;
+                const self_type = requirement.input.fields[self_index].ty;
+                if (self_type == .pointer_type and self_type.pointer_type.mutability == .cleanup) {
+                    required_permission = .cleanup;
+                    break;
+                }
+            }
+            if (required_permission == .cleanup) break;
+        }
+        if (!typ.pointerMutabilityCompatible(required_permission, value.ty.pointer_type.mutability)) {
+            if (required_permission == .cleanup) {
+                try self.diags.add(
+                    input.fields[0].value.location,
+                    .semantic,
+                    "to_virtual requires an cleanup reference because this Abstract contains an cleanup Self method",
+                    .{},
+                );
+            } else {
+                try self.diags.add(
+                    input.fields[0].value.location,
+                    .semantic,
+                    "to_virtual requires a mutable reference because Virtual exposes mutable backing storage",
+                    .{},
+                );
+            }
+            return error.Reported;
+        }
+        const concrete_type = value.ty.pointer_type.child.*;
+        if (!abs.typeImplementsAbstract(abstract_type.name, concrete_type, s)) {
+            const concrete_text = try self.formatTypeText(concrete_type, s);
+            defer concrete_text.deinit();
+            try self.diags.add(
+                input.fields[0].value.location,
+                .semantic,
+                "type '{s}' does not implement Abstract '{s}'",
+                .{ concrete_text.bytes, abstract_type.name },
+            );
+            return error.Reported;
+        }
+
+        var methods = try self.allocator.alloc(*const sg.FunctionDeclaration, abstract_info.requirements.len);
+        for (abstract_info.requirements, 0..) |*requirement, index| {
+            const expected_input = try abs.buildExpectedInputWithConcrete(requirement, concrete_type, self.allocator);
+            methods[index] = abs.resolveOverload(
+                requirement.name,
+                .{ .struct_type = expected_input },
+                s,
+            ) catch |err| switch (err) {
+                error.SymbolNotFound, error.AmbiguousOverload => {
+                    try self.diags.add(
+                        call.callee_loc,
+                        .semantic,
+                        "cannot build Virtual vtable for '{s}': requirement '{s}' has no unique concrete implementation",
+                        .{ abstract_type.name, requirement.name },
+                    );
+                    return error.Reported;
+                },
+                else => return err,
+            };
+        }
+
+        const virtualize = try self.allocator.create(sg.Virtualize);
+        virtualize.* = .{
+            .value = value.node,
+            .concrete_type = concrete_type,
+            .abstract_type = abstract_type,
+            .virtual_type = virtual_type.struct_type,
+            .methods = methods,
+        };
+        const node = try sg.makeSGNode(.{ .virtualize = virtualize }, call.callee_loc, self.allocator);
+        node.sem_type = virtual_type;
+        return .{ .node = node, .ty = virtual_type };
+    }
+
     fn handleCall(
         self: *Semantizer,
         call: syn.FunctionCall,
@@ -6567,6 +6946,11 @@ pub const Semantizer = struct {
             };
         if (std.mem.eql(u8, call.callee, "type_of"))
             return self.handleTypeOf(call, s) catch |err| switch (err) {
+                error.Reported => return err,
+                else => err,
+            };
+        if (std.mem.eql(u8, call.callee, "to_virtual"))
+            return self.handleToVirtual(call, s) catch |err| switch (err) {
                 error.Reported => return err,
                 else => err,
             };
@@ -6601,6 +6985,7 @@ pub const Semantizer = struct {
         if (call.module_qualifier != null and std.mem.eql(u8, call.module_qualifier.?, "testing") and std.mem.eql(u8, call.callee, "expect_error")) {
             return try self.handleTestingExpectErrorBuiltin(call, tv_in, s);
         }
+        if (try self.tryHandleVirtualCall(call, tv_in, s)) |virtual_call| return virtual_call;
         if (typ.builtinFromName(call.callee)) |builtin_ty| {
             if (builtin_ty == .Void) {
                 if (tv_in.ty != .struct_type or tv_in.ty.struct_type.fields.len != 0) {
@@ -6698,6 +7083,20 @@ pub const Semantizer = struct {
                 return err;
             },
         };
+        if (chosen.declared_extern and chosen.temporal_contract.raw_boundary) {
+            const function = s.current_fn;
+            if (function == null or (!function.?.temporal_contract.raw_boundary and
+                !function.?.temporal_contract.trusted_transitions))
+            {
+                try self.diags.add(
+                    call.callee_loc,
+                    .semantic,
+                    "raw extern operation '{s}' requires #raw_boundary or #trusted_temporal",
+                    .{call.callee},
+                );
+                return error.Reported;
+            }
+        }
         const coerced_input = try self.coerceCallInputToExpected(&chosen.input, tv_in, call.input, s);
         try self.checkCallBindingExclusivity(call.callee, coerced_input, call.input.*.location);
         self.cancelExplicitDeinitAutoCleanup(chosen, coerced_input, s);
@@ -6710,6 +7109,99 @@ pub const Semantizer = struct {
         const result_ty = typ.functionReturnType(chosen);
 
         return .{ .node = n, .ty = result_ty };
+    }
+
+    fn virtualAbstractType(ty: sg.Type) ?*const sg.AbstractType {
+        const value_type = if (ty == .pointer_type) ty.pointer_type.child.* else ty;
+        if (value_type != .struct_type) return null;
+        const identity = value_type.struct_type.identity orelse return null;
+        const generic = switch (identity) {
+            .generic => |generic| generic,
+            else => return null,
+        };
+        if (!std.mem.eql(u8, generic.base_name, "Virtual") or generic.arg_values.len != 1) return null;
+        return switch (generic.arg_values[0]) {
+            .type => |abstract_type| if (abstract_type == .abstract_type) abstract_type.abstract_type else null,
+            else => null,
+        };
+    }
+
+    fn containsU32Index(indices: []const u32, index: usize) bool {
+        for (indices) |candidate| if (candidate == index) return true;
+        return false;
+    }
+
+    fn tryHandleVirtualCall(
+        self: *Semantizer,
+        call: syn.FunctionCall,
+        input: typ.TypedExpr,
+        s: *Scope,
+    ) SemErr!?typ.TypedExpr {
+        if (call.module_qualifier != null or call.type_arguments != null or call.type_arguments_struct != null) return null;
+        if (input.ty != .struct_type or input.node.content != .struct_value_literal) return null;
+
+        const input_type = input.ty.struct_type;
+        const input_value = input.node.content.struct_value_literal;
+        for (input_type.fields, 0..) |actual_field, self_index| {
+            const abstract_type = virtualAbstractType(actual_field.ty) orelse continue;
+            if (actual_field.ty != .pointer_type) continue;
+            const info = s.lookupAbstractInfo(abstract_type.name) orelse return error.SymbolNotFound;
+
+            for (info.requirements, 0..) |*requirement, method_index| {
+                if (!std.mem.eql(u8, requirement.name, call.callee)) continue;
+                if (!containsU32Index(requirement.input_pointer_self_indices, self_index)) continue;
+                if (requirement.input_self_indices.len != 0 or
+                    requirement.output_self_indices.len != 0 or
+                    requirement.output_pointer_self_indices.len != 0)
+                {
+                    try self.diags.add(call.callee_loc, .semantic, "Abstract method '{s}' is not virtual-safe because Self escapes by value or output", .{call.callee});
+                    return error.Reported;
+                }
+                if (requirement.input.fields.len != input_type.fields.len) continue;
+
+                var compatible = true;
+                for (requirement.input.fields, 0..) |expected_field, field_index| {
+                    if (!std.mem.eql(u8, expected_field.name, input_type.fields[field_index].name)) {
+                        compatible = false;
+                        break;
+                    }
+                    if (field_index == self_index) {
+                        if (expected_field.ty != .pointer_type or
+                            !typ.pointerMutabilityCompatible(expected_field.ty.pointer_type.mutability, actual_field.ty.pointer_type.mutability))
+                        {
+                            compatible = false;
+                            break;
+                        }
+                    } else if (!typ.typesCompatible(expected_field.ty, input_type.fields[field_index].ty)) {
+                        compatible = false;
+                        break;
+                    }
+                }
+                if (!compatible) continue;
+
+                const virtual_call = try self.allocator.create(sg.VirtualCall);
+                virtual_call.* = .{
+                    .handle = input_value.fields[self_index].value,
+                    .input = input.node,
+                    .self_input_index = @intCast(self_index),
+                    .method_index = @intCast(method_index),
+                    .method_count = @intCast(info.requirements.len),
+                    .method_name = requirement.name,
+                    .input_type = &requirement.input,
+                    .output_type = &requirement.output,
+                    .self_permission = requirement.input.fields[self_index].ty.pointer_type.mutability,
+                };
+                const node = try sg.makeSGNode(.{ .virtual_call = virtual_call }, call.callee_loc, self.allocator);
+                const result_type: sg.Type = switch (requirement.output.fields.len) {
+                    0 => .{ .builtin = .Any },
+                    1 => requirement.output.fields[0].ty,
+                    else => .{ .struct_type = &requirement.output },
+                };
+                node.sem_type = result_type;
+                return .{ .node = node, .ty = result_type };
+            }
+        }
+        return null;
     }
 
     fn handleNullableUnwrapCall(
@@ -6763,7 +7255,7 @@ pub const Semantizer = struct {
 
         for (chosen.input.fields[0..positional_prefix], 0..) |expected_field, idx| {
             if (expected_field.ty != .pointer_type) continue;
-            if (expected_field.ty.pointer_type.mutability != .read_write) continue;
+            if (!typ.pointerCanWrite(expected_field.ty.pointer_type.mutability)) continue;
 
             const arg_node = input_value.fields[idx].value;
             if (arg_node.content != .address_of) continue;
@@ -6774,7 +7266,7 @@ pub const Semantizer = struct {
 
         for (chosen.input.fields[positional_prefix..]) |expected_field| {
             if (expected_field.ty != .pointer_type) continue;
-            if (expected_field.ty.pointer_type.mutability != .read_write) continue;
+            if (!typ.pointerCanWrite(expected_field.ty.pointer_type.mutability)) continue;
 
             const actual_field = findStructValueFieldByNameFrom(input_value.fields, positional_prefix, expected_field.name) orelse continue;
             if (actual_field.value.content != .address_of) continue;
@@ -6788,101 +7280,37 @@ pub const Semantizer = struct {
         self: *Semantizer,
         field_value: *const sg.SGNode,
         field_ty: sg.Type,
-    ) ?CallBindingAccess {
-        _ = self;
+    ) !?CallBindingAccess {
         return switch (field_value.content) {
-            .binding_use => |binding| .{
-                .root_name = binding.name,
-                .mode = .value,
-                .access_node = field_value,
-            },
+            .binding_use,
             .struct_field_access,
             .choice_payload_access,
             .array_index,
             .dereference,
             => blk: {
-                const root_name = extractBindingRootName(field_value) orelse break :blk null;
+                const place = try temporal_place.Place.fromNode(field_value, self.allocator) orelse break :blk null;
                 break :blk .{
-                    .root_name = root_name,
+                    .root_name = place.root.name,
                     .mode = .value,
-                    .access_node = field_value,
+                    .place = place,
                 };
             },
             .address_of => |inner| blk: {
                 if (field_ty != .pointer_type) break :blk null;
-                const root_name = extractBindingRootName(inner) orelse break :blk null;
+                const place = try temporal_place.Place.fromNode(inner, self.allocator) orelse break :blk null;
 
                 const mode: CallAccessMode = switch (field_ty.pointer_type.mutability) {
                     .read_only => .read,
-                    .read_write => .write,
+                    .read_write => .read,
+                    .cleanup => .write,
                 };
                 break :blk .{
-                    .root_name = root_name,
+                    .root_name = place.root.name,
                     .mode = mode,
-                    .access_node = inner,
+                    .place = place,
                 };
             },
             else => null,
-        };
-    }
-
-    fn extractBindingRootName(node: *const sg.SGNode) ?[]const u8 {
-        return switch (node.content) {
-            .binding_use => |binding| binding.name,
-            .struct_field_access => |acc| extractBindingRootName(acc.struct_value),
-            .choice_payload_access => |acc| extractBindingRootName(acc.choice_value),
-            .array_index => |acc| extractBindingRootName(acc.array_ptr),
-            .dereference => |deref| extractBindingRootName(deref.pointer),
-            else => null,
-        };
-    }
-
-    fn indexNodesMayAlias(left: *const sg.SGNode, right: *const sg.SGNode) bool {
-        if (left.content == .value_literal and right.content == .value_literal) {
-            const l = left.content.value_literal;
-            const r = right.content.value_literal;
-            if (l == .int_literal and r == .int_literal) {
-                return l.int_literal == r.int_literal;
-            }
-        }
-
-        return true;
-    }
-
-    fn accessNodesMayAlias(left: *const sg.SGNode, right: *const sg.SGNode) bool {
-        return switch (left.content) {
-            .binding_use => switch (right.content) {
-                .binding_use => std.mem.eql(u8, left.content.binding_use.name, right.content.binding_use.name),
-                .struct_field_access => accessNodesMayAlias(left, right.content.struct_field_access.struct_value),
-                .choice_payload_access => accessNodesMayAlias(left, right.content.choice_payload_access.choice_value),
-                .array_index => accessNodesMayAlias(left, right.content.array_index.array_ptr),
-                .dereference => false,
-                else => false,
-            },
-            .struct_field_access => |lacc| switch (right.content) {
-                .binding_use => accessNodesMayAlias(lacc.struct_value, right),
-                .struct_field_access => |racc| lacc.field_index == racc.field_index and accessNodesMayAlias(lacc.struct_value, racc.struct_value),
-                else => false,
-            },
-            .choice_payload_access => |lacc| switch (right.content) {
-                .binding_use => accessNodesMayAlias(lacc.choice_value, right),
-                .choice_payload_access => |racc| lacc.variant_index == racc.variant_index and accessNodesMayAlias(lacc.choice_value, racc.choice_value),
-                else => false,
-            },
-            .array_index => |lacc| switch (right.content) {
-                .binding_use => accessNodesMayAlias(lacc.array_ptr, right),
-                .array_index => |racc| accessNodesMayAlias(lacc.array_ptr, racc.array_ptr) and indexNodesMayAlias(lacc.index, racc.index),
-                .dereference => accessNodesMayAlias(lacc.array_ptr, right),
-                else => false,
-            },
-            .dereference => |lderef| switch (right.content) {
-                .dereference => |rderef| accessNodesMayAlias(lderef.pointer, rderef.pointer),
-                .struct_field_access => accessNodesMayAlias(left, right.content.struct_field_access.struct_value),
-                .choice_payload_access => accessNodesMayAlias(left, right.content.choice_payload_access.choice_value),
-                .array_index => accessNodesMayAlias(left, right.content.array_index.array_ptr),
-                else => false,
-            },
-            else => false,
         };
     }
 
@@ -6912,13 +7340,12 @@ pub const Semantizer = struct {
 
         var i: usize = 0;
         while (i < input_value.fields.len) : (i += 1) {
-            const left = self.extractCallBindingAccess(input_value.fields[i].value, input_ty.fields[i].ty) orelse continue;
+            const left = (try self.extractCallBindingAccess(input_value.fields[i].value, input_ty.fields[i].ty)) orelse continue;
 
             var j: usize = i + 1;
             while (j < input_value.fields.len) : (j += 1) {
-                const right = self.extractCallBindingAccess(input_value.fields[j].value, input_ty.fields[j].ty) orelse continue;
-                if (!std.mem.eql(u8, left.root_name, right.root_name)) continue;
-                if (!accessNodesMayAlias(left.access_node, right.access_node)) continue;
+                const right = (try self.extractCallBindingAccess(input_value.fields[j].value, input_ty.fields[j].ty)) orelse continue;
+                if (!temporal_place.Place.mayOverlap(left.place, right.place)) continue;
                 if (!callModesConflict(left.mode, right.mode)) continue;
 
                 try self.diags.add(
@@ -7540,7 +7967,7 @@ pub const Semantizer = struct {
             else => return null,
         };
         const binding = binding_use_node.content.binding_use;
-        if (expected.pointer_type.mutability == .read_write and binding.mutability != .variable) {
+        if (typ.pointerCanWrite(expected.pointer_type.mutability) and binding.mutability != .variable) {
             return null;
         }
 
@@ -7626,6 +8053,7 @@ pub const Semantizer = struct {
             const ptr_expr = switch (expected.pointer_type.mutability) {
                 .read_only => try typ.ensureReadOnlyPointer(expr_node, actual, self.allocator, self.diags),
                 .read_write => try typ.ensureMutablePointer(expr_node, actual, s, self.allocator, self.diags),
+                .cleanup => try typ.ensureCleanupPointer(expr_node, actual, s, self.allocator, self.diags),
             };
             if (typ.typesCompatible(expected, ptr_expr.ty)) return ptr_expr;
         }
@@ -8415,6 +8843,7 @@ pub const Semantizer = struct {
                 switch (ptr_info.mutability) {
                     .read_only => try buf.appendSlice("&"),
                     .read_write => try buf.appendSlice("$&"),
+                    .cleanup => try buf.appendSlice("$&"),
                 }
                 try self.appendTemplateTypePretty(buf, ptr_info.child.*, tmpl);
             },
@@ -8482,6 +8911,7 @@ pub const Semantizer = struct {
                 switch (ptr_info.mutability) {
                     .read_only => try buf.appendSlice("&"),
                     .read_write => try buf.appendSlice("$&"),
+                    .cleanup => try buf.appendSlice("$&"),
                 }
                 try self.appendSyntaxTypePretty(buf, ptr_info.child.*);
             },
@@ -9024,7 +9454,7 @@ pub const Semantizer = struct {
                     if (first.ty != .pointer_type) continue;
 
                     const ptr_info = first.ty.pointer_type.*;
-                    if (ptr_info.mutability != .read_write) continue;
+                    if (!typ.pointerCanWrite(ptr_info.mutability)) continue;
                     if (!typ.typesStructurallyEqual(ptr_info.child.*, ty)) continue;
 
                     return true;
@@ -9049,7 +9479,7 @@ pub const Semantizer = struct {
         if (first.ty != .pointer_type) return false;
 
         const ptr_info = first.ty.pointer_type.*;
-        if (ptr_info.mutability != .read_write) return false;
+        if (!typ.pointerCanWrite(ptr_info.mutability)) return false;
         return typ.typesStructurallyEqual(ptr_info.child.*, ty);
     }
 
@@ -9952,6 +10382,12 @@ pub const Semantizer = struct {
             .input = in_struct_ptr.*,
             .output = out_struct_ptr.*,
             .body = null,
+            .temporal_contract = try self.resolveTemporalContract(
+                tmpl.temporal_contract,
+                in_struct_ptr.*,
+                out_struct_ptr.*,
+                tmpl.location,
+            ),
         };
 
         var child = try Scope.init(self.allocator, s, s.current_fn);
@@ -9970,15 +10406,19 @@ pub const Semantizer = struct {
             });
         }
 
-        for (in_struct_ptr.fields) |fld| {
+        const input_bindings = try self.allocator.alloc(*const sg.BindingDeclaration, in_struct_ptr.fields.len);
+        for (in_struct_ptr.fields, 0..) |fld, index| {
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{ .name = fld.name, .location = tmpl.location, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
             try child.bindings.put(fld.name, bd);
+            input_bindings[index] = bd;
         }
-        for (out_struct_ptr.fields) |fld| {
+        const output_bindings = try self.allocator.alloc(*const sg.BindingDeclaration, out_struct_ptr.fields.len);
+        for (out_struct_ptr.fields, 0..) |fld, index| {
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{ .name = fld.name, .location = tmpl.location, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
             try child.bindings.put(fld.name, bd);
+            output_bindings[index] = bd;
         }
 
         var body_cb: ?*sg.CodeBlock = null;
@@ -9995,6 +10435,8 @@ pub const Semantizer = struct {
         }
 
         fn_ptr.input = in_struct_ptr.*;
+        fn_ptr.input_bindings = input_bindings;
+        fn_ptr.output_bindings = output_bindings;
         fn_ptr.body = body_cb;
 
         try s.appendFunction(name, fn_ptr);
@@ -11099,7 +11541,7 @@ pub const Semantizer = struct {
         const iterable_name = try self.makeSyntheticName("iterable");
         const iterator_name = try self.makeSyntheticName("iterator");
         const iterable_direct_ok = iterable_ty == .pointer_type and
-            (!iterable_needs_mutability or iterable_ty.pointer_type.mutability == .read_write) and
+            (!iterable_needs_mutability or typ.pointerCanWrite(iterable_ty.pointer_type.mutability)) and
             abs.typeImplementsAbstract(iterable_abstract_name, iterable_ty.pointer_type.child.*, s);
 
         const iterable_ident = if (iterable_copyable and f.iterable.*.content != .identifier)
@@ -11508,6 +11950,7 @@ pub const Semantizer = struct {
         return switch (addr.mutability) {
             .read_only => try typ.ensureReadOnlyPointer(addr.value, te, self.allocator, self.diags),
             .read_write => try typ.ensureMutablePointer(addr.value, te, s, self.allocator, self.diags),
+            .cleanup => try typ.ensureCleanupPointer(addr.value, te, s, self.allocator, self.diags),
         };
     }
 
@@ -11742,7 +12185,7 @@ pub const Semantizer = struct {
                 .value = rhs.node,
             };
 
-            const node = try sg.makeSGNode(.{ .struct_field_store = store }, undefined, self.allocator);
+            const node = try sg.makeSGNode(.{ .struct_field_store = store }, pa.target.*.location, self.allocator);
             try s.nodes.append(node);
             return .{ .node = node, .ty = .{ .builtin = .Any } };
         }
@@ -11754,7 +12197,7 @@ pub const Semantizer = struct {
 
         rhs = try typ.coerceExprToType(deref_sg.ty, rhs, pa.value, s, self.allocator, self.diags);
 
-        if (deref_sg.pointer_type.*.mutability != .read_write) {
+        if (!typ.pointerCanWrite(deref_sg.pointer_type.*.mutability)) {
             const ptr_ty: sg.Type = .{ .pointer_type = deref_sg.pointer_type };
             const ptr_str = try self.formatTypeText(ptr_ty, s);
             defer ptr_str.deinit();
@@ -11782,9 +12225,123 @@ pub const Semantizer = struct {
         const n = try sg.makeSGNode(.{ .pointer_assignment = .{
             .pointer = deref_sg.pointer,
             .value = rhs.node,
-        } }, undefined, self.allocator);
+        } }, pa.target.*.location, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn accessPermission(node: *const sg.SGNode) ?syn.PointerMutability {
+        return switch (node.content) {
+            .dereference => |dereference| dereference.pointer_type.mutability,
+            .struct_field_access => |access| accessPermission(access.struct_value),
+            .choice_payload_access => |access| accessPermission(access.choice_value),
+            .array_index => |access| accessPermission(access.array_ptr),
+            .address_of => |inner| accessPermission(inner),
+            else => null,
+        };
+    }
+
+    fn allowsTrustedTemporalTransition(s: *const Scope) bool {
+        const function = s.current_fn orelse return false;
+        return function.temporal_contract.trusted_transitions;
+    }
+
+    fn allowsCleanupRawStorageInitialization(pointer: *const sg.SGNode, s: *const Scope) bool {
+        const function = s.current_fn orelse return false;
+        return function.temporal_contract.raw_boundary and nodeComesFromExplicitCast(pointer, 0);
+    }
+
+    fn nodeComesFromExplicitCast(node: *const sg.SGNode, depth: usize) bool {
+        if (depth >= 16) return false;
+        return switch (node.content) {
+            .explicit_cast => true,
+            .binding_use => |binding| binding.initialization != null and
+                nodeComesFromExplicitCast(binding.initialization.?, depth + 1),
+            else => false,
+        };
+    }
+
+    fn fieldStorePreservesTemporalDependencies(
+        target: *const sg.StructFieldAccess,
+        value: *const sg.SGNode,
+    ) bool {
+        if (value.content != .struct_field_access) return false;
+        const source = value.content.struct_field_access;
+        return source.field_index == target.field_index and
+            accessNodesEquivalent(source.struct_value, target.struct_value);
+    }
+
+    fn assignmentPreservesTemporalDependencies(
+        target: *const sg.SGNode,
+        value: *const sg.SGNode,
+        value_type: sg.Type,
+    ) bool {
+        if (accessNodesEquivalent(target, value)) return true;
+        if (value_type != .struct_type or value.content != .struct_value_literal) return false;
+
+        const literal = value.content.struct_value_literal;
+        if (literal.fields.len != value_type.struct_type.fields.len) return false;
+        for (value_type.struct_type.fields, 0..) |field, index| {
+            const field_type = typ.effectiveStructFieldType(field);
+            if (!typ.typeMayCarryTemporalDependencies(field_type)) continue;
+            const field_value = literal.fields[index].value;
+            if (field_value.content != .struct_field_access) return false;
+            const access = field_value.content.struct_field_access;
+            if (access.field_index != index) return false;
+            if (!accessNodesEquivalent(access.struct_value, target)) return false;
+        }
+        return true;
+    }
+
+    fn accessNodesEquivalent(left: *const sg.SGNode, right: *const sg.SGNode) bool {
+        return accessNodesEquivalentAtDepth(left, right, 0);
+    }
+
+    fn accessNodesEquivalentAtDepth(
+        left: *const sg.SGNode,
+        right: *const sg.SGNode,
+        depth: usize,
+    ) bool {
+        if (depth >= 32) return false;
+        return switch (left.content) {
+            .binding_use => |left_binding| switch (right.content) {
+                .binding_use => |right_binding| left_binding == right_binding or
+                    (left_binding.initialization != null and accessNodesEquivalentAtDepth(left_binding.initialization.?, right, depth + 1)) or
+                    (right_binding.initialization != null and accessNodesEquivalentAtDepth(left, right_binding.initialization.?, depth + 1)),
+                else => left_binding.initialization != null and
+                    accessNodesEquivalentAtDepth(left_binding.initialization.?, right, depth + 1),
+            },
+            .dereference => |left_dereference| switch (right.content) {
+                .dereference => |right_dereference| accessNodesEquivalentAtDepth(left_dereference.pointer, right_dereference.pointer, depth + 1),
+                .binding_use => |right_binding| right_binding.initialization != null and
+                    accessNodesEquivalentAtDepth(left, right_binding.initialization.?, depth + 1),
+                else => false,
+            },
+            .struct_field_access => |left_access| switch (right.content) {
+                .struct_field_access => |right_access| left_access.field_index == right_access.field_index and
+                    accessNodesEquivalentAtDepth(left_access.struct_value, right_access.struct_value, depth + 1),
+                else => false,
+            },
+            .choice_payload_access => |left_access| switch (right.content) {
+                .choice_payload_access => |right_access| left_access.variant_index == right_access.variant_index and
+                    accessNodesEquivalentAtDepth(left_access.choice_value, right_access.choice_value, depth + 1),
+                else => false,
+            },
+            .array_index => |left_access| switch (right.content) {
+                .array_index => |right_access| left_access.index == right_access.index and
+                    accessNodesEquivalentAtDepth(left_access.array_ptr, right_access.array_ptr, depth + 1),
+                else => false,
+            },
+            .address_of => |left_inner| switch (right.content) {
+                .address_of => |right_inner| accessNodesEquivalentAtDepth(left_inner, right_inner, depth + 1),
+                else => false,
+            },
+            else => switch (right.content) {
+                .binding_use => |right_binding| right_binding.initialization != null and
+                    accessNodesEquivalentAtDepth(left, right_binding.initialization.?, depth + 1),
+                else => false,
+            },
+        };
     }
 
     fn extractTypeArgument(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!sg.Type {
@@ -11938,7 +12495,22 @@ pub const Semantizer = struct {
         const source_is_native_uint = value_te.ty == .builtin and value_te.ty.builtin == .UIntNative;
         const target_is_native_uint = target_ty == .builtin and target_ty.builtin == .UIntNative;
 
-        if (!((source_is_ptr and target_is_native_uint) or (source_is_native_uint and target_is_ptr))) {
+        const compatible_pointer_cast = source_is_ptr and target_is_ptr and typ.typesCompatible(target_ty, value_te.ty);
+        if (source_is_native_uint and target_is_ptr) {
+            const function = s.current_fn;
+            if (function == null or (!function.?.temporal_contract.raw_boundary and
+                !function.?.temporal_contract.trusted_transitions))
+            {
+                try self.diags.add(
+                    call.input.*.location,
+                    .semantic,
+                    "reconstituting a pointer from UIntNative requires #raw_boundary or #trusted_temporal",
+                    .{},
+                );
+                return error.Reported;
+            }
+        }
+        if (!((source_is_ptr and target_is_native_uint) or (source_is_native_uint and target_is_ptr) or compatible_pointer_cast)) {
             const pair = try self.formatTypePairText(target_ty, value_te.ty, s);
             defer pair.deinit();
             try self.diags.add(

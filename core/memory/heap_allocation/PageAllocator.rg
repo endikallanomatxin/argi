@@ -55,7 +55,7 @@ init(
 allocate(
     .self: $&PageAllocator,
     .size: UIntNative,
-) -> (.data: $&UInt8) := {
+) -> (.data: $&UInt8) #returns_fresh(data) #trusted_temporal := {
     page_size ::= page_allocator_page_size(.self = self).size
     aligned_size ::= page_allocator_round_up(.size = size, .alignment = page_size).rounded
     raw ::= aligned_alloc(.alignment = page_size, .size = aligned_size)
@@ -66,7 +66,7 @@ deallocate(
     .self: $&PageAllocator,
     .data: $&UInt8,
     .size: UIntNative,
-) -> () := {
+) -> () #invalidates(data) #trusted_temporal := {
     free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = data)))
 }
 

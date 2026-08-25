@@ -77,6 +77,9 @@ pub const Content = union(enum) {
 pub const PointerMutability = enum {
     read_only,
     read_write,
+    // Reserved for compiler-created cleanup calls. Source references have only
+    // read-only and aliasable read-write permissions.
+    cleanup,
 };
 
 pub const Type = union(enum) {
@@ -172,8 +175,46 @@ pub const FunctionDeclaration = struct {
     generic_params_struct: ?StructTypeLiteral,
     input: StructTypeLiteral, // Arguments
     output: StructTypeLiteral, // Named return params
+    temporal_contract: TemporalContract = .{},
     body: ?*STNode, // CodeBlock
     // If it has no body, it is an extern function.
+};
+
+pub const TemporalContract = struct {
+    invalidates_inputs: []const []const u8 = &.{},
+    invalidates_dependencies: []const DependencyInvalidation = &.{},
+    return_dependencies: []const DependencyReturn = &.{},
+    fresh_dependency_transitions: []const FreshDependencyTransition = &.{},
+    return_root: ?ReturnRoot = null,
+    trusted_transitions: bool = false,
+    raw_boundary: bool = false,
+
+    pub const DependencyInvalidation = struct {
+        input_name: []const u8,
+        value_path: []const []const u8,
+    };
+
+    pub const DependencyReturn = struct {
+        output_name: []const u8,
+        output_value_path: []const []const u8,
+        input_name: []const u8,
+        value_path: []const []const u8,
+    };
+
+    pub const FreshDependencyTransition = struct {
+        input_name: []const u8,
+        value_path: []const []const u8,
+    };
+
+    pub const ReturnRoot = struct {
+        output_name: []const u8,
+        source: Source,
+
+        pub const Source = union(enum) {
+            fresh,
+            follows_input: []const u8,
+        };
+    };
 };
 
 pub const TestDeclaration = struct {

@@ -115,17 +115,15 @@ fn valid_access():
   print(my_string)
 ```
 
-Note that argument exclusivity isn't enforced for register-passable trivial
-types (like `Int` and `Bool`), because they are always passed by copy. When
-passing the same value into two `Int` arguments, the callee will receive two
-copies of the value.
+Register-passable trivial types such as `Int` and `Bool` are passed by copy.
+Passing the same value into two `Int` arguments gives the callee two values.
 
 
 ## Summary
 
 - `Type` means independent value semantics
 - `&Type` means shared read access
-- `$&Type` means exclusive mutable access
+- `$&Type` means aliasable read and write access
 - non-copyable types cannot be passed as `Type`
 
 

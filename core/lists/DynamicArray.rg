@@ -42,7 +42,7 @@ init #(.t: Type) (
     .p: $&DynamicArray#(.t: t),
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .capacity: UIntNative,
-) -> () := {
+) -> () #trusted_temporal := {
     element_size :: UIntNative = size_of(.type = t)
     actual_capacity ::= capacity
     zero :: UIntNative = 0
@@ -66,7 +66,7 @@ init #(.t: Type) (
 deinit #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&DynamicArray#(.t: t)
-) -> () := {
+) -> () #invalidates(self) #invalidates_dependency(self, allocation.data) := {
     zero :: UIntNative = 0
     deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
     self& = (
@@ -79,7 +79,7 @@ deinit #(.t: Type) (
 copy #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: DynamicArray#(.t: t),
-) -> (.out: DynamicArray#(.t: t)) := {
+) -> (.out: DynamicArray#(.t: t)) #trusted_temporal := {
     init#(.t: t)(.p = $&out, .allocator = allocator, .capacity = self.length)
 
     i :: UIntNative = 0
@@ -144,7 +144,7 @@ dynamic_array_grow_growing #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .array: $&DynamicArray#(.t: t),
     .min_capacity: UIntNative,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) #trusted_temporal := {
     element_size :: UIntNative = size_of(.type = t)
     new_capacity ::= array&.capacity
     zero :: UIntNative = 0
@@ -193,7 +193,7 @@ push #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&DynamicArray#(.t: t),
     .value: t,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) #invalidates_dependency(self, allocation.data) #raw_boundary := {
     one :: UIntNative = 1
     offset ::= self&.length
 
@@ -223,7 +223,7 @@ push #(.t: Type) (
 
 pop #(.t: Type) (
     .self: $&DynamicArray#(.t: t),
-) -> (.value: t) := {
+) -> (.value: t) #trusted_temporal := {
     one :: UIntNative = 1
     new_length ::= self&.length - one
     self& = (
@@ -241,7 +241,7 @@ insert #(.t: Type) (
     .self: $&DynamicArray#(.t: t),
     .i: UIntNative,
     .value: t,
-) -> () := {
+) -> () #trusted_temporal := {
     one :: UIntNative = 1
     current_length ::= self&.length
     element_size :: UIntNative = size_of(.type = t)
@@ -344,7 +344,7 @@ insert_growing #(.t: Type) (
 operator get[] #(.t: Type) (
     .self: &DynamicArray#(.t: t),
     .index: UIntNative,
-) -> (.value: t) := {
+) -> (.value: t) #trusted_temporal := {
     addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
     ptr : &t = cast#(.to: &t)(.value = addr)
     value = ptr&
@@ -353,7 +353,7 @@ operator get[] #(.t: Type) (
 operator get_ro_pointer[] #(.t: Type) (
     .self: &DynamicArray#(.t: t),
     .index: UIntNative,
-) -> (.value: &t) := {
+) -> (.value: &t) #returns_dependency(value, self, allocation.data) #raw_boundary := {
     addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
     value = cast#(.to: &t)(.value = addr)
 }
@@ -361,7 +361,7 @@ operator get_ro_pointer[] #(.t: Type) (
 operator get_rw_pointer[] #(.t: Type) (
     .self: $&DynamicArray#(.t: t),
     .index: UIntNative,
-) -> (.value: $&t) := {
+) -> (.value: $&t) #returns_dependency(value, self, allocation.data) #raw_boundary := {
     addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
     value = cast#(.to: $&t)(.value = addr)
 }
@@ -370,7 +370,7 @@ operator set[] #(.t: Type) (
     .self: $&DynamicArray#(.t: t),
     .index: UIntNative,
     .value: t,
-) -> () := {
+) -> () #raw_boundary := {
     addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
     ptr : $&t = cast#(.to: $&t)(.value = addr)
     ptr& = value
@@ -412,7 +412,7 @@ has_next#(.t: Type) (
 
 next#(.t: Type) (
     .self: $&DynamicArrayIterator#(.t: t)
-) -> (.value: t) := {
+) -> (.value: t) #trusted_temporal := {
     iterator :: DynamicArrayIterator#(.t: t) = self&
     current_index :: UIntNative = iterator.index
     addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = iterator.array, .offset = current_index).address
@@ -433,7 +433,7 @@ has_next#(.t: Type) (
 
 next#(.t: Type) (
     .self: $&DynamicArrayROPointerIterator#(.t: t)
-) -> (.value: &t) := {
+) -> (.value: &t) #returns_dependency(value, self, array) #raw_boundary := {
     iterator :: DynamicArrayROPointerIterator#(.t: t) = self&
     current_index :: UIntNative = iterator.index
     value = cast#(.to: &t)(.value = dynamic_array_element_address#(.t: t)(.array = iterator.array, .offset = current_index).address)
@@ -452,7 +452,7 @@ has_next#(.t: Type) (
 
 next#(.t: Type) (
     .self: $&DynamicArrayRWPointerIterator#(.t: t)
-) -> (.value: $&t) := {
+) -> (.value: $&t) #returns_dependency(value, self, array) #raw_boundary := {
     iterator :: DynamicArrayRWPointerIterator#(.t: t) = self&
     current_index :: UIntNative = iterator.index
     value = cast#(.to: $&t)(.value = dynamic_array_element_address#(.t: t)(.array = iterator.array, .offset = current_index).address)

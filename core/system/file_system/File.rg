@@ -41,7 +41,7 @@ file_open_mode_c_string(
     text = "ab"
 }
 
-file_stream_pointer(.self: &File) -> (.stream: &Any) := {
+file_stream_pointer(.self: &File) -> (.stream: &Any) #trusted_temporal := {
     stream = cast#(.to: &Any)(.value = self&.stream_address)
 }
 
@@ -49,7 +49,7 @@ open(
     .p: $&File,
     .path: &Char,
     .mode: FileOpenMode,
-) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) #trusted_temporal #raw_boundary := {
     mode_text ::= file_open_mode_c_string(.mode = mode)
     opened : &Any = fopen(.path = path, .mode = mode_text)
     p& = (
@@ -66,25 +66,25 @@ open(
 open_read(
     .p: $&File,
     .path: &Char,
-) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) #trusted_temporal := {
     result = open(.p = p, .path = path, .mode = ..read)
 }
 
 open_write(
     .p: $&File,
     .path: &Char,
-) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) #trusted_temporal := {
     result = open(.p = p, .path = path, .mode = ..write)
 }
 
 open_append(
     .p: $&File,
     .path: &Char,
-) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..file_open_failed))) #trusted_temporal := {
     result = open(.p = p, .path = path, .mode = ..append)
 }
 
-init_stdin(.p: $&File) -> () := {
+init_stdin(.p: $&File) -> () #trusted_temporal #raw_boundary := {
     mode_text ::= file_open_mode_c_string(.mode = ..read)
     stream : &Any = fdopen(.fd = 0, .mode = mode_text)
     p& = (
@@ -93,7 +93,7 @@ init_stdin(.p: $&File) -> () := {
     )
 }
 
-init_stdout(.p: $&File) -> () := {
+init_stdout(.p: $&File) -> () #trusted_temporal #raw_boundary := {
     mode_text ::= file_open_mode_c_string(.mode = ..write)
     stream : &Any = fdopen(.fd = 1, .mode = mode_text)
     p& = (
@@ -102,7 +102,7 @@ init_stdout(.p: $&File) -> () := {
     )
 }
 
-init_stderr(.p: $&File) -> () := {
+init_stderr(.p: $&File) -> () #trusted_temporal #raw_boundary := {
     mode_text ::= file_open_mode_c_string(.mode = ..write)
     stream : &Any = fdopen(.fd = 2, .mode = mode_text)
     p& = (

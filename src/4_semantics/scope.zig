@@ -254,7 +254,7 @@ pub const Scope = struct {
                     for (cand.input.fields, 0..) |field, idx| {
                         if (field.ty != .pointer_type) continue;
                         const ptr_info = field.ty.pointer_type.*;
-                        if (ptr_info.mutability != .read_write) continue;
+                        if (!typ.pointerCanWrite(ptr_info.mutability)) continue;
                         const pointee = ptr_info.child.*;
                         if (!typ.typesStructurallyEqual(pointee, ty)) continue;
 

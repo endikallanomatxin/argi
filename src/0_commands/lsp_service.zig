@@ -1817,7 +1817,11 @@ fn appendHoverType(
         .builtin => |builtin| try out.appendSlice(@tagName(builtin)),
         .abstract_type => |abstract_ty| try out.appendSlice(abstract_ty.name),
         .pointer_type => |ptr| {
-            try out.appendSlice(if (ptr.mutability == .read_write) "$&" else "&");
+            try out.appendSlice(switch (ptr.mutability) {
+                .read_only => "&",
+                .read_write => "$&",
+                .cleanup => "$&",
+            });
             try appendHoverType(out, ptr.child.*, type_refs);
         },
         .array_type => |arr| {

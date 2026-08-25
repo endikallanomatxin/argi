@@ -14,7 +14,7 @@ string_view_byte_address(
 bytes_get(
     .view: &StringView,
     .index: UIntNative,
-) -> (.byte: UInt8) := {
+) -> (.byte: UInt8) #trusted_temporal := {
     addr :: UIntNative = string_view_byte_address(.self = view, .index = index).address
     ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
     byte = ptr&

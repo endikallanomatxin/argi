@@ -4,7 +4,7 @@ CountingAllocator : Type = (
     .dealloc_count: Int32 = 0
 )
 
-allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.data: $&UInt8) := {
+allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.data: $&UInt8) #returns_fresh(data) #trusted_temporal := {
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = malloc(.size = size))
     self& = (
         .last_alloc_size = size,
@@ -14,7 +14,7 @@ allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.data: $&UInt8) := {
     data = cast#(.to: $&UInt8)(.value = raw_addr)
 }
 
-deallocate(.self: $&CountingAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
+deallocate(.self: $&CountingAllocator, .data: $&UInt8, .size: UIntNative) -> () #invalidates(data) #trusted_temporal := {
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = data)
     free(.pointer = cast#(.to: &Any)(.value = raw_addr))
     self& = (

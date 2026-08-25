@@ -28,7 +28,7 @@ Terminal : Type = (
 once init(
     .p: $&Terminal,
     .allocator: $&CAllocator = #reach allocator, system.allocator,
-) -> () := {
+) -> () #trusted_temporal := {
     init_stdin(.p = $&p&._storage.stdin_file)
     init_stdout(.p = $&p&._storage.stdout_file)
     init_stderr(.p = $&p&._storage.stderr_file)
@@ -63,13 +63,13 @@ once init(
 deinit(
     .self: $&Terminal,
     .allocator: $&CAllocator = #reach allocator, system.allocator,
-) -> () := {
-    deinit(.self = self&.stdin_reader, .allocator = allocator)
-    deinit(.self = self&.stdout_writer, .allocator = allocator)
-    deinit(.self = self&.stderr_writer, .allocator = allocator)
-    close(.self = self&.stdin_file)
-    close(.self = self&.stdout_file)
-    close(.self = self&.stderr_file)
+) -> () #invalidates(self) := {
+    deinit(.self = $&self&._storage.stdin_reader, .allocator = allocator)
+    deinit(.self = $&self&._storage.stdout_writer, .allocator = allocator)
+    deinit(.self = $&self&._storage.stderr_writer, .allocator = allocator)
+    close(.self = $&self&._storage.stdin_file)
+    close(.self = $&self&._storage.stdout_file)
+    close(.self = $&self&._storage.stderr_file)
 }
 
 read_line_into_buffer(

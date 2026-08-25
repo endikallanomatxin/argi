@@ -38,6 +38,7 @@ pub const GenericTemplate = struct {
     input: syn.StructTypeLiteral,
     output: syn.StructTypeLiteral,
     body: ?*syn.STNode,
+    temporal_contract: syn.TemporalContract = .{},
 };
 
 // Generic type template for monomorphization of named struct types

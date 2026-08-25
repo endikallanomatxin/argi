@@ -1,4 +1,4 @@
-main () -> (.status_code: Int32) := {
+main () -> (.status_code: Int32) #trusted_temporal := {
     value :: Int32 = 42
     ptr : &Int32 = &value
 

@@ -525,7 +525,37 @@ pub fn pointerToAny(mutability: syn.PointerMutability, allocator: *const std.mem
 pub fn pointerMutabilityCompatible(expected: syn.PointerMutability, actual: syn.PointerMutability) bool {
     return switch (expected) {
         .read_only => true,
-        .read_write => actual == .read_write,
+        .read_write => actual == .read_write or actual == .cleanup,
+        .cleanup => actual == .cleanup,
+    };
+}
+
+pub fn pointerCanWrite(mutability: syn.PointerMutability) bool {
+    return mutability != .read_only;
+}
+
+/// Nominal types do not encode provenance, but their shape tells us whether a
+/// runtime value may carry hidden temporal dependencies. Replacing such a
+/// value through `$&` would change the referent's temporal refinement.
+pub fn typeMayCarryTemporalDependencies(ty: sg.Type) bool {
+    return switch (ty) {
+        .pointer_type, .abstract_type => true,
+        .struct_type => |struct_type| blk: {
+            for (struct_type.fields) |field| {
+                if (typeMayCarryTemporalDependencies(effectiveStructFieldType(field))) break :blk true;
+            }
+            break :blk false;
+        },
+        .choice_type => |choice_type| blk: {
+            for (choice_type.variants) |variant| {
+                if (variant.payload_type) |payload_type| {
+                    if (typeMayCarryTemporalDependencies(payload_type)) break :blk true;
+                }
+            }
+            break :blk false;
+        },
+        .array_type => |array_type| typeMayCarryTemporalDependencies(array_type.element_type.*),
+        .builtin => false,
     };
 }
 
@@ -678,7 +708,11 @@ fn appendType(buf: *std.array_list.Managed(u8), t: sg.Type) !void {
         .choice_type => |ct| try buf.appendSlice(if (ct.layout == .c_enum) "CEnum" else "choice"),
         .pointer_type => |ptr_info_ptr| {
             const ptr_info = ptr_info_ptr.*;
-            const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
+            const prefix = switch (ptr_info.mutability) {
+                .read_only => "&",
+                .read_write => "$&",
+                .cleanup => "$&",
+            };
             try buf.appendSlice(prefix);
             try appendType(buf, ptr_info.child.*);
         },
@@ -766,7 +800,11 @@ pub fn appendTypePretty(buf: *std.array_list.Managed(u8), t: sg.Type, s: *Scope)
         .choice_type => |ct| try buf.appendSlice(if (ct.layout == .c_enum) "CEnum" else "choice"),
         .pointer_type => |ptr_info_ptr| {
             const ptr_info = ptr_info_ptr.*;
-            const prefix = if (ptr_info.mutability == .read_write) "$&" else "&";
+            const prefix = switch (ptr_info.mutability) {
+                .read_only => "&",
+                .read_write => "$&",
+                .cleanup => "$&",
+            };
             try buf.appendSlice(prefix);
             try appendTypePretty(buf, ptr_info.child.*, s);
         },
@@ -1682,7 +1720,7 @@ pub fn ensureMutablePointer(
 ) err.SemErr!TypedExpr {
     if (te.ty == .pointer_type) {
         const info = te.ty.pointer_type.*;
-        if (info.mutability != .read_write) {
+        if (!pointerCanWrite(info.mutability)) {
             const ptr_str = try formatTypeText(.{ .pointer_type = te.ty.pointer_type }, s, allocator);
             defer ptr_str.deinit();
             try diags.add(
@@ -1713,6 +1751,32 @@ pub fn ensureMutablePointer(
     return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_info } };
 }
 
+pub fn ensureCleanupPointer(
+    expr_node: *const syn.STNode,
+    te: TypedExpr,
+    s: *Scope,
+    allocator: *const std.mem.Allocator,
+    diags: *diagnostics.Diagnostics,
+) err.SemErr!TypedExpr {
+    if (te.ty == .pointer_type) {
+        const info = te.ty.pointer_type.*;
+        if (info.mutability != .cleanup) {
+            const ptr_str = try formatTypeText(.{ .pointer_type = te.ty.pointer_type }, s, allocator);
+            defer ptr_str.deinit();
+            try diags.add(
+                expr_node.location,
+                .semantic,
+                "cannot grant cleanup access through pointer '{s}'; acquire it with '$&'",
+                .{ptr_str.bytes},
+            );
+            return error.Reported;
+        }
+        return te;
+    }
+
+    return makeAddressablePointer(te.node, te.ty, .cleanup, expr_node.location, allocator, diags);
+}
+
 fn ensureAddressableNode(
     node: *const sg.SGNode,
     mutability: syn.PointerMutability,
@@ -1721,7 +1785,7 @@ fn ensureAddressableNode(
 ) err.SemErr!void {
     switch (node.content) {
         .binding_use => |binding| {
-            if (mutability == .read_write and binding.mutability != .variable) {
+            if (pointerCanWrite(mutability) and binding.mutability != .variable) {
                 try diags.add(
                     loc,
                     .semantic,
@@ -1738,8 +1802,14 @@ fn ensureAddressableNode(
         .choice_payload_access => |acc| {
             return ensureAddressableNode(acc.choice_value, mutability, loc, diags);
         },
+        .array_index => |access| {
+            return ensureAddressableNode(access.array_ptr, mutability, loc, diags);
+        },
+        .address_of => |inner| {
+            return ensureAddressableNode(inner, mutability, loc, diags);
+        },
         .dereference => |deref| {
-            if (mutability == .read_write and deref.pointer_type.mutability != .read_write) {
+            if (!pointerMutabilityCompatible(mutability, deref.pointer_type.mutability)) {
                 try diags.add(
                     loc,
                     .semantic,

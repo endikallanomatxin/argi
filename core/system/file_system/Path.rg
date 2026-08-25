@@ -49,7 +49,7 @@ string_view_slice(
 init(
     .p: $&Path,
     .text: String,
-) -> () := {
+) -> () #trusted_temporal := {
     p& = (
         .text = text,
     )
@@ -59,7 +59,7 @@ init(
     .p: $&Path,
     .view: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> () := {
+) -> () #trusted_temporal := {
     text :: String = String(.allocator = allocator, .capacity = view.length)
     pushed ::= push_view(.self = $&text, .view = view)
     match pushed {
@@ -101,7 +101,7 @@ path_with_view(
 deinit(
     .self: $&Path,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> () := {
+) -> () #invalidates(self) #invalidates_dependency(self, text.allocation.data) := {
     deinit(.self = $&self&.text, .allocator = allocator)
 }
 

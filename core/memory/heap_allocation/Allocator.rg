@@ -24,13 +24,13 @@ CAllocator : Type = ()
 init(.p: $&CAllocator) -> () := {
 }
 
-allocate(.self: $&CAllocator, .size: UIntNative) -> (.data: $&UInt8) := {
+allocate(.self: $&CAllocator, .size: UIntNative) -> (.data: $&UInt8) #returns_fresh(data) #trusted_temporal := {
     allocation ::= malloc(.size = size)
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = allocation)
     data = cast#(.to: $&UInt8)(.value = raw_addr)
 }
 
-deallocate(.self: $&CAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
+deallocate(.self: $&CAllocator, .data: $&UInt8, .size: UIntNative) -> () #invalidates(data) #trusted_temporal := {
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = data)
     free(.pointer = cast#(.to: &Any)(.value = raw_addr))
 }
@@ -58,7 +58,7 @@ Allocation : Type = (
 deinit(
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&Allocation,
-) -> () := {
+) -> () #invalidates(self) #invalidates_dependency(self, data) := {
     if self&.size > 0 {
         deallocate(.self = allocator, .data = self&.data, .size = self&.size)
     }

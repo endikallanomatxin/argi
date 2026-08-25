@@ -1,4 +1,4 @@
-main(.system: System = System()) -> (.status_code: Int32) := {
+main(.system: System = System()) -> (.status_code: Int32) #trusted_temporal := {
     argc ::= length(.self = system.args).count
     if argc < 1 {
         status_code = 1

@@ -43,7 +43,7 @@ argument_pointer_address(
 argument_at(
     .self: &Arguments,
     .index: UIntNative,
-) -> (.text: &Char) := {
+) -> (.text: &Char) #trusted_temporal := {
     addr ::= argument_pointer_address(.self = self, .index = index).address
     ptr : &UIntNative = cast#(.to: &UIntNative)(.value = addr)
     text = cast#(.to: &Char)(.value = ptr&)

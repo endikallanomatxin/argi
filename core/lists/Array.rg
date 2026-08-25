@@ -86,7 +86,7 @@ has_next#(.n: UIntNative, .t: Type) (
 
 next#(.n: UIntNative, .t: Type) (
     .self: $&ArrayROPointerIterator#(.n = n, .t: t)
-) -> (.value: &t) := {
+) -> (.value: &t) #returns_dependency(value, self, array) #raw_boundary := {
     iterator :: ArrayROPointerIterator#(.n = n, .t: t) = self&
     current_index :: UIntNative = iterator.index
     value = cast#(.to: &t)(.value = array_element_address#(.n = n, .t: t)(.self = iterator.array, .index = current_index).address)
@@ -105,7 +105,7 @@ has_next#(.n: UIntNative, .t: Type) (
 
 next#(.n: UIntNative, .t: Type) (
     .self: $&ArrayRWPointerIterator#(.n = n, .t: t)
-) -> (.value: $&t) := {
+) -> (.value: $&t) #returns_dependency(value, self, array) #raw_boundary := {
     iterator :: ArrayRWPointerIterator#(.n = n, .t: t) = self&
     current_index :: UIntNative = iterator.index
     value = cast#(.to: $&t)(.value = array_element_address#(.n = n, .t: t)(.self = iterator.array, .index = current_index).address)

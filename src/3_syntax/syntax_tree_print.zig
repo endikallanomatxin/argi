@@ -26,6 +26,7 @@ fn printType(t: syn.Type, lvl: usize) void {
             const prefix = switch (pt.mutability) {
                 .read_only => "&",
                 .read_write => "$&",
+                .cleanup => "$&",
             };
             std.debug.print("{s}", .{prefix});
             printType(pt.child.*, lvl);
@@ -517,6 +518,7 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             const prefix = switch (ao.mutability) {
                 .read_only => "&",
                 .read_write => "$&",
+                .cleanup => "$&",
             };
             std.debug.print("AddressOf {s}\n", .{prefix});
             indent(lvl + 1);

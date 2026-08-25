@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32) := {
+main() -> (.status_code: Int32) #trusted_temporal := {
     src_raw ::= malloc(.size = 4)
     dst_raw ::= malloc(.size = 4)
 

@@ -25,7 +25,7 @@ System : Type = (
   .ffi       : $&ForeignFunctionInterface
 )
 
-once init(.p: $&System) -> () := {
+once init(.p: $&System) -> () #trusted_temporal := {
     --
     -- Current runtime-backed initialization baseline:
     --
@@ -62,6 +62,6 @@ once init(.p: $&System) -> () := {
     p&.ffi = $&p&._storage.ffi
 }
 
-deinit(.self: $&System) -> () := {
-    deinit(.self = self&.terminal)
+deinit(.self: $&System) -> () #invalidates(self) := {
+    deinit(.self = $&self&._storage.terminal)
 }

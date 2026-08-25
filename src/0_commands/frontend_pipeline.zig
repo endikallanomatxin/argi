@@ -8,6 +8,7 @@ const st = @import("../3_syntax/syntax_tree.zig");
 const syntaxer = @import("../3_syntax/syntaxer.zig");
 const sg = @import("../4_semantics/semantic_graph.zig");
 const semantizer = @import("../4_semantics/semantizer.zig");
+const memory_safety = @import("../4_semantics/memory_safety.zig");
 
 // FrontendPipeline is the shared orchestration layer for the pre-codegen
 // compiler phases. The intent is to keep `build` and `lsp` on exactly the same
@@ -25,6 +26,7 @@ pub const FrontendPipeline = struct {
     tokens: std.array_list.Managed(token.Token),
     syntax_ctx: ?syntaxer.Syntaxer = null,
     sem_ctx: ?semantizer.Semantizer = null,
+    memory_safety_ctx: ?memory_safety.MemorySafetyAnalyzer = null,
     semantize_timings: semantizer.Semantizer.SemantizeTimings = .{},
     st_nodes: []const *st.STNode = &.{},
     sg_nodes: []const *sg.SGNode = &.{},
@@ -45,6 +47,7 @@ pub const FrontendPipeline = struct {
     }
 
     pub fn deinit(self: *FrontendPipeline) void {
+        if (self.memory_safety_ctx) |*ctx| ctx.deinit();
         self.tokens.deinit();
     }
 
@@ -90,6 +93,9 @@ pub const FrontendPipeline = struct {
         const result = try self.sem_ctx.?.semantizeWithTimings();
         self.sg_nodes = result.nodes;
         self.semantize_timings = result.timings;
+
+        self.memory_safety_ctx = memory_safety.MemorySafetyAnalyzer.init(&self.allocator, self.diagnostics);
+        try self.memory_safety_ctx.?.analyze(self.sg_nodes);
         return self.sg_nodes;
     }
 };

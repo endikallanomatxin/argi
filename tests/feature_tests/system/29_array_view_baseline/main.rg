@@ -1,4 +1,4 @@
-main() -> (.status_code: Int32) := {
+main() -> (.status_code: Int32) #trusted_temporal := {
     raw ::= malloc(.size = 16)
     if cast#(.to: UIntNative)(.value = raw) == 0 {
         status_code = 10

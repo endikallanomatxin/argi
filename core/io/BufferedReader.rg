@@ -20,7 +20,7 @@ init#(.base_type: Type: Reader)(
     .allocator: $&CAllocator = #reach allocator, system.allocator,
     .base: $&base_type,
     .capacity: UIntNative,
-) -> () := {
+) -> () #trusted_temporal := {
     actual_capacity ::= capacity
     one :: UIntNative = 1
 
@@ -40,7 +40,7 @@ init#(.base_type: Type: Reader)(
 deinit#(.base_type: Type: Reader)(
     .self: $&BufferedReader#(.base_type: base_type),
     .allocator: $&CAllocator = #reach allocator, system.allocator,
-) -> () := {
+) -> () #invalidates(self) #invalidates_dependency(self, buffer) := {
     deallocate(.self = allocator, .data = self&.buffer, .size = self&.capacity)
     self& = (
         .base = self&.base,
@@ -59,7 +59,7 @@ buffered_reader_byte_address#(.base_type: Type: Reader)(
     address = base + index
 }
 
-read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_type)) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
+read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_type)) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) #trusted_temporal := {
     if self&.start < self&.end {
         addr :: UIntNative = buffered_reader_byte_address(.self = self, .index = self&.start).address
         ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)

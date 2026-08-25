@@ -45,6 +45,8 @@ pub const Content = union(enum) {
     auto_deinit_binding: *AutoDeinitBinding,
 
     function_call: *FunctionCall,
+    virtualize: *const Virtualize,
+    virtual_call: *const VirtualCall,
     code_block: *CodeBlock,
     value_literal: ValueLiteral,
     choice_literal: *const ChoiceLiteral,
@@ -373,8 +375,12 @@ pub const FunctionDeclaration = struct {
     input: StructType, // Arguments
     output: StructType, // Named return params
     body: ?*const CodeBlock,
+    declared_extern: bool = false,
     uses_inferred_error_reasons: bool = false,
+    input_bindings: []const *const BindingDeclaration = &.{},
     output_bindings: []const *const BindingDeclaration = &.{},
+    temporal_contract: TemporalContract = .{},
+    temporal_summary: ?*const TemporalSummary = null,
     inferred_error_reasons: ?*const ChoiceType = null,
 
     pub fn isExtern(self: *const FunctionDeclaration) bool {
@@ -389,6 +395,97 @@ pub const FunctionDeclaration = struct {
     pub const GenericDispatchKind = enum {
         regular,
         abstract_contract,
+    };
+};
+
+pub const TemporalContract = struct {
+    invalidates_inputs: []const u32 = &.{},
+    invalidates_dependencies: []const InvalidationFootprint = &.{},
+    return_dependencies: []const ReturnDependency = &.{},
+    dependency_transitions: []const DependencyTransition = &.{},
+    return_root: ?ReturnRoot = null,
+    trusted_transitions: bool = false,
+    raw_boundary: bool = false,
+
+    pub const ReturnRoot = struct {
+        output_index: u32,
+        source: Source,
+
+        pub const Source = union(enum) {
+            fresh,
+            follows_input: u32,
+        };
+    };
+};
+
+/// Compiler-internal temporal contract inferred from a concrete function body.
+/// Paths use semantic field/index projections and deliberately do not appear in
+/// source-level function types.
+pub const TemporalSummary = struct {
+    is_widened: bool = false,
+    // Set when fixed-point inference cannot retain a finite set of precise
+    // post-state transitions. Callers must treat every dependency-carrying
+    // input as potentially transitioned.
+    unknown_dependency_transitions: bool = false,
+    return_dependencies: []const ReturnDependency = &.{},
+    dependency_transitions: []const DependencyTransition = &.{},
+    invalidations: []const InvalidationFootprint = &.{},
+    return_roots: []const ReturnStorageRoot = &.{},
+    address_dependent_outputs: []const AddressDependentOutput = &.{},
+};
+
+pub const AddressDependentOutput = struct {
+    output_index: u32,
+    value_path: []const TemporalProjection,
+    target_path: []const TemporalProjection,
+};
+
+pub const DependencyTransition = struct {
+    target_input_index: u32,
+    target_path: []const TemporalProjection,
+    source: Source,
+
+    pub const Source = union(enum) {
+        fresh,
+        input: struct {
+            index: u32,
+            value_path: []const TemporalProjection = &.{},
+            path: []const TemporalProjection,
+        },
+    };
+};
+
+pub const TemporalProjection = union(enum) {
+    field: u32,
+    choice_payload: u32,
+    array_index: ?i64,
+    dereference,
+};
+
+pub const ReturnDependency = struct {
+    output_path: []const TemporalProjection,
+    input_index: u32,
+    input_value_path: []const TemporalProjection = &.{},
+    input_path: []const TemporalProjection,
+};
+
+pub const InvalidationFootprint = struct {
+    input_index: u32,
+    input_value_path: []const TemporalProjection = &.{},
+    input_path: []const TemporalProjection,
+    refreshes_input: bool = false,
+};
+
+pub const ReturnStorageRoot = struct {
+    output_path: []const TemporalProjection,
+    source: Source,
+
+    pub const Source = union(enum) {
+        fresh,
+        input: struct {
+            index: u32,
+            path: []const TemporalProjection,
+        },
     };
 };
 
@@ -441,6 +538,26 @@ pub const AutoDeinitField = struct {
 pub const FunctionCall = struct {
     callee: *const FunctionDeclaration,
     input: *const SGNode, // Arguments
+};
+
+pub const Virtualize = struct {
+    value: *const SGNode,
+    concrete_type: Type,
+    abstract_type: *const AbstractType,
+    virtual_type: *const StructType,
+    methods: []const *const FunctionDeclaration,
+};
+
+pub const VirtualCall = struct {
+    handle: *const SGNode,
+    input: *const SGNode,
+    self_input_index: u32,
+    method_index: u32,
+    method_count: u32,
+    method_name: []const u8,
+    input_type: *const StructType,
+    output_type: *const StructType,
+    self_permission: syn.PointerMutability,
 };
 
 pub const ReachDirective = struct {

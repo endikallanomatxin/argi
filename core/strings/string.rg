@@ -42,7 +42,7 @@ string_with_length(
 string_with_capacity(
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .capacity: UIntNative,
-) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) #trusted_temporal := {
     actual_capacity ::= capacity
     one :: UIntNative = 1
 
@@ -74,7 +74,7 @@ init (
     .p: $&String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .length: UIntNative,
-) -> () := {
+) -> () #trusted_temporal := {
     allocation_size ::= length + 1
     data ::= allocate(.self = allocator, .size = allocation_size)
     p& = (
@@ -91,7 +91,7 @@ init (
     .p: $&String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .capacity: UIntNative,
-) -> () := {
+) -> () #trusted_temporal := {
     actual_capacity ::= capacity
     one :: UIntNative = 1
 
@@ -114,7 +114,7 @@ init (
 deinit (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&String,
-) -> () := {
+) -> () #invalidates(self) #invalidates_dependency(self, allocation.data) := {
     zero :: UIntNative = 0
     deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
     self& = (
@@ -164,7 +164,7 @@ string_byte_address (
 bytes_get (
     .string: &String,
     .index: UIntNative,
-) -> (.byte: UInt8) := {
+) -> (.byte: UInt8) #trusted_temporal := {
     addr :: UIntNative = string_byte_address(.string = string, .index = index).address
     ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
     byte = ptr&
@@ -174,7 +174,7 @@ bytes_set (
     .string: $&String,
     .index: UIntNative,
     .value: UInt8,
-) -> () := {
+) -> () #trusted_temporal := {
     addr :: UIntNative = string_byte_address(.string = string, .index = index).address
     ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
     ptr& = value
@@ -182,7 +182,7 @@ bytes_set (
 
 as_view(
     .self: &String,
-) -> (.view: StringView) := {
+) -> (.view: StringView) #returns_dependency(view.data, self, allocation.data) #raw_boundary := {
     view = (
         .data = cast#(.to: UIntNative)(.value = self&.allocation.data),
         .length = self&.length,
@@ -200,7 +200,7 @@ capacity(
     value = self&.allocation.size - 1
 }
 
-clear(.self: $&String) -> () := {
+clear(.self: $&String) -> () #invalidates_dependency(self, allocation.data) := {
     self& = (
         .allocation = self&.allocation,
         .length = 0,
@@ -234,7 +234,7 @@ ensure_capacity(
     .self: $&String,
     .capacity: UIntNative,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> () := {
+) -> () #invalidates_dependency(self, allocation.data) #sets_dependency_fresh(self, allocation.data) #raw_boundary := {
     current_capacity ::= capacity(.self = self).value
     if current_capacity >= capacity {
         return
@@ -266,7 +266,7 @@ ensure_capacity_growing(
     .self: $&String,
     .target_capacity: UIntNative,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) #invalidates_dependency(self, allocation.data) #sets_dependency_fresh(self, allocation.data) #raw_boundary := {
     current_capacity ::= capacity(.self = self).value
     if current_capacity >= target_capacity {
         result = ..ok Void()
@@ -337,7 +337,7 @@ push_byte(
     .self: $&String,
     .byte: UInt8,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) #invalidates_dependency(self, allocation.data) #sets_dependency_fresh(self, allocation.data) #raw_boundary := {
     if has_space(.self = self).ok {
     } else {
         next_capacity ::= string_growth_capacity(.self = self, .min_capacity = self&.length + 1).value
@@ -360,7 +360,7 @@ push_c_string(
     .self: $&String,
     .text: &Char,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) #invalidates_dependency(self, allocation.data) #sets_dependency_fresh(self, allocation.data) #raw_boundary := {
     append_length ::= c_string_length(.text = text).length
     target_capacity ::= self&.length + append_length
     growth_result ::= ensure_capacity_growing(.self = self, .target_capacity = target_capacity, .allocator = allocator)
@@ -385,7 +385,7 @@ push_view(
     .self: $&String,
     .view: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) #invalidates_dependency(self, allocation.data) #sets_dependency_fresh(self, allocation.data) #raw_boundary := {
     target_capacity ::= self&.length + view.length
     growth_result ::= ensure_capacity_growing(.self = self, .target_capacity = target_capacity, .allocator = allocator)
     match growth_result {
@@ -407,7 +407,7 @@ push_view(
 
 c_string_length(
     .text: &Char,
-) -> (.length: UIntNative) := {
+) -> (.length: UIntNative) #trusted_temporal := {
     length = 0
     c_length :: UIntNative = 0
     while 1 == 1 {
@@ -424,7 +424,7 @@ c_string_length(
 
 c_string_as_view(
     .text: &Char,
-) -> (.view: StringView) := {
+) -> (.view: StringView) #returns_dependency(view.data, text) #raw_boundary := {
     view = (
         .data = cast#(.to: UIntNative)(.value = text),
         .length = c_string_length(.text = text).length,
