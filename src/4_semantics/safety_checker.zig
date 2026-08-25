@@ -316,9 +316,9 @@ pub const SafetyChecker = struct {
             if (index >= arguments.len) continue;
             if (try self.resolvePlace(arguments[index].value, state)) |storage| {
                 if (self.getPlace(state, storage)) |place_facts| {
-                    for (place_facts.value.cleanup_responsibilities) |responsibility| state.tracker.end(responsibility.root);
+                    for (place_facts.value.owned_roots) |owned_root| state.tracker.end(owned_root);
                     var remaining = place_facts.value;
-                    remaining.cleanup_responsibilities = &.{};
+                    remaining.owned_roots = &.{};
                     try self.setPlace(state, storage, .initialized, remaining);
                 }
             }
@@ -337,13 +337,13 @@ pub const SafetyChecker = struct {
         if (effect.fresh) {
             const root = try state.tracker.establish(.fresh);
             result.dependencies = try self.oneDependency(root);
-            result.cleanup_responsibilities = try self.oneResponsibility(root);
+            result.owned_roots = try self.oneOwnedRoot(root);
         }
         for (effect.input_dependencies) |dependency| {
             if (dependency.input_index >= arguments.len) continue;
             var input = arguments[dependency.input_index];
             input = projectValueFacts(input, dependency.projections);
-            if (!dependency.transfers_cleanup) input.cleanup_responsibilities = &.{};
+            if (!dependency.transfers_ownership) input.owned_roots = &.{};
             result = try self.mergeValueFacts(result, input);
         }
         if (effect.fields.len != 0) {
@@ -364,9 +364,9 @@ pub const SafetyChecker = struct {
         var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
         for (left.dependencies) |dependency| try appendDependency(&dependencies, dependency);
         for (right.dependencies) |dependency| try appendDependency(&dependencies, dependency);
-        var responsibilities = std.array_list.Managed(facts.CleanupResponsibility).init(self.allocator.*);
-        for (left.cleanup_responsibilities) |responsibility| try appendResponsibility(&responsibilities, responsibility);
-        for (right.cleanup_responsibilities) |responsibility| try appendResponsibility(&responsibilities, responsibility);
+        var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        for (left.owned_roots) |owned_root| try appendOwnedRoot(&owned_roots, owned_root);
+        for (right.owned_roots) |owned_root| try appendOwnedRoot(&owned_roots, owned_root);
         var fields = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
         for (left.fields) |left_field| {
             var merged = left_field.value.*;
@@ -388,7 +388,7 @@ pub const SafetyChecker = struct {
         }
         return .{
             .dependencies = try dependencies.toOwnedSlice(),
-            .cleanup_responsibilities = try responsibilities.toOwnedSlice(),
+            .owned_roots = try owned_roots.toOwnedSlice(),
             .fields = try fields.toOwnedSlice(),
             .integer_address = left.integer_address or right.integer_address,
             .referenced_place = if (left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?))
@@ -475,13 +475,13 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) anyerror!facts.ValueFacts {
         var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
-        var responsibilities = std.array_list.Managed(facts.CleanupResponsibility).init(self.allocator.*);
+        var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
         var field_facts = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
         var contains_integer_address = false;
         for (fields, 0..) |field, index| {
             const value = try self.evaluate(function, field.value, state);
             try dependencies.appendSlice(value.dependencies);
-            try responsibilities.appendSlice(value.cleanup_responsibilities);
+            try owned_roots.appendSlice(value.owned_roots);
             const stored = try self.allocator.create(facts.ValueFacts);
             stored.* = value;
             try field_facts.append(.{ .index = @intCast(index), .value = stored });
@@ -489,7 +489,7 @@ pub const SafetyChecker = struct {
         }
         return .{
             .dependencies = try dependencies.toOwnedSlice(),
-            .cleanup_responsibilities = try responsibilities.toOwnedSlice(),
+            .owned_roots = try owned_roots.toOwnedSlice(),
             .fields = try field_facts.toOwnedSlice(),
             .integer_address = contains_integer_address,
         };
@@ -588,9 +588,9 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn oneResponsibility(self: *SafetyChecker, root: facts.RootId) ![]const facts.CleanupResponsibility {
-        const result = try self.allocator.alloc(facts.CleanupResponsibility, 1);
-        result[0] = .{ .root = root };
+    fn oneOwnedRoot(self: *SafetyChecker, root: facts.RootId) ![]const facts.RootId {
+        const result = try self.allocator.alloc(facts.RootId, 1);
+        result[0] = root;
         return result;
     }
 
@@ -701,8 +701,8 @@ pub const SafetyChecker = struct {
                 try self.inputOutputEffect(@intCast(index), &.{})
             else
                 .{},
-            .move_value => |value| self.withCleanupTransfer(try self.inferExpression(function, value)),
-            .address_of => |value| try self.withoutCleanupTransfer(try self.inferExpression(function, value)),
+            .move_value => |value| self.withOwnershipTransfer(try self.inferExpression(function, value)),
+            .address_of => |value| try self.withoutOwnershipTransfer(try self.inferExpression(function, value)),
             .dereference => |value| try self.inferExpression(function, value.pointer),
             .struct_value_literal => |literal| try self.inferAggregate(function, literal.fields),
             .struct_field_access => |access| try self.inferProjection(function, access.struct_value, .{ .field = access.field_index }),
@@ -742,15 +742,15 @@ pub const SafetyChecker = struct {
         };
     }
 
-    fn withCleanupTransfer(self: *SafetyChecker, effect: facts.OutputEffect) facts.OutputEffect {
+    fn withOwnershipTransfer(self: *SafetyChecker, effect: facts.OutputEffect) facts.OutputEffect {
         _ = self;
-        for (effect.input_dependencies) |*dependency| @constCast(dependency).transfers_cleanup = true;
+        for (effect.input_dependencies) |*dependency| @constCast(dependency).transfers_ownership = true;
         return effect;
     }
 
-    fn withoutCleanupTransfer(self: *SafetyChecker, effect: facts.OutputEffect) !facts.OutputEffect {
+    fn withoutOwnershipTransfer(self: *SafetyChecker, effect: facts.OutputEffect) !facts.OutputEffect {
         const dependencies = try self.allocator.dupe(facts.InputDependency, effect.input_dependencies);
-        for (dependencies) |*dependency| dependency.transfers_cleanup = false;
+        for (dependencies) |*dependency| dependency.transfers_ownership = false;
         var result = effect;
         result.input_dependencies = dependencies;
         return result;
@@ -803,7 +803,7 @@ pub const SafetyChecker = struct {
             if (dependency.input_index >= arguments.len) continue;
             var argument = try self.inferExpression(function, arguments[dependency.input_index].value);
             for (dependency.projections) |projection| argument = try self.projectOutputEffect(argument, projection);
-            if (dependency.transfers_cleanup) argument = self.withCleanupTransfer(argument) else argument = try self.withoutCleanupTransfer(argument);
+            if (dependency.transfers_ownership) argument = self.withOwnershipTransfer(argument) else argument = try self.withoutOwnershipTransfer(argument);
             result = try self.mergeOutputEffects(result, argument);
         }
         if (effect.fields.len != 0) {
@@ -859,9 +859,9 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 }
 
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
-    if (left.integer_address != right.integer_address or left.dependencies.len != right.dependencies.len or left.cleanup_responsibilities.len != right.cleanup_responsibilities.len or left.fields.len != right.fields.len) return false;
+    if (left.integer_address != right.integer_address or left.dependencies.len != right.dependencies.len or left.owned_roots.len != right.owned_roots.len or left.fields.len != right.fields.len) return false;
     for (left.dependencies, right.dependencies) |a, b| if (a.root != b.root) return false;
-    for (left.cleanup_responsibilities, right.cleanup_responsibilities) |a, b| if (a.root != b.root) return false;
+    for (left.owned_roots, right.owned_roots) |a, b| if (a != b) return false;
     if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
     if (left.referenced_place) |left_place| if (!left_place.eql(right.referenced_place.?)) return false;
     for (left.fields, right.fields) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
@@ -919,14 +919,14 @@ fn appendDependency(list: *std.array_list.Managed(facts.ReferenceDependency), de
     try list.append(dependency);
 }
 
-fn appendResponsibility(list: *std.array_list.Managed(facts.CleanupResponsibility), responsibility: facts.CleanupResponsibility) !void {
-    for (list.items) |existing| if (existing.root == responsibility.root) return;
-    try list.append(responsibility);
+fn appendOwnedRoot(list: *std.array_list.Managed(facts.RootId), owned_root: facts.RootId) !void {
+    for (list.items) |existing| if (existing == owned_root) return;
+    try list.append(owned_root);
 }
 
 fn appendInputDependency(list: *std.array_list.Managed(facts.InputDependency), dependency: facts.InputDependency) !void {
     for (list.items) |existing| {
-        if (existing.input_index != dependency.input_index or existing.transfers_cleanup != dependency.transfers_cleanup) continue;
+        if (existing.input_index != dependency.input_index or existing.transfers_ownership != dependency.transfers_ownership) continue;
         if (projectionsEqual(existing.projections, dependency.projections)) return;
     }
     try list.append(dependency);
@@ -942,7 +942,7 @@ fn outputEffectEqual(left: facts.OutputEffect, right: facts.OutputEffect) bool {
     if (left.fresh != right.fresh or left.integer_address != right.integer_address) return false;
     if (left.input_dependencies.len != right.input_dependencies.len or left.fields.len != right.fields.len) return false;
     for (left.input_dependencies, right.input_dependencies) |a, b| {
-        if (a.input_index != b.input_index or a.transfers_cleanup != b.transfers_cleanup or !projectionsEqual(a.projections, b.projections)) return false;
+        if (a.input_index != b.input_index or a.transfers_ownership != b.transfers_ownership or !projectionsEqual(a.projections, b.projections)) return false;
     }
     for (left.fields, right.fields) |a, b| {
         if (a.index != b.index or !outputEffectEqual(a.value.*, b.value.*)) return false;

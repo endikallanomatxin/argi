@@ -13,16 +13,12 @@ pub const ReferenceDependency = struct {
     root: RootId,
 };
 
-pub const CleanupResponsibility = struct {
-    root: RootId,
-};
-
-/// Facts travel with values. Dependencies and cleanup responsibilities are
-/// intentionally separate: copying a reference copies only its dependencies,
-/// while moving a value transfers both lists.
+/// Facts travel with values. Dependencies and owned roots are intentionally
+/// separate: copying a reference copies only its dependencies, while moving a
+/// value transfers both lists.
 pub const ValueFacts = struct {
     dependencies: []const ReferenceDependency = &.{},
-    cleanup_responsibilities: []const CleanupResponsibility = &.{},
+    owned_roots: []const RootId = &.{},
     fields: []const FieldFacts = &.{},
     integer_address: bool = false,
     referenced_place: ?place.Place = null,
@@ -51,7 +47,7 @@ pub const RootEstablishment = union(enum) {
 pub const InputDependency = struct {
     input_index: u32,
     projections: []const place.Projection = &.{},
-    transfers_cleanup: bool = false,
+    transfers_ownership: bool = false,
 };
 
 pub const OutputFieldEffect = struct {
@@ -138,7 +134,7 @@ test "fresh roots are independent and inherit preserves identity" {
     try std.testing.expect(tracker.isAlive(second));
 }
 
-test "move transfers responsibilities without changing root identity" {
+test "move transfers owned roots without changing root identity" {
     const binding: *const @import("semantic_graph.zig").BindingDeclaration = undefined;
     const storage = place.Place{ .root = binding };
     const root: RootId = @enumFromInt(3);
@@ -146,23 +142,23 @@ test "move transfers responsibilities without changing root identity" {
         .storage = storage,
         .value = .{
             .dependencies = &.{.{ .root = root }},
-            .cleanup_responsibilities = &.{.{ .root = root }},
+            .owned_roots = &.{root},
         },
     };
     var destination = PlaceFacts{ .storage = storage, .initializedness = .deinitialized };
     Tracker.moveValue(&source, &destination);
     try std.testing.expectEqual(value_state.Initializedness.moved, source.initializedness);
     try std.testing.expectEqual(root, destination.value.dependencies[0].root);
-    try std.testing.expectEqual(root, destination.value.cleanup_responsibilities[0].root);
+    try std.testing.expectEqual(root, destination.value.owned_roots[0]);
 }
 
-test "copying a reference does not duplicate cleanup responsibility" {
+test "copying a reference does not duplicate root ownership" {
     const root: RootId = @enumFromInt(7);
     const original = ValueFacts{
         .dependencies = &.{.{ .root = root }},
-        .cleanup_responsibilities = &.{.{ .root = root }},
+        .owned_roots = &.{root},
     };
     const copied = original.referenceCopy();
     try std.testing.expectEqual(root, copied.dependencies[0].root);
-    try std.testing.expectEqual(@as(usize, 0), copied.cleanup_responsibilities.len);
+    try std.testing.expectEqual(@as(usize, 0), copied.owned_roots.len);
 }
