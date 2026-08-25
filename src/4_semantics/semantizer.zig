@@ -6593,7 +6593,6 @@ pub const Semantizer = struct {
         }
 
         const tv_in = try self.visitNode(call.input.*, s);
-        try self.checkCallBindingExclusivity(call.callee, tv_in, call.input.*.location);
         // `testing.expect_error(...)` is a dedicated builtin in v1 instead of a
         // generic helper over arbitrary `Errable` values. That keeps native
         // testing independent from the generic/choice-heavy call paths that
@@ -6699,7 +6698,6 @@ pub const Semantizer = struct {
             },
         };
         const coerced_input = try self.coerceCallInputToExpected(&chosen.input, tv_in, call.input, s);
-        try self.checkCallBindingExclusivity(call.callee, coerced_input, call.input.*.location);
         self.cancelExplicitDeinitAutoCleanup(chosen, coerced_input, s);
 
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
@@ -7964,7 +7962,6 @@ pub const Semantizer = struct {
                 loc,
             );
             input_te = try self.coerceCallInputToExpected(&chosen.input, input_te, call.input, s);
-            try self.checkCallBindingExclusivity(call.callee, input_te, loc);
 
             const fc_ptr = try self.allocator.create(sg.FunctionCall);
             fc_ptr.* = .{ .callee = chosen, .input = input_te.node };

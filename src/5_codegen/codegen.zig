@@ -679,7 +679,6 @@ pub const CodeGenerator = struct {
                 const prefix = switch (ptr_info.mutability) {
                     .read_only => "pro_",
                     .read_write => "prw_",
-                    .exclusive => "pex_",
                 };
                 try buf.appendSlice(prefix);
                 try self.encodeType(buf, ptr_info.child.*);
