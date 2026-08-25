@@ -5,6 +5,7 @@ const tok = @import("../2_tokens/token.zig");
 const abs = @import("abstracts.zig");
 const gen = @import("generics.zig");
 const typ = @import("types.zig");
+const value_state = @import("value_state.zig");
 
 pub const DeferredGroup = struct {
     nodes: []const *sg.SGNode,
@@ -29,7 +30,7 @@ pub const Scope = struct {
     bindings: std.StringHashMap(*sg.BindingDeclaration),
     refined_bindings: std.StringHashMap(*sg.BindingDeclaration),
     generic_values: std.StringHashMap(gen.GenericValueBinding),
-    moved_bindings: std.StringHashMap(tok.Location),
+    binding_states: std.StringHashMap(value_state.State),
     functions: std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)),
     types: std.StringHashMap(*sg.TypeDeclaration),
     choice_options: std.StringHashMap(*sg.ChoiceOptionDeclaration),
@@ -56,7 +57,7 @@ pub const Scope = struct {
             .bindings = std.StringHashMap(*sg.BindingDeclaration).init(a.*),
             .refined_bindings = std.StringHashMap(*sg.BindingDeclaration).init(a.*),
             .generic_values = std.StringHashMap(gen.GenericValueBinding).init(a.*),
-            .moved_bindings = std.StringHashMap(tok.Location).init(a.*),
+            .binding_states = std.StringHashMap(value_state.State).init(a.*),
             .functions = std.StringHashMap(std.array_list.Managed(*sg.FunctionDeclaration)).init(a.*),
             .types = std.StringHashMap(*sg.TypeDeclaration).init(a.*),
             .choice_options = std.StringHashMap(*sg.ChoiceOptionDeclaration).init(a.*),
@@ -145,14 +146,16 @@ pub const Scope = struct {
     }
 
     pub fn bindingMoveLocation(self: *Scope, n: []const u8) ?tok.Location {
-        if (self.moved_bindings.get(n)) |loc| return loc;
+        if (self.binding_states.get(n)) |state| {
+            if (state.initializedness == .moved) return state.transition_location;
+        }
         if (self.parent) |p| return p.bindingMoveLocation(n);
         return null;
     }
 
     pub fn markBindingMoved(self: *Scope, n: []const u8, loc: tok.Location) !void {
         if (self.bindings.contains(n)) {
-            try self.moved_bindings.put(n, loc);
+            try self.binding_states.put(n, .{ .initializedness = .moved, .transition_location = loc });
             return;
         }
         if (self.parent) |p| return p.markBindingMoved(n, loc);
@@ -160,7 +163,7 @@ pub const Scope = struct {
 
     pub fn clearBindingMoved(self: *Scope, n: []const u8) void {
         if (self.bindings.contains(n)) {
-            _ = self.moved_bindings.remove(n);
+            _ = self.binding_states.remove(n);
             return;
         }
         if (self.parent) |p| p.clearBindingMoved(n);
