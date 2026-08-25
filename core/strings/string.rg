@@ -145,29 +145,26 @@ copy (
             .data = out.allocation.data,
             .length = allocation_size,
         )
-        src_view ::= array_view#(.t: UInt8)(
-            .data = self.allocation.data,
+        src_view ::= array_view_ro#(.t: UInt8)(
+            .data = read_reference#(.t: UInt8)(.base = self.allocation.data).reference,
             .length = allocation_size,
         )
         memcpy_bytes(.dst = dst_view, .src = src_view)
     }
 }
 
-string_byte_address (
+string_byte_reference (
     .string: &String,
     .index: UIntNative,
-) -> (.address: UIntNative) := {
-    base :: UIntNative = cast#(.to: UIntNative)(.value = string&.allocation.data)
-    address = base + index
+) -> (.reference: &UInt8) := {
+    reference = reference_offset#(.t: UInt8)(.base = string&.allocation.data, .elements = index)
 }
 
 bytes_get (
     .string: &String,
     .index: UIntNative,
 ) -> (.byte: UInt8) := {
-    addr :: UIntNative = string_byte_address(.string = string, .index = index).address
-    ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
-    byte = ptr&
+    byte = string_byte_reference(.string = string, .index = index).reference&
 }
 
 bytes_set (
@@ -175,8 +172,7 @@ bytes_set (
     .index: UIntNative,
     .value: UInt8,
 ) -> () := {
-    addr :: UIntNative = string_byte_address(.string = string, .index = index).address
-    ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
+    ptr ::= mutable_reference_offset#(.t: UInt8)(.base = string&.allocation.data, .elements = index).reference
     ptr& = value
 }
 
@@ -184,7 +180,7 @@ as_view(
     .self: &String,
 ) -> (.view: StringView) := {
     view = (
-        .data = cast#(.to: UIntNative)(.value = self&.allocation.data),
+        .data = read_reference#(.t: UInt8)(.base = self&.allocation.data).reference,
         .length = self&.length,
     )
 }
@@ -245,11 +241,11 @@ ensure_capacity(
 
     if self&.length > 0 {
         dst_view ::= array_view#(.t: UInt8)(.data = new_data, .length = self&.length)
-        src_view ::= array_view#(.t: UInt8)(.data = self&.allocation.data, .length = self&.length)
+        src_view ::= array_view_ro#(.t: UInt8)(.data = read_reference#(.t: UInt8)(.base = self&.allocation.data).reference, .length = self&.length)
         memcpy_bytes(.dst = dst_view, .src = src_view)
     }
 
-    nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = new_data) + self&.length)
+    nul_ptr ::= mutable_reference_offset#(.t: UInt8)(.base = new_data, .elements = self&.length).reference
     nul_ptr& = 0
 
     deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
@@ -281,11 +277,11 @@ ensure_capacity_growing(
 
             if self&.length > 0 {
                 dst_view ::= array_view#(.t: UInt8)(.data = new_data, .length = self&.length)
-                src_view ::= array_view#(.t: UInt8)(.data = self&.allocation.data, .length = self&.length)
+                src_view ::= array_view_ro#(.t: UInt8)(.data = read_reference#(.t: UInt8)(.base = self&.allocation.data).reference, .length = self&.length)
                 memcpy_bytes(.dst = dst_view, .src = src_view)
             }
 
-            nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = new_data) + self&.length)
+            nul_ptr ::= mutable_reference_offset#(.t: UInt8)(.base = new_data, .elements = self&.length).reference
             nul_ptr& = 0
 
             deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
@@ -318,11 +314,11 @@ string_append_byte(
 
 string_append_bytes(
     .self: $&String,
-    .source: ArrayView#(.t: UInt8),
+    .source: ArrayViewRO#(.t: UInt8),
 ) -> () := {
     if source.length > 0 {
-        dest_address ::= cast#(.to: UIntNative)(.value = self&.allocation.data) + self&.length
-        dest_view ::= array_view_from_address#(.t: UInt8)(.address = dest_address, .length = source.length)
+        dest_data ::= mutable_reference_offset#(.t: UInt8)(.base = self&.allocation.data, .elements = self&.length).reference
+        dest_view ::= array_view#(.t: UInt8)(.data = dest_data, .length = source.length)
         memcpy_bytes(.dst = dest_view, .src = source)
     }
 
@@ -373,8 +369,8 @@ push_c_string(
         }
     }
 
-    source_view ::= array_view_from_address#(.t: UInt8)(
-        .address = cast#(.to: UIntNative)(.value = text),
+    source_view ::= array_view_ro#(.t: UInt8)(
+        .data = reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,
         .length = append_length,
     )
     string_append_bytes(.self = self, .source = source_view)
@@ -397,8 +393,8 @@ push_view(
         }
     }
 
-    source_view ::= array_view_from_address#(.t: UInt8)(
-        .address = view.data,
+    source_view ::= array_view_ro#(.t: UInt8)(
+        .data = view.data,
         .length = view.length,
     )
     string_append_bytes(.self = self, .source = source_view)
@@ -426,7 +422,7 @@ c_string_as_view(
     .text: &Char,
 ) -> (.view: StringView) := {
     view = (
-        .data = cast#(.to: UIntNative)(.value = text),
+        .data = reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,
         .length = c_string_length(.text = text).length,
     )
 }
@@ -437,8 +433,8 @@ concat_views(
 ) -> (.out: String) := {
     allocator : $&Allocator = #reach allocator, system.allocator
     temp :: String = String(.allocator = allocator, .capacity = left&.length + right&.length)
-    left_view ::= array_view_from_address#(.t: UInt8)(.address = left&.data, .length = left&.length)
-    right_view ::= array_view_from_address#(.t: UInt8)(.address = right&.data, .length = right&.length)
+    left_view ::= array_view_ro#(.t: UInt8)(.data = left&.data, .length = left&.length)
+    right_view ::= array_view_ro#(.t: UInt8)(.data = right&.data, .length = right&.length)
     string_append_bytes(.self = $&temp, .source = left_view)
     string_append_bytes(.self = $&temp, .source = right_view)
     out = temp

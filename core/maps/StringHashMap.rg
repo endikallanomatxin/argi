@@ -29,7 +29,7 @@ string_hash_map_key_view(
     .key: &Char,
 ) -> (.view: StringView) := {
     view = (
-        .data = cast#(.to: UIntNative)(.value = key),
+        .data = reinterpret_reference#(.from: Char, .to: UInt8)(.base = key).reference,
         .length = c_string_length(.text = key).length,
     )
 }

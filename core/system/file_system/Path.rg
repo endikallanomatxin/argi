@@ -41,7 +41,7 @@ string_view_slice(
     .length: UIntNative,
 ) -> (.out: StringView) := {
     out = (
-        .data = view&.data + start,
+        .data = reference_offset#(.t: UInt8)(.base = view&.data, .elements = start).reference,
         .length = length,
     )
 }

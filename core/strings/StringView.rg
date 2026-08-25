@@ -1,23 +1,20 @@
 StringView : Type = (
-    .data   : UIntNative
+    .data   : &UInt8
     .length : UIntNative
 )
 
 string_view_byte_address(
     .self: &StringView,
     .index: UIntNative,
-) -> (.address: UIntNative) := {
-    base :: UIntNative = self&.data
-    address = base + index
+) -> (.reference: &UInt8) := {
+    reference = reference_offset#(.t: UInt8)(.base = self&.data, .elements = index)
 }
 
 bytes_get(
     .view: &StringView,
     .index: UIntNative,
 ) -> (.byte: UInt8) := {
-    addr :: UIntNative = string_view_byte_address(.self = view, .index = index).address
-    ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
-    byte = ptr&
+    byte = string_view_byte_address(.self = view, .index = index).reference&
 }
 
 equals(

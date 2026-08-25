@@ -26,8 +26,7 @@ string_view_has_c_string_layout(
         i = i + 1
     }
 
-    terminator_address :: UIntNative = self&.data + self&.length
-    terminator_ptr : &UInt8 = cast#(.to: &UInt8)(.value = terminator_address)
+    terminator_ptr ::= reference_offset#(.t: UInt8)(.base = self&.data, .elements = self&.length)
     ok = terminator_ptr& == 0
 }
 
@@ -40,7 +39,7 @@ as_c_string(
 ) := {
     if string_view_has_c_string_layout(.self = &self).ok {
         zero :: UIntNative = 0
-        text = cast#(.to: &Char)(.value = self.data)
+        text = reinterpret_reference#(.from: UInt8, .to: Char)(.base = self.data).reference
         storage = (
             .data = cast#(.to: $&UInt8)(.value = zero),
             .size = 0,
@@ -53,15 +52,15 @@ as_c_string(
 
     i :: UIntNative = 0
     while i < self.length {
-        ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = data) + i)
+        ptr ::= mutable_reference_offset#(.t: UInt8)(.base = data, .elements = i).reference
         ptr& = bytes_get(.view = &self, .index = i).byte
         i = i + 1
     }
 
-    nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = data) + self.length)
+    nul_ptr ::= mutable_reference_offset#(.t: UInt8)(.base = data, .elements = self.length).reference
     nul_ptr& = 0
 
-    text = cast#(.to: &Char)(.value = cast#(.to: UIntNative)(.value = data))
+    text = reinterpret_reference#(.from: UInt8, .to: Char)(.base = read_reference#(.t: UInt8)(.base = data).reference).reference
     storage = (
         .data = data,
         .size = size,
@@ -72,7 +71,7 @@ as_view(
     .self: &Char,
 ) -> (.view: StringView) := {
     view = (
-        .data = cast#(.to: UIntNative)(.value = self),
+        .data = reinterpret_reference#(.from: Char, .to: UInt8)(.base = self).reference,
         .length = strlen(.string = self).length,
     )
 }

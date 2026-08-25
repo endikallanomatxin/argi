@@ -58,3 +58,14 @@ memcpy_bytes(
         .n = dst.length,
     )
 }
+
+memcpy_bytes(
+    .dst: ArrayView#(.t: UInt8),
+    .src: ArrayViewRO#(.t: UInt8),
+) -> () := {
+    memcpy(
+        .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = dst.data)),
+        .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = src.data)),
+        .n = dst.length,
+    )
+}

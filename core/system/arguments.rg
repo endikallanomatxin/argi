@@ -55,7 +55,7 @@ argument_view_at(
 ) -> (.view: StringView) := {
     text ::= argument_at(.self = self, .index = index)
     view = (
-        .data = cast#(.to: UIntNative)(.value = text),
+        .data = reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,
         .length = strlen(.string = text).length,
     )
 }

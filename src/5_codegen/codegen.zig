@@ -1135,7 +1135,9 @@ pub const CodeGenerator = struct {
         if (st.fields.len != 2) return false;
         if (!std.mem.eql(u8, st.fields[0].name, "data")) return false;
         if (!std.mem.eql(u8, st.fields[1].name, "length")) return false;
-        return st.fields[0].ty == .builtin and st.fields[0].ty.builtin == .UIntNative and
+        return st.fields[0].ty == .pointer_type and
+            st.fields[0].ty.pointer_type.child.* == .builtin and
+            st.fields[0].ty.pointer_type.child.*.builtin == .UInt8 and
             st.fields[1].ty == .builtin and st.fields[1].ty.builtin == .UIntNative;
     }
 
@@ -1662,9 +1664,8 @@ pub const CodeGenerator = struct {
                         const type_ref = try self.toLLVMType(ty);
                         const data_ptr = try self.emitStringLiteralPointer(str);
                         const native_uint_ty = try self.toLLVMType(.{ .builtin = .UIntNative });
-                        const data_addr = c.LLVMConstPtrToInt(data_ptr, native_uint_ty);
                         const length = c.LLVMConstInt(native_uint_ty, @intCast(str.len), 0);
-                        var fields = [_]llvm.c.LLVMValueRef{ data_addr, length };
+                        var fields = [_]llvm.c.LLVMValueRef{ data_ptr, length };
                         break :blk .{
                             .type_ref = type_ref,
                             .value_ref = c.LLVMConstNamedStruct(type_ref, &fields, fields.len),
@@ -2640,12 +2641,8 @@ pub const CodeGenerator = struct {
         const ctx_tv = (try self.visitNode(ctx_node)) orelse return CodegenError.ValueNotFound;
         if (ctx_tv.sem_type) |sem_ty| {
             if (isStringViewType(sem_ty)) {
-                const native_uint_ty = try self.toLLVMType(.{ .builtin = .UIntNative });
                 const data_index = fieldIndexByName(sem_ty.struct_type, "data") orelse return CodegenError.InvalidType;
-                const data_addr = c.LLVMBuildExtractValue(self.builder, ctx_tv.value_ref, @intCast(data_index), "ctx.data");
-                if (c.LLVMTypeOf(data_addr) != native_uint_ty)
-                    return CodegenError.InvalidType;
-                return c.LLVMBuildIntToPtr(self.builder, data_addr, c.LLVMPointerType(c.LLVMInt8Type(), 0), "ctx.ptr");
+                return c.LLVMBuildExtractValue(self.builder, ctx_tv.value_ref, @intCast(data_index), "ctx.data");
             }
         }
         return ctx_tv.value_ref;
