@@ -4042,13 +4042,14 @@ pub const Semantizer = struct {
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
         if (inner.content != .identifier) {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "move currently only supports named bindings",
-                .{},
-            );
-            return error.Reported;
+            const value = try self.visitNode(inner.*, s);
+            if (value.node.content != .struct_field_access and value.node.content != .array_index and value.node.content != .dereference) {
+                try self.diags.add(loc, .semantic, "move requires a stable place", .{});
+                return error.Reported;
+            }
+            const node = try sg.makeSGNode(.{ .move_value = value.node }, loc, self.allocator);
+            node.sem_type = value.ty;
+            return .{ .node = node, .ty = value.ty };
         }
 
         const name = inner.content.identifier;
@@ -6851,7 +6852,10 @@ pub const Semantizer = struct {
         const value_type = if (ty == .pointer_type) ty.pointer_type.child.* else ty;
         if (value_type != .struct_type) return null;
         const identity = value_type.struct_type.identity orelse return null;
-        const generic = switch (identity) { .generic => |value| value, else => return null };
+        const generic = switch (identity) {
+            .generic => |value| value,
+            else => return null,
+        };
         if (!std.mem.eql(u8, generic.base_name, "Virtual") or generic.arg_values.len != 1) return null;
         return switch (generic.arg_values[0]) {
             .type => |abstract_type| if (abstract_type == .abstract_type) abstract_type.abstract_type else null,
@@ -6882,9 +6886,15 @@ pub const Semantizer = struct {
                 if (requirement.input.fields.len != input_type.fields.len) continue;
                 var compatible = true;
                 for (requirement.input.fields, 0..) |expected_field, field_index| {
-                    if (!std.mem.eql(u8, expected_field.name, input_type.fields[field_index].name)) { compatible = false; break; }
+                    if (!std.mem.eql(u8, expected_field.name, input_type.fields[field_index].name)) {
+                        compatible = false;
+                        break;
+                    }
                     if (field_index == self_index) {
-                        if (expected_field.ty != .pointer_type or !typ.pointerMutabilityCompatible(expected_field.ty.pointer_type.mutability, actual_field.ty.pointer_type.mutability)) { compatible = false; break; }
+                        if (expected_field.ty != .pointer_type or !typ.pointerMutabilityCompatible(expected_field.ty.pointer_type.mutability, actual_field.ty.pointer_type.mutability)) {
+                            compatible = false;
+                            break;
+                        }
                     }
                 }
                 if (!compatible) continue;

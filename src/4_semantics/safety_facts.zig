@@ -25,9 +25,10 @@ pub const ValueFacts = struct {
     cleanup_responsibilities: []const CleanupResponsibility = &.{},
     fields: []const FieldFacts = &.{},
     integer_address: bool = false,
+    referenced_place: ?place.Place = null,
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
-        return .{ .dependencies = self.dependencies };
+        return .{ .dependencies = self.dependencies, .referenced_place = self.referenced_place };
     }
 };
 

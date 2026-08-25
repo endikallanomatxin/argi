@@ -1318,7 +1318,8 @@ pub const CodeGenerator = struct {
     }
 
     fn genMoveValue(self: *CodeGenerator, inner: *const sem.SGNode) !TypedValue {
-        if (inner.content != .binding_use) return CodegenError.InvalidType;
+        if (inner.content != .binding_use)
+            return (try self.visitNode(inner)) orelse CodegenError.ValueNotFound;
         const binding = inner.content.binding_use;
         const sym = self.current_scope.lookup(binding.name) orelse
             return CodegenError.SymbolNotFound;

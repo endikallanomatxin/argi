@@ -2960,6 +2960,21 @@ test "feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance" {
     );
 }
 
+test "feature_tests/ownership/48_structural_field_move" {
+    const test_path = "tests/feature_tests/ownership/48_structural_field_move";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/49X_structural_field_use_after_move" {
+    try buildExpectFailExact("tests/feature_tests/ownership/49X_structural_field_use_after_move",
+        \\tests/feature_tests/ownership/49X_structural_field_use_after_move/main.rg:10:1: error: place rooted at 'pair' is moved and cannot be used
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
 test "feature_tests/ownership/29_string_view_is_copyable" {
     const test_path = "tests/feature_tests/ownership/29_string_view_is_copyable";
     try expectSuccessfulBuild(test_path);

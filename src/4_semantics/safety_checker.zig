@@ -2,6 +2,8 @@ const std = @import("std");
 const diagnostics = @import("../1_base/diagnostic.zig");
 const sg = @import("semantic_graph.zig");
 const facts = @import("safety_facts.zig");
+const place = @import("place.zig");
+const value_state = @import("value_state.zig");
 
 /// Infers temporal effects from semantized bodies. Summaries are deliberately
 /// compiler-owned: ordinary functions have no source contract to maintain.
@@ -45,23 +47,20 @@ pub const SafetyChecker = struct {
 
     const FunctionState = struct {
         tracker: facts.Tracker,
-        values: std.AutoHashMap(*const sg.BindingDeclaration, facts.ValueFacts),
-        initializedness: std.AutoHashMap(*const sg.BindingDeclaration, @import("value_state.zig").Initializedness),
+        places: std.array_list.Managed(facts.PlaceFacts),
         storage_roots: std.AutoHashMap(*const sg.BindingDeclaration, facts.RootId),
 
         fn init(allocator: std.mem.Allocator) FunctionState {
             return .{
                 .tracker = facts.Tracker.init(allocator),
-                .values = std.AutoHashMap(*const sg.BindingDeclaration, facts.ValueFacts).init(allocator),
-                .initializedness = std.AutoHashMap(*const sg.BindingDeclaration, @import("value_state.zig").Initializedness).init(allocator),
+                .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
                 .storage_roots = std.AutoHashMap(*const sg.BindingDeclaration, facts.RootId).init(allocator),
             };
         }
 
         fn deinit(self: *FunctionState) void {
             self.tracker.deinit();
-            self.values.deinit();
-            self.initializedness.deinit();
+            self.places.deinit();
             self.storage_roots.deinit();
         }
     };
@@ -76,7 +75,9 @@ pub const SafetyChecker = struct {
         for (function.input_bindings) |binding| {
             if (binding.ty == .pointer_type) {
                 const root = try state.tracker.establish(.fresh);
-                try state.values.put(binding, .{ .dependencies = try self.oneDependency(root) });
+                try self.setPlace(&state, .{ .root = binding }, .initialized, .{ .dependencies = try self.oneDependency(root) });
+            } else {
+                try self.setPlace(&state, .{ .root = binding }, .initialized, .{});
             }
         }
         try self.validateBlock(function, body, &state);
@@ -94,14 +95,31 @@ pub const SafetyChecker = struct {
                     try self.evaluate(function, initialization, state)
                 else
                     facts.ValueFacts{};
-                try state.values.put(binding, value);
-                try state.initializedness.put(binding, .initialized);
+                try self.setPlace(state, .{ .root = binding }, .initialized, value);
             },
             .binding_assignment => |assignment| {
-                try state.values.put(assignment.sym_id, try self.evaluate(function, assignment.value, state));
-                try state.initializedness.put(assignment.sym_id, .initialized);
+                try self.setPlace(state, .{ .root = assignment.sym_id }, .initialized, try self.evaluate(function, assignment.value, state));
             },
-            .function_call, .dereference, .explicit_cast => _ = try self.evaluate(function, node, state),
+            .struct_field_store => |store| {
+                _ = try self.evaluate(function, store.struct_ptr, state);
+                const target = try self.projectedPlace(try self.resolvePlace(store.struct_ptr, state) orelse continue, .{ .field = store.field_index });
+                try self.setPlace(state, target, .initialized, try self.evaluate(function, store.value, state));
+            },
+            .array_store => |store| {
+                _ = try self.evaluate(function, store.array_ptr, state);
+                const projection: place.Projection = if (staticIndex(store.index)) |index|
+                    .{ .static_index = index }
+                else
+                    .dynamic_index;
+                const target = try self.projectedPlace(try self.resolvePlace(store.array_ptr, state) orelse continue, projection);
+                try self.setPlace(state, target, .initialized, try self.evaluate(function, store.value, state));
+            },
+            .pointer_assignment => |assignment| {
+                const pointer = try self.evaluate(function, assignment.pointer, state);
+                if (pointer.referenced_place) |target|
+                    try self.setPlace(state, target, .initialized, try self.evaluate(function, assignment.value, state));
+            },
+            .function_call, .dereference, .explicit_cast, .struct_field_access, .array_index => _ = try self.evaluate(function, node, state),
             .if_statement => |statement| {
                 _ = try self.evaluate(function, statement.condition, state);
                 try self.validateBlock(function, statement.then_block, state);
@@ -132,39 +150,62 @@ pub const SafetyChecker = struct {
     ) anyerror!facts.ValueFacts {
         return switch (node.content) {
             .binding_use => |binding| blk: {
-                if (state.initializedness.get(binding)) |initializedness| {
-                    if (initializedness != .initialized) {
-                        try self.diagnostics.add(function.location, .semantic, "binding '{s}' is {s} and cannot be used", .{
-                            binding.name,
-                            @tagName(initializedness),
-                        });
-                    }
+                const storage = place.Place{ .root = binding };
+                if (self.getPlace(state, storage)) |place_facts| {
+                    try self.requireInitialized(function, place_facts);
+                    break :blk place_facts.value;
                 }
-                break :blk state.values.get(binding) orelse .{};
+                break :blk .{};
             },
             .move_value => |value| blk: {
                 const result = try self.evaluate(function, value, state);
-                if (value.content == .binding_use) {
-                    try state.values.put(value.content.binding_use, .{});
-                    try state.initializedness.put(value.content.binding_use, .moved);
-                }
+                if (try self.resolvePlace(value, state)) |source|
+                    try self.setPlace(state, source, .moved, .{});
                 break :blk result;
             },
-            .address_of => |value| .{ .dependencies = try self.oneDependency(try self.storageRoot(value, state)) },
+            .address_of => |value| blk: {
+                const target = try self.resolvePlace(value, state);
+                break :blk .{
+                    .dependencies = try self.oneDependency(try self.storageRoot(value, state)),
+                    .referenced_place = target,
+                };
+            },
             .dereference => |dereference| blk: {
                 const pointer = try self.evaluate(function, dereference.pointer, state);
                 if (!state.tracker.dependenciesAreAlive(pointer)) {
                     try self.diagnostics.add(function.location, .semantic, "reference depends on a root that has ended", .{});
                 }
+                if (pointer.referenced_place) |target| {
+                    if (self.getPlace(state, target)) |place_facts| {
+                        try self.requireInitialized(function, place_facts);
+                        break :blk place_facts.value;
+                    }
+                }
                 break :blk facts.ValueFacts{};
             },
             .struct_value_literal => |literal| try self.aggregate(function, literal.fields, state),
             .struct_field_access => |access| blk: {
+                if (try self.resolvePlace(node, state)) |storage| {
+                    if (self.getPlace(state, storage)) |place_facts| {
+                        try self.requireInitialized(function, place_facts);
+                        break :blk place_facts.value;
+                    }
+                }
                 const aggregate_value = try self.evaluate(function, access.struct_value, state);
                 for (aggregate_value.fields) |field| {
                     if (field.index == access.field_index) break :blk field.value.*;
                 }
                 break :blk aggregate_value;
+            },
+            .array_index => |index| blk: {
+                _ = try self.evaluate(function, index.array_ptr, state);
+                if (try self.resolvePlace(node, state)) |storage| {
+                    if (self.getPlace(state, storage)) |place_facts| {
+                        try self.requireInitialized(function, place_facts);
+                        break :blk place_facts.value;
+                    }
+                }
+                break :blk .{};
             },
             .explicit_cast => |cast| blk: {
                 const value = try self.evaluate(function, cast.value, state);
@@ -219,11 +260,13 @@ pub const SafetyChecker = struct {
         const summary = self.summaries.get(call.callee) orelse return .{};
         for (summary.ends_input_roots) |index| {
             if (index >= arguments.len) continue;
-            if (rootBinding(arguments[index].value)) |binding| {
-                if (state.values.get(binding)) |value| {
-                    for (value.cleanup_responsibilities) |responsibility| state.tracker.end(responsibility.root);
+            if (try self.resolvePlace(arguments[index].value, state)) |storage| {
+                if (self.getPlace(state, storage)) |place_facts| {
+                    for (place_facts.value.cleanup_responsibilities) |responsibility| state.tracker.end(responsibility.root);
+                    var remaining = place_facts.value;
+                    remaining.cleanup_responsibilities = &.{};
+                    try self.setPlace(state, storage, .initialized, remaining);
                 }
-                try state.values.put(binding, .{});
             }
         }
         if (summary.outputs.len != 1) return .{};
@@ -277,6 +320,84 @@ pub const SafetyChecker = struct {
         const root = try state.tracker.establish(.fresh);
         try state.storage_roots.put(binding, root);
         return root;
+    }
+
+    fn getPlace(self: *SafetyChecker, state: *FunctionState, storage: place.Place) ?*facts.PlaceFacts {
+        _ = self;
+        var index = state.places.items.len;
+        while (index > 0) {
+            index -= 1;
+            if (state.places.items[index].storage.eql(storage)) return &state.places.items[index];
+        }
+        return null;
+    }
+
+    fn setPlace(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        storage: place.Place,
+        initializedness: value_state.Initializedness,
+        value: facts.ValueFacts,
+    ) !void {
+        if (self.getPlace(state, storage)) |existing| {
+            existing.initializedness = initializedness;
+            existing.value = value;
+        } else {
+            try state.places.append(.{ .storage = storage, .initializedness = initializedness, .value = value });
+        }
+        if (initializedness == .initialized) {
+            var index = state.places.items.len;
+            while (index > 0) {
+                index -= 1;
+                const candidate = &state.places.items[index];
+                if (storage.eql(candidate.storage)) continue;
+                if (storage.isPrefixOf(candidate.storage)) {
+                    candidate.initializedness = .deinitialized;
+                    candidate.value = .{};
+                }
+            }
+        }
+    }
+
+    fn requireInitialized(self: *SafetyChecker, function: *const sg.FunctionDeclaration, place_facts: *const facts.PlaceFacts) !void {
+        if (place_facts.initializedness == .initialized) return;
+        try self.diagnostics.add(function.location, .semantic, "place rooted at '{s}' is {s} and cannot be used", .{
+            place_facts.storage.root.name,
+            @tagName(place_facts.initializedness),
+        });
+    }
+
+    fn projectedPlace(self: *SafetyChecker, base: place.Place, projection: place.Projection) !place.Place {
+        const projections = try self.allocator.alloc(place.Projection, base.projections.len + 1);
+        @memcpy(projections[0..base.projections.len], base.projections);
+        projections[base.projections.len] = projection;
+        return .{ .root = base.root, .projections = projections };
+    }
+
+    fn resolvePlace(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) !?place.Place {
+        return switch (node.content) {
+            .binding_use => |binding| .{ .root = binding },
+            .address_of => |value| try self.resolvePlace(value, state),
+            .struct_field_access => |access| if (try self.resolvePlace(access.struct_value, state)) |base|
+                try self.projectedPlace(base, .{ .field = access.field_index })
+            else
+                null,
+            .array_index => |index| if (try self.resolvePlace(index.array_ptr, state)) |base|
+                try self.projectedPlace(base, if (staticIndex(index.index)) |static_index|
+                    .{ .static_index = static_index }
+                else
+                    .dynamic_index)
+            else
+                null,
+            .dereference => |dereference| blk: {
+                if (dereference.pointer.content == .address_of)
+                    break :blk try self.resolvePlace(dereference.pointer.content.address_of, state);
+                const pointer_storage = try self.resolvePlace(dereference.pointer, state) orelse break :blk null;
+                const pointer_facts = self.getPlace(state, pointer_storage) orelse break :blk null;
+                break :blk pointer_facts.value.referenced_place;
+            },
+            else => null,
+        };
     }
 
     fn oneDependency(self: *SafetyChecker, root: facts.RootId) ![]const facts.ReferenceDependency {
@@ -478,6 +599,14 @@ fn rootBinding(node: *const sg.SGNode) ?*const sg.BindingDeclaration {
         .array_index => |index| rootBinding(index.array_ptr),
         .dereference => |dereference| rootBinding(dereference.pointer),
         .address_of => |value| rootBinding(value),
+        else => null,
+    };
+}
+
+fn staticIndex(node: *const sg.SGNode) ?usize {
+    if (node.content != .value_literal) return null;
+    return switch (node.content.value_literal) {
+        .int_literal => |index| if (index >= 0) @intCast(index) else null,
         else => null,
     };
 }
