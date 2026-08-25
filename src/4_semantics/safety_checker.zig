@@ -70,7 +70,7 @@ pub const SafetyChecker = struct {
         const body = function.body orelse return;
         if (function.origin_kind != .declared) return;
         if (isRootingPrimitive(function.name)) return;
-        if (std.mem.indexOf(u8, function.location.file, "/core/") != null) return;
+        if (std.mem.indexOf(u8, function.location.file, "core/") != null) return;
         var state = FunctionState.init(self.allocator.*);
         defer state.deinit();
         for (function.input_bindings) |binding| {
@@ -166,7 +166,21 @@ pub const SafetyChecker = struct {
                 }
                 break :blk aggregate_value;
             },
-            .explicit_cast => |cast| try self.evaluate(function, cast.value, state),
+            .explicit_cast => |cast| blk: {
+                const value = try self.evaluate(function, cast.value, state);
+                const target_is_integer = cast.target_type == .builtin and cast.target_type.builtin == .UIntNative;
+                const target_is_reference = cast.target_type == .pointer_type;
+                const target_is_raw_any = target_is_reference and
+                    cast.target_type.pointer_type.child.* == .builtin and
+                    cast.target_type.pointer_type.child.*.builtin == .Any;
+                const source_is_reference = cast.value.sem_type != null and cast.value.sem_type.? == .pointer_type;
+                if (target_is_integer and source_is_reference)
+                    break :blk facts.ValueFacts{ .integer_address = true };
+                if (target_is_reference and !target_is_raw_any and value.integer_address) {
+                    try self.diagnostics.add(function.location, .semantic, "an integer address cannot establish a safe reference; use RawPointer and explicit root establishment", .{});
+                }
+                break :blk .{};
+            },
             .function_call => |call| try self.evaluateCall(function, call, state),
             .binary_operation => |operation| blk: {
                 _ = try self.evaluate(function, operation.left, state);
@@ -201,14 +215,13 @@ pub const SafetyChecker = struct {
             return .{};
         }
         const summary = self.summaries.get(call.callee) orelse return .{};
-        for (summary.deinitializes_inputs) |index| {
+        for (summary.ends_input_roots) |index| {
             if (index >= arguments.len) continue;
             if (rootBinding(arguments[index].value)) |binding| {
                 if (state.values.get(binding)) |value| {
                     for (value.cleanup_responsibilities) |responsibility| state.tracker.end(responsibility.root);
                 }
                 try state.values.put(binding, .{});
-                try state.initializedness.put(binding, .deinitialized);
             }
         }
         if (summary.outputs.len != 1) return .{};
@@ -237,6 +250,7 @@ pub const SafetyChecker = struct {
         var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
         var responsibilities = std.array_list.Managed(facts.CleanupResponsibility).init(self.allocator.*);
         var field_facts = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
+        var contains_integer_address = false;
         for (fields, 0..) |field, index| {
             const value = try self.evaluate(function, field.value, state);
             try dependencies.appendSlice(value.dependencies);
@@ -244,11 +258,13 @@ pub const SafetyChecker = struct {
             const stored = try self.allocator.create(facts.ValueFacts);
             stored.* = value;
             try field_facts.append(.{ .index = @intCast(index), .value = stored });
+            contains_integer_address = contains_integer_address or value.integer_address;
         }
         return .{
             .dependencies = try dependencies.toOwnedSlice(),
             .cleanup_responsibilities = try responsibilities.toOwnedSlice(),
             .fields = try field_facts.toOwnedSlice(),
+            .integer_address = contains_integer_address,
         };
     }
 
@@ -293,10 +309,10 @@ pub const SafetyChecker = struct {
         try self.inferDeinitializedInputs(function, body, &deinitialized);
         const deinitialized_slice = try deinitialized.toOwnedSlice();
         if (effectsEqual(previous.outputs, outputs) and
-            std.mem.eql(u32, previous.deinitializes_inputs, deinitialized_slice)) return false;
+            std.mem.eql(u32, previous.ends_input_roots, deinitialized_slice)) return false;
         try self.summaries.put(function, .{
             .outputs = outputs,
-            .deinitializes_inputs = deinitialized_slice,
+            .ends_input_roots = deinitialized_slice,
         });
         return true;
     }
@@ -319,7 +335,7 @@ pub const SafetyChecker = struct {
                     continue;
                 }
                 const summary = self.summaries.get(call.callee) orelse continue;
-                for (summary.deinitializes_inputs) |callee_index| {
+                for (summary.ends_input_roots) |callee_index| {
                     if (callee_index < arguments.len)
                         try appendEffectInput(self.inferExpression(function, arguments[callee_index].value), result);
                 }

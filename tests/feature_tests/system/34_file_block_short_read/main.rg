@@ -26,7 +26,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     }
 
     write_buffer ::= array_view#(.t: UInt8)(
-        .data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = write_raw)),
+        .data = establish_fresh_reference#(.t: UInt8)(.raw = raw_pointer#(.t: UInt8)(.address = cast#(.to: UIntNative)(.value = write_raw))).reference,
         .length = 2,
     )
     write_buffer[0] = 41
@@ -66,7 +66,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     }
 
     read_buffer ::= array_view#(.t: UInt8)(
-        .data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = read_raw)),
+        .data = establish_fresh_reference#(.t: UInt8)(.raw = raw_pointer#(.t: UInt8)(.address = cast#(.to: UIntNative)(.value = read_raw))).reference,
         .length = 4,
     )
 

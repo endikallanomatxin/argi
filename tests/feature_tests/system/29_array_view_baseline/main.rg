@@ -5,7 +5,7 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    data : $&Int32 = cast#(.to: $&Int32)(.value = cast#(.to: UIntNative)(.value = raw))
+    data ::= establish_fresh_reference#(.t: Int32)(.raw = raw_pointer#(.t: Int32)(.address = cast#(.to: UIntNative)(.value = raw))).reference
     values ::= array_view#(.t: Int32)(.data = data, .length = 4)
 
     values[0] = 3

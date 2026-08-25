@@ -20,7 +20,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    first_ptr : &UInt8 = cast#(.to: &UInt8)(.value = cast#(.to: UIntNative)(.value = arg0_ptr))
+    first_ptr ::= reinterpret_reference#(.from: Char, .to: UInt8)(.base = arg0_ptr).reference
     if bytes_get(.view = &arg0_view, .index = 0).byte != first_ptr& {
         status_code = 4
         return

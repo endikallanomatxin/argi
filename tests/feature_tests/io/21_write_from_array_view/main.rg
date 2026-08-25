@@ -28,7 +28,7 @@ main() -> (.status_code: Int32) := {
     }
 
     buffer ::= array_view#(.t: UInt8)(
-        .data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = raw)),
+        .data = establish_fresh_reference#(.t: UInt8)(.raw = raw_pointer#(.t: UInt8)(.address = cast#(.to: UIntNative)(.value = raw))).reference,
         .length = 3,
     )
     buffer[0] = 2

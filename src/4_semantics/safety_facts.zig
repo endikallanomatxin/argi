@@ -24,6 +24,7 @@ pub const ValueFacts = struct {
     dependencies: []const ReferenceDependency = &.{},
     cleanup_responsibilities: []const CleanupResponsibility = &.{},
     fields: []const FieldFacts = &.{},
+    integer_address: bool = false,
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
         return .{ .dependencies = self.dependencies };

@@ -9,7 +9,7 @@ allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.data: $&UInt8) := {
         .alloc_count = self&.alloc_count + 1,
         .dealloc_count = self&.dealloc_count,
     )
-    data = cast#(.to: $&UInt8)(.value = raw_addr)
+    data = establish_fresh_reference#(.t: UInt8)(.raw = raw_pointer#(.t: UInt8)(.address = raw_addr)).reference
 }
 
 deallocate(.self: $&CountingAllocator, .data: $&UInt8, .size: UIntNative) -> () := {

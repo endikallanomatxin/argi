@@ -14,11 +14,11 @@ main() -> (.status_code: Int32) := {
     }
 
     src ::= array_view#(.t: UInt8)(
-        .data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = src_raw)),
+        .data = establish_fresh_reference#(.t: UInt8)(.raw = raw_pointer#(.t: UInt8)(.address = cast#(.to: UIntNative)(.value = src_raw))).reference,
         .length = 4,
     )
     dst ::= array_view#(.t: UInt8)(
-        .data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = dst_raw)),
+        .data = establish_fresh_reference#(.t: UInt8)(.raw = raw_pointer#(.t: UInt8)(.address = cast#(.to: UIntNative)(.value = dst_raw))).reference,
         .length = 4,
     )
 

@@ -2951,6 +2951,15 @@ test "feature_tests/ownership/46_deinitialized_place_can_be_replaced" {
     try expectSuccessfulBuild("tests/feature_tests/ownership/46_deinitialized_place_can_be_replaced");
 }
 
+test "feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance" {
+    try buildExpectFailExact("tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance",
+        \\tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
 test "feature_tests/ownership/29_string_view_is_copyable" {
     const test_path = "tests/feature_tests/ownership/29_string_view_is_copyable";
     try expectSuccessfulBuild(test_path);
