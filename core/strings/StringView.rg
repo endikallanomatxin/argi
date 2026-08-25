@@ -1,5 +1,5 @@
 StringView : Type = (
-    .data   : UIntNative
+    .data   : &UInt8
     .length : UIntNative
 )
 
@@ -7,7 +7,7 @@ string_view_byte_address(
     .self: &StringView,
     .index: UIntNative,
 ) -> (.address: UIntNative) := {
-    base :: UIntNative = self&.data
+    base :: UIntNative = cast#(.to: UIntNative)(.value = self&.data)
     address = base + index
 }
 

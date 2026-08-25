@@ -27,9 +27,9 @@ string_hash_map_key_view(
 
 string_hash_map_key_view(
     .key: &Char,
-) -> (.view: StringView) := {
+) -> (.view: StringView) #returns_dependency(view.data, key) #raw_boundary := {
     view = (
-        .data = cast#(.to: UIntNative)(.value = key),
+        .data = cast#(.to: &UInt8)(.value = cast#(.to: UIntNative)(.value = key)),
         .length = c_string_length(.text = key).length,
     )
 }

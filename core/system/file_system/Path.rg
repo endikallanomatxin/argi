@@ -39,9 +39,9 @@ string_view_slice(
     .view: &StringView,
     .start: UIntNative,
     .length: UIntNative,
-) -> (.out: StringView) := {
+) -> (.out: StringView) #returns_dependency(out.data, view, data) #raw_boundary := {
     out = (
-        .data = view&.data + start,
+        .data = cast#(.to: &UInt8)(.value = cast#(.to: UIntNative)(.value = view&.data) + start),
         .length = length,
     )
 }

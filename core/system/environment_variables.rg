@@ -5,7 +5,7 @@ once init(.p: $&EnvironmentVariables) -> () := {
 
 environment_variables_get_c_string(
     .key: &Char,
-) -> (.value: ?StringView) := {
+) -> (.value: ?StringView) #raw_boundary := {
     raw_ptr ::= getenv(.name = key).value
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = raw_ptr)
 
@@ -15,7 +15,7 @@ environment_variables_get_c_string(
     }
 
     value = ..some(.value = (
-        .data = raw_addr,
+        .data = cast#(.to: &UInt8)(.value = raw_addr),
         .length = strlen(.string = raw_ptr).length,
     ))
 }

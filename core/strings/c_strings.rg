@@ -26,7 +26,7 @@ string_view_has_c_string_layout(
         i = i + 1
     }
 
-    terminator_address :: UIntNative = self&.data + self&.length
+    terminator_address :: UIntNative = cast#(.to: UIntNative)(.value = self&.data) + self&.length
     terminator_ptr : &UInt8 = cast#(.to: &UInt8)(.value = terminator_address)
     ok = terminator_ptr& == 0
 }
@@ -40,7 +40,7 @@ as_c_string(
 ) #trusted_temporal := {
     if string_view_has_c_string_layout(.self = &self).ok {
         zero :: UIntNative = 0
-        text = cast#(.to: &Char)(.value = self.data)
+        text = cast#(.to: &Char)(.value = cast#(.to: UIntNative)(.value = self.data))
         storage = (
             .data = cast#(.to: $&UInt8)(.value = zero),
             .size = 0,
@@ -72,7 +72,7 @@ as_view(
     .self: &Char,
 ) -> (.view: StringView) #returns_dependency(view.data, self) #raw_boundary := {
     view = (
-        .data = cast#(.to: UIntNative)(.value = self),
+        .data = cast#(.to: &UInt8)(.value = cast#(.to: UIntNative)(.value = self)),
         .length = strlen(.string = self).length,
     )
 }

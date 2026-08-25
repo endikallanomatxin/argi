@@ -184,7 +184,7 @@ as_view(
     .self: &String,
 ) -> (.view: StringView) #returns_dependency(view.data, self, allocation.data) #raw_boundary := {
     view = (
-        .data = cast#(.to: UIntNative)(.value = self&.allocation.data),
+        .data = cast#(.to: &UInt8)(.value = self&.allocation.data),
         .length = self&.length,
     )
 }
@@ -398,7 +398,7 @@ push_view(
     }
 
     source_view ::= array_view_from_address#(.t: UInt8)(
-        .address = view.data,
+        .address = cast#(.to: UIntNative)(.value = view.data),
         .length = view.length,
     )
     string_append_bytes(.self = self, .source = source_view)
@@ -426,7 +426,7 @@ c_string_as_view(
     .text: &Char,
 ) -> (.view: StringView) #returns_dependency(view.data, text) #raw_boundary := {
     view = (
-        .data = cast#(.to: UIntNative)(.value = text),
+        .data = cast#(.to: &UInt8)(.value = cast#(.to: UIntNative)(.value = text)),
         .length = c_string_length(.text = text).length,
     )
 }
@@ -437,8 +437,8 @@ concat_views(
 ) -> (.out: String) := {
     allocator : $&Allocator = #reach allocator, system.allocator
     temp :: String = String(.allocator = allocator, .capacity = left&.length + right&.length)
-    left_view ::= array_view_from_address#(.t: UInt8)(.address = left&.data, .length = left&.length)
-    right_view ::= array_view_from_address#(.t: UInt8)(.address = right&.data, .length = right&.length)
+    left_view ::= array_view_from_address#(.t: UInt8)(.address = cast#(.to: UIntNative)(.value = left&.data), .length = left&.length)
+    right_view ::= array_view_from_address#(.t: UInt8)(.address = cast#(.to: UIntNative)(.value = right&.data), .length = right&.length)
     string_append_bytes(.self = $&temp, .source = left_view)
     string_append_bytes(.self = $&temp, .source = right_view)
     out = temp

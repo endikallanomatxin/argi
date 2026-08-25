@@ -52,10 +52,10 @@ argument_at(
 argument_view_at(
     .self: &Arguments,
     .index: UIntNative,
-) -> (.view: StringView) := {
+) -> (.view: StringView) #returns_dependency(view.data, self) #raw_boundary := {
     text ::= argument_at(.self = self, .index = index)
     view = (
-        .data = cast#(.to: UIntNative)(.value = text),
+        .data = cast#(.to: &UInt8)(.value = cast#(.to: UIntNative)(.value = text)),
         .length = strlen(.string = text).length,
     )
 }
