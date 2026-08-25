@@ -340,11 +340,31 @@ pub const SafetyChecker = struct {
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
     ) !facts.ValueFacts {
+        var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.RootId).init(self.allocator.*);
+        defer fresh_roots.deinit();
+        return self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots);
+    }
+
+    fn instantiateOutputWithFresh(
+        self: *SafetyChecker,
+        effect: facts.OutputEffect,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+        fresh_roots: *std.AutoHashMap(facts.FreshRootSource, facts.RootId),
+    ) !facts.ValueFacts {
         var result: facts.ValueFacts = .{};
-        if (effect.fresh) {
-            const root = try state.tracker.establish(.fresh);
-            result.dependencies = try self.oneDependency(root);
+        var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
+        for (effect.fresh_dependencies) |source| {
+            const root = try self.instantiateFreshRoot(source, state, fresh_roots);
+            try appendDependency(&dependencies, .{ .root = root });
         }
+        result.dependencies = try dependencies.toOwnedSlice();
+        var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        for (effect.fresh_owned_roots) |source| {
+            const root = try self.instantiateFreshRoot(source, state, fresh_roots);
+            try appendOwnedRoot(&owned_roots, root);
+        }
+        result.owned_roots = try owned_roots.toOwnedSlice();
         for (effect.input_dependencies) |dependency| {
             if (dependency.input_index >= arguments.len) continue;
             var input = arguments[dependency.input_index];
@@ -356,7 +376,7 @@ pub const SafetyChecker = struct {
             const fields = try self.allocator.alloc(facts.FieldFacts, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
                 const value = try self.allocator.create(facts.ValueFacts);
-                value.* = try self.instantiateOutput(field.value.*, arguments, state);
+                value.* = try self.instantiateOutputWithFresh(field.value.*, arguments, state, fresh_roots);
                 fields[index] = .{ .index = field.index, .value = value };
                 result = try self.mergeValueFacts(result, value.*);
             }
@@ -364,6 +384,19 @@ pub const SafetyChecker = struct {
         }
         result.integer_address = effect.integer_address;
         return result;
+    }
+
+    fn instantiateFreshRoot(
+        self: *SafetyChecker,
+        source: facts.FreshRootSource,
+        state: *FunctionState,
+        fresh_roots: *std.AutoHashMap(facts.FreshRootSource, facts.RootId),
+    ) !facts.RootId {
+        _ = self;
+        if (fresh_roots.get(source)) |root| return root;
+        const root = try state.tracker.establish(.fresh);
+        try fresh_roots.put(source, root);
+        return root;
     }
 
     fn mergeValueFacts(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts) !facts.ValueFacts {
@@ -641,6 +674,23 @@ pub const SafetyChecker = struct {
         return result;
     }
 
+    fn oneFreshSource(self: *SafetyChecker, source: facts.FreshRootSource) ![]const facts.FreshRootSource {
+        const result = try self.allocator.alloc(facts.FreshRootSource, 1);
+        result[0] = source;
+        return result;
+    }
+
+    fn mergeFreshSources(
+        self: *SafetyChecker,
+        left: []const facts.FreshRootSource,
+        right: []const facts.FreshRootSource,
+    ) ![]const facts.FreshRootSource {
+        var result = std.array_list.Managed(facts.FreshRootSource).init(self.allocator.*);
+        for (left) |source| try appendFreshSource(&result, source);
+        for (right) |source| try appendFreshSource(&result, source);
+        return result.toOwnedSlice();
+    }
+
     fn oneOwnedRoot(self: *SafetyChecker, root: facts.RootId) ![]const facts.RootId {
         const result = try self.allocator.alloc(facts.RootId, 1);
         result[0] = root;
@@ -656,7 +706,7 @@ pub const SafetyChecker = struct {
 
     fn infer(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !bool {
         if (function.safety_primitive != .none)
-            return self.replaceSingleOutput(function, try self.primitiveOutputEffect(function.safety_primitive));
+            return self.replaceSingleOutput(function, try self.primitiveOutputEffect(function.safety_primitive, @intFromPtr(function)));
         const body = function.body orelse return false;
         const previous = self.summaries.get(function).?;
         const outputs = try self.allocator.dupe(facts.OutputEffect, previous.outputs);
@@ -769,7 +819,7 @@ pub const SafetyChecker = struct {
     }
 
     fn inferCall(self: *SafetyChecker, function: *const sg.FunctionDeclaration, call: *const sg.FunctionCall) !facts.OutputEffect {
-        if (call.callee.safety_primitive != .none) return self.primitiveOutputEffect(call.callee.safety_primitive);
+        if (call.callee.safety_primitive != .none) return self.primitiveOutputEffect(call.callee.safety_primitive, @intFromPtr(call));
         const callee_summary = self.summaries.get(call.callee) orelse return .{};
         if (callee_summary.outputs.len != 1 or call.input.content != .struct_value_literal) return .{};
         return self.substituteOutput(function, callee_summary.outputs[0], call.input.content.struct_value_literal.fields);
@@ -781,10 +831,10 @@ pub const SafetyChecker = struct {
         return .{ .input_dependencies = dependencies };
     }
 
-    fn primitiveOutputEffect(self: *SafetyChecker, primitive: sg.SafetyPrimitive) !facts.OutputEffect {
+    fn primitiveOutputEffect(self: *SafetyChecker, primitive: sg.SafetyPrimitive, source: facts.FreshRootSource) !facts.OutputEffect {
         return switch (primitive) {
             .none => .{},
-            .establish_fresh_reference => .{ .fresh = true },
+            .establish_fresh_reference => .{ .fresh_dependencies = try self.oneFreshSource(source) },
             .establish_inherited_reference => self.inputOutputEffect(1, &.{}),
             .reference_offset,
             .mutable_reference_offset,
@@ -840,7 +890,8 @@ pub const SafetyChecker = struct {
         }
         return .{
             .input_dependencies = dependencies,
-            .fresh = effect.fresh,
+            .fresh_dependencies = effect.fresh_dependencies,
+            .fresh_owned_roots = effect.fresh_owned_roots,
             .integer_address = effect.integer_address,
         };
     }
@@ -851,7 +902,11 @@ pub const SafetyChecker = struct {
         effect: facts.OutputEffect,
         arguments: []const sg.StructValueLiteralField,
     ) !facts.OutputEffect {
-        var result: facts.OutputEffect = .{ .fresh = effect.fresh, .integer_address = effect.integer_address };
+        var result: facts.OutputEffect = .{
+            .fresh_dependencies = effect.fresh_dependencies,
+            .fresh_owned_roots = effect.fresh_owned_roots,
+            .integer_address = effect.integer_address,
+        };
         for (effect.input_dependencies) |dependency| {
             if (dependency.input_index >= arguments.len) continue;
             var argument = try self.inferExpression(function, arguments[dependency.input_index].value);
@@ -877,7 +932,8 @@ pub const SafetyChecker = struct {
         for (right.input_dependencies) |dependency| try appendInputDependency(&dependencies, dependency);
         return .{
             .input_dependencies = try dependencies.toOwnedSlice(),
-            .fresh = left.fresh or right.fresh,
+            .fresh_dependencies = try self.mergeFreshSources(left.fresh_dependencies, right.fresh_dependencies),
+            .fresh_owned_roots = try self.mergeFreshSources(left.fresh_owned_roots, right.fresh_owned_roots),
             .integer_address = left.integer_address or right.integer_address,
         };
     }
@@ -1007,6 +1063,11 @@ fn appendInputDependency(list: *std.array_list.Managed(facts.InputDependency), d
     try list.append(dependency);
 }
 
+fn appendFreshSource(list: *std.array_list.Managed(facts.FreshRootSource), source: facts.FreshRootSource) !void {
+    for (list.items) |existing| if (existing == source) return;
+    try list.append(source);
+}
+
 fn projectionsEqual(left: []const place.Projection, right: []const place.Projection) bool {
     if (left.len != right.len) return false;
     for (left, right) |a, b| if (!a.eql(b)) return false;
@@ -1014,7 +1075,9 @@ fn projectionsEqual(left: []const place.Projection, right: []const place.Project
 }
 
 fn outputEffectEqual(left: facts.OutputEffect, right: facts.OutputEffect) bool {
-    if (left.fresh != right.fresh or left.integer_address != right.integer_address) return false;
+    if (left.integer_address != right.integer_address or
+        !std.mem.eql(facts.FreshRootSource, left.fresh_dependencies, right.fresh_dependencies) or
+        !std.mem.eql(facts.FreshRootSource, left.fresh_owned_roots, right.fresh_owned_roots)) return false;
     if (left.input_dependencies.len != right.input_dependencies.len or left.fields.len != right.fields.len) return false;
     for (left.input_dependencies, right.input_dependencies) |a, b| {
         if (a.input_index != b.input_index or a.transfers_ownership != b.transfers_ownership or !projectionsEqual(a.projections, b.projections)) return false;

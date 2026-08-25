@@ -55,12 +55,18 @@ pub const OutputFieldEffect = struct {
     value: *const OutputEffect,
 };
 
+/// Stable compiler-owned identity for one fresh root produced while evaluating
+/// a summarized expression. Calls instantiate each distinct source as a new
+/// runtime RootId; fields naming the same source share that root.
+pub const FreshRootSource = usize;
+
 /// Symbolic ValueFacts for a function output. Input dependencies retain their
 /// structural path until a call instantiates them with the caller's facts.
 pub const OutputEffect = struct {
     input_dependencies: []const InputDependency = &.{},
     fields: []const OutputFieldEffect = &.{},
-    fresh: bool = false,
+    fresh_dependencies: []const FreshRootSource = &.{},
+    fresh_owned_roots: []const FreshRootSource = &.{},
     integer_address: bool = false,
 };
 
