@@ -14,9 +14,8 @@ const Scope = @import("scope.zig").Scope;
 const SemErr = @import("errors.zig").SemErr;
 
 fn safetyPrimitiveForDeclaration(name: []const u8, file: []const u8) sg.SafetyPrimitive {
-    if (!std.mem.endsWith(u8, file, "core/memory/heap_allocation/RawPointer.rg")) return .none;
     const Entry = struct { name: []const u8, primitive: sg.SafetyPrimitive };
-    const entries = [_]Entry{
+    const raw_pointer_entries = [_]Entry{
         .{ .name = "establish_fresh_reference", .primitive = .establish_fresh_reference },
         .{ .name = "establish_inherited_reference", .primitive = .establish_inherited_reference },
         .{ .name = "reference_offset", .primitive = .reference_offset },
@@ -25,7 +24,10 @@ fn safetyPrimitiveForDeclaration(name: []const u8, file: []const u8) sg.SafetyPr
         .{ .name = "mutable_reinterpret_reference", .primitive = .mutable_reinterpret_reference },
         .{ .name = "read_reference", .primitive = .read_reference },
     };
-    for (entries) |entry| if (std.mem.eql(u8, name, entry.name)) return entry.primitive;
+    if (std.mem.endsWith(u8, file, "core/memory/heap_allocation/RawPointer.rg"))
+        for (raw_pointer_entries) |entry| if (std.mem.eql(u8, name, entry.name)) return entry.primitive;
+    if (std.mem.endsWith(u8, file, "core/memory/heap_allocation/Allocator.rg") and
+        std.mem.eql(u8, name, "establish_allocation")) return .establish_allocation;
     return .none;
 }
 

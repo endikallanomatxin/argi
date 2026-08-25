@@ -55,6 +55,19 @@ Allocation : Type = (
     .size      : UIntNative
 )
 
+-- Compiler-owned temporal boundary used after a physical allocator has
+-- returned backing storage. The Allocation value owns the new root; its data
+-- field only depends on it.
+establish_allocation(
+    .data: $&UInt8,
+    .size: UIntNative,
+) -> (.allocation: Allocation) := {
+    allocation = (
+        .data = data,
+        .size = size,
+    )
+}
+
 deinit(
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&Allocation,

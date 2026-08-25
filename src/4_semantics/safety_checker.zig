@@ -50,6 +50,7 @@ pub const SafetyChecker = struct {
         places: std.array_list.Managed(facts.PlaceFacts),
         storage_roots: std.AutoHashMap(*const sg.BindingDeclaration, facts.RootId),
         reachable: bool = true,
+        ownership_conflict_reported: bool = false,
 
         fn init(allocator: std.mem.Allocator) FunctionState {
             return .{
@@ -72,6 +73,7 @@ pub const SafetyChecker = struct {
             var roots = self.storage_roots.iterator();
             while (roots.next()) |entry| try result.storage_roots.put(entry.key_ptr.*, entry.value_ptr.*);
             result.reachable = self.reachable;
+            result.ownership_conflict_reported = self.ownership_conflict_reported;
             return result;
         }
     };
@@ -197,6 +199,7 @@ pub const SafetyChecker = struct {
                 },
                 else => {},
             }
+            try self.validateUniqueOwnership(function, state);
             if (!state.reachable) return;
         }
     }
@@ -519,6 +522,7 @@ pub const SafetyChecker = struct {
         while (right_roots.next()) |entry| if (!joined.storage_roots.contains(entry.key_ptr.*))
             try joined.storage_roots.put(entry.key_ptr.*, entry.value_ptr.*);
         joined.reachable = true;
+        joined.ownership_conflict_reported = left.ownership_conflict_reported or right.ownership_conflict_reported;
         destination.deinit();
         destination.* = joined;
     }
@@ -633,6 +637,56 @@ pub const SafetyChecker = struct {
             place_facts.storage.root.name,
             @tagName(place_facts.initializedness),
         });
+    }
+
+    const OwnerLocation = struct {
+        root: facts.RootId,
+        storage: place.Place,
+    };
+
+    fn validateUniqueOwnership(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        state: *FunctionState,
+    ) !void {
+        if (state.ownership_conflict_reported) return;
+        var owners = std.array_list.Managed(OwnerLocation).init(self.allocator.*);
+        defer owners.deinit();
+        for (state.places.items) |place_facts| {
+            if (place_facts.initializedness != .initialized) continue;
+            try self.collectOwnerLocations(place_facts.storage, place_facts.value, &owners);
+        }
+        for (owners.items, 0..) |owner, index| {
+            for (owners.items[index + 1 ..]) |other| {
+                if (owner.root != other.root or owner.storage.eql(other.storage)) continue;
+                state.ownership_conflict_reported = true;
+                try self.diagnostics.add(function.location, .semantic, "root ownership was duplicated across structural places", .{});
+                return;
+            }
+        }
+    }
+
+    fn collectOwnerLocations(
+        self: *SafetyChecker,
+        storage: place.Place,
+        value: facts.ValueFacts,
+        result: *std.array_list.Managed(OwnerLocation),
+    ) !void {
+        for (value.owned_roots) |root| {
+            var owned_by_field = false;
+            for (value.fields) |field| if (valueContainsOwnedRoot(field.value.*, root)) {
+                owned_by_field = true;
+                break;
+            };
+            if (!owned_by_field) try result.append(.{ .root = root, .storage = storage });
+        }
+        for (value.fields) |field| {
+            try self.collectOwnerLocations(
+                try self.projectedPlace(storage, .{ .field = field.index }),
+                field.value.*,
+                result,
+            );
+        }
     }
 
     fn projectedPlace(self: *SafetyChecker, base: place.Place, projection: place.Projection) !place.Place {
@@ -836,12 +890,27 @@ pub const SafetyChecker = struct {
             .none => .{},
             .establish_fresh_reference => .{ .fresh_dependencies = try self.oneFreshSource(source) },
             .establish_inherited_reference => self.inputOutputEffect(1, &.{}),
+            .establish_allocation => self.ownedAllocationEffect(source),
             .reference_offset,
             .mutable_reference_offset,
             .reinterpret_reference,
             .mutable_reinterpret_reference,
             .read_reference,
             => self.inputOutputEffect(0, &.{}),
+        };
+    }
+
+    fn ownedAllocationEffect(self: *SafetyChecker, source: facts.FreshRootSource) !facts.OutputEffect {
+        const fields = try self.allocator.alloc(facts.OutputFieldEffect, 2);
+        const data = try self.allocator.create(facts.OutputEffect);
+        data.* = .{ .fresh_dependencies = try self.oneFreshSource(source) };
+        const size = try self.allocator.create(facts.OutputEffect);
+        size.* = .{};
+        fields[0] = .{ .index = 0, .value = data };
+        fields[1] = .{ .index = 1, .value = size };
+        return .{
+            .fresh_owned_roots = try self.oneFreshSource(source),
+            .fields = fields,
         };
     }
 
@@ -961,6 +1030,12 @@ fn containsRoot(roots: []const facts.RootId, target: facts.RootId) bool {
     return false;
 }
 
+fn valueContainsOwnedRoot(value: facts.ValueFacts, target: facts.RootId) bool {
+    if (containsRoot(value.owned_roots, target)) return true;
+    for (value.fields) |field| if (valueContainsOwnedRoot(field.value.*, target)) return true;
+    return false;
+}
+
 fn ownershipShapeEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     if (left.owned_roots.len != right.owned_roots.len) return false;
     for (left.owned_roots) |root| if (!containsRoot(right.owned_roots, root)) return false;
@@ -980,7 +1055,10 @@ fn joinInitializedness(left: value_state.Initializedness, right: value_state.Ini
 }
 
 fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChecker.FunctionState) bool {
-    if (left.reachable != right.reachable or left.tracker.roots.items.len != right.tracker.roots.items.len or left.places.items.len != right.places.items.len) return false;
+    if (left.reachable != right.reachable or
+        left.ownership_conflict_reported != right.ownership_conflict_reported or
+        left.tracker.roots.items.len != right.tracker.roots.items.len or
+        left.places.items.len != right.places.items.len) return false;
     for (left.tracker.roots.items, right.tracker.roots.items) |a, b| if (a.state != b.state) return false;
     for (left.places.items) |left_place| {
         const right_place = findPlace(right.places.items, left_place.storage) orelse return false;
