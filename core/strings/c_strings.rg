@@ -61,10 +61,7 @@ as_c_string(
     nul_ptr& = 0
 
     text = reinterpret_reference#(.from: UInt8, .to: Char)(.base = read_reference#(.t: UInt8)(.base = data).reference).reference
-    storage = (
-        .data = data,
-        .size = size,
-    )
+    storage = establish_allocation(.data = data, .size = size)
 }
 
 as_view(

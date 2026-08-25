@@ -35,10 +35,5 @@ main(.system: System = System()) -> (.status_code: Int32) := {
 
     deinit(.self = $&arena)
 
-    if arena.blocks.length != 0 {
-        status_code = 15
-        return
-    }
-
     status_code = 0
 }

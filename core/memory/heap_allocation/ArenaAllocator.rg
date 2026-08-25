@@ -59,10 +59,16 @@ reset(
     block_size ::= self&.block_size
 
     arena_release_blocks(.self = self)
-    init#(.t: Allocation)(.p = $&self&.blocks, .allocator = backing_allocator, .capacity = 4)
-    self&.block_size = block_size
-    self&.backing_allocator = backing_allocator
-    self&.current_block_offset = 0
+    new_blocks :: DynamicArray#(.t: Allocation) = DynamicArray#(.t: Allocation)(
+        .allocator = backing_allocator,
+        .capacity = 4,
+    )
+    self& = (
+        .backing_allocator = backing_allocator,
+        .blocks = ~new_blocks,
+        .block_size = block_size,
+        .current_block_offset = 0,
+    )
 }
 
 deinit(

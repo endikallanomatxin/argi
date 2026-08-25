@@ -6,7 +6,7 @@ pub const RootId = enum(u32) { _ };
 
 pub const Root = struct {
     id: RootId,
-    state: enum { alive, dead } = .alive,
+    state: enum { alive, maybe_alive, dead } = .alive,
 };
 
 pub const ReferenceDependency = struct {
@@ -21,10 +21,16 @@ pub const ValueFacts = struct {
     owned_roots: []const RootId = &.{},
     fields: []const FieldFacts = &.{},
     integer_address: bool = false,
+    foreign_storage: bool = false,
     referenced_place: ?place.Place = null,
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
-        return .{ .dependencies = self.dependencies, .referenced_place = self.referenced_place };
+        return .{
+            .dependencies = self.dependencies,
+            .integer_address = self.integer_address,
+            .foreign_storage = self.foreign_storage,
+            .referenced_place = self.referenced_place,
+        };
     }
 };
 
@@ -68,6 +74,7 @@ pub const OutputEffect = struct {
     fresh_dependencies: []const FreshRootSource = &.{},
     fresh_owned_roots: []const FreshRootSource = &.{},
     integer_address: bool = false,
+    foreign_storage: bool = false,
 };
 
 pub const FunctionSummary = struct {

@@ -101,6 +101,7 @@ pub const SafetyChecker = struct {
             }
         }
         try self.validateBlock(function, body, &state);
+        if (state.reachable) try self.rejectEscapingLocalRoots(function, &state);
     }
 
     fn validateBlock(
@@ -119,7 +120,14 @@ pub const SafetyChecker = struct {
                     try self.setPlace(state, .{ .root = binding }, .initialized, value);
                 },
                 .binding_assignment => |assignment| {
-                    try self.setPlace(state, .{ .root = assignment.sym_id }, .initialized, try self.evaluate(function, assignment.value, state));
+                    const value = try self.evaluate(function, assignment.value, state);
+                    try self.setPlace(state, .{ .root = assignment.sym_id }, .initialized, value);
+                },
+                .auto_deinit_binding => |cleanup| {
+                    const storage = place.Place{ .root = cleanup.binding };
+                    if (self.getPlace(state, storage)) |owned_value|
+                        for (owned_value.value.owned_roots) |root| state.tracker.end(root);
+                    try self.setPlace(state, storage, .deinitialized, .{});
                 },
                 .struct_field_store => |store| {
                     _ = try self.evaluate(function, store.struct_ptr, state);
@@ -160,8 +168,13 @@ pub const SafetyChecker = struct {
                     _ = try self.evaluate(function, statement.condition, state);
                     try self.validateLoop(function, statement.body, state, statement.increment);
                 },
-                .return_statement => |statement| if (statement.expression) |expression| {
-                    _ = try self.evaluate(function, expression, state);
+                .return_statement => |statement| {
+                    if (statement.expression) |expression| {
+                        const output = try self.evaluate(function, expression, state);
+                        if (expression.sem_type) |ty| if (typeContainsPointer(ty))
+                            try self.rejectEscapingValue(function, output, state);
+                    }
+                    try self.rejectEscapingLocalRoots(function, state);
                     state.reachable = false;
                 },
                 .switch_statement => |statement| {
@@ -277,9 +290,20 @@ pub const SafetyChecker = struct {
                     cast.target_type.pointer_type.child.* == .builtin and
                     cast.target_type.pointer_type.child.*.builtin == .Any;
                 const source_is_reference = cast.value.sem_type != null and cast.value.sem_type.? == .pointer_type;
-                if (target_is_integer and source_is_reference)
-                    break :blk facts.ValueFacts{ .integer_address = true };
-                if (target_is_reference and !target_is_raw_any and value.integer_address) {
+                const source_is_integer = cast.value.sem_type != null and
+                    cast.value.sem_type.? == .builtin and
+                    switch (cast.value.sem_type.?.builtin) {
+                        .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64 => true,
+                        else => false,
+                    };
+                if (target_is_integer and (source_is_reference or value.foreign_storage))
+                    break :blk facts.ValueFacts{
+                        .integer_address = true,
+                        .foreign_storage = value.foreign_storage or value.dependencies.len == 0,
+                    };
+                if (target_is_reference and !target_is_raw_any and
+                    (source_is_integer or value.integer_address) and !value.foreign_storage)
+                {
                     try self.diagnostics.add(function.location, .semantic, "an integer address cannot establish a safe reference; use RawPointer and explicit root establishment", .{});
                 }
                 break :blk .{};
@@ -316,11 +340,24 @@ pub const SafetyChecker = struct {
         if (call.input.content == .struct_value_literal) arguments = call.input.content.struct_value_literal.fields;
         const argument_values = try self.allocator.alloc(facts.ValueFacts, arguments.len);
         for (arguments, 0..) |argument, index| argument_values[index] = try self.evaluate(function, argument.value, state);
+        if (call.callee.safety_primitive == .establish_fresh_reference or
+            call.callee.safety_primitive == .establish_inherited_reference or
+            call.callee.safety_primitive == .establish_allocation)
+        {
+            const has_foreign_storage = argument_values.len != 0 and argument_values[0].foreign_storage;
+            if (!has_foreign_storage and call.callee.safety_primitive != .establish_allocation)
+                try self.diagnostics.add(function.location, .semantic, "raw-to-safe reference establishment is restricted to compiler-owned storage boundaries", .{});
+            if (call.callee.safety_primitive == .establish_allocation)
+                try self.diagnostics.add(function.location, .semantic, "allocation root establishment is restricted to compiler-owned storage boundaries", .{});
+        }
         if (std.mem.eql(u8, call.callee.name, "deallocate") and arguments.len > 1) {
             const data = argument_values[1];
             for (data.dependencies) |dependency| state.tracker.end(dependency.root);
             return .{};
         }
+        if (call.callee.body == null and call.callee.output.fields.len == 1 and
+            call.callee.output.fields[0].ty == .pointer_type)
+            return .{ .foreign_storage = true };
         const summary = self.summaries.get(call.callee) orelse return .{};
         for (summary.ends_input_roots) |index| {
             if (index >= arguments.len) continue;
@@ -395,6 +432,7 @@ pub const SafetyChecker = struct {
             result.fields = fields;
         }
         result.integer_address = effect.integer_address;
+        result.foreign_storage = result.foreign_storage or effect.foreign_storage;
         return result;
     }
 
@@ -442,6 +480,7 @@ pub const SafetyChecker = struct {
             .owned_roots = try owned_roots.toOwnedSlice(),
             .fields = try fields.toOwnedSlice(),
             .integer_address = left.integer_address or right.integer_address,
+            .foreign_storage = left.foreign_storage or right.foreign_storage,
             .referenced_place = if (left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?))
                 left.referenced_place
             else
@@ -449,14 +488,12 @@ pub const SafetyChecker = struct {
         };
     }
 
-    /// Dependencies widen at a join, but linear ownership is retained only
-    /// when both incoming paths put the same root at the same structural value.
+    /// Dependencies and cleanup obligations both widen at a join. A place may
+    /// own a root on only some incoming paths; initializedness records that the
+    /// value cannot be used unconditionally, while auto-deinit consumes the
+    /// remaining per-path obligation through its runtime drop flag.
     fn joinValueFacts(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts) !facts.ValueFacts {
         var result = try self.mergeValueFacts(left, right);
-        var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
-        for (left.owned_roots) |root| if (containsRoot(right.owned_roots, root))
-            try owned_roots.append(root);
-        result.owned_roots = try owned_roots.toOwnedSlice();
 
         const fields = try self.allocator.alloc(facts.FieldFacts, result.fields.len);
         for (result.fields, 0..) |field, index| {
@@ -466,21 +503,8 @@ pub const SafetyChecker = struct {
             if (left_field != null and right_field != null) {
                 stored.* = try self.joinValueFacts(left_field.?.value.*, right_field.?.value.*);
             } else {
-                stored.* = try self.withoutOwnership(field.value.*);
+                stored.* = field.value.*;
             }
-            fields[index] = .{ .index = field.index, .value = stored };
-        }
-        result.fields = fields;
-        return result;
-    }
-
-    fn withoutOwnership(self: *SafetyChecker, value: facts.ValueFacts) !facts.ValueFacts {
-        var result = value;
-        result.owned_roots = &.{};
-        const fields = try self.allocator.alloc(facts.FieldFacts, value.fields.len);
-        for (value.fields, 0..) |field, index| {
-            const stored = try self.allocator.create(facts.ValueFacts);
-            stored.* = try self.withoutOwnership(field.value.*);
             fields[index] = .{ .index = field.index, .value = stored };
         }
         result.fields = fields;
@@ -500,6 +524,7 @@ pub const SafetyChecker = struct {
         left: *const FunctionState,
         right: *const FunctionState,
     ) !void {
+        _ = function;
         if (!left.reachable) return self.copyState(destination, right);
         if (!right.reachable) return self.copyState(destination, left);
         var joined = FunctionState.init(self.allocator.*);
@@ -507,16 +532,17 @@ pub const SafetyChecker = struct {
         const root_count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);
         for (0..root_count) |index| {
             const id: facts.RootId = @enumFromInt(index);
-            const left_dead = index < left.tracker.roots.items.len and left.tracker.roots.items[index].state == .dead;
-            const right_dead = index < right.tracker.roots.items.len and right.tracker.roots.items[index].state == .dead;
-            try joined.tracker.roots.append(.{ .id = id, .state = if (left_dead or right_dead) .dead else .alive });
+            const left_state = if (index < left.tracker.roots.items.len) left.tracker.roots.items[index].state else .dead;
+            const right_state = if (index < right.tracker.roots.items.len) right.tracker.roots.items[index].state else .dead;
+            const root_state: @TypeOf(left_state) = if (left_state == right_state)
+                left_state
+            else
+                .maybe_alive;
+            try joined.tracker.roots.append(.{ .id = id, .state = root_state });
         }
         for (left.places.items) |left_place| {
             var merged = left_place;
             if (findPlace(right.places.items, left_place.storage)) |right_place| {
-                if (!ownershipShapeEqual(left_place.value, right_place.value)) {
-                    try self.diagnostics.add(function.location, .semantic, "root ownership must have one structural location after control-flow join", .{});
-                }
                 merged.initializedness = joinInitializedness(left_place.initializedness, right_place.initializedness);
                 merged.value = try self.joinValueFacts(left_place.value, right_place.value);
             }
@@ -577,6 +603,7 @@ pub const SafetyChecker = struct {
         var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
         var field_facts = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
         var contains_integer_address = false;
+        var contains_foreign_storage = false;
         for (fields, 0..) |field, index| {
             const value = try self.evaluate(function, field.value, state);
             try dependencies.appendSlice(value.dependencies);
@@ -585,12 +612,14 @@ pub const SafetyChecker = struct {
             stored.* = value;
             try field_facts.append(.{ .index = @intCast(index), .value = stored });
             contains_integer_address = contains_integer_address or value.integer_address;
+            contains_foreign_storage = contains_foreign_storage or value.foreign_storage;
         }
         return .{
             .dependencies = try dependencies.toOwnedSlice(),
             .owned_roots = try owned_roots.toOwnedSlice(),
             .fields = try field_facts.toOwnedSlice(),
             .integer_address = contains_integer_address,
+            .foreign_storage = contains_foreign_storage,
         };
     }
 
@@ -672,6 +701,32 @@ pub const SafetyChecker = struct {
                 try self.diagnostics.add(function.location, .semantic, "root ownership was duplicated across structural places", .{});
                 return;
             }
+        }
+    }
+
+    fn rejectEscapingLocalRoots(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        state: *const FunctionState,
+    ) !void {
+        for (function.output_bindings) |binding| {
+            if (!typeContainsPointer(binding.ty)) continue;
+            const output = findPlace(state.places.items, .{ .root = binding }) orelse continue;
+            if (output.initializedness == .initialized)
+                try self.rejectEscapingValue(function, output.value, state);
+        }
+    }
+
+    fn rejectEscapingValue(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        value: facts.ValueFacts,
+        state: *const FunctionState,
+    ) !void {
+        for (value.dependencies) |dependency| {
+            if (!isLocalStorageRoot(function, state, dependency.root)) continue;
+            try self.diagnostics.add(function.location, .semantic, "function output cannot depend on a local storage root that ends before return", .{});
+            return;
         }
     }
 
@@ -1008,6 +1063,7 @@ pub const SafetyChecker = struct {
             .fresh_dependencies = effect.fresh_dependencies,
             .fresh_owned_roots = effect.fresh_owned_roots,
             .integer_address = effect.integer_address,
+            .foreign_storage = effect.foreign_storage,
         };
     }
 
@@ -1021,6 +1077,7 @@ pub const SafetyChecker = struct {
             .fresh_dependencies = effect.fresh_dependencies,
             .fresh_owned_roots = effect.fresh_owned_roots,
             .integer_address = effect.integer_address,
+            .foreign_storage = effect.foreign_storage,
         };
         for (effect.input_dependencies) |dependency| {
             if (dependency.input_index >= arguments.len) continue;
@@ -1050,6 +1107,7 @@ pub const SafetyChecker = struct {
             .fresh_dependencies = try self.mergeFreshSources(left.fresh_dependencies, right.fresh_dependencies),
             .fresh_owned_roots = try self.mergeFreshSources(left.fresh_owned_roots, right.fresh_owned_roots),
             .integer_address = left.integer_address or right.integer_address,
+            .foreign_storage = left.foreign_storage or right.foreign_storage,
         };
     }
 };
@@ -1082,22 +1140,39 @@ fn valueContainsOwnedRoot(value: facts.ValueFacts, target: facts.RootId) bool {
     return false;
 }
 
-fn ownershipShapeEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
-    if (left.owned_roots.len != right.owned_roots.len) return false;
-    for (left.owned_roots) |root| if (!containsRoot(right.owned_roots, root)) return false;
-    if (left.owned_roots.len == 0) return true;
-    if (left.fields.len != right.fields.len) return false;
-    for (left.fields) |left_field| {
-        const right_field = findField(right.fields, left_field.index) orelse return false;
-        if (!ownershipShapeEqual(left_field.value.*, right_field.value.*)) return false;
+fn isLocalStorageRoot(
+    function: *const sg.FunctionDeclaration,
+    state: *const SafetyChecker.FunctionState,
+    root: facts.RootId,
+) bool {
+    var iterator = state.storage_roots.iterator();
+    while (iterator.next()) |entry| {
+        if (entry.value_ptr.* != root) continue;
+        return bindingIndex(function.input_bindings, entry.key_ptr.*) == null;
     }
-    return true;
+    return false;
+}
+
+fn typeContainsPointer(ty: sg.Type) bool {
+    return switch (ty) {
+        .pointer_type => true,
+        .array_type => |array| typeContainsPointer(array.element_type.*),
+        .struct_type => |struct_type| blk: {
+            for (struct_type.fields) |field| if (typeContainsPointer(field.ty)) break :blk true;
+            break :blk false;
+        },
+        .choice_type => |choice| blk: {
+            for (choice.variants) |variant| if (variant.payload_type) |payload|
+                if (typeContainsPointer(payload)) break :blk true;
+            break :blk false;
+        },
+        else => false,
+    };
 }
 
 fn joinInitializedness(left: value_state.Initializedness, right: value_state.Initializedness) value_state.Initializedness {
     if (left == right) return left;
-    if (left == .moved or right == .moved) return .moved;
-    return .deinitialized;
+    return .maybe_initialized;
 }
 
 fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChecker.FunctionState) bool {
@@ -1114,7 +1189,11 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 }
 
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
-    if (left.integer_address != right.integer_address or left.dependencies.len != right.dependencies.len or left.owned_roots.len != right.owned_roots.len or left.fields.len != right.fields.len) return false;
+    if (left.integer_address != right.integer_address or
+        left.foreign_storage != right.foreign_storage or
+        left.dependencies.len != right.dependencies.len or
+        left.owned_roots.len != right.owned_roots.len or
+        left.fields.len != right.fields.len) return false;
     for (left.dependencies, right.dependencies) |a, b| if (a.root != b.root) return false;
     for (left.owned_roots, right.owned_roots) |a, b| if (a != b) return false;
     if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
@@ -1230,6 +1309,7 @@ fn projectionsEqual(left: []const place.Projection, right: []const place.Project
 
 fn outputEffectEqual(left: facts.OutputEffect, right: facts.OutputEffect) bool {
     if (left.integer_address != right.integer_address or
+        left.foreign_storage != right.foreign_storage or
         !std.mem.eql(facts.FreshRootSource, left.fresh_dependencies, right.fresh_dependencies) or
         !std.mem.eql(facts.FreshRootSource, left.fresh_owned_roots, right.fresh_owned_roots)) return false;
     if (left.input_dependencies.len != right.input_dependencies.len or left.fields.len != right.fields.len) return false;

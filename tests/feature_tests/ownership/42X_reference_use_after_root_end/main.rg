@@ -1,11 +1,9 @@
 main(.system: System) -> (.status_code: Int32) := {
-    byte :: UInt8 = 7
-    address ::= cast#(.to: UIntNative)(.value = $&byte)
-    raw ::= raw_pointer#(.t: UInt8)(.address = address)
-    reference ::= establish_fresh_reference#(.t: UInt8)(.raw = raw)
+    allocation ::= allocate_owned(.self = system.allocator, .size = 1)
+    reference ::= allocation.data
 
-    deallocate(.self = system.allocator, .data = reference, .size = 1)
-    if reference& == 7 {
+    deinit(.self = $&allocation, .allocator = system.allocator)
+    if reference& == 0 {
         status_code = 0
     }
 }

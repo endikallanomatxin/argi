@@ -2,6 +2,7 @@ const tok = @import("../2_tokens/token.zig");
 
 pub const Initializedness = enum {
     initialized,
+    maybe_initialized,
     moved,
     deinitialized,
 };

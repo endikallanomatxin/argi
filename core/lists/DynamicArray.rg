@@ -54,7 +54,7 @@ init #(.t: Type) (
 
     bytes :: UIntNative = actual_capacity * element_size
     p& = (
-        .allocation = (
+        .allocation = establish_allocation(
             .data = allocate(.self = allocator, .size = bytes),
             .size = bytes,
         ),
@@ -67,13 +67,7 @@ deinit #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&DynamicArray#(.t: t)
 ) -> () := {
-    zero :: UIntNative = 0
-    deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
-    self& = (
-        .allocation = self&.allocation,
-        .length = zero,
-        .capacity = zero,
-    )
+    deinit(.allocator = allocator, .self = $&self&.allocation)
 }
 
 copy #(.t: Type) (
@@ -128,13 +122,10 @@ dynamic_array_grow #(.t: Type) (
         memcpy_bytes(.dst = dst_view, .src = src_view)
     }
 
-    deallocate(.self = allocator, .data = array&.allocation.data, .size = array&.allocation.size)
+    deinit(.allocator = allocator, .self = $&array&.allocation)
 
     array& = (
-        .allocation = (
-            .data = new_data,
-            .size = new_bytes,
-        ),
+        .allocation = establish_allocation(.data = new_data, .size = new_bytes),
         .length = array&.length,
         .capacity = new_capacity,
     )
@@ -171,13 +162,10 @@ dynamic_array_grow_growing #(.t: Type) (
                 memcpy_bytes(.dst = dst_view, .src = src_view)
             }
 
-            deallocate(.self = allocator, .data = array&.allocation.data, .size = array&.allocation.size)
+            deinit(.allocator = allocator, .self = $&array&.allocation)
 
             array& = (
-                .allocation = (
-                    .data = new_data,
-                    .size = new_bytes,
-                ),
+                .allocation = establish_allocation(.data = new_data, .size = new_bytes),
                 .length = array&.length,
                 .capacity = new_capacity,
             )

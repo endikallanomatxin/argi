@@ -68,6 +68,14 @@ establish_allocation(
     )
 }
 
+allocate_owned(
+    .self: $&Allocator,
+    .size: UIntNative,
+) -> (.allocation: Allocation) := {
+    data ::= allocate(.self = self, .size = size)
+    allocation = establish_allocation(.data = data, .size = size)
+}
+
 deinit(
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&Allocation,

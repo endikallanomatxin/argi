@@ -6859,10 +6859,14 @@ pub const Semantizer = struct {
             },
         };
         const coerced_input = try self.coerceCallInputToExpected(&chosen.input, tv_in, call.input, s);
-        self.cancelExplicitDeinitAutoCleanup(chosen, coerced_input, s);
+        const consumed_auto_deinit = self.explicitDeinitAutoCleanupBinding(chosen, coerced_input, s);
 
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
-        fc_ptr.* = .{ .callee = chosen, .input = coerced_input.node };
+        fc_ptr.* = .{
+            .callee = chosen,
+            .input = coerced_input.node,
+            .consumes_auto_deinit = consumed_auto_deinit,
+        };
 
         const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, call.callee_loc, self.allocator);
 
@@ -6986,14 +6990,14 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = nullable_info.some_value_type };
     }
 
-    fn cancelExplicitDeinitAutoCleanup(
+    fn explicitDeinitAutoCleanupBinding(
         self: *Semantizer,
         chosen: *sg.FunctionDeclaration,
         coerced_input: typ.TypedExpr,
         s: *Scope,
-    ) void {
-        if (!std.mem.eql(u8, chosen.name, "deinit")) return;
-        if (coerced_input.node.content != .struct_value_literal) return;
+    ) ?*const sg.BindingDeclaration {
+        if (!std.mem.eql(u8, chosen.name, "deinit")) return null;
+        if (coerced_input.node.content != .struct_value_literal) return null;
 
         const input_value = coerced_input.node.content.struct_value_literal;
         const positional_prefix = @min(input_value.dispatch_prefix_positional_count, input_value.fields.len);
@@ -7006,7 +7010,8 @@ pub const Semantizer = struct {
             if (arg_node.content != .address_of) continue;
             const inner = arg_node.content.address_of;
             if (inner.content != .binding_use) continue;
-            _ = self.cancelAutoDeinitForBinding(inner.content.binding_use, s);
+            if (self.hasAutoDeinitForBinding(inner.content.binding_use, s))
+                return inner.content.binding_use;
         }
 
         for (chosen.input.fields[positional_prefix..]) |expected_field| {
@@ -7017,8 +7022,22 @@ pub const Semantizer = struct {
             if (actual_field.value.content != .address_of) continue;
             const inner = actual_field.value.content.address_of;
             if (inner.content != .binding_use) continue;
-            _ = self.cancelAutoDeinitForBinding(inner.content.binding_use, s);
+            if (self.hasAutoDeinitForBinding(inner.content.binding_use, s))
+                return inner.content.binding_use;
         }
+        return null;
+    }
+
+    fn hasAutoDeinitForBinding(self: *Semantizer, binding: *const sg.BindingDeclaration, s: *Scope) bool {
+        _ = self;
+        var cur: ?*Scope = s;
+        while (cur) |scope_ptr| : (cur = scope_ptr.parent) {
+            for (scope_ptr.deferred.items) |group| {
+                if (group.nodes.len != 1 or group.nodes[0].content != .auto_deinit_binding) continue;
+                if (group.nodes[0].content.auto_deinit_binding.binding == binding) return true;
+            }
+        }
+        return false;
     }
 
     fn extractCallBindingAccess(

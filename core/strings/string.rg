@@ -24,7 +24,7 @@ string_with_length(
     match allocate_result {
         ..ok payload {
             out :: String = (
-                .allocation = (
+                .allocation = establish_allocation(
                     .data = cast#(.to: $&UInt8)(.value = payload),
                     .size = allocation_size,
                 ),
@@ -55,7 +55,7 @@ string_with_capacity(
     match allocate_result {
         ..ok payload {
             out :: String = (
-                .allocation = (
+                .allocation = establish_allocation(
                     .data = cast#(.to: $&UInt8)(.value = payload),
                     .size = allocation_size,
                 ),
@@ -78,10 +78,7 @@ init (
     allocation_size ::= length + 1
     data ::= allocate(.self = allocator, .size = allocation_size)
     p& = (
-        .allocation = (
-            .data = data,
-            .size = allocation_size,
-        ),
+        .allocation = establish_allocation(.data = data, .size = allocation_size),
         .length = length,
     )
     bytes_set(.string = p, .index = length, .value = 0)
@@ -102,10 +99,7 @@ init (
     allocation_size ::= actual_capacity + 1
     data ::= allocate(.self = allocator, .size = allocation_size)
     p& = (
-        .allocation = (
-            .data = data,
-            .size = allocation_size,
-        ),
+        .allocation = establish_allocation(.data = data, .size = allocation_size),
         .length = 0,
     )
     bytes_set(.string = p, .index = 0, .value = 0)
@@ -115,15 +109,7 @@ deinit (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&String,
 ) -> () := {
-    zero :: UIntNative = 0
-    deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
-    self& = (
-        .allocation = (
-            .data = self&.allocation.data,
-            .size = self&.allocation.size,
-        ),
-        .length = zero,
-    )
+    deinit(.allocator = allocator, .self = $&self&.allocation)
 }
 
 copy (
@@ -133,10 +119,7 @@ copy (
     allocation_size ::= self.length + 1
     new_data ::= allocate(.self = allocator, .size = allocation_size)
     out = (
-        .allocation = (
-            .data = new_data,
-            .size = allocation_size,
-        ),
+        .allocation = establish_allocation(.data = new_data, .size = allocation_size),
         .length = self.length,
     )
 
@@ -248,12 +231,9 @@ ensure_capacity(
     nul_ptr ::= mutable_reference_offset#(.t: UInt8)(.base = new_data, .elements = self&.length).reference
     nul_ptr& = 0
 
-    deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
+    deinit(.allocator = allocator, .self = $&self&.allocation)
     self& = (
-        .allocation = (
-            .data = new_data,
-            .size = new_allocation_size,
-        ),
+        .allocation = establish_allocation(.data = new_data, .size = new_allocation_size),
         .length = self&.length,
     )
 }
@@ -284,12 +264,9 @@ ensure_capacity_growing(
             nul_ptr ::= mutable_reference_offset#(.t: UInt8)(.base = new_data, .elements = self&.length).reference
             nul_ptr& = 0
 
-            deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
+            deinit(.allocator = allocator, .self = $&self&.allocation)
             self& = (
-                .allocation = (
-                    .data = new_data,
-                    .size = new_allocation_size,
-                ),
+                .allocation = establish_allocation(.data = new_data, .size = new_allocation_size),
                 .length = self&.length,
             )
             result = ..ok Void()

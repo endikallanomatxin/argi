@@ -457,6 +457,9 @@ pub const AutoDeinitField = struct {
 pub const FunctionCall = struct {
     callee: *const FunctionDeclaration,
     input: *const SGNode, // Arguments
+    /// Set only when the semantizer proves that this call consumes the exact
+    /// binding for which automatic cleanup was scheduled.
+    consumes_auto_deinit: ?*const BindingDeclaration = null,
 };
 
 pub const Virtualize = struct {

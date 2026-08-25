@@ -1419,10 +1419,13 @@ test "feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param" {
     );
 }
 
-test "feature_tests/pointers/06_explicit_pointer_casts" {
-    const test_path = "tests/feature_tests/pointers/06_explicit_pointer_casts";
-    try expectSuccessfulBuild(test_path);
-    try run(test_path);
+test "feature_tests/pointers/06X_explicit_pointer_casts" {
+    try buildExpectFailExact("tests/feature_tests/pointers/06X_explicit_pointer_casts",
+        \\tests/feature_tests/pointers/06X_explicit_pointer_casts/main.rg:1:1: error: raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
+        \\  main () -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
 }
 
 test "feature_tests/pointers/07X_pointer_arithmetic_requires_cast" {
@@ -2907,13 +2910,21 @@ test "feature_tests/ownership/39_stable_field_reference_survives_replacement" {
 }
 
 test "feature_tests/ownership/40_raw_pointer_establish_fresh" {
-    const test_path = "tests/feature_tests/ownership/40_raw_pointer_establish_fresh";
-    try expectSuccessfulBuild(test_path);
+    try buildExpectFailExact("tests/feature_tests/ownership/40_raw_pointer_establish_fresh",
+        \\tests/feature_tests/ownership/40_raw_pointer_establish_fresh/main.rg:1:1: error: raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
 }
 
 test "feature_tests/ownership/41_raw_pointer_establish_inherit" {
-    const test_path = "tests/feature_tests/ownership/41_raw_pointer_establish_inherit";
-    try expectSuccessfulBuild(test_path);
+    try buildExpectFailExact("tests/feature_tests/ownership/41_raw_pointer_establish_inherit",
+        \\tests/feature_tests/ownership/41_raw_pointer_establish_inherit/main.rg:1:1: error: raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
 }
 
 test "feature_tests/ownership/42X_reference_use_after_root_end" {
@@ -2942,6 +2953,37 @@ test "feature_tests/ownership/55X_deinit_through_alias_read" {
     try buildExpectFailExact("tests/feature_tests/ownership/55X_deinit_through_alias_read",
         \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:1:1: error: place rooted at 'allocation' is deinitialized and cannot be used
         \\  main(.system: System) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/56_branch_ownership_cleanup_resolves" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/56_branch_ownership_cleanup_resolves");
+}
+
+test "feature_tests/ownership/57X_return_reference_to_local" {
+    try buildExpectFailExact("tests/feature_tests/ownership/57X_return_reference_to_local",
+        \\tests/feature_tests/ownership/57X_return_reference_to_local/main.rg:1:1: error: function output cannot depend on a local storage root that ends before return
+        \\  bad() -> (.result: &Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/58X_null_safe_reference" {
+    try buildExpectFailExact("tests/feature_tests/ownership/58X_null_safe_reference",
+        \\tests/feature_tests/ownership/58X_null_safe_reference/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/59X_branch_deinit_then_use" {
+    try buildExpectFailExact("tests/feature_tests/ownership/59X_branch_deinit_then_use",
+        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:1:1: error: place rooted at 'allocation' is maybe_initialized and cannot be used
+        \\  main(.system: System, .condition: Bool = false) -> (.status_code: Int32) := {
         \\  ^
         \\
     );

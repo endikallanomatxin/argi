@@ -30,6 +30,7 @@ const Symbol = struct {
     ref: llvm.c.LLVMValueRef, // alloca ó función
     sem_type: ?sem.Type = null,
     initialized: bool = false, // para bindings
+    needs_deinit_ref: llvm.c.LLVMValueRef = null,
 };
 
 const TypedValue = struct {
@@ -981,6 +982,7 @@ pub const CodeGenerator = struct {
             }
 
             storage = c.LLVMBuildAlloca(tmp_builder, llvm_decl_ty, cname.ptr);
+            const needs_deinit_ref = c.LLVMBuildAlloca(tmp_builder, c.LLVMInt1Type(), "needs.deinit");
             try self.current_scope.symbols.put(b.name, .{
                 .cname = cname,
                 .mutability = b.mutability,
@@ -988,7 +990,9 @@ pub const CodeGenerator = struct {
                 .ref = storage,
                 .sem_type = b.ty,
                 .initialized = init_tv != null,
+                .needs_deinit_ref = needs_deinit_ref,
             });
+            _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), if (init_tv != null) 1 else 0, 0), needs_deinit_ref);
             try self.binding_storage.put(b, .{
                 .ref = storage,
                 .type_ref = llvm_decl_ty,
@@ -1353,6 +1357,8 @@ pub const CodeGenerator = struct {
 
         const val = c.LLVMBuildLoad2(self.builder, sym.type_ref, sym.ref, sym.cname.ptr);
         sym.initialized = false;
+        if (sym.needs_deinit_ref != null)
+            _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), 0, 0), sym.needs_deinit_ref);
         return .{ .value_ref = val, .type_ref = sym.type_ref, .sem_type = sym.sem_type };
     }
 
@@ -1403,6 +1409,15 @@ pub const CodeGenerator = struct {
         if (self.current_scope.lookup(adb.binding.name)) |sym| {
             if (!sym.initialized) return;
 
+            const current_bb = c.LLVMGetInsertBlock(self.builder);
+            const function = c.LLVMGetBasicBlockParent(current_bb);
+            const cleanup_bb = c.LLVMAppendBasicBlock(function, "autodeinit.run");
+            const continue_bb = c.LLVMAppendBasicBlock(function, "autodeinit.done");
+            const needs_deinit = c.LLVMBuildLoad2(self.builder, c.LLVMInt1Type(), sym.needs_deinit_ref, "needs.deinit");
+            _ = c.LLVMBuildCondBr(self.builder, needs_deinit, cleanup_bb, continue_bb);
+            c.LLVMPositionBuilderAtEnd(self.builder, cleanup_bb);
+            _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), 0, 0), sym.needs_deinit_ref);
+
             if (adb.deinit_fn) |deinit_fn| {
                 const input_node = adb.input orelse return CodegenError.InvalidType;
                 const call = try self.allocator.create(sem.FunctionCall);
@@ -1412,6 +1427,8 @@ pub const CodeGenerator = struct {
             } else {
                 try self.genAutoDeinitPointer(sym.ref, adb.binding.ty, null, null, 0, adb.fields);
             }
+            _ = c.LLVMBuildBr(self.builder, continue_bb);
+            c.LLVMPositionBuilderAtEnd(self.builder, continue_bb);
             return;
         }
 
@@ -1660,6 +1677,8 @@ pub const CodeGenerator = struct {
 
         _ = c.LLVMBuildStore(self.builder, rhs_val, sym_ptr.*.ref);
         sym_ptr.*.initialized = true;
+        if (sym_ptr.*.needs_deinit_ref != null)
+            _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), 1, 0), sym_ptr.*.needs_deinit_ref);
         return .{ .value_ref = rhs_val, .type_ref = sym_ptr.*.type_ref, .sem_type = sym_ptr.*.sem_type };
     }
 
@@ -2363,6 +2382,7 @@ pub const CodeGenerator = struct {
                 1,
                 call_name,
             );
+            self.markAutoDeinitConsumed(fc);
 
             if (ret_ty == c.LLVMVoidType()) {
                 return null;
@@ -2422,6 +2442,7 @@ pub const CodeGenerator = struct {
             @intCast(idx),
             call_name,
         );
+        self.markAutoDeinitConsumed(fc);
 
         // Return according to number of return fields
         switch (callee_decl.output.fields.len) {
@@ -2434,6 +2455,13 @@ pub const CodeGenerator = struct {
                 return .{ .value_ref = loaded, .type_ref = sret_ty, .sem_type = .{ .struct_type = &callee_decl.output } };
             },
         }
+    }
+
+    fn markAutoDeinitConsumed(self: *CodeGenerator, fc: *const sem.FunctionCall) void {
+        const binding = fc.consumes_auto_deinit orelse return;
+        const sym = self.current_scope.lookup(binding.name) orelse return;
+        if (sym.needs_deinit_ref == null) return;
+        _ = c.LLVMBuildStore(self.builder, c.LLVMConstInt(c.LLVMInt1Type(), 0, 0), sym.needs_deinit_ref);
     }
 
     fn genTypeInitializerInto(self: *CodeGenerator, ti: *const sem.TypeInitializer, storage: llvm.c.LLVMValueRef) CodegenError!void {

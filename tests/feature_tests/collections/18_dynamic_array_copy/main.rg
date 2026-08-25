@@ -42,19 +42,16 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     copied_strings :: DynamicArray#(.t: String) = strings
     #defer deinit(.self = $&copied_strings, .allocator = system.allocator)
 
-    copied_first_addr ::= dynamic_array_element_address#(.t: String)(.array = &copied_strings, .offset = 0).address
-    copied_first_ptr : &String = cast#(.to: &String)(.value = copied_first_addr)
+    copied_first_ptr : &String = &copied_strings[0]
     first_string ::= copy(.self = copied_first_ptr&, .allocator = system.allocator)
     #defer deinit(.self = $&first_string, .allocator = system.allocator)
     bytes_set(.string = $&first_string, .index = 0, .value = 78)
     copied_strings[0] = first_string
 
-    original_first_addr ::= dynamic_array_element_address#(.t: String)(.array = &strings, .offset = 0).address
-    original_first_ptr : &String = cast#(.to: &String)(.value = original_first_addr)
+    original_first_ptr : &String = &strings[0]
     original_first ::= copy(.self = original_first_ptr&, .allocator = system.allocator)
     #defer deinit(.self = $&original_first, .allocator = system.allocator)
-    copied_first_after_addr ::= dynamic_array_element_address#(.t: String)(.array = &copied_strings, .offset = 0).address
-    copied_first_after_ptr : &String = cast#(.to: &String)(.value = copied_first_after_addr)
+    copied_first_after_ptr : &String = &copied_strings[0]
     copied_first ::= copy(.self = copied_first_after_ptr&, .allocator = system.allocator)
     #defer deinit(.self = $&copied_first, .allocator = system.allocator)
 
