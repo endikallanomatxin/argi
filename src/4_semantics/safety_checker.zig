@@ -49,6 +49,7 @@ pub const SafetyChecker = struct {
         tracker: facts.Tracker,
         places: std.array_list.Managed(facts.PlaceFacts),
         storage_roots: std.AutoHashMap(*const sg.BindingDeclaration, facts.RootId),
+        input_roots: std.array_list.Managed(facts.RootId),
         reachable: bool = true,
 
         fn init(allocator: std.mem.Allocator) FunctionState {
@@ -56,6 +57,7 @@ pub const SafetyChecker = struct {
                 .tracker = facts.Tracker.init(allocator),
                 .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
                 .storage_roots = std.AutoHashMap(*const sg.BindingDeclaration, facts.RootId).init(allocator),
+                .input_roots = std.array_list.Managed(facts.RootId).init(allocator),
             };
         }
 
@@ -63,6 +65,7 @@ pub const SafetyChecker = struct {
             self.tracker.deinit();
             self.places.deinit();
             self.storage_roots.deinit();
+            self.input_roots.deinit();
         }
 
         fn clone(self: *const FunctionState, allocator: std.mem.Allocator) !FunctionState {
@@ -71,6 +74,7 @@ pub const SafetyChecker = struct {
             try result.places.appendSlice(self.places.items);
             var roots = self.storage_roots.iterator();
             while (roots.next()) |entry| try result.storage_roots.put(entry.key_ptr.*, entry.value_ptr.*);
+            try result.input_roots.appendSlice(self.input_roots.items);
             result.reachable = self.reachable;
             return result;
         }
@@ -86,6 +90,7 @@ pub const SafetyChecker = struct {
         for (function.input_bindings) |binding| {
             if (binding.ty == .pointer_type) {
                 const root = try state.tracker.establish(.fresh);
+                try state.input_roots.append(root);
                 try self.setPlace(&state, .{ .root = binding }, .initialized, .{ .dependencies = try self.oneDependency(root) });
             } else {
                 try self.setPlace(&state, .{ .root = binding }, .initialized, .{});
@@ -104,13 +109,14 @@ pub const SafetyChecker = struct {
             switch (node.content) {
                 .binding_declaration => |binding| {
                     const value = if (binding.initialization) |initialization|
-                        try self.evaluate(function, initialization, state)
+                        self.copyReferenceValue(initialization, try self.evaluate(function, initialization, state))
                     else
                         facts.ValueFacts{};
                     try self.setPlace(state, .{ .root = binding }, .initialized, value);
                 },
                 .binding_assignment => |assignment| {
-                    try self.setPlace(state, .{ .root = assignment.sym_id }, .initialized, try self.evaluate(function, assignment.value, state));
+                    const value = self.copyReferenceValue(assignment.value, try self.evaluate(function, assignment.value, state));
+                    try self.setPlace(state, .{ .root = assignment.sym_id }, .initialized, value);
                 },
                 .struct_field_store => |store| {
                     _ = try self.evaluate(function, store.struct_ptr, state);
@@ -233,7 +239,7 @@ pub const SafetyChecker = struct {
                         break :blk place_facts.value;
                     }
                 }
-                break :blk facts.ValueFacts{};
+                break :blk facts.ValueFacts{ .dependencies = pointer.dependencies };
             },
             .struct_value_literal => |literal| try self.aggregate(function, literal.fields, state),
             .struct_field_access => |access| blk: {
@@ -305,10 +311,24 @@ pub const SafetyChecker = struct {
         var arguments: []const sg.StructValueLiteralField = &.{};
         if (call.input.content == .struct_value_literal) arguments = call.input.content.struct_value_literal.fields;
         const argument_values = try self.allocator.alloc(facts.ValueFacts, arguments.len);
-        for (arguments, 0..) |argument, index| argument_values[index] = try self.evaluate(function, argument.value, state);
-        if (std.mem.eql(u8, call.callee.name, "deallocate") and arguments.len > 1) {
-            const data = argument_values[1];
-            for (data.dependencies) |dependency| state.tracker.end(dependency.root);
+        for (arguments, 0..) |argument, index| {
+            argument_values[index] = self.copyReferenceValue(argument.value, try self.evaluate(function, argument.value, state));
+        }
+        if (call.callee.safety_primitive == .end_root) {
+            if (argument_values.len == 0 or argument_values[0].cleanup_responsibilities.len == 0) {
+                var consumes_input_authority = false;
+                if (argument_values.len != 0) for (argument_values[0].dependencies) |dependency| {
+                    if (containsRoot(state.input_roots.items, dependency.root)) {
+                        consumes_input_authority = true;
+                        state.tracker.end(dependency.root);
+                    }
+                };
+                if (!consumes_input_authority) {
+                    try self.diagnostics.add(function.location, .semantic, "ending a root requires cleanup responsibility", .{});
+                    return .{};
+                }
+            }
+            for (argument_values[0].cleanup_responsibilities) |responsibility| state.tracker.end(responsibility.root);
             return .{};
         }
         const summary = self.summaries.get(call.callee) orelse return .{};
@@ -433,6 +453,7 @@ pub const SafetyChecker = struct {
         while (right_roots.next()) |entry| if (!joined.storage_roots.contains(entry.key_ptr.*))
             try joined.storage_roots.put(entry.key_ptr.*, entry.value_ptr.*);
         joined.reachable = true;
+        try joined.input_roots.appendSlice(left.input_roots.items);
         destination.deinit();
         destination.* = joined;
     }
@@ -479,7 +500,7 @@ pub const SafetyChecker = struct {
         var field_facts = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
         var contains_integer_address = false;
         for (fields, 0..) |field, index| {
-            const value = try self.evaluate(function, field.value, state);
+            const value = self.copyReferenceValue(field.value, try self.evaluate(function, field.value, state));
             try dependencies.appendSlice(value.dependencies);
             try responsibilities.appendSlice(value.cleanup_responsibilities);
             const stored = try self.allocator.create(facts.ValueFacts);
@@ -588,6 +609,13 @@ pub const SafetyChecker = struct {
         return result;
     }
 
+    fn copyReferenceValue(self: *SafetyChecker, node: *const sg.SGNode, value: facts.ValueFacts) facts.ValueFacts {
+        _ = self;
+        if (node.content == .move_value) return value;
+        if (node.sem_type != null and node.sem_type.? == .pointer_type) return value.referenceCopy();
+        return value;
+    }
+
     fn oneResponsibility(self: *SafetyChecker, root: facts.RootId) ![]const facts.CleanupResponsibility {
         const result = try self.allocator.alloc(facts.CleanupResponsibility, 1);
         result[0] = .{ .root = root };
@@ -602,8 +630,7 @@ pub const SafetyChecker = struct {
     }
 
     fn infer(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !bool {
-        if (function.safety_primitive != .none)
-            return self.replaceSingleOutput(function, try self.primitiveOutputEffect(function.safety_primitive));
+        if (function.safety_primitive != .none) return self.replacePrimitiveSummary(function);
         const body = function.body orelse return false;
         const previous = self.summaries.get(function).?;
         const outputs = try self.allocator.dupe(facts.OutputEffect, previous.outputs);
@@ -630,11 +657,8 @@ pub const SafetyChecker = struct {
             .function_call => |call| {
                 if (call.input.content != .struct_value_literal) continue;
                 const arguments = call.input.content.struct_value_literal.fields;
-                if (std.mem.eql(u8, call.callee.name, "deallocate")) {
-                    if (arguments.len > 1) {
-                        const effect = try self.inferExpression(function, arguments[1].value);
-                        try appendEffectInput(effect, result);
-                    }
+                if (call.callee.safety_primitive == .end_root) {
+                    if (arguments.len > 0) try appendEffectInput(try self.inferExpression(function, arguments[0].value), result);
                     continue;
                 }
                 const summary = self.summaries.get(call.callee) orelse continue;
@@ -663,6 +687,17 @@ pub const SafetyChecker = struct {
         const outputs = try self.allocator.alloc(facts.OutputEffect, 1);
         outputs[0] = effect;
         try self.summaries.put(function, .{ .outputs = outputs });
+        return true;
+    }
+
+    fn replacePrimitiveSummary(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !bool {
+        const previous = self.summaries.get(function).?;
+        const outputs = try self.allocator.alloc(facts.OutputEffect, function.output.fields.len);
+        @memset(outputs, .{});
+        if (outputs.len == 1) outputs[0] = try self.primitiveOutputEffect(function.safety_primitive);
+        const ended: []const u32 = if (function.safety_primitive == .end_root) &.{0} else &.{};
+        if (effectsEqual(previous.outputs, outputs) and std.mem.eql(u32, previous.ends_input_roots, ended)) return false;
+        try self.summaries.put(function, .{ .outputs = outputs, .ends_input_roots = ended });
         return true;
     }
 
@@ -739,6 +774,7 @@ pub const SafetyChecker = struct {
             .mutable_reinterpret_reference,
             .read_reference,
             => self.inputOutputEffect(0, &.{}),
+            .end_root => .{},
         };
     }
 
@@ -917,6 +953,11 @@ fn projectValueFacts(value: facts.ValueFacts, projections: []const place.Project
 fn appendDependency(list: *std.array_list.Managed(facts.ReferenceDependency), dependency: facts.ReferenceDependency) !void {
     for (list.items) |existing| if (existing.root == dependency.root) return;
     try list.append(dependency);
+}
+
+fn containsRoot(roots: []const facts.RootId, root: facts.RootId) bool {
+    for (roots) |candidate| if (candidate == root) return true;
+    return false;
 }
 
 fn appendResponsibility(list: *std.array_list.Managed(facts.CleanupResponsibility), responsibility: facts.CleanupResponsibility) !void {

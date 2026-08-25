@@ -24,6 +24,7 @@ fn safetyPrimitiveForDeclaration(name: []const u8, file: []const u8) sg.SafetyPr
         .{ .name = "reinterpret_reference", .primitive = .reinterpret_reference },
         .{ .name = "mutable_reinterpret_reference", .primitive = .mutable_reinterpret_reference },
         .{ .name = "read_reference", .primitive = .read_reference },
+        .{ .name = "end_root", .primitive = .end_root },
     };
     for (entries) |entry| if (std.mem.eql(u8, name, entry.name)) return entry.primitive;
     return .none;

@@ -2999,6 +2999,27 @@ test "feature_tests/ownership/52_user_primitive_name_has_no_authority" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/53X_alias_cannot_end_root" {
+    try buildExpectFailExact("tests/feature_tests/ownership/53X_alias_cannot_end_root",
+        \\tests/feature_tests/ownership/53X_alias_cannot_end_root/main.rg:1:1: error: ending a root requires cleanup responsibility
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/54_move_transfers_cleanup_authority" {
+    const test_path = "tests/feature_tests/ownership/54_move_transfers_cleanup_authority";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/55_user_deallocate_has_no_temporal_effect" {
+    const test_path = "tests/feature_tests/ownership/55_user_deallocate_has_no_temporal_effect";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/ownership/29_string_view_is_copyable" {
     const test_path = "tests/feature_tests/ownership/29_string_view_is_copyable";
     try expectSuccessfulBuild(test_path);

@@ -50,3 +50,6 @@ mutable_reference_offset#(.t: Type)(
     address ::= cast#(.to: UIntNative)(.value = base) + elements * size_of(.type = t)
     reference = cast#(.to: $&t)(.value = address)
 }
+
+end_root#(.t: Type)(.resource: $&t) -> () := {
+}
