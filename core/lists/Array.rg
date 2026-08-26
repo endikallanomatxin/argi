@@ -20,15 +20,6 @@ Array#(.n: UIntNative, .t: Type) implements Iterable#(.t: t)
 Array#(.n: UIntNative, .t: Type) implements ROPointerIterable#(.t: t)
 Array#(.n: UIntNative, .t: Type) implements RWPointerIterable#(.t: t)
 
-array_element_address#(.n: UIntNative, .t: Type)(
-    .self: &Array#(.n = n, .t: t),
-    .index: UIntNative,
-) -> (.address: UIntNative) := {
-    base :: UIntNative = cast#(.to: UIntNative)(.value = self)
-    stride :: UIntNative = size_of(.type = t)
-    address = base + index * stride
-}
-
 to_iterator#(.n: UIntNative, .t: Type) (
     .value: &Array#(.n = n, .t: t)
 ) -> (.iterator: ArrayIterator#(.n = n, .t: t)) := {
@@ -89,7 +80,8 @@ next#(.n: UIntNative, .t: Type) (
 ) -> (.value: &t) := {
     iterator :: ArrayROPointerIterator#(.n = n, .t: t) = self&
     current_index :: UIntNative = iterator.index
-    value = cast#(.to: &t)(.value = array_element_address#(.n = n, .t: t)(.self = iterator.array, .index = current_index).address)
+    base ::= reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = iterator.array).reference
+    value = reference_offset#(.t: t)(.base = base, .elements = current_index).reference
     self& = (
         .array = iterator.array,
         .index = current_index + 1,
@@ -108,7 +100,8 @@ next#(.n: UIntNative, .t: Type) (
 ) -> (.value: $&t) := {
     iterator :: ArrayRWPointerIterator#(.n = n, .t: t) = self&
     current_index :: UIntNative = iterator.index
-    value = cast#(.to: $&t)(.value = array_element_address#(.n = n, .t: t)(.self = iterator.array, .index = current_index).address)
+    base ::= mutable_reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = iterator.array).reference
+    value = mutable_reference_offset#(.t: t)(.base = base, .elements = current_index).reference
     self& = (
         .array = iterator.array,
         .index = current_index + 1,

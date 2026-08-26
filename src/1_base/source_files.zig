@@ -4,7 +4,14 @@ const std = @import("std");
 pub const SourceFile = struct {
     path: []const u8, // ruta (relativa a cwd)
     code: []const u8, // contenido completo
+    origin: Origin = .user,
+
+    pub const Origin = enum { user, bundled_core };
 };
+
+fn markBundledCore(files: []SourceFile) void {
+    for (files) |*file| file.origin = .bundled_core;
+}
 
 const DirSet = std.StringHashMap(void);
 const ImportList = std.array_list.Managed(ResolvedImport);
@@ -715,7 +722,9 @@ pub fn collectModuleWithOptions(
         ordered_seen.deinit();
     }
 
+    const core_start = list.items.len;
     try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files);
+    markBundledCore(list.items[core_start..]);
 
     try validateModuleGraphAcyclic(
         alloc,
@@ -806,7 +815,9 @@ pub fn collectWithEntrySourceWithOptions(
     }
 
     // ─── core/ ────────────────────────────────────────────────────────────
+    const core_start = list.items.len;
     try collectRgFilesRecursively(alloc, io, &list, resolved_core_dir, &seen_files);
+    markBundledCore(list.items[core_start..]);
 
     // ─── carpeta del entrypoint del usuario y imports explícitos ─────────
     const user_dir = std.fs.path.dirname(user_path) orelse ".";

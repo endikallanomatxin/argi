@@ -1,5 +1,5 @@
 main(.system: System) -> (.status_code: Int32) := {
-    allocation ::= allocate_owned(.self = system.allocator, .size = 1)
+    allocation ::= allocate(.self = system.allocator, .size = 1)
     reference ::= allocation.data
 
     deinit(.self = $&allocation)

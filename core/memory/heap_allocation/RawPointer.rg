@@ -14,7 +14,7 @@ establish_fresh_reference#(.t: Type)(
 
 establish_inherited_reference#(.t: Type)(
     .raw: RawPointer#(.t: t),
-    .root: $&Any,
+    .root: &Any,
 ) -> (.reference: $&t) := {
     reference = cast#(.to: $&t)(.value = raw.address)
 }

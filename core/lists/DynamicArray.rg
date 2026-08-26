@@ -75,20 +75,26 @@ copy #(.t: Type) (
 
     i :: UIntNative = 0
     while i < self.length {
-        addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = &self, .offset = i).address
-        ptr : &t = cast#(.to: &t)(.value = addr)
+        ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = &self, .offset = i).pointer
         push#(.t: t)(.allocator = allocator, .self = $&out, .value = ptr&)
         i = i + 1
     }
 }
 
-dynamic_array_element_address #(.t: Type) (
+dynamic_array_element_ro_pointer #(.t: Type) (
     .array: &DynamicArray#(.t: t),
     .offset: UIntNative,
-) -> (.address: UIntNative) := {
-    element_size :: UIntNative = size_of(.type = t)
-    base :: UIntNative = cast#(.to: UIntNative)(.value = array&.allocation.data)
-    address = base + offset * element_size
+) -> (.pointer: &t) := {
+    base ::= reinterpret_reference#(.from: UInt8, .to: t)(.base = array&.allocation.data).reference
+    pointer = reference_offset#(.t: t)(.base = base, .elements = offset).reference
+}
+
+dynamic_array_element_rw_pointer #(.t: Type) (
+    .array: $&DynamicArray#(.t: t),
+    .offset: UIntNative,
+) -> (.pointer: $&t) := {
+    base ::= mutable_reinterpret_reference#(.from: UInt8, .to: t)(.base = array&.allocation.data).reference
+    pointer = mutable_reference_offset#(.t: t)(.base = base, .elements = offset).reference
 }
 
 dynamic_array_grow #(.t: Type) (
@@ -197,8 +203,7 @@ push #(.t: Type) (
         offset = self&.length
     }
 
-    ptr_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = offset).address
-    ptr : $&t = cast#(.to: $&t)(.value = ptr_addr)
+    ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = offset).pointer
     ptr& = value
     self&.length = offset + one
     result = ..ok Void()
@@ -210,8 +215,7 @@ pop #(.t: Type) (
     one :: UIntNative = 1
     new_length ::= self&.length - one
     self&.length = new_length
-    addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = new_length).address
-    ptr : &t = cast#(.to: &t)(.value = addr)
+    ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = new_length).pointer
     value = ptr&
 }
 
@@ -235,14 +239,14 @@ insert #(.t: Type) (
         bytes_to_shift :: UIntNative = count_to_shift * element_size
         temp_allocation ::= allocate(.self = allocator, .size = bytes_to_shift)
         temp_data ::= temp_allocation.data
-        temp_addr :: UIntNative = cast#(.to: UIntNative)(.value = temp_data)
-
-        source_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = i).address
-        dest_addr ::= source_addr + element_size
+        source_byte_offset :: UIntNative = i * element_size
+        dest_byte_offset :: UIntNative = source_byte_offset + element_size
+        source_data ::= mutable_reference_offset#(.t: UInt8)(.base = self&.allocation.data, .elements = source_byte_offset).reference
+        dest_data ::= mutable_reference_offset#(.t: UInt8)(.base = self&.allocation.data, .elements = dest_byte_offset).reference
 
         temp_view ::= array_view#(.t: UInt8)(.data = temp_data, .length = bytes_to_shift)
-        source_view ::= array_view_from_address#(.t: UInt8)(.address = source_addr, .length = bytes_to_shift)
-        dest_view ::= array_view_from_address#(.t: UInt8)(.address = dest_addr, .length = bytes_to_shift)
+        source_view ::= array_view#(.t: UInt8)(.data = source_data, .length = bytes_to_shift)
+        dest_view ::= array_view#(.t: UInt8)(.data = dest_data, .length = bytes_to_shift)
 
         memcpy_bytes(.dst = temp_view, .src = source_view)
         memcpy_bytes(.dst = dest_view, .src = temp_view)
@@ -250,8 +254,7 @@ insert #(.t: Type) (
         deinit(.self = $&temp_allocation)
     }
 
-    ptr_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = i).address
-    ptr : $&t = cast#(.to: $&t)(.value = ptr_addr)
+    ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = i).pointer
     ptr& = value
     self&.length = current_length + one
 }
@@ -288,12 +291,14 @@ insert_growing #(.t: Type) (
                 temp_allocation ::= ~payload
                 temp_data ::= temp_allocation.data
 
-                source_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = i).address
-                dest_addr ::= source_addr + element_size
+                source_byte_offset :: UIntNative = i * element_size
+                dest_byte_offset :: UIntNative = source_byte_offset + element_size
+                source_data ::= mutable_reference_offset#(.t: UInt8)(.base = self&.allocation.data, .elements = source_byte_offset).reference
+                dest_data ::= mutable_reference_offset#(.t: UInt8)(.base = self&.allocation.data, .elements = dest_byte_offset).reference
 
                 temp_view ::= array_view#(.t: UInt8)(.data = temp_data, .length = bytes_to_shift)
-                source_view ::= array_view_from_address#(.t: UInt8)(.address = source_addr, .length = bytes_to_shift)
-                dest_view ::= array_view_from_address#(.t: UInt8)(.address = dest_addr, .length = bytes_to_shift)
+                source_view ::= array_view#(.t: UInt8)(.data = source_data, .length = bytes_to_shift)
+                dest_view ::= array_view#(.t: UInt8)(.data = dest_data, .length = bytes_to_shift)
 
                 memcpy_bytes(.dst = temp_view, .src = source_view)
                 memcpy_bytes(.dst = dest_view, .src = temp_view)
@@ -307,8 +312,7 @@ insert_growing #(.t: Type) (
         }
     }
 
-    ptr_addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = i).address
-    ptr : $&t = cast#(.to: $&t)(.value = ptr_addr)
+    ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = i).pointer
     ptr& = value
     self&.length = current_length + one
     result = ..ok Void()
@@ -318,8 +322,7 @@ operator get[] #(.t: Type) (
     .self: &DynamicArray#(.t: t),
     .index: UIntNative,
 ) -> (.value: t) := {
-    addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
-    ptr : &t = cast#(.to: &t)(.value = addr)
+    ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = index).pointer
     value = ptr&
 }
 
@@ -327,16 +330,14 @@ operator get_ro_pointer[] #(.t: Type) (
     .self: &DynamicArray#(.t: t),
     .index: UIntNative,
 ) -> (.value: &t) := {
-    addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
-    value = cast#(.to: &t)(.value = addr)
+    value = dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = index).pointer
 }
 
 operator get_rw_pointer[] #(.t: Type) (
     .self: $&DynamicArray#(.t: t),
     .index: UIntNative,
 ) -> (.value: $&t) := {
-    addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
-    value = cast#(.to: $&t)(.value = addr)
+    value = dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = index).pointer
 }
 
 operator set[] #(.t: Type) (
@@ -344,8 +345,7 @@ operator set[] #(.t: Type) (
     .index: UIntNative,
     .value: t,
 ) -> () := {
-    addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = self, .offset = index).address
-    ptr : $&t = cast#(.to: $&t)(.value = addr)
+    ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = index).pointer
     ptr& = value
 }
 
@@ -388,8 +388,7 @@ next#(.t: Type) (
 ) -> (.value: t) := {
     iterator :: DynamicArrayIterator#(.t: t) = self&
     current_index :: UIntNative = iterator.index
-    addr :: UIntNative = dynamic_array_element_address#(.t: t)(.array = iterator.array, .offset = current_index).address
-    ptr : &t = cast#(.to: &t)(.value = addr)
+    ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = iterator.array, .offset = current_index).pointer
     value = ptr&
     self& = (
         .array = iterator.array,
@@ -409,7 +408,7 @@ next#(.t: Type) (
 ) -> (.value: &t) := {
     iterator :: DynamicArrayROPointerIterator#(.t: t) = self&
     current_index :: UIntNative = iterator.index
-    value = cast#(.to: &t)(.value = dynamic_array_element_address#(.t: t)(.array = iterator.array, .offset = current_index).address)
+    value = dynamic_array_element_ro_pointer#(.t: t)(.array = iterator.array, .offset = current_index).pointer
     self& = (
         .array = iterator.array,
         .index = current_index + 1,
@@ -428,7 +427,7 @@ next#(.t: Type) (
 ) -> (.value: $&t) := {
     iterator :: DynamicArrayRWPointerIterator#(.t: t) = self&
     current_index :: UIntNative = iterator.index
-    value = cast#(.to: $&t)(.value = dynamic_array_element_address#(.t: t)(.array = iterator.array, .offset = current_index).address)
+    value = dynamic_array_element_rw_pointer#(.t: t)(.array = iterator.array, .offset = current_index).pointer
     self& = (
         .array = iterator.array,
         .index = current_index + 1,

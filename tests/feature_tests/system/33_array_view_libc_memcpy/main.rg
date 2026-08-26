@@ -1,7 +1,7 @@
 main() -> (.status_code: Int32) := {
     allocator :: CAllocator = CAllocator()
-    src_allocation ::= allocate_owned(.self = $&allocator, .size = 4)
-    dst_allocation ::= allocate_owned(.self = $&allocator, .size = 4)
+    src_allocation ::= allocate(.self = $&allocator, .size = 4)
+    dst_allocation ::= allocate(.self = $&allocator, .size = 4)
 
     src ::= array_view#(.t: UInt8)(
         .data = src_allocation.data,

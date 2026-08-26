@@ -3,7 +3,6 @@ LocalAllocator : Type = (.deallocations: Int32)
 allocate(.self: $&LocalAllocator, .size: UIntNative) -> (.allocation: Allocation) := {
     storage ::= malloc(.size = size)
     address :: UIntNative = cast#(.to: UIntNative)(.value = storage)
-    data ::= cast#(.to: $&UInt8)(.value = address)
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
     allocation = establish_allocation(.storage = storage, .size = size, .deallocator = deallocator)
 }
@@ -19,7 +18,7 @@ LocalAllocator implements Deallocator
 
 make() -> (.allocation: Allocation) := {
     allocator :: LocalAllocator = (.deallocations = 0)
-    allocation = allocate_owned(.self = $&allocator, .size = 1)
+    allocation = allocate(.self = $&allocator, .size = 1)
 }
 
 main() -> (.status_code: Int32) := {

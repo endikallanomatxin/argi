@@ -44,18 +44,9 @@ deinit#(.base_type: Type: Reader)(
     deinit(.self = $&self&.buffer)
 }
 
-buffered_reader_byte_address#(.base_type: Type: Reader)(
-    .self: &BufferedReader#(.base_type: base_type),
-    .index: UIntNative,
-) -> (.address: UIntNative) := {
-    base :: UIntNative = cast#(.to: UIntNative)(.value = self&.buffer.data)
-    address = base + index
-}
-
 read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_type)) -> (.result: Errable#(.t: ReadByte, .reasons: (..stream_read_failed))) := {
     if self&.start < self&.end {
-        addr :: UIntNative = buffered_reader_byte_address(.self = self, .index = self&.start).address
-        ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
+        ptr ::= reference_offset#(.t: UInt8)(.base = self&.buffer.data, .elements = self&.start).reference
         result = ..ok ..ok ptr&
         self&.start = self&.start + 1
         return
@@ -79,8 +70,7 @@ read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_t
     }
 
     payload ::= first_payload..ok
-    addr :: UIntNative = buffered_reader_byte_address(.self = self, .index = 0).address
-    ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
+    ptr ::= mutable_reference_offset#(.t: UInt8)(.base = self&.buffer.data, .elements = 0).reference
     ptr& = payload
     self&.start = 1
     self&.end = 1

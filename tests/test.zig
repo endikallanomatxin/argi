@@ -3052,6 +3052,38 @@ test "feature_tests/ownership/69X_arena_reset_ends_child_domain" {
     );
 }
 
+test "feature_tests/ownership/70_zero_size_allocation_cleanup" {
+    const test_path = "tests/feature_tests/ownership/70_zero_size_allocation_cleanup";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/71_fallible_allocation_failure_cleanup" {
+    const test_path = "tests/feature_tests/ownership/71_fallible_allocation_failure_cleanup";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/72X_duplicate_storage_establishment" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/72X_duplicate_storage_establishment",
+        "physical storage authority has already been consumed",
+    );
+}
+
+test "feature_tests/ownership/73_storage_authority_move" {
+    const test_path = "tests/feature_tests/ownership/73_storage_authority_move";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/74X_core_path_not_trusted" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/74X_core_path_not_trusted",
+        "an integer address cannot establish a safe reference",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

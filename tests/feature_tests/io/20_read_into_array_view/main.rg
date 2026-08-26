@@ -24,7 +24,7 @@ DummyInput implements Reader
 
 main() -> (.status_code: Int32) := {
     allocator :: CAllocator = CAllocator()
-    allocation ::= allocate_owned(.self = $&allocator, .size = 4)
+    allocation ::= allocate(.self = $&allocator, .size = 4)
 
     buffer ::= array_view#(.t: UInt8)(
         .data = allocation.data,

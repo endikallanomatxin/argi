@@ -13,7 +13,7 @@ const gen = @import("generics.zig");
 const Scope = @import("scope.zig").Scope;
 const SemErr = @import("errors.zig").SemErr;
 
-fn safetyPrimitiveForDeclaration(name: []const u8, file: []const u8) sg.SafetyPrimitive {
+fn safetyPrimitiveForBundledDeclaration(name: []const u8, file: []const u8) sg.SafetyPrimitive {
     const Entry = struct { name: []const u8, primitive: sg.SafetyPrimitive };
     const raw_pointer_entries = [_]Entry{
         .{ .name = "establish_fresh_reference", .primitive = .establish_fresh_reference },
@@ -212,6 +212,15 @@ pub const Semantizer = struct {
     next_choice_option_id: u32 = 1,
     next_inferred_choice_identity_id: u32 = 1,
     function_reach_stack: std.array_list.Managed(ReachFunctionContext),
+
+    fn safetyPrimitiveForDeclaration(self: *const Semantizer, name: []const u8, file: []const u8) sg.SafetyPrimitive {
+        for (self.diags.source_files) |source| {
+            if (!std.mem.eql(u8, source.path, file)) continue;
+            if (source.origin != .bundled_core) return .none;
+            return safetyPrimitiveForBundledDeclaration(name, file);
+        }
+        return .none;
+    }
 
     pub fn init(
         alloc: *const std.mem.Allocator,
@@ -840,7 +849,7 @@ pub const Semantizer = struct {
             .id = self.freshFunctionId(),
             .name = decl.name.string,
             .location = loc,
-            .safety_primitive = safetyPrimitiveForDeclaration(decl.name.string, loc.file),
+            .safety_primitive = self.safetyPrimitiveForDeclaration(decl.name.string, loc.file),
             .is_deinit = std.mem.eql(u8, decl.name.string, "deinit"),
             .is_once = decl.is_once,
             .is_test = is_test,
@@ -3507,7 +3516,6 @@ pub const Semantizer = struct {
             };
             if (concrete_direct) |concrete_ty| {
                 try s.appendAbstractImpl(abstract_name, .{ .ty = concrete_ty, .location = loc });
-                self.markAllocatorAllocateImplementation(abstract_name, concrete_ty, s);
                 const n = try self.makeNoopNode(loc);
                 try s.nodes.append(n);
                 return .{ .node = n, .ty = .{ .builtin = .Any } };
@@ -3542,24 +3550,10 @@ pub const Semantizer = struct {
         // Defer conformance checks until call sites or a validation pass.
 
         try s.appendAbstractImpl(abstract_name, .{ .ty = concrete_ty, .location = loc });
-        self.markAllocatorAllocateImplementation(abstract_name, concrete_ty, s);
 
         const n = try self.makeNoopNode(loc);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
-    }
-
-    fn markAllocatorAllocateImplementation(self: *Semantizer, abstract_name: []const u8, concrete_ty: sg.Type, s: *Scope) void {
-        _ = self;
-        if (!std.mem.eql(u8, abstract_name, "Allocator")) return;
-        const candidates = s.functions.getPtr("allocate") orelse return;
-        for (candidates.items) |candidate| {
-            for (candidate.input.fields) |field| {
-                if (!std.mem.eql(u8, field.name, "self") or field.ty != .pointer_type) continue;
-                if (typ.typesExactlyEqual(field.ty.pointer_type.child.*, concrete_ty))
-                    candidate.is_allocator_allocate = true;
-            }
-        }
     }
 
     fn handleAbstractDefault(
@@ -4647,7 +4641,7 @@ pub const Semantizer = struct {
                 .id = self.freshFunctionId(),
                 .name = f.name.string,
                 .location = loc,
-                .safety_primitive = safetyPrimitiveForDeclaration(f.name.string, loc.file),
+                .safety_primitive = self.safetyPrimitiveForDeclaration(f.name.string, loc.file),
                 .is_deinit = std.mem.eql(u8, f.name.string, "deinit"),
                 .is_once = f.is_once,
                 .is_test = is_test,
@@ -4869,7 +4863,7 @@ pub const Semantizer = struct {
                 .id = self.freshFunctionId(),
                 .name = f.name.string,
                 .location = loc,
-                .safety_primitive = safetyPrimitiveForDeclaration(f.name.string, loc.file),
+                .safety_primitive = self.safetyPrimitiveForDeclaration(f.name.string, loc.file),
                 .is_deinit = std.mem.eql(u8, f.name.string, "deinit"),
                 .is_once = f.is_once,
                 .is_test = is_test,
@@ -10263,7 +10257,7 @@ pub const Semantizer = struct {
             .name = tmpl.name,
             .location = tmpl.location,
             .origin_kind = .generic_instantiation,
-            .safety_primitive = safetyPrimitiveForDeclaration(tmpl.name, tmpl.location.file),
+            .safety_primitive = self.safetyPrimitiveForDeclaration(tmpl.name, tmpl.location.file),
             .is_deinit = std.mem.eql(u8, tmpl.name, "deinit"),
             .generic_dispatch_kind = switch (tmpl.dispatch_kind) {
                 .regular => .regular,

@@ -10,7 +10,6 @@ allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.allocation: Allocat
         .alloc_count = self&.alloc_count + 1,
         .dealloc_count = self&.dealloc_count,
     )
-    data ::= cast#(.to: $&UInt8)(.value = raw_addr)
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
     allocation = establish_allocation(.storage = storage, .size = size, .deallocator = deallocator)
 }

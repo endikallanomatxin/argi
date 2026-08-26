@@ -14,6 +14,7 @@ pub const SafetyChecker = struct {
     virtual_summaries: std.AutoHashMap(*const sg.VirtualMethodRegistry, facts.FunctionSummary),
     invalid_virtual_summaries: std.AutoHashMap(*const sg.VirtualMethodRegistry, void),
     inference_bindings: ?*std.AutoHashMap(*const sg.BindingDeclaration, facts.OutputEffect),
+    inference_place_bindings: ?*std.AutoHashMap(*const sg.BindingDeclaration, []const facts.InputPath),
 
     pub fn init(allocator: *const std.mem.Allocator, diags: *diagnostics.Diagnostics) SafetyChecker {
         return .{
@@ -23,6 +24,7 @@ pub const SafetyChecker = struct {
             .virtual_summaries = std.AutoHashMap(*const sg.VirtualMethodRegistry, facts.FunctionSummary).init(allocator.*),
             .invalid_virtual_summaries = std.AutoHashMap(*const sg.VirtualMethodRegistry, void).init(allocator.*),
             .inference_bindings = null,
+            .inference_place_bindings = null,
         };
     }
 
@@ -60,7 +62,9 @@ pub const SafetyChecker = struct {
     const FunctionState = struct {
         const OwnershipEdge = struct { owner: facts.RootId, owned: facts.RootId };
         const StorageRoot = struct { storage: place.Place, root: facts.RootId };
+        const StorageAuthorityState = enum { available, maybe_consumed, consumed };
         tracker: facts.Tracker,
+        storage_authorities: std.array_list.Managed(StorageAuthorityState),
         places: std.array_list.Managed(facts.PlaceFacts),
         ownership_edges: std.array_list.Managed(OwnershipEdge),
         storage_roots: std.array_list.Managed(StorageRoot),
@@ -70,6 +74,7 @@ pub const SafetyChecker = struct {
         fn init(allocator: std.mem.Allocator) FunctionState {
             return .{
                 .tracker = facts.Tracker.init(allocator),
+                .storage_authorities = std.array_list.Managed(StorageAuthorityState).init(allocator),
                 .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
                 .ownership_edges = std.array_list.Managed(OwnershipEdge).init(allocator),
                 .storage_roots = std.array_list.Managed(StorageRoot).init(allocator),
@@ -78,6 +83,7 @@ pub const SafetyChecker = struct {
 
         fn deinit(self: *FunctionState) void {
             self.tracker.deinit();
+            self.storage_authorities.deinit();
             self.places.deinit();
             self.ownership_edges.deinit();
             self.storage_roots.deinit();
@@ -86,6 +92,7 @@ pub const SafetyChecker = struct {
         fn clone(self: *const FunctionState, allocator: std.mem.Allocator) !FunctionState {
             var result = FunctionState.init(allocator);
             try result.tracker.roots.appendSlice(self.tracker.roots.items);
+            try result.storage_authorities.appendSlice(self.storage_authorities.items);
             try result.places.appendSlice(self.places.items);
             try result.ownership_edges.appendSlice(self.ownership_edges.items);
             try result.storage_roots.appendSlice(self.storage_roots.items);
@@ -98,7 +105,6 @@ pub const SafetyChecker = struct {
     fn validateFunction(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !void {
         const body = function.body orelse return;
         if (function.safety_primitive != .none) return;
-        if (std.mem.indexOf(u8, function.location.file, "core/") != null) return;
         var state = FunctionState.init(self.allocator.*);
         defer state.deinit();
         // Argi pointer parameters may alias. Until a call-site proof can
@@ -324,12 +330,9 @@ pub const SafetyChecker = struct {
                     break :blk facts.ValueFacts{
                         .integer_address = true,
                         .foreign_storage = value.foreign_storage or value.dependencies.len == 0,
-                        .storage_authority = value.storage_authority,
+                        .storage_authorities = value.storage_authorities,
                     };
-                if (target_is_reference and !target_is_raw_any and
-                    (source_is_integer or value.integer_address) and
-                    !(value.storage_authority and function.is_allocator_allocate))
-                {
+                if (target_is_reference and !target_is_raw_any and (source_is_integer or value.integer_address)) {
                     try self.diagnostics.add(function.location, .semantic, "an integer address cannot establish a safe reference; use RawPointer and explicit root establishment", .{});
                 }
                 break :blk .{};
@@ -366,22 +369,38 @@ pub const SafetyChecker = struct {
         if (call.input.content == .struct_value_literal) arguments = call.input.content.struct_value_literal.fields;
         const argument_values = try self.allocator.alloc(facts.ValueFacts, arguments.len);
         for (arguments, 0..) |argument, index| argument_values[index] = try self.evaluate(function, argument.value, state);
-        if (call.callee.safety_primitive == .raw_allocated_storage)
-            return .{ .foreign_storage = true, .storage_authority = true };
+        if (call.callee.safety_primitive == .raw_allocated_storage) {
+            const authority: facts.StorageAuthorityId = @enumFromInt(state.storage_authorities.items.len);
+            try state.storage_authorities.append(.available);
+            return .{ .foreign_storage = true, .storage_authorities = try self.oneStorageAuthority(authority) };
+        }
         if (call.callee.safety_primitive == .establish_fresh_reference)
             try self.diagnostics.add(function.location, .semantic, "fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries", .{});
-        if (call.callee.safety_primitive == .establish_allocation and
-            (argument_values.len == 0 or !argument_values[0].storage_authority))
-            try self.diagnostics.add(function.location, .semantic, "allocation root establishment requires storage returned by an authorized allocator boundary", .{});
+        if (call.callee.safety_primitive == .establish_allocation or
+            call.callee.safety_primitive == .establish_inherited_reference)
+        {
+            const requires_authority = call.callee.safety_primitive == .establish_allocation;
+            if (requires_authority and (argument_values.len == 0 or argument_values[0].storage_authorities.len == 0)) {
+                try self.diagnostics.add(function.location, .semantic, "allocation root establishment requires storage returned by an authorized allocator boundary", .{});
+            } else if (argument_values.len != 0) {
+                for (argument_values[0].storage_authorities) |authority| {
+                    const index = @intFromEnum(authority);
+                    if (index >= state.storage_authorities.items.len or state.storage_authorities.items[index] != .available) {
+                        try self.diagnostics.add(function.location, .semantic, "physical storage authority has already been consumed", .{});
+                    } else {
+                        state.storage_authorities.items[index] = .consumed;
+                    }
+                }
+            }
+        }
         if (call.callee.body == null and call.callee.output.fields.len == 1 and
             call.callee.output.fields[0].ty == .pointer_type)
             return .{ .foreign_storage = true };
         const summary = self.summaries.get(call.callee) orelse return .{};
-        for (summary.deinitializes_inputs) |index| {
-            if (index >= arguments.len) continue;
-            if (arguments[index].value.content == .address_of and
-                rootBinding(arguments[index].value.content.address_of) != null)
-            {
+        for (summary.input_post_states) |post_state| {
+            const index = post_state.target.input_index;
+            if (post_state.initializedness != .deinitialized or post_state.target.projections.len != 0 or index >= arguments.len) continue;
+            if (arguments[index].value.content == .address_of and rootBinding(arguments[index].value.content.address_of) != null) {
                 @constCast(call).consumes_auto_deinit = arguments[index].value.content.address_of;
             }
         }
@@ -405,11 +424,10 @@ pub const SafetyChecker = struct {
                 try self.diagnostics.add(call.input.location, .semantic, "virtual method '{s}' has incompatible safety effects across implementations", .{call.method_name});
             return .{};
         };
-        for (summary.deinitializes_inputs) |index| {
-            if (index >= arguments.len) continue;
-            if (arguments[index].value.content == .address_of and
-                rootBinding(arguments[index].value.content.address_of) != null)
-            {
+        for (summary.input_post_states) |post_state| {
+            const index = post_state.target.input_index;
+            if (post_state.initializedness != .deinitialized or post_state.target.projections.len != 0 or index >= arguments.len) continue;
+            if (arguments[index].value.content == .address_of and rootBinding(arguments[index].value.content.address_of) != null) {
                 @constCast(call).consumes_auto_deinit = arguments[index].value.content.address_of;
             }
         }
@@ -446,33 +464,15 @@ pub const SafetyChecker = struct {
         argument_values: []const facts.ValueFacts,
         state: *FunctionState,
     ) !void {
-        for (summary.ends_input_roots) |index| {
-            if (index >= arguments.len) continue;
-            const target = argument_values[index].referenced_place;
-            if (target) |storage| {
-                if (self.getPlace(state, storage)) |place_facts| {
-                    for (place_facts.value.owned_roots) |owned_root| state.tracker.end(owned_root);
-                    var remaining = place_facts.value;
-                    remaining.owned_roots = &.{};
-                    try self.setPlace(state, storage, .initialized, remaining);
-                }
-            } else {
-                for (argument_values[index].dependencies) |dependency| state.tracker.end(dependency.root);
-            }
-        }
-        for (summary.deinitializes_inputs) |index| {
-            if (index >= arguments.len) continue;
-            const target = argument_values[index].referenced_place orelse
-                try self.resolvePlace(arguments[index].value, state);
-            if (target) |storage| try self.setPlace(state, storage, .deinitialized, .{});
-        }
         var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.RootId).init(self.allocator.*);
         defer fresh_roots.deinit();
+        var fresh_authorities = std.AutoHashMap(facts.FreshRootSource, facts.StorageAuthorityId).init(self.allocator.*);
+        defer fresh_authorities.deinit();
         for (summary.input_post_states) |post_state| {
             if (post_state.target.input_index >= arguments.len) continue;
             const index = post_state.target.input_index;
-            if (argument_values[index].referenced_place == null and post_state.target.references_place_storage) {
-                if (post_state.ends_previous_roots)
+            if (argument_values[index].referenced_place == null) {
+                if (post_state.ends_previous_roots and post_state.target.projections.len == 0)
                     for (argument_values[index].dependencies) |dependency| state.tracker.end(dependency.root);
                 continue;
             }
@@ -484,7 +484,7 @@ pub const SafetyChecker = struct {
             }
             if (post_state.refreshes_storage_root) try self.refreshStorageRoot(state, target);
             const value = if (post_state.initializedness == .initialized)
-                try self.instantiateOutputWithFresh(post_state.value, argument_values, state, &fresh_roots)
+                try self.instantiateOutputWithFresh(post_state.value, argument_values, state, &fresh_roots, &fresh_authorities)
             else
                 facts.ValueFacts{};
             try self.setPlace(state, target, post_state.initializedness, value);
@@ -499,7 +499,9 @@ pub const SafetyChecker = struct {
     ) !facts.ValueFacts {
         var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.RootId).init(self.allocator.*);
         defer fresh_roots.deinit();
-        return self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots);
+        var fresh_authorities = std.AutoHashMap(facts.FreshRootSource, facts.StorageAuthorityId).init(self.allocator.*);
+        defer fresh_authorities.deinit();
+        return self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, &fresh_authorities);
     }
 
     fn instantiateOutputWithFresh(
@@ -508,6 +510,7 @@ pub const SafetyChecker = struct {
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
         fresh_roots: *std.AutoHashMap(facts.FreshRootSource, facts.RootId),
+        fresh_authorities: *std.AutoHashMap(facts.FreshRootSource, facts.StorageAuthorityId),
     ) !facts.ValueFacts {
         var result: facts.ValueFacts = .{};
         var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
@@ -523,21 +526,24 @@ pub const SafetyChecker = struct {
             try appendOwnedRoot(&owned_roots, root);
         }
         result.owned_roots = try owned_roots.toOwnedSlice();
-        for (effect.input_dependencies) |dependency| {
-            if (dependency.input_index >= arguments.len) continue;
-            if (dependency.references_place_storage) {
-                if (arguments[dependency.input_index].referenced_place) |argument_place| {
-                    var target = argument_place;
-                    for (dependency.projections) |projection| target = try self.projectedPlace(target, projection);
-                    const root = try self.storageRootForPlace(target, state);
-                    try appendDependency(&dependencies, .{ .root = root });
-                    result.dependencies = try dependencies.toOwnedSlice();
-                    result.referenced_place = target;
-                    continue;
-                }
+        var authorities = std.array_list.Managed(facts.StorageAuthorityId).init(self.allocator.*);
+        for (effect.fresh_storage_authorities) |source|
+            try appendStorageAuthority(&authorities, try self.instantiateFreshStorageAuthority(source, state, fresh_authorities));
+        result.storage_authorities = try authorities.toOwnedSlice();
+        for (effect.input_places) |path| {
+            if (path.input_index >= arguments.len) continue;
+            if (arguments[path.input_index].referenced_place) |argument_place| {
+                var target = argument_place;
+                for (path.projections) |projection| target = try self.projectedPlace(target, projection);
+                try appendDependency(&dependencies, .{ .root = try self.storageRootForPlace(target, state) });
+                result.dependencies = try dependencies.toOwnedSlice();
+                result.referenced_place = target;
             }
-            var input = arguments[dependency.input_index];
-            input = projectValueFacts(input, dependency.projections);
+        }
+        for (effect.input_dependencies) |dependency| {
+            if (dependency.path.input_index >= arguments.len) continue;
+            var input = arguments[dependency.path.input_index];
+            input = projectValueFacts(input, dependency.path.projections);
             if (!dependency.transfers_ownership) input.owned_roots = &.{};
             result = try self.mergeValueFacts(result, input);
         }
@@ -545,7 +551,7 @@ pub const SafetyChecker = struct {
             const fields = try self.allocator.alloc(facts.FieldFacts, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
                 const value = try self.allocator.create(facts.ValueFacts);
-                value.* = try self.instantiateOutputWithFresh(field.value.*, arguments, state, fresh_roots);
+                value.* = try self.instantiateOutputWithFresh(field.value.*, arguments, state, fresh_roots, fresh_authorities);
                 fields[index] = .{ .index = field.index, .value = value };
                 result = try self.mergeValueFacts(result, value.*);
             }
@@ -553,8 +559,16 @@ pub const SafetyChecker = struct {
         }
         result.integer_address = effect.integer_address;
         result.foreign_storage = result.foreign_storage or effect.foreign_storage;
-        result.storage_authority = result.storage_authority or effect.storage_authority;
         return result;
+    }
+
+    fn instantiateFreshStorageAuthority(self: *SafetyChecker, source: facts.FreshRootSource, state: *FunctionState, fresh: *std.AutoHashMap(facts.FreshRootSource, facts.StorageAuthorityId)) !facts.StorageAuthorityId {
+        _ = self;
+        if (fresh.get(source)) |authority| return authority;
+        const authority: facts.StorageAuthorityId = @enumFromInt(state.storage_authorities.items.len);
+        try state.storage_authorities.append(.available);
+        try fresh.put(source, authority);
+        return authority;
     }
 
     fn instantiateFreshRoot(
@@ -577,6 +591,9 @@ pub const SafetyChecker = struct {
         var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
         for (left.owned_roots) |owned_root| try appendOwnedRoot(&owned_roots, owned_root);
         for (right.owned_roots) |owned_root| try appendOwnedRoot(&owned_roots, owned_root);
+        var authorities = std.array_list.Managed(facts.StorageAuthorityId).init(self.allocator.*);
+        for (left.storage_authorities) |authority| try appendStorageAuthority(&authorities, authority);
+        for (right.storage_authorities) |authority| try appendStorageAuthority(&authorities, authority);
         var fields = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
         for (left.fields) |left_field| {
             var merged = left_field.value.*;
@@ -602,7 +619,7 @@ pub const SafetyChecker = struct {
             .fields = try fields.toOwnedSlice(),
             .integer_address = left.integer_address or right.integer_address,
             .foreign_storage = left.foreign_storage or right.foreign_storage,
-            .storage_authority = left.storage_authority or right.storage_authority,
+            .storage_authorities = try authorities.toOwnedSlice(),
             .referenced_place = if (left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?))
                 left.referenced_place
             else
@@ -664,6 +681,12 @@ pub const SafetyChecker = struct {
             const right_owned = index < right.tracker.roots.items.len and right.tracker.roots.items[index].owned_resource;
             try joined.tracker.roots.append(.{ .id = id, .state = root_state, .owned_resource = left_owned or right_owned });
         }
+        const authority_count = @max(left.storage_authorities.items.len, right.storage_authorities.items.len);
+        for (0..authority_count) |index| {
+            const left_state: FunctionState.StorageAuthorityState = if (index < left.storage_authorities.items.len) left.storage_authorities.items[index] else .consumed;
+            const right_state: FunctionState.StorageAuthorityState = if (index < right.storage_authorities.items.len) right.storage_authorities.items[index] else .consumed;
+            try joined.storage_authorities.append(if (left_state == right_state) left_state else .maybe_consumed);
+        }
         for (left.places.items) |left_place| {
             var merged = left_place;
             if (findPlace(right.places.items, left_place.storage)) |right_place| {
@@ -699,6 +722,12 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         increment: ?*const sg.SGNode,
     ) !void {
+        // Structural storage exists before control enters the loop. Materialize
+        // its roots before cloning the entry state so lazy first address-taking
+        // inside the body cannot look like a conditionally created lifetime at
+        // the CFG join.
+        const existing_places = try self.allocator.dupe(facts.PlaceFacts, state.places.items);
+        for (existing_places) |place_facts| _ = try self.storageRootForPlace(place_facts.storage, state);
         var entry = try state.clone(self.allocator.*);
         defer entry.deinit();
         var current = try state.clone(self.allocator.*);
@@ -734,7 +763,7 @@ pub const SafetyChecker = struct {
         var field_facts = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
         var contains_integer_address = false;
         var contains_foreign_storage = false;
-        var contains_storage_authority = false;
+        var storage_authorities = std.array_list.Managed(facts.StorageAuthorityId).init(self.allocator.*);
         for (fields, 0..) |field, index| {
             const value = try self.evaluate(function, field.value, state);
             try dependencies.appendSlice(value.dependencies);
@@ -744,7 +773,7 @@ pub const SafetyChecker = struct {
             try field_facts.append(.{ .index = @intCast(index), .value = stored });
             contains_integer_address = contains_integer_address or value.integer_address;
             contains_foreign_storage = contains_foreign_storage or value.foreign_storage;
-            contains_storage_authority = contains_storage_authority or value.storage_authority;
+            for (value.storage_authorities) |authority| try appendStorageAuthority(&storage_authorities, authority);
         }
         return .{
             .dependencies = try dependencies.toOwnedSlice(),
@@ -752,7 +781,7 @@ pub const SafetyChecker = struct {
             .fields = try field_facts.toOwnedSlice(),
             .integer_address = contains_integer_address,
             .foreign_storage = contains_foreign_storage,
-            .storage_authority = contains_storage_authority,
+            .storage_authorities = try storage_authorities.toOwnedSlice(),
         };
     }
 
@@ -1069,6 +1098,12 @@ pub const SafetyChecker = struct {
         return result;
     }
 
+    fn oneStorageAuthority(self: *SafetyChecker, authority: facts.StorageAuthorityId) ![]const facts.StorageAuthorityId {
+        const result = try self.allocator.alloc(facts.StorageAuthorityId, 1);
+        result[0] = authority;
+        return result;
+    }
+
     fn ensureEmptySummary(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !void {
         if (self.summaries.contains(function)) return;
         const outputs = try self.allocator.alloc(facts.OutputEffect, function.output.fields.len);
@@ -1098,9 +1133,7 @@ pub const SafetyChecker = struct {
         left: facts.FunctionSummary,
         right: facts.FunctionSummary,
     ) !?facts.FunctionSummary {
-        if (!std.mem.eql(u32, left.ends_input_roots, right.ends_input_roots) or
-            !std.mem.eql(u32, left.deinitializes_inputs, right.deinitializes_inputs) or
-            !inputPostStatesEqual(left.input_post_states, right.input_post_states) or
+        if (!inputPostStatesEqual(left.input_post_states, right.input_post_states) or
             left.outputs.len != right.outputs.len) return null;
 
         var fresh_map = std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource).init(self.allocator.*);
@@ -1112,8 +1145,6 @@ pub const SafetyChecker = struct {
         return .{
             .outputs = outputs,
             .input_post_states = left.input_post_states,
-            .ends_input_roots = left.ends_input_roots,
-            .deinitializes_inputs = left.deinitializes_inputs,
         };
     }
 
@@ -1125,13 +1156,14 @@ pub const SafetyChecker = struct {
     ) !?facts.OutputEffect {
         if (left.integer_address != right.integer_address or
             left.foreign_storage != right.foreign_storage or
-            left.storage_authority != right.storage_authority or
             left.fresh_dependencies.len != right.fresh_dependencies.len or
             left.fresh_owned_roots.len != right.fresh_owned_roots.len or
+            left.fresh_storage_authorities.len != right.fresh_storage_authorities.len or
             left.fields.len != right.fields.len) return null;
 
         if (!try alignFreshSources(left.fresh_dependencies, right.fresh_dependencies, fresh_map) or
-            !try alignFreshSources(left.fresh_owned_roots, right.fresh_owned_roots, fresh_map)) return null;
+            !try alignFreshSources(left.fresh_owned_roots, right.fresh_owned_roots, fresh_map) or
+            !try alignFreshSources(left.fresh_storage_authorities, right.fresh_storage_authorities, fresh_map)) return null;
 
         var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator.*);
         for (left.input_dependencies) |dependency| try appendInputDependency(&dependencies, dependency);
@@ -1142,6 +1174,9 @@ pub const SafetyChecker = struct {
         for (left.input_dependencies) |dependency| {
             if (dependency.transfers_ownership and !containsInputDependency(right.input_dependencies, dependency)) return null;
         }
+        var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        for (left.input_places) |path| try appendInputPath(&input_places, path);
+        for (right.input_places) |path| try appendInputPath(&input_places, path);
 
         const fields = try self.allocator.alloc(facts.OutputFieldEffect, left.fields.len);
         for (left.fields, right.fields, 0..) |left_field, right_field, index| {
@@ -1152,12 +1187,13 @@ pub const SafetyChecker = struct {
         }
         return .{
             .input_dependencies = try dependencies.toOwnedSlice(),
+            .input_places = try input_places.toOwnedSlice(),
             .fields = fields,
             .fresh_dependencies = left.fresh_dependencies,
             .fresh_owned_roots = left.fresh_owned_roots,
+            .fresh_storage_authorities = left.fresh_storage_authorities,
             .integer_address = left.integer_address,
             .foreign_storage = left.foreign_storage,
-            .storage_authority = left.storage_authority,
         };
     }
 
@@ -1169,8 +1205,12 @@ pub const SafetyChecker = struct {
         const outputs = try self.allocator.dupe(facts.OutputEffect, previous.outputs);
         var bindings = std.AutoHashMap(*const sg.BindingDeclaration, facts.OutputEffect).init(self.allocator.*);
         defer bindings.deinit();
+        var place_bindings = std.AutoHashMap(*const sg.BindingDeclaration, []const facts.InputPath).init(self.allocator.*);
+        defer place_bindings.deinit();
         self.inference_bindings = &bindings;
         defer self.inference_bindings = null;
+        self.inference_place_bindings = &place_bindings;
+        defer self.inference_place_bindings = null;
         try self.inferBlock(function, body, outputs);
         var post_states = std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
         try self.inferInputPostStates(function, body, &post_states);
@@ -1178,9 +1218,7 @@ pub const SafetyChecker = struct {
             for (function.input.fields, 0..) |input_field, index| {
                 if (!std.mem.eql(u8, input_field.name, "self") or input_field.ty != .pointer_type or
                     input_field.ty.pointer_type.mutability != .read_write) continue;
-                try self.recordInputPostState(&post_states, .{
-                    .input_dependencies = try self.oneInputPlaceDependency(@intCast(index), &.{}),
-                }, .deinitialized, .{}, true);
+                try self.recordInputPostState(&post_states, try self.oneInputPath(@intCast(index), &.{}), .deinitialized, .{}, true);
                 break;
             }
         }
@@ -1207,10 +1245,10 @@ pub const SafetyChecker = struct {
                 const summary = self.summaries.get(call.callee) orelse continue;
                 for (summary.input_post_states) |post_state| {
                     if (post_state.target.input_index >= arguments.len) continue;
-                    var target = try self.inferExpression(function, arguments[post_state.target.input_index].value);
-                    for (post_state.target.projections) |projection| target = try self.projectOutputEffect(target, projection);
+                    var targets = try self.inferInputPaths(function, arguments[post_state.target.input_index].value);
+                    for (post_state.target.projections) |projection| targets = try self.projectInputPaths(targets, projection);
                     const value = try self.substituteOutput(function, post_state.value, arguments);
-                    try self.recordInputPostState(states, target, post_state.initializedness, value, post_state.ends_previous_roots);
+                    try self.recordInputPostState(states, targets, post_state.initializedness, value, post_state.ends_previous_roots);
                 }
             },
             .virtual_call => |call| {
@@ -1219,25 +1257,25 @@ pub const SafetyChecker = struct {
                 const arguments = call.input.content.struct_value_literal.fields;
                 for (summary.input_post_states) |post_state| {
                     if (post_state.target.input_index >= arguments.len) continue;
-                    var target = try self.inferExpression(function, arguments[post_state.target.input_index].value);
-                    for (post_state.target.projections) |projection| target = try self.projectOutputEffect(target, projection);
-                    try self.recordInputPostState(states, target, post_state.initializedness, try self.substituteOutput(function, post_state.value, arguments), post_state.ends_previous_roots);
+                    var targets = try self.inferInputPaths(function, arguments[post_state.target.input_index].value);
+                    for (post_state.target.projections) |projection| targets = try self.projectInputPaths(targets, projection);
+                    try self.recordInputPostState(states, targets, post_state.initializedness, try self.substituteOutput(function, post_state.value, arguments), post_state.ends_previous_roots);
                 }
             },
             .pointer_assignment => |assignment| {
                 if (assignment.value.sem_type != null and !typeContainsPointer(assignment.value.sem_type.?)) continue;
-                try self.recordInputPostState(states, try self.inferExpression(function, assignment.pointer), .initialized, try self.inferExpression(function, assignment.value), false);
+                try self.recordInputPostState(states, try self.inferInputPaths(function, assignment.pointer), .initialized, try self.inferExpression(function, assignment.value), false);
             },
             .struct_field_store => |store| {
                 if (store.value.sem_type != null and !typeContainsPointer(store.value.sem_type.?)) continue;
-                const target = try self.projectOutputEffect(try self.inferExpression(function, store.struct_ptr), .{ .field = store.field_index });
-                try self.recordInputPostState(states, target, .initialized, try self.inferExpression(function, store.value), false);
+                const targets = try self.projectInputPaths(try self.inferInputPaths(function, store.struct_ptr), .{ .field = store.field_index });
+                try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false);
             },
             .array_store => |store| {
                 if (store.value.sem_type != null and !typeContainsPointer(store.value.sem_type.?)) continue;
                 const projection: place.Projection = if (staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
-                const target = try self.projectOutputEffect(try self.inferExpression(function, store.array_ptr), projection);
-                try self.recordInputPostState(states, target, .initialized, try self.inferExpression(function, store.value), false);
+                const targets = try self.projectInputPaths(try self.inferInputPaths(function, store.array_ptr), projection);
+                try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false);
             },
             .if_statement => |statement| {
                 var then_states = try cloneInputPostStates(states, self.allocator.*);
@@ -1264,11 +1302,11 @@ pub const SafetyChecker = struct {
         };
     }
 
-    fn recordInputPostState(self: *SafetyChecker, states: *std.array_list.Managed(facts.InputPlaceEffect), target: facts.OutputEffect, initializedness: value_state.Initializedness, value: facts.OutputEffect, ends_roots: bool) !void {
+    fn recordInputPostState(self: *SafetyChecker, states: *std.array_list.Managed(facts.InputPlaceEffect), targets: []const facts.InputPath, initializedness: value_state.Initializedness, value: facts.OutputEffect, ends_roots: bool) !void {
         _ = self;
-        for (target.input_dependencies) |dependency| {
+        for (targets) |target| {
             var existing_state: ?*facts.InputPlaceEffect = null;
-            for (states.items) |*existing| if (inputPlaceTargetEqual(existing.target, dependency)) {
+            for (states.items) |*existing| if (inputPlaceTargetEqual(existing.target, target)) {
                 existing_state = existing;
                 break;
             };
@@ -1279,8 +1317,8 @@ pub const SafetyChecker = struct {
                 existing.ends_previous_roots = existing.ends_previous_roots or ends_roots;
                 existing.refreshes_storage_root = existing.refreshes_storage_root or (was_deinitialized and initializedness == .initialized);
             } else if (initializedness != .initialized or ends_roots or
-                (!outputEffectIsEmpty(value) and !outputEffectOnlyDependsOnTarget(value, dependency))) try states.append(.{
-                .target = dependency,
+                (!outputEffectIsEmpty(value) and !outputEffectOnlyDependsOnTarget(value, target))) try states.append(.{
+                .target = target,
                 .initializedness = initializedness,
                 .value = value,
                 .ends_previous_roots = ends_roots,
@@ -1343,6 +1381,7 @@ pub const SafetyChecker = struct {
             .binding_declaration => |binding| {
                 const initialization = binding.initialization orelse continue;
                 try self.inference_bindings.?.put(binding, try self.inferExpression(function, initialization));
+                try self.inference_place_bindings.?.put(binding, try self.inferInputPaths(function, initialization));
             },
             .binding_assignment => |assignment| {
                 const effect = try self.inferExpression(function, assignment.value);
@@ -1350,6 +1389,7 @@ pub const SafetyChecker = struct {
                     outputs[output_index] = effect;
                 } else {
                     try self.inference_bindings.?.put(assignment.sym_id, effect);
+                    try self.inference_place_bindings.?.put(assignment.sym_id, try self.inferInputPaths(function, assignment.value));
                 }
             },
             .if_statement => |statement| {
@@ -1376,7 +1416,7 @@ pub const SafetyChecker = struct {
                 try self.inputOutputEffect(@intCast(index), &.{})
             else if (self.inference_bindings) |bindings| bindings.get(binding) orelse .{} else .{},
             .move_value => |value| self.withOwnershipTransfer(try self.inferExpression(function, value)),
-            .address_of => |value| try self.asPlaceReference(try self.withoutOwnershipTransfer(try self.inferExpression(function, value))),
+            .address_of => |value| .{ .input_places = try self.inferInputPaths(function, value) },
             .dereference => |value| try self.inferExpression(function, value.pointer),
             .struct_value_literal => |literal| try self.inferAggregate(function, literal.fields),
             .struct_field_access => |access| try self.inferProjection(function, access.struct_value, .{ .field = access.field_index }),
@@ -1387,6 +1427,31 @@ pub const SafetyChecker = struct {
             .virtual_call => |call| try self.inferVirtualCall(function, call),
             else => .{},
         };
+    }
+
+    fn inferInputPaths(self: *SafetyChecker, function: *const sg.FunctionDeclaration, node: *const sg.SGNode) anyerror![]const facts.InputPath {
+        return switch (node.content) {
+            .binding_use => |binding| if (inputIndex(function, binding)) |index|
+                try self.oneInputPath(@intCast(index), &.{})
+            else if (self.inference_place_bindings) |bindings| bindings.get(binding) orelse &.{} else &.{},
+            .address_of => |value| try self.inferInputPaths(function, value),
+            .dereference => |value| try self.inferInputPaths(function, value.pointer),
+            .struct_field_access => |access| try self.projectInputPaths(try self.inferInputPaths(function, access.struct_value), .{ .field = access.field_index }),
+            .array_index => |index| try self.projectInputPaths(try self.inferInputPaths(function, index.array_ptr), if (staticIndex(index.index)) |value| .{ .static_index = value } else .dynamic_index),
+            .explicit_cast => |cast| try self.inferInputPaths(function, cast.value),
+            else => &.{},
+        };
+    }
+
+    fn projectInputPaths(self: *SafetyChecker, paths: []const facts.InputPath, projection: place.Projection) ![]const facts.InputPath {
+        const result = try self.allocator.alloc(facts.InputPath, paths.len);
+        for (paths, 0..) |path, index| {
+            const projections = try self.allocator.alloc(place.Projection, path.projections.len + 1);
+            @memcpy(projections[0..path.projections.len], path.projections);
+            projections[path.projections.len] = projection;
+            result[index] = .{ .input_index = path.input_index, .projections = projections };
+        }
+        return result;
     }
 
     fn inferCall(self: *SafetyChecker, function: *const sg.FunctionDeclaration, call: *const sg.FunctionCall) !facts.OutputEffect {
@@ -1412,14 +1477,14 @@ pub const SafetyChecker = struct {
 
     fn oneInputDependency(self: *SafetyChecker, input_index: u32, projections: []const place.Projection) ![]const facts.InputDependency {
         const dependencies = try self.allocator.alloc(facts.InputDependency, 1);
-        dependencies[0] = .{ .input_index = input_index, .projections = projections };
+        dependencies[0] = .{ .path = .{ .input_index = input_index, .projections = projections } };
         return dependencies;
     }
 
-    fn oneInputPlaceDependency(self: *SafetyChecker, input_index: u32, projections: []const place.Projection) ![]const facts.InputDependency {
-        const dependencies = try self.oneInputDependency(input_index, projections);
-        @constCast(dependencies[0..])[0].references_place_storage = true;
-        return dependencies;
+    fn oneInputPath(self: *SafetyChecker, input_index: u32, projections: []const place.Projection) ![]const facts.InputPath {
+        const paths = try self.allocator.alloc(facts.InputPath, 1);
+        paths[0] = .{ .input_index = input_index, .projections = projections };
+        return paths;
     }
 
     fn primitiveOutputEffect(self: *SafetyChecker, primitive: sg.SafetyPrimitive, source: facts.FreshRootSource) !facts.OutputEffect {
@@ -1428,7 +1493,7 @@ pub const SafetyChecker = struct {
             .establish_fresh_reference => .{ .fresh_dependencies = try self.oneFreshSource(source) },
             .establish_inherited_reference => self.inputOutputEffect(1, &.{}),
             .establish_allocation => self.ownedAllocationEffect(source),
-            .raw_allocated_storage => .{ .foreign_storage = true, .storage_authority = true },
+            .raw_allocated_storage => .{ .foreign_storage = true, .fresh_storage_authorities = try self.oneFreshSource(source) },
             .reference_offset,
             .mutable_reference_offset,
             .reinterpret_reference,
@@ -1469,14 +1534,6 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn asPlaceReference(self: *SafetyChecker, effect: facts.OutputEffect) !facts.OutputEffect {
-        const dependencies = try self.allocator.dupe(facts.InputDependency, effect.input_dependencies);
-        for (dependencies) |*dependency| dependency.references_place_storage = true;
-        var result = effect;
-        result.input_dependencies = dependencies;
-        return result;
-    }
-
     fn inferAggregate(self: *SafetyChecker, function: *const sg.FunctionDeclaration, fields: []const sg.StructValueLiteralField) !facts.OutputEffect {
         const output_fields = try self.allocator.alloc(facts.OutputFieldEffect, fields.len);
         var result: facts.OutputEffect = .{};
@@ -1500,19 +1557,21 @@ pub const SafetyChecker = struct {
         }
         const dependencies = try self.allocator.alloc(facts.InputDependency, effect.input_dependencies.len);
         for (effect.input_dependencies, 0..) |dependency, index| {
-            const projections = try self.allocator.alloc(place.Projection, dependency.projections.len + 1);
-            @memcpy(projections[0..dependency.projections.len], dependency.projections);
-            projections[dependency.projections.len] = projection;
+            const projections = try self.allocator.alloc(place.Projection, dependency.path.projections.len + 1);
+            @memcpy(projections[0..dependency.path.projections.len], dependency.path.projections);
+            projections[dependency.path.projections.len] = projection;
             dependencies[index] = dependency;
-            dependencies[index].projections = projections;
+            dependencies[index].path.projections = projections;
         }
+        const input_places = try self.projectInputPaths(effect.input_places, projection);
         return .{
             .input_dependencies = dependencies,
+            .input_places = input_places,
             .fresh_dependencies = effect.fresh_dependencies,
             .fresh_owned_roots = effect.fresh_owned_roots,
+            .fresh_storage_authorities = effect.fresh_storage_authorities,
             .integer_address = effect.integer_address,
             .foreign_storage = effect.foreign_storage,
-            .storage_authority = effect.storage_authority,
         };
     }
 
@@ -1525,14 +1584,22 @@ pub const SafetyChecker = struct {
         var result: facts.OutputEffect = .{
             .fresh_dependencies = effect.fresh_dependencies,
             .fresh_owned_roots = effect.fresh_owned_roots,
+            .fresh_storage_authorities = effect.fresh_storage_authorities,
             .integer_address = effect.integer_address,
             .foreign_storage = effect.foreign_storage,
-            .storage_authority = effect.storage_authority,
         };
+        var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        for (effect.input_places) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var substituted = try self.inferInputPaths(function, arguments[path.input_index].value);
+            for (path.projections) |projection| substituted = try self.projectInputPaths(substituted, projection);
+            for (substituted) |candidate| try appendInputPath(&input_places, candidate);
+        }
+        result.input_places = try input_places.toOwnedSlice();
         for (effect.input_dependencies) |dependency| {
-            if (dependency.input_index >= arguments.len) continue;
-            var argument = try self.inferExpression(function, arguments[dependency.input_index].value);
-            for (dependency.projections) |projection| argument = try self.projectOutputEffect(argument, projection);
+            if (dependency.path.input_index >= arguments.len) continue;
+            var argument = try self.inferExpression(function, arguments[dependency.path.input_index].value);
+            for (dependency.path.projections) |projection| argument = try self.projectOutputEffect(argument, projection);
             if (dependency.transfers_ownership) argument = self.withOwnershipTransfer(argument) else argument = try self.withoutOwnershipTransfer(argument);
             result = try self.mergeOutputEffects(result, argument);
         }
@@ -1552,13 +1619,17 @@ pub const SafetyChecker = struct {
         var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator.*);
         for (left.input_dependencies) |dependency| try appendInputDependency(&dependencies, dependency);
         for (right.input_dependencies) |dependency| try appendInputDependency(&dependencies, dependency);
+        var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        for (left.input_places) |path| try appendInputPath(&input_places, path);
+        for (right.input_places) |path| try appendInputPath(&input_places, path);
         return .{
             .input_dependencies = try dependencies.toOwnedSlice(),
+            .input_places = try input_places.toOwnedSlice(),
             .fresh_dependencies = try self.mergeFreshSources(left.fresh_dependencies, right.fresh_dependencies),
             .fresh_owned_roots = try self.mergeFreshSources(left.fresh_owned_roots, right.fresh_owned_roots),
+            .fresh_storage_authorities = try self.mergeFreshSources(left.fresh_storage_authorities, right.fresh_storage_authorities),
             .integer_address = left.integer_address or right.integer_address,
             .foreign_storage = left.foreign_storage or right.foreign_storage,
-            .storage_authority = left.storage_authority or right.storage_authority,
         };
     }
 };
@@ -1591,10 +1662,9 @@ fn alignFreshSources(
 
 fn containsInputDependency(haystack: []const facts.InputDependency, needle: facts.InputDependency) bool {
     for (haystack) |candidate| {
-        if (candidate.input_index == needle.input_index and
+        if (candidate.path.input_index == needle.path.input_index and
             candidate.transfers_ownership == needle.transfers_ownership and
-            candidate.references_place_storage == needle.references_place_storage and
-            projectionsEqual(candidate.projections, needle.projections)) return true;
+            projectionsEqual(candidate.path.projections, needle.path.projections)) return true;
     }
     return false;
 }
@@ -1708,7 +1778,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
 fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     if (left.integer_address != right.integer_address or
         left.foreign_storage != right.foreign_storage or
-        left.storage_authority != right.storage_authority or
+        !std.mem.eql(facts.StorageAuthorityId, left.storage_authorities, right.storage_authorities) or
         left.dependencies.len != right.dependencies.len or
         left.owned_roots.len != right.owned_roots.len or
         left.fields.len != right.fields.len) return false;
@@ -1736,30 +1806,30 @@ fn effectsEqual(left: []const facts.OutputEffect, right: []const facts.OutputEff
 
 fn outputEffectIsEmpty(effect: facts.OutputEffect) bool {
     return effect.input_dependencies.len == 0 and effect.fields.len == 0 and
-        effect.fresh_dependencies.len == 0 and effect.fresh_owned_roots.len == 0 and
-        !effect.integer_address and !effect.foreign_storage and !effect.storage_authority;
+        effect.fresh_dependencies.len == 0 and effect.fresh_owned_roots.len == 0 and effect.fresh_storage_authorities.len == 0 and
+        !effect.integer_address and !effect.foreign_storage;
 }
 
-fn outputEffectOnlyDependsOnTarget(effect: facts.OutputEffect, target: facts.InputDependency) bool {
-    if (effect.fresh_dependencies.len != 0 or effect.fresh_owned_roots.len != 0 or
-        effect.integer_address or effect.foreign_storage or effect.storage_authority) return false;
+fn outputEffectOnlyDependsOnTarget(effect: facts.OutputEffect, target: facts.InputPath) bool {
+    if (effect.fresh_dependencies.len != 0 or effect.fresh_owned_roots.len != 0 or effect.fresh_storage_authorities.len != 0 or
+        effect.integer_address or effect.foreign_storage) return false;
     for (effect.input_dependencies) |dependency| {
-        if (dependency.input_index != target.input_index or dependency.transfers_ownership or
-            dependency.projections.len < target.projections.len or
-            !projectionsEqual(dependency.projections[0..target.projections.len], target.projections)) return false;
+        if (dependency.path.input_index != target.input_index or dependency.transfers_ownership or
+            dependency.path.projections.len < target.projections.len or
+            !projectionsEqual(dependency.path.projections[0..target.projections.len], target.projections)) return false;
     }
     for (effect.fields) |field| if (!outputEffectOnlyDependsOnTarget(field.value.*, target)) return false;
     return true;
 }
 
 fn inputDependencyEqual(left: facts.InputDependency, right: facts.InputDependency) bool {
-    if (left.input_index != right.input_index or left.transfers_ownership != right.transfers_ownership or
-        left.references_place_storage != right.references_place_storage or left.projections.len != right.projections.len) return false;
-    for (left.projections, right.projections) |a, b| if (!a.eql(b)) return false;
+    if (left.path.input_index != right.path.input_index or left.transfers_ownership != right.transfers_ownership or
+        left.path.projections.len != right.path.projections.len) return false;
+    for (left.path.projections, right.path.projections) |a, b| if (!a.eql(b)) return false;
     return true;
 }
 
-fn findInputPostState(states: []const facts.InputPlaceEffect, target: facts.InputDependency) ?facts.InputPlaceEffect {
+fn findInputPostState(states: []const facts.InputPlaceEffect, target: facts.InputPath) ?facts.InputPlaceEffect {
     for (states) |state| if (inputPlaceTargetEqual(state.target, target)) return state;
     return null;
 }
@@ -1774,7 +1844,7 @@ fn inputPostStatesEqual(left: []const facts.InputPlaceEffect, right: []const fac
     return true;
 }
 
-fn inputPlaceTargetEqual(left: facts.InputDependency, right: facts.InputDependency) bool {
+fn inputPlaceTargetEqual(left: facts.InputPath, right: facts.InputPath) bool {
     return left.input_index == right.input_index and projectionsEqual(left.projections, right.projections);
 }
 
@@ -1782,48 +1852,6 @@ fn cloneInputPostStates(source: *const std.array_list.Managed(facts.InputPlaceEf
     var result = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
     try result.appendSlice(source.items);
     return result;
-}
-
-fn appendEffectInput(effect: facts.OutputEffect, result: *std.array_list.Managed(u32)) !void {
-    for (effect.input_dependencies) |dependency| {
-        var found = false;
-        for (result.items) |existing| if (existing == dependency.input_index) {
-            found = true;
-            break;
-        };
-        if (found) continue;
-        try result.append(dependency.input_index);
-    }
-}
-
-fn setEffectInputState(
-    effect: facts.OutputEffect,
-    states: *std.AutoHashMap(u32, bool),
-    deinitialized: bool,
-) !void {
-    for (effect.input_dependencies) |dependency|
-        try states.put(dependency.input_index, deinitialized);
-}
-
-fn cloneInputStates(source: *const std.AutoHashMap(u32, bool), allocator: std.mem.Allocator) !std.AutoHashMap(u32, bool) {
-    var result = std.AutoHashMap(u32, bool).init(allocator);
-    var iterator = source.iterator();
-    while (iterator.next()) |entry| try result.put(entry.key_ptr.*, entry.value_ptr.*);
-    return result;
-}
-
-fn joinInputStates(
-    destination: *std.AutoHashMap(u32, bool),
-    left: *const std.AutoHashMap(u32, bool),
-    right: *const std.AutoHashMap(u32, bool),
-) !void {
-    destination.clearRetainingCapacity();
-    var left_iterator = left.iterator();
-    while (left_iterator.next()) |entry|
-        try destination.put(entry.key_ptr.*, entry.value_ptr.* or (right.get(entry.key_ptr.*) orelse false));
-    var right_iterator = right.iterator();
-    while (right_iterator.next()) |entry| if (!destination.contains(entry.key_ptr.*))
-        try destination.put(entry.key_ptr.*, entry.value_ptr.*);
 }
 
 fn projectValueFacts(value: facts.ValueFacts, projections: []const place.Projection) facts.ValueFacts {
@@ -1856,13 +1884,23 @@ fn appendOwnedRoot(list: *std.array_list.Managed(facts.RootId), owned_root: fact
     try list.append(owned_root);
 }
 
+fn appendStorageAuthority(list: *std.array_list.Managed(facts.StorageAuthorityId), authority: facts.StorageAuthorityId) !void {
+    for (list.items) |existing| if (existing == authority) return;
+    try list.append(authority);
+}
+
 fn appendInputDependency(list: *std.array_list.Managed(facts.InputDependency), dependency: facts.InputDependency) !void {
     for (list.items) |existing| {
-        if (existing.input_index != dependency.input_index or existing.transfers_ownership != dependency.transfers_ownership or
-            existing.references_place_storage != dependency.references_place_storage) continue;
-        if (projectionsEqual(existing.projections, dependency.projections)) return;
+        if (existing.path.input_index != dependency.path.input_index or existing.transfers_ownership != dependency.transfers_ownership) continue;
+        if (projectionsEqual(existing.path.projections, dependency.path.projections)) return;
     }
     try list.append(dependency);
+}
+
+fn appendInputPath(list: *std.array_list.Managed(facts.InputPath), path: facts.InputPath) !void {
+    for (list.items) |existing|
+        if (existing.input_index == path.input_index and projectionsEqual(existing.projections, path.projections)) return;
+    try list.append(path);
 }
 
 fn appendFreshSource(list: *std.array_list.Managed(facts.FreshRootSource), source: facts.FreshRootSource) !void {
@@ -1879,14 +1917,14 @@ fn projectionsEqual(left: []const place.Projection, right: []const place.Project
 fn outputEffectEqual(left: facts.OutputEffect, right: facts.OutputEffect) bool {
     if (left.integer_address != right.integer_address or
         left.foreign_storage != right.foreign_storage or
-        left.storage_authority != right.storage_authority or
         !std.mem.eql(facts.FreshRootSource, left.fresh_dependencies, right.fresh_dependencies) or
-        !std.mem.eql(facts.FreshRootSource, left.fresh_owned_roots, right.fresh_owned_roots)) return false;
-    if (left.input_dependencies.len != right.input_dependencies.len or left.fields.len != right.fields.len) return false;
+        !std.mem.eql(facts.FreshRootSource, left.fresh_owned_roots, right.fresh_owned_roots) or
+        !std.mem.eql(facts.FreshRootSource, left.fresh_storage_authorities, right.fresh_storage_authorities)) return false;
+    if (left.input_dependencies.len != right.input_dependencies.len or left.input_places.len != right.input_places.len or left.fields.len != right.fields.len) return false;
     for (left.input_dependencies, right.input_dependencies) |a, b| {
-        if (a.input_index != b.input_index or a.transfers_ownership != b.transfers_ownership or
-            a.references_place_storage != b.references_place_storage or !projectionsEqual(a.projections, b.projections)) return false;
+        if (!inputDependencyEqual(a, b)) return false;
     }
+    for (left.input_places, right.input_places) |a, b| if (!inputPlaceTargetEqual(a, b)) return false;
     for (left.fields, right.fields) |a, b| {
         if (a.index != b.index or !outputEffectEqual(a.value.*, b.value.*)) return false;
     }
@@ -1949,7 +1987,7 @@ test "virtual summaries require exact ownership transfer and deinitialization" {
     var checker = SafetyChecker.init(&allocator, undefined);
     defer checker.deinit();
 
-    const transfer = facts.InputDependency{ .input_index = 0, .transfers_ownership = true };
+    const transfer = facts.InputDependency{ .path = .{ .input_index = 0 }, .transfers_ownership = true };
     const transfer_mismatch = try checker.mergeVirtualFunctionSummary(
         .{ .outputs = &.{.{ .input_dependencies = &.{transfer} }} },
         .{ .outputs = &.{.{}} },
@@ -1957,7 +1995,11 @@ test "virtual summaries require exact ownership transfer and deinitialization" {
     try std.testing.expect(transfer_mismatch == null);
 
     const deinit_mismatch = try checker.mergeVirtualFunctionSummary(
-        .{ .outputs = &.{.{}}, .ends_input_roots = &.{0}, .deinitializes_inputs = &.{0} },
+        .{ .outputs = &.{.{}}, .input_post_states = &.{.{
+            .target = .{ .input_index = 0 },
+            .initializedness = .deinitialized,
+            .ends_previous_roots = true,
+        }} },
         .{ .outputs = &.{.{}} },
     );
     try std.testing.expect(deinit_mismatch == null);
@@ -1970,8 +2012,8 @@ test "virtual summaries widen dependencies but require exact provenance" {
     var checker = SafetyChecker.init(&allocator, undefined);
     defer checker.deinit();
 
-    const from_self = facts.InputDependency{ .input_index = 0 };
-    const from_other = facts.InputDependency{ .input_index = 1 };
+    const from_self = facts.InputDependency{ .path = .{ .input_index = 0 } };
+    const from_other = facts.InputDependency{ .path = .{ .input_index = 1 } };
     const widened = try checker.mergeVirtualFunctionSummary(
         .{ .outputs = &.{.{ .input_dependencies = &.{from_self} }} },
         .{ .outputs = &.{.{ .input_dependencies = &.{ from_self, from_other } }} },
@@ -1980,7 +2022,7 @@ test "virtual summaries widen dependencies but require exact provenance" {
     try std.testing.expectEqual(@as(usize, 2), widened.?.outputs[0].input_dependencies.len);
 
     const provenance_mismatch = try checker.mergeVirtualFunctionSummary(
-        .{ .outputs = &.{.{ .storage_authority = true }} },
+        .{ .outputs = &.{.{ .fresh_storage_authorities = &.{1} }} },
         .{ .outputs = &.{.{}} },
     );
     try std.testing.expect(provenance_mismatch == null);

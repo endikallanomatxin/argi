@@ -10,7 +10,6 @@ allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.allocation: Allocat
         .alloc_count = self&.alloc_count + 1,
         .dealloc_count = self&.dealloc_count,
     )
-    data ::= cast#(.to: $&UInt8)(.value = raw_addr)
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
     allocation = establish_allocation(.storage = storage, .size = size, .deallocator = deallocator)
 }
@@ -38,8 +37,8 @@ Outer : Type = (
 
 run_branch(.allocator: $&CountingAllocator, .condition: Bool) -> () := {
     pair ::= Pair(
-        .a = allocate_owned(.self = allocator, .size = 1),
-        .b = allocate_owned(.self = allocator, .size = 1),
+        .a = allocate(.self = allocator, .size = 1),
+        .b = allocate(.self = allocator, .size = 1),
     )
     if condition {
         taken ::= ~pair.a
@@ -51,16 +50,16 @@ main() -> (.status_code: Int32) := {
 
     if 1 == 1 {
         pair ::= Pair(
-            .a = allocate_owned(.self = $&allocator, .size = 1),
-            .b = allocate_owned(.self = $&allocator, .size = 1),
+            .a = allocate(.self = $&allocator, .size = 1),
+            .b = allocate(.self = $&allocator, .size = 1),
         )
         taken ::= ~pair.a
     }
 
     if 1 == 1 {
         pair ::= Pair(
-            .a = allocate_owned(.self = $&allocator, .size = 1),
-            .b = allocate_owned(.self = $&allocator, .size = 1),
+            .a = allocate(.self = $&allocator, .size = 1),
+            .b = allocate(.self = $&allocator, .size = 1),
         )
         deinit(.self = $&pair.a)
     }
@@ -70,19 +69,19 @@ main() -> (.status_code: Int32) := {
 
     if 1 == 1 {
         outer ::= Outer(.pair = Pair(
-            .a = allocate_owned(.self = $&allocator, .size = 1),
-            .b = allocate_owned(.self = $&allocator, .size = 1),
+            .a = allocate(.self = $&allocator, .size = 1),
+            .b = allocate(.self = $&allocator, .size = 1),
         ))
         taken ::= ~outer.pair.a
     }
 
     if 1 == 1 {
         pair ::= Pair(
-            .a = allocate_owned(.self = $&allocator, .size = 1),
-            .b = allocate_owned(.self = $&allocator, .size = 1),
+            .a = allocate(.self = $&allocator, .size = 1),
+            .b = allocate(.self = $&allocator, .size = 1),
         )
         taken ::= ~pair.a
-        pair.a = allocate_owned(.self = $&allocator, .size = 1)
+        pair.a = allocate(.self = $&allocator, .size = 1)
     }
 
     if allocator.alloc_count != 13 {

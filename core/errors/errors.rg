@@ -20,9 +20,9 @@ write_trace_text(
     .stderr: $&Writer = #reach stderr, terminal.stderr, system.terminal.stderr,
 ) -> () := {
     i :: UIntNative = 0
+    bytes ::= reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference
     while 1 == 1 {
-        addr :: UIntNative = cast#(.to: UIntNative)(.value = text) + i
-        ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
+        ptr ::= reference_offset#(.t: UInt8)(.base = bytes, .elements = i).reference
         if ptr& == 0 {
             break
         }

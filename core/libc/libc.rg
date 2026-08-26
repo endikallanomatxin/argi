@@ -53,8 +53,8 @@ memcpy_bytes(
     .src: ArrayView#(.t: UInt8),
 ) -> () := {
     memcpy(
-        .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = dst.data)),
-        .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = src.data)),
+        .dst = mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = dst.data).reference,
+        .src = reinterpret_reference#(.from: UInt8, .to: Any)(.base = src.data).reference,
         .n = dst.length,
     )
 }
@@ -64,8 +64,8 @@ memcpy_bytes(
     .src: ArrayViewRO#(.t: UInt8),
 ) -> () := {
     memcpy(
-        .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = dst.data)),
-        .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = src.data)),
+        .dst = mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = dst.data).reference,
+        .src = reinterpret_reference#(.from: UInt8, .to: Any)(.base = src.data).reference,
         .n = dst.length,
     )
 }

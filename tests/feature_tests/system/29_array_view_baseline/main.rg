@@ -1,6 +1,6 @@
 main() -> (.status_code: Int32) := {
     allocator :: CAllocator = CAllocator()
-    allocation ::= allocate_owned(.self = $&allocator, .size = 16)
+    allocation ::= allocate(.self = $&allocator, .size = 16)
     data ::= mutable_reinterpret_reference#(.from: UInt8, .to: Int32)(.base = allocation.data).reference
     values ::= array_view#(.t: Int32)(.data = data, .length = 4)
 

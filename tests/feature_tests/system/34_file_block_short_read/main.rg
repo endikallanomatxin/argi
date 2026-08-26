@@ -18,7 +18,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     }
     file ::= create_result..ok
 
-    write_allocation ::= allocate_owned(.self = system.allocator, .size = 2)
+    write_allocation ::= allocate(.self = system.allocator, .size = 2)
 
     write_buffer ::= array_view#(.t: UInt8)(
         .data = write_allocation.data,
@@ -52,7 +52,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     }
     file = open_result..ok
 
-    read_allocation ::= allocate_owned(.self = system.allocator, .size = 4)
+    read_allocation ::= allocate(.self = system.allocator, .size = 4)
 
     read_buffer ::= array_view#(.t: UInt8)(
         .data = read_allocation.data,

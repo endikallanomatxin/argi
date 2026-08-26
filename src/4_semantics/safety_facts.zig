@@ -3,6 +3,7 @@ const place = @import("place.zig");
 const value_state = @import("value_state.zig");
 
 pub const RootId = enum(u32) { _ };
+pub const StorageAuthorityId = enum(u32) { _ };
 
 pub const Root = struct {
     id: RootId,
@@ -23,7 +24,7 @@ pub const ValueFacts = struct {
     fields: []const FieldFacts = &.{},
     integer_address: bool = false,
     foreign_storage: bool = false,
-    storage_authority: bool = false,
+    storage_authorities: []const StorageAuthorityId = &.{},
     referenced_place: ?place.Place = null,
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
@@ -31,7 +32,7 @@ pub const ValueFacts = struct {
             .dependencies = self.dependencies,
             .integer_address = self.integer_address,
             .foreign_storage = self.foreign_storage,
-            .storage_authority = self.storage_authority,
+            .storage_authorities = self.storage_authorities,
             .referenced_place = self.referenced_place,
         };
     }
@@ -53,11 +54,14 @@ pub const RootEstablishment = union(enum) {
     inherit: RootId,
 };
 
-pub const InputDependency = struct {
+pub const InputPath = struct {
     input_index: u32,
     projections: []const place.Projection = &.{},
+};
+
+pub const InputDependency = struct {
+    path: InputPath,
     transfers_ownership: bool = false,
-    references_place_storage: bool = false,
 };
 
 pub const OutputFieldEffect = struct {
@@ -74,19 +78,20 @@ pub const FreshRootSource = usize;
 /// structural path until a call instantiates them with the caller's facts.
 pub const OutputEffect = struct {
     input_dependencies: []const InputDependency = &.{},
+    input_places: []const InputPath = &.{},
     fields: []const OutputFieldEffect = &.{},
     fresh_dependencies: []const FreshRootSource = &.{},
     fresh_owned_roots: []const FreshRootSource = &.{},
     integer_address: bool = false,
     foreign_storage: bool = false,
-    storage_authority: bool = false,
+    fresh_storage_authorities: []const FreshRootSource = &.{},
 };
 
 /// Symbolic post-state of a Place reached through a function input.  The
 /// target uses the same input/projection vocabulary as OutputEffect, so call
 /// composition can substitute it without inventing a second Place model.
 pub const InputPlaceEffect = struct {
-    target: InputDependency,
+    target: InputPath,
     initializedness: value_state.Initializedness,
     value: OutputEffect = .{},
     ends_previous_roots: bool = false,
@@ -96,9 +101,6 @@ pub const InputPlaceEffect = struct {
 pub const FunctionSummary = struct {
     outputs: []const OutputEffect = &.{},
     input_post_states: []const InputPlaceEffect = &.{},
-    ends_input_roots: []const u32 = &.{},
-    deinitializes_inputs: []const u32 = &.{},
-    invalidates_dynamic_slots: []const u32 = &.{},
 };
 
 pub const Tracker = struct {

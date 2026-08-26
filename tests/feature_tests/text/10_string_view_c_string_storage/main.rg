@@ -10,7 +10,6 @@ allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.allocation: Allocat
         .alloc_count = self&.alloc_count + 1,
         .dealloc_count = self&.dealloc_count,
     )
-    data ::= cast#(.to: $&UInt8)(.value = raw_addr)
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
     allocation = establish_allocation(.storage = storage, .size = size, .deallocator = deallocator)
 }
@@ -42,17 +41,17 @@ main() -> (.status_code: Int32) := {
             .length = 3,
         )
         borrowed ::= as_c_string(.self = borrowed_view, .allocator = $&allocator)
-        if borrowed.storage.size != 0 {
+        if borrowed.storage.size != 4 {
             status_code = 1
             return
         }
-        if allocator.alloc_count != 0 {
+        if allocator.alloc_count != 1 {
             status_code = 2
             return
         }
     }
 
-    if allocator.dealloc_count != 0 {
+    if allocator.dealloc_count != 1 {
         status_code = 3
         return
     }
@@ -67,13 +66,13 @@ main() -> (.status_code: Int32) := {
             status_code = 4
             return
         }
-        if allocator.alloc_count != 1 {
+        if allocator.alloc_count != 2 {
             status_code = 5
             return
         }
     }
 
-    if allocator.dealloc_count != 1 {
+    if allocator.dealloc_count != 2 {
         status_code = 6
         return
     }

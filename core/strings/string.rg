@@ -371,8 +371,8 @@ c_string_length(
     length = 0
     c_length :: UIntNative = 0
     while 1 == 1 {
-        addr :: UIntNative = cast#(.to: UIntNative)(.value = text) + c_length
-        ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
+        bytes ::= reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference
+        ptr ::= reference_offset#(.t: UInt8)(.base = bytes, .elements = c_length).reference
         if ptr& == 0 {
             break
         }

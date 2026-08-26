@@ -96,7 +96,13 @@ allocate(
     if needs_block {
         new_block_size ::= arena_min_block_capacity(.requested = required, .block_size = self&.block_size).capacity
         raw_block ::= malloc(.size = new_block_size)
-        block_data ::= cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = raw_block))
+        raw ::= raw_pointer#(.t: UInt8)(.address = cast#(.to: UIntNative)(.value = raw_block))
+        block_data ::= establish_inherited_reference#(.t: UInt8)(
+            .raw = raw,
+            -- Physical storage is incorporated into the arena's existing
+            -- temporal domain instead of manufacturing a child root.
+            .root = cast#(.to: $&Any)(.value = $&self&.blocks),
+        ).reference
         pushed ::= push(
             .allocator = self&.backing_allocator,
             .self = $&self&.blocks,
@@ -106,8 +112,8 @@ allocate(
             ),
         )
         if is(.value = pushed, .variant = ..error) {
-            zero :: UIntNative = 0
-            data ::= cast#(.to: $&UInt8)(.value = zero)
+            deallocate(.self = self&.backing_allocator, .data = block_data, .size = new_block_size)
+            data ::= mutable_reinterpret_reference#(.from: ArenaAllocator, .to: UInt8)(.base = self).reference
             deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
             allocation = (
                 .data = data,
