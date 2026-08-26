@@ -1648,12 +1648,7 @@ pub const SafetyChecker = struct {
     fn choiceValue(self: *SafetyChecker, variant_index: u32, payload: facts.ValueFacts) !facts.ValueFacts {
         const fields = try self.allocator.alloc(facts.FieldFacts, 1);
         const stored = try self.allocator.create(facts.ValueFacts);
-        stored.* = .{
-            .dependencies = payload.dependencies,
-            .owned_roots = payload.owned_roots,
-            .fields = payload.fields,
-            .referenced_place = payload.referenced_place,
-        };
+        stored.* = payload;
         fields[0] = .{ .index = variant_index, .value = stored };
         return .{ .fields = fields };
     }
@@ -1661,13 +1656,7 @@ pub const SafetyChecker = struct {
     fn choiceOutputEffect(self: *SafetyChecker, variant_index: u32, payload: facts.OutputEffect) !facts.OutputEffect {
         const fields = try self.allocator.alloc(facts.OutputFieldEffect, 1);
         const stored = try self.allocator.create(facts.OutputEffect);
-        stored.* = .{
-            .input_dependencies = payload.input_dependencies,
-            .input_places = payload.input_places,
-            .fresh_dependencies = payload.fresh_dependencies,
-            .fresh_owned_roots = payload.fresh_owned_roots,
-            .fields = payload.fields,
-        };
+        stored.* = payload;
         fields[0] = .{ .index = variant_index, .value = stored };
         return .{ .fields = fields };
     }
@@ -2157,4 +2146,88 @@ test "virtual summaries widen dependencies but require exact provenance" {
         .{ .outputs = &.{.{}} },
     );
     try std.testing.expect(provenance_mismatch == null);
+}
+
+test "choice values preserve complete payload facts" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    const binding = try checker.allocator.create(sg.BindingDeclaration);
+    binding.* = undefined;
+    const dependency_root: facts.RootId = @enumFromInt(1);
+    const owned_root: facts.RootId = @enumFromInt(2);
+    const authority: facts.StorageAuthorityId = @enumFromInt(3);
+
+    const nested = try checker.allocator.create(facts.ValueFacts);
+    nested.* = .{
+        .dependencies = &.{.{ .root = dependency_root }},
+        .owned_roots = &.{owned_root},
+        .integer_address = true,
+        .foreign_storage = true,
+        .storage_authorities = &.{authority},
+        .referenced_place = .{ .root = binding },
+    };
+    const payload_fields = try checker.allocator.alloc(facts.FieldFacts, 1);
+    payload_fields[0] = .{ .index = 17, .value = nested };
+    const payload = facts.ValueFacts{
+        .dependencies = &.{.{ .root = dependency_root }},
+        .owned_roots = &.{owned_root},
+        .fields = payload_fields,
+        .integer_address = true,
+        .foreign_storage = true,
+        .storage_authorities = &.{authority},
+        .referenced_place = .{ .root = binding },
+    };
+
+    const wrapped = try checker.choiceValue(5, payload);
+    try std.testing.expectEqual(@as(usize, 1), wrapped.fields.len);
+    try std.testing.expectEqual(@as(u32, 5), wrapped.fields[0].index);
+    try std.testing.expect(valueFactsEqual(payload, wrapped.fields[0].value.*));
+
+    const nested_wrapped = try checker.choiceValue(9, wrapped);
+    const extracted = nested_wrapped.fields[0].value.fields[0].value.*;
+    try std.testing.expect(valueFactsEqual(payload, extracted));
+}
+
+test "choice output effects preserve complete payload facts" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    const nested = try checker.allocator.create(facts.OutputEffect);
+    nested.* = .{
+        .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }},
+        .input_places = &.{.{ .input_index = 2 }},
+        .fresh_dependencies = &.{11},
+        .fresh_owned_roots = &.{12},
+        .integer_address = true,
+        .foreign_storage = true,
+        .fresh_storage_authorities = &.{13},
+    };
+    const payload_fields = try checker.allocator.alloc(facts.OutputFieldEffect, 1);
+    payload_fields[0] = .{ .index = 17, .value = nested };
+    const payload = facts.OutputEffect{
+        .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }},
+        .input_places = &.{.{ .input_index = 2 }},
+        .fields = payload_fields,
+        .fresh_dependencies = &.{11},
+        .fresh_owned_roots = &.{12},
+        .integer_address = true,
+        .foreign_storage = true,
+        .fresh_storage_authorities = &.{13},
+    };
+
+    const wrapped = try checker.choiceOutputEffect(5, payload);
+    try std.testing.expectEqual(@as(usize, 1), wrapped.fields.len);
+    try std.testing.expectEqual(@as(u32, 5), wrapped.fields[0].index);
+    try std.testing.expect(outputEffectEqual(payload, wrapped.fields[0].value.*));
+
+    const nested_wrapped = try checker.choiceOutputEffect(9, wrapped);
+    const extracted = nested_wrapped.fields[0].value.fields[0].value.*;
+    try std.testing.expect(outputEffectEqual(payload, extracted));
 }
