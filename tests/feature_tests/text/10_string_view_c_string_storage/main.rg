@@ -3,13 +3,16 @@ CountingAllocator : Type = (
     .dealloc_count: Int32 = 0
 )
 
-allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.data: $&UInt8) := {
-    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = malloc(.size = size))
+allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.allocation: Allocation) := {
+    storage ::= malloc(.size = size)
+    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = storage)
     self& = (
         .alloc_count = self&.alloc_count + 1,
         .dealloc_count = self&.dealloc_count,
     )
-    data = cast#(.to: $&UInt8)(.value = raw_addr)
+    data ::= cast#(.to: $&UInt8)(.value = raw_addr)
+    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
+    allocation = establish_allocation(.storage = storage, .size = size, .deallocator = deallocator)
 }
 
 deallocate(.self: $&CountingAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
@@ -22,6 +25,7 @@ deallocate(.self: $&CountingAllocator, .data: $&UInt8, .size: UIntNative) -> () 
 }
 
 CountingAllocator implements Allocator
+CountingAllocator implements Deallocator
 
 main() -> (.status_code: Int32) := {
     allocator :: CountingAllocator = (

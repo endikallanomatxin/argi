@@ -1,9 +1,9 @@
 alloc_one(
     .allocator: $&Allocator,
 ) -> (.value: UIntNative) := {
-    ptr ::= allocate(.self = allocator, .size = 1)
-    value = cast#(.to: UIntNative)(.value = ptr)
-    deallocate(.self = allocator, .data = ptr, .size = 1)
+    allocation ::= allocate(.self = allocator, .size = 1)
+    value = cast#(.to: UIntNative)(.value = allocation.data)
+    deinit(.self = $&allocation)
 }
 
 main() -> (.status_code: Int32) := {

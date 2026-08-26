@@ -18,8 +18,8 @@ main(.system: System) -> (.status_code: Int32) := {
     result := top()
 
     if is(.value = result, .variant = ..error) {
-        err := result..error
-        report_trace(.trace = &err.trace)
+        err ::= &result..error
+        report_trace(.trace = &err&.trace)
         status_code = 0
     } else {
         status_code = 1

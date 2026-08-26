@@ -253,7 +253,7 @@ read_file(
     while 1 == 1 {
         next ::= read_byte(.self = $&file)
         if is(.value = next, .variant = ..error) {
-            deallocate(.self = allocator, .data = text.allocation.data, .size = text.allocation.size)
+            deinit(.self = $&text)
             _ ::= close(.self = $&file)
             result = ..error(.reason = ..stream_read_failed)
             return
@@ -270,7 +270,7 @@ read_file(
             ..ok _ {
             }
             ..error _ {
-                deallocate(.self = allocator, .data = text.allocation.data, .size = text.allocation.size)
+                deinit(.self = $&text)
                 _ ::= close(.self = $&file)
                 result = ..error(.reason = ..out_of_memory)
                 return
@@ -280,7 +280,7 @@ read_file(
 
     close_result ::= close(.self = $&file)
     if is(.value = close_result, .variant = ..error) {
-        deallocate(.self = allocator, .data = text.allocation.data, .size = text.allocation.size)
+        deinit(.self = $&text)
         result = ..error(.reason = ..stream_close_failed)
         return
     }
@@ -316,7 +316,7 @@ read_file(
 write_file(
     .self: &FileSystem,
     .path: &Char,
-    .text: String,
+    .text: &String,
 ) -> (.result: Errable#(.t: Void, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed))) := {
     open_result ::= open_write(.self = self, .path = path)
     if is(.value = open_result, .variant = ..error) {
@@ -367,7 +367,7 @@ write_file(
 write_file(
     .self: &FileSystem,
     .path: &String,
-    .text: String,
+    .text: &String,
 ) -> (.result: Errable#(.t: Void, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed))) := {
     c_path ::= as_c_string(.self = path)
     result = write_file(.self = self, .path = c_path, .text = text)
@@ -376,7 +376,7 @@ write_file(
 write_file(
     .self: &FileSystem,
     .path: StringView,
-    .text: String,
+    .text: &String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed))) := {
     c_path ::= as_c_string(.self = path, .allocator = allocator)
@@ -386,7 +386,7 @@ write_file(
 write_file(
     .self: &FileSystem,
     .path: &Path,
-    .text: String,
+    .text: &String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Void, .reasons: (..path_open_failed, ..stream_write_failed, ..stream_flush_failed, ..stream_close_failed))) := {
     result = write_file(.self = self, .path = &path&.text, .text = text)

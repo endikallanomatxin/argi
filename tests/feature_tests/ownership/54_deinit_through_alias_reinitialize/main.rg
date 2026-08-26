@@ -3,7 +3,7 @@ main(.system: System) -> (.status_code: Int32) := {
     a ::= $&allocation
     b ::= $&allocation
 
-    deinit(.self = a, .allocator = system.allocator)
+    deinit(.self = a)
 
     b& = allocate_owned(.self = system.allocator, .size = 1)
     if b&.size == 1 {

@@ -13,6 +13,7 @@ pub const SafetyChecker = struct {
     summaries: std.AutoHashMap(*const sg.FunctionDeclaration, facts.FunctionSummary),
     virtual_summaries: std.AutoHashMap(*const sg.VirtualMethodRegistry, facts.FunctionSummary),
     invalid_virtual_summaries: std.AutoHashMap(*const sg.VirtualMethodRegistry, void),
+    inference_bindings: ?*std.AutoHashMap(*const sg.BindingDeclaration, facts.OutputEffect),
 
     pub fn init(allocator: *const std.mem.Allocator, diags: *diagnostics.Diagnostics) SafetyChecker {
         return .{
@@ -21,6 +22,7 @@ pub const SafetyChecker = struct {
             .summaries = std.AutoHashMap(*const sg.FunctionDeclaration, facts.FunctionSummary).init(allocator.*),
             .virtual_summaries = std.AutoHashMap(*const sg.VirtualMethodRegistry, facts.FunctionSummary).init(allocator.*),
             .invalid_virtual_summaries = std.AutoHashMap(*const sg.VirtualMethodRegistry, void).init(allocator.*),
+            .inference_bindings = null,
         };
     }
 
@@ -57,10 +59,11 @@ pub const SafetyChecker = struct {
 
     const FunctionState = struct {
         const OwnershipEdge = struct { owner: facts.RootId, owned: facts.RootId };
+        const StorageRoot = struct { storage: place.Place, root: facts.RootId };
         tracker: facts.Tracker,
         places: std.array_list.Managed(facts.PlaceFacts),
         ownership_edges: std.array_list.Managed(OwnershipEdge),
-        storage_roots: std.AutoHashMap(*const sg.BindingDeclaration, facts.RootId),
+        storage_roots: std.array_list.Managed(StorageRoot),
         reachable: bool = true,
         ownership_conflict_reported: bool = false,
 
@@ -69,7 +72,7 @@ pub const SafetyChecker = struct {
                 .tracker = facts.Tracker.init(allocator),
                 .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
                 .ownership_edges = std.array_list.Managed(OwnershipEdge).init(allocator),
-                .storage_roots = std.AutoHashMap(*const sg.BindingDeclaration, facts.RootId).init(allocator),
+                .storage_roots = std.array_list.Managed(StorageRoot).init(allocator),
             };
         }
 
@@ -85,8 +88,7 @@ pub const SafetyChecker = struct {
             try result.tracker.roots.appendSlice(self.tracker.roots.items);
             try result.places.appendSlice(self.places.items);
             try result.ownership_edges.appendSlice(self.ownership_edges.items);
-            var roots = self.storage_roots.iterator();
-            while (roots.next()) |entry| try result.storage_roots.put(entry.key_ptr.*, entry.value_ptr.*);
+            try result.storage_roots.appendSlice(self.storage_roots.items);
             result.reachable = self.reachable;
             result.ownership_conflict_reported = self.ownership_conflict_reported;
             return result;
@@ -164,6 +166,8 @@ pub const SafetyChecker = struct {
                 },
                 .pointer_assignment => |assignment| {
                     const pointer = try self.evaluate(function, assignment.pointer, state);
+                    if (!state.tracker.dependenciesAreAlive(pointer))
+                        try self.diagnostics.add(function.location, .semantic, "reference depends on a root that has ended", .{});
                     const value = try self.evaluate(function, assignment.value, state);
                     try self.addStoredOwnershipEdges(function, state, pointer, value);
                     if (pointer.referenced_place) |target| try self.setPlace(state, target, .initialized, value);
@@ -373,22 +377,6 @@ pub const SafetyChecker = struct {
             call.callee.output.fields[0].ty == .pointer_type)
             return .{ .foreign_storage = true };
         const summary = self.summaries.get(call.callee) orelse return .{};
-        for (summary.ends_input_roots) |index| {
-            if (index >= arguments.len) continue;
-            const target = argument_values[index].referenced_place;
-            if (target) |storage| {
-                if (self.getPlace(state, storage)) |place_facts| {
-                    for (place_facts.value.owned_roots) |owned_root| state.tracker.end(owned_root);
-                    var remaining = place_facts.value;
-                    remaining.owned_roots = &.{};
-                    try self.setPlace(state, storage, .initialized, remaining);
-                }
-            } else {
-                // Unknown pointee: conservatively invalidate the shared input
-                // lifetime so aliases cannot continue reading through it.
-                for (argument_values[index].dependencies) |dependency| state.tracker.end(dependency.root);
-            }
-        }
         for (summary.deinitializes_inputs) |index| {
             if (index >= arguments.len) continue;
             if (arguments[index].value.content == .address_of and
@@ -396,11 +384,8 @@ pub const SafetyChecker = struct {
             {
                 @constCast(call).consumes_auto_deinit = arguments[index].value.content.address_of;
             }
-            const target = argument_values[index].referenced_place orelse
-                try self.resolvePlace(arguments[index].value, state);
-            if (target) |storage|
-                try self.setPlace(state, storage, .deinitialized, .{});
         }
+        try self.applyInputEffects(summary, arguments, argument_values, state);
         if (summary.outputs.len != 1) return .{};
         return self.instantiateOutput(summary.outputs[0], argument_values, state);
     }
@@ -481,6 +466,29 @@ pub const SafetyChecker = struct {
                 try self.resolvePlace(arguments[index].value, state);
             if (target) |storage| try self.setPlace(state, storage, .deinitialized, .{});
         }
+        var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.RootId).init(self.allocator.*);
+        defer fresh_roots.deinit();
+        for (summary.input_post_states) |post_state| {
+            if (post_state.target.input_index >= arguments.len) continue;
+            const index = post_state.target.input_index;
+            if (argument_values[index].referenced_place == null and post_state.target.references_place_storage) {
+                if (post_state.ends_previous_roots)
+                    for (argument_values[index].dependencies) |dependency| state.tracker.end(dependency.root);
+                continue;
+            }
+            var target = argument_values[index].referenced_place orelse try self.resolvePlace(arguments[index].value, state) orelse continue;
+            for (post_state.target.projections) |projection|
+                target = try self.projectedPlace(target, projection);
+            if (post_state.ends_previous_roots) {
+                if (self.valueAtPlace(state, target)) |old| for (old.owned_roots) |root| state.tracker.end(root);
+            }
+            if (post_state.refreshes_storage_root) try self.refreshStorageRoot(state, target);
+            const value = if (post_state.initializedness == .initialized)
+                try self.instantiateOutputWithFresh(post_state.value, argument_values, state, &fresh_roots)
+            else
+                facts.ValueFacts{};
+            try self.setPlace(state, target, post_state.initializedness, value);
+        }
     }
 
     fn instantiateOutput(
@@ -517,6 +525,17 @@ pub const SafetyChecker = struct {
         result.owned_roots = try owned_roots.toOwnedSlice();
         for (effect.input_dependencies) |dependency| {
             if (dependency.input_index >= arguments.len) continue;
+            if (dependency.references_place_storage) {
+                if (arguments[dependency.input_index].referenced_place) |argument_place| {
+                    var target = argument_place;
+                    for (dependency.projections) |projection| target = try self.projectedPlace(target, projection);
+                    const root = try self.storageRootForPlace(target, state);
+                    try appendDependency(&dependencies, .{ .root = root });
+                    result.dependencies = try dependencies.toOwnedSlice();
+                    result.referenced_place = target;
+                    continue;
+                }
+            }
             var input = arguments[dependency.input_index];
             input = projectValueFacts(input, dependency.projections);
             if (!dependency.transfers_ownership) input.owned_roots = &.{};
@@ -658,11 +677,15 @@ pub const SafetyChecker = struct {
         }
         for (left.ownership_edges.items) |edge| try appendOwnershipEdge(&joined.ownership_edges, edge);
         for (right.ownership_edges.items) |edge| try appendOwnershipEdge(&joined.ownership_edges, edge);
-        var left_roots = left.storage_roots.iterator();
-        while (left_roots.next()) |entry| try joined.storage_roots.put(entry.key_ptr.*, entry.value_ptr.*);
-        var right_roots = right.storage_roots.iterator();
-        while (right_roots.next()) |entry| if (!joined.storage_roots.contains(entry.key_ptr.*))
-            try joined.storage_roots.put(entry.key_ptr.*, entry.value_ptr.*);
+        try joined.storage_roots.appendSlice(left.storage_roots.items);
+        for (right.storage_roots.items) |candidate| {
+            var found = false;
+            for (joined.storage_roots.items) |existing| if (existing.storage.eql(candidate.storage)) {
+                found = true;
+                break;
+            };
+            if (!found) try joined.storage_roots.append(candidate);
+        }
         joined.reachable = true;
         joined.ownership_conflict_reported = left.ownership_conflict_reported or right.ownership_conflict_reported;
         destination.deinit();
@@ -734,12 +757,26 @@ pub const SafetyChecker = struct {
     }
 
     fn storageRoot(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) !facts.RootId {
+        const storage = try self.resolvePlace(node, state) orelse return state.tracker.establish(.fresh);
+        return self.storageRootForPlace(storage, state);
+    }
+
+    fn storageRootForPlace(self: *SafetyChecker, storage: place.Place, state: *FunctionState) !facts.RootId {
         _ = self;
-        const binding = rootBinding(node) orelse return state.tracker.establish(.fresh);
-        if (state.storage_roots.get(binding)) |root| return root;
+        for (state.storage_roots.items) |entry| if (entry.storage.eql(storage)) return entry.root;
         const root = try state.tracker.establish(.fresh);
-        try state.storage_roots.put(binding, root);
+        try state.storage_roots.append(.{ .storage = storage, .root = root });
         return root;
+    }
+
+    fn refreshStorageRoot(self: *SafetyChecker, state: *FunctionState, storage: place.Place) !void {
+        _ = self;
+        for (state.storage_roots.items) |*entry| if (entry.storage.eql(storage)) {
+            state.tracker.end(entry.root);
+            entry.root = try state.tracker.establish(.fresh);
+            return;
+        };
+        try state.storage_roots.append(.{ .storage = storage, .root = try state.tracker.establish(.fresh) });
     }
 
     fn getPlace(self: *SafetyChecker, state: *FunctionState, storage: place.Place) ?*facts.PlaceFacts {
@@ -750,6 +787,18 @@ pub const SafetyChecker = struct {
             if (state.places.items[index].storage.eql(storage)) return &state.places.items[index];
         }
         return null;
+    }
+
+    fn valueAtPlace(self: *SafetyChecker, state: *FunctionState, storage: place.Place) ?facts.ValueFacts {
+        if (self.getPlace(state, storage)) |exact| return exact.value;
+        var projection_count = storage.projections.len;
+        while (true) {
+            const prefix = place.Place{ .root = storage.root, .projections = storage.projections[0..projection_count] };
+            if (self.getPlace(state, prefix)) |ancestor|
+                return projectValueFacts(ancestor.value, storage.projections[projection_count..]);
+            if (projection_count == 0) return null;
+            projection_count -= 1;
+        }
     }
 
     fn setPlace(
@@ -782,8 +831,8 @@ pub const SafetyChecker = struct {
                 const candidate = &state.places.items[index];
                 if (storage.eql(candidate.storage)) continue;
                 if (storage.isPrefixOf(candidate.storage)) {
-                    candidate.initializedness = .deinitialized;
-                    candidate.value = .{};
+                    candidate.initializedness = .initialized;
+                    candidate.value = projectValueFacts(value, candidate.storage.projections[storage.projections.len..]);
                 }
             }
         }
@@ -869,7 +918,8 @@ pub const SafetyChecker = struct {
         }
         for (owners.items, 0..) |owner, index| {
             for (owners.items[index + 1 ..]) |other| {
-                if (owner.root != other.root or owner.storage.eql(other.storage)) continue;
+                if (owner.root != other.root or owner.storage.eql(other.storage) or
+                    owner.storage.isPrefixOf(other.storage) or other.storage.isPrefixOf(owner.storage)) continue;
                 state.ownership_conflict_reported = true;
                 try self.diagnostics.add(function.location, .semantic, "root ownership was duplicated across structural places", .{});
                 return;
@@ -1050,6 +1100,7 @@ pub const SafetyChecker = struct {
     ) !?facts.FunctionSummary {
         if (!std.mem.eql(u32, left.ends_input_roots, right.ends_input_roots) or
             !std.mem.eql(u32, left.deinitializes_inputs, right.deinitializes_inputs) or
+            !inputPostStatesEqual(left.input_post_states, right.input_post_states) or
             left.outputs.len != right.outputs.len) return null;
 
         var fresh_map = std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource).init(self.allocator.*);
@@ -1060,6 +1111,7 @@ pub const SafetyChecker = struct {
         }
         return .{
             .outputs = outputs,
+            .input_post_states = left.input_post_states,
             .ends_input_roots = left.ends_input_roots,
             .deinitializes_inputs = left.deinitializes_inputs,
         };
@@ -1115,98 +1167,157 @@ pub const SafetyChecker = struct {
         const body = function.body orelse return false;
         const previous = self.summaries.get(function).?;
         const outputs = try self.allocator.dupe(facts.OutputEffect, previous.outputs);
+        var bindings = std.AutoHashMap(*const sg.BindingDeclaration, facts.OutputEffect).init(self.allocator.*);
+        defer bindings.deinit();
+        self.inference_bindings = &bindings;
+        defer self.inference_bindings = null;
         try self.inferBlock(function, body, outputs);
-        var deinitialized = std.array_list.Managed(u32).init(self.allocator.*);
-        try self.inferDeinitializedInputs(function, body, &deinitialized);
+        var post_states = std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
+        try self.inferInputPostStates(function, body, &post_states);
         if (function.is_deinit) {
             for (function.input.fields, 0..) |input_field, index| {
                 if (!std.mem.eql(u8, input_field.name, "self") or input_field.ty != .pointer_type or
                     input_field.ty.pointer_type.mutability != .read_write) continue;
-                if (std.mem.indexOfScalar(u32, deinitialized.items, @intCast(index)) == null)
-                    try deinitialized.append(@intCast(index));
+                try self.recordInputPostState(&post_states, .{
+                    .input_dependencies = try self.oneInputPlaceDependency(@intCast(index), &.{}),
+                }, .deinitialized, .{}, true);
                 break;
             }
         }
-        const deinitialized_slice = try deinitialized.toOwnedSlice();
+        const post_state_slice = try post_states.toOwnedSlice();
         if (effectsEqual(previous.outputs, outputs) and
-            std.mem.eql(u32, previous.ends_input_roots, deinitialized_slice) and
-            std.mem.eql(u32, previous.deinitializes_inputs, deinitialized_slice)) return false;
+            inputPostStatesEqual(previous.input_post_states, post_state_slice)) return false;
         try self.summaries.put(function, .{
             .outputs = outputs,
-            .ends_input_roots = deinitialized_slice,
-            .deinitializes_inputs = deinitialized_slice,
+            .input_post_states = post_state_slice,
         });
         return true;
     }
 
-    fn inferDeinitializedInputs(
+    fn inferInputPostStates(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         block: *const sg.CodeBlock,
-        result: *std.array_list.Managed(u32),
-    ) !void {
-        var states = std.AutoHashMap(u32, bool).init(self.allocator.*);
-        defer states.deinit();
-        try self.inferInputInitializedness(function, block, &states);
-        var iterator = states.iterator();
-        while (iterator.next()) |entry| if (entry.value_ptr.*) try result.append(entry.key_ptr.*);
-    }
-
-    fn inferInputInitializedness(
-        self: *SafetyChecker,
-        function: *const sg.FunctionDeclaration,
-        block: *const sg.CodeBlock,
-        states: *std.AutoHashMap(u32, bool),
+        states: *std.array_list.Managed(facts.InputPlaceEffect),
     ) !void {
         for (block.nodes) |node| switch (node.content) {
             .function_call => |call| {
                 if (call.input.content != .struct_value_literal) continue;
                 const arguments = call.input.content.struct_value_literal.fields;
                 const summary = self.summaries.get(call.callee) orelse continue;
-                for (summary.ends_input_roots) |callee_index| {
-                    if (callee_index < arguments.len)
-                        try setEffectInputState(try self.inferExpression(function, arguments[callee_index].value), states, true);
+                for (summary.input_post_states) |post_state| {
+                    if (post_state.target.input_index >= arguments.len) continue;
+                    var target = try self.inferExpression(function, arguments[post_state.target.input_index].value);
+                    for (post_state.target.projections) |projection| target = try self.projectOutputEffect(target, projection);
+                    const value = try self.substituteOutput(function, post_state.value, arguments);
+                    try self.recordInputPostState(states, target, post_state.initializedness, value, post_state.ends_previous_roots);
                 }
             },
             .virtual_call => |call| {
                 if (call.input.content != .struct_value_literal) continue;
                 const summary = try self.virtualSummary(call.safety_methods) orelse continue;
                 const arguments = call.input.content.struct_value_literal.fields;
-                for (summary.ends_input_roots) |callee_index| {
-                    if (callee_index < arguments.len)
-                        try setEffectInputState(try self.inferExpression(function, arguments[callee_index].value), states, true);
+                for (summary.input_post_states) |post_state| {
+                    if (post_state.target.input_index >= arguments.len) continue;
+                    var target = try self.inferExpression(function, arguments[post_state.target.input_index].value);
+                    for (post_state.target.projections) |projection| target = try self.projectOutputEffect(target, projection);
+                    try self.recordInputPostState(states, target, post_state.initializedness, try self.substituteOutput(function, post_state.value, arguments), post_state.ends_previous_roots);
                 }
             },
             .pointer_assignment => |assignment| {
-                try setEffectInputState(try self.inferExpression(function, assignment.pointer), states, false);
+                if (assignment.value.sem_type != null and !typeContainsPointer(assignment.value.sem_type.?)) continue;
+                try self.recordInputPostState(states, try self.inferExpression(function, assignment.pointer), .initialized, try self.inferExpression(function, assignment.value), false);
+            },
+            .struct_field_store => |store| {
+                if (store.value.sem_type != null and !typeContainsPointer(store.value.sem_type.?)) continue;
+                const target = try self.projectOutputEffect(try self.inferExpression(function, store.struct_ptr), .{ .field = store.field_index });
+                try self.recordInputPostState(states, target, .initialized, try self.inferExpression(function, store.value), false);
+            },
+            .array_store => |store| {
+                if (store.value.sem_type != null and !typeContainsPointer(store.value.sem_type.?)) continue;
+                const projection: place.Projection = if (staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
+                const target = try self.projectOutputEffect(try self.inferExpression(function, store.array_ptr), projection);
+                try self.recordInputPostState(states, target, .initialized, try self.inferExpression(function, store.value), false);
             },
             .if_statement => |statement| {
-                var then_states = try cloneInputStates(states, self.allocator.*);
+                var then_states = try cloneInputPostStates(states, self.allocator.*);
                 defer then_states.deinit();
-                try self.inferInputInitializedness(function, statement.then_block, &then_states);
-                var else_states = try cloneInputStates(states, self.allocator.*);
+                try self.inferInputPostStates(function, statement.then_block, &then_states);
+                var else_states = try cloneInputPostStates(states, self.allocator.*);
                 defer else_states.deinit();
-                if (statement.else_block) |else_block| try self.inferInputInitializedness(function, else_block, &else_states);
-                try joinInputStates(states, &then_states, &else_states);
+                if (statement.else_block) |else_block| try self.inferInputPostStates(function, else_block, &else_states);
+                try self.joinInputPostStates(states, &then_states, &else_states);
             },
             .while_statement => |statement| {
-                var body_states = try cloneInputStates(states, self.allocator.*);
+                var body_states = try cloneInputPostStates(states, self.allocator.*);
                 defer body_states.deinit();
-                try self.inferInputInitializedness(function, statement.body, &body_states);
-                var entry_states = try cloneInputStates(states, self.allocator.*);
-                defer entry_states.deinit();
-                try joinInputStates(states, &entry_states, &body_states);
+                try self.inferInputPostStates(function, statement.body, &body_states);
+                try self.joinInputPostStates(states, states, &body_states);
             },
             .for_statement => |statement| {
-                var body_states = try cloneInputStates(states, self.allocator.*);
+                var body_states = try cloneInputPostStates(states, self.allocator.*);
                 defer body_states.deinit();
-                try self.inferInputInitializedness(function, statement.body, &body_states);
-                var entry_states = try cloneInputStates(states, self.allocator.*);
-                defer entry_states.deinit();
-                try joinInputStates(states, &entry_states, &body_states);
+                try self.inferInputPostStates(function, statement.body, &body_states);
+                try self.joinInputPostStates(states, states, &body_states);
             },
             else => {},
         };
+    }
+
+    fn recordInputPostState(self: *SafetyChecker, states: *std.array_list.Managed(facts.InputPlaceEffect), target: facts.OutputEffect, initializedness: value_state.Initializedness, value: facts.OutputEffect, ends_roots: bool) !void {
+        _ = self;
+        for (target.input_dependencies) |dependency| {
+            var existing_state: ?*facts.InputPlaceEffect = null;
+            for (states.items) |*existing| if (inputPlaceTargetEqual(existing.target, dependency)) {
+                existing_state = existing;
+                break;
+            };
+            if (existing_state) |existing| {
+                const was_deinitialized = existing.initializedness != .initialized;
+                existing.initializedness = initializedness;
+                existing.value = value;
+                existing.ends_previous_roots = existing.ends_previous_roots or ends_roots;
+                existing.refreshes_storage_root = existing.refreshes_storage_root or (was_deinitialized and initializedness == .initialized);
+            } else if (initializedness != .initialized or ends_roots or
+                (!outputEffectIsEmpty(value) and !outputEffectOnlyDependsOnTarget(value, dependency))) try states.append(.{
+                .target = dependency,
+                .initializedness = initializedness,
+                .value = value,
+                .ends_previous_roots = ends_roots,
+            });
+        }
+    }
+
+    fn joinInputPostStates(self: *SafetyChecker, destination: *std.array_list.Managed(facts.InputPlaceEffect), left: *const std.array_list.Managed(facts.InputPlaceEffect), right: *const std.array_list.Managed(facts.InputPlaceEffect)) !void {
+        var joined = std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
+        for (left.items) |left_state| {
+            var merged = left_state;
+            if (findInputPostState(right.items, left_state.target)) |right_state| {
+                merged.initializedness = joinInitializedness(left_state.initializedness, right_state.initializedness);
+                merged.value = try self.mergeOutputEffects(left_state.value, right_state.value);
+                merged.ends_previous_roots = left_state.ends_previous_roots or right_state.ends_previous_roots;
+                merged.refreshes_storage_root = left_state.refreshes_storage_root or right_state.refreshes_storage_root;
+            } else {
+                if (left_state.initializedness != .initialized) {
+                    merged.initializedness = .maybe_initialized;
+                } else {
+                    merged.value = try self.mergeOutputEffects(left_state.value, try self.inputOutputEffect(left_state.target.input_index, left_state.target.projections));
+                }
+            }
+            try joined.append(merged);
+        }
+        for (right.items) |right_state| if (findInputPostState(left.items, right_state.target) == null) {
+            var merged = right_state;
+            if (right_state.initializedness != .initialized) {
+                merged.initializedness = .maybe_initialized;
+            } else {
+                merged.value = try self.mergeOutputEffects(right_state.value, try self.inputOutputEffect(right_state.target.input_index, right_state.target.projections));
+            }
+            try joined.append(merged);
+        };
+        destination.clearRetainingCapacity();
+        try destination.appendSlice(joined.items);
+        joined.deinit();
     }
 
     fn replaceSingleOutput(
@@ -1229,9 +1340,17 @@ pub const SafetyChecker = struct {
         outputs: []facts.OutputEffect,
     ) !void {
         for (block.nodes) |node| switch (node.content) {
+            .binding_declaration => |binding| {
+                const initialization = binding.initialization orelse continue;
+                try self.inference_bindings.?.put(binding, try self.inferExpression(function, initialization));
+            },
             .binding_assignment => |assignment| {
-                const output_index = bindingIndex(function.output_bindings, assignment.sym_id) orelse continue;
-                outputs[output_index] = try self.inferExpression(function, assignment.value);
+                const effect = try self.inferExpression(function, assignment.value);
+                if (bindingIndex(function.output_bindings, assignment.sym_id)) |output_index| {
+                    outputs[output_index] = effect;
+                } else {
+                    try self.inference_bindings.?.put(assignment.sym_id, effect);
+                }
             },
             .if_statement => |statement| {
                 try self.inferBlock(function, statement.then_block, outputs);
@@ -1255,10 +1374,9 @@ pub const SafetyChecker = struct {
         return switch (node.content) {
             .binding_use => |binding| if (inputIndex(function, binding)) |index|
                 try self.inputOutputEffect(@intCast(index), &.{})
-            else
-                .{},
+            else if (self.inference_bindings) |bindings| bindings.get(binding) orelse .{} else .{},
             .move_value => |value| self.withOwnershipTransfer(try self.inferExpression(function, value)),
-            .address_of => |value| try self.withoutOwnershipTransfer(try self.inferExpression(function, value)),
+            .address_of => |value| try self.asPlaceReference(try self.withoutOwnershipTransfer(try self.inferExpression(function, value))),
             .dereference => |value| try self.inferExpression(function, value.pointer),
             .struct_value_literal => |literal| try self.inferAggregate(function, literal.fields),
             .struct_field_access => |access| try self.inferProjection(function, access.struct_value, .{ .field = access.field_index }),
@@ -1272,7 +1390,11 @@ pub const SafetyChecker = struct {
     }
 
     fn inferCall(self: *SafetyChecker, function: *const sg.FunctionDeclaration, call: *const sg.FunctionCall) !facts.OutputEffect {
-        if (call.callee.safety_primitive != .none) return self.primitiveOutputEffect(call.callee.safety_primitive, @intFromPtr(call));
+        if (call.callee.safety_primitive != .none) {
+            const effect = try self.primitiveOutputEffect(call.callee.safety_primitive, @intFromPtr(call));
+            if (call.input.content != .struct_value_literal) return effect;
+            return self.substituteOutput(function, effect, call.input.content.struct_value_literal.fields);
+        }
         const callee_summary = self.summaries.get(call.callee) orelse return .{};
         if (callee_summary.outputs.len != 1 or call.input.content != .struct_value_literal) return .{};
         return self.substituteOutput(function, callee_summary.outputs[0], call.input.content.struct_value_literal.fields);
@@ -1285,9 +1407,19 @@ pub const SafetyChecker = struct {
     }
 
     fn inputOutputEffect(self: *SafetyChecker, input_index: u32, projections: []const place.Projection) !facts.OutputEffect {
+        return .{ .input_dependencies = try self.oneInputDependency(input_index, projections) };
+    }
+
+    fn oneInputDependency(self: *SafetyChecker, input_index: u32, projections: []const place.Projection) ![]const facts.InputDependency {
         const dependencies = try self.allocator.alloc(facts.InputDependency, 1);
         dependencies[0] = .{ .input_index = input_index, .projections = projections };
-        return .{ .input_dependencies = dependencies };
+        return dependencies;
+    }
+
+    fn oneInputPlaceDependency(self: *SafetyChecker, input_index: u32, projections: []const place.Projection) ![]const facts.InputDependency {
+        const dependencies = try self.oneInputDependency(input_index, projections);
+        @constCast(dependencies[0..])[0].references_place_storage = true;
+        return dependencies;
     }
 
     fn primitiveOutputEffect(self: *SafetyChecker, primitive: sg.SafetyPrimitive, source: facts.FreshRootSource) !facts.OutputEffect {
@@ -1307,13 +1439,16 @@ pub const SafetyChecker = struct {
     }
 
     fn ownedAllocationEffect(self: *SafetyChecker, source: facts.FreshRootSource) !facts.OutputEffect {
-        const fields = try self.allocator.alloc(facts.OutputFieldEffect, 2);
+        const fields = try self.allocator.alloc(facts.OutputFieldEffect, 3);
         const data = try self.allocator.create(facts.OutputEffect);
         data.* = .{ .fresh_dependencies = try self.oneFreshSource(source) };
         const size = try self.allocator.create(facts.OutputEffect);
         size.* = .{};
+        const allocator = try self.allocator.create(facts.OutputEffect);
+        allocator.* = try self.inputOutputEffect(2, &.{});
         fields[0] = .{ .index = 0, .value = data };
         fields[1] = .{ .index = 1, .value = size };
+        fields[2] = .{ .index = 2, .value = allocator };
         return .{
             .fresh_owned_roots = try self.oneFreshSource(source),
             .fields = fields,
@@ -1329,6 +1464,14 @@ pub const SafetyChecker = struct {
     fn withoutOwnershipTransfer(self: *SafetyChecker, effect: facts.OutputEffect) !facts.OutputEffect {
         const dependencies = try self.allocator.dupe(facts.InputDependency, effect.input_dependencies);
         for (dependencies) |*dependency| dependency.transfers_ownership = false;
+        var result = effect;
+        result.input_dependencies = dependencies;
+        return result;
+    }
+
+    fn asPlaceReference(self: *SafetyChecker, effect: facts.OutputEffect) !facts.OutputEffect {
+        const dependencies = try self.allocator.dupe(facts.InputDependency, effect.input_dependencies);
+        for (dependencies) |*dependency| dependency.references_place_storage = true;
         var result = effect;
         result.input_dependencies = dependencies;
         return result;
@@ -1450,6 +1593,7 @@ fn containsInputDependency(haystack: []const facts.InputDependency, needle: fact
     for (haystack) |candidate| {
         if (candidate.input_index == needle.input_index and
             candidate.transfers_ownership == needle.transfers_ownership and
+            candidate.references_place_storage == needle.references_place_storage and
             projectionsEqual(candidate.projections, needle.projections)) return true;
     }
     return false;
@@ -1509,10 +1653,9 @@ fn isLocalStorageRoot(
     state: *const SafetyChecker.FunctionState,
     root: facts.RootId,
 ) bool {
-    var iterator = state.storage_roots.iterator();
-    while (iterator.next()) |entry| {
-        if (entry.value_ptr.* != root) continue;
-        return bindingIndex(function.input_bindings, entry.key_ptr.*) == null;
+    for (state.storage_roots.items) |entry| {
+        if (entry.root != root) continue;
+        return bindingIndex(function.input_bindings, entry.storage.root) == null;
     }
     return false;
 }
@@ -1591,6 +1734,56 @@ fn effectsEqual(left: []const facts.OutputEffect, right: []const facts.OutputEff
     return true;
 }
 
+fn outputEffectIsEmpty(effect: facts.OutputEffect) bool {
+    return effect.input_dependencies.len == 0 and effect.fields.len == 0 and
+        effect.fresh_dependencies.len == 0 and effect.fresh_owned_roots.len == 0 and
+        !effect.integer_address and !effect.foreign_storage and !effect.storage_authority;
+}
+
+fn outputEffectOnlyDependsOnTarget(effect: facts.OutputEffect, target: facts.InputDependency) bool {
+    if (effect.fresh_dependencies.len != 0 or effect.fresh_owned_roots.len != 0 or
+        effect.integer_address or effect.foreign_storage or effect.storage_authority) return false;
+    for (effect.input_dependencies) |dependency| {
+        if (dependency.input_index != target.input_index or dependency.transfers_ownership or
+            dependency.projections.len < target.projections.len or
+            !projectionsEqual(dependency.projections[0..target.projections.len], target.projections)) return false;
+    }
+    for (effect.fields) |field| if (!outputEffectOnlyDependsOnTarget(field.value.*, target)) return false;
+    return true;
+}
+
+fn inputDependencyEqual(left: facts.InputDependency, right: facts.InputDependency) bool {
+    if (left.input_index != right.input_index or left.transfers_ownership != right.transfers_ownership or
+        left.references_place_storage != right.references_place_storage or left.projections.len != right.projections.len) return false;
+    for (left.projections, right.projections) |a, b| if (!a.eql(b)) return false;
+    return true;
+}
+
+fn findInputPostState(states: []const facts.InputPlaceEffect, target: facts.InputDependency) ?facts.InputPlaceEffect {
+    for (states) |state| if (inputPlaceTargetEqual(state.target, target)) return state;
+    return null;
+}
+
+fn inputPostStatesEqual(left: []const facts.InputPlaceEffect, right: []const facts.InputPlaceEffect) bool {
+    if (left.len != right.len) return false;
+    for (left, right) |a, b| {
+        if (!inputPlaceTargetEqual(a.target, b.target) or a.initializedness != b.initializedness or
+            a.ends_previous_roots != b.ends_previous_roots or a.refreshes_storage_root != b.refreshes_storage_root or
+            !outputEffectEqual(a.value, b.value)) return false;
+    }
+    return true;
+}
+
+fn inputPlaceTargetEqual(left: facts.InputDependency, right: facts.InputDependency) bool {
+    return left.input_index == right.input_index and projectionsEqual(left.projections, right.projections);
+}
+
+fn cloneInputPostStates(source: *const std.array_list.Managed(facts.InputPlaceEffect), allocator: std.mem.Allocator) !std.array_list.Managed(facts.InputPlaceEffect) {
+    var result = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    try result.appendSlice(source.items);
+    return result;
+}
+
 fn appendEffectInput(effect: facts.OutputEffect, result: *std.array_list.Managed(u32)) !void {
     for (effect.input_dependencies) |dependency| {
         var found = false;
@@ -1665,7 +1858,8 @@ fn appendOwnedRoot(list: *std.array_list.Managed(facts.RootId), owned_root: fact
 
 fn appendInputDependency(list: *std.array_list.Managed(facts.InputDependency), dependency: facts.InputDependency) !void {
     for (list.items) |existing| {
-        if (existing.input_index != dependency.input_index or existing.transfers_ownership != dependency.transfers_ownership) continue;
+        if (existing.input_index != dependency.input_index or existing.transfers_ownership != dependency.transfers_ownership or
+            existing.references_place_storage != dependency.references_place_storage) continue;
         if (projectionsEqual(existing.projections, dependency.projections)) return;
     }
     try list.append(dependency);
@@ -1690,7 +1884,8 @@ fn outputEffectEqual(left: facts.OutputEffect, right: facts.OutputEffect) bool {
         !std.mem.eql(facts.FreshRootSource, left.fresh_owned_roots, right.fresh_owned_roots)) return false;
     if (left.input_dependencies.len != right.input_dependencies.len or left.fields.len != right.fields.len) return false;
     for (left.input_dependencies, right.input_dependencies) |a, b| {
-        if (a.input_index != b.input_index or a.transfers_ownership != b.transfers_ownership or !projectionsEqual(a.projections, b.projections)) return false;
+        if (a.input_index != b.input_index or a.transfers_ownership != b.transfers_ownership or
+            a.references_place_storage != b.references_place_storage or !projectionsEqual(a.projections, b.projections)) return false;
     }
     for (left.fields, right.fields) |a, b| {
         if (a.index != b.index or !outputEffectEqual(a.value.*, b.value.*)) return false;

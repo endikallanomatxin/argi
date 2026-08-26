@@ -9,7 +9,7 @@ BufferedReader#(.base_type: Type: Reader) : Type = (
     -- do not borrow storage tied to this wrapper's lifetime.
     --
     .base     : $&base_type
-    .buffer   : $&UInt8
+    .buffer   : Allocation
     .capacity : UIntNative
     .start    : UIntNative
     .end      : UIntNative
@@ -41,21 +41,14 @@ deinit#(.base_type: Type: Reader)(
     .self: $&BufferedReader#(.base_type: base_type),
     .allocator: $&CAllocator = #reach allocator, system.allocator,
 ) -> () := {
-    deallocate(.self = allocator, .data = self&.buffer, .size = self&.capacity)
-    self& = (
-        .base = self&.base,
-        .buffer = self&.buffer,
-        .capacity = 0,
-        .start = 0,
-        .end = 0,
-    )
+    deinit(.self = $&self&.buffer)
 }
 
 buffered_reader_byte_address#(.base_type: Type: Reader)(
     .self: &BufferedReader#(.base_type: base_type),
     .index: UIntNative,
 ) -> (.address: UIntNative) := {
-    base :: UIntNative = cast#(.to: UIntNative)(.value = self&.buffer)
+    base :: UIntNative = cast#(.to: UIntNative)(.value = self&.buffer.data)
     address = base + index
 }
 
@@ -64,13 +57,7 @@ read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_t
         addr :: UIntNative = buffered_reader_byte_address(.self = self, .index = self&.start).address
         ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
         result = ..ok ..ok ptr&
-        self& = (
-            .base = self&.base,
-            .buffer = self&.buffer,
-            .capacity = self&.capacity,
-            .start = self&.start + 1,
-            .end = self&.end,
-        )
+        self&.start = self&.start + 1
         return
     }
 
@@ -95,13 +82,8 @@ read_byte#(.base_type: Type: Reader)(.self: $&BufferedReader#(.base_type: base_t
     addr :: UIntNative = buffered_reader_byte_address(.self = self, .index = 0).address
     ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
     ptr& = payload
-    self& = (
-        .base = self&.base,
-        .buffer = self&.buffer,
-        .capacity = self&.capacity,
-        .start = 1,
-        .end = 1,
-    )
+    self&.start = 1
+    self&.end = 1
     result = ..ok ..ok payload
 }
 

@@ -9,8 +9,8 @@ main() -> (.status_code: Int32) := {
     first ::= allocate(.self = $&allocator, .size = 1)
     second ::= allocate(.self = $&allocator, .size = allocator.page_size + 1)
 
-    first_addr :: UIntNative = cast#(.to: UIntNative)(.value = first)
-    second_addr :: UIntNative = cast#(.to: UIntNative)(.value = second)
+    first_addr :: UIntNative = cast#(.to: UIntNative)(.value = first.data)
+    second_addr :: UIntNative = cast#(.to: UIntNative)(.value = second.data)
 
     if first_addr == 0 {
         status_code = 11
@@ -27,7 +27,7 @@ main() -> (.status_code: Int32) := {
         return
     }
 
-    deallocate(.self = $&allocator, .data = first, .size = 1)
-    deallocate(.self = $&allocator, .data = second, .size = allocator.page_size + 1)
+    deinit(.self = $&first)
+    deinit(.self = $&second)
     status_code = 0
 }

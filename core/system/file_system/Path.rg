@@ -51,7 +51,7 @@ init(
     .text: String,
 ) -> () := {
     p& = (
-        .text = text,
+        .text = ~text,
     )
 }
 
@@ -69,7 +69,7 @@ init(
         }
     }
     p& = (
-        .text = text,
+        .text = ~text,
     )
 }
 
@@ -84,10 +84,10 @@ path_with_view(
             pushed ::= push_view(.self = $&text, .view = view, .allocator = allocator)
             match pushed {
                 ..ok _ {
-                    result = ..ok (.text = text)
+                    result = ..ok (.text = ~text)
+                    return
                 }
                 ..error _ {
-                    deinit(.self = $&text, .allocator = allocator)
                     result = ..error(.reason = ..out_of_memory)
                 }
             }
@@ -264,10 +264,10 @@ join_views(
             pushed_right ::= push_view(.self = $&text, .view = right&, .allocator = allocator)
             match pushed_right {
                 ..ok _ {
-                    result = ..ok (.text = text)
+                    result = ..ok (.text = ~text)
+                    return
                 }
                 ..error _ {
-                    deinit(.self = $&text, .allocator = allocator)
                     result = ..error(.reason = ..out_of_memory)
                 }
             }

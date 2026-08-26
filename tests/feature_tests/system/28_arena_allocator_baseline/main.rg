@@ -4,12 +4,12 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     first ::= allocate(.self = $&arena, .size = 8)
     second ::= allocate(.self = $&arena, .size = 8)
 
-    if cast#(.to: UIntNative)(.value = first) == 0 {
+    if cast#(.to: UIntNative)(.value = first.data) == 0 {
         status_code = 10
         return
     }
 
-    if cast#(.to: UIntNative)(.value = second) == 0 {
+    if cast#(.to: UIntNative)(.value = second.data) == 0 {
         status_code = 11
         return
     }
@@ -18,6 +18,10 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         status_code = 12
         return
     }
+
+    deinit(.self = $&first)
+    second.data& = 9
+    deinit(.self = $&second)
 
     reset(.self = $&arena)
 
@@ -28,11 +32,12 @@ main(.system: System = System()) -> (.status_code: Int32) := {
 
     third ::= allocate(.self = $&arena, .size = 64)
 
-    if cast#(.to: UIntNative)(.value = third) == 0 {
+    if cast#(.to: UIntNative)(.value = third.data) == 0 {
         status_code = 14
         return
     }
 
+    deinit(.self = $&third)
     deinit(.self = $&arena)
 
     status_code = 0

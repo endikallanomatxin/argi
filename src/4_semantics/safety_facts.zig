@@ -57,6 +57,7 @@ pub const InputDependency = struct {
     input_index: u32,
     projections: []const place.Projection = &.{},
     transfers_ownership: bool = false,
+    references_place_storage: bool = false,
 };
 
 pub const OutputFieldEffect = struct {
@@ -81,8 +82,20 @@ pub const OutputEffect = struct {
     storage_authority: bool = false,
 };
 
+/// Symbolic post-state of a Place reached through a function input.  The
+/// target uses the same input/projection vocabulary as OutputEffect, so call
+/// composition can substitute it without inventing a second Place model.
+pub const InputPlaceEffect = struct {
+    target: InputDependency,
+    initializedness: value_state.Initializedness,
+    value: OutputEffect = .{},
+    ends_previous_roots: bool = false,
+    refreshes_storage_root: bool = false,
+};
+
 pub const FunctionSummary = struct {
     outputs: []const OutputEffect = &.{},
+    input_post_states: []const InputPlaceEffect = &.{},
     ends_input_roots: []const u32 = &.{},
     deinitializes_inputs: []const u32 = &.{},
     invalidates_dynamic_slots: []const u32 = &.{},

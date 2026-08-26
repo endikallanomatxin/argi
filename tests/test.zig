@@ -3019,6 +3019,39 @@ test "feature_tests/ownership/64X_owned_root_cycle" {
     );
 }
 
+test "feature_tests/ownership/65_allocation_stores_stateful_allocator" {
+    const test_path = "tests/feature_tests/ownership/65_allocation_stores_stateful_allocator";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/66X_allocation_stateful_allocator_escape" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/66X_allocation_stateful_allocator_escape",
+        "function output cannot depend on a local storage root that ends before return",
+    );
+}
+
+test "feature_tests/ownership/67X_local_binding_summary_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/67X_local_binding_summary_dependency",
+        "function output cannot depend on a local storage root that ends before return",
+    );
+}
+
+test "feature_tests/ownership/68_arena_child_deinit_preserves_sibling" {
+    const test_path = "tests/feature_tests/ownership/68_arena_child_deinit_preserves_sibling";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/69X_arena_reset_ends_child_domain" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/69X_arena_reset_ends_child_domain",
+        "reference depends on a root that has ended",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

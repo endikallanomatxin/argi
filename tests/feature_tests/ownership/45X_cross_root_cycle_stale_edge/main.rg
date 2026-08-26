@@ -5,7 +5,7 @@ main(.system: System) -> (.status_code: Int32) := {
     ref_a ::= allocation.data
     b :: B = (.value = 5, .to_a = ref_a)
 
-    deinit(.self = $&allocation, .allocator = system.allocator)
+    deinit(.self = $&allocation)
     if b.to_a& == 0 {
         status_code = 0
     }

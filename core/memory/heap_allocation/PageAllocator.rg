@@ -55,11 +55,12 @@ init(
 allocate(
     .self: $&PageAllocator,
     .size: UIntNative,
-) -> (.data: $&UInt8) := {
+) -> (.allocation: Allocation) := {
     page_size ::= page_allocator_page_size(.self = self).size
     aligned_size ::= page_allocator_round_up(.size = size, .alignment = page_size).rounded
-    raw ::= aligned_alloc(.alignment = page_size, .size = aligned_size)
-    data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = raw))
+    raw ::= malloc(.size = aligned_size)
+    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
+    allocation = establish_allocation(.storage = raw, .size = aligned_size, .deallocator = deallocator)
 }
 
 deallocate(
@@ -71,3 +72,4 @@ deallocate(
 }
 
 PageAllocator implements Allocator
+PageAllocator implements Deallocator

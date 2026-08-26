@@ -9,7 +9,7 @@ BufferedWriter#(.base_type: Type: Writer) : Type = (
     -- internal buffer storage becomes invalid.
     --
     .base     : $&base_type
-    .buffer   : $&UInt8
+    .buffer   : Allocation
     .capacity : UIntNative
     .length   : UIntNative
 )
@@ -40,20 +40,14 @@ deinit#(.base_type: Type: Writer)(
     .allocator: $&CAllocator = #reach allocator, system.allocator,
 ) -> () := {
     buffered_writer_flush(.self = self)
-    deallocate(.self = allocator, .data = self&.buffer, .size = self&.capacity)
-    self& = (
-        .base = self&.base,
-        .buffer = self&.buffer,
-        .capacity = 0,
-        .length = 0,
-    )
+    deinit(.self = $&self&.buffer)
 }
 
 buffered_writer_byte_address#(.base_type: Type: Writer)(
     .self: &BufferedWriter#(.base_type: base_type),
     .index: UIntNative,
 ) -> (.address: UIntNative) := {
-    base :: UIntNative = cast#(.to: UIntNative)(.value = self&.buffer)
+    base :: UIntNative = cast#(.to: UIntNative)(.value = self&.buffer.data)
     address = base + index
 }
 
@@ -64,12 +58,7 @@ buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_
         ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
         wrote ::= write_byte(.self = self&.base, .byte = ptr&)
         if is(.value = wrote, .variant = ..error) {
-            self& = (
-                .base = self&.base,
-                .buffer = self&.buffer,
-                .capacity = self&.capacity,
-                .length = 0,
-            )
+            self&.length = 0
             result = ..error(.reason = wrote..error.reason)
             return
         }
@@ -78,22 +67,12 @@ buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_
 
     flushed ::= flush(.self = self&.base)
     if is(.value = flushed, .variant = ..error) {
-        self& = (
-            .base = self&.base,
-            .buffer = self&.buffer,
-            .capacity = self&.capacity,
-            .length = 0,
-        )
+        self&.length = 0
         result = ..error(.reason = flushed..error.reason)
         return
     }
 
-    self& = (
-        .base = self&.base,
-        .buffer = self&.buffer,
-        .capacity = self&.capacity,
-        .length = 0,
-    )
+    self&.length = 0
     result = ..ok Void()
 }
 
@@ -102,12 +81,7 @@ write_byte#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_
     ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
     ptr& = byte
     next_length ::= self&.length + 1
-    self& = (
-        .base = self&.base,
-        .buffer = self&.buffer,
-        .capacity = self&.capacity,
-        .length = next_length,
-    )
+    self&.length = next_length
 
     if next_length == self&.capacity {
         result = buffered_writer_flush(.self = self)

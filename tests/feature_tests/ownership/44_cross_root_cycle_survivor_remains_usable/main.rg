@@ -9,7 +9,7 @@ main(.system: System) -> (.status_code: Int32) := {
     a :: A = (.value = 3, .to_b = ref_b)
     b :: B = (.value = 5, .to_a = ref_a)
 
-    deinit(.self = $&allocation_a, .allocator = system.allocator)
+    deinit(.self = $&allocation_a)
     status_code = 0
     if b.value != 5 {
         status_code = 1
@@ -17,5 +17,5 @@ main(.system: System) -> (.status_code: Int32) := {
     if a.to_b& != 0 {
         status_code = 2
     }
-    deinit(.self = $&allocation_b, .allocator = system.allocator)
+    deinit(.self = $&allocation_b)
 }

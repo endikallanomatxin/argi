@@ -1,7 +1,7 @@
 Buffer : Type = (.allocation: Allocation)
 
 release(.self: $&Buffer, .allocator: $&Allocator) -> () := {
-    deinit(.self = $&self&.allocation, .allocator = allocator)
+    deinit(.self = $&self&.allocation)
 }
 
 main(.system: System) -> (.status_code: Int32) := {
@@ -15,5 +15,5 @@ main(.system: System) -> (.status_code: Int32) := {
     if buffer.allocation.size != 1 {
         status_code = 1
     }
-    deinit(.self = $&buffer.allocation, .allocator = system.allocator)
+    deinit(.self = $&buffer.allocation)
 }

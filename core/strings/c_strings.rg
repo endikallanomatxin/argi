@@ -37,18 +37,21 @@ as_c_string(
     .text: &Char,
     .storage: Allocation,
 ) := {
+    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = allocator)
     if string_view_has_c_string_layout(.self = &self).ok {
         zero :: UIntNative = 0
         text = reinterpret_reference#(.from: UInt8, .to: Char)(.base = self.data).reference
         storage = (
             .data = cast#(.to: $&UInt8)(.value = zero),
             .size = 0,
+            .deallocator = deallocator,
         )
         return
     }
 
     size :: UIntNative = self.length + 1
-    data ::= allocate(.self = allocator, .size = size)
+    allocation ::= allocate(.self = allocator, .size = size)
+    data ::= allocation.data
 
     i :: UIntNative = 0
     while i < self.length {
@@ -61,7 +64,7 @@ as_c_string(
     nul_ptr& = 0
 
     text = reinterpret_reference#(.from: UInt8, .to: Char)(.base = read_reference#(.t: UInt8)(.base = data).reference).reference
-    storage = establish_allocation(.data = data, .size = size)
+    storage = ~allocation
 }
 
 as_view(

@@ -3,7 +3,7 @@ Buffer : Type = (
 )
 
 release(.self: $&Buffer, .allocator: $&Allocator) -> () := {
-    deinit(.self = $&self&.allocation, .allocator = allocator)
+    deinit(.self = $&self&.allocation)
 }
 
 main(.system: System) -> (.status_code: Int32) := {
