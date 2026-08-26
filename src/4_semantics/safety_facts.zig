@@ -7,7 +7,7 @@ pub const StorageAuthorityId = enum(u32) { _ };
 
 pub const Root = struct {
     id: RootId,
-    state: enum { alive, maybe_alive, dead } = .alive,
+    state: enum { alive, conditional, maybe_alive, dead } = .alive,
     owned_resource: bool = false,
 };
 
@@ -22,6 +22,9 @@ pub const ValueFacts = struct {
     dependencies: []const ReferenceDependency = &.{},
     owned_roots: []const RootId = &.{},
     fields: []const FieldFacts = &.{},
+    /// Mutually exclusive payload facts for a choice value. Unlike `fields`,
+    /// these values do not all exist at once and are refined by a match arm.
+    variants: []const VariantFacts = &.{},
     integer_address: bool = false,
     foreign_storage: bool = false,
     storage_authorities: []const StorageAuthorityId = &.{},
@@ -39,6 +42,11 @@ pub const ValueFacts = struct {
 };
 
 pub const FieldFacts = struct {
+    index: u32,
+    value: *const ValueFacts,
+};
+
+pub const VariantFacts = struct {
     index: u32,
     value: *const ValueFacts,
 };
@@ -80,11 +88,19 @@ pub const OutputEffect = struct {
     input_dependencies: []const InputDependency = &.{},
     input_places: []const InputPath = &.{},
     fields: []const OutputFieldEffect = &.{},
+    /// Alternative effects selected by the runtime choice tag. Fresh roots
+    /// below an alternative are never promoted to the enclosing output.
+    variants: []const OutputVariantEffect = &.{},
     fresh_dependencies: []const FreshRootSource = &.{},
     fresh_owned_roots: []const FreshRootSource = &.{},
     integer_address: bool = false,
     foreign_storage: bool = false,
     fresh_storage_authorities: []const FreshRootSource = &.{},
+};
+
+pub const OutputVariantEffect = struct {
+    index: u32,
+    value: *const OutputEffect,
 };
 
 /// Symbolic post-state of a Place reached through a function input.  The

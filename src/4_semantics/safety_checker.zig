@@ -62,7 +62,7 @@ pub const SafetyChecker = struct {
     const FunctionState = struct {
         const OwnershipEdge = struct { owner: facts.RootId, owned: facts.RootId };
         const StorageRoot = struct { storage: place.Place, root: facts.RootId };
-        const StorageAuthorityState = enum { available, maybe_consumed, consumed };
+        const StorageAuthorityState = enum { available, conditional, maybe_consumed, consumed };
         tracker: facts.Tracker,
         storage_authorities: std.array_list.Managed(StorageAuthorityState),
         places: std.array_list.Managed(facts.PlaceFacts),
@@ -328,8 +328,9 @@ pub const SafetyChecker = struct {
                     self.valueAtPlace(state, storage) orelse facts.ValueFacts{}
                 else
                     try self.evaluate(function, access.choice_value, state);
-                for (choice.fields) |field| {
-                    if (field.index == access.variant_index) break :blk field.value.*;
+                self.activateChoiceVariant(choice, access.variant_index, state);
+                for (choice.variants) |variant| {
+                    if (variant.index == access.variant_index) break :blk variant.value.*;
                 }
                 break :blk .{};
             },
@@ -582,6 +583,7 @@ pub const SafetyChecker = struct {
             result = try self.mergeValueFacts(result, input);
         }
         if (effect.fields.len != 0) {
+            const enclosing_variants = result.variants;
             const fields = try self.allocator.alloc(facts.FieldFacts, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
                 const value = try self.allocator.create(facts.ValueFacts);
@@ -590,10 +592,31 @@ pub const SafetyChecker = struct {
                 result = try self.mergeValueFacts(result, value.*);
             }
             result.fields = fields;
+            result.variants = enclosing_variants;
+        }
+        if (effect.variants.len != 0) {
+            const variants = try self.allocator.alloc(facts.VariantFacts, effect.variants.len);
+            for (effect.variants, 0..) |variant, index| {
+                const first_root = state.tracker.roots.items.len;
+                const first_authority = state.storage_authorities.items.len;
+                const value = try self.allocator.create(facts.ValueFacts);
+                value.* = try self.instantiateOutputWithFresh(variant.value.*, arguments, state, fresh_roots, fresh_authorities);
+                for (state.tracker.roots.items[first_root..]) |*root| root.state = .conditional;
+                for (state.storage_authorities.items[first_authority..]) |*authority| authority.* = .conditional;
+                variants[index] = .{ .index = variant.index, .value = value };
+            }
+            result.variants = variants;
         }
         result.integer_address = effect.integer_address;
         result.foreign_storage = result.foreign_storage or effect.foreign_storage;
         return result;
+    }
+
+    fn activateChoiceVariant(self: *SafetyChecker, choice: facts.ValueFacts, variant_index: u32, state: *FunctionState) void {
+        _ = self;
+        for (choice.variants) |variant| {
+            activateConditionalFacts(variant.value.*, state, variant.index == variant_index);
+        }
     }
 
     fn instantiateFreshStorageAuthority(self: *SafetyChecker, source: facts.FreshRootSource, state: *FunctionState, fresh: *std.AutoHashMap(facts.FreshRootSource, facts.StorageAuthorityId)) !facts.StorageAuthorityId {
@@ -647,10 +670,30 @@ pub const SafetyChecker = struct {
             };
             if (!found) try fields.append(right_field);
         }
+        var variants = std.array_list.Managed(facts.VariantFacts).init(self.allocator.*);
+        for (left.variants) |left_variant| {
+            var merged = left_variant.value.*;
+            for (right.variants) |right_variant| if (right_variant.index == left_variant.index) {
+                merged = try self.mergeValueFacts(merged, right_variant.value.*);
+                break;
+            };
+            const stored = try self.allocator.create(facts.ValueFacts);
+            stored.* = merged;
+            try variants.append(.{ .index = left_variant.index, .value = stored });
+        }
+        for (right.variants) |right_variant| {
+            var found = false;
+            for (left.variants) |left_variant| if (left_variant.index == right_variant.index) {
+                found = true;
+                break;
+            };
+            if (!found) try variants.append(right_variant);
+        }
         return .{
             .dependencies = try dependencies.toOwnedSlice(),
             .owned_roots = try owned_roots.toOwnedSlice(),
             .fields = try fields.toOwnedSlice(),
+            .variants = try variants.toOwnedSlice(),
             .integer_address = left.integer_address or right.integer_address,
             .foreign_storage = left.foreign_storage or right.foreign_storage,
             .storage_authorities = try authorities.toOwnedSlice(),
@@ -681,6 +724,18 @@ pub const SafetyChecker = struct {
             fields[index] = .{ .index = field.index, .value = stored };
         }
         result.fields = fields;
+        const variants = try self.allocator.alloc(facts.VariantFacts, result.variants.len);
+        for (result.variants, 0..) |variant, index| {
+            const stored = try self.allocator.create(facts.ValueFacts);
+            const left_variant = findVariant(left.variants, variant.index);
+            const right_variant = findVariant(right.variants, variant.index);
+            stored.* = if (left_variant != null and right_variant != null)
+                try self.joinValueFacts(left_variant.?.value.*, right_variant.?.value.*)
+            else
+                variant.value.*;
+            variants[index] = .{ .index = variant.index, .value = stored };
+        }
+        result.variants = variants;
         return result;
     }
 
@@ -1072,6 +1127,9 @@ pub const SafetyChecker = struct {
         for (value.fields) |field| {
             try self.rejectEscapingValue(function, field.value.*, state);
         }
+        for (value.variants) |variant| {
+            try self.rejectEscapingValue(function, variant.value.*, state);
+        }
     }
 
     fn collectOwnerLocations(
@@ -1224,7 +1282,8 @@ pub const SafetyChecker = struct {
             left.fresh_dependencies.len != right.fresh_dependencies.len or
             left.fresh_owned_roots.len != right.fresh_owned_roots.len or
             left.fresh_storage_authorities.len != right.fresh_storage_authorities.len or
-            left.fields.len != right.fields.len) return null;
+            left.fields.len != right.fields.len or
+            left.variants.len != right.variants.len) return null;
 
         if (!try alignFreshSources(left.fresh_dependencies, right.fresh_dependencies, fresh_map) or
             !try alignFreshSources(left.fresh_owned_roots, right.fresh_owned_roots, fresh_map) or
@@ -1250,10 +1309,18 @@ pub const SafetyChecker = struct {
             value.* = (try self.mergeVirtualOutputEffect(left_field.value.*, right_field.value.*, fresh_map)) orelse return null;
             fields[index] = .{ .index = left_field.index, .value = value };
         }
+        const variants = try self.allocator.alloc(facts.OutputVariantEffect, left.variants.len);
+        for (left.variants, right.variants, 0..) |left_variant, right_variant, index| {
+            if (left_variant.index != right_variant.index) return null;
+            const value = try self.allocator.create(facts.OutputEffect);
+            value.* = (try self.mergeVirtualOutputEffect(left_variant.value.*, right_variant.value.*, fresh_map)) orelse return null;
+            variants[index] = .{ .index = left_variant.index, .value = value };
+        }
         return .{
             .input_dependencies = try dependencies.toOwnedSlice(),
             .input_places = try input_places.toOwnedSlice(),
             .fields = fields,
+            .variants = variants,
             .fresh_dependencies = left.fresh_dependencies,
             .fresh_owned_roots = left.fresh_owned_roots,
             .fresh_storage_authorities = left.fresh_storage_authorities,
@@ -1451,7 +1518,10 @@ pub const SafetyChecker = struct {
             .binding_assignment => |assignment| {
                 const effect = try self.inferExpression(function, assignment.value);
                 if (bindingIndex(function.output_bindings, assignment.sym_id)) |output_index| {
-                    outputs[output_index] = effect;
+                    outputs[output_index] = if (outputs[output_index].variants.len != 0 or effect.variants.len != 0)
+                        try self.mergeOutputEffects(outputs[output_index], effect)
+                    else
+                        effect;
                 } else {
                     try self.inference_bindings.?.put(assignment.sym_id, effect);
                     try self.inference_place_bindings.?.put(assignment.sym_id, try self.inferInputPaths(function, assignment.value));
@@ -1487,7 +1557,7 @@ pub const SafetyChecker = struct {
             .choice_literal => |literal| if (literal.payload) |payload|
                 try self.choiceOutputEffect(literal.variant_index, try self.inferExpression(function, payload))
             else
-                .{},
+                try self.choiceOutputEffect(literal.variant_index, .{}),
             .struct_field_access => |access| try self.inferProjection(function, access.struct_value, .{ .field = access.field_index }),
             .choice_payload_access => |access| try self.inferChoicePayload(function, access.choice_value, access.variant_index),
             .array_index => |index| try self.inferProjection(function, index.array_ptr, if (staticIndex(index.index)) |value| .{ .static_index = value } else .dynamic_index),
@@ -1565,6 +1635,13 @@ pub const SafetyChecker = struct {
             fields[index] = .{ .index = field.index, .value = value };
         }
         result.fields = fields;
+        const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
+        for (effect.variants, 0..) |variant, index| {
+            const value = try self.allocator.create(facts.OutputEffect);
+            value.* = try self.rebaseFreshSources(variant.value.*, call_site);
+            variants[index] = .{ .index = variant.index, .value = value };
+        }
+        result.variants = variants;
         return result;
     }
 
@@ -1640,25 +1717,28 @@ pub const SafetyChecker = struct {
             value.* = try self.inferExpression(function, field.value);
             output_fields[index] = .{ .index = @intCast(index), .value = value };
             result = try self.mergeOutputEffects(result, value.*);
+            // A struct contains the choice; it is not itself refined by the
+            // tags of choice-valued fields.
+            result.variants = &.{};
         }
         result.fields = output_fields;
         return result;
     }
 
     fn choiceValue(self: *SafetyChecker, variant_index: u32, payload: facts.ValueFacts) !facts.ValueFacts {
-        const fields = try self.allocator.alloc(facts.FieldFacts, 1);
+        const variants = try self.allocator.alloc(facts.VariantFacts, 1);
         const stored = try self.allocator.create(facts.ValueFacts);
         stored.* = payload;
-        fields[0] = .{ .index = variant_index, .value = stored };
-        return .{ .fields = fields };
+        variants[0] = .{ .index = variant_index, .value = stored };
+        return .{ .variants = variants };
     }
 
     fn choiceOutputEffect(self: *SafetyChecker, variant_index: u32, payload: facts.OutputEffect) !facts.OutputEffect {
-        const fields = try self.allocator.alloc(facts.OutputFieldEffect, 1);
+        const variants = try self.allocator.alloc(facts.OutputVariantEffect, 1);
         const stored = try self.allocator.create(facts.OutputEffect);
         stored.* = payload;
-        fields[0] = .{ .index = variant_index, .value = stored };
-        return .{ .fields = fields };
+        variants[0] = .{ .index = variant_index, .value = stored };
+        return .{ .variants = variants };
     }
 
     fn inferProjection(self: *SafetyChecker, function: *const sg.FunctionDeclaration, base_node: *const sg.SGNode, projection: place.Projection) !facts.OutputEffect {
@@ -1667,7 +1747,7 @@ pub const SafetyChecker = struct {
 
     fn inferChoicePayload(self: *SafetyChecker, function: *const sg.FunctionDeclaration, base_node: *const sg.SGNode, variant_index: u32) !facts.OutputEffect {
         const effect = try self.inferExpression(function, base_node);
-        for (effect.fields) |field| if (field.index == variant_index) return field.value.*;
+        for (effect.variants) |variant| if (variant.index == variant_index) return variant.value.*;
         return .{};
     }
 
@@ -1732,6 +1812,15 @@ pub const SafetyChecker = struct {
             }
             result.fields = fields;
         }
+        if (effect.variants.len != 0) {
+            const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
+            for (effect.variants, 0..) |variant, index| {
+                const value = try self.allocator.create(facts.OutputEffect);
+                value.* = try self.substituteOutput(function, variant.value.*, arguments);
+                variants[index] = .{ .index = variant.index, .value = value };
+            }
+            result.variants = variants;
+        }
         return result;
     }
 
@@ -1742,14 +1831,54 @@ pub const SafetyChecker = struct {
         var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         for (left.input_places) |path| try appendInputPath(&input_places, path);
         for (right.input_places) |path| try appendInputPath(&input_places, path);
+        var fields = std.array_list.Managed(facts.OutputFieldEffect).init(self.allocator.*);
+        for (left.fields) |left_field| {
+            var merged = left_field.value.*;
+            for (right.fields) |right_field| if (right_field.index == left_field.index) {
+                merged = try self.mergeOutputEffects(merged, right_field.value.*);
+                break;
+            };
+            const stored = try self.allocator.create(facts.OutputEffect);
+            stored.* = merged;
+            try fields.append(.{ .index = left_field.index, .value = stored });
+        }
+        for (right.fields) |right_field| {
+            var found = false;
+            for (left.fields) |left_field| if (left_field.index == right_field.index) {
+                found = true;
+                break;
+            };
+            if (!found) try fields.append(right_field);
+        }
+        var variants = std.array_list.Managed(facts.OutputVariantEffect).init(self.allocator.*);
+        for (left.variants) |left_variant| {
+            var merged = left_variant.value.*;
+            for (right.variants) |right_variant| if (right_variant.index == left_variant.index) {
+                merged = try self.mergeOutputEffects(merged, right_variant.value.*);
+                break;
+            };
+            const stored = try self.allocator.create(facts.OutputEffect);
+            stored.* = merged;
+            try variants.append(.{ .index = left_variant.index, .value = stored });
+        }
+        for (right.variants) |right_variant| {
+            var found = false;
+            for (left.variants) |left_variant| if (left_variant.index == right_variant.index) {
+                found = true;
+                break;
+            };
+            if (!found) try variants.append(right_variant);
+        }
         return .{
             .input_dependencies = try dependencies.toOwnedSlice(),
             .input_places = try input_places.toOwnedSlice(),
+            .fields = try fields.toOwnedSlice(),
             .fresh_dependencies = try self.mergeFreshSources(left.fresh_dependencies, right.fresh_dependencies),
             .fresh_owned_roots = try self.mergeFreshSources(left.fresh_owned_roots, right.fresh_owned_roots),
             .fresh_storage_authorities = try self.mergeFreshSources(left.fresh_storage_authorities, right.fresh_storage_authorities),
             .integer_address = left.integer_address or right.integer_address,
             .foreign_storage = left.foreign_storage or right.foreign_storage,
+            .variants = try variants.toOwnedSlice(),
         };
     }
 };
@@ -1799,6 +1928,11 @@ fn findField(fields: []const facts.FieldFacts, index: u32) ?facts.FieldFacts {
     return null;
 }
 
+fn findVariant(variants: []const facts.VariantFacts, index: u32) ?facts.VariantFacts {
+    for (variants) |variant| if (variant.index == index) return variant;
+    return null;
+}
+
 fn containsRoot(roots: []const facts.RootId, target: facts.RootId) bool {
     for (roots) |root| if (root == target) return true;
     return false;
@@ -1807,13 +1941,32 @@ fn containsRoot(roots: []const facts.RootId, target: facts.RootId) bool {
 fn valueContainsOwnedRoot(value: facts.ValueFacts, target: facts.RootId) bool {
     if (containsRoot(value.owned_roots, target)) return true;
     for (value.fields) |field| if (valueContainsOwnedRoot(field.value.*, target)) return true;
+    for (value.variants) |variant| if (valueContainsOwnedRoot(variant.value.*, target)) return true;
     return false;
 }
 
 fn valueDependsOnRoot(value: facts.ValueFacts, target: facts.RootId) bool {
     for (value.dependencies) |dependency| if (dependency.root == target) return true;
     for (value.fields) |field| if (valueDependsOnRoot(field.value.*, target)) return true;
+    for (value.variants) |variant| if (valueDependsOnRoot(variant.value.*, target)) return true;
     return false;
+}
+
+fn activateConditionalFacts(value: facts.ValueFacts, state: *SafetyChecker.FunctionState, active: bool) void {
+    for (value.dependencies) |dependency| {
+        const root = &state.tracker.roots.items[@intFromEnum(dependency.root)];
+        if (root.state == .conditional) root.state = if (active) .alive else .dead;
+    }
+    for (value.owned_roots) |owned_root| {
+        const root = &state.tracker.roots.items[@intFromEnum(owned_root)];
+        if (root.state == .conditional) root.state = if (active) .alive else .dead;
+    }
+    for (value.storage_authorities) |authority| {
+        const authority_state = &state.storage_authorities.items[@intFromEnum(authority)];
+        if (authority_state.* == .conditional) authority_state.* = if (active) .available else .consumed;
+    }
+    for (value.fields) |field| activateConditionalFacts(field.value.*, state, active);
+    for (value.variants) |variant| activateConditionalFacts(variant.value.*, state, active);
 }
 
 fn appendOwnershipEdge(
@@ -1901,12 +2054,14 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
         !std.mem.eql(facts.StorageAuthorityId, left.storage_authorities, right.storage_authorities) or
         left.dependencies.len != right.dependencies.len or
         left.owned_roots.len != right.owned_roots.len or
-        left.fields.len != right.fields.len) return false;
+        left.fields.len != right.fields.len or
+        left.variants.len != right.variants.len) return false;
     for (left.dependencies, right.dependencies) |a, b| if (a.root != b.root) return false;
     for (left.owned_roots, right.owned_roots) |a, b| if (a != b) return false;
     if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
     if (left.referenced_place) |left_place| if (!left_place.eql(right.referenced_place.?)) return false;
     for (left.fields, right.fields) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
+    for (left.variants, right.variants) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
     return true;
 }
 
@@ -1925,7 +2080,7 @@ fn effectsEqual(left: []const facts.OutputEffect, right: []const facts.OutputEff
 }
 
 fn outputEffectIsEmpty(effect: facts.OutputEffect) bool {
-    return effect.input_dependencies.len == 0 and effect.fields.len == 0 and
+    return effect.input_dependencies.len == 0 and effect.fields.len == 0 and effect.variants.len == 0 and
         effect.fresh_dependencies.len == 0 and effect.fresh_owned_roots.len == 0 and effect.fresh_storage_authorities.len == 0 and
         !effect.integer_address and !effect.foreign_storage;
 }
@@ -1939,6 +2094,7 @@ fn outputEffectOnlyDependsOnTarget(effect: facts.OutputEffect, target: facts.Inp
             !projectionsEqual(dependency.path.projections[0..target.projections.len], target.projections)) return false;
     }
     for (effect.fields) |field| if (!outputEffectOnlyDependsOnTarget(field.value.*, target)) return false;
+    for (effect.variants) |variant| if (!outputEffectOnlyDependsOnTarget(variant.value.*, target)) return false;
     return true;
 }
 
@@ -1978,8 +2134,14 @@ fn projectValueFacts(value: facts.ValueFacts, projections: []const place.Project
     var current = value;
     for (projections) |projection| switch (projection) {
         .field => |index| {
+            var projected = false;
             for (current.fields) |field| if (field.index == index) {
                 current = field.value.*;
+                projected = true;
+                break;
+            };
+            if (!projected) for (current.variants) |variant| if (variant.index == index) {
+                current = variant.value.*;
                 break;
             };
         },
@@ -2040,12 +2202,15 @@ fn outputEffectEqual(left: facts.OutputEffect, right: facts.OutputEffect) bool {
         !std.mem.eql(facts.FreshRootSource, left.fresh_dependencies, right.fresh_dependencies) or
         !std.mem.eql(facts.FreshRootSource, left.fresh_owned_roots, right.fresh_owned_roots) or
         !std.mem.eql(facts.FreshRootSource, left.fresh_storage_authorities, right.fresh_storage_authorities)) return false;
-    if (left.input_dependencies.len != right.input_dependencies.len or left.input_places.len != right.input_places.len or left.fields.len != right.fields.len) return false;
+    if (left.input_dependencies.len != right.input_dependencies.len or left.input_places.len != right.input_places.len or left.fields.len != right.fields.len or left.variants.len != right.variants.len) return false;
     for (left.input_dependencies, right.input_dependencies) |a, b| {
         if (!inputDependencyEqual(a, b)) return false;
     }
     for (left.input_places, right.input_places) |a, b| if (!inputPlaceTargetEqual(a, b)) return false;
     for (left.fields, right.fields) |a, b| {
+        if (a.index != b.index or !outputEffectEqual(a.value.*, b.value.*)) return false;
+    }
+    for (left.variants, right.variants) |a, b| {
         if (a.index != b.index or !outputEffectEqual(a.value.*, b.value.*)) return false;
     }
     return true;
@@ -2183,12 +2348,13 @@ test "choice values preserve complete payload facts" {
     };
 
     const wrapped = try checker.choiceValue(5, payload);
-    try std.testing.expectEqual(@as(usize, 1), wrapped.fields.len);
-    try std.testing.expectEqual(@as(u32, 5), wrapped.fields[0].index);
-    try std.testing.expect(valueFactsEqual(payload, wrapped.fields[0].value.*));
+    try std.testing.expectEqual(@as(usize, 0), wrapped.fields.len);
+    try std.testing.expectEqual(@as(usize, 1), wrapped.variants.len);
+    try std.testing.expectEqual(@as(u32, 5), wrapped.variants[0].index);
+    try std.testing.expect(valueFactsEqual(payload, wrapped.variants[0].value.*));
 
     const nested_wrapped = try checker.choiceValue(9, wrapped);
-    const extracted = nested_wrapped.fields[0].value.fields[0].value.*;
+    const extracted = nested_wrapped.variants[0].value.variants[0].value.*;
     try std.testing.expect(valueFactsEqual(payload, extracted));
 }
 
@@ -2223,11 +2389,44 @@ test "choice output effects preserve complete payload facts" {
     };
 
     const wrapped = try checker.choiceOutputEffect(5, payload);
-    try std.testing.expectEqual(@as(usize, 1), wrapped.fields.len);
-    try std.testing.expectEqual(@as(u32, 5), wrapped.fields[0].index);
-    try std.testing.expect(outputEffectEqual(payload, wrapped.fields[0].value.*));
+    try std.testing.expectEqual(@as(usize, 0), wrapped.fields.len);
+    try std.testing.expectEqual(@as(usize, 1), wrapped.variants.len);
+    try std.testing.expectEqual(@as(u32, 5), wrapped.variants[0].index);
+    try std.testing.expect(outputEffectEqual(payload, wrapped.variants[0].value.*));
 
     const nested_wrapped = try checker.choiceOutputEffect(9, wrapped);
-    const extracted = nested_wrapped.fields[0].value.fields[0].value.*;
+    const extracted = nested_wrapped.variants[0].value.variants[0].value.*;
     try std.testing.expect(outputEffectEqual(payload, extracted));
+}
+
+test "choice alternatives activate fresh ownership by variant" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    const owned = facts.OutputEffect{ .fresh_owned_roots = &.{41} };
+    const ok = try checker.choiceOutputEffect(0, owned);
+    const failed = try checker.choiceOutputEffect(1, .{});
+    const alternatives = try checker.mergeOutputEffects(ok, failed);
+    try std.testing.expectEqual(@as(usize, 0), alternatives.fields.len);
+    try std.testing.expectEqual(@as(usize, 2), alternatives.variants.len);
+    try std.testing.expectEqual(@as(usize, 0), alternatives.fresh_owned_roots.len);
+
+    var failed_state = SafetyChecker.FunctionState.init(allocator);
+    defer failed_state.deinit();
+    const failed_value = try checker.instantiateOutput(alternatives, &.{}, &failed_state);
+    try std.testing.expectEqual(@as(usize, 1), failed_state.tracker.roots.items.len);
+    try std.testing.expectEqual(.conditional, failed_state.tracker.roots.items[0].state);
+    checker.activateChoiceVariant(failed_value, 1, &failed_state);
+    try std.testing.expectEqual(.dead, failed_state.tracker.roots.items[0].state);
+    try std.testing.expectEqual(@as(usize, 0), failed_value.variants[1].value.owned_roots.len);
+
+    var ok_state = SafetyChecker.FunctionState.init(allocator);
+    defer ok_state.deinit();
+    const ok_value = try checker.instantiateOutput(alternatives, &.{}, &ok_state);
+    checker.activateChoiceVariant(ok_value, 0, &ok_state);
+    try std.testing.expectEqual(.alive, ok_state.tracker.roots.items[0].state);
+    try std.testing.expectEqual(@as(usize, 1), ok_value.variants[0].value.owned_roots.len);
 }

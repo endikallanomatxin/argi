@@ -3072,6 +3072,19 @@ test "feature_tests/ownership/74X_core_path_not_trusted" {
     );
 }
 
+test "feature_tests/ownership/75_choice_variant_sensitive_roots" {
+    const test_path = "tests/feature_tests/ownership/75_choice_variant_sensitive_roots";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/76X_choice_payload_double_move" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/76X_choice_payload_double_move",
+        "binding 'payload' was moved and cannot be used again",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended
