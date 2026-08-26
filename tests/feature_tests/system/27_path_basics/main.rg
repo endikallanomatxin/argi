@@ -61,8 +61,8 @@ main(.system: System = System()) -> (.status_code: Int32) := {
 
     joined_result ::= join(.left = &base, .right = &child, .allocator = system.allocator)
     match joined_result {
-        ..ok & payload {
-            joined ::= copy(.self = payload&, .allocator = system.allocator)
+        ..ok ~ payload {
+            joined ::= ~payload
             joined_view ::= as_view(.self = &joined)
             if joined_view == "/tmp/demo/child.txt" {
             } else {

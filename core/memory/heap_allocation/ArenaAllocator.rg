@@ -3,6 +3,17 @@ ArenaBlock : Type = (
     .size: UIntNative
 )
 
+ArenaDomain : Type = (
+    .anchor: &Any
+)
+
+init(.p: $&ArenaDomain, .anchor: &Any) -> () := {
+    p& = (.anchor = anchor)
+}
+
+deinit(.self: $&ArenaDomain) -> () := {
+}
+
 ArenaAllocator : Type = (
     --
     -- Simple bump arena backed by another allocator.
@@ -15,6 +26,7 @@ ArenaAllocator : Type = (
     --
     .backing_allocator    : $&CAllocator
     .blocks               : DynamicArray#(.t: ArenaBlock)
+    .domain               : ArenaDomain
     .block_size           : UIntNative
     .current_block_offset : UIntNative
 )
@@ -36,48 +48,53 @@ init(
     .p: $&ArenaAllocator,
     .backing_allocator: $&CAllocator = #reach allocator, system.allocator,
     .block_size: UIntNative = 4096,
-) -> () := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     p&.backing_allocator = backing_allocator
-    init#(.t: ArenaBlock)(.p = $&p&.blocks, .allocator = backing_allocator, .capacity = 4)
+    initialized ::= init#(.t: ArenaBlock)(.p = $&p&.blocks, .allocator = backing_allocator, .capacity = 4)
+    if is(.value = initialized, .variant = ..error) {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
+    init(.p = $&p&.domain, .anchor = cast#(.to: &Any)(.value = p))
     p&.block_size = arena_min_block_capacity(.requested = 1, .block_size = block_size).capacity
     p&.current_block_offset = 0
+    result = ..ok Void()
 }
 
-arena_release_blocks(
+arena_free_blocks(
     .self: $&ArenaAllocator,
 ) -> () := {
     i :: UIntNative = 0
     while i < self&.blocks.length {
         block : &ArenaBlock = &self&.blocks[i]
-        deallocate(.self = self&.backing_allocator, .data = block&.data, .size = block&.size)
+        free(.address = cast#(.to: UIntNative)(.value = block&.data))
         i = i + 1
     }
 
-    deinit(.allocator = self&.backing_allocator, .self = $&self&.blocks)
+    self&.blocks.length = 0
     self&.current_block_offset = 0
 }
 
 reset(
     .self: $&ArenaAllocator,
 ) -> () := {
-    arena_release_blocks(.self = self)
-    init#(.t: ArenaBlock)(
-        .p = $&self&.blocks,
-        .allocator = self&.backing_allocator,
-        .capacity = 4,
-    )
+    deinit(.self = $&self&.domain)
+    arena_free_blocks(.self = self)
+    init(.p = $&self&.domain, .anchor = cast#(.to: &Any)(.value = self))
 }
 
 deinit(
     .self: $&ArenaAllocator,
 ) -> () := {
-    arena_release_blocks(.self = self)
+    deinit(.self = $&self&.domain)
+    arena_free_blocks(.self = self)
+    deinit(.allocator = self&.backing_allocator, .self = $&self&.blocks)
 }
 
 allocate(
     .self: $&ArenaAllocator,
     .size: UIntNative,
-) -> (.allocation: Allocation) := {
+) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
     required ::= size
     if required == 0 {
         required = 1
@@ -95,13 +112,16 @@ allocate(
 
     if needs_block {
         new_block_size ::= arena_min_block_capacity(.requested = required, .block_size = self&.block_size).capacity
-        raw_block ::= malloc(.size = new_block_size)
-        raw ::= raw_pointer#(.t: UInt8)(.address = cast#(.to: UIntNative)(.value = raw_block))
-        block_data ::= establish_inherited_reference#(.t: UInt8)(
-            .raw = raw,
+        raw_address ::= malloc(.size = new_block_size).address
+        if raw_address == 0 {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+        block_data ::= establish_inherited_storage#(.t: UInt8)(
+            .address = raw_address,
             -- Physical storage is incorporated into the arena's existing
             -- temporal domain instead of manufacturing a child root.
-            .root = cast#(.to: $&Any)(.value = $&self&.blocks),
+            .root = cast#(.to: $&Any)(.value = $&self&.domain),
         ).reference
         pushed ::= push(
             .allocator = self&.backing_allocator,
@@ -112,14 +132,8 @@ allocate(
             ),
         )
         if is(.value = pushed, .variant = ..error) {
-            deallocate(.self = self&.backing_allocator, .data = block_data, .size = new_block_size)
-            data ::= mutable_reinterpret_reference#(.from: ArenaAllocator, .to: UInt8)(.base = self).reference
-            deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-            allocation = (
-                .data = data,
-                .size = 0,
-                .deallocator = deallocator,
-            )
+            free(.address = raw_address)
+            result = ..error(.reason = ..out_of_memory)
             return
         }
         self&.current_block_offset = 0
@@ -133,18 +147,18 @@ allocate(
     raw ::= raw_pointer#(.t: UInt8)(.address = cast#(.to: UIntNative)(.value = child_data))
     data ::= establish_inherited_reference#(.t: UInt8)(
         .raw = raw,
-        -- The structural blocks Place is the arena's shared temporal domain.
-        -- reset replaces that Place, ending the old domain and establishing a
-        -- fresh one without manufacturing a root per child allocation.
-        .root = cast#(.to: $&Any)(.value = $&self&.blocks),
+        -- The domain Place is shared by every child. Reset replaces that
+        -- domain without manufacturing a root per child allocation.
+        .root = cast#(.to: $&Any)(.value = $&self&.domain),
     ).reference
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation = (
+    allocation :: Allocation = (
         .data = data,
         .size = size,
         .deallocator = deallocator,
     )
     self&.current_block_offset = self&.current_block_offset + required
+    result = ..ok ~allocation
 }
 
 deallocate(

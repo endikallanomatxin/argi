@@ -24,7 +24,10 @@ DummyInput implements Reader
 
 main() -> (.status_code: Int32) := {
     allocator :: CAllocator = CAllocator()
-    allocation ::= allocate(.self = $&allocator, .size = 4)
+    allocated ::= allocate(.self = $&allocator, .size = 4)
+    match allocated {
+    ..error _ { status_code = 10 }
+    ..ok ~ allocation {
 
     buffer ::= array_view#(.t: UInt8)(
         .data = allocation.data,
@@ -56,4 +59,6 @@ main() -> (.status_code: Int32) := {
     }
 
     status_code = 0
+    }
+    }
 }

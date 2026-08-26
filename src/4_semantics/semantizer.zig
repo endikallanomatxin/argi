@@ -18,6 +18,7 @@ fn safetyPrimitiveForBundledDeclaration(name: []const u8, file: []const u8) sg.S
     const raw_pointer_entries = [_]Entry{
         .{ .name = "establish_fresh_reference", .primitive = .establish_fresh_reference },
         .{ .name = "establish_inherited_reference", .primitive = .establish_inherited_reference },
+        .{ .name = "establish_inherited_storage", .primitive = .establish_inherited_storage },
         .{ .name = "reference_offset", .primitive = .reference_offset },
         .{ .name = "mutable_reference_offset", .primitive = .mutable_reference_offset },
         .{ .name = "reinterpret_reference", .primitive = .reinterpret_reference },
@@ -4080,7 +4081,9 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         if (inner.content != .identifier) {
             const value = try self.visitNode(inner.*, s);
-            if (value.node.content != .struct_field_access and value.node.content != .array_index and value.node.content != .dereference) {
+            if (value.node.content != .struct_field_access and value.node.content != .choice_payload_access and
+                value.node.content != .array_index and value.node.content != .dereference)
+            {
                 try self.diags.add(loc, .semantic, "move requires a stable place", .{});
                 return error.Reported;
             }

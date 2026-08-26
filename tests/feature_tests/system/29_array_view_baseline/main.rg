@@ -1,6 +1,9 @@
 main() -> (.status_code: Int32) := {
     allocator :: CAllocator = CAllocator()
-    allocation ::= allocate(.self = $&allocator, .size = 16)
+    allocated ::= allocate(.self = $&allocator, .size = 16)
+    match allocated {
+    ..error _ { status_code = 10 }
+    ..ok ~ allocation {
     data ::= mutable_reinterpret_reference#(.from: UInt8, .to: Int32)(.base = allocation.data).reference
     values ::= array_view#(.t: Int32)(.data = data, .length = 4)
 
@@ -20,4 +23,6 @@ main() -> (.status_code: Int32) := {
     }
 
     status_code = values[1] + values[2]
+    }
+    }
 }

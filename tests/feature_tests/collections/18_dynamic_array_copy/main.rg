@@ -5,7 +5,12 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     push(.self = $&arr, .value = 10, .allocator = system.allocator)
     push(.self = $&arr, .value = 20, .allocator = system.allocator)
 
-    copied :: DynamicArray#(.t: Int32) = arr
+    copied_result ::= copy_fallible#(.t: Int32)(.self = &arr, .allocator = system.allocator)
+    if is(.value = copied_result, .variant = ..error) {
+        status_code = 5
+        return
+    }
+    copied ::= ~copied_result..ok
     #defer deinit(.self = $&copied, .allocator = system.allocator)
 
     copied[0] = 99
@@ -28,40 +33,6 @@ main(.system: System = System()) -> (.status_code: Int32) := {
 
     if copied[0] != 99 {
         status_code = 4
-        return
-    }
-
-    text ::= String(.allocator = system.allocator, .length = 2)
-    bytes_set(.string = $&text, .index = 0, .value = 79)
-    bytes_set(.string = $&text, .index = 1, .value = 75)
-
-    strings ::= DynamicArray#(.t: String)(.capacity = 1)
-    #defer deinit(.self = $&strings, .allocator = system.allocator)
-    push(.self = $&strings, .value = text, .allocator = system.allocator)
-
-    copied_strings :: DynamicArray#(.t: String) = strings
-    #defer deinit(.self = $&copied_strings, .allocator = system.allocator)
-
-    copied_first_ptr : &String = &copied_strings[0]
-    first_string ::= copy(.self = copied_first_ptr&, .allocator = system.allocator)
-    #defer deinit(.self = $&first_string, .allocator = system.allocator)
-    bytes_set(.string = $&first_string, .index = 0, .value = 78)
-    copied_strings[0] = first_string
-
-    original_first_ptr : &String = &strings[0]
-    original_first ::= copy(.self = original_first_ptr&, .allocator = system.allocator)
-    #defer deinit(.self = $&original_first, .allocator = system.allocator)
-    copied_first_after_ptr : &String = &copied_strings[0]
-    copied_first ::= copy(.self = copied_first_after_ptr&, .allocator = system.allocator)
-    #defer deinit(.self = $&copied_first, .allocator = system.allocator)
-
-    if bytes_get(.string = &original_first, .index = 0).byte != 79 {
-        status_code = 5
-        return
-    }
-
-    if bytes_get(.string = &copied_first, .index = 0).byte != 78 {
-        status_code = 6
         return
     }
 

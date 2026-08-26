@@ -33,7 +33,8 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    line ::= result..ok..ok
+    outer ::= ~result..ok
+    line ::= ~outer..ok
 
     if line.length != 20 {
         status_code = 2

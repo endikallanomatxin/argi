@@ -105,13 +105,15 @@ deinit(
     deinit(.self = $&self&.text, .allocator = allocator)
 }
 
-copy(
-    .self: Path,
+copy_fallible(
+    .self: &Path,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.out: Path) := {
-    out = (
-        .text = copy(.self = self.text, .allocator = allocator),
-    )
+) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
+    copied ::= copy_fallible(.self = &self&.text, .allocator = allocator)
+    match copied {
+        ..ok ~ payload { result = ..ok (.text = ~payload) }
+        ..error _ { result = ..error(.reason = ..out_of_memory) }
+    }
 }
 
 as_view(
@@ -231,8 +233,8 @@ join_views(
 
     created ::= string_with_capacity(.allocator = allocator, .capacity = target_capacity)
     match created {
-        ..ok payload {
-            text ::= payload
+        ..ok ~ created_text {
+            text ::= ~created_text
 
             pushed_left ::= push_view(.self = $&text, .view = left&, .allocator = allocator)
             match pushed_left {

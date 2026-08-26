@@ -172,8 +172,20 @@ pub const SafetyChecker = struct {
                 },
                 .pointer_assignment => |assignment| {
                     const pointer = try self.evaluate(function, assignment.pointer, state);
-                    if (!state.tracker.dependenciesAreAlive(pointer))
+                    const reinitializes_dead_place = if (pointer.referenced_place) |target|
+                        if (self.getPlace(state, target)) |target_facts|
+                            target_facts.initializedness == .deinitialized
+                        else
+                            false
+                    else
+                        false;
+                    if (!state.tracker.dependenciesAreAlive(pointer) and !reinitializes_dead_place)
                         try self.diagnostics.add(function.location, .semantic, "reference depends on a root that has ended", .{});
+                    if (reinitializes_dead_place) {
+                        const target = pointer.referenced_place.?;
+                        try self.refreshStorageRoot(state, target);
+                        try self.rebindAliasesToStorageRoot(state, target);
+                    }
                     const value = try self.evaluate(function, assignment.value, state);
                     try self.addStoredOwnershipEdges(function, state, pointer, value);
                     if (pointer.referenced_place) |target| try self.setPlace(state, target, .initialized, value);
@@ -263,9 +275,14 @@ pub const SafetyChecker = struct {
                 break :blk .{};
             },
             .move_value => |value| blk: {
-                const result = try self.evaluate(function, value, state);
+                const value_type = value.sem_type orelse if (value.content == .binding_use) value.content.binding_use.ty else null;
+                const moving_choice = value_type != null and value_type.? == .choice_type;
+                const result = if (moving_choice and try self.resolvePlace(value, state) != null)
+                    self.valueAtPlace(state, (try self.resolvePlace(value, state)).?) orelse facts.ValueFacts{}
+                else
+                    try self.evaluate(function, value, state);
                 if (try self.resolvePlace(value, state)) |source|
-                    try self.setPlace(state, source, .moved, .{});
+                    try self.setPlace(state, source, .moved, if (moving_choice) result else .{});
                 break :blk result;
             },
             .address_of => |value| blk: {
@@ -301,6 +318,20 @@ pub const SafetyChecker = struct {
                     if (field.index == access.field_index) break :blk field.value.*;
                 }
                 break :blk aggregate_value;
+            },
+            .choice_payload_access => |access| blk: {
+                // A moving match first consumes the choice container and then
+                // extracts the active payload. Preserve the stored facts for
+                // that compiler-generated extraction even though the
+                // container Place has already transitioned to moved.
+                const choice = if (try self.resolvePlace(access.choice_value, state)) |storage|
+                    self.valueAtPlace(state, storage) orelse facts.ValueFacts{}
+                else
+                    try self.evaluate(function, access.choice_value, state);
+                for (choice.fields) |field| {
+                    if (field.index == access.variant_index) break :blk field.value.*;
+                }
+                break :blk .{};
             },
             .array_index => |index| blk: {
                 _ = try self.evaluate(function, index.array_ptr, state);
@@ -377,9 +408,11 @@ pub const SafetyChecker = struct {
         if (call.callee.safety_primitive == .establish_fresh_reference)
             try self.diagnostics.add(function.location, .semantic, "fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries", .{});
         if (call.callee.safety_primitive == .establish_allocation or
-            call.callee.safety_primitive == .establish_inherited_reference)
+            call.callee.safety_primitive == .establish_inherited_reference or
+            call.callee.safety_primitive == .establish_inherited_storage)
         {
-            const requires_authority = call.callee.safety_primitive == .establish_allocation;
+            const requires_authority = call.callee.safety_primitive == .establish_allocation or
+                call.callee.safety_primitive == .establish_inherited_storage;
             if (requires_authority and (argument_values.len == 0 or argument_values[0].storage_authorities.len == 0)) {
                 try self.diagnostics.add(function.location, .semantic, "allocation root establishment requires storage returned by an authorized allocator boundary", .{});
             } else if (argument_values.len != 0) {
@@ -482,6 +515,7 @@ pub const SafetyChecker = struct {
             if (post_state.ends_previous_roots) {
                 if (self.valueAtPlace(state, target)) |old| for (old.owned_roots) |root| state.tracker.end(root);
             }
+            if (post_state.initializedness == .deinitialized) self.endStorageRootsUnder(state, target);
             if (post_state.refreshes_storage_root) try self.refreshStorageRoot(state, target);
             const value = if (post_state.initializedness == .initialized)
                 try self.instantiateOutputWithFresh(post_state.value, argument_values, state, &fresh_roots, &fresh_authorities)
@@ -808,6 +842,26 @@ pub const SafetyChecker = struct {
         try state.storage_roots.append(.{ .storage = storage, .root = try state.tracker.establish(.fresh) });
     }
 
+    fn endStorageRootsUnder(self: *SafetyChecker, state: *FunctionState, storage: place.Place) void {
+        _ = self;
+        for (state.storage_roots.items) |entry|
+            if (storage.isPrefixOf(entry.storage)) state.tracker.end(entry.root);
+    }
+
+    fn rebindAliasesToStorageRoot(self: *SafetyChecker, state: *FunctionState, storage: place.Place) !void {
+        var replacement: ?facts.RootId = null;
+        for (state.storage_roots.items) |entry| if (entry.storage.eql(storage)) {
+            replacement = entry.root;
+            break;
+        };
+        const root = replacement orelse return;
+        for (state.places.items) |*place_facts| {
+            const target = place_facts.value.referenced_place orelse continue;
+            if (!target.eql(storage)) continue;
+            place_facts.value.dependencies = try self.oneDependency(root);
+        }
+    }
+
     fn getPlace(self: *SafetyChecker, state: *FunctionState, storage: place.Place) ?*facts.PlaceFacts {
         _ = self;
         var index = state.places.items.len;
@@ -1011,6 +1065,13 @@ pub const SafetyChecker = struct {
             try self.diagnostics.add(function.location, .semantic, "function output cannot depend on a local storage root that ends before return", .{});
             return;
         }
+        // Aggregate outputs, including choice payloads such as
+        // Errable<Allocation>, retain the temporal facts of their fields.
+        // Escapes must therefore be checked recursively rather than only on
+        // the aggregate's direct facts.
+        for (value.fields) |field| {
+            try self.rejectEscapingValue(function, field.value.*, state);
+        }
     }
 
     fn collectOwnerLocations(
@@ -1049,6 +1110,10 @@ pub const SafetyChecker = struct {
             .address_of => |value| try self.resolvePlace(value, state),
             .struct_field_access => |access| if (try self.resolvePlace(access.struct_value, state)) |base|
                 try self.projectedPlace(base, .{ .field = access.field_index })
+            else
+                null,
+            .choice_payload_access => |access| if (try self.resolvePlace(access.choice_value, state)) |base|
+                try self.projectedPlace(base, .{ .field = access.variant_index })
             else
                 null,
             .array_index => |index| if (try self.resolvePlace(index.array_ptr, state)) |base|
@@ -1419,7 +1484,12 @@ pub const SafetyChecker = struct {
             .address_of => |value| .{ .input_places = try self.inferInputPaths(function, value) },
             .dereference => |value| try self.inferExpression(function, value.pointer),
             .struct_value_literal => |literal| try self.inferAggregate(function, literal.fields),
+            .choice_literal => |literal| if (literal.payload) |payload|
+                try self.choiceOutputEffect(literal.variant_index, try self.inferExpression(function, payload))
+            else
+                .{},
             .struct_field_access => |access| try self.inferProjection(function, access.struct_value, .{ .field = access.field_index }),
+            .choice_payload_access => |access| try self.inferChoicePayload(function, access.choice_value, access.variant_index),
             .array_index => |index| try self.inferProjection(function, index.array_ptr, if (staticIndex(index.index)) |value| .{ .static_index = value } else .dynamic_index),
             .explicit_cast => |cast| try self.inferExpression(function, cast.value),
             .function_call => |call| try self.inferCall(function, call),
@@ -1462,13 +1532,40 @@ pub const SafetyChecker = struct {
         }
         const callee_summary = self.summaries.get(call.callee) orelse return .{};
         if (callee_summary.outputs.len != 1 or call.input.content != .struct_value_literal) return .{};
-        return self.substituteOutput(function, callee_summary.outputs[0], call.input.content.struct_value_literal.fields);
+        const substituted = try self.substituteOutput(function, callee_summary.outputs[0], call.input.content.struct_value_literal.fields);
+        return self.rebaseFreshSources(substituted, @intFromPtr(call));
     }
 
     fn inferVirtualCall(self: *SafetyChecker, function: *const sg.FunctionDeclaration, call: *const sg.VirtualCall) !facts.OutputEffect {
         const summary = try self.virtualSummary(call.safety_methods) orelse return .{};
         if (summary.outputs.len != 1 or call.input.content != .struct_value_literal) return .{};
-        return self.substituteOutput(function, summary.outputs[0], call.input.content.struct_value_literal.fields);
+        const substituted = try self.substituteOutput(function, summary.outputs[0], call.input.content.struct_value_literal.fields);
+        return self.rebaseFreshSources(substituted, @intFromPtr(call));
+    }
+
+    fn rebaseFreshSources(self: *SafetyChecker, effect: facts.OutputEffect, call_site: usize) !facts.OutputEffect {
+        const Context = struct { call_site: usize, source: facts.FreshRootSource };
+        var result = effect;
+        const dependencies = try self.allocator.alloc(facts.FreshRootSource, effect.fresh_dependencies.len);
+        for (effect.fresh_dependencies, 0..) |source, index|
+            dependencies[index] = std.hash.Wyhash.hash(0, std.mem.asBytes(&Context{ .call_site = call_site, .source = source }));
+        result.fresh_dependencies = dependencies;
+        const owned_roots = try self.allocator.alloc(facts.FreshRootSource, effect.fresh_owned_roots.len);
+        for (effect.fresh_owned_roots, 0..) |source, index|
+            owned_roots[index] = std.hash.Wyhash.hash(0, std.mem.asBytes(&Context{ .call_site = call_site, .source = source }));
+        result.fresh_owned_roots = owned_roots;
+        const authorities = try self.allocator.alloc(facts.FreshRootSource, effect.fresh_storage_authorities.len);
+        for (effect.fresh_storage_authorities, 0..) |source, index|
+            authorities[index] = std.hash.Wyhash.hash(0, std.mem.asBytes(&Context{ .call_site = call_site, .source = source }));
+        result.fresh_storage_authorities = authorities;
+        const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
+        for (effect.fields, 0..) |field, index| {
+            const value = try self.allocator.create(facts.OutputEffect);
+            value.* = try self.rebaseFreshSources(field.value.*, call_site);
+            fields[index] = .{ .index = field.index, .value = value };
+        }
+        result.fields = fields;
+        return result;
     }
 
     fn inputOutputEffect(self: *SafetyChecker, input_index: u32, projections: []const place.Projection) !facts.OutputEffect {
@@ -1492,6 +1589,7 @@ pub const SafetyChecker = struct {
             .none => .{},
             .establish_fresh_reference => .{ .fresh_dependencies = try self.oneFreshSource(source) },
             .establish_inherited_reference => self.inputOutputEffect(1, &.{}),
+            .establish_inherited_storage => self.inputOutputEffect(1, &.{}),
             .establish_allocation => self.ownedAllocationEffect(source),
             .raw_allocated_storage => .{ .foreign_storage = true, .fresh_storage_authorities = try self.oneFreshSource(source) },
             .reference_offset,
@@ -1547,8 +1645,41 @@ pub const SafetyChecker = struct {
         return result;
     }
 
+    fn choiceValue(self: *SafetyChecker, variant_index: u32, payload: facts.ValueFacts) !facts.ValueFacts {
+        const fields = try self.allocator.alloc(facts.FieldFacts, 1);
+        const stored = try self.allocator.create(facts.ValueFacts);
+        stored.* = .{
+            .dependencies = payload.dependencies,
+            .owned_roots = payload.owned_roots,
+            .fields = payload.fields,
+            .referenced_place = payload.referenced_place,
+        };
+        fields[0] = .{ .index = variant_index, .value = stored };
+        return .{ .fields = fields };
+    }
+
+    fn choiceOutputEffect(self: *SafetyChecker, variant_index: u32, payload: facts.OutputEffect) !facts.OutputEffect {
+        const fields = try self.allocator.alloc(facts.OutputFieldEffect, 1);
+        const stored = try self.allocator.create(facts.OutputEffect);
+        stored.* = .{
+            .input_dependencies = payload.input_dependencies,
+            .input_places = payload.input_places,
+            .fresh_dependencies = payload.fresh_dependencies,
+            .fresh_owned_roots = payload.fresh_owned_roots,
+            .fields = payload.fields,
+        };
+        fields[0] = .{ .index = variant_index, .value = stored };
+        return .{ .fields = fields };
+    }
+
     fn inferProjection(self: *SafetyChecker, function: *const sg.FunctionDeclaration, base_node: *const sg.SGNode, projection: place.Projection) !facts.OutputEffect {
         return self.projectOutputEffect(try self.inferExpression(function, base_node), projection);
+    }
+
+    fn inferChoicePayload(self: *SafetyChecker, function: *const sg.FunctionDeclaration, base_node: *const sg.SGNode, variant_index: u32) !facts.OutputEffect {
+        const effect = try self.inferExpression(function, base_node);
+        for (effect.fields) |field| if (field.index == variant_index) return field.value.*;
+        return .{};
     }
 
     fn projectOutputEffect(self: *SafetyChecker, effect: facts.OutputEffect, projection: place.Projection) !facts.OutputEffect {

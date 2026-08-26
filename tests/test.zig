@@ -1870,8 +1870,6 @@ test "feature_tests/types/47X_match_value_payload_ambiguous_copy" {
         \\tests/feature_tests/types/47X_match_value_payload_ambiguous_copy/main.rg:26:14: error: ambiguous call to 'copy' for arguments (.__arg0: Payload). Possible overloads:
         \\  - copy (.payload: Payload, .tag: Int32) -> (.out: Payload)
         \\  - copy (.payload: Payload, .flag: Bool) -> (.out: Payload)
-        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
-        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
         \\          ..ok payload {
         \\               ^
         \\
@@ -1892,8 +1890,6 @@ test "feature_tests/types/49X_choice_payload_access_ambiguous_copy" {
         \\tests/feature_tests/types/49X_choice_payload_access_ambiguous_copy/main.rg:24:21: error: ambiguous call to 'copy' for arguments (.__arg0: Payload). Possible overloads:
         \\  - copy (.payload: Payload, .tag: Int32) -> (.out: Payload)
         \\  - copy (.payload: Payload, .flag: Bool) -> (.out: Payload)
-        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
-        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
         \\      payload := value..ok
         \\                      ^
         \\
@@ -1905,8 +1901,6 @@ test "feature_tests/types/50X_choice_literal_payload_ambiguous_copy" {
         \\tests/feature_tests/types/50X_choice_literal_payload_ambiguous_copy/main.rg:24:28: error: ambiguous call to 'copy' for arguments (.__arg0: Payload). Possible overloads:
         \\  - copy (.payload: Payload, .tag: Int32) -> (.out: Payload)
         \\  - copy (.payload: Payload, .flag: Bool) -> (.out: Payload)
-        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
-        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
         \\      result : Result = ..ok payload
         \\                             ^
         \\
@@ -2864,8 +2858,6 @@ test "feature_tests/ownership/28X_ambiguous_copy_assignment" {
         \\tests/feature_tests/ownership/28X_ambiguous_copy_assignment/main.rg:17:15: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
         \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
         \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
-        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
-        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
         \\      copied := source
         \\                ^
         \\
@@ -2877,8 +2869,6 @@ test "feature_tests/ownership/37X_ambiguous_copy_return" {
         \\tests/feature_tests/ownership/37X_ambiguous_copy_return/main.rg:16:12: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
         \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
         \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
-        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
-        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
         \\      return source
         \\             ^
         \\
@@ -2890,8 +2880,6 @@ test "feature_tests/ownership/38X_ambiguous_copy_struct_field" {
         \\tests/feature_tests/ownership/38X_ambiguous_copy_struct_field/main.rg:21:33: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
         \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
         \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
-        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
-        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
         \\      wrapped : Wrapper = (.res = handle)
         \\                                  ^
         \\
@@ -2941,7 +2929,7 @@ test "feature_tests/ownership/54_deinit_through_alias_reinitialize" {
 
 test "feature_tests/ownership/55X_deinit_through_alias_read" {
     try buildExpectFailExact("tests/feature_tests/ownership/55X_deinit_through_alias_read",
-        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:1:1: error: place rooted at 'allocation' is deinitialized and cannot be used
+        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:1:1: error: reference depends on a root that has ended
         \\  main(.system: System) -> (.status_code: Int32) := {
         \\  ^
         \\

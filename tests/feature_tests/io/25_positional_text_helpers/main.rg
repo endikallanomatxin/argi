@@ -121,7 +121,8 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
         return
     }
 
-    line ::= line_result..ok..ok
+    outer ::= ~line_result..ok
+    line ::= ~outer..ok
     if line.length != 2 {
         status_code = 10
         return

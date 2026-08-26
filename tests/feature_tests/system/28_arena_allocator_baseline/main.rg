@@ -1,8 +1,21 @@
 main(.system: System = System()) -> (.status_code: Int32) := {
-    arena :: ArenaAllocator = ArenaAllocator(.backing_allocator = system.allocator, .block_size = 32)
+    arena :: ArenaAllocator
+    initialized ::= init(.p = $&arena, .backing_allocator = system.allocator, .block_size = 32)
+    if is(.value = initialized, .variant = ..error) {
+        status_code = 18
+        return
+    }
 
-    first ::= allocate(.self = $&arena, .size = 8)
-    second ::= allocate(.self = $&arena, .size = 8)
+    first_result ::= allocate(.self = $&arena, .size = 8)
+    match first_result {
+    ..error _ { status_code = 15 }
+    ..ok ~ first_payload {
+    first ::= ~first_payload
+    second_result ::= allocate(.self = $&arena, .size = 8)
+    match second_result {
+    ..error _ { status_code = 16 }
+    ..ok ~ second_payload {
+    second ::= ~second_payload
 
     if cast#(.to: UIntNative)(.value = first.data) == 0 {
         status_code = 10
@@ -30,7 +43,11 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    third ::= allocate(.self = $&arena, .size = 64)
+    third_result ::= allocate(.self = $&arena, .size = 64)
+    match third_result {
+    ..error _ { status_code = 17 }
+    ..ok ~ third_payload {
+    third ::= ~third_payload
 
     if cast#(.to: UIntNative)(.value = third.data) == 0 {
         status_code = 14
@@ -38,7 +55,11 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     }
 
     deinit(.self = $&third)
-    deinit(.self = $&arena)
-
     status_code = 0
+    }
+    }
+    }
+    }
+    }
+    }
 }

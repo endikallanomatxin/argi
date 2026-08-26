@@ -20,7 +20,7 @@ init#(.base_type: Type: Reader)(
     .allocator: $&CAllocator = #reach allocator, system.allocator,
     .base: $&base_type,
     .capacity: UIntNative,
-) -> () := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     actual_capacity ::= capacity
     one :: UIntNative = 1
 
@@ -28,13 +28,22 @@ init#(.base_type: Type: Reader)(
         actual_capacity = one
     }
 
-    p& = (
-        .base = base,
-        .buffer = allocate(.self = allocator, .size = actual_capacity),
-        .capacity = actual_capacity,
-        .start = 0,
-        .end = 0,
-    )
+    allocated ::= allocate(.self = allocator, .size = actual_capacity)
+    match allocated {
+        ..ok ~ payload {
+            p& = (
+                .base = base,
+                .buffer = ~payload,
+                .capacity = actual_capacity,
+                .start = 0,
+                .end = 0,
+            )
+            result = ..ok Void()
+        }
+        ..error _ {
+            result = ..error(.reason = ..out_of_memory)
+        }
+    }
 }
 
 deinit#(.base_type: Type: Reader)(

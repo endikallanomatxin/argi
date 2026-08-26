@@ -125,11 +125,15 @@ normal safe traversal mechanism.
 Physical allocation and temporal policy are separate:
 
 ```text
-allocator -> raw storage -> establish fresh / inherit R -> safe reference
+allocator -> raw storage + StorageAuthority -> establish fresh / inherit R -> safe reference
 ```
 
 An allocator determines how bytes are obtained and returned. Root
 establishment determines their validity domain.
+
+Failure is decided at the raw-storage boundary. `..error ..out_of_memory`
+therefore carries no `Allocation`, safe reference, Root, or cleanup obligation;
+`StorageAuthority` is consumed only on successful establishment.
 
 `ArenaAllocator(backing_allocator)` composes a caller-selected physical
 allocator with grouped lifetime. Its safe allocations inherit one arena root;

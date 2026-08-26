@@ -1,42 +1,36 @@
 ..out_of_memory
 
 Allocator : Abstract = (
-    allocate(.self: $&Self, .size: UIntNative) -> (.allocation: Allocation)
+    allocate(.self: $&Self, .size: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory)))
 )
 
 Deallocator : Abstract = (
     deallocate(.self: $&Self, .data: $&UInt8, .size: UIntNative) -> ()
 )
 
-allocate_fallible(
-    .self: $&Allocator,
-    .size: UIntNative,
-) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
-    allocation ::= allocate(.self = self, .size = size)
-    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = allocation.data)
-    if raw_addr == 0 {
-        deinit(.self = $&allocation)
-        result = ..error(.reason = ..out_of_memory)
-        return
-    }
-
-    result = ..ok ~allocation
-}
-
 CAllocator : Type = ()
 
 init(.p: $&CAllocator) -> () := {
 }
 
-allocate(.self: $&CAllocator, .size: UIntNative) -> (.allocation: Allocation) := {
-    storage ::= malloc(.size = size)
+allocate(.self: $&CAllocator, .size: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+    physical_size ::= size
+    if physical_size == 0 {
+        physical_size = 1
+    }
+    address ::= malloc(.size = physical_size).address
+    if address == 0 {
+        result = ..error(.reason = ..out_of_memory)
+        return
+    }
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation = establish_allocation(.storage = storage, .size = size, .deallocator = deallocator)
+    allocation ::= establish_allocation(.storage = address, .size = size, .deallocator = deallocator)
+    result = ..ok ~allocation
 }
 
 deallocate(.self: $&CAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = data)
-    free(.pointer = cast#(.to: &Any)(.value = raw_addr))
+    free(.address = raw_addr)
 }
 
 CAllocator implements Allocator
@@ -67,11 +61,11 @@ Allocation : Type = (
 -- returned backing storage. The Allocation value owns the new root; its data
 -- field only depends on it.
 establish_allocation(
-    .storage: $&Any,
+    .storage: UIntNative,
     .size: UIntNative,
     .deallocator: Virtual#(.abstract: Deallocator),
 ) -> (.allocation: Allocation) := {
-    data ::= cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = storage))
+    data ::= cast#(.to: $&UInt8)(.value = storage)
     allocation = (
         .data = data,
         .size = size,

@@ -24,39 +24,33 @@ get(
     .self: &EnvironmentVariables,
     .key: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.value: ?StringView) := {
-    c_key ::= as_c_string(.self = key, .allocator = allocator)
-    found ::= environment_variables_get_c_string(.key = c_key.text)
-    deinit(.self = $&c_key.storage)
-    if found? {
-        payload ::= found..some
-        value = ..some(.value = payload.value)
-        return
+) -> (.result: Errable#(.t: ?StringView, .reasons: (..out_of_memory))) := {
+    converted ::= as_c_string(.self = key, .allocator = allocator)
+    match converted {
+        ..error _ { result = ..error(.reason = ..out_of_memory) }
+        ..ok ~ c_key {
+            result = ..ok environment_variables_get_c_string(.key = c_key.text)
+        }
     }
-
-    value = ..none
 }
 
 has(
     .self: &EnvironmentVariables,
     .key: StringView,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.ok: Bool) := {
+) -> (.result: Errable#(.t: Bool, .reasons: (..out_of_memory))) := {
     found ::= get(.self = self, .key = key, .allocator = allocator)
-    ok = found?
+    match found {
+        ..ok payload { result = ..ok payload? }
+        ..error _ { result = ..error(.reason = ..out_of_memory) }
+    }
 }
 
 operator get[](
     .self: &EnvironmentVariables,
     .index: StringView,
-) -> (.value: ?StringView) := {
+) -> (.result: Errable#(.t: ?StringView, .reasons: (..out_of_memory))) := {
     allocator :: CAllocator = CAllocator()
     found ::= get(.self = self, .key = index, .allocator = $&allocator)
-    if found? {
-        payload ::= found..some
-        value = ..some(.value = payload.value)
-        return
-    }
-
-    value = ..none
+    result = ~found
 }

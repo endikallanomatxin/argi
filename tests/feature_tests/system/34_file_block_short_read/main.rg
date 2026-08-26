@@ -18,7 +18,12 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     }
     file ::= create_result..ok
 
-    write_allocation ::= allocate(.self = system.allocator, .size = 2)
+    write_allocation_result ::= allocate(.self = system.allocator, .size = 2)
+    if is(.value = write_allocation_result, .variant = ..error) {
+        status_code = 3
+        return
+    }
+    write_allocation ::= ~write_allocation_result..ok
 
     write_buffer ::= array_view#(.t: UInt8)(
         .data = write_allocation.data,
@@ -52,7 +57,12 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     }
     file = open_result..ok
 
-    read_allocation ::= allocate(.self = system.allocator, .size = 4)
+    read_allocation_result ::= allocate(.self = system.allocator, .size = 4)
+    if is(.value = read_allocation_result, .variant = ..error) {
+        status_code = 7
+        return
+    }
+    read_allocation ::= ~read_allocation_result..ok
 
     read_buffer ::= array_view#(.t: UInt8)(
         .data = read_allocation.data,

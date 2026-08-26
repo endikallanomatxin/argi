@@ -3,7 +3,7 @@ CountingAllocator : Type = (
     .dealloc_count: Int32 = 0
 )
 
-allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.allocation: Allocation) := {
+allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
     storage ::= malloc(.size = size)
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = storage)
     self& = (
@@ -11,12 +11,13 @@ allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.allocation: Allocat
         .dealloc_count = self&.dealloc_count,
     )
     deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
-    allocation = establish_allocation(.storage = storage, .size = size, .deallocator = deallocator)
+    allocation ::= establish_allocation(.storage = storage, .size = size, .deallocator = deallocator)
+    result = ..ok ~allocation
 }
 
 deallocate(.self: $&CountingAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = data)
-    free(.pointer = cast#(.to: &Any)(.value = raw_addr))
+    free(.address = raw_addr)
     self& = (
         .alloc_count = self&.alloc_count,
         .dealloc_count = self&.dealloc_count + 1,
@@ -40,7 +41,10 @@ main() -> (.status_code: Int32) := {
             .data = data,
             .length = 3,
         )
-        borrowed ::= as_c_string(.self = borrowed_view, .allocator = $&allocator)
+        borrowed_result ::= as_c_string(.self = borrowed_view, .allocator = $&allocator)
+        match borrowed_result {
+        ..error _ { status_code = 7 }
+        ..ok ~ borrowed {
         if borrowed.storage.size != 4 {
             status_code = 1
             return
@@ -48,6 +52,8 @@ main() -> (.status_code: Int32) := {
         if allocator.alloc_count != 1 {
             status_code = 2
             return
+        }
+        }
         }
     }
 
@@ -61,7 +67,10 @@ main() -> (.status_code: Int32) := {
             .data = data,
             .length = 2,
         )
-        copied ::= as_c_string(.self = copied_view, .allocator = $&allocator)
+        copied_result ::= as_c_string(.self = copied_view, .allocator = $&allocator)
+        match copied_result {
+        ..error _ { status_code = 8 }
+        ..ok ~ copied {
         if copied.storage.size != 3 {
             status_code = 4
             return
@@ -69,6 +78,8 @@ main() -> (.status_code: Int32) := {
         if allocator.alloc_count != 2 {
             status_code = 5
             return
+        }
+        }
         }
     }
 

@@ -1,7 +1,15 @@
 main() -> (.status_code: Int32) := {
     allocator :: CAllocator = CAllocator()
-    src_allocation ::= allocate(.self = $&allocator, .size = 4)
-    dst_allocation ::= allocate(.self = $&allocator, .size = 4)
+    src_result ::= allocate(.self = $&allocator, .size = 4)
+    match src_result {
+    ..error _ { status_code = 10 }
+    ..ok ~ src_payload {
+    src_allocation ::= ~src_payload
+    dst_result ::= allocate(.self = $&allocator, .size = 4)
+    match dst_result {
+    ..error _ { status_code = 11 }
+    ..ok ~ dst_payload {
+    dst_allocation ::= ~dst_payload
 
     src ::= array_view#(.t: UInt8)(
         .data = src_allocation.data,
@@ -35,6 +43,10 @@ main() -> (.status_code: Int32) := {
                 }
             }
         }
+    }
+    }
+    }
+    }
     }
 
 }

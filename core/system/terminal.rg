@@ -127,12 +127,16 @@ read_line(
     --
     initial_capacity :: UIntNative = 16
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = initial_capacity)
-    if is(.value = create_result, .variant = ..error) {
-        result = ..error(.reason = ..out_of_memory)
-        return
+    line :: String
+    match create_result {
+        ..ok ~ payload { line = ~payload }
+        ..error _ {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
     }
-    line ::= create_result..ok
 
+    line_complete :: Bool = false
     while 1 == 1 {
         next ::= read_byte(.self = stdin)
         if is(.value = next, .variant = ..error) {
@@ -149,14 +153,14 @@ read_line(
                 return
             }
 
-            result = ..ok ..ok line
-            return
+            line_complete = true
+            break
         }
 
         payload ::= next_value..ok
         if payload == 10 {
-            result = ..ok ..ok line
-            return
+            line_complete = true
+            break
         }
 
         grew ::= push_byte(.self = $&line, .byte = payload, .allocator = allocator)
@@ -169,6 +173,9 @@ read_line(
                 return
             }
         }
+    }
+    if line_complete {
+        result = ..ok ..ok ~line
     }
 }
 

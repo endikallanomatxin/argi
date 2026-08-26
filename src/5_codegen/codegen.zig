@@ -944,9 +944,17 @@ pub const CodeGenerator = struct {
         for (f.input.fields, 0..) |fld, i|
             arg_tys[idx + i] = try self.toLLVMType(fld.ty);
 
+        // Raw physical allocation APIs use UIntNative in Argi so no safe
+        // reference exists before establishment. Their C ABI remains pointer
+        // based and is bridged explicitly at the extern boundary.
+        if (std.mem.eql(u8, f.name, "free") and f.input.fields.len == 1)
+            arg_tys[idx] = c.LLVMPointerType(c.LLVMInt8Type(), 0);
+
         var ret_ty: llvm.c.LLVMTypeRef = c.LLVMVoidType();
         if (f.output.fields.len == 1)
             ret_ty = try self.toLLVMType(f.output.fields[0].ty);
+        if (f.safety_primitive == .raw_allocated_storage)
+            ret_ty = c.LLVMPointerType(c.LLVMInt8Type(), 0);
 
         const fn_ty = c.LLVMFunctionType(
             ret_ty,
@@ -2479,7 +2487,14 @@ pub const CodeGenerator = struct {
         // aplanar struct-input
         for (callee_decl.input.fields, 0..) |fld, i| {
             const raw = c.LLVMBuildExtractValue(self.builder, in_val, @intCast(i), "");
-            const pty = try self.toLLVMType(fld.ty);
+            var pty = try self.toLLVMType(fld.ty);
+
+            if (std.mem.eql(u8, callee_decl.name, "free") and callee_decl.input.fields.len == 1) {
+                pty = c.LLVMPointerType(c.LLVMInt8Type(), 0);
+                argv[idx] = c.LLVMBuildIntToPtr(self.builder, raw, pty, "free.address");
+                idx += 1;
+                continue;
+            }
 
             if (c.LLVMTypeOf(raw) != pty) return CodegenError.InvalidType;
             argv[idx] = raw;
@@ -2503,6 +2518,14 @@ pub const CodeGenerator = struct {
         switch (callee_decl.output.fields.len) {
             0 => return null,
             1 => {
+                if (callee_decl.safety_primitive == .raw_allocated_storage) {
+                    const address_ty = try self.toLLVMType(callee_decl.output.fields[0].ty);
+                    return .{
+                        .value_ref = c.LLVMBuildPtrToInt(self.builder, call_inst, address_ty, "raw.address"),
+                        .type_ref = address_ty,
+                        .sem_type = callee_decl.output.fields[0].ty,
+                    };
+                }
                 return .{ .value_ref = call_inst, .type_ref = ret_ty, .sem_type = callee_decl.output.fields[0].ty };
             },
             else => {
