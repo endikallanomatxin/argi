@@ -3097,6 +3097,25 @@ test "feature_tests/ownership/80_arena_repeated_reset" {
     try run(test_path);
 }
 
+test "feature_tests/ownership/81_descendant_storage_roots" {
+    const test_path = "tests/feature_tests/ownership/81_descendant_storage_roots";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/82X_descendant_storage_stale_alias" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/82X_descendant_storage_stale_alias",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/83_field_reinitialization_preserves_sibling" {
+    const test_path = "tests/feature_tests/ownership/83_field_reinitialization_preserves_sibling";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

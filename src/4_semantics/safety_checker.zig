@@ -899,12 +899,28 @@ pub const SafetyChecker = struct {
 
     fn refreshStorageRoot(self: *SafetyChecker, state: *FunctionState, storage: place.Place) !void {
         _ = self;
-        for (state.storage_roots.items) |*entry| if (entry.storage.eql(storage)) {
+        var refreshed = false;
+        var index: usize = 0;
+        while (index < state.storage_roots.items.len) {
+            const entry = state.storage_roots.items[index];
+            if (!storage.isPrefixOf(entry.storage)) {
+                index += 1;
+                continue;
+            }
             state.tracker.end(entry.root);
-            entry.root = try state.tracker.establish(.fresh);
-            return;
-        };
-        try state.storage_roots.append(.{ .storage = storage, .root = try state.tracker.establish(.fresh) });
+            if (entry.storage.eql(storage)) {
+                state.storage_roots.items[index].root = try state.tracker.establish(.fresh);
+                refreshed = true;
+                index += 1;
+            } else {
+                // Descendant mappings name storage from the old generation.
+                // Drop them so a later address-of establishes each new root
+                // lazily, without reviving aliases to the old roots.
+                _ = state.storage_roots.orderedRemove(index);
+            }
+        }
+        if (!refreshed)
+            try state.storage_roots.append(.{ .storage = storage, .root = try state.tracker.establish(.fresh) });
     }
 
     fn endStorageRootsUnder(self: *SafetyChecker, state: *FunctionState, storage: place.Place) void {
@@ -2557,4 +2573,43 @@ test "refreshing storage roots invalidates earlier aliases" {
     try std.testing.expectEqual(.dead, state.tracker.roots.items[@intFromEnum(old_root)].state);
     try std.testing.expect(!state.tracker.dependenciesAreAlive(stale_alias));
     try std.testing.expect(state.tracker.isAlive(fresh_root));
+}
+
+test "refreshing a place drops descendant storage root mappings" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const parent = place.Place{ .root = undefined };
+    const child = place.Place{ .root = parent.root, .projections = &.{.{ .field = 0 }} };
+    const grandchild = place.Place{ .root = parent.root, .projections = &.{ .{ .field = 0 }, .{ .field = 1 } } };
+    const sibling = place.Place{ .root = parent.root, .projections = &.{.{ .field = 2 }} };
+    const indexed = place.Place{ .root = parent.root, .projections = &.{.{ .static_index = 3 }} };
+    const old_parent = try checker.storageRootForPlace(parent, &state);
+    const old_child = try checker.storageRootForPlace(child, &state);
+    const old_grandchild = try checker.storageRootForPlace(grandchild, &state);
+    const old_sibling = try checker.storageRootForPlace(sibling, &state);
+    const old_indexed = try checker.storageRootForPlace(indexed, &state);
+    const stale_child = facts.ValueFacts{ .dependencies = &.{.{ .root = old_child }} };
+
+    try checker.refreshStorageRoot(&state, parent);
+    const fresh_parent = try checker.storageRootForPlace(parent, &state);
+    const fresh_child = try checker.storageRootForPlace(child, &state);
+    const fresh_grandchild = try checker.storageRootForPlace(grandchild, &state);
+    const fresh_sibling = try checker.storageRootForPlace(sibling, &state);
+    const fresh_indexed = try checker.storageRootForPlace(indexed, &state);
+    try std.testing.expect(old_parent != fresh_parent);
+    try std.testing.expect(old_child != fresh_child);
+    try std.testing.expect(old_grandchild != fresh_grandchild);
+    try std.testing.expect(old_sibling != fresh_sibling);
+    try std.testing.expect(old_indexed != fresh_indexed);
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(stale_child));
+
+    const sibling_before_field_refresh = fresh_sibling;
+    try checker.refreshStorageRoot(&state, child);
+    try std.testing.expectEqual(sibling_before_field_refresh, try checker.storageRootForPlace(sibling, &state));
 }
