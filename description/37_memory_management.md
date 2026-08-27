@@ -78,6 +78,11 @@ known ownership roots, alias barriers, and dependency validity. The caller
 assumes only the runtime-slot invariant that the checker cannot represent:
 initializedness and exactly-once destruction in opaque storage. Opaque
 contents cannot yet be extracted back into precise ownership.
+In particular, `trusted_opaque_drop_owned` requires its slot to contain exactly
+one live value that has not already been dropped. Calling it twice, or calling
+it after a value has been taken by some future trusted operation, violates the
+primitive's manual trusted precondition. The checker deliberately does not add
+per-slot occupancy state to diagnose that contract dynamically.
 Canonical primitive identity is based on the bundled declaration; its trusted
 meaning is not granted merely by reusing the name in user code.
 

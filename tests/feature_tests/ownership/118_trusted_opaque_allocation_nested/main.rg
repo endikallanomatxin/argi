@@ -1,5 +1,9 @@
-store_wrapper#(.t: Type)(.slot: $&t, .value: t) -> () := {
+inner#(.t: Type)(.slot: $&t, .value: t) -> () := {
     trusted_opaque_store_owned#(.t: t)(.destination = slot, .source = ~value)
+}
+
+outer#(.t: Type)(.slot: $&t, .value: t) -> () := {
+    inner#(.t: t)(.slot = slot, .value = ~value)
 }
 
 main(.system: System) -> (.status_code: Int32) := {
@@ -10,14 +14,14 @@ main(.system: System) -> (.status_code: Int32) := {
         ..error _ { status_code = 1 }
         ..ok ~ payload {
             allocation ::= ~payload
-            alias ::= allocation.data
             match slot_result {
                 ..error _ { status_code = 2 }
                 ..ok ~ slot_payload {
                     slot_allocation ::= ~slot_payload
                     slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = slot_allocation.data).reference
-                    store_wrapper#(.t: Allocation)(.slot = slot, .value = ~allocation)
-                    alias& = 0
+                    outer#(.t: Allocation)(.slot = slot, .value = ~allocation)
+                    trusted_opaque_drop_owned#(.t: Allocation)(.slot = slot)
+                    deinit(.self = $&slot_allocation)
                     status_code = 0
                 }
             }

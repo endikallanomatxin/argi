@@ -1,3 +1,7 @@
+store_wrapper#(.t: Type)(.slot: $&t, .value: t) -> () := {
+    trusted_opaque_store_owned#(.t: t)(.destination = slot, .source = ~value)
+}
+
 main(.system: System) -> (.status_code: Int32) := {
     source_result ::= allocate(.self = system.allocator, .size = 1)
     slot_result ::= allocate(.self = system.allocator, .size = size_of(.type = Allocation))
@@ -11,7 +15,9 @@ main(.system: System) -> (.status_code: Int32) := {
                 ..ok ~ slot_payload {
                     slot_allocation ::= ~slot_payload
                     slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = slot_allocation.data).reference
-                    trusted_opaque_store_owned#(.t: Allocation)(.destination = slot, .source = ~allocation)
+                    store_wrapper#(.t: Allocation)(.slot = slot, .value = ~allocation)
+                    trusted_opaque_drop_owned#(.t: Allocation)(.slot = slot)
+                    deinit(.self = $&slot_allocation)
                     status_code = 0
                 }
             }

@@ -3309,7 +3309,9 @@ test "feature_tests/ownership/115X_trusted_opaque_nested_wrapper_double_move" {
 }
 
 test "feature_tests/ownership/116_trusted_opaque_allocation" {
-    try expectSuccessfulBuild("tests/feature_tests/ownership/116_trusted_opaque_allocation");
+    const test_path = "tests/feature_tests/ownership/116_trusted_opaque_allocation";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
 }
 
 test "feature_tests/ownership/117X_trusted_opaque_allocation_alias" {
@@ -3317,6 +3319,32 @@ test "feature_tests/ownership/117X_trusted_opaque_allocation_alias" {
         "tests/feature_tests/ownership/117X_trusted_opaque_allocation_alias",
         "opaque ownership storage requires no live external aliases to the consumed root",
     );
+}
+
+test "feature_tests/ownership/118_trusted_opaque_allocation_nested" {
+    const test_path = "tests/feature_tests/ownership/118_trusted_opaque_allocation_nested";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/119X_trusted_opaque_allocation_nested_alias" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/119X_trusted_opaque_allocation_nested_alias",
+        "opaque ownership storage requires no live external aliases to the consumed root",
+    );
+}
+
+test "feature_tests/ownership/120X_trusted_opaque_router_transaction" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/120X_trusted_opaque_router_transaction",
+        "opaque ownership storage cannot hide dependencies on external roots",
+    );
+}
+
+test "feature_tests/ownership/121_trusted_opaque_drop_cleanup" {
+    const test_path = "tests/feature_tests/ownership/121_trusted_opaque_drop_cleanup";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
 }
 
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {

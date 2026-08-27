@@ -427,6 +427,27 @@ pub const SafetyChecker = struct {
         call: *const sg.FunctionCall,
         state: *FunctionState,
     ) anyerror!facts.ValueFacts {
+        // Argument evaluation can move values before a summary discovers that
+        // one of its effects is invalid. Evaluate the complete call against a
+        // speculative state so a rejected call cannot consume inputs or leave
+        // any other temporal fact partly committed.
+        var candidate = try state.clone(self.allocator.*);
+        defer candidate.deinit();
+        const diagnostic_count = self.diagnostics.list.items.len;
+        const result = try self.evaluateCallCandidate(function, call, &candidate);
+        if (self.diagnostics.list.items.len != diagnostic_count) return .{};
+        const previous = state.*;
+        state.* = candidate;
+        candidate = previous;
+        return result;
+    }
+
+    fn evaluateCallCandidate(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        call: *const sg.FunctionCall,
+        state: *FunctionState,
+    ) anyerror!facts.ValueFacts {
         var arguments: []const sg.StructValueLiteralField = &.{};
         if (call.input.content == .struct_value_literal) arguments = call.input.content.struct_value_literal.fields;
         const argument_values = try self.allocator.alloc(facts.ValueFacts, arguments.len);
@@ -542,6 +563,23 @@ pub const SafetyChecker = struct {
     }
 
     fn evaluateVirtualCall(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        call: *const sg.VirtualCall,
+        state: *FunctionState,
+    ) anyerror!facts.ValueFacts {
+        var candidate = try state.clone(self.allocator.*);
+        defer candidate.deinit();
+        const diagnostic_count = self.diagnostics.list.items.len;
+        const result = try self.evaluateVirtualCallCandidate(function, call, &candidate);
+        if (self.diagnostics.list.items.len != diagnostic_count) return .{};
+        const previous = state.*;
+        state.* = candidate;
+        candidate = previous;
+        return result;
+    }
+
+    fn evaluateVirtualCallCandidate(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         call: *const sg.VirtualCall,
@@ -3125,6 +3163,104 @@ test "opaque ownership distinguishes internal from external dependencies recursi
     };
     try std.testing.expect(!hasExternalOpaqueDependency(internal_value, &.{owned}));
     try std.testing.expect(hasExternalOpaqueDependency(external_value, &.{owned}));
+}
+
+test "rejected multi-effect call restores roots and input value facts" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(&allocator, &diags);
+    defer checker.deinit();
+
+    const location = @import("../2_tokens/token.zig").Location{
+        .file = "transaction_test.rg",
+        .offset = 0,
+        .line = 1,
+        .column = 1,
+    };
+    var first_binding = sg.BindingDeclaration{
+        .name = "first",
+        .location = location,
+        .origin_file = location.file,
+        .mutability = undefined,
+        .ty = .{ .builtin = .Int32 },
+        .initialization = null,
+    };
+    var second_binding = sg.BindingDeclaration{
+        .name = "second",
+        .location = location,
+        .origin_file = location.file,
+        .mutability = undefined,
+        .ty = .{ .builtin = .Int32 },
+        .initialization = null,
+    };
+    var first_use = sg.SGNode{ .location = location, .content = .{ .binding_use = &first_binding } };
+    var second_use = sg.SGNode{ .location = location, .content = .{ .binding_use = &second_binding } };
+    var first_move = sg.SGNode{ .location = location, .content = .{ .move_value = &first_use } };
+    var second_move = sg.SGNode{ .location = location, .content = .{ .move_value = &second_use } };
+    const argument_fields = [_]sg.StructValueLiteralField{
+        .{ .name = "first", .value = &first_move },
+        .{ .name = "second", .value = &second_move },
+    };
+    var input_literal = sg.StructValueLiteral{
+        .fields = &argument_fields,
+        .ty = .{ .builtin = .Void },
+    };
+    var input_node = sg.SGNode{ .location = location, .content = .{ .struct_value_literal = &input_literal } };
+    var callee = sg.FunctionDeclaration{
+        .id = 1,
+        .name = "store_pair",
+        .location = location,
+        .is_once = false,
+        .input = .{ .fields = &.{} },
+        .output = .{ .fields = &.{} },
+        .body = null,
+    };
+    var caller = sg.FunctionDeclaration{
+        .id = 2,
+        .name = "caller",
+        .location = location,
+        .is_once = false,
+        .input = .{ .fields = &.{} },
+        .output = .{ .fields = &.{} },
+        .body = null,
+    };
+    var call = sg.FunctionCall{ .callee = &callee, .input = &input_node };
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const first_root = try state.tracker.establish(.fresh);
+    const second_root = try state.tracker.establish(.fresh);
+    const external_root = try state.tracker.establish(.fresh);
+    const first_value = facts.ValueFacts{ .owned_roots = &.{first_root} };
+    const second_value = facts.ValueFacts{
+        .dependencies = &.{.{ .root = external_root }},
+        .owned_roots = &.{second_root},
+    };
+    try checker.setPlace(&state, .{ .root = &first_binding }, .initialized, first_value);
+    try checker.setPlace(&state, .{ .root = &second_binding }, .initialized, second_value);
+    try checker.summaries.put(&callee, .{
+        .input_post_states = &.{
+            .{ .target = .{ .input_index = 0 }, .initializedness = .initialized, .opaque_ownership = .definite },
+            .{ .target = .{ .input_index = 1 }, .initializedness = .initialized, .opaque_ownership = .definite },
+        },
+    });
+
+    _ = try checker.evaluateCall(&caller, &call, &state);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try std.testing.expectEqualStrings("opaque ownership storage cannot hide dependencies on external roots", diags.list.items[0].msg);
+    try std.testing.expect(state.tracker.isAlive(first_root));
+    try std.testing.expect(state.tracker.isAlive(second_root));
+    try std.testing.expect(state.tracker.isAlive(external_root));
+    const restored_first = checker.getPlace(&state, .{ .root = &first_binding }).?;
+    const restored_second = checker.getPlace(&state, .{ .root = &second_binding }).?;
+    try std.testing.expectEqual(value_state.Initializedness.initialized, restored_first.initializedness);
+    try std.testing.expectEqual(value_state.Initializedness.initialized, restored_second.initializedness);
+    try std.testing.expect(valueFactsEqual(first_value, restored_first.value));
+    try std.testing.expect(valueFactsEqual(second_value, restored_second.value));
 }
 
 test "relocation transfers storage authority into refreshed destination storage" {
