@@ -29,6 +29,8 @@ fn safetyPrimitiveForBundledDeclaration(name: []const u8, file: []const u8) sg.S
         for (raw_pointer_entries) |entry| if (std.mem.eql(u8, name, entry.name)) return entry.primitive;
     if (std.mem.endsWith(u8, file, "core/memory/heap_allocation/Allocator.rg") and
         std.mem.eql(u8, name, "establish_allocation")) return .establish_allocation;
+    if (std.mem.endsWith(u8, file, "core/memory/relocation.rg") and
+        std.mem.eql(u8, name, "relocate")) return .relocate;
     if (std.mem.endsWith(u8, file, "core/libc/libc.rg") and std.mem.eql(u8, name, "malloc"))
         return .raw_allocated_storage;
     return .none;

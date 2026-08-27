@@ -1416,6 +1416,25 @@ pub const CodeGenerator = struct {
         return .{ .value_ref = val, .type_ref = sym.type_ref, .sem_type = sym.sem_type };
     }
 
+    fn genRelocate(self: *CodeGenerator, call: *const sem.FunctionCall) !?TypedValue {
+        const input = switch (call.input.content) {
+            .struct_value_literal => |literal| literal,
+            else => return CodegenError.InvalidType,
+        };
+        if (input.fields.len != 2) return CodegenError.InvalidType;
+        const source = (try self.visitNode(input.fields[0].value)) orelse return CodegenError.ValueNotFound;
+        const destination = (try self.visitNode(input.fields[1].value)) orelse return CodegenError.ValueNotFound;
+        const pointer_type = input.fields[0].value.sem_type orelse return CodegenError.InvalidType;
+        if (pointer_type != .pointer_type or destination.sem_type == null or destination.sem_type.? != .pointer_type)
+            return CodegenError.InvalidType;
+        const value_type = try self.toLLVMType(pointer_type.pointer_type.child.*);
+        const value = c.LLVMBuildLoad2(self.builder, value_type, source.value_ref, "relocate.load");
+        _ = c.LLVMBuildStore(self.builder, value, destination.value_ref);
+        if (self.dropStateForNode(input.fields[0].value)) |drop_state| self.storeDropState(drop_state, false);
+        if (self.dropStateForNode(input.fields[1].value)) |drop_state| self.storeDropState(drop_state, true);
+        return null;
+    }
+
     fn genReachDirective(self: *CodeGenerator, reach: *const sem.ReachDirective) !TypedValue {
         for (reach.alternatives) |alt| {
             if (self.genReachAlternative(alt)) |tv| {
@@ -2408,6 +2427,7 @@ pub const CodeGenerator = struct {
     }
 
     fn genFunctionCall(self: *CodeGenerator, fc: *const sem.FunctionCall) CodegenError!?TypedValue {
+        if (fc.callee.safety_primitive == .relocate) return self.genRelocate(fc);
         const key_name = try self.functionSymbolKey(fc.callee);
         const callee_decl = fc.callee;
         const is_extern = (callee_decl.body == null);

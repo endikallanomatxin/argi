@@ -3116,6 +3116,43 @@ test "feature_tests/ownership/83_field_reinitialization_preserves_sibling" {
     try run(test_path);
 }
 
+test "feature_tests/ownership/84_semantic_relocation" {
+    const test_path = "tests/feature_tests/ownership/84_semantic_relocation";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/85X_semantic_relocation_double" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/85X_semantic_relocation_double",
+        "place rooted at 'source' is moved and cannot be used",
+    );
+}
+
+test "feature_tests/ownership/86_relocation_storage_authority" {
+    const test_path = "tests/feature_tests/ownership/86_relocation_storage_authority";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/87_relocation_interprocedural" {
+    const test_path = "tests/feature_tests/ownership/87_relocation_interprocedural";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/88_semantic_relocation_trivial" {
+    const test_path = "tests/feature_tests/ownership/88_semantic_relocation_trivial";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/89_semantic_relocation_choice" {
+    const test_path = "tests/feature_tests/ownership/89_semantic_relocation_choice";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

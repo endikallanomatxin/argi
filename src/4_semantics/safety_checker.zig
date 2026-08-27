@@ -400,6 +400,8 @@ pub const SafetyChecker = struct {
         if (call.input.content == .struct_value_literal) arguments = call.input.content.struct_value_literal.fields;
         const argument_values = try self.allocator.alloc(facts.ValueFacts, arguments.len);
         for (arguments, 0..) |argument, index| argument_values[index] = try self.evaluate(function, argument.value, state);
+        if (call.callee.safety_primitive == .relocate)
+            return self.relocatePlaces(function, arguments, argument_values, state);
         if (call.callee.safety_primitive == .raw_allocated_storage) {
             const authority: facts.StorageAuthorityId = @enumFromInt(state.storage_authorities.items.len);
             try state.storage_authorities.append(.available);
@@ -432,7 +434,8 @@ pub const SafetyChecker = struct {
         const summary = self.summaries.get(call.callee) orelse return .{};
         for (summary.input_post_states) |post_state| {
             const index = post_state.target.input_index;
-            if (post_state.initializedness != .deinitialized or post_state.target.projections.len != 0 or index >= arguments.len) continue;
+            if ((post_state.initializedness != .deinitialized and post_state.initializedness != .moved) or
+                post_state.target.projections.len != 0 or index >= arguments.len) continue;
             if (arguments[index].value.content == .address_of and rootBinding(arguments[index].value.content.address_of) != null) {
                 @constCast(call).consumes_auto_deinit = arguments[index].value.content.address_of;
             }
@@ -440,6 +443,33 @@ pub const SafetyChecker = struct {
         try self.applyInputEffects(summary, arguments, argument_values, state);
         if (summary.outputs.len != 1) return .{};
         return self.instantiateOutput(summary.outputs[0], argument_values, state);
+    }
+
+    /// Relocation transfers one existing value representation between distinct
+    /// Places. It deliberately leaves structural storage roots alone: aliases
+    /// into the source storage keep their old provenance and are not rebound.
+    fn relocatePlaces(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        arguments: []const sg.StructValueLiteralField,
+        argument_values: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !facts.ValueFacts {
+        if (arguments.len != 2 or argument_values.len != 2) return .{};
+        // Pointer inputs of an interprocedural body do not name a caller
+        // Place locally. Their relocation effect is carried by the summary.
+        const source = argument_values[0].referenced_place orelse return .{};
+        const destination = argument_values[1].referenced_place orelse return .{};
+        if (source.eql(destination)) {
+            try self.diagnostics.add(function.location, .semantic, "relocate requires distinct source and destination places", .{});
+            return .{};
+        }
+        const source_facts = self.getPlace(state, source) orelse return .{};
+        try self.requireInitialized(function, source_facts);
+        const value = source_facts.value;
+        try self.setPlace(state, destination, .initialized, value);
+        try self.setPlace(state, source, .moved, .{});
+        return .{};
     }
 
     fn evaluateVirtualCall(
@@ -459,7 +489,8 @@ pub const SafetyChecker = struct {
         };
         for (summary.input_post_states) |post_state| {
             const index = post_state.target.input_index;
-            if (post_state.initializedness != .deinitialized or post_state.target.projections.len != 0 or index >= arguments.len) continue;
+            if ((post_state.initializedness != .deinitialized and post_state.initializedness != .moved) or
+                post_state.target.projections.len != 0 or index >= arguments.len) continue;
             if (arguments[index].value.content == .address_of and rootBinding(arguments[index].value.content.address_of) != null) {
                 @constCast(call).consumes_auto_deinit = arguments[index].value.content.address_of;
             }
@@ -1386,6 +1417,19 @@ pub const SafetyChecker = struct {
             .function_call => |call| {
                 if (call.input.content != .struct_value_literal) continue;
                 const arguments = call.input.content.struct_value_literal.fields;
+                if (call.callee.safety_primitive == .relocate) {
+                    if (arguments.len != 2) continue;
+                    const source_targets = try self.inferInputPaths(function, arguments[0].value);
+                    const destination_targets = try self.inferInputPaths(function, arguments[1].value);
+                    for (source_targets) |source| {
+                        try self.recordInputPostState(states, &.{source}, .moved, .{}, false, false);
+                        var transferred = try self.inputOutputEffect(source.input_index, source.projections);
+                        transferred = self.withOwnershipTransfer(transferred);
+                        for (destination_targets) |destination|
+                            try self.recordInputPostState(states, &.{destination}, .initialized, transferred, false, false);
+                    }
+                    continue;
+                }
                 const summary = self.summaries.get(call.callee) orelse continue;
                 for (summary.input_post_states) |post_state| {
                     if (post_state.target.input_index >= arguments.len) continue;
@@ -1673,6 +1717,7 @@ pub const SafetyChecker = struct {
     fn primitiveOutputEffect(self: *SafetyChecker, primitive: sg.SafetyPrimitive, source: facts.FreshRootSource) !facts.OutputEffect {
         return switch (primitive) {
             .none => .{},
+            .relocate => .{},
             .establish_fresh_reference => .{ .fresh_dependencies = try self.oneFreshSource(source) },
             .establish_inherited_reference => self.inputOutputEffect(1, &.{}),
             .establish_inherited_storage => self.inputOutputEffect(1, &.{}),
