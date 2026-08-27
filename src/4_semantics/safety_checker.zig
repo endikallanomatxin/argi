@@ -700,16 +700,20 @@ pub const SafetyChecker = struct {
         for (effect.fresh_storage_authorities) |source|
             try appendStorageAuthority(&authorities, try self.instantiateFreshStorageAuthority(source, state, fresh_authorities));
         result.storage_authorities = try authorities.toOwnedSlice();
+        // `input_places` names the provenance of the output. Apply it after
+        // dependencies: an effect may intentionally combine a reference with
+        // unrelated lifetime dependencies without changing where it points.
+        var referenced_place: ?place.Place = null;
         for (effect.input_places) |path| {
             if (path.input_index >= arguments.len) continue;
             if (arguments[path.input_index].referenced_place) |argument_place| {
                 var target = argument_place;
                 for (path.projections) |projection| target = try self.projectedPlace(target, projection);
                 try appendDependency(&dependencies, .{ .root = try self.storageRootForPlace(target, state) });
-                result.dependencies = try dependencies.toOwnedSlice();
-                result.referenced_place = target;
+                referenced_place = target;
             }
         }
+        result.dependencies = try dependencies.toOwnedSlice();
         for (effect.input_dependencies) |dependency| {
             if (dependency.path.input_index >= arguments.len) continue;
             var input = arguments[dependency.path.input_index];
@@ -744,6 +748,7 @@ pub const SafetyChecker = struct {
         }
         result.integer_address = effect.integer_address;
         result.foreign_storage = result.foreign_storage or effect.foreign_storage;
+        if (referenced_place) |target| result.referenced_place = target;
         return result;
     }
 
@@ -1981,7 +1986,19 @@ pub const SafetyChecker = struct {
             .mutable_reinterpret_reference,
             .read_reference,
             => self.inputOutputEffect(0, &.{}),
+            .restrict_reference => self.restrictReferenceEffect(),
         };
+    }
+
+    /// Restriction retains every fact of the input reference and appends the
+    /// storage generation of the lifetime Place. `input_places` preserves the
+    /// input reference's provenance; neither root ownership nor authority is
+    /// transferred by either dependency.
+    fn restrictReferenceEffect(self: *SafetyChecker) !facts.OutputEffect {
+        var result = try self.inputOutputEffect(0, &.{});
+        result = try self.mergeOutputEffects(result, try self.inputOutputEffect(1, &.{}));
+        result.input_places = try self.oneInputPath(0, &.{});
+        return result;
     }
 
     fn ownedAllocationEffect(self: *SafetyChecker, source: facts.FreshRootSource) !facts.OutputEffect {
@@ -2926,6 +2943,50 @@ test "refreshing storage roots invalidates earlier aliases" {
     try std.testing.expectEqual(.dead, state.tracker.roots.items[@intFromEnum(old_root)].state);
     try std.testing.expect(!state.tracker.dependenciesAreAlive(stale_alias));
     try std.testing.expect(state.tracker.isAlive(fresh_root));
+}
+
+test "reference restriction preserves provenance and only adds lifetime dependencies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const pointee_binding = try checker.allocator.create(sg.BindingDeclaration);
+    const lifetime_binding = try checker.allocator.create(sg.BindingDeclaration);
+    pointee_binding.* = undefined;
+    lifetime_binding.* = undefined;
+    const pointee = place.Place{ .root = pointee_binding };
+    const lifetime = place.Place{ .root = lifetime_binding };
+    const pointee_root = try checker.storageRootForPlace(pointee, &state);
+    const lifetime_root = try checker.storageRootForPlace(lifetime, &state);
+    const effect = try checker.restrictReferenceEffect();
+    try std.testing.expectEqual(@as(usize, 2), effect.input_dependencies.len);
+    try std.testing.expect(!effect.input_dependencies[0].transfers_ownership);
+    try std.testing.expect(!effect.input_dependencies[1].transfers_ownership);
+    try std.testing.expectEqual(@as(usize, 0), effect.fresh_dependencies.len);
+    try std.testing.expectEqual(@as(usize, 0), effect.fresh_owned_roots.len);
+    try std.testing.expectEqual(@as(usize, 0), effect.fresh_storage_authorities.len);
+    const input = [_]facts.ValueFacts{
+        .{ .dependencies = &.{.{ .root = pointee_root }}, .referenced_place = pointee },
+        .{ .dependencies = &.{.{ .root = lifetime_root }}, .referenced_place = lifetime },
+    };
+
+    const restricted = try checker.instantiateOutput(effect, &input, &state);
+    try std.testing.expectEqual(@as(usize, 2), restricted.dependencies.len);
+    try std.testing.expectEqual(pointee_root, restricted.dependencies[0].root);
+    try std.testing.expectEqual(lifetime_root, restricted.dependencies[1].root);
+    try std.testing.expect(restricted.referenced_place.?.eql(pointee));
+    try std.testing.expectEqual(@as(usize, 0), restricted.owned_roots.len);
+    try std.testing.expectEqual(@as(usize, 0), restricted.storage_authorities.len);
+
+    state.tracker.end(lifetime_root);
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(restricted));
+    try std.testing.expect(state.tracker.dependenciesAreAlive(input[0]));
+    state.tracker.end(pointee_root);
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(input[0]));
 }
 
 test "refreshing a place drops descendant storage root mappings" {

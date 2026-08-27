@@ -65,6 +65,12 @@ The reference graph permits aliases, cycles, and cross-root cycles. Ending one
 root invalidates only uses that depend on it; independent fields and objects in
 other live roots remain usable.
 
+`restrict_reference(.input, .lifetime)` adds the current storage generation of
+`lifetime` to an already safe reference. It preserves the input's pointee,
+mutability, provenance, and all previous dependencies; it creates no root,
+ownership, or storage authority. Thus it can only shorten a usable lifetime,
+never extend one.
+
 ## Root ownership
 
 A value that owns a root is the unique logical owner responsible for ending it

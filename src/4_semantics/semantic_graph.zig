@@ -411,6 +411,7 @@ pub const SafetyPrimitive = enum {
     reinterpret_reference,
     mutable_reinterpret_reference,
     read_reference,
+    restrict_reference,
     relocate,
 };
 

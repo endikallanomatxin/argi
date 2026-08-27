@@ -3220,6 +3220,46 @@ test "feature_tests/ownership/99X_choice_else_keeps_multiple_variants" {
     );
 }
 
+test "feature_tests/ownership/100_safe_reference_lifetime_restriction" {
+    const test_path = "tests/feature_tests/ownership/100_safe_reference_lifetime_restriction";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/101X_safe_reference_restriction_ended_lifetime" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/101X_safe_reference_restriction_ended_lifetime",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/102X_safe_reference_restriction_ended_source" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/102X_safe_reference_restriction_ended_source",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/103_safe_reference_restriction_after_reinitialize" {
+    const test_path = "tests/feature_tests/ownership/103_safe_reference_restriction_after_reinitialize";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/104X_safe_reference_restriction_relocated" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/104X_safe_reference_restriction_relocated",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/105X_safe_reference_restriction_stale_after_reinitialize" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/105X_safe_reference_restriction_stale_after_reinitialize",
+        "reference depends on a root that has ended",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended
