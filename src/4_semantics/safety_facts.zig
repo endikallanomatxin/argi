@@ -112,6 +112,9 @@ pub const InputPlaceEffect = struct {
     value: OutputEffect = .{},
     ends_previous_roots: bool = false,
     refreshes_storage_root: bool = false,
+    /// This post-state comes from relocation, which requires the caller to
+    /// provide storage that is not currently initialized.
+    requires_available_destination: bool = false,
 };
 
 pub const FunctionSummary = struct {

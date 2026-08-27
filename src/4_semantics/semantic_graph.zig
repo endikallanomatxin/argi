@@ -467,6 +467,9 @@ pub const FunctionCall = struct {
     /// Set only when the semantizer proves that this call consumes the exact
     /// binding for which automatic cleanup was scheduled.
     consumes_auto_deinit: ?*const SGNode = null,
+    /// Set for a relocation destination whose caller-side cleanup becomes
+    /// responsible for the representation transferred by the callee.
+    initializes_auto_deinit: ?*const SGNode = null,
 };
 
 pub const Virtualize = struct {

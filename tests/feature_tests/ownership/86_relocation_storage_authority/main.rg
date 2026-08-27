@@ -1,10 +1,12 @@
+StorageSlot : Type = (.address: Int32)
+
+deinit(.self: $&StorageSlot) -> () := {
+}
+
 main() -> (.status_code: Int32) := {
-    storage ::= malloc(.size = 1).address
-    destination :: UIntNative
-    relocate(.source = $&storage, .destination = $&destination)
-    allocator :: CAllocator
-    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = $&allocator)
-    allocation ::= establish_allocation(.storage = destination, .size = 1, .deallocator = deallocator)
-    deinit(.self = $&allocation)
-    status_code = 0
+    source :: StorageSlot = (.address = 1)
+    destination :: StorageSlot = (.address = 0)
+    deinit(.self = $&destination)
+    relocate(.source = $&source, .destination = $&destination)
+    status_code = destination.address - 1
 }

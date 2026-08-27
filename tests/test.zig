@@ -3153,6 +3153,34 @@ test "feature_tests/ownership/89_semantic_relocation_choice" {
     try run(test_path);
 }
 
+test "feature_tests/ownership/90X_relocation_initialized_destination" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/90X_relocation_initialized_destination",
+        "relocate destination is initialized",
+    );
+}
+
+test "feature_tests/ownership/91X_relocation_stale_destination_alias" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/91X_relocation_stale_destination_alias",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/92X_relocation_owning_destination" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/92X_relocation_owning_destination",
+        "relocate destination is initialized",
+    );
+}
+
+test "feature_tests/ownership/93X_relocation_maybe_initialized_destination" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/93X_relocation_maybe_initialized_destination",
+        "relocate destination may be initialized",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

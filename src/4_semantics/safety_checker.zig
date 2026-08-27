@@ -434,13 +434,18 @@ pub const SafetyChecker = struct {
         const summary = self.summaries.get(call.callee) orelse return .{};
         for (summary.input_post_states) |post_state| {
             const index = post_state.target.input_index;
+            if (post_state.requires_available_destination and post_state.target.projections.len == 0 and index < arguments.len and
+                arguments[index].value.content == .address_of and rootBinding(arguments[index].value.content.address_of) != null)
+            {
+                @constCast(call).initializes_auto_deinit = arguments[index].value.content.address_of;
+            }
             if ((post_state.initializedness != .deinitialized and post_state.initializedness != .moved) or
                 post_state.target.projections.len != 0 or index >= arguments.len) continue;
             if (arguments[index].value.content == .address_of and rootBinding(arguments[index].value.content.address_of) != null) {
                 @constCast(call).consumes_auto_deinit = arguments[index].value.content.address_of;
             }
         }
-        try self.applyInputEffects(summary, arguments, argument_values, state);
+        try self.applyInputEffects(function, summary, arguments, argument_values, state);
         if (summary.outputs.len != 1) return .{};
         return self.instantiateOutput(summary.outputs[0], argument_values, state);
     }
@@ -464,9 +469,16 @@ pub const SafetyChecker = struct {
             try self.diagnostics.add(function.location, .semantic, "relocate requires distinct source and destination places", .{});
             return .{};
         }
-        const source_facts = self.getPlace(state, source) orelse return .{};
-        try self.requireInitialized(function, source_facts);
-        const value = source_facts.value;
+        if (self.initializednessAtPlace(state, source) != .initialized) {
+            const initializedness = self.initializednessAtPlace(state, source);
+            try self.diagnostics.add(function.location, .semantic, "place rooted at '{s}' is {s} and cannot be used", .{
+                source.root.name,
+                @tagName(initializedness),
+            });
+            return .{};
+        }
+        if (!try self.prepareRelocationDestination(function, state, destination)) return .{};
+        const value = self.valueAtPlace(state, source) orelse return .{};
         try self.setPlace(state, destination, .initialized, value);
         try self.setPlace(state, source, .moved, .{});
         return .{};
@@ -495,7 +507,7 @@ pub const SafetyChecker = struct {
                 @constCast(call).consumes_auto_deinit = arguments[index].value.content.address_of;
             }
         }
-        try self.applyInputEffects(summary, arguments, argument_values, state);
+        try self.applyInputEffects(function, summary, arguments, argument_values, state);
         if (summary.outputs.len != 1) return .{};
         return self.instantiateOutput(summary.outputs[0], argument_values, state);
     }
@@ -523,6 +535,7 @@ pub const SafetyChecker = struct {
 
     fn applyInputEffects(
         self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
         summary: facts.FunctionSummary,
         arguments: []const sg.StructValueLiteralField,
         argument_values: []const facts.ValueFacts,
@@ -532,6 +545,22 @@ pub const SafetyChecker = struct {
         defer fresh_roots.deinit();
         var fresh_authorities = std.AutoHashMap(facts.FreshRootSource, facts.StorageAuthorityId).init(self.allocator.*);
         defer fresh_authorities.deinit();
+        // A relocation summary is only valid when its two Places remain
+        // distinct at the caller. Check this before applying either side so
+        // an invalid call cannot partially move its source.
+        for (summary.input_post_states) |destination_state| {
+            if (!destination_state.requires_available_destination) continue;
+            const destination = try self.inputEffectTarget(destination_state, arguments, argument_values, state) orelse continue;
+            for (summary.input_post_states) |source_state| {
+                if (source_state.initializedness != .moved) continue;
+                const source = try self.inputEffectTarget(source_state, arguments, argument_values, state) orelse continue;
+                if (source.eql(destination)) {
+                    try self.diagnostics.add(function.location, .semantic, "relocate requires distinct source and destination places", .{});
+                    return;
+                }
+            }
+            if (!try self.prepareRelocationDestination(function, state, destination)) return;
+        }
         for (summary.input_post_states) |post_state| {
             if (post_state.target.input_index >= arguments.len) continue;
             const index = post_state.target.input_index;
@@ -540,9 +569,7 @@ pub const SafetyChecker = struct {
                     for (argument_values[index].dependencies) |dependency| state.tracker.end(dependency.root);
                 continue;
             }
-            var target = argument_values[index].referenced_place orelse try self.resolvePlace(arguments[index].value, state) orelse continue;
-            for (post_state.target.projections) |projection|
-                target = try self.projectedPlace(target, projection);
+            const target = try self.inputEffectTarget(post_state, arguments, argument_values, state) orelse continue;
             // A callee only describes its resulting Place state. The caller
             // decides whether that state begins a new storage generation.
             const reinitializes_dead_place = post_state.initializedness == .initialized and
@@ -554,7 +581,7 @@ pub const SafetyChecker = struct {
                 if (self.valueAtPlace(state, target)) |old| for (old.owned_roots) |root| state.tracker.end(root);
             }
             if (post_state.initializedness == .deinitialized) self.endStorageRootsUnder(state, target);
-            if (reinitializes_dead_place or post_state.refreshes_storage_root)
+            if (!post_state.requires_available_destination and (reinitializes_dead_place or post_state.refreshes_storage_root))
                 try self.refreshStorageRoot(state, target);
             const value = if (post_state.initializedness == .initialized)
                 try self.instantiateOutputWithFresh(post_state.value, argument_values, state, &fresh_roots, &fresh_authorities)
@@ -562,6 +589,45 @@ pub const SafetyChecker = struct {
                 facts.ValueFacts{};
             try self.setPlace(state, target, post_state.initializedness, value);
         }
+    }
+
+    fn inputEffectTarget(
+        self: *SafetyChecker,
+        post_state: facts.InputPlaceEffect,
+        arguments: []const sg.StructValueLiteralField,
+        argument_values: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !?place.Place {
+        const index = post_state.target.input_index;
+        if (index >= arguments.len) return null;
+        var target = argument_values[index].referenced_place orelse try self.resolvePlace(arguments[index].value, state) orelse return null;
+        for (post_state.target.projections) |projection|
+            target = try self.projectedPlace(target, projection);
+        return target;
+    }
+
+    /// Relocation receives storage; it never destroys the representation that
+    /// happens to be there. A deinitialized Place starts a new structural
+    /// generation, while a moved Place follows ordinary Place reuse rules.
+    fn prepareRelocationDestination(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        state: *FunctionState,
+        destination: place.Place,
+    ) !bool {
+        switch (self.initializednessAtPlace(state, destination)) {
+            .initialized => {
+                try self.diagnostics.add(function.location, .semantic, "relocate destination is initialized", .{});
+                return false;
+            },
+            .maybe_initialized => {
+                try self.diagnostics.add(function.location, .semantic, "relocate destination may be initialized", .{});
+                return false;
+            },
+            .deinitialized => try self.refreshStorageRoot(state, destination),
+            .moved => {},
+        }
+        return true;
     }
 
     fn instantiateOutput(
@@ -968,6 +1034,16 @@ pub const SafetyChecker = struct {
             if (state.places.items[index].storage.eql(storage)) return &state.places.items[index];
         }
         return null;
+    }
+
+    fn initializednessAtPlace(self: *SafetyChecker, state: *FunctionState, storage: place.Place) value_state.Initializedness {
+        var projection_count = storage.projections.len;
+        while (true) {
+            const prefix = place.Place{ .root = storage.root, .projections = storage.projections[0..projection_count] };
+            if (self.getPlace(state, prefix)) |facts_at_prefix| return facts_at_prefix.initializedness;
+            if (projection_count == 0) return .initialized;
+            projection_count -= 1;
+        }
     }
 
     fn valueAtPlace(self: *SafetyChecker, state: *FunctionState, storage: place.Place) ?facts.ValueFacts {
@@ -1393,7 +1469,7 @@ pub const SafetyChecker = struct {
             for (function.input.fields, 0..) |input_field, index| {
                 if (!std.mem.eql(u8, input_field.name, "self") or input_field.ty != .pointer_type or
                     input_field.ty.pointer_type.mutability != .read_write) continue;
-                try self.recordInputPostState(&post_states, try self.oneInputPath(@intCast(index), &.{}), .deinitialized, .{}, true, false);
+                try self.recordInputPostState(&post_states, try self.oneInputPath(@intCast(index), &.{}), .deinitialized, .{}, true, false, false);
                 break;
             }
         }
@@ -1422,11 +1498,11 @@ pub const SafetyChecker = struct {
                     const source_targets = try self.inferInputPaths(function, arguments[0].value);
                     const destination_targets = try self.inferInputPaths(function, arguments[1].value);
                     for (source_targets) |source| {
-                        try self.recordInputPostState(states, &.{source}, .moved, .{}, false, false);
+                        try self.recordInputPostState(states, &.{source}, .moved, .{}, false, false, false);
                         var transferred = try self.inputOutputEffect(source.input_index, source.projections);
                         transferred = self.withOwnershipTransfer(transferred);
                         for (destination_targets) |destination|
-                            try self.recordInputPostState(states, &.{destination}, .initialized, transferred, false, false);
+                            try self.recordInputPostState(states, &.{destination}, .initialized, transferred, false, false, true);
                     }
                     continue;
                 }
@@ -1436,7 +1512,7 @@ pub const SafetyChecker = struct {
                     var targets = try self.inferInputPaths(function, arguments[post_state.target.input_index].value);
                     for (post_state.target.projections) |projection| targets = try self.projectInputPaths(targets, projection);
                     const value = try self.substituteOutput(function, post_state.value, arguments);
-                    try self.recordInputPostState(states, targets, post_state.initializedness, value, post_state.ends_previous_roots, post_state.refreshes_storage_root);
+                    try self.recordInputPostState(states, targets, post_state.initializedness, value, post_state.ends_previous_roots, post_state.refreshes_storage_root, post_state.requires_available_destination);
                 }
             },
             .virtual_call => |call| {
@@ -1447,20 +1523,20 @@ pub const SafetyChecker = struct {
                     if (post_state.target.input_index >= arguments.len) continue;
                     var targets = try self.inferInputPaths(function, arguments[post_state.target.input_index].value);
                     for (post_state.target.projections) |projection| targets = try self.projectInputPaths(targets, projection);
-                    try self.recordInputPostState(states, targets, post_state.initializedness, try self.substituteOutput(function, post_state.value, arguments), post_state.ends_previous_roots, post_state.refreshes_storage_root);
+                    try self.recordInputPostState(states, targets, post_state.initializedness, try self.substituteOutput(function, post_state.value, arguments), post_state.ends_previous_roots, post_state.refreshes_storage_root, post_state.requires_available_destination);
                 }
             },
             .pointer_assignment => |assignment| {
-                try self.recordInputPostState(states, try self.inferInputPaths(function, assignment.pointer), .initialized, try self.inferExpression(function, assignment.value), false, false);
+                try self.recordInputPostState(states, try self.inferInputPaths(function, assignment.pointer), .initialized, try self.inferExpression(function, assignment.value), false, false, false);
             },
             .struct_field_store => |store| {
                 const targets = try self.projectInputPaths(try self.inferInputPaths(function, store.struct_ptr), .{ .field = store.field_index });
-                try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false, false);
+                try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false, false, false);
             },
             .array_store => |store| {
                 const projection: place.Projection = if (staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
                 const targets = try self.projectInputPaths(try self.inferInputPaths(function, store.array_ptr), projection);
-                try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false, false);
+                try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false, false, false);
             },
             .if_statement => |statement| {
                 var then_states = try cloneInputPostStates(states, self.allocator.*);
@@ -1487,7 +1563,7 @@ pub const SafetyChecker = struct {
         };
     }
 
-    fn recordInputPostState(self: *SafetyChecker, states: *std.array_list.Managed(facts.InputPlaceEffect), targets: []const facts.InputPath, initializedness: value_state.Initializedness, value: facts.OutputEffect, ends_roots: bool, refreshes_storage_root: bool) !void {
+    fn recordInputPostState(self: *SafetyChecker, states: *std.array_list.Managed(facts.InputPlaceEffect), targets: []const facts.InputPath, initializedness: value_state.Initializedness, value: facts.OutputEffect, ends_roots: bool, refreshes_storage_root: bool, requires_available_destination: bool) !void {
         _ = self;
         for (targets) |target| {
             var existing_state: ?*facts.InputPlaceEffect = null;
@@ -1501,12 +1577,14 @@ pub const SafetyChecker = struct {
                 existing.value = value;
                 existing.ends_previous_roots = existing.ends_previous_roots or ends_roots;
                 existing.refreshes_storage_root = existing.refreshes_storage_root or refreshes_storage_root or (was_deinitialized and initializedness == .initialized);
+                existing.requires_available_destination = existing.requires_available_destination or requires_available_destination;
             } else try states.append(.{
                 .target = target,
                 .initializedness = initializedness,
                 .value = value,
                 .ends_previous_roots = ends_roots,
                 .refreshes_storage_root = refreshes_storage_root,
+                .requires_available_destination = requires_available_destination,
             });
         }
     }
@@ -1520,6 +1598,7 @@ pub const SafetyChecker = struct {
                 merged.value = try self.mergeOutputEffects(left_state.value, right_state.value);
                 merged.ends_previous_roots = left_state.ends_previous_roots or right_state.ends_previous_roots;
                 merged.refreshes_storage_root = left_state.refreshes_storage_root or right_state.refreshes_storage_root;
+                merged.requires_available_destination = left_state.requires_available_destination or right_state.requires_available_destination;
             } else {
                 if (left_state.initializedness != .initialized) {
                     merged.initializedness = .maybe_initialized;
@@ -2172,6 +2251,7 @@ fn inputPostStatesEqual(left: []const facts.InputPlaceEffect, right: []const fac
     for (left, right) |a, b| {
         if (!inputPlaceTargetEqual(a.target, b.target) or a.initializedness != b.initializedness or
             a.ends_previous_roots != b.ends_previous_roots or a.refreshes_storage_root != b.refreshes_storage_root or
+            a.requires_available_destination != b.requires_available_destination or
             !outputEffectEqual(a.value, b.value)) return false;
     }
     return true;
@@ -2501,10 +2581,12 @@ test "payloadless choice case rejects facts from owned alternatives" {
     state.tracker.roots.items[@intFromEnum(owned_root)].state = .conditional;
 
     const owned = facts.ValueFacts{ .owned_roots = &.{owned_root} };
-    const choice = facts.ValueFacts{ .variants = &.{
-        .{ .index = 0, .value = &facts.ValueFacts{} }, // ..empty
-        .{ .index = 1, .value = &owned }, // ..owned
-    } };
+    const choice = facts.ValueFacts{
+        .variants = &.{
+            .{ .index = 0, .value = &facts.ValueFacts{} }, // ..empty
+            .{ .index = 1, .value = &owned }, // ..owned
+        },
+    };
     checker.activateChoiceVariant(choice, 0, &state);
     try std.testing.expectEqual(.dead, state.tracker.roots.items[@intFromEnum(owned_root)].state);
 }
@@ -2529,10 +2611,12 @@ test "outer choice refinement leaves nested variants conditional" {
         .{ .index = 0, .value = &inner_a },
         .{ .index = 1, .value = &inner_b },
     } };
-    const outer = facts.ValueFacts{ .variants = &.{
-        .{ .index = 0, .value = &inner }, // ..ok
-        .{ .index = 1, .value = &facts.ValueFacts{} }, // ..error
-    } };
+    const outer = facts.ValueFacts{
+        .variants = &.{
+            .{ .index = 0, .value = &inner }, // ..ok
+            .{ .index = 1, .value = &facts.ValueFacts{} }, // ..error
+        },
+    };
 
     checker.activateChoiceVariant(outer, 0, &state);
     try std.testing.expectEqual(.conditional, state.tracker.roots.items[@intFromEnum(root_a)].state);
@@ -2563,10 +2647,12 @@ test "rejecting an outer choice rejects all nested alternative facts" {
         .{ .index = 0, .value = &inner_a },
         .{ .index = 1, .value = &inner_b },
     } };
-    const errable = facts.ValueFacts{ .variants = &.{
-        .{ .index = 0, .value = &inner }, // ..ok: Choice<OwningA, OwningB>
-        .{ .index = 1, .value = &facts.ValueFacts{} }, // ..error
-    } };
+    const errable = facts.ValueFacts{
+        .variants = &.{
+            .{ .index = 0, .value = &inner }, // ..ok: Choice<OwningA, OwningB>
+            .{ .index = 1, .value = &facts.ValueFacts{} }, // ..error
+        },
+    };
 
     checker.activateChoiceVariant(errable, 1, &state);
     try std.testing.expectEqual(.dead, state.tracker.roots.items[@intFromEnum(root_a)].state);
@@ -2586,14 +2672,63 @@ test "trivial input writes retain initialized post states" {
 
     // The value is deliberately fact-free: recording this transition must not
     // depend on pointers in the value or on the callee's name.
-    try checker.recordInputPostState(&states, &.{target}, .initialized, .{}, false, false);
+    try checker.recordInputPostState(&states, &.{target}, .initialized, .{}, false, false, false);
     try std.testing.expectEqual(@as(usize, 1), states.items.len);
     try std.testing.expectEqual(value_state.Initializedness.initialized, states.items[0].initializedness);
     try std.testing.expect(!states.items[0].refreshes_storage_root);
 
-    try checker.recordInputPostState(&states, &.{target}, .deinitialized, .{}, true, false);
-    try checker.recordInputPostState(&states, &.{target}, .initialized, .{}, false, false);
+    try checker.recordInputPostState(&states, &.{target}, .deinitialized, .{}, true, false, false);
+    try checker.recordInputPostState(&states, &.{target}, .initialized, .{}, false, false, false);
     try std.testing.expect(states.items[0].refreshes_storage_root);
+}
+
+test "relocation transfers storage authority into refreshed destination storage" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const source_binding = try checker.allocator.create(sg.BindingDeclaration);
+    const destination_binding = try checker.allocator.create(sg.BindingDeclaration);
+    source_binding.* = undefined;
+    destination_binding.* = undefined;
+    const source = place.Place{ .root = source_binding };
+    const destination = place.Place{ .root = destination_binding };
+    const resource = try state.tracker.establish(.fresh);
+    const authority: facts.StorageAuthorityId = @enumFromInt(0);
+    try state.storage_authorities.append(.available);
+    try state.places.append(.{
+        .storage = source,
+        .initializedness = .initialized,
+        .value = .{
+            .owned_roots = &.{resource},
+            .foreign_storage = true,
+            .storage_authorities = &.{authority},
+        },
+    });
+    try state.places.append(.{ .storage = destination, .initializedness = .deinitialized });
+    const old_destination_root = try checker.storageRootForPlace(destination, &state);
+
+    const arguments = [_]sg.StructValueLiteralField{ undefined, undefined };
+    const values = [_]facts.ValueFacts{
+        .{ .referenced_place = source },
+        .{ .referenced_place = destination },
+    };
+    const function: sg.FunctionDeclaration = undefined;
+    _ = try checker.relocatePlaces(&function, &arguments, &values, &state);
+
+    const destination_facts = checker.getPlace(&state, destination).?;
+    try std.testing.expectEqual(value_state.Initializedness.initialized, destination_facts.initializedness);
+    try std.testing.expectEqualSlices(facts.RootId, &.{resource}, destination_facts.value.owned_roots);
+    try std.testing.expectEqualSlices(facts.StorageAuthorityId, &.{authority}, destination_facts.value.storage_authorities);
+    try std.testing.expectEqual(value_state.Initializedness.moved, checker.getPlace(&state, source).?.initializedness);
+    const new_destination_root = try checker.storageRootForPlace(destination, &state);
+    try std.testing.expect(old_destination_root != new_destination_root);
+    try std.testing.expectEqual(@as(@TypeOf(state.tracker.roots.items[@intFromEnum(old_destination_root)].state), .dead), state.tracker.roots.items[@intFromEnum(old_destination_root)].state);
+    try std.testing.expectEqual(@as(@TypeOf(state.tracker.roots.items[@intFromEnum(resource)].state), .alive), state.tracker.roots.items[@intFromEnum(resource)].state);
 }
 
 test "refreshing storage roots invalidates earlier aliases" {

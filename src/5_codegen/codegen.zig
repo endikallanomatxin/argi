@@ -2466,6 +2466,7 @@ pub const CodeGenerator = struct {
                 call_name,
             );
             self.markAutoDeinitConsumed(fc);
+            self.markAutoDeinitInitialized(fc);
 
             if (ret_ty == c.LLVMVoidType()) {
                 return null;
@@ -2533,6 +2534,7 @@ pub const CodeGenerator = struct {
             call_name,
         );
         self.markAutoDeinitConsumed(fc);
+        self.markAutoDeinitInitialized(fc);
 
         // Return according to number of return fields
         switch (callee_decl.output.fields.len) {
@@ -2557,6 +2559,12 @@ pub const CodeGenerator = struct {
 
     fn markAutoDeinitConsumed(self: *CodeGenerator, fc: *const sem.FunctionCall) void {
         self.markAutoDeinitNodeConsumed(fc.consumes_auto_deinit);
+    }
+
+    fn markAutoDeinitInitialized(self: *CodeGenerator, fc: *const sem.FunctionCall) void {
+        const target = fc.initializes_auto_deinit orelse return;
+        const drop_state = self.dropStateForNode(target) orelse return;
+        self.storeDropState(drop_state, true);
     }
 
     fn markAutoDeinitNodeConsumed(self: *CodeGenerator, consumed: ?*const sem.SGNode) void {
