@@ -3260,6 +3260,65 @@ test "feature_tests/ownership/105X_safe_reference_restriction_stale_after_reinit
     );
 }
 
+test "feature_tests/ownership/106_trusted_opaque_store_user_call" {
+    const test_path = "tests/feature_tests/ownership/106_trusted_opaque_store_user_call";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/107_trusted_opaque_drop_user_call" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/107_trusted_opaque_drop_user_call");
+}
+
+test "feature_tests/ownership/108_trusted_opaque_user_core_path" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/108_trusted_opaque_user_core_path/core");
+}
+
+test "feature_tests/ownership/109_trusted_opaque_store_scalar" {
+    const test_path = "tests/feature_tests/ownership/109_trusted_opaque_store_scalar";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
+test "feature_tests/ownership/110X_trusted_opaque_store_double_move" {
+    try buildExpectFail("tests/feature_tests/ownership/110X_trusted_opaque_store_double_move", "binding 'value' was moved and cannot be used again");
+}
+
+test "feature_tests/ownership/111X_trusted_opaque_store_use_after_move" {
+    try buildExpectFail("tests/feature_tests/ownership/111X_trusted_opaque_store_use_after_move", "binding 'value' was moved and cannot be used again");
+}
+
+test "feature_tests/ownership/112_trusted_opaque_wrapper" {
+    const test_path = "tests/feature_tests/ownership/112_trusted_opaque_wrapper";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
+test "feature_tests/ownership/113_fake_trusted_opaque_name" {
+    const test_path = "tests/feature_tests/ownership/113_fake_trusted_opaque_name";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/114X_trusted_opaque_wrapper_use_after_move" {
+    try buildExpectFail("tests/feature_tests/ownership/114X_trusted_opaque_wrapper_use_after_move", "binding 'value' was moved and cannot be used again");
+}
+
+test "feature_tests/ownership/115X_trusted_opaque_nested_wrapper_double_move" {
+    try buildExpectFail("tests/feature_tests/ownership/115X_trusted_opaque_nested_wrapper_double_move", "binding 'value' was moved and cannot be used again");
+}
+
+test "feature_tests/ownership/116_trusted_opaque_allocation" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/116_trusted_opaque_allocation");
+}
+
+test "feature_tests/ownership/117X_trusted_opaque_allocation_alias" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/117X_trusted_opaque_allocation_alias",
+        "opaque ownership storage requires no live external aliases to the consumed root",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

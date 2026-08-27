@@ -33,6 +33,13 @@ fn safetyPrimitiveForBundledDeclaration(name: []const u8, file: []const u8) sg.S
         std.mem.eql(u8, name, "relocate")) return .relocate;
     if (std.mem.endsWith(u8, file, "core/memory/reference_lifetime.rg") and
         std.mem.eql(u8, name, "restrict_reference")) return .restrict_reference;
+    // SourceFile.origin establishes trust before this function is reached.
+    // The canonical path only identifies the trusted declaration, so another
+    // bundled-core helper with the same name cannot become a primitive.
+    if (std.mem.endsWith(u8, file, "core/memory/opaque_ownership.rg")) {
+        if (std.mem.eql(u8, name, "trusted_opaque_store_owned")) return .trusted_opaque_store_owned;
+        if (std.mem.eql(u8, name, "trusted_opaque_drop_owned")) return .trusted_opaque_drop_owned;
+    }
     if (std.mem.endsWith(u8, file, "core/libc/libc.rg") and std.mem.eql(u8, name, "malloc"))
         return .raw_allocated_storage;
     return .none;

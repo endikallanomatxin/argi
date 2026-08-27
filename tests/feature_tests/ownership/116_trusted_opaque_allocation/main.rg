@@ -1,0 +1,20 @@
+main(.system: System) -> (.status_code: Int32) := {
+    source_result ::= allocate(.self = system.allocator, .size = 1)
+    slot_result ::= allocate(.self = system.allocator, .size = size_of(.type = Allocation))
+
+    match source_result {
+        ..error _ { status_code = 1 }
+        ..ok ~ payload {
+            allocation ::= ~payload
+            match slot_result {
+                ..error _ { status_code = 2 }
+                ..ok ~ slot_payload {
+                    slot_allocation ::= ~slot_payload
+                    slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = slot_allocation.data).reference
+                    trusted_opaque_store_owned#(.t: Allocation)(.destination = slot, .source = ~allocation)
+                    status_code = 0
+                }
+            }
+        }
+    }
+}

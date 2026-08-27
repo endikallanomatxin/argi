@@ -115,6 +115,16 @@ pub const InputPlaceEffect = struct {
     /// This post-state comes from relocation, which requires the caller to
     /// provide storage that is not currently initialized.
     requires_available_destination: bool = false,
+    /// Whether this input crosses trusted opaque runtime storage. `maybe`
+    /// cannot be applied at a caller because precise ownership would only be
+    /// lost on some returning paths.
+    opaque_ownership: OpaqueOwnershipConsumption = .none,
+};
+
+pub const OpaqueOwnershipConsumption = enum {
+    none,
+    definite,
+    maybe,
 };
 
 pub const FunctionSummary = struct {

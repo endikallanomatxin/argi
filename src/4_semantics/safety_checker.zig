@@ -433,6 +433,10 @@ pub const SafetyChecker = struct {
         for (arguments, 0..) |argument, index| argument_values[index] = try self.evaluate(function, argument.value, state);
         if (call.callee.safety_primitive == .relocate)
             return self.relocatePlaces(function, arguments, argument_values, state);
+        if (call.callee.safety_primitive == .trusted_opaque_store_owned) {
+            if (argument_values.len == 2) try self.closeOpaqueOwnedRoots(function, argument_values[1], state);
+            return .{};
+        }
         if (call.callee.safety_primitive == .raw_allocated_storage) {
             const authority: facts.StorageAuthorityId = @enumFromInt(state.storage_authorities.items.len);
             try state.storage_authorities.append(.available);
@@ -515,6 +519,28 @@ pub const SafetyChecker = struct {
         return .{};
     }
 
+    fn closeOpaqueOwnedRoots(self: *SafetyChecker, function: *const sg.FunctionDeclaration, value: facts.ValueFacts, state: *FunctionState) !void {
+        var roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        defer roots.deinit();
+        try collectOwnedRoots(value, &roots);
+        if (hasExternalOpaqueDependency(value, roots.items)) {
+            try self.diagnostics.add(function.location, .semantic, "opaque ownership storage cannot hide dependencies on external roots", .{});
+            return;
+        }
+        // Validate the complete boundary before changing root liveness. A
+        // rejected call must not leave analysis state partly committed.
+        for (roots.items) |root| {
+            for (state.places.items) |candidate| {
+                if (candidate.initializedness != .initialized or !valueDependsOnRoot(candidate.value, root)) continue;
+                try self.diagnostics.add(function.location, .semantic, "opaque ownership storage requires no live external aliases to the consumed root", .{});
+                return;
+            }
+        }
+        for (roots.items) |root| {
+            state.tracker.end(root);
+        }
+    }
+
     fn evaluateVirtualCall(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
@@ -594,6 +620,15 @@ pub const SafetyChecker = struct {
         }
         for (summary.input_post_states) |post_state| {
             if (post_state.target.input_index >= arguments.len) continue;
+            if (post_state.opaque_ownership == .maybe) {
+                try self.diagnostics.add(function.location, .semantic, "opaque ownership storage is conditional and cannot be summarized safely", .{});
+                continue;
+            }
+            if (post_state.opaque_ownership == .definite) {
+                const value = projectValueFacts(argument_values[post_state.target.input_index], post_state.target.projections);
+                try self.closeOpaqueOwnedRoots(function, value, state);
+                continue;
+            }
             const index = post_state.target.input_index;
             if (argument_values[index].referenced_place == null) {
                 if (post_state.ends_previous_roots and post_state.target.projections.len == 0)
@@ -688,7 +723,6 @@ pub const SafetyChecker = struct {
             const root = try self.instantiateFreshRoot(source, state, fresh_roots);
             try appendDependency(&dependencies, .{ .root = root });
         }
-        result.dependencies = try dependencies.toOwnedSlice();
         var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
         for (effect.fresh_owned_roots) |source| {
             const root = try self.instantiateFreshRoot(source, state, fresh_roots);
@@ -1671,6 +1705,13 @@ pub const SafetyChecker = struct {
             .function_call => |call| {
                 if (call.input.content != .struct_value_literal) continue;
                 const arguments = call.input.content.struct_value_literal.fields;
+                if (call.callee.safety_primitive == .trusted_opaque_store_owned) {
+                    if (arguments.len >= 2) {
+                        const targets = try self.inferInputPaths(function, arguments[1].value);
+                        try self.recordOpaqueOwnershipConsumption(states, targets, .definite);
+                    }
+                    continue;
+                }
                 if (call.callee.safety_primitive == .relocate) {
                     if (arguments.len != 2) continue;
                     const source_targets = try self.inferInputPaths(function, arguments[0].value);
@@ -1689,6 +1730,10 @@ pub const SafetyChecker = struct {
                     if (post_state.target.input_index >= arguments.len) continue;
                     var targets = try self.inferInputPaths(function, arguments[post_state.target.input_index].value);
                     for (post_state.target.projections) |projection| targets = try self.projectInputPaths(targets, projection);
+                    if (post_state.opaque_ownership != .none) {
+                        try self.recordOpaqueOwnershipConsumption(states, targets, post_state.opaque_ownership);
+                        continue;
+                    }
                     const value = try self.substituteOutput(function, post_state.value, arguments);
                     try self.recordInputPostState(states, targets, post_state.initializedness, value, post_state.ends_previous_roots, post_state.refreshes_storage_root, post_state.requires_available_destination);
                 }
@@ -1701,6 +1746,10 @@ pub const SafetyChecker = struct {
                     if (post_state.target.input_index >= arguments.len) continue;
                     var targets = try self.inferInputPaths(function, arguments[post_state.target.input_index].value);
                     for (post_state.target.projections) |projection| targets = try self.projectInputPaths(targets, projection);
+                    if (post_state.opaque_ownership != .none) {
+                        try self.recordOpaqueOwnershipConsumption(states, targets, post_state.opaque_ownership);
+                        continue;
+                    }
                     try self.recordInputPostState(states, targets, post_state.initializedness, try self.substituteOutput(function, post_state.value, arguments), post_state.ends_previous_roots, post_state.refreshes_storage_root, post_state.requires_available_destination);
                 }
             },
@@ -1737,8 +1786,46 @@ pub const SafetyChecker = struct {
                 try self.inferInputPostStates(function, statement.body, &body_states);
                 try self.joinInputPostStates(states, states, &body_states);
             },
+            .switch_statement => |statement| {
+                var joined: ?std.array_list.Managed(facts.InputPlaceEffect) = null;
+                defer if (joined) |*joined_states| joined_states.deinit();
+
+                for (statement.cases) |case| {
+                    var branch = try cloneInputPostStates(states, self.allocator.*);
+                    defer branch.deinit();
+                    try self.inferInputPostStates(function, case.body, &branch);
+                    try self.joinInputPostStateBranch(&joined, &branch);
+                }
+                if (statement.default_case) |default_case| {
+                    var branch = try cloneInputPostStates(states, self.allocator.*);
+                    defer branch.deinit();
+                    try self.inferInputPostStates(function, default_case, &branch);
+                    try self.joinInputPostStateBranch(&joined, &branch);
+                } else if (!statement.exhaustive) {
+                    try self.joinInputPostStateBranch(&joined, states);
+                }
+                if (joined) |*joined_states| {
+                    states.clearRetainingCapacity();
+                    try states.appendSlice(joined_states.items);
+                }
+            },
             else => {},
         };
+    }
+
+    fn joinInputPostStateBranch(
+        self: *SafetyChecker,
+        joined: *?std.array_list.Managed(facts.InputPlaceEffect),
+        branch: *const std.array_list.Managed(facts.InputPlaceEffect),
+    ) !void {
+        if (joined.*) |*previous| {
+            var combined = std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
+            try self.joinInputPostStates(&combined, previous, branch);
+            previous.deinit();
+            joined.* = combined;
+        } else {
+            joined.* = try cloneInputPostStates(branch, self.allocator.*);
+        }
     }
 
     fn recordInputPostState(self: *SafetyChecker, states: *std.array_list.Managed(facts.InputPlaceEffect), targets: []const facts.InputPath, initializedness: value_state.Initializedness, value: facts.OutputEffect, ends_roots: bool, refreshes_storage_root: bool, requires_available_destination: bool) !void {
@@ -1767,6 +1854,28 @@ pub const SafetyChecker = struct {
         }
     }
 
+    fn recordOpaqueOwnershipConsumption(self: *SafetyChecker, states: *std.array_list.Managed(facts.InputPlaceEffect), targets: []const facts.InputPath, consumption: facts.OpaqueOwnershipConsumption) !void {
+        _ = self;
+        for (targets) |target| {
+            var existing_state: ?*facts.InputPlaceEffect = null;
+            for (states.items) |*existing| if (inputPlaceTargetEqual(existing.target, target)) {
+                existing_state = existing;
+                break;
+            };
+            if (existing_state) |existing| {
+                // A later unconditional boundary dominates an earlier
+                // conditional one on every path that reaches this point.
+                existing.opaque_ownership = consumption;
+            } else {
+                try states.append(.{
+                    .target = target,
+                    .initializedness = .initialized,
+                    .opaque_ownership = consumption,
+                });
+            }
+        }
+    }
+
     fn joinInputPostStates(self: *SafetyChecker, destination: *std.array_list.Managed(facts.InputPlaceEffect), left: *const std.array_list.Managed(facts.InputPlaceEffect), right: *const std.array_list.Managed(facts.InputPlaceEffect)) !void {
         var joined = std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
         for (left.items) |left_state| {
@@ -1777,12 +1886,14 @@ pub const SafetyChecker = struct {
                 merged.ends_previous_roots = left_state.ends_previous_roots or right_state.ends_previous_roots;
                 merged.refreshes_storage_root = left_state.refreshes_storage_root or right_state.refreshes_storage_root;
                 merged.requires_available_destination = left_state.requires_available_destination or right_state.requires_available_destination;
+                merged.opaque_ownership = joinOpaqueOwnership(left_state.opaque_ownership, right_state.opaque_ownership);
             } else {
                 if (left_state.initializedness != .initialized) {
                     merged.initializedness = .maybe_initialized;
                 } else {
                     merged.value = try self.mergeOutputEffects(left_state.value, try self.inputOutputEffect(left_state.target.input_index, left_state.target.projections));
                 }
+                merged.opaque_ownership = joinOpaqueOwnership(left_state.opaque_ownership, .none);
             }
             try joined.append(merged);
         }
@@ -1793,6 +1904,7 @@ pub const SafetyChecker = struct {
             } else {
                 merged.value = try self.mergeOutputEffects(right_state.value, try self.inputOutputEffect(right_state.target.input_index, right_state.target.projections));
             }
+            merged.opaque_ownership = joinOpaqueOwnership(.none, right_state.opaque_ownership);
             try joined.append(merged);
         };
         destination.clearRetainingCapacity();
@@ -1863,7 +1975,7 @@ pub const SafetyChecker = struct {
             .move_value => |value| self.withOwnershipTransfer(try self.inferExpression(function, value)),
             .address_of => |value| .{ .input_places = try self.inferInputPaths(function, value) },
             .dereference => |value| try self.inferExpression(function, value.pointer),
-            .struct_value_literal => |literal| try self.inferAggregate(function, literal.fields),
+            .struct_value_literal => |literal| try self.inferAggregate(function, literal),
             .choice_literal => |literal| if (literal.payload) |payload|
                 try self.choiceOutputEffect(literal.variant_index, try self.inferExpression(function, payload))
             else
@@ -1889,6 +2001,7 @@ pub const SafetyChecker = struct {
             .struct_field_access => |access| try self.projectInputPaths(try self.inferInputPaths(function, access.struct_value), .{ .field = access.field_index }),
             .array_index => |index| try self.projectInputPaths(try self.inferInputPaths(function, index.array_ptr), if (staticIndex(index.index)) |value| .{ .static_index = value } else .dynamic_index),
             .explicit_cast => |cast| try self.inferInputPaths(function, cast.value),
+            .move_value => |value| try self.inferInputPaths(function, value),
             else => &.{},
         };
     }
@@ -1987,6 +2100,9 @@ pub const SafetyChecker = struct {
             .read_reference,
             => self.inputOutputEffect(0, &.{}),
             .restrict_reference => self.restrictReferenceEffect(),
+            .trusted_opaque_store_owned,
+            .trusted_opaque_drop_owned,
+            => .{},
         };
     }
 
@@ -2032,13 +2148,24 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn inferAggregate(self: *SafetyChecker, function: *const sg.FunctionDeclaration, fields: []const sg.StructValueLiteralField) !facts.OutputEffect {
-        const output_fields = try self.allocator.alloc(facts.OutputFieldEffect, fields.len);
+    fn inferAggregate(self: *SafetyChecker, function: *const sg.FunctionDeclaration, literal: *const sg.StructValueLiteral) !facts.OutputEffect {
+        const output_fields = try self.allocator.alloc(facts.OutputFieldEffect, literal.fields.len);
         var result: facts.OutputEffect = .{};
-        for (fields, 0..) |field, index| {
+        for (literal.fields, 0..) |field, position| {
+            var field_index: ?u32 = null;
+            for (literal.ty.struct_type.fields, 0..) |type_field, index| {
+                if (!std.mem.eql(u8, field.name, type_field.name)) continue;
+                field_index = @intCast(index);
+                break;
+            }
+            // Struct literals have already been semantized against their
+            // declared type. Keep facts keyed by that type's field index,
+            // rather than by the incidental order in which the literal wrote
+            // its named fields.
+            const semantic_index = field_index orelse return error.InvalidType;
             const value = try self.allocator.create(facts.OutputEffect);
             value.* = try self.inferExpression(function, field.value);
-            output_fields[index] = .{ .index = @intCast(index), .value = value };
+            output_fields[position] = .{ .index = semantic_index, .value = value };
             result = try self.mergeOutputEffects(result, value.*);
             // A struct contains the choice; it is not itself refined by the
             // tags of choice-valued fields.
@@ -2261,6 +2388,19 @@ fn containsRoot(roots: []const facts.RootId, target: facts.RootId) bool {
     return false;
 }
 
+fn collectOwnedRoots(value: facts.ValueFacts, roots: *std.array_list.Managed(facts.RootId)) !void {
+    for (value.owned_roots) |root| try appendOwnedRoot(roots, root);
+    for (value.fields) |field| try collectOwnedRoots(field.value.*, roots);
+    for (value.variants) |variant| try collectOwnedRoots(variant.value.*, roots);
+}
+
+fn hasExternalOpaqueDependency(value: facts.ValueFacts, owned: []const facts.RootId) bool {
+    for (value.dependencies) |dependency| if (!containsRoot(owned, dependency.root)) return true;
+    for (value.fields) |field| if (hasExternalOpaqueDependency(field.value.*, owned)) return true;
+    for (value.variants) |variant| if (hasExternalOpaqueDependency(variant.value.*, owned)) return true;
+    return false;
+}
+
 fn valueContainsOwnedRoot(value: facts.ValueFacts, target: facts.RootId) bool {
     if (containsRoot(value.owned_roots, target)) return true;
     for (value.fields) |field| if (valueContainsOwnedRoot(field.value.*, target)) return true;
@@ -2442,7 +2582,7 @@ fn inputPostStatesEqual(left: []const facts.InputPlaceEffect, right: []const fac
         if (!inputPlaceTargetEqual(a.target, b.target) or a.initializedness != b.initializedness or
             a.ends_previous_roots != b.ends_previous_roots or a.refreshes_storage_root != b.refreshes_storage_root or
             a.requires_available_destination != b.requires_available_destination or
-            !outputEffectEqual(a.value, b.value)) return false;
+            a.opaque_ownership != b.opaque_ownership or !outputEffectEqual(a.value, b.value)) return false;
     }
     return true;
 }
@@ -2515,6 +2655,12 @@ fn appendInputPath(list: *std.array_list.Managed(facts.InputPath), path: facts.I
 fn appendFreshSource(list: *std.array_list.Managed(facts.FreshRootSource), source: facts.FreshRootSource) !void {
     for (list.items) |existing| if (existing == source) return;
     try list.append(source);
+}
+
+fn joinOpaqueOwnership(left: facts.OpaqueOwnershipConsumption, right: facts.OpaqueOwnershipConsumption) facts.OpaqueOwnershipConsumption {
+    if (left == right) return left;
+    if (left == .none and right == .none) return .none;
+    return .maybe;
 }
 
 fn projectionsEqual(left: []const place.Projection, right: []const place.Projection) bool {
@@ -2615,6 +2761,20 @@ test "virtual summaries require exact ownership transfer and deinitialization" {
         .{ .outputs = &.{.{}} },
     );
     try std.testing.expect(deinit_mismatch == null);
+
+    const opaque_mismatch = try checker.mergeVirtualFunctionSummary(
+        .{ .outputs = &.{.{}}, .input_post_states = &.{.{
+            .target = .{ .input_index = 0 },
+            .initializedness = .initialized,
+            .opaque_ownership = .definite,
+        }} },
+        .{ .outputs = &.{.{}}, .input_post_states = &.{.{
+            .target = .{ .input_index = 0 },
+            .initializedness = .initialized,
+            .opaque_ownership = .maybe,
+        }} },
+    );
+    try std.testing.expect(opaque_mismatch == null);
 }
 
 test "virtual summaries widen dependencies but require exact provenance" {
@@ -2638,6 +2798,39 @@ test "virtual summaries widen dependencies but require exact provenance" {
         .{ .outputs = &.{.{}} },
     );
     try std.testing.expect(provenance_mismatch == null);
+}
+
+test "output instantiation preserves sparse semantic field indices" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    const dependency = try checker.allocator.create(facts.OutputEffect);
+    dependency.* = .{ .fresh_dependencies = &.{91} };
+    const empty = try checker.allocator.create(facts.OutputEffect);
+    empty.* = .{};
+    const fields = try checker.allocator.alloc(facts.OutputFieldEffect, 2);
+    // The representation is deliberately sparse and out of semantic order.
+    fields[0] = .{ .index = 2, .value = dependency };
+    fields[1] = .{ .index = 0, .value = empty };
+    const effect = facts.OutputEffect{
+        .fresh_owned_roots = &.{91},
+        .fields = fields,
+    };
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const value = try checker.instantiateOutput(effect, &.{}, &state);
+    const owned = value.owned_roots[0];
+    const field_two = findField(value.fields, 2).?;
+    const field_zero = findField(value.fields, 0).?;
+
+    try std.testing.expectEqual(@as(usize, 1), value.owned_roots.len);
+    try std.testing.expectEqual(@as(usize, 1), field_two.value.dependencies.len);
+    try std.testing.expectEqual(owned, field_two.value.dependencies[0].root);
+    try std.testing.expectEqual(@as(usize, 0), field_zero.value.dependencies.len);
 }
 
 test "choice values preserve complete payload facts" {
@@ -2870,6 +3063,68 @@ test "trivial input writes retain initialized post states" {
     try checker.recordInputPostState(&states, &.{target}, .deinitialized, .{}, true, false, false);
     try checker.recordInputPostState(&states, &.{target}, .initialized, .{}, false, false, false);
     try std.testing.expect(states.items[0].refreshes_storage_root);
+}
+
+test "opaque ownership joins are path-order independent and finite" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    const target = facts.InputPath{ .input_index = 0 };
+    var opaque_branch = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    defer opaque_branch.deinit();
+    try checker.recordOpaqueOwnershipConsumption(&opaque_branch, &.{target}, .definite);
+    var plain_branch = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    defer plain_branch.deinit();
+
+    var forward = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    defer forward.deinit();
+    try checker.joinInputPostStates(&forward, &opaque_branch, &plain_branch);
+    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.maybe, forward.items[0].opaque_ownership);
+
+    var reverse = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    defer reverse.deinit();
+    try checker.joinInputPostStates(&reverse, &plain_branch, &opaque_branch);
+    try std.testing.expect(inputPostStatesEqual(forward.items, reverse.items));
+
+    var fixed_point = try cloneInputPostStates(&forward, allocator);
+    defer fixed_point.deinit();
+    try checker.joinInputPostStates(&fixed_point, &fixed_point, &opaque_branch);
+    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.maybe, fixed_point.items[0].opaque_ownership);
+    try std.testing.expectEqual(@as(usize, 1), fixed_point.items.len);
+}
+
+test "opaque ownership projections retain sibling facts" {
+    const owned_field = facts.ValueFacts{ .owned_roots = &.{@enumFromInt(0)} };
+    const sibling = facts.ValueFacts{ .owned_roots = &.{@enumFromInt(1)} };
+    const value = facts.ValueFacts{ .fields = &.{
+        .{ .index = 0, .value = &owned_field },
+        .{ .index = 1, .value = &sibling },
+    } };
+    const projected = projectValueFacts(value, &.{.{ .field = 0 }});
+    var roots = std.array_list.Managed(facts.RootId).init(std.testing.allocator);
+    defer roots.deinit();
+    try collectOwnedRoots(projected, &roots);
+    try std.testing.expectEqualSlices(facts.RootId, &.{@as(facts.RootId, @enumFromInt(0))}, roots.items);
+}
+
+test "opaque ownership distinguishes internal from external dependencies recursively" {
+    const owned: facts.RootId = @enumFromInt(0);
+    const external: facts.RootId = @enumFromInt(1);
+    const internal_value = facts.ValueFacts{
+        .owned_roots = &.{owned},
+        .fields = &.{.{ .index = 0, .value = &facts.ValueFacts{ .dependencies = &.{.{ .root = owned }} } }},
+    };
+    const external_value = facts.ValueFacts{
+        .variants = &.{.{ .index = 0, .value = &facts.ValueFacts{
+            .owned_roots = &.{owned},
+            .dependencies = &.{.{ .root = external }},
+        } }},
+    };
+    try std.testing.expect(!hasExternalOpaqueDependency(internal_value, &.{owned}));
+    try std.testing.expect(hasExternalOpaqueDependency(external_value, &.{owned}));
 }
 
 test "relocation transfers storage authority into refreshed destination storage" {

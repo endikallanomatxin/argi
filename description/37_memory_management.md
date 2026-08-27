@@ -71,6 +71,16 @@ mutability, provenance, and all previous dependencies; it creates no root,
 ownership, or storage authority. Thus it can only shorten a usable lifetime,
 never extend one.
 
+`trusted_opaque_store_owned` and `trusted_opaque_drop_owned` are explicit
+trusted primitives. Any library may invoke them: there is no global unsafe
+mode and bundled core has no extra privilege. The checker still enforces moves,
+known ownership roots, alias barriers, and dependency validity. The caller
+assumes only the runtime-slot invariant that the checker cannot represent:
+initializedness and exactly-once destruction in opaque storage. Opaque
+contents cannot yet be extracted back into precise ownership.
+Canonical primitive identity is based on the bundled declaration; its trusted
+meaning is not granted merely by reusing the name in user code.
+
 ## Root ownership
 
 A value that owns a root is the unique logical owner responsible for ending it

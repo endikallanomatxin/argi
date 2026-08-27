@@ -2428,6 +2428,7 @@ pub const CodeGenerator = struct {
 
     fn genFunctionCall(self: *CodeGenerator, fc: *const sem.FunctionCall) CodegenError!?TypedValue {
         if (fc.callee.safety_primitive == .relocate) return self.genRelocate(fc);
+        if (fc.callee.safety_primitive == .trusted_opaque_store_owned) return self.genOpaqueStore(fc);
         const key_name = try self.functionSymbolKey(fc.callee);
         const callee_decl = fc.callee;
         const is_extern = (callee_decl.body == null);
@@ -2555,6 +2556,15 @@ pub const CodeGenerator = struct {
                 return .{ .value_ref = loaded, .type_ref = sret_ty, .sem_type = .{ .struct_type = &callee_decl.output } };
             },
         }
+    }
+
+    fn genOpaqueStore(self: *CodeGenerator, call: *const sem.FunctionCall) !?TypedValue {
+        const input = switch (call.input.content) { .struct_value_literal => |literal| literal, else => return CodegenError.InvalidType };
+        if (input.fields.len != 2) return CodegenError.InvalidType;
+        const destination = (try self.visitNode(input.fields[0].value)) orelse return CodegenError.ValueNotFound;
+        const source = (try self.visitNode(input.fields[1].value)) orelse return CodegenError.ValueNotFound;
+        _ = c.LLVMBuildStore(self.builder, source.value_ref, destination.value_ref);
+        return null;
     }
 
     fn markAutoDeinitConsumed(self: *CodeGenerator, fc: *const sem.FunctionCall) void {

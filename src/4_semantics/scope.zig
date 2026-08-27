@@ -149,6 +149,10 @@ pub const Scope = struct {
         if (self.binding_states.get(n)) |state| {
             if (state.initializedness == .moved) return state.transition_location;
         }
+        // Binding lifecycle is lexical: a local declaration shadows an
+        // identically named binding in an enclosing scope even before the
+        // local binding has recorded any lifecycle transition.
+        if (self.bindings.contains(n)) return null;
         if (self.parent) |p| return p.bindingMoveLocation(n);
         return null;
     }
@@ -342,3 +346,37 @@ pub const Scope = struct {
         return info.function;
     }
 };
+
+test "binding move state respects lexical shadowing" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var outer = try Scope.init(&allocator, null, null);
+    const outer_binding = try allocator.create(sg.BindingDeclaration);
+    outer_binding.* = .{
+        .name = "value",
+        .location = undefined,
+        .origin_file = "outer.rg",
+        .mutability = .constant,
+        .ty = .{ .builtin = .Int32 },
+        .initialization = null,
+    };
+    try outer.bindings.put("value", outer_binding);
+    try outer.markBindingMoved("value", undefined);
+
+    var inner = try Scope.init(&allocator, &outer, null);
+    const inner_binding = try allocator.create(sg.BindingDeclaration);
+    inner_binding.* = .{
+        .name = "value",
+        .location = undefined,
+        .origin_file = "inner.rg",
+        .mutability = .constant,
+        .ty = .{ .builtin = .Int32 },
+        .initialization = null,
+    };
+    try inner.bindings.put("value", inner_binding);
+
+    try std.testing.expect(outer.bindingMoveLocation("value") != null);
+    try std.testing.expect(inner.bindingMoveLocation("value") == null);
+}
