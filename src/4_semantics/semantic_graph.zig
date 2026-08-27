@@ -564,6 +564,10 @@ pub const SwitchStatement = struct {
 
 pub const SwitchCase = struct {
     value: *const SGNode,
+    /// The choice alternative known to be active while validating this case.
+    /// `value` remains the codegen switch value; this identity is used by
+    /// control-flow-sensitive semantic passes.
+    variant_index: u32,
     body: *const CodeBlock,
 };
 

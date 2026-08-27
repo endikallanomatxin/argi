@@ -220,12 +220,13 @@ pub const SafetyChecker = struct {
                     state.reachable = false;
                 },
                 .switch_statement => |statement| {
-                    _ = try self.evaluate(function, statement.expression, state);
+                    const choice = try self.evaluate(function, statement.expression, state);
                     var joined: ?FunctionState = null;
                     defer if (joined) |*joined_state| joined_state.deinit();
                     for (statement.cases) |case| {
                         var branch = try state.clone(self.allocator.*);
                         defer branch.deinit();
+                        self.activateChoiceVariant(choice, case.variant_index, &branch);
                         try self.validateBlock(function, case.body, &branch);
                         if (joined) |*joined_state| {
                             var combined = try state.clone(self.allocator.*);
@@ -328,7 +329,6 @@ pub const SafetyChecker = struct {
                     self.valueAtPlace(state, storage) orelse facts.ValueFacts{}
                 else
                     try self.evaluate(function, access.choice_value, state);
-                self.activateChoiceVariant(choice, access.variant_index, state);
                 for (choice.variants) |variant| {
                     if (variant.index == access.variant_index) break :blk variant.value.*;
                 }
@@ -615,7 +615,10 @@ pub const SafetyChecker = struct {
     fn activateChoiceVariant(self: *SafetyChecker, choice: facts.ValueFacts, variant_index: u32, state: *FunctionState) void {
         _ = self;
         for (choice.variants) |variant| {
-            activateConditionalFacts(variant.value.*, state, variant.index == variant_index);
+            if (variant.index == variant_index)
+                activateConditionalFacts(variant.value.*, state)
+            else
+                rejectConditionalFacts(variant.value.*, state);
         }
     }
 
@@ -1953,21 +1956,43 @@ fn valueDependsOnRoot(value: facts.ValueFacts, target: facts.RootId) bool {
     return false;
 }
 
-fn activateConditionalFacts(value: facts.ValueFacts, state: *SafetyChecker.FunctionState, active: bool) void {
+/// Activating a choice alternative realizes facts that belong directly to it
+/// and its simultaneous fields. Nested variants remain conditional because
+/// their runtime tag has not been tested yet.
+fn activateConditionalFacts(value: facts.ValueFacts, state: *SafetyChecker.FunctionState) void {
     for (value.dependencies) |dependency| {
         const root = &state.tracker.roots.items[@intFromEnum(dependency.root)];
-        if (root.state == .conditional) root.state = if (active) .alive else .dead;
+        if (root.state == .conditional) root.state = .alive;
     }
     for (value.owned_roots) |owned_root| {
         const root = &state.tracker.roots.items[@intFromEnum(owned_root)];
-        if (root.state == .conditional) root.state = if (active) .alive else .dead;
+        if (root.state == .conditional) root.state = .alive;
     }
     for (value.storage_authorities) |authority| {
         const authority_state = &state.storage_authorities.items[@intFromEnum(authority)];
-        if (authority_state.* == .conditional) authority_state.* = if (active) .available else .consumed;
+        if (authority_state.* == .conditional) authority_state.* = .available;
     }
-    for (value.fields) |field| activateConditionalFacts(field.value.*, state, active);
-    for (value.variants) |variant| activateConditionalFacts(variant.value.*, state, active);
+    for (value.fields) |field| activateConditionalFacts(field.value.*, state);
+}
+
+/// Rejecting a choice alternative makes every fact exclusively contained by
+/// it impossible, including facts below nested choices whose tags can no
+/// longer be reached.
+fn rejectConditionalFacts(value: facts.ValueFacts, state: *SafetyChecker.FunctionState) void {
+    for (value.dependencies) |dependency| {
+        const root = &state.tracker.roots.items[@intFromEnum(dependency.root)];
+        if (root.state == .conditional) root.state = .dead;
+    }
+    for (value.owned_roots) |owned_root| {
+        const root = &state.tracker.roots.items[@intFromEnum(owned_root)];
+        if (root.state == .conditional) root.state = .dead;
+    }
+    for (value.storage_authorities) |authority| {
+        const authority_state = &state.storage_authorities.items[@intFromEnum(authority)];
+        if (authority_state.* == .conditional) authority_state.* = .consumed;
+    }
+    for (value.fields) |field| rejectConditionalFacts(field.value.*, state);
+    for (value.variants) |variant| rejectConditionalFacts(variant.value.*, state);
 }
 
 fn appendOwnershipEdge(
@@ -2430,4 +2455,89 @@ test "choice alternatives activate fresh ownership by variant" {
     checker.activateChoiceVariant(ok_value, 0, &ok_state);
     try std.testing.expectEqual(.alive, ok_state.tracker.roots.items[0].state);
     try std.testing.expectEqual(@as(usize, 1), ok_value.variants[0].value.owned_roots.len);
+}
+
+test "payloadless choice case rejects facts from owned alternatives" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const owned_root = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(owned_root)].state = .conditional;
+
+    const owned = facts.ValueFacts{ .owned_roots = &.{owned_root} };
+    const choice = facts.ValueFacts{ .variants = &.{
+        .{ .index = 0, .value = &facts.ValueFacts{} }, // ..empty
+        .{ .index = 1, .value = &owned }, // ..owned
+    } };
+    checker.activateChoiceVariant(choice, 0, &state);
+    try std.testing.expectEqual(.dead, state.tracker.roots.items[@intFromEnum(owned_root)].state);
+}
+
+test "outer choice refinement leaves nested variants conditional" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const root_a = try state.tracker.establish(.fresh);
+    const root_b = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(root_a)].state = .conditional;
+    state.tracker.roots.items[@intFromEnum(root_b)].state = .conditional;
+
+    const inner_a = facts.ValueFacts{ .owned_roots = &.{root_a} };
+    const inner_b = facts.ValueFacts{ .owned_roots = &.{root_b} };
+    const inner = facts.ValueFacts{ .variants = &.{
+        .{ .index = 0, .value = &inner_a },
+        .{ .index = 1, .value = &inner_b },
+    } };
+    const outer = facts.ValueFacts{ .variants = &.{
+        .{ .index = 0, .value = &inner }, // ..ok
+        .{ .index = 1, .value = &facts.ValueFacts{} }, // ..error
+    } };
+
+    checker.activateChoiceVariant(outer, 0, &state);
+    try std.testing.expectEqual(.conditional, state.tracker.roots.items[@intFromEnum(root_a)].state);
+    try std.testing.expectEqual(.conditional, state.tracker.roots.items[@intFromEnum(root_b)].state);
+
+    checker.activateChoiceVariant(inner, 0, &state);
+    try std.testing.expectEqual(.alive, state.tracker.roots.items[@intFromEnum(root_a)].state);
+    try std.testing.expectEqual(.dead, state.tracker.roots.items[@intFromEnum(root_b)].state);
+}
+
+test "rejecting an outer choice rejects all nested alternative facts" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const root_a = try state.tracker.establish(.fresh);
+    const root_b = try state.tracker.establish(.fresh);
+    state.tracker.roots.items[@intFromEnum(root_a)].state = .conditional;
+    state.tracker.roots.items[@intFromEnum(root_b)].state = .conditional;
+
+    const inner_a = facts.ValueFacts{ .owned_roots = &.{root_a} };
+    const inner_b = facts.ValueFacts{ .owned_roots = &.{root_b} };
+    const inner = facts.ValueFacts{ .variants = &.{
+        .{ .index = 0, .value = &inner_a },
+        .{ .index = 1, .value = &inner_b },
+    } };
+    const errable = facts.ValueFacts{ .variants = &.{
+        .{ .index = 0, .value = &inner }, // ..ok: Choice<OwningA, OwningB>
+        .{ .index = 1, .value = &facts.ValueFacts{} }, // ..error
+    } };
+
+    checker.activateChoiceVariant(errable, 1, &state);
+    try std.testing.expectEqual(.dead, state.tracker.roots.items[@intFromEnum(root_a)].state);
+    try std.testing.expectEqual(.dead, state.tracker.roots.items[@intFromEnum(root_b)].state);
 }

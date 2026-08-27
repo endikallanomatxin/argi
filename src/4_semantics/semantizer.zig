@@ -11679,6 +11679,7 @@ pub const Semantizer = struct {
 
             try cases.append(.{
                 .value = lit_node,
+                .variant_index = found_idx.?,
                 .body = case_body,
             });
         }
