@@ -184,7 +184,6 @@ pub const SafetyChecker = struct {
                     if (reinitializes_dead_place) {
                         const target = pointer.referenced_place.?;
                         try self.refreshStorageRoot(state, target);
-                        try self.rebindAliasesToStorageRoot(state, target);
                     }
                     const value = try self.evaluate(function, assignment.value, state);
                     try self.addStoredOwnershipEdges(function, state, pointer, value);
@@ -513,11 +512,19 @@ pub const SafetyChecker = struct {
             var target = argument_values[index].referenced_place orelse try self.resolvePlace(arguments[index].value, state) orelse continue;
             for (post_state.target.projections) |projection|
                 target = try self.projectedPlace(target, projection);
+            // A callee only describes its resulting Place state. The caller
+            // decides whether that state begins a new storage generation.
+            const reinitializes_dead_place = post_state.initializedness == .initialized and
+                (if (self.getPlace(state, target)) |target_facts|
+                    target_facts.initializedness == .deinitialized
+                else
+                    false);
             if (post_state.ends_previous_roots) {
                 if (self.valueAtPlace(state, target)) |old| for (old.owned_roots) |root| state.tracker.end(root);
             }
             if (post_state.initializedness == .deinitialized) self.endStorageRootsUnder(state, target);
-            if (post_state.refreshes_storage_root) try self.refreshStorageRoot(state, target);
+            if (reinitializes_dead_place or post_state.refreshes_storage_root)
+                try self.refreshStorageRoot(state, target);
             const value = if (post_state.initializedness == .initialized)
                 try self.instantiateOutputWithFresh(post_state.value, argument_values, state, &fresh_roots, &fresh_authorities)
             else
@@ -904,20 +911,6 @@ pub const SafetyChecker = struct {
         _ = self;
         for (state.storage_roots.items) |entry|
             if (storage.isPrefixOf(entry.storage)) state.tracker.end(entry.root);
-    }
-
-    fn rebindAliasesToStorageRoot(self: *SafetyChecker, state: *FunctionState, storage: place.Place) !void {
-        var replacement: ?facts.RootId = null;
-        for (state.storage_roots.items) |entry| if (entry.storage.eql(storage)) {
-            replacement = entry.root;
-            break;
-        };
-        const root = replacement orelse return;
-        for (state.places.items) |*place_facts| {
-            const target = place_facts.value.referenced_place orelse continue;
-            if (!target.eql(storage)) continue;
-            place_facts.value.dependencies = try self.oneDependency(root);
-        }
     }
 
     fn getPlace(self: *SafetyChecker, state: *FunctionState, storage: place.Place) ?*facts.PlaceFacts {
@@ -1383,7 +1376,7 @@ pub const SafetyChecker = struct {
                     var targets = try self.inferInputPaths(function, arguments[post_state.target.input_index].value);
                     for (post_state.target.projections) |projection| targets = try self.projectInputPaths(targets, projection);
                     const value = try self.substituteOutput(function, post_state.value, arguments);
-                    try self.recordInputPostState(states, targets, post_state.initializedness, value, post_state.ends_previous_roots, false);
+                    try self.recordInputPostState(states, targets, post_state.initializedness, value, post_state.ends_previous_roots, post_state.refreshes_storage_root);
                 }
             },
             .virtual_call => |call| {
@@ -1394,21 +1387,17 @@ pub const SafetyChecker = struct {
                     if (post_state.target.input_index >= arguments.len) continue;
                     var targets = try self.inferInputPaths(function, arguments[post_state.target.input_index].value);
                     for (post_state.target.projections) |projection| targets = try self.projectInputPaths(targets, projection);
-                    try self.recordInputPostState(states, targets, post_state.initializedness, try self.substituteOutput(function, post_state.value, arguments), post_state.ends_previous_roots, false);
+                    try self.recordInputPostState(states, targets, post_state.initializedness, try self.substituteOutput(function, post_state.value, arguments), post_state.ends_previous_roots, post_state.refreshes_storage_root);
                 }
             },
             .pointer_assignment => |assignment| {
-                const establishes_storage = std.mem.eql(u8, function.name, "init");
-                if (assignment.value.sem_type != null and !typeContainsPointer(assignment.value.sem_type.?) and !establishes_storage) continue;
-                try self.recordInputPostState(states, try self.inferInputPaths(function, assignment.pointer), .initialized, try self.inferExpression(function, assignment.value), false, establishes_storage);
+                try self.recordInputPostState(states, try self.inferInputPaths(function, assignment.pointer), .initialized, try self.inferExpression(function, assignment.value), false, false);
             },
             .struct_field_store => |store| {
-                if (store.value.sem_type != null and !typeContainsPointer(store.value.sem_type.?)) continue;
                 const targets = try self.projectInputPaths(try self.inferInputPaths(function, store.struct_ptr), .{ .field = store.field_index });
                 try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false, false);
             },
             .array_store => |store| {
-                if (store.value.sem_type != null and !typeContainsPointer(store.value.sem_type.?)) continue;
                 const projection: place.Projection = if (staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
                 const targets = try self.projectInputPaths(try self.inferInputPaths(function, store.array_ptr), projection);
                 try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false, false);
@@ -1438,7 +1427,7 @@ pub const SafetyChecker = struct {
         };
     }
 
-    fn recordInputPostState(self: *SafetyChecker, states: *std.array_list.Managed(facts.InputPlaceEffect), targets: []const facts.InputPath, initializedness: value_state.Initializedness, value: facts.OutputEffect, ends_roots: bool, force_initialized: bool) !void {
+    fn recordInputPostState(self: *SafetyChecker, states: *std.array_list.Managed(facts.InputPlaceEffect), targets: []const facts.InputPath, initializedness: value_state.Initializedness, value: facts.OutputEffect, ends_roots: bool, refreshes_storage_root: bool) !void {
         _ = self;
         for (targets) |target| {
             var existing_state: ?*facts.InputPlaceEffect = null;
@@ -1451,13 +1440,13 @@ pub const SafetyChecker = struct {
                 existing.initializedness = initializedness;
                 existing.value = value;
                 existing.ends_previous_roots = existing.ends_previous_roots or ends_roots;
-                existing.refreshes_storage_root = existing.refreshes_storage_root or (was_deinitialized and initializedness == .initialized);
-            } else if ((force_initialized and initializedness == .initialized) or ends_roots or
-                (!outputEffectIsEmpty(value) and !outputEffectOnlyDependsOnTarget(value, target))) try states.append(.{
+                existing.refreshes_storage_root = existing.refreshes_storage_root or refreshes_storage_root or (was_deinitialized and initializedness == .initialized);
+            } else try states.append(.{
                 .target = target,
                 .initializedness = initializedness,
                 .value = value,
                 .ends_previous_roots = ends_roots,
+                .refreshes_storage_root = refreshes_storage_root,
             });
         }
     }
@@ -2105,25 +2094,6 @@ fn effectsEqual(left: []const facts.OutputEffect, right: []const facts.OutputEff
     return true;
 }
 
-fn outputEffectIsEmpty(effect: facts.OutputEffect) bool {
-    return effect.input_dependencies.len == 0 and effect.fields.len == 0 and effect.variants.len == 0 and
-        effect.fresh_dependencies.len == 0 and effect.fresh_owned_roots.len == 0 and effect.fresh_storage_authorities.len == 0 and
-        !effect.integer_address and !effect.foreign_storage;
-}
-
-fn outputEffectOnlyDependsOnTarget(effect: facts.OutputEffect, target: facts.InputPath) bool {
-    if (effect.fresh_dependencies.len != 0 or effect.fresh_owned_roots.len != 0 or effect.fresh_storage_authorities.len != 0 or
-        effect.integer_address or effect.foreign_storage) return false;
-    for (effect.input_dependencies) |dependency| {
-        if (dependency.path.input_index != target.input_index or dependency.transfers_ownership or
-            dependency.path.projections.len < target.projections.len or
-            !projectionsEqual(dependency.path.projections[0..target.projections.len], target.projections)) return false;
-    }
-    for (effect.fields) |field| if (!outputEffectOnlyDependsOnTarget(field.value.*, target)) return false;
-    for (effect.variants) |variant| if (!outputEffectOnlyDependsOnTarget(variant.value.*, target)) return false;
-    return true;
-}
-
 fn inputDependencyEqual(left: facts.InputDependency, right: facts.InputDependency) bool {
     if (left.path.input_index != right.path.input_index or left.transfers_ownership != right.transfers_ownership or
         left.path.projections.len != right.path.projections.len) return false;
@@ -2540,4 +2510,51 @@ test "rejecting an outer choice rejects all nested alternative facts" {
     checker.activateChoiceVariant(errable, 1, &state);
     try std.testing.expectEqual(.dead, state.tracker.roots.items[@intFromEnum(root_a)].state);
     try std.testing.expectEqual(.dead, state.tracker.roots.items[@intFromEnum(root_b)].state);
+}
+
+test "trivial input writes retain initialized post states" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var states = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    defer states.deinit();
+    const target = facts.InputPath{ .input_index = 0 };
+
+    // The value is deliberately fact-free: recording this transition must not
+    // depend on pointers in the value or on the callee's name.
+    try checker.recordInputPostState(&states, &.{target}, .initialized, .{}, false, false);
+    try std.testing.expectEqual(@as(usize, 1), states.items.len);
+    try std.testing.expectEqual(value_state.Initializedness.initialized, states.items[0].initializedness);
+    try std.testing.expect(!states.items[0].refreshes_storage_root);
+
+    try checker.recordInputPostState(&states, &.{target}, .deinitialized, .{}, true, false);
+    try checker.recordInputPostState(&states, &.{target}, .initialized, .{}, false, false);
+    try std.testing.expect(states.items[0].refreshes_storage_root);
+}
+
+test "refreshing storage roots invalidates earlier aliases" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const storage = place.Place{ .root = undefined };
+    const old_root = try checker.storageRootForPlace(storage, &state);
+    const stale_alias = facts.ValueFacts{
+        .dependencies = &.{.{ .root = old_root }},
+        .referenced_place = storage,
+    };
+
+    try checker.refreshStorageRoot(&state, storage);
+    const fresh_root = try checker.storageRootForPlace(storage, &state);
+    try std.testing.expect(old_root != fresh_root);
+    try std.testing.expectEqual(.dead, state.tracker.roots.items[@intFromEnum(old_root)].state);
+    try std.testing.expect(!state.tracker.dependenciesAreAlive(stale_alias));
+    try std.testing.expect(state.tracker.isAlive(fresh_root));
 }

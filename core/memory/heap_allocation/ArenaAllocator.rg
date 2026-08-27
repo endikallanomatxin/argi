@@ -82,16 +82,16 @@ arena_free_blocks(
 reset(
     .self: $&ArenaAllocator,
 ) -> () := {
-    deinit(.self = $&self&.domain)
     arena_free_blocks(.self = self)
+    deinit(.self = $&self&.domain)
     init(.p = $&self&.domain)
 }
 
 deinit(
     .self: $&ArenaAllocator,
 ) -> () := {
-    deinit(.self = $&self&.domain)
     arena_free_blocks(.self = self)
+    deinit(.self = $&self&.domain)
     deinit(.allocator = self&.backing_allocator, .self = $&self&.blocks)
 }
 
