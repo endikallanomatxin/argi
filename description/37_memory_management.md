@@ -102,15 +102,18 @@ live opaque-owned value, destination is empty, the slots are distinct; after
 the operation source is empty and destination contains that same live value.
 It performs neither cleanup nor opaque-to-precise extraction.
 
-The minimum relocatability rule is value-based, not a public trait: an
-opaque-owned value is relocatable when it entered opaque storage through
-`trusted_opaque_store_owned`, or arrived from an earlier opaque relocation.
-The store boundary rejects dependencies on external roots. Consequently, its
-safe references cannot point into the structural storage from which its
-representation is being moved; references to roots owned by the value remain
-valid because those roots do not move. Callers must preserve this provenance as
-part of their trusted slot invariant. The checker deliberately does not track
-per-slot occupancy, provenance, or generations.
+Passing `trusted_opaque_store_owned` is not a permanent relocatability proof.
+The current store boundary rejects dependencies on external roots, but a later
+write through a pointer to the opaque slot can introduce a reference to that
+slot, another slot, or another root. Relocating the representation can then
+leave a hidden stale reference even though the value was safe when stored.
+
+Relocation permission must therefore eventually depend on the current facts of
+the opaque storage. The intended direction is a conservative storage-level
+summary of hidden dependencies, not per-slot occupancy or provenance. Until
+that model exists, callers of `trusted_opaque_relocate_owned` must ensure that
+no live opaque value depends on storage invalidated by the move. The checker
+does not enforce that precondition yet.
 
 ## Root ownership
 

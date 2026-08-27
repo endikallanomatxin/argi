@@ -12,11 +12,11 @@ trusted_opaque_store_owned#(.t: Type)(.destination: $&t, .source: t) -> () := {
 -- destination. The caller must ensure that `source` is live, `destination`
 -- is empty, and the two slots are distinct.
 --
--- A value may enter opaque ownership only through store_owned (or a previous
--- opaque relocation). store_owned rejects safe references that depend on an
--- external root, so an opaque-owned value cannot contain a reference into its
--- former structural storage. That established invariant makes its physical
--- representation relocatable without a separate type capability.
+-- Passing store_owned once is not a permanent relocatability proof: later
+-- mutation through a pointer to an opaque slot can introduce address-sensitive
+-- references. A future checker model must condition relocation on the current
+-- facts of the opaque storage. Until then, callers must conservatively ensure
+-- that no live opaque value depends on storage invalidated by this move.
 trusted_opaque_relocate_owned#(.t: Type)(.source: $&t, .destination: $&t) -> () := {
 }
 
