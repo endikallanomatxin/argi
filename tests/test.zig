@@ -3359,6 +3359,25 @@ test "feature_tests/ownership/121_trusted_opaque_drop_cleanup" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/122_trusted_opaque_relocate_owned" {
+    const test_path = "tests/feature_tests/ownership/122_trusted_opaque_relocate_owned";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/123_self_referential_movable" {
+    const test_path = "tests/feature_tests/ownership/123_self_referential_movable";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/123X_opaque_relocate_self_reference" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/123X_opaque_relocate_self_reference",
+        "opaque ownership storage cannot hide dependencies on external roots",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

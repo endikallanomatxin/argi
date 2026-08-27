@@ -1435,6 +1435,26 @@ pub const CodeGenerator = struct {
         return null;
     }
 
+    /// Opaque ownership has no compiler-managed drop state. This is therefore
+    /// the same representation transfer as relocate, but intentionally does
+    /// not alter structural Place state or emit cleanup for the source.
+    fn genOpaqueRelocate(self: *CodeGenerator, call: *const sem.FunctionCall) !?TypedValue {
+        const input = switch (call.input.content) {
+            .struct_value_literal => |literal| literal,
+            else => return CodegenError.InvalidType,
+        };
+        if (input.fields.len != 2) return CodegenError.InvalidType;
+        const source = (try self.visitNode(input.fields[0].value)) orelse return CodegenError.ValueNotFound;
+        const destination = (try self.visitNode(input.fields[1].value)) orelse return CodegenError.ValueNotFound;
+        const pointer_type = input.fields[0].value.sem_type orelse return CodegenError.InvalidType;
+        if (pointer_type != .pointer_type or destination.sem_type == null or destination.sem_type.? != .pointer_type)
+            return CodegenError.InvalidType;
+        const value_type = try self.toLLVMType(pointer_type.pointer_type.child.*);
+        const value = c.LLVMBuildLoad2(self.builder, value_type, source.value_ref, "opaque_relocate.load");
+        _ = c.LLVMBuildStore(self.builder, value, destination.value_ref);
+        return null;
+    }
+
     fn genReachDirective(self: *CodeGenerator, reach: *const sem.ReachDirective) !TypedValue {
         for (reach.alternatives) |alt| {
             if (self.genReachAlternative(alt)) |tv| {
@@ -2429,6 +2449,7 @@ pub const CodeGenerator = struct {
     fn genFunctionCall(self: *CodeGenerator, fc: *const sem.FunctionCall) CodegenError!?TypedValue {
         if (fc.callee.safety_primitive == .relocate) return self.genRelocate(fc);
         if (fc.callee.safety_primitive == .trusted_opaque_store_owned) return self.genOpaqueStore(fc);
+        if (fc.callee.safety_primitive == .trusted_opaque_relocate_owned) return self.genOpaqueRelocate(fc);
         const key_name = try self.functionSymbolKey(fc.callee);
         const callee_decl = fc.callee;
         const is_extern = (callee_decl.body == null);

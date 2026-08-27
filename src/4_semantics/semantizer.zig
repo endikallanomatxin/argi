@@ -38,6 +38,7 @@ fn safetyPrimitiveForBundledDeclaration(name: []const u8, file: []const u8) sg.S
     // bundled-core helper with the same name cannot become a primitive.
     if (std.mem.endsWith(u8, file, "core/memory/opaque_ownership.rg")) {
         if (std.mem.eql(u8, name, "trusted_opaque_store_owned")) return .trusted_opaque_store_owned;
+        if (std.mem.eql(u8, name, "trusted_opaque_relocate_owned")) return .trusted_opaque_relocate_owned;
         if (std.mem.eql(u8, name, "trusted_opaque_drop_owned")) return .trusted_opaque_drop_owned;
     }
     if (std.mem.endsWith(u8, file, "core/libc/libc.rg") and std.mem.eql(u8, name, "malloc"))

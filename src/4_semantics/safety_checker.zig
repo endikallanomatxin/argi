@@ -459,6 +459,11 @@ pub const SafetyChecker = struct {
             if (argument_values.len == 2) try self.closeOpaqueOwnedRoots(function, argument_values[1], state);
             return .{};
         }
+        // Opaque-slot occupancy and contents deliberately have no precise
+        // checker representation. A relocate transfers the runtime value
+        // between two slots without changing roots or dependencies; its
+        // source-live/destination-empty contract is maintained by the caller.
+        if (call.callee.safety_primitive == .trusted_opaque_relocate_owned) return .{};
         if (call.callee.safety_primitive == .raw_allocated_storage) {
             const authority: facts.StorageAuthorityId = @enumFromInt(state.storage_authorities.items.len);
             try state.storage_authorities.append(.available);
@@ -1751,6 +1756,7 @@ pub const SafetyChecker = struct {
                     }
                     continue;
                 }
+                if (call.callee.safety_primitive == .trusted_opaque_relocate_owned) continue;
                 if (call.callee.safety_primitive == .relocate) {
                     if (arguments.len != 2) continue;
                     const source_targets = try self.inferInputPaths(function, arguments[0].value);
@@ -2140,6 +2146,7 @@ pub const SafetyChecker = struct {
             => self.inputOutputEffect(0, &.{}),
             .restrict_reference => self.restrictReferenceEffect(),
             .trusted_opaque_store_owned,
+            .trusted_opaque_relocate_owned,
             .trusted_opaque_drop_owned,
             => .{},
         };

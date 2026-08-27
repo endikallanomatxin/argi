@@ -86,6 +86,32 @@ per-slot occupancy state to diagnose that contract dynamically.
 Canonical primitive identity is based on the bundled declaration; its trusted
 meaning is not granted merely by reusing the name in user code.
 
+## Relocatability and opaque ownership
+
+Moving with `~` transfers a value's logical ownership between known Places; it
+does not promise that the representation can be copied to a different physical
+address. A safe value can contain a reference to one of its own fields, so it
+can be movable while its representation is address-sensitive. `relocate` is a
+separate structural operation between Places known to the checker. Its source
+and destination storage identities remain distinct, and it does not retarget
+references into the source.
+
+`trusted_opaque_relocate_owned` is instead a runtime representation move
+between opaque slots. It has no precise ownership effect: source contains one
+live opaque-owned value, destination is empty, the slots are distinct; after
+the operation source is empty and destination contains that same live value.
+It performs neither cleanup nor opaque-to-precise extraction.
+
+The minimum relocatability rule is value-based, not a public trait: an
+opaque-owned value is relocatable when it entered opaque storage through
+`trusted_opaque_store_owned`, or arrived from an earlier opaque relocation.
+The store boundary rejects dependencies on external roots. Consequently, its
+safe references cannot point into the structural storage from which its
+representation is being moved; references to roots owned by the value remain
+valid because those roots do not move. Callers must preserve this provenance as
+part of their trusted slot invariant. The checker deliberately does not track
+per-slot occupancy, provenance, or generations.
+
 ## Root ownership
 
 A value that owns a root is the unique logical owner responsible for ending it
