@@ -5,10 +5,13 @@ DynamicArray #(.t: Type) : Type = (
     -- It owns heap memory through `Allocation` and should serve as the default
     -- resizable list shape in `core`.
     --
-    -- Growth may reallocate and copy contents. Alternative strategies can be
-    -- modeled later as separate types if needed.
+    -- Fixed-capacity append and destruction support owning elements. Growth,
+    -- shifting, and extraction by value remain limited to elements for which
+    -- the existing byte-copy or value-copy operation is valid.
     --
     .allocation : Allocation
+    -- `length` is the runtime opaque-slot invariant: indices below it contain
+    -- exactly one live value; indices from length to capacity contain none.
     .length     : UIntNative
     .capacity   : UIntNative
     --
@@ -73,6 +76,12 @@ deinit #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&DynamicArray#(.t: t)
 ) -> () := {
+    i :: UIntNative = 0
+    while i < self&.length {
+        slot ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = i).pointer
+        trusted_opaque_drop_owned(.slot = slot, .allocator = allocator)
+        i = i + 1
+    }
     deinit(.self = $&self&.allocation)
 }
 
@@ -80,6 +89,8 @@ copy_fallible #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: &DynamicArray#(.t: t),
 ) -> (.result: Errable#(.t: DynamicArray#(.t: t), .reasons: (..out_of_memory))) := {
+    -- Copying an owning element still requires an explicit element copy
+    -- operation; reading the slot by value is only valid for copyable `t`.
     out :: DynamicArray#(.t: t)
     initialized ::= init#(.t: t)(.p = $&out, .allocator = allocator, .capacity = self&.length)
     if is(.value = initialized, .variant = ..error) {
@@ -145,6 +156,8 @@ dynamic_array_grow_growing #(.t: Type) (
     .array: $&DynamicArray#(.t: t),
     .min_capacity: UIntNative,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    -- Bytewise growth is not yet valid for arbitrary owning `t`: opaque slots
+    -- need a settled relocatability rule and a trusted relocation operation.
     element_size :: UIntNative = size_of(.type = t)
     new_capacity ::= array&.capacity
     zero :: UIntNative = 0
@@ -193,9 +206,10 @@ push #(.t: Type) (
     .value: t,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     one :: UIntNative = 1
-    offset ::= self&.length
 
     if self&.length == self&.capacity {
+        -- The existing growth implementation remains restricted as documented
+        -- above. Owning callers currently require spare capacity.
         growth_result ::= dynamic_array_grow_growing#(.t: t)(.allocator = allocator, .array = self, .min_capacity = self&.length + one)
         match growth_result {
             ..ok _ {
@@ -205,12 +219,9 @@ push #(.t: Type) (
                 return
             }
         }
-        offset = self&.length
     }
 
-    ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = offset).pointer
-    ptr& = value
-    self&.length = offset + one
+    push_assume_capacity#(.t: t)(.self = self, .value = ~value)
     result = ..ok Void()
 }
 
@@ -222,13 +233,14 @@ push_assume_capacity #(.t: Type) (
 ) -> () := {
     offset ::= self&.length
     ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = offset).pointer
-    ptr& = value
+    trusted_opaque_store_owned(.destination = ptr, .source = ~value)
     self&.length = offset + 1
 }
 
 pop #(.t: Type) (
     .self: $&DynamicArray#(.t: t),
 ) -> (.value: t) := {
+    -- Owning extraction requires opaque take support; this read remains a copy.
     one :: UIntNative = 1
     new_length ::= self&.length - one
     self&.length = new_length
@@ -251,6 +263,8 @@ insert_growing #(.t: Type) (
     .i: UIntNative,
     .value: t,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    -- Shifting live opaque slots needs trusted relocation and is not yet valid
+    -- for arbitrary owning `t`.
     one :: UIntNative = 1
     current_length ::= self&.length
     element_size :: UIntNative = size_of(.type = t)
@@ -308,6 +322,7 @@ operator get[] #(.t: Type) (
     .self: &DynamicArray#(.t: t),
     .index: UIntNative,
 ) -> (.value: t) := {
+    -- Value indexing is a copy; owning access must use a reference for now.
     ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = index).pointer
     value = ptr&
 }
@@ -331,6 +346,7 @@ operator set[] #(.t: Type) (
     .index: UIntNative,
     .value: t,
 ) -> () := {
+    -- Replacing an owning live slot needs an explicit drop/replace contract.
     ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = index).pointer
     ptr& = value
 }
@@ -372,6 +388,7 @@ has_next#(.t: Type) (
 next#(.t: Type) (
     .self: $&DynamicArrayIterator#(.t: t)
 ) -> (.value: t) := {
+    -- The value iterator copies; owning iteration remains reference-only.
     iterator :: DynamicArrayIterator#(.t: t) = self&
     current_index :: UIntNative = iterator.index
     ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = iterator.array, .offset = current_index).pointer

@@ -10,3 +10,9 @@ trusted_opaque_store_owned#(.t: Type)(.destination: $&t, .source: t) -> () := {
 trusted_opaque_drop_owned#(.t: Type)(.slot: $&t) -> () := {
     deinit(.self = slot)
 }
+
+-- Use this overload when the element destructor may reach an allocator. The
+-- explicit input keeps the monomorphized trusted function self-contained.
+trusted_opaque_drop_owned#(.t: Type)(.slot: $&t, .allocator: $&Allocator) -> () := {
+    deinit(.self = slot)
+}

@@ -99,6 +99,7 @@ pub const SafetyChecker = struct {
 
         fn clone(self: *const FunctionState, allocator: std.mem.Allocator) !FunctionState {
             var result = FunctionState.init(allocator);
+            errdefer result.deinit();
             try result.tracker.roots.appendSlice(self.tracker.roots.items);
             try result.storage_authorities.appendSlice(self.storage_authorities.items);
             try result.places.appendSlice(self.places.items);
@@ -3165,7 +3166,7 @@ test "opaque ownership distinguishes internal from external dependencies recursi
     try std.testing.expect(hasExternalOpaqueDependency(external_value, &.{owned}));
 }
 
-test "rejected multi-effect call restores roots and input value facts" {
+fn expectRejectedMultiEffectCallRestoresState(comptime use_virtual_call: bool) !void {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -3228,6 +3229,23 @@ test "rejected multi-effect call restores roots and input value facts" {
         .body = null,
     };
     var call = sg.FunctionCall{ .callee = &callee, .input = &input_node };
+    var registry = sg.VirtualMethodRegistry{
+        .implementations = std.array_list.Managed(*const sg.FunctionDeclaration).init(allocator),
+    };
+    defer registry.implementations.deinit();
+    try registry.implementations.append(&callee);
+    var virtual_call = sg.VirtualCall{
+        .handle = &input_node,
+        .input = &input_node,
+        .self_input_index = 0,
+        .method_index = 0,
+        .method_count = 1,
+        .method_name = "store_pair",
+        .input_type = &callee.input,
+        .output_type = &callee.output,
+        .self_permission = undefined,
+        .safety_methods = &registry,
+    };
 
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
@@ -3248,7 +3266,11 @@ test "rejected multi-effect call restores roots and input value facts" {
         },
     });
 
-    _ = try checker.evaluateCall(&caller, &call, &state);
+    if (use_virtual_call) {
+        _ = try checker.evaluateVirtualCall(&caller, &virtual_call, &state);
+    } else {
+        _ = try checker.evaluateCall(&caller, &call, &state);
+    }
 
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
     try std.testing.expectEqualStrings("opaque ownership storage cannot hide dependencies on external roots", diags.list.items[0].msg);
@@ -3261,6 +3283,14 @@ test "rejected multi-effect call restores roots and input value facts" {
     try std.testing.expectEqual(value_state.Initializedness.initialized, restored_second.initializedness);
     try std.testing.expect(valueFactsEqual(first_value, restored_first.value));
     try std.testing.expect(valueFactsEqual(second_value, restored_second.value));
+}
+
+test "rejected multi-effect call restores roots and input value facts" {
+    try expectRejectedMultiEffectCallRestoresState(false);
+}
+
+test "rejected multi-effect virtual call restores roots and input value facts" {
+    try expectRejectedMultiEffectCallRestoresState(true);
 }
 
 test "relocation transfers storage authority into refreshed destination storage" {

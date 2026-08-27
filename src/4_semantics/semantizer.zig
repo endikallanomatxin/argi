@@ -6915,7 +6915,23 @@ pub const Semantizer = struct {
         if (tv_in.ty != .struct_type) return error.InvalidType;
         if (try self.tryHandleVirtualCall(call, tv_in, s)) |virtual_call| return virtual_call;
 
-        const chosen = self.resolveRegularCallCallee(call, tv_in, s, call.input.*.location) catch |err| switch (err) {
+        const trusted_drop_without_destructor = s.current_fn != null and
+            s.current_fn.?.safety_primitive == .trusted_opaque_drop_owned and
+            std.mem.eql(u8, call.callee, "deinit");
+        const chosen = (if (trusted_drop_without_destructor)
+            self.tryResolveRegularCallCallee(call, tv_in, s, call.input.*.location)
+        else
+            self.resolveRegularCallCallee(call, tv_in, s, call.input.*.location)) catch |err| switch (err) {
+            error.SymbolNotFound => if (trusted_drop_without_destructor) {
+                // Dropping a trivially destructible value is a runtime no-op.
+                // Keep this exception inside the trusted primitive; ordinary
+                // missing `deinit` calls must remain diagnostics.
+                const lit = try self.allocator.create(sg.StructValueLiteral);
+                lit.* = .{ .fields = &.{}, .ty = .{ .builtin = .Void } };
+                const node = try sg.makeSGNode(.{ .struct_value_literal = lit }, call.callee_loc, self.allocator);
+                node.sem_type = .{ .builtin = .Void };
+                return .{ .node = node, .ty = .{ .builtin = .Void } };
+            } else return err,
             error.AmbiguousOverload => {
                 if (call.module_qualifier) |module_name| {
                     const module_dir = s.lookupModuleAlias(module_name) orelse {
