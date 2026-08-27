@@ -595,9 +595,7 @@ pub const SafetyChecker = struct {
                 return;
             }
         }
-        for (roots.items) |root| {
-            state.tracker.end(root);
-        }
+        _ = try self.endRoots(function, state, roots.items);
     }
 
     fn hideOpaqueDependencies(self: *SafetyChecker, state: *FunctionState, storage: place.Place, value: facts.ValueFacts) !void {
@@ -781,8 +779,11 @@ pub const SafetyChecker = struct {
                 var storage = argument_values[opaque_path.input_index].referenced_place orelse
                     try self.resolvePlace(arguments[opaque_path.input_index].value, state) orelse continue;
                 for (opaque_path.projections) |projection| storage = try self.projectedPlace(storage, projection);
-                try self.hideOpaqueDependencies(state, storage, value);
+                // Match the primitive boundary: consuming the old ownership
+                // is validated before the destination storage starts hiding
+                // the transferred value's dependencies.
                 try self.closeOpaqueOwnedRoots(function, value, state);
+                try self.hideOpaqueDependencies(state, storage, value);
                 continue;
             }
             const index = post_state.target.input_index;
@@ -1383,12 +1384,24 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         root: facts.RootId,
     ) !bool {
-        if (rootIsHidden(state, root)) {
+        return self.endRoots(function, state, &.{root});
+    }
+
+    fn endRoots(
+        self: *SafetyChecker,
+        function: ?*const sg.FunctionDeclaration,
+        state: *FunctionState,
+        roots: []const facts.RootId,
+    ) !bool {
+        // Root termination is a transaction: opaque barriers are checked for
+        // the complete batch before any liveness fact changes.
+        for (roots) |root| {
+            if (!rootIsHidden(state, root)) continue;
             if (function) |current|
                 try self.diagnostics.add(current.location, .semantic, "cannot end a root while opaque storage hides a dependency on it", .{});
             return false;
         }
-        state.tracker.end(root);
+        for (roots) |root| state.tracker.end(root);
         return true;
     }
 
@@ -3637,6 +3650,27 @@ test "rejected multi-effect call restores roots and input value facts" {
 
 test "rejected multi-effect virtual call restores roots and input value facts" {
     try expectRejectedMultiEffectCallRestoresState(true);
+}
+
+test "root batches remain alive when any root is hidden" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const first = try state.tracker.establish(.fresh);
+    const hidden = try state.tracker.establish(.fresh);
+    try state.opaque_storages.append(.{
+        .storage = .{ .root = undefined },
+        .hidden_dependencies = &.{hidden},
+    });
+
+    try std.testing.expect(!try checker.endRoots(null, &state, &.{ first, hidden }));
+    try std.testing.expect(state.tracker.isAlive(first));
+    try std.testing.expect(state.tracker.isAlive(hidden));
 }
 
 test "relocation transfers storage authority into refreshed destination storage" {

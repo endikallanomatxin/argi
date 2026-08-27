@@ -3462,6 +3462,26 @@ test "feature_tests/ownership/136_opaque_dependency_summary_does_not_duplicate_o
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/137X_opaque_hidden_dependency_blocks_owner_consumption" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/137X_opaque_hidden_dependency_blocks_owner_consumption",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/138_opaque_hidden_dependency_allows_unrelated_owner_consumption" {
+    const test_path = "tests/feature_tests/ownership/138_opaque_hidden_dependency_allows_unrelated_owner_consumption";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/139X_opaque_hidden_dependency_blocks_owner_consumption_through_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/139X_opaque_hidden_dependency_blocks_owner_consumption_through_wrapper",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended
