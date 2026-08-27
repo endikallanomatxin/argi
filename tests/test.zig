@@ -3181,6 +3181,45 @@ test "feature_tests/ownership/93X_relocation_maybe_initialized_destination" {
     );
 }
 
+test "feature_tests/ownership/94_choice_if_narrowing" {
+    const test_path = "tests/feature_tests/ownership/94_choice_if_narrowing";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/95X_choice_unproven_payload" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/95X_choice_unproven_payload",
+        "requires its variant to be proven active",
+    );
+}
+
+test "feature_tests/ownership/96_choice_comparison_narrowing" {
+    const test_path = "tests/feature_tests/ownership/96_choice_comparison_narrowing";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/97_choice_nested_narrowing" {
+    const test_path = "tests/feature_tests/ownership/97_choice_nested_narrowing";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/98X_choice_nested_unproven_payload" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/98X_choice_nested_unproven_payload",
+        "requires its variant to be proven active",
+    );
+}
+
+test "feature_tests/ownership/99X_choice_else_keeps_multiple_variants" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/99X_choice_else_keeps_multiple_variants",
+        "requires its variant to be proven active",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

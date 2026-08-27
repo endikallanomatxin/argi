@@ -544,8 +544,18 @@ pub const ReturnStatement = struct {
 
 pub const IfStatement = struct {
     condition: *const SGNode,
+    choice_test: ?ChoiceTagTest = null,
     then_block: *const CodeBlock,
     else_block: ?*const CodeBlock,
+};
+
+/// Compiler-resolved tag test used by control-flow-sensitive passes. The
+/// original comparison remains the runtime condition used by codegen.
+pub const ChoiceTagTest = struct {
+    choice_value: *const SGNode,
+    choice_type: *const ChoiceType,
+    variant_index: u32,
+    then_has_variant: bool,
 };
 
 pub const WhileStatement = struct {
@@ -564,6 +574,7 @@ pub const SwitchStatement = struct {
     expression: *const SGNode,
     cases: []const SwitchCase,
     default_case: ?*const CodeBlock,
+    exhaustive: bool = false,
 };
 
 pub const SwitchCase = struct {

@@ -62,12 +62,16 @@ pub const SafetyChecker = struct {
     const FunctionState = struct {
         const OwnershipEdge = struct { owner: facts.RootId, owned: facts.RootId };
         const StorageRoot = struct { storage: place.Place, root: facts.RootId };
+        const ChoiceActive = struct { storage: place.Place, variant_index: u32 };
+        const ChoiceRejected = struct { storage: place.Place, variant_index: u32 };
         const StorageAuthorityState = enum { available, conditional, maybe_consumed, consumed };
         tracker: facts.Tracker,
         storage_authorities: std.array_list.Managed(StorageAuthorityState),
         places: std.array_list.Managed(facts.PlaceFacts),
         ownership_edges: std.array_list.Managed(OwnershipEdge),
         storage_roots: std.array_list.Managed(StorageRoot),
+        choice_active: std.array_list.Managed(ChoiceActive),
+        choice_rejected: std.array_list.Managed(ChoiceRejected),
         reachable: bool = true,
         ownership_conflict_reported: bool = false,
 
@@ -78,6 +82,8 @@ pub const SafetyChecker = struct {
                 .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
                 .ownership_edges = std.array_list.Managed(OwnershipEdge).init(allocator),
                 .storage_roots = std.array_list.Managed(StorageRoot).init(allocator),
+                .choice_active = std.array_list.Managed(ChoiceActive).init(allocator),
+                .choice_rejected = std.array_list.Managed(ChoiceRejected).init(allocator),
             };
         }
 
@@ -87,6 +93,8 @@ pub const SafetyChecker = struct {
             self.places.deinit();
             self.ownership_edges.deinit();
             self.storage_roots.deinit();
+            self.choice_active.deinit();
+            self.choice_rejected.deinit();
         }
 
         fn clone(self: *const FunctionState, allocator: std.mem.Allocator) !FunctionState {
@@ -96,6 +104,8 @@ pub const SafetyChecker = struct {
             try result.places.appendSlice(self.places.items);
             try result.ownership_edges.appendSlice(self.ownership_edges.items);
             try result.storage_roots.appendSlice(self.storage_roots.items);
+            try result.choice_active.appendSlice(self.choice_active.items);
+            try result.choice_rejected.appendSlice(self.choice_rejected.items);
             result.reachable = self.reachable;
             result.ownership_conflict_reported = self.ownership_conflict_reported;
             return result;
@@ -194,9 +204,13 @@ pub const SafetyChecker = struct {
                     _ = try self.evaluate(function, statement.condition, state);
                     var then_state = try state.clone(self.allocator.*);
                     defer then_state.deinit();
+                    if (statement.choice_test) |tag_test|
+                        try self.refineChoiceTest(function, tag_test, &then_state, tag_test.then_has_variant);
                     try self.validateBlock(function, statement.then_block, &then_state);
                     var else_state = try state.clone(self.allocator.*);
                     defer else_state.deinit();
+                    if (statement.choice_test) |tag_test|
+                        try self.refineChoiceTest(function, tag_test, &else_state, !tag_test.then_has_variant);
                     if (statement.else_block) |else_block| try self.validateBlock(function, else_block, &else_state);
                     try self.joinStates(function, state, &then_state, &else_state);
                 },
@@ -225,7 +239,7 @@ pub const SafetyChecker = struct {
                     for (statement.cases) |case| {
                         var branch = try state.clone(self.allocator.*);
                         defer branch.deinit();
-                        self.activateChoiceVariant(choice, case.variant_index, &branch);
+                        try self.refineChoiceVariant(try self.resolvePlace(statement.expression, &branch), choice, statement.expression.sem_type.?.choice_type.variants.len, case.variant_index, true, &branch);
                         try self.validateBlock(function, case.body, &branch);
                         if (joined) |*joined_state| {
                             var combined = try state.clone(self.allocator.*);
@@ -244,11 +258,13 @@ pub const SafetyChecker = struct {
                             joined_state.deinit();
                             joined_state.* = combined;
                         } else joined = try branch.clone(self.allocator.*);
-                    } else if (joined) |*joined_state| {
-                        var combined = try state.clone(self.allocator.*);
-                        try self.joinStates(function, &combined, joined_state, state);
-                        joined_state.deinit();
-                        joined_state.* = combined;
+                    } else if (!statement.exhaustive) {
+                        if (joined) |*joined_state| {
+                            var combined = try state.clone(self.allocator.*);
+                            try self.joinStates(function, &combined, joined_state, state);
+                            joined_state.deinit();
+                            joined_state.* = combined;
+                        }
                     }
                     if (joined) |*joined_state| try self.copyState(state, joined_state);
                 },
@@ -328,6 +344,15 @@ pub const SafetyChecker = struct {
                     self.valueAtPlace(state, storage) orelse facts.ValueFacts{}
                 else
                     try self.evaluate(function, access.choice_value, state);
+                if (try self.resolvePlace(access.choice_value, state)) |storage| {
+                    if (!self.choiceVariantIsActive(state, storage, access.variant_index)) {
+                        try self.diagnostics.add(function.location, .semantic, "choice payload '..{d}' requires its variant to be proven active", .{access.variant_index});
+                        break :blk .{};
+                    }
+                } else {
+                    try self.diagnostics.add(function.location, .semantic, "choice payload access requires a choice Place with a proven active variant", .{});
+                    break :blk .{};
+                }
                 for (choice.variants) |variant| {
                     if (variant.index == access.variant_index) break :blk variant.value.*;
                 }
@@ -383,7 +408,13 @@ pub const SafetyChecker = struct {
             },
             .logical_operation => |operation| blk: {
                 _ = try self.evaluate(function, operation.left, state);
-                _ = try self.evaluate(function, operation.right, state);
+                var right_state = try state.clone(self.allocator.*);
+                defer right_state.deinit();
+                if (self.choiceTagTestFromCondition(operation.left)) |tag_test| {
+                    const left_has_variant = operation.operator == .and_;
+                    try self.refineChoiceTest(function, tag_test, &right_state, left_has_variant == tag_test.then_has_variant);
+                }
+                _ = try self.evaluate(function, operation.right, &right_state);
                 break :blk .{};
             },
             else => .{},
@@ -726,6 +757,116 @@ pub const SafetyChecker = struct {
         }
     }
 
+    fn refineChoiceTest(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        tag_test: sg.ChoiceTagTest,
+        state: *FunctionState,
+        has_variant: bool,
+    ) !void {
+        const choice = try self.evaluate(function, tag_test.choice_value, state);
+        try self.refineChoiceVariant(try self.resolvePlace(tag_test.choice_value, state), choice, tag_test.choice_type.variants.len, tag_test.variant_index, has_variant, state);
+    }
+
+    fn choiceTagTestFromCondition(self: *SafetyChecker, condition: *const sg.SGNode) ?sg.ChoiceTagTest {
+        _ = self;
+        const comparison = switch (condition.content) {
+            .comparison => |value| value,
+            else => return null,
+        };
+        const then_has_variant = switch (comparison.operator) {
+            .equal => true,
+            .not_equal => false,
+            else => return null,
+        };
+        const left_literal = switch (comparison.left.content) {
+            .choice_literal => |value| value,
+            else => null,
+        };
+        const right_literal = switch (comparison.right.content) {
+            .choice_literal => |value| value,
+            else => null,
+        };
+        const choice_value = if (left_literal != null)
+            comparison.right
+        else if (right_literal != null)
+            comparison.left
+        else
+            return null;
+        const literal = left_literal orelse right_literal.?;
+        if (literal.payload != null or choice_value.sem_type == null or choice_value.sem_type.? != .choice_type) return null;
+        return .{
+            .choice_value = choice_value,
+            .choice_type = choice_value.sem_type.?.choice_type,
+            .variant_index = literal.variant_index,
+            .then_has_variant = then_has_variant,
+        };
+    }
+
+    fn refineChoiceVariant(
+        self: *SafetyChecker,
+        storage: ?place.Place,
+        choice: facts.ValueFacts,
+        variant_count: usize,
+        variant_index: u32,
+        has_variant: bool,
+        state: *FunctionState,
+    ) !void {
+        if (has_variant) {
+            self.activateChoiceVariant(choice, variant_index, state);
+            if (storage) |target| try self.setChoiceActive(state, target, variant_index);
+            return;
+        }
+
+        for (choice.variants) |variant| if (variant.index == variant_index) {
+            rejectConditionalFacts(variant.value.*, state);
+            break;
+        };
+        const target = storage orelse return;
+        try self.setChoiceRejected(state, target, variant_index);
+        var remaining: ?u32 = null;
+        for (0..variant_count) |index| {
+            const candidate: u32 = @intCast(index);
+            if (self.choiceVariantIsRejected(state, target, candidate)) continue;
+            if (remaining != null) return;
+            remaining = candidate;
+        }
+        if (remaining) |active| {
+            self.activateChoiceVariant(choice, active, state);
+            try self.setChoiceActive(state, target, active);
+        }
+    }
+
+    fn setChoiceActive(self: *SafetyChecker, state: *FunctionState, storage: place.Place, variant_index: u32) !void {
+        _ = self;
+        var index: usize = 0;
+        while (index < state.choice_active.items.len) {
+            if (state.choice_active.items[index].storage.eql(storage)) {
+                _ = state.choice_active.orderedRemove(index);
+            } else index += 1;
+        }
+        try state.choice_active.append(.{ .storage = storage, .variant_index = variant_index });
+    }
+
+    fn setChoiceRejected(self: *SafetyChecker, state: *FunctionState, storage: place.Place, variant_index: u32) !void {
+        if (self.choiceVariantIsRejected(state, storage, variant_index)) return;
+        try state.choice_rejected.append(.{ .storage = storage, .variant_index = variant_index });
+    }
+
+    fn choiceVariantIsActive(self: *SafetyChecker, state: *const FunctionState, storage: place.Place, variant_index: u32) bool {
+        _ = self;
+        for (state.choice_active.items) |active|
+            if (active.storage.eql(storage)) return active.variant_index == variant_index;
+        return false;
+    }
+
+    fn choiceVariantIsRejected(self: *SafetyChecker, state: *const FunctionState, storage: place.Place, variant_index: u32) bool {
+        _ = self;
+        for (state.choice_rejected.items) |rejected|
+            if (rejected.storage.eql(storage) and rejected.variant_index == variant_index) return true;
+        return false;
+    }
+
     fn instantiateFreshStorageAuthority(self: *SafetyChecker, source: facts.FreshRootSource, state: *FunctionState, fresh: *std.AutoHashMap(facts.FreshRootSource, facts.StorageAuthorityId)) !facts.StorageAuthorityId {
         _ = self;
         if (fresh.get(source)) |authority| return authority;
@@ -905,6 +1046,18 @@ pub const SafetyChecker = struct {
             };
             if (!found) try joined.storage_roots.append(candidate);
         }
+        for (left.choice_active.items) |candidate| for (right.choice_active.items) |other| {
+            if (candidate.storage.eql(other.storage) and candidate.variant_index == other.variant_index) {
+                try joined.choice_active.append(candidate);
+                break;
+            }
+        };
+        for (left.choice_rejected.items) |candidate| for (right.choice_rejected.items) |other| {
+            if (candidate.storage.eql(other.storage) and candidate.variant_index == other.variant_index) {
+                try joined.choice_rejected.append(candidate);
+                break;
+            }
+        };
         joined.reachable = true;
         joined.ownership_conflict_reported = left.ownership_conflict_reported or right.ownership_conflict_reported;
         destination.deinit();
@@ -1065,6 +1218,7 @@ pub const SafetyChecker = struct {
         initializedness: value_state.Initializedness,
         value: facts.ValueFacts,
     ) !void {
+        self.clearChoiceRefinementsUnder(state, storage);
         if (storage.projections.len != 0) {
             const root_storage = place.Place{ .root = storage.root };
             if (self.getPlace(state, root_storage)) |root_place| {
@@ -1092,6 +1246,24 @@ pub const SafetyChecker = struct {
                     candidate.value = projectValueFacts(value, candidate.storage.projections[storage.projections.len..]);
                 }
             }
+        }
+    }
+
+    fn clearChoiceRefinementsUnder(self: *SafetyChecker, state: *FunctionState, storage: place.Place) void {
+        _ = self;
+        var index: usize = 0;
+        while (index < state.choice_active.items.len) {
+            const refined = state.choice_active.items[index].storage;
+            if (storage.isPrefixOf(refined) or refined.isPrefixOf(storage)) {
+                _ = state.choice_active.orderedRemove(index);
+            } else index += 1;
+        }
+        index = 0;
+        while (index < state.choice_rejected.items.len) {
+            const refined = state.choice_rejected.items[index].storage;
+            if (storage.isPrefixOf(refined) or refined.isPrefixOf(storage)) {
+                _ = state.choice_rejected.orderedRemove(index);
+            } else index += 1;
         }
     }
 
@@ -1284,6 +1456,7 @@ pub const SafetyChecker = struct {
     fn resolvePlace(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) !?place.Place {
         return switch (node.content) {
             .binding_use => |binding| .{ .root = binding },
+            .move_value => |value| try self.resolvePlace(value, state),
             .address_of => |value| try self.resolvePlace(value, state),
             .struct_field_access => |access| if (try self.resolvePlace(access.struct_value, state)) |base|
                 try self.projectedPlace(base, .{ .field = access.field_index })

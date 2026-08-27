@@ -11200,6 +11200,7 @@ pub const Semantizer = struct {
 
         const cond = try self.visitNode(ifs.condition.*, s);
         const nullable_refinement = try self.extractNullableIfRefinement(ifs.condition, s);
+        const choice_test = self.choiceTagTestForCondition(cond.node);
 
         const then_te = switch (ifs.then_block.*.content) {
             .code_block => |blk| try self.handleCodeBlockWithNullableRefinement(blk, s, nullable_refinement, ifs.condition.location),
@@ -11216,6 +11217,7 @@ pub const Semantizer = struct {
         const if_ptr = try self.allocator.create(sg.IfStatement);
         if_ptr.* = .{
             .condition = cond.node,
+            .choice_test = choice_test,
             .then_block = then_te.node.content.code_block,
             .else_block = else_cb,
         };
@@ -11223,6 +11225,41 @@ pub const Semantizer = struct {
         const n = try sg.makeSGNode(.{ .if_statement = if_ptr }, undefined, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
+    }
+
+    fn choiceTagTestForCondition(self: *Semantizer, condition: *const sg.SGNode) ?sg.ChoiceTagTest {
+        _ = self;
+        const comparison = switch (condition.content) {
+            .comparison => |value| value,
+            else => return null,
+        };
+        const then_has_variant = switch (comparison.operator) {
+            .equal => true,
+            .not_equal => false,
+            else => return null,
+        };
+        const left_literal = switch (comparison.left.content) {
+            .choice_literal => |value| value,
+            else => null,
+        };
+        const right_literal = switch (comparison.right.content) {
+            .choice_literal => |value| value,
+            else => null,
+        };
+        const choice_value: *const sg.SGNode = if (left_literal != null)
+            comparison.right
+        else if (right_literal != null)
+            comparison.left
+        else
+            return null;
+        const literal = left_literal orelse right_literal.?;
+        if (literal.payload != null or choice_value.sem_type == null or choice_value.sem_type.? != .choice_type) return null;
+        return .{
+            .choice_value = choice_value,
+            .choice_type = choice_value.sem_type.?.choice_type,
+            .variant_index = literal.variant_index,
+            .then_has_variant = then_has_variant,
+        };
     }
 
     fn extractNullableIfRefinement(
@@ -11705,11 +11742,25 @@ pub const Semantizer = struct {
 
         s.nodes.items.len = start_len;
 
+        var exhaustive = cases.items.len == choice_ty.variants.len;
+        if (exhaustive) for (choice_ty.variants, 0..) |_, variant_index| {
+            var found = false;
+            for (cases.items) |case| if (case.variant_index == variant_index) {
+                found = true;
+                break;
+            };
+            if (!found) {
+                exhaustive = false;
+                break;
+            }
+        };
+
         const switch_ptr = try self.allocator.create(sg.SwitchStatement);
         switch_ptr.* = .{
             .expression = value_te.node,
             .cases = try cases.toOwnedSlice(),
             .default_case = null,
+            .exhaustive = exhaustive,
         };
 
         const node = try sg.makeSGNode(.{ .switch_statement = switch_ptr }, m.value.location, self.allocator);
