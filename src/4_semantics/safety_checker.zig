@@ -468,6 +468,7 @@ pub const SafetyChecker = struct {
             call.callee.safety_primitive == .trusted_opaque_store_owned_in)
         {
             if (argument_values.len == 3) {
+                try self.closeOpaqueOwnedRoots(function, argument_values[2], state);
                 if (valueHasDependency(argument_values[2])) {
                     if (argument_values[0].referenced_place) |storage| {
                         try self.hideOpaqueDependencies(state, storage, argument_values[2]);
@@ -484,7 +485,6 @@ pub const SafetyChecker = struct {
                         return .{};
                     }
                 }
-                try self.closeOpaqueOwnedRoots(function, argument_values[2], state);
             } else if (argument_values.len == 2) {
                 if (hasExternalOpaqueDependency(argument_values[1], argument_values[1].owned_roots)) {
                     try self.diagnostics.add(function.location, .semantic, "opaque ownership storage cannot hide dependencies on external roots", .{});
@@ -604,7 +604,7 @@ pub const SafetyChecker = struct {
         var hidden = std.array_list.Managed(facts.RootId).init(self.allocator.*);
         defer hidden.deinit();
         try collectDependencyRoots(value, &hidden);
-        try self.mergeOpaqueStorage(state, storage, hidden.items);
+        try self.mergeLiveOpaqueDependencies(state, storage, hidden.items);
     }
 
     fn applyOpaqueStorageEffects(
@@ -619,9 +619,53 @@ pub const SafetyChecker = struct {
             var storage = argument_values[effect.storage.input_index].referenced_place orelse
                 try self.resolvePlace(arguments[effect.storage.input_index].value, state) orelse continue;
             for (effect.storage.projections) |projection| storage = try self.projectedPlace(storage, projection);
-            const hidden = try self.instantiateOutput(effect.hidden_dependencies, argument_values, state);
-            try self.hideOpaqueDependencies(state, storage, hidden);
+            var hidden = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+            defer hidden.deinit();
+            var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.RootId).init(self.allocator.*);
+            defer fresh_roots.deinit();
+            try self.instantiateOpaqueDependencies(effect.hidden_dependencies, argument_values, state, &fresh_roots, &hidden);
+            try self.mergeLiveOpaqueDependencies(state, storage, hidden.items);
         }
+    }
+
+    fn mergeLiveOpaqueDependencies(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        storage: place.Place,
+        dependencies: []const facts.RootId,
+    ) !void {
+        var live = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        defer live.deinit();
+        for (dependencies) |dependency|
+            if (state.tracker.isAlive(dependency)) try appendOwnedRoot(&live, dependency);
+        try self.mergeOpaqueStorage(state, storage, live.items);
+    }
+
+    fn instantiateOpaqueDependencies(
+        self: *SafetyChecker,
+        effect: facts.OutputEffect,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+        fresh_roots: *std.AutoHashMap(facts.FreshRootSource, facts.RootId),
+        hidden: *std.array_list.Managed(facts.RootId),
+    ) !void {
+        for (effect.fresh_dependencies) |source|
+            try appendOwnedRoot(hidden, try self.instantiateFreshRoot(source, state, fresh_roots));
+        for (effect.input_places) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var target = arguments[path.input_index].referenced_place orelse continue;
+            for (path.projections) |projection| target = try self.projectedPlace(target, projection);
+            try appendOwnedRoot(hidden, try self.storageRootForPlace(target, state));
+        }
+        for (effect.input_dependencies) |dependency| {
+            if (dependency.path.input_index >= arguments.len) continue;
+            const input = projectValueFacts(arguments[dependency.path.input_index], dependency.path.projections);
+            try collectDependencyRoots(input, hidden);
+        }
+        for (effect.fields) |field|
+            try self.instantiateOpaqueDependencies(field.value.*, arguments, state, fresh_roots, hidden);
+        for (effect.variants) |variant|
+            try self.instantiateOpaqueDependencies(variant.value.*, arguments, state, fresh_roots, hidden);
     }
 
     fn evaluateVirtualCall(
@@ -2069,12 +2113,37 @@ pub const SafetyChecker = struct {
         storage: facts.InputPath,
         hidden: facts.OutputEffect,
     ) !void {
+        const dependencies_only = try self.dependencyOnlyEffect(hidden);
         for (effects.items) |*existing| {
             if (!inputPlaceTargetEqual(existing.storage, storage)) continue;
-            existing.hidden_dependencies = try self.mergeOutputEffects(existing.hidden_dependencies, hidden);
+            existing.hidden_dependencies = try self.mergeOutputEffects(existing.hidden_dependencies, dependencies_only);
             return;
         }
-        try effects.append(.{ .storage = storage, .hidden_dependencies = hidden });
+        try effects.append(.{ .storage = storage, .hidden_dependencies = dependencies_only });
+    }
+
+    fn dependencyOnlyEffect(self: *SafetyChecker, effect: facts.OutputEffect) !facts.OutputEffect {
+        const input_dependencies = try self.allocator.dupe(facts.InputDependency, effect.input_dependencies);
+        for (input_dependencies) |*dependency| dependency.transfers_ownership = false;
+        const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
+        for (effect.fields, 0..) |field, index| {
+            const value = try self.allocator.create(facts.OutputEffect);
+            value.* = try self.dependencyOnlyEffect(field.value.*);
+            fields[index] = .{ .index = field.index, .value = value };
+        }
+        const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
+        for (effect.variants, 0..) |variant, index| {
+            const value = try self.allocator.create(facts.OutputEffect);
+            value.* = try self.dependencyOnlyEffect(variant.value.*);
+            variants[index] = .{ .index = variant.index, .value = value };
+        }
+        return .{
+            .input_dependencies = input_dependencies,
+            .input_places = effect.input_places,
+            .fields = fields,
+            .variants = variants,
+            .fresh_dependencies = effect.fresh_dependencies,
+        };
     }
 
     fn joinInputPostStateBranch(
@@ -3724,4 +3793,38 @@ test "refreshing a place drops descendant storage root mappings" {
     const sibling_before_field_refresh = fresh_sibling;
     try checker.refreshStorageRoot(null, &state, child);
     try std.testing.expectEqual(sibling_before_field_refresh, try checker.storageRootForPlace(sibling, &state));
+}
+
+test "opaque dependency projection cannot instantiate ownership or authorities" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    const projected = try checker.dependencyOnlyEffect(.{
+        .input_dependencies = &.{.{ .path = .{ .input_index = 0 }, .transfers_ownership = true }},
+        .fresh_dependencies = &.{11},
+        .fresh_owned_roots = &.{12},
+        .fresh_storage_authorities = &.{13},
+        .integer_address = true,
+        .foreign_storage = true,
+    });
+    try std.testing.expect(!projected.input_dependencies[0].transfers_ownership);
+    try std.testing.expectEqualSlices(facts.FreshRootSource, &.{11}, projected.fresh_dependencies);
+    try std.testing.expectEqual(@as(usize, 0), projected.fresh_owned_roots.len);
+    try std.testing.expectEqual(@as(usize, 0), projected.fresh_storage_authorities.len);
+    try std.testing.expect(!projected.integer_address);
+    try std.testing.expect(!projected.foreign_storage);
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.RootId).init(allocator);
+    defer fresh_roots.deinit();
+    var hidden = std.array_list.Managed(facts.RootId).init(allocator);
+    defer hidden.deinit();
+    try checker.instantiateOpaqueDependencies(projected, &.{.{}}, &state, &fresh_roots, &hidden);
+    try std.testing.expectEqual(@as(usize, 1), state.tracker.roots.items.len);
+    try std.testing.expect(!state.tracker.roots.items[0].owned_resource);
+    try std.testing.expectEqual(@as(usize, 0), state.storage_authorities.items.len);
 }

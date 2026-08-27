@@ -3450,6 +3450,18 @@ test "feature_tests/ownership/134X_opaque_local_aggregate_nested_wrapper" {
     );
 }
 
+test "feature_tests/ownership/135_opaque_store_in_exactly_once_codegen" {
+    const test_path = "tests/feature_tests/ownership/135_opaque_store_in_exactly_once_codegen";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/136_opaque_dependency_summary_does_not_duplicate_ownership" {
+    const test_path = "tests/feature_tests/ownership/136_opaque_dependency_summary_does_not_duplicate_ownership";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

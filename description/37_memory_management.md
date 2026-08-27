@@ -108,6 +108,14 @@ local binding itself to be an input Place. Call substitution maps both the
 storage path and the dependency effect into the caller, and control-flow joins
 union these effects conservatively.
 
+Before storing that summary, the checker projects it to dependency-only facts:
+ownership transfer, owned roots, storage authorities, foreign-storage markers,
+and integer-address markers are discarded recursively. Applying the effect
+instantiates only input dependencies, input-place provenance, and fresh
+temporal dependencies. Fresh temporal identities remain necessary when a
+wrapper creates a new lifetime whose reference is hidden, but they are never
+marked owned and do not create storage authority.
+
 ## Relocatability and opaque ownership
 
 Moving with `~` transfers a value's logical ownership between known Places; it
