@@ -45,5 +45,6 @@ pub const GenericTypeTemplate = struct {
     name: []const u8,
     location: tok.Location,
     params: []const GenericParam,
+    param_abstract_constraints: []const ?[]const u8,
     body: *syn.STNode,
 };

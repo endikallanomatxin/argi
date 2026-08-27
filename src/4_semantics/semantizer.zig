@@ -4334,6 +4334,7 @@ pub const Semantizer = struct {
                 .name = d.name.string,
                 .location = d.value.location,
                 .params = generic_info.params,
+                .param_abstract_constraints = generic_info.abstract_constraints,
                 .body = d.value,
             });
             // No concrete type emitted now
@@ -10396,6 +10397,22 @@ pub const Semantizer = struct {
                         }
                     }
                     if (!ok) continue;
+
+                    for (tmpl.params, 0..) |param, index| {
+                        const constraint = tmpl.param_abstract_constraints[index] orelse continue;
+                        const actual = subst.types.get(param.name) orelse continue;
+                        if (abs.typeImplementsAbstract(constraint, actual, s)) continue;
+
+                        const actual_text = try self.formatTypeText(actual, s);
+                        defer actual_text.deinit();
+                        try self.diags.add(
+                            tmpl.location,
+                            .semantic,
+                            "type '{s}' does not implement abstract '{s}' required by generic type parameter '.{s}' of '{s}'",
+                            .{ actual_text.bytes, constraint, param.name, tmpl.name },
+                        );
+                        return error.Reported;
+                    }
 
                     return switch (tmpl.body.*.content) {
                         .struct_type_literal => |st| blk_struct: {

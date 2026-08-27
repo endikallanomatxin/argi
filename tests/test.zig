@@ -3291,6 +3291,26 @@ test "feature_tests/polymorphism/31X_virtual_incompatible_deinit" {
     );
 }
 
+test "feature_tests/polymorphism/32_static_abstract_generic_fields" {
+    const test_path = "tests/feature_tests/polymorphism/32_static_abstract_generic_fields";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/polymorphism/33X_static_abstract_generic_field_requires_implementation" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/33X_static_abstract_generic_field_requires_implementation",
+        "does not implement abstract 'Backend' required by generic type parameter '.backend_type' of 'Wrapper'",
+    );
+}
+
+test "feature_tests/polymorphism/34X_static_abstract_generic_field_identity" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/34X_static_abstract_generic_field_identity",
+        "no overload of 'accept_b' accepts arguments (.value: Wrapper#(.backend_type: BackendA))",
+    );
+}
+
 test "feature_tests/text/10_string_view_c_string_storage" {
     const test_path = "tests/feature_tests/text/10_string_view_c_string_storage";
     try expectSuccessfulBuild(test_path);
