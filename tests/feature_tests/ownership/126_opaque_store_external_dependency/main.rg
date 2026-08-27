@@ -12,9 +12,13 @@ main(.system: System) -> (.status_code: Int32) := {
             slots ::= ~slots_payload
             slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = slots.data).reference
 
-            -- This is rejected today. A future opaque-domain model should
-            -- accept it by retaining `external` as a hidden dependency.
-            trusted_opaque_store_owned(.destination = slot, .source = ~value)
+            -- Precision is discarded at the slot boundary, but the dependency
+            -- on `external` survives in the storage-level opaque summary.
+            trusted_opaque_store_owned_in#(.t: Borrowing, .storage_type: Allocation)(
+                .storage = $&slots,
+                .destination = slot,
+                .source = ~value,
+            )
             deinit(.self = $&slots)
             status_code = 0
         }

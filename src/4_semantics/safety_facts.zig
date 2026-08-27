@@ -119,6 +119,9 @@ pub const InputPlaceEffect = struct {
     /// cannot be applied at a caller because precise ownership would only be
     /// lost on some returning paths.
     opaque_ownership: OpaqueOwnershipConsumption = .none,
+    /// Storage that conservatively retains the consumed value's dependencies.
+    /// This is symbolic so wrappers can map the opaque boundary to a caller Place.
+    opaque_storage: ?InputPath = null,
 };
 
 pub const OpaqueOwnershipConsumption = enum {

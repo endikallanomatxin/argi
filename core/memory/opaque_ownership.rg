@@ -7,6 +7,15 @@ trusted_opaque_store_owned#(.t: Type)(.destination: $&t, .source: t) -> () := {
     destination& = source
 }
 
+-- Storage-aware form. `storage` is the stable structural domain shared by the
+-- opaque slots whose contents are summarized together. It has no runtime role;
+-- the safety checker uses its Place to retain hidden temporal dependencies.
+-- Dependencies are conservative and monotonic for that domain in the current
+-- model; mutation through a slot pointer is not tracked yet.
+trusted_opaque_store_owned_in#(.t: Type, .storage_type: Type)(.storage: $&storage_type, .destination: $&t, .source: t) -> () := {
+    destination& = source
+}
+
 -- Moves one live opaque-owned representation between slots. It neither
 -- destroys the source representation nor creates precise ownership for the
 -- destination. The caller must ensure that `source` is live, `destination`

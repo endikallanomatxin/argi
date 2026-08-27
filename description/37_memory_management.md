@@ -71,7 +71,8 @@ mutability, provenance, and all previous dependencies; it creates no root,
 ownership, or storage authority. Thus it can only shorten a usable lifetime,
 never extend one.
 
-`trusted_opaque_store_owned` and `trusted_opaque_drop_owned` are explicit
+`trusted_opaque_store_owned`, its storage-aware form
+`trusted_opaque_store_owned_in`, and `trusted_opaque_drop_owned` are explicit
 trusted primitives. Any library may invoke them: there is no global unsafe
 mode and bundled core has no extra privilege. The checker still enforces moves,
 known ownership roots, alias barriers, and dependency validity. The caller
@@ -85,6 +86,19 @@ primitive's manual trusted precondition. The checker deliberately does not add
 per-slot occupancy state to diagnose that contract dynamically.
 Canonical primitive identity is based on the bundled declaration; its trusted
 meaning is not granted merely by reusing the name in user code.
+
+The storage-aware store receives a structural `storage` Place in addition to
+the runtime slot. Dependencies present when the value crosses this boundary
+are retained in a conservative storage-level set. They are not tracked per
+slot and are unioned across control-flow joins. While such a dependency remains
+hidden, ending its root is rejected; precise visible references do not impose
+that restriction. The original two-argument store remains available for values
+without external dependencies, where no storage-level obligation is needed.
+
+These facts currently grow monotonically. There is no slot removal or
+whole-storage release operation yet. Writes made later through pointers to
+opaque slots also lack opaque provenance, so mutation-after-store remains a
+known separate gap.
 
 ## Relocatability and opaque ownership
 

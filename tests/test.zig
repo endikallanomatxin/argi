@@ -3391,17 +3391,43 @@ test "feature_tests/ownership/125X_visible_reference_use_after_invalidation" {
     );
 }
 
-test "feature_tests/ownership/126X_opaque_store_external_dependency" {
-    try buildExpectFail(
-        "tests/feature_tests/ownership/126X_opaque_store_external_dependency",
-        "opaque ownership storage cannot hide dependencies on external roots",
-    );
+test "feature_tests/ownership/126_opaque_store_external_dependency" {
+    const test_path = "tests/feature_tests/ownership/126_opaque_store_external_dependency";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
 }
 
 test "feature_tests/ownership/127_opaque_relocate_mutation_after_store_hole" {
     // This successful build is an adversarial regression characterization, not
     // the desired safety result. Opaque provenance must make it fail later.
     try expectSuccessfulBuild("tests/feature_tests/ownership/127_opaque_relocate_mutation_after_store_hole");
+}
+
+test "feature_tests/ownership/128X_opaque_hidden_dependency_blocks_root_end" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/128X_opaque_hidden_dependency_blocks_root_end",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/129_opaque_hidden_dependency_does_not_block_unrelated_root" {
+    const test_path = "tests/feature_tests/ownership/129_opaque_hidden_dependency_does_not_block_unrelated_root";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/130X_opaque_hidden_dependency_branch_join" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/130X_opaque_hidden_dependency_branch_join",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/131X_opaque_hidden_dependency_through_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/131X_opaque_hidden_dependency_through_wrapper",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
 }
 
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
