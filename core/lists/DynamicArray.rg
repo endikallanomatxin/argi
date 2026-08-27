@@ -125,6 +125,21 @@ dynamic_array_grow #(.t: Type) (
     result = dynamic_array_grow_growing#(.t: t)(.allocator = allocator, .array = array, .min_capacity = min_capacity)
 }
 
+-- Ensures space for at least `capacity` elements without changing length.
+-- Callers that must commit an external resource after a successful capacity
+-- check can follow this with `push_assume_capacity` without another OOM point.
+ensure_capacity #(.t: Type) (
+    .allocator: $&Allocator = #reach allocator, system.allocator,
+    .self: $&DynamicArray#(.t: t),
+    .capacity: UIntNative,
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    if self&.capacity >= capacity {
+        result = ..ok Void()
+        return
+    }
+    result = dynamic_array_grow_growing#(.t: t)(.allocator = allocator, .array = self, .min_capacity = capacity)
+}
+
 dynamic_array_grow_growing #(.t: Type) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .array: $&DynamicArray#(.t: t),
@@ -197,6 +212,18 @@ push #(.t: Type) (
     ptr& = value
     self&.length = offset + one
     result = ..ok Void()
+}
+
+-- Appends without allocation. The caller must first ensure `length < capacity`,
+-- normally through `ensure_capacity`.
+push_assume_capacity #(.t: Type) (
+    .self: $&DynamicArray#(.t: t),
+    .value: t,
+) -> () := {
+    offset ::= self&.length
+    ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = offset).pointer
+    ptr& = value
+    self&.length = offset + 1
 }
 
 pop #(.t: Type) (

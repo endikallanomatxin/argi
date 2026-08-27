@@ -1350,7 +1350,7 @@ pub const SafetyChecker = struct {
             for (function.input.fields, 0..) |input_field, index| {
                 if (!std.mem.eql(u8, input_field.name, "self") or input_field.ty != .pointer_type or
                     input_field.ty.pointer_type.mutability != .read_write) continue;
-                try self.recordInputPostState(&post_states, try self.oneInputPath(@intCast(index), &.{}), .deinitialized, .{}, true);
+                try self.recordInputPostState(&post_states, try self.oneInputPath(@intCast(index), &.{}), .deinitialized, .{}, true, false);
                 break;
             }
         }
@@ -1380,7 +1380,7 @@ pub const SafetyChecker = struct {
                     var targets = try self.inferInputPaths(function, arguments[post_state.target.input_index].value);
                     for (post_state.target.projections) |projection| targets = try self.projectInputPaths(targets, projection);
                     const value = try self.substituteOutput(function, post_state.value, arguments);
-                    try self.recordInputPostState(states, targets, post_state.initializedness, value, post_state.ends_previous_roots);
+                    try self.recordInputPostState(states, targets, post_state.initializedness, value, post_state.ends_previous_roots, false);
                 }
             },
             .virtual_call => |call| {
@@ -1391,23 +1391,24 @@ pub const SafetyChecker = struct {
                     if (post_state.target.input_index >= arguments.len) continue;
                     var targets = try self.inferInputPaths(function, arguments[post_state.target.input_index].value);
                     for (post_state.target.projections) |projection| targets = try self.projectInputPaths(targets, projection);
-                    try self.recordInputPostState(states, targets, post_state.initializedness, try self.substituteOutput(function, post_state.value, arguments), post_state.ends_previous_roots);
+                    try self.recordInputPostState(states, targets, post_state.initializedness, try self.substituteOutput(function, post_state.value, arguments), post_state.ends_previous_roots, false);
                 }
             },
             .pointer_assignment => |assignment| {
-                if (assignment.value.sem_type != null and !typeContainsPointer(assignment.value.sem_type.?)) continue;
-                try self.recordInputPostState(states, try self.inferInputPaths(function, assignment.pointer), .initialized, try self.inferExpression(function, assignment.value), false);
+                const establishes_storage = std.mem.eql(u8, function.name, "init");
+                if (assignment.value.sem_type != null and !typeContainsPointer(assignment.value.sem_type.?) and !establishes_storage) continue;
+                try self.recordInputPostState(states, try self.inferInputPaths(function, assignment.pointer), .initialized, try self.inferExpression(function, assignment.value), false, establishes_storage);
             },
             .struct_field_store => |store| {
                 if (store.value.sem_type != null and !typeContainsPointer(store.value.sem_type.?)) continue;
                 const targets = try self.projectInputPaths(try self.inferInputPaths(function, store.struct_ptr), .{ .field = store.field_index });
-                try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false);
+                try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false, false);
             },
             .array_store => |store| {
                 if (store.value.sem_type != null and !typeContainsPointer(store.value.sem_type.?)) continue;
                 const projection: place.Projection = if (staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
                 const targets = try self.projectInputPaths(try self.inferInputPaths(function, store.array_ptr), projection);
-                try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false);
+                try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false, false);
             },
             .if_statement => |statement| {
                 var then_states = try cloneInputPostStates(states, self.allocator.*);
@@ -1434,7 +1435,7 @@ pub const SafetyChecker = struct {
         };
     }
 
-    fn recordInputPostState(self: *SafetyChecker, states: *std.array_list.Managed(facts.InputPlaceEffect), targets: []const facts.InputPath, initializedness: value_state.Initializedness, value: facts.OutputEffect, ends_roots: bool) !void {
+    fn recordInputPostState(self: *SafetyChecker, states: *std.array_list.Managed(facts.InputPlaceEffect), targets: []const facts.InputPath, initializedness: value_state.Initializedness, value: facts.OutputEffect, ends_roots: bool, force_initialized: bool) !void {
         _ = self;
         for (targets) |target| {
             var existing_state: ?*facts.InputPlaceEffect = null;
@@ -1448,7 +1449,7 @@ pub const SafetyChecker = struct {
                 existing.value = value;
                 existing.ends_previous_roots = existing.ends_previous_roots or ends_roots;
                 existing.refreshes_storage_root = existing.refreshes_storage_root or (was_deinitialized and initializedness == .initialized);
-            } else if (initializedness != .initialized or ends_roots or
+            } else if ((force_initialized and initializedness == .initialized) or ends_roots or
                 (!outputEffectIsEmpty(value) and !outputEffectOnlyDependsOnTarget(value, target))) try states.append(.{
                 .target = target,
                 .initializedness = initializedness,

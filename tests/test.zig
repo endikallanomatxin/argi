@@ -3085,6 +3085,12 @@ test "feature_tests/ownership/76X_choice_payload_double_move" {
     );
 }
 
+test "feature_tests/ownership/77_arena_zero_size_allocation" {
+    const test_path = "tests/feature_tests/ownership/77_arena_zero_size_allocation";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

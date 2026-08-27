@@ -3,12 +3,16 @@ ArenaBlock : Type = (
     .size: UIntNative
 )
 
+-- Structural temporal anchor. Its identity is the `ArenaAllocator.domain`
+-- Place, so it deliberately carries no reference back to its owner. The
+-- marker is retained because empty values currently require an `init` path
+-- that cannot initialize itself without a recursive resolution cycle.
 ArenaDomain : Type = (
-    .anchor: &Any
+    .marker: Bool
 )
 
-init(.p: $&ArenaDomain, .anchor: &Any) -> () := {
-    p& = (.anchor = anchor)
+init(.p: $&ArenaDomain) -> () := {
+    p& = (.marker = false)
 }
 
 deinit(.self: $&ArenaDomain) -> () := {
@@ -55,7 +59,7 @@ init(
         result = ..error(.reason = ..out_of_memory)
         return
     }
-    init(.p = $&p&.domain, .anchor = cast#(.to: &Any)(.value = p))
+    init(.p = $&p&.domain)
     p&.block_size = arena_min_block_capacity(.requested = 1, .block_size = block_size).capacity
     p&.current_block_offset = 0
     result = ..ok Void()
@@ -80,7 +84,7 @@ reset(
 ) -> () := {
     deinit(.self = $&self&.domain)
     arena_free_blocks(.self = self)
-    init(.p = $&self&.domain, .anchor = cast#(.to: &Any)(.value = self))
+    init(.p = $&self&.domain)
 }
 
 deinit(
@@ -112,6 +116,15 @@ allocate(
 
     if needs_block {
         new_block_size ::= arena_min_block_capacity(.requested = required, .block_size = self&.block_size).capacity
+        metadata_ready ::= ensure_capacity#(.t: ArenaBlock)(
+            .allocator = self&.backing_allocator,
+            .self = $&self&.blocks,
+            .capacity = self&.blocks.length + 1,
+        )
+        if is(.value = metadata_ready, .variant = ..error) {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
         raw_address ::= malloc(.size = new_block_size).address
         if raw_address == 0 {
             result = ..error(.reason = ..out_of_memory)
@@ -123,19 +136,15 @@ allocate(
             -- temporal domain instead of manufacturing a child root.
             .root = cast#(.to: $&Any)(.value = $&self&.domain),
         ).reference
-        pushed ::= push(
-            .allocator = self&.backing_allocator,
+        -- Metadata capacity was secured before acquiring physical storage, so
+        -- publishing this safe reference has no later fallible rollback path.
+        push_assume_capacity#(.t: ArenaBlock)(
             .self = $&self&.blocks,
             .value = (
                 .data = block_data,
                 .size = new_block_size,
             ),
         )
-        if is(.value = pushed, .variant = ..error) {
-            free(.address = raw_address)
-            result = ..error(.reason = ..out_of_memory)
-            return
-        }
         self&.current_block_offset = 0
     }
 
