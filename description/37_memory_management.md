@@ -100,6 +100,14 @@ whole-storage release operation yet. Writes made later through pointers to
 opaque slots also lack opaque provenance, so mutation-after-store remains a
 known separate gap.
 
+Function summaries represent hidden dependencies independently from ownership
+consumption. An opaque storage effect pairs a symbolic input storage path with
+an ordinary output-style dependency effect. Consequently a wrapper may build a
+local aggregate from its inputs and hide that aggregate without requiring the
+local binding itself to be an input Place. Call substitution maps both the
+storage path and the dependency effect into the caller, and control-flow joins
+union these effects conservatively.
+
 ## Relocatability and opaque ownership
 
 Moving with `~` transfers a value's logical ownership between known Places; it

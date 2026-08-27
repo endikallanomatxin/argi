@@ -469,11 +469,20 @@ pub const SafetyChecker = struct {
         {
             if (argument_values.len == 3) {
                 if (valueHasDependency(argument_values[2])) {
-                    const storage = argument_values[0].referenced_place orelse {
+                    if (argument_values[0].referenced_place) |storage| {
+                        try self.hideOpaqueDependencies(state, storage, argument_values[2]);
+                    } else if (rootBinding(arguments[0].value)) |binding| {
+                        // Pointer inputs name caller storage symbolically. The
+                        // FunctionSummary carries this obligation to the caller,
+                        // where the concrete storage Place is available.
+                        if (inputIndex(function, binding) == null) {
+                            try self.diagnostics.add(function.location, .semantic, "opaque ownership storage requires an identifiable storage domain place", .{});
+                            return .{};
+                        }
+                    } else {
                         try self.diagnostics.add(function.location, .semantic, "opaque ownership storage requires an identifiable storage domain place", .{});
                         return .{};
-                    };
-                    try self.hideOpaqueDependencies(state, storage, argument_values[2]);
+                    }
                 }
                 try self.closeOpaqueOwnedRoots(function, argument_values[2], state);
             } else if (argument_values.len == 2) {
@@ -534,6 +543,7 @@ pub const SafetyChecker = struct {
             }
         }
         try self.applyInputEffects(function, summary, arguments, argument_values, state);
+        try self.applyOpaqueStorageEffects(summary, arguments, argument_values, state);
         if (summary.outputs.len != 1) return .{};
         return self.instantiateOutput(summary.outputs[0], argument_values, state);
     }
@@ -597,6 +607,23 @@ pub const SafetyChecker = struct {
         try self.mergeOpaqueStorage(state, storage, hidden.items);
     }
 
+    fn applyOpaqueStorageEffects(
+        self: *SafetyChecker,
+        summary: facts.FunctionSummary,
+        arguments: []const sg.StructValueLiteralField,
+        argument_values: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !void {
+        for (summary.opaque_storage_effects) |effect| {
+            if (effect.storage.input_index >= arguments.len) continue;
+            var storage = argument_values[effect.storage.input_index].referenced_place orelse
+                try self.resolvePlace(arguments[effect.storage.input_index].value, state) orelse continue;
+            for (effect.storage.projections) |projection| storage = try self.projectedPlace(storage, projection);
+            const hidden = try self.instantiateOutput(effect.hidden_dependencies, argument_values, state);
+            try self.hideOpaqueDependencies(state, storage, hidden);
+        }
+    }
+
     fn evaluateVirtualCall(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
@@ -638,6 +665,7 @@ pub const SafetyChecker = struct {
             }
         }
         try self.applyInputEffects(function, summary, arguments, argument_values, state);
+        try self.applyOpaqueStorageEffects(summary, arguments, argument_values, state);
         if (summary.outputs.len != 1) return .{};
         return self.instantiateOutput(summary.outputs[0], argument_values, state);
     }
@@ -1741,9 +1769,15 @@ pub const SafetyChecker = struct {
         for (left.outputs, right.outputs, 0..) |left_output, right_output, index| {
             outputs[index] = (try self.mergeVirtualOutputEffect(left_output, right_output, &fresh_map)) orelse return null;
         }
+        var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator.*);
+        for (left.opaque_storage_effects) |effect|
+            try self.recordOpaqueStorageEffect(&opaque_storage_effects, effect.storage, effect.hidden_dependencies);
+        for (right.opaque_storage_effects) |effect|
+            try self.recordOpaqueStorageEffect(&opaque_storage_effects, effect.storage, effect.hidden_dependencies);
         return .{
             .outputs = outputs,
             .input_post_states = left.input_post_states,
+            .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
         };
     }
 
@@ -1822,6 +1856,8 @@ pub const SafetyChecker = struct {
         try self.inferBlock(function, body, outputs);
         var post_states = std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
         try self.inferInputPostStates(function, body, &post_states);
+        var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator.*);
+        try self.inferOpaqueStorageEffects(function, body, &opaque_storage_effects);
         if (function.is_deinit) {
             for (function.input.fields, 0..) |input_field, index| {
                 if (!std.mem.eql(u8, input_field.name, "self") or input_field.ty != .pointer_type or
@@ -1831,11 +1867,14 @@ pub const SafetyChecker = struct {
             }
         }
         const post_state_slice = try post_states.toOwnedSlice();
+        const opaque_storage_effect_slice = try opaque_storage_effects.toOwnedSlice();
         if (effectsEqual(previous.outputs, outputs) and
-            inputPostStatesEqual(previous.input_post_states, post_state_slice)) return false;
+            inputPostStatesEqual(previous.input_post_states, post_state_slice) and
+            opaqueStorageEffectsEqual(previous.opaque_storage_effects, opaque_storage_effect_slice)) return false;
         try self.summaries.put(function, .{
             .outputs = outputs,
             .input_post_states = post_state_slice,
+            .opaque_storage_effects = opaque_storage_effect_slice,
         });
         return true;
     }
@@ -1970,6 +2009,72 @@ pub const SafetyChecker = struct {
             },
             else => {},
         };
+    }
+
+    fn inferOpaqueStorageEffects(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        block: *const sg.CodeBlock,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+    ) !void {
+        for (block.nodes) |node| switch (node.content) {
+            .function_call => |call| {
+                if (call.input.content != .struct_value_literal) continue;
+                const arguments = call.input.content.struct_value_literal.fields;
+                if (call.callee.safety_primitive == .trusted_opaque_store_owned_in) {
+                    if (arguments.len != 3) continue;
+                    const storages = try self.inferInputPaths(function, arguments[0].value);
+                    const hidden = try self.inferExpression(function, arguments[2].value);
+                    for (storages) |storage| try self.recordOpaqueStorageEffect(effects, storage, hidden);
+                    continue;
+                }
+                const summary = self.summaries.get(call.callee) orelse continue;
+                for (summary.opaque_storage_effects) |effect| {
+                    if (effect.storage.input_index >= arguments.len) continue;
+                    var storages = try self.inferInputPaths(function, arguments[effect.storage.input_index].value);
+                    for (effect.storage.projections) |projection| storages = try self.projectInputPaths(storages, projection);
+                    const hidden = try self.substituteOutput(function, effect.hidden_dependencies, arguments);
+                    for (storages) |storage| try self.recordOpaqueStorageEffect(effects, storage, hidden);
+                }
+            },
+            .virtual_call => |call| {
+                if (call.input.content != .struct_value_literal) continue;
+                const summary = try self.virtualSummary(call.safety_methods) orelse continue;
+                const arguments = call.input.content.struct_value_literal.fields;
+                for (summary.opaque_storage_effects) |effect| {
+                    if (effect.storage.input_index >= arguments.len) continue;
+                    var storages = try self.inferInputPaths(function, arguments[effect.storage.input_index].value);
+                    for (effect.storage.projections) |projection| storages = try self.projectInputPaths(storages, projection);
+                    const hidden = try self.substituteOutput(function, effect.hidden_dependencies, arguments);
+                    for (storages) |storage| try self.recordOpaqueStorageEffect(effects, storage, hidden);
+                }
+            },
+            .if_statement => |statement| {
+                try self.inferOpaqueStorageEffects(function, statement.then_block, effects);
+                if (statement.else_block) |else_block| try self.inferOpaqueStorageEffects(function, else_block, effects);
+            },
+            .while_statement => |statement| try self.inferOpaqueStorageEffects(function, statement.body, effects),
+            .for_statement => |statement| try self.inferOpaqueStorageEffects(function, statement.body, effects),
+            .switch_statement => |statement| {
+                for (statement.cases) |case| try self.inferOpaqueStorageEffects(function, case.body, effects);
+                if (statement.default_case) |default_case| try self.inferOpaqueStorageEffects(function, default_case, effects);
+            },
+            else => {},
+        };
+    }
+
+    fn recordOpaqueStorageEffect(
+        self: *SafetyChecker,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        storage: facts.InputPath,
+        hidden: facts.OutputEffect,
+    ) !void {
+        for (effects.items) |*existing| {
+            if (!inputPlaceTargetEqual(existing.storage, storage)) continue;
+            existing.hidden_dependencies = try self.mergeOutputEffects(existing.hidden_dependencies, hidden);
+            return;
+        }
+        try effects.append(.{ .storage = storage, .hidden_dependencies = hidden });
     }
 
     fn joinInputPostStateBranch(
@@ -2774,6 +2879,21 @@ fn inputPostStatesEqual(left: []const facts.InputPlaceEffect, right: []const fac
             a.opaque_ownership != b.opaque_ownership or
             !optionalInputPathEqual(a.opaque_storage, b.opaque_storage) or
             !outputEffectEqual(a.value, b.value)) return false;
+    }
+    return true;
+}
+
+fn opaqueStorageEffectsEqual(left: []const facts.OpaqueStorageEffect, right: []const facts.OpaqueStorageEffect) bool {
+    if (left.len != right.len) return false;
+    for (left) |effect| {
+        var found = false;
+        for (right) |other| {
+            if (!inputPlaceTargetEqual(effect.storage, other.storage)) continue;
+            if (!outputEffectEqual(effect.hidden_dependencies, other.hidden_dependencies)) return false;
+            found = true;
+            break;
+        }
+        if (!found) return false;
     }
     return true;
 }

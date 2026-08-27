@@ -3430,6 +3430,26 @@ test "feature_tests/ownership/131X_opaque_hidden_dependency_through_wrapper" {
     );
 }
 
+test "feature_tests/ownership/132X_opaque_local_aggregate_dependency_through_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/132X_opaque_local_aggregate_dependency_through_wrapper",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/133_opaque_local_aggregate_wrapper_allows_unrelated_end" {
+    const test_path = "tests/feature_tests/ownership/133_opaque_local_aggregate_wrapper_allows_unrelated_end";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/134X_opaque_local_aggregate_nested_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/134X_opaque_local_aggregate_nested_wrapper",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

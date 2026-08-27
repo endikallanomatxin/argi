@@ -133,6 +133,16 @@ pub const OpaqueOwnershipConsumption = enum {
 pub const FunctionSummary = struct {
     outputs: []const OutputEffect = &.{},
     input_post_states: []const InputPlaceEffect = &.{},
+    opaque_storage_effects: []const OpaqueStorageEffect = &.{},
+};
+
+/// A storage domain conservatively gains the dependencies described by
+/// `hidden_dependencies`. This is separate from consuming precise ownership:
+/// the crossing value may be a local aggregate even when its dependencies
+/// originate in function inputs.
+pub const OpaqueStorageEffect = struct {
+    storage: InputPath,
+    hidden_dependencies: OutputEffect,
 };
 
 pub const Tracker = struct {
