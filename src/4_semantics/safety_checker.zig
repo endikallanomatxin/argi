@@ -173,7 +173,7 @@ pub const SafetyChecker = struct {
                     try self.setPlace(state, storage, .deinitialized, .{});
                 },
                 .struct_field_store => |store| {
-                    const pointer = try self.evaluate(function, store.struct_ptr, state);
+                    const pointer = try self.evaluatePointerUse(function, pointerUseOperand(node).?, state) orelse continue;
                     const target = if (try self.resolvePlace(store.struct_ptr, state)) |base|
                         try self.projectedPlace(base, .{ .field = store.field_index })
                     else
@@ -3948,6 +3948,7 @@ fn pointerUseOperand(node: *const sg.SGNode) ?*const sg.SGNode {
         .dereference => |dereference| dereference.pointer,
         .array_index => |index| index.array_ptr,
         .array_store => |store| store.array_ptr,
+        .struct_field_store => |store| store.struct_ptr,
         else => null,
     };
 }
