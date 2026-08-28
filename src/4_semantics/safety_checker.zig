@@ -165,10 +165,7 @@ pub const SafetyChecker = struct {
                 .auto_deinit_binding => |cleanup| {
                     const storage = place.Place{ .root = cleanup.binding };
                     if (self.getPlace(state, storage)) |owned_value| {
-                        var can_deinit = true;
-                        for (owned_value.value.owned_roots) |root|
-                            can_deinit = (try self.endRoot(function, state, root)) and can_deinit;
-                        if (!can_deinit) continue;
+                        if (!try self.endRoots(function, state, owned_value.value.owned_roots)) continue;
                     }
                     try self.setPlace(state, storage, .deinitialized, .{});
                 },
@@ -3671,6 +3668,73 @@ test "root batches remain alive when any root is hidden" {
     try std.testing.expect(!try checker.endRoots(null, &state, &.{ first, hidden }));
     try std.testing.expect(state.tracker.isAlive(first));
     try std.testing.expect(state.tracker.isAlive(hidden));
+}
+
+test "auto deinit keeps every owned root and the binding alive when one root is hidden" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(&allocator, &diags);
+    defer checker.deinit();
+
+    const location = @import("../2_tokens/token.zig").Location{
+        .file = "auto_deinit_transaction_test.rg",
+        .offset = 0,
+        .line = 1,
+        .column = 1,
+    };
+    var binding = sg.BindingDeclaration{
+        .name = "owned_pair",
+        .location = location,
+        .origin_file = location.file,
+        .mutability = undefined,
+        .ty = .{ .builtin = .Int32 },
+        .initialization = null,
+    };
+    var cleanup = sg.AutoDeinitBinding{
+        .binding = &binding,
+        .deinit_fn = null,
+    };
+    var cleanup_node = sg.SGNode{
+        .location = location,
+        .content = .{ .auto_deinit_binding = &cleanup },
+    };
+    const block = sg.CodeBlock{
+        .nodes = &.{&cleanup_node},
+        .ret_val = null,
+    };
+    const function = sg.FunctionDeclaration{
+        .id = 1,
+        .name = "auto_deinit_transaction",
+        .location = location,
+        .is_once = false,
+        .input = .{ .fields = &.{} },
+        .output = .{ .fields = &.{} },
+        .body = &block,
+    };
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const first = try state.tracker.establish(.fresh);
+    const hidden = try state.tracker.establish(.fresh);
+    const value = facts.ValueFacts{ .owned_roots = &.{ first, hidden } };
+    try checker.setPlace(&state, .{ .root = &binding }, .initialized, value);
+    try state.opaque_storages.append(.{
+        .storage = .{ .root = undefined },
+        .hidden_dependencies = &.{hidden},
+    });
+
+    try checker.validateBlock(&function, &block, &state);
+
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try std.testing.expectEqualStrings("cannot end a root while opaque storage hides a dependency on it", diags.list.items[0].msg);
+    try std.testing.expect(state.tracker.isAlive(first));
+    try std.testing.expect(state.tracker.isAlive(hidden));
+    const preserved = checker.getPlace(&state, .{ .root = &binding }).?;
+    try std.testing.expectEqual(value_state.Initializedness.initialized, preserved.initializedness);
+    try std.testing.expect(valueFactsEqual(value, preserved.value));
 }
 
 test "relocation transfers storage authority into refreshed destination storage" {
