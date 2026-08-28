@@ -343,10 +343,10 @@ pub const SafetyChecker = struct {
                 if (pointer.referenced_place) |target| {
                     if (self.getPlace(state, target)) |place_facts| {
                         try self.requireInitialized(function, place_facts);
-                        break :blk place_facts.value;
+                        break :blk try self.envelopeOpaqueRead(state, place_facts.value, node.sem_type, pointer);
                     }
                 }
-                break :blk facts.ValueFacts{};
+                break :blk try self.envelopeOpaqueRead(state, .{}, node.sem_type, pointer);
             },
             .struct_value_literal => |literal| try self.aggregate(function, literal.fields, state),
             .struct_field_access => |access| blk: {
@@ -354,7 +354,8 @@ pub const SafetyChecker = struct {
                     if (!try self.validateAddressablePath(function, access.struct_value, state)) break :blk .{};
                     if (self.getPlace(state, storage)) |place_facts| {
                         try self.requireInitialized(function, place_facts);
-                        break :blk place_facts.value;
+                        const origins = try self.opaqueOriginsCarriedByAccess(access.struct_value, state);
+                        break :blk try self.addOpaqueReadEnvelope(place_facts.value, node.sem_type, origins);
                     }
                 }
                 const aggregate_value = try self.evaluate(function, access.struct_value, state);
@@ -370,10 +371,11 @@ pub const SafetyChecker = struct {
                 // container Place has already transitioned to moved.
                 const resolved = try self.resolvePlace(access.choice_value, state);
                 if (resolved != null and !try self.validateAddressablePath(function, access.choice_value, state)) break :blk .{};
-                const choice = if (resolved) |storage|
-                    self.valueAtPlace(state, storage) orelse facts.ValueFacts{}
-                else
-                    try self.evaluate(function, access.choice_value, state);
+                const choice = if (resolved) |storage| stored_blk: {
+                    const stored = self.valueAtPlace(state, storage) orelse facts.ValueFacts{};
+                    const origins = try self.opaqueOriginsCarriedByAccess(access.choice_value, state);
+                    break :stored_blk try self.addOpaqueReadEnvelope(stored, access.choice_value.sem_type, origins);
+                } else try self.evaluate(function, access.choice_value, state);
                 if (resolved) |storage| {
                     if (!self.choiceVariantIsActive(state, storage, access.variant_index)) {
                         try self.diagnostics.add(function.location, .semantic, "choice payload '..{d}' requires its variant to be proven active", .{access.variant_index});
@@ -389,14 +391,14 @@ pub const SafetyChecker = struct {
                 break :blk .{};
             },
             .array_index => |index| blk: {
-                _ = try self.evaluatePointerUse(function, index.array_ptr, state) orelse break :blk .{};
+                const pointer = try self.evaluatePointerUse(function, index.array_ptr, state) orelse break :blk .{};
                 if (try self.resolvePlace(node, state)) |storage| {
                     if (self.getPlace(state, storage)) |place_facts| {
                         try self.requireInitialized(function, place_facts);
-                        break :blk place_facts.value;
+                        break :blk try self.envelopeOpaqueRead(state, place_facts.value, node.sem_type, pointer);
                     }
                 }
-                break :blk .{};
+                break :blk try self.envelopeOpaqueRead(state, .{}, node.sem_type, pointer);
             },
             .explicit_cast => |cast| blk: {
                 const value = try self.evaluate(function, cast.value, state);
@@ -775,6 +777,100 @@ pub const SafetyChecker = struct {
                     });
             }
         }
+    }
+
+    /// Opaque contents have no per-slot facts. A reference-bearing value read
+    /// through an opaque pointer therefore inherits the concrete generation
+    /// carried by that pointer as its conservative temporal envelope.
+    fn envelopeOpaqueRead(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        value: facts.ValueFacts,
+        ty: ?sg.Type,
+        pointer: facts.ValueFacts,
+    ) !facts.ValueFacts {
+        var origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
+        defer origins.deinit();
+        try self.collectOpaqueOriginsCarriedBy(state, pointer, &origins);
+        return self.addOpaqueReadEnvelope(value, ty, origins.items);
+    }
+
+    fn opaqueOriginsCarriedByAccess(
+        self: *SafetyChecker,
+        node: *const sg.SGNode,
+        state: *FunctionState,
+    ) ![]const facts.OpaqueOrigin {
+        return switch (node.content) {
+            .move_value => |value| self.opaqueOriginsCarriedByAccess(value, state),
+            .struct_field_access => |access| self.opaqueOriginsCarriedByAccess(access.struct_value, state),
+            .choice_payload_access => |access| self.opaqueOriginsCarriedByAccess(access.choice_value, state),
+            .array_index => |index| self.opaqueOriginsCarriedByPointerNode(index.array_ptr, state),
+            .dereference => |dereference| self.opaqueOriginsCarriedByPointerNode(dereference.pointer, state),
+            else => &.{},
+        };
+    }
+
+    fn opaqueOriginsCarriedByPointerNode(
+        self: *SafetyChecker,
+        node: *const sg.SGNode,
+        state: *FunctionState,
+    ) ![]const facts.OpaqueOrigin {
+        const pointer_place = try self.resolvePlace(node, state) orelse return &.{};
+        const pointer = self.getPlace(state, pointer_place) orelse return &.{};
+        var origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
+        try self.collectOpaqueOriginsCarriedBy(state, pointer.value, &origins);
+        return origins.toOwnedSlice();
+    }
+
+    fn addOpaqueReadEnvelope(
+        self: *SafetyChecker,
+        value: facts.ValueFacts,
+        ty: ?sg.Type,
+        origins: []const facts.OpaqueOrigin,
+    ) !facts.ValueFacts {
+        const value_type = ty orelse return value;
+        if (!typeContainsPointer(value_type) or origins.len == 0) return value;
+
+        var result = value;
+        var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
+        try dependencies.appendSlice(value.dependencies);
+        for (origins) |origin| try appendDependency(&dependencies, .{ .root = origin.generation });
+        result.dependencies = try dependencies.toOwnedSlice();
+
+        if (value.fields.len != 0) {
+            const fields = try self.allocator.alloc(facts.FieldFacts, value.fields.len);
+            for (value.fields, 0..) |field, index| {
+                const field_type: ?sg.Type = switch (value_type) {
+                    .struct_type => |struct_type| if (field.index < struct_type.fields.len)
+                        struct_type.fields[field.index].ty
+                    else
+                        null,
+                    .array_type => |array_type| array_type.element_type.*,
+                    else => null,
+                };
+                const stored = try self.allocator.create(facts.ValueFacts);
+                stored.* = try self.addOpaqueReadEnvelope(field.value.*, field_type, origins);
+                fields[index] = .{ .index = field.index, .value = stored };
+            }
+            result.fields = fields;
+        }
+        if (value.variants.len != 0) {
+            const variants = try self.allocator.alloc(facts.VariantFacts, value.variants.len);
+            for (value.variants, 0..) |variant, index| {
+                const payload_type: ?sg.Type = switch (value_type) {
+                    .choice_type => |choice| if (variant.index < choice.variants.len)
+                        choice.variants[variant.index].payload_type
+                    else
+                        null,
+                    else => null,
+                };
+                const stored = try self.allocator.create(facts.ValueFacts);
+                stored.* = try self.addOpaqueReadEnvelope(variant.value.*, payload_type, origins);
+                variants[index] = .{ .index = variant.index, .value = stored };
+            }
+            result.variants = variants;
+        }
+        return result;
     }
 
     fn opaqueOriginsForAccess(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) ![]const facts.OpaqueOrigin {
@@ -4281,6 +4377,44 @@ test "opaque provenance join preserves distinct generations of one domain" {
     try std.testing.expectEqual(@as(usize, 2), merged.opaque_origins.len);
     try std.testing.expectEqual(first, merged.opaque_origins[0].generation);
     try std.testing.expectEqual(second, merged.opaque_origins[1].generation);
+}
+
+test "opaque read envelopes preserve captured generations across refresh and joins" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    var storage_binding: sg.BindingDeclaration = undefined;
+    const storage = place.Place{ .root = &storage_binding };
+    const first = try checker.storageRootForPlace(storage, &state);
+    try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{} });
+    try checker.refreshStorageRoot(null, &state, storage);
+    const second = try checker.storageRootForPlace(storage, &state);
+
+    var child_type = sg.Type{ .builtin = .UInt8 };
+    var pointer_type = sg.PointerType{ .mutability = undefined, .child = &child_type };
+    const reference_type = sg.Type{ .pointer_type = &pointer_type };
+    const old_value = try checker.addOpaqueReadEnvelope(.{}, reference_type, &.{.{
+        .storage = storage,
+        .generation = first,
+    }});
+    const fresh_value = try checker.addOpaqueReadEnvelope(.{}, reference_type, &.{.{
+        .storage = storage,
+        .generation = second,
+    }});
+
+    try std.testing.expect(valueDependsOnRoot(old_value, first));
+    try std.testing.expect(!valueDependsOnRoot(old_value, second));
+    try std.testing.expect(valueDependsOnRoot(fresh_value, second));
+    try std.testing.expect(!valueDependsOnRoot(fresh_value, first));
+
+    const joined = try checker.mergeValueFacts(old_value, fresh_value);
+    try std.testing.expect(valueDependsOnRoot(joined, first));
+    try std.testing.expect(valueDependsOnRoot(joined, second));
 }
 
 test "array pointer operations reject stale pointer values" {

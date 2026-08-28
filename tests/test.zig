@@ -3577,6 +3577,32 @@ test "feature_tests/ownership/154_precise_pointer_assignment_reinitializes_dead_
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/155X_extracted_opaque_reference_expires_with_domain" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/155X_extracted_opaque_reference_expires_with_domain",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/156_fresh_opaque_extraction_after_refresh" {
+    const test_path = "tests/feature_tests/ownership/156_fresh_opaque_extraction_after_refresh";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/157X_opaque_aggregate_extraction_preserves_domain_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/157X_opaque_aggregate_extraction_preserves_domain_dependency",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/158_live_opaque_extraction_is_usable" {
+    const test_path = "tests/feature_tests/ownership/158_live_opaque_extraction_is_usable";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended
