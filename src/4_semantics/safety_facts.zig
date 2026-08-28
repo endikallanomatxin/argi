@@ -101,6 +101,10 @@ pub const FreshRootSource = usize;
 pub const OutputEffect = struct {
     input_dependencies: []const InputDependency = &.{},
     input_places: []const InputPath = &.{},
+    /// Opaque reads cannot name caller RootIds directly. Each path records
+    /// that instantiation must add the concrete generations carried by that
+    /// caller value as temporal dependencies of this output.
+    opaque_generation_dependencies: []const InputPath = &.{},
     fields: []const OutputFieldEffect = &.{},
     /// Alternative effects selected by the runtime choice tag. Fresh roots
     /// below an alternative are never promoted to the enclosing output.

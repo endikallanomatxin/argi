@@ -1230,6 +1230,14 @@ pub const SafetyChecker = struct {
             const root = try self.instantiateFreshRoot(source, state, fresh_roots);
             try appendDependency(&dependencies, .{ .root = root });
         }
+        for (effect.opaque_generation_dependencies) |path| {
+            if (path.input_index >= arguments.len) continue;
+            const input = projectValueFacts(arguments[path.input_index], path.projections);
+            var origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
+            defer origins.deinit();
+            try self.collectOpaqueOriginsRecursively(state, input, &origins);
+            for (origins.items) |origin| try appendDependency(&dependencies, .{ .root = origin.generation });
+        }
         var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
         for (effect.fresh_owned_roots) |source| {
             const root = try self.instantiateFreshRoot(source, state, fresh_roots);
@@ -1291,6 +1299,17 @@ pub const SafetyChecker = struct {
         result.foreign_storage = result.foreign_storage or effect.foreign_storage;
         if (referenced_place) |target| result.referenced_place = target;
         return result;
+    }
+
+    fn collectOpaqueOriginsRecursively(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        value: facts.ValueFacts,
+        origins: *std.array_list.Managed(facts.OpaqueOrigin),
+    ) !void {
+        try self.collectOpaqueOriginsCarriedBy(state, value, origins);
+        for (value.fields) |field| try self.collectOpaqueOriginsRecursively(state, field.value.*, origins);
+        for (value.variants) |variant| try self.collectOpaqueOriginsRecursively(state, variant.value.*, origins);
     }
 
     fn activateChoiceVariant(self: *SafetyChecker, choice: facts.ValueFacts, variant_index: u32, state: *FunctionState) void {
@@ -2344,6 +2363,9 @@ pub const SafetyChecker = struct {
         var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         for (left.input_places) |path| try appendInputPath(&input_places, path);
         for (right.input_places) |path| try appendInputPath(&input_places, path);
+        var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        for (left.opaque_generation_dependencies) |path| try appendInputPath(&opaque_generations, path);
+        for (right.opaque_generation_dependencies) |path| try appendInputPath(&opaque_generations, path);
 
         const fields = try self.allocator.alloc(facts.OutputFieldEffect, left.fields.len);
         for (left.fields, right.fields, 0..) |left_field, right_field, index| {
@@ -2362,6 +2384,7 @@ pub const SafetyChecker = struct {
         return .{
             .input_dependencies = try dependencies.toOwnedSlice(),
             .input_places = try input_places.toOwnedSlice(),
+            .opaque_generation_dependencies = try opaque_generations.toOwnedSlice(),
             .fields = fields,
             .variants = variants,
             .fresh_dependencies = left.fresh_dependencies,
@@ -2629,6 +2652,7 @@ pub const SafetyChecker = struct {
         return .{
             .input_dependencies = input_dependencies,
             .input_places = effect.input_places,
+            .opaque_generation_dependencies = effect.opaque_generation_dependencies,
             .fields = fields,
             .variants = variants,
             .fresh_dependencies = effect.fresh_dependencies,
@@ -2799,20 +2823,68 @@ pub const SafetyChecker = struct {
             else if (self.inference_bindings) |bindings| bindings.get(binding) orelse .{} else .{},
             .move_value => |value| self.withOwnershipTransfer(try self.inferExpression(function, value)),
             .address_of => |value| .{ .input_places = try self.inferInputPaths(function, value) },
-            .dereference => |value| try self.inferExpression(function, value.pointer),
+            .dereference => |value| try self.inferOpaqueRead(
+                function,
+                node,
+                try self.inferExpression(function, value.pointer),
+            ),
             .struct_value_literal => |literal| try self.inferAggregate(function, literal),
             .choice_literal => |literal| if (literal.payload) |payload|
                 try self.choiceOutputEffect(literal.variant_index, try self.inferExpression(function, payload))
             else
                 try self.choiceOutputEffect(literal.variant_index, .{}),
-            .struct_field_access => |access| try self.inferProjection(function, access.struct_value, .{ .field = access.field_index }),
-            .choice_payload_access => |access| try self.inferChoicePayload(function, access.choice_value, access.variant_index),
-            .array_index => |index| try self.inferProjection(function, index.array_ptr, if (staticIndex(index.index)) |value| .{ .static_index = value } else .dynamic_index),
+            .struct_field_access => |access| try self.inferOpaqueRead(
+                function,
+                node,
+                try self.inferProjection(function, access.struct_value, .{ .field = access.field_index }),
+            ),
+            .choice_payload_access => |access| try self.inferOpaqueRead(
+                function,
+                node,
+                try self.inferChoicePayload(function, access.choice_value, access.variant_index),
+            ),
+            .array_index => |index| try self.inferOpaqueRead(
+                function,
+                node,
+                try self.inferProjection(function, index.array_ptr, if (staticIndex(index.index)) |value| .{ .static_index = value } else .dynamic_index),
+            ),
             .explicit_cast => |cast| try self.inferExpression(function, cast.value),
             .function_call => |call| try self.inferCall(function, call),
             .virtualize => |virtualize| try self.inferExpression(function, virtualize.value),
             .virtual_call => |call| try self.inferVirtualCall(function, call),
             else => .{},
+        };
+    }
+
+    fn inferOpaqueRead(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        effect: facts.OutputEffect,
+    ) !facts.OutputEffect {
+        const ty = node.sem_type orelse return effect;
+        if (!typeContainsPointer(ty)) return effect;
+        var result = effect;
+        var dependencies = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        try dependencies.appendSlice(effect.opaque_generation_dependencies);
+        const accesses = try self.inferOpaqueReadInputPaths(function, node);
+        for (accesses) |path| try appendInputPath(&dependencies, path);
+        result.opaque_generation_dependencies = try dependencies.toOwnedSlice();
+        return result;
+    }
+
+    fn inferOpaqueReadInputPaths(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+    ) ![]const facts.InputPath {
+        return switch (node.content) {
+            .move_value => |value| self.inferOpaqueReadInputPaths(function, value),
+            .struct_field_access => |access| self.inferOpaqueReadInputPaths(function, access.struct_value),
+            .choice_payload_access => |access| self.inferOpaqueReadInputPaths(function, access.choice_value),
+            .dereference => |dereference| self.inferInputPaths(function, dereference.pointer),
+            .array_index => |index| self.inferInputPaths(function, index.array_ptr),
+            else => &.{},
         };
     }
 
@@ -3044,6 +3116,7 @@ pub const SafetyChecker = struct {
         return .{
             .input_dependencies = dependencies,
             .input_places = input_places,
+            .opaque_generation_dependencies = effect.opaque_generation_dependencies,
             .fresh_dependencies = effect.fresh_dependencies,
             .fresh_owned_roots = effect.fresh_owned_roots,
             .fresh_storage_authorities = effect.fresh_storage_authorities,
@@ -3073,6 +3146,14 @@ pub const SafetyChecker = struct {
             for (substituted) |candidate| try appendInputPath(&input_places, candidate);
         }
         result.input_places = try input_places.toOwnedSlice();
+        var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        for (effect.opaque_generation_dependencies) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var substituted = try self.inferInputPaths(function, arguments[path.input_index].value);
+            for (path.projections) |projection| substituted = try self.projectInputPaths(substituted, projection);
+            for (substituted) |candidate| try appendInputPath(&opaque_generations, candidate);
+        }
+        result.opaque_generation_dependencies = try opaque_generations.toOwnedSlice();
         for (effect.input_dependencies) |dependency| {
             if (dependency.path.input_index >= arguments.len) continue;
             var argument = try self.inferExpression(function, arguments[dependency.path.input_index].value);
@@ -3108,6 +3189,9 @@ pub const SafetyChecker = struct {
         var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         for (left.input_places) |path| try appendInputPath(&input_places, path);
         for (right.input_places) |path| try appendInputPath(&input_places, path);
+        var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        for (left.opaque_generation_dependencies) |path| try appendInputPath(&opaque_generations, path);
+        for (right.opaque_generation_dependencies) |path| try appendInputPath(&opaque_generations, path);
         var fields = std.array_list.Managed(facts.OutputFieldEffect).init(self.allocator.*);
         for (left.fields) |left_field| {
             var merged = left_field.value.*;
@@ -3149,6 +3233,7 @@ pub const SafetyChecker = struct {
         return .{
             .input_dependencies = try dependencies.toOwnedSlice(),
             .input_places = try input_places.toOwnedSlice(),
+            .opaque_generation_dependencies = try opaque_generations.toOwnedSlice(),
             .fields = try fields.toOwnedSlice(),
             .fresh_dependencies = try self.mergeFreshSources(left.fresh_dependencies, right.fresh_dependencies),
             .fresh_owned_roots = try self.mergeFreshSources(left.fresh_owned_roots, right.fresh_owned_roots),
@@ -3563,11 +3648,16 @@ fn outputEffectEqual(left: facts.OutputEffect, right: facts.OutputEffect) bool {
         !std.mem.eql(facts.FreshRootSource, left.fresh_dependencies, right.fresh_dependencies) or
         !std.mem.eql(facts.FreshRootSource, left.fresh_owned_roots, right.fresh_owned_roots) or
         !std.mem.eql(facts.FreshRootSource, left.fresh_storage_authorities, right.fresh_storage_authorities)) return false;
-    if (left.input_dependencies.len != right.input_dependencies.len or left.input_places.len != right.input_places.len or left.fields.len != right.fields.len or left.variants.len != right.variants.len) return false;
+    if (left.input_dependencies.len != right.input_dependencies.len or
+        left.input_places.len != right.input_places.len or
+        left.opaque_generation_dependencies.len != right.opaque_generation_dependencies.len or
+        left.fields.len != right.fields.len or left.variants.len != right.variants.len) return false;
     for (left.input_dependencies, right.input_dependencies) |a, b| {
         if (!inputDependencyEqual(a, b)) return false;
     }
     for (left.input_places, right.input_places) |a, b| if (!inputPlaceTargetEqual(a, b)) return false;
+    for (left.opaque_generation_dependencies, right.opaque_generation_dependencies) |a, b|
+        if (!inputPlaceTargetEqual(a, b)) return false;
     for (left.fields, right.fields) |a, b| {
         if (a.index != b.index or !outputEffectEqual(a.value.*, b.value.*)) return false;
     }
@@ -4415,6 +4505,66 @@ test "opaque read envelopes preserve captured generations across refresh and joi
     const joined = try checker.mergeValueFacts(old_value, fresh_value);
     try std.testing.expect(valueDependsOnRoot(joined, first));
     try std.testing.expect(valueDependsOnRoot(joined, second));
+}
+
+test "symbolic opaque read generations instantiate without polluting identity outputs" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const ordinary = try state.tracker.establish(.fresh);
+    const first_generation = try state.tracker.establish(.fresh);
+    const second_generation = try state.tracker.establish(.fresh);
+    var first_storage_binding: sg.BindingDeclaration = undefined;
+    var second_storage_binding: sg.BindingDeclaration = undefined;
+    const arguments = [_]facts.ValueFacts{
+        .{
+            .dependencies = &.{.{ .root = ordinary }},
+            .opaque_origins = &.{.{
+                .storage = .{ .root = &first_storage_binding },
+                .generation = first_generation,
+            }},
+        },
+        .{
+            .opaque_origins = &.{.{
+                .storage = .{ .root = &second_storage_binding },
+                .generation = second_generation,
+            }},
+        },
+    };
+
+    const opaque_read = facts.OutputEffect{
+        .opaque_generation_dependencies = try checker.oneInputPath(0, &.{}),
+    };
+    const extracted = try checker.instantiateOutput(opaque_read, &arguments, &state);
+    try std.testing.expect(valueDependsOnRoot(extracted, first_generation));
+    try std.testing.expect(!valueDependsOnRoot(extracted, ordinary));
+
+    const identity = try checker.instantiateOutput(try checker.inputOutputEffect(0, &.{}), &arguments, &state);
+    try std.testing.expect(valueDependsOnRoot(identity, ordinary));
+    try std.testing.expect(!valueDependsOnRoot(identity, first_generation));
+    try std.testing.expectEqual(@as(usize, 1), identity.opaque_origins.len);
+    try std.testing.expectEqual(first_generation, identity.opaque_origins[0].generation);
+
+    const joined_effect = try checker.mergeOutputEffects(opaque_read, .{
+        .opaque_generation_dependencies = try checker.oneInputPath(1, &.{}),
+    });
+    const joined = try checker.instantiateOutput(joined_effect, &arguments, &state);
+    try std.testing.expect(valueDependsOnRoot(joined, first_generation));
+    try std.testing.expect(valueDependsOnRoot(joined, second_generation));
+
+    var fresh_map = std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource).init(allocator);
+    defer fresh_map.deinit();
+    const virtual_joined = (try checker.mergeVirtualOutputEffect(
+        opaque_read,
+        .{ .opaque_generation_dependencies = try checker.oneInputPath(1, &.{}) },
+        &fresh_map,
+    )).?;
+    try std.testing.expectEqual(@as(usize, 2), virtual_joined.opaque_generation_dependencies.len);
 }
 
 test "array pointer operations reject stale pointer values" {
