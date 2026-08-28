@@ -3530,6 +3530,27 @@ test "feature_tests/ownership/146X_opaque_mutation_cached_internal_pointer_throu
     );
 }
 
+test "feature_tests/ownership/147X_address_through_stale_pointer_does_not_revive" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/147X_address_through_stale_pointer_does_not_revive",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/148X_address_through_stale_opaque_pointer_does_not_revive" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/148X_address_through_stale_opaque_pointer_does_not_revive",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/149X_field_read_through_stale_pointer_fails" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/149X_field_read_through_stale_pointer_fails",
+        "reference depends on a root that has ended",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

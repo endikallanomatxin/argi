@@ -307,6 +307,7 @@ pub const SafetyChecker = struct {
                 break :blk .{};
             },
             .move_value => |value| blk: {
+                if (!try self.validateAddressablePath(function, value, state)) break :blk .{};
                 const value_type = value.sem_type orelse if (value.content == .binding_use) value.content.binding_use.ty else null;
                 const moving_choice = value_type != null and value_type.? == .choice_type;
                 const result = if (moving_choice and try self.resolvePlace(value, state) != null)
@@ -318,6 +319,7 @@ pub const SafetyChecker = struct {
                 break :blk result;
             },
             .address_of => |value| blk: {
+                if (!try self.validateAddressablePath(function, value, state)) break :blk .{};
                 const target = try self.resolvePlace(value, state);
                 const opaque_origins = try self.opaqueOriginsForAccess(value, state);
                 var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
@@ -349,6 +351,7 @@ pub const SafetyChecker = struct {
             .struct_value_literal => |literal| try self.aggregate(function, literal.fields, state),
             .struct_field_access => |access| blk: {
                 if (try self.resolvePlace(node, state)) |storage| {
+                    if (!try self.validateAddressablePath(function, access.struct_value, state)) break :blk .{};
                     if (self.getPlace(state, storage)) |place_facts| {
                         try self.requireInitialized(function, place_facts);
                         break :blk place_facts.value;
@@ -365,11 +368,13 @@ pub const SafetyChecker = struct {
                 // extracts the active payload. Preserve the stored facts for
                 // that compiler-generated extraction even though the
                 // container Place has already transitioned to moved.
-                const choice = if (try self.resolvePlace(access.choice_value, state)) |storage|
+                const resolved = try self.resolvePlace(access.choice_value, state);
+                if (resolved != null and !try self.validateAddressablePath(function, access.choice_value, state)) break :blk .{};
+                const choice = if (resolved) |storage|
                     self.valueAtPlace(state, storage) orelse facts.ValueFacts{}
                 else
                     try self.evaluate(function, access.choice_value, state);
-                if (try self.resolvePlace(access.choice_value, state)) |storage| {
+                if (resolved) |storage| {
                     if (!self.choiceVariantIsActive(state, storage, access.variant_index)) {
                         try self.diagnostics.add(function.location, .semantic, "choice payload '..{d}' requires its variant to be proven active", .{access.variant_index});
                         break :blk .{};
@@ -2085,6 +2090,34 @@ pub const SafetyChecker = struct {
                 break :blk pointer_facts.value.referenced_place;
             },
             else => null,
+        };
+    }
+
+    /// Validate only the pointer traversals needed to reach an addressable
+    /// Place. Structural resolution intentionally remains liveness-agnostic;
+    /// taking an address is the semantic operation that must prove each
+    /// intermediate pointer usable. Bindings and projections are not read.
+    fn validateAddressablePath(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        state: *FunctionState,
+    ) !bool {
+        return switch (node.content) {
+            .binding_use => true,
+            .move_value => |value| self.validateAddressablePath(function, value, state),
+            .address_of => |value| self.validateAddressablePath(function, value, state),
+            .struct_field_access => |access| self.validateAddressablePath(function, access.struct_value, state),
+            .choice_payload_access => |access| self.validateAddressablePath(function, access.choice_value, state),
+            .array_index => |index| self.validateAddressablePath(function, index.array_ptr, state),
+            .dereference => |dereference| blk: {
+                if (!try self.validateAddressablePath(function, dereference.pointer, state)) break :blk false;
+                const pointer = try self.evaluate(function, dereference.pointer, state);
+                if (state.tracker.dependenciesAreAlive(pointer)) break :blk true;
+                try self.diagnostics.add(function.location, .semantic, "reference depends on a root that has ended", .{});
+                break :blk false;
+            },
+            else => true,
         };
     }
 
