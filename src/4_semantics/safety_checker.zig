@@ -325,7 +325,7 @@ pub const SafetyChecker = struct {
                     try appendDependency(&dependencies, .{ .root = try self.storageRoot(value, state) });
                 } else {
                     for (opaque_origins) |origin|
-                        try appendDependency(&dependencies, .{ .root = try self.storageRootForPlace(origin, state) });
+                        try appendDependency(&dependencies, .{ .root = origin.generation });
                 }
                 break :blk .{
                     .dependencies = try dependencies.toOwnedSlice(),
@@ -639,11 +639,10 @@ pub const SafetyChecker = struct {
     ) !void {
         for (value.dependencies) |dependency| try appendOwnedRoot(hidden, dependency.root);
 
-        var origins = std.array_list.Managed(place.Place).init(self.allocator.*);
+        var origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
         defer origins.deinit();
-        try self.collectOpaqueDomainsAccessedBy(state, value, &origins);
-        for (origins.items) |origin|
-            try appendOwnedRoot(hidden, try self.storageRootForPlace(origin, state));
+        try self.collectOpaqueOriginsCarriedBy(state, value, &origins);
+        for (origins.items) |origin| try appendOwnedRoot(hidden, origin.generation);
 
         for (value.fields) |field|
             try self.collectOpaqueHiddenDependencies(state, field.value.*, hidden);
@@ -666,10 +665,45 @@ pub const SafetyChecker = struct {
     fn markOpaqueAccess(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState, storage: place.Place) !void {
         const pointer_place = try self.resolvePlace(node, state) orelse return;
         const pointer = self.getPlace(state, pointer_place) orelse return;
-        var origins = std.array_list.Managed(place.Place).init(self.allocator.*);
-        try origins.appendSlice(pointer.value.opaque_origins);
-        try appendPlace(&origins, storage);
-        pointer.value.opaque_origins = try origins.toOwnedSlice();
+        try self.addOpaqueAccessProvenance(state, &pointer.value, storage);
+    }
+
+    fn addOpaqueAccessProvenance(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        pointer: *facts.ValueFacts,
+        storage: place.Place,
+    ) !void {
+        var origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
+        try origins.appendSlice(pointer.opaque_origins);
+        for (origins.items) |origin| if (origin.storage.eql(storage)) return;
+
+        var inferred = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
+        defer inferred.deinit();
+        try self.collectOpaqueOriginsCarriedBy(state, pointer.*, &inferred);
+        for (inferred.items) |origin|
+            if (origin.storage.eql(storage)) try appendOpaqueOrigin(&origins, origin);
+
+        var found = false;
+        for (origins.items) |origin| if (origin.storage.eql(storage)) {
+            found = true;
+            break;
+        };
+        if (!found) {
+            var domain_already_opaque = false;
+            for (state.opaque_storages.items) |opaque_storage| if (opaque_storage.storage.eql(storage)) {
+                domain_already_opaque = true;
+                break;
+            };
+            // The first opaque-store boundary establishes provenance for its
+            // destination pointer now. Once the domain already exists, an
+            // unproven old alias must never be rebound to its current root.
+            if (!domain_already_opaque) try appendOpaqueOrigin(&origins, .{
+                .storage = storage,
+                .generation = try self.storageRootForPlace(storage, state),
+            });
+        }
+        pointer.opaque_origins = try origins.toOwnedSlice();
     }
 
     fn inferOpaqueDomain(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts) !?place.Place {
@@ -694,7 +728,7 @@ pub const SafetyChecker = struct {
         pointer: facts.ValueFacts,
         result: *std.array_list.Managed(place.Place),
     ) !void {
-        for (pointer.opaque_origins) |storage| try appendPlace(result, storage);
+        for (pointer.opaque_origins) |origin| try appendPlace(result, origin.storage);
         for (state.opaque_storages.items) |opaque_storage| {
             if (self.valueAtPlace(state, opaque_storage.storage)) |storage_value| {
                 for (pointer.dependencies) |dependency|
@@ -708,13 +742,41 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn opaqueOriginsForAccess(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) ![]const place.Place {
+    /// Recover generation-stable value provenance without resolving a domain
+    /// Place against its current storage root. Retrospective inference is only
+    /// allowed when one of the pointer's existing dependency roots itself
+    /// proves the association with the opaque domain.
+    fn collectOpaqueOriginsCarriedBy(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        pointer: facts.ValueFacts,
+        result: *std.array_list.Managed(facts.OpaqueOrigin),
+    ) !void {
+        for (pointer.opaque_origins) |origin| try appendOpaqueOrigin(result, origin);
+        for (state.opaque_storages.items) |opaque_storage| {
+            if (self.valueAtPlace(state, opaque_storage.storage)) |storage_value| {
+                for (pointer.dependencies) |dependency|
+                    if (valueContainsOwnedRoot(storage_value, dependency.root)) try appendOpaqueOrigin(result, .{
+                        .storage = opaque_storage.storage,
+                        .generation = dependency.root,
+                    });
+            }
+            for (state.storage_roots.items) |entry| {
+                if (!opaque_storage.storage.isPrefixOf(entry.storage)) continue;
+                for (pointer.dependencies) |dependency|
+                    if (dependency.root == entry.root) try appendOpaqueOrigin(result, .{
+                        .storage = opaque_storage.storage,
+                        .generation = dependency.root,
+                    });
+            }
+        }
+    }
+
+    fn opaqueOriginsForAccess(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) ![]const facts.OpaqueOrigin {
         return switch (node.content) {
             .binding_use => |binding| blk: {
                 const value = self.getPlace(state, .{ .root = binding }) orelse break :blk &.{};
-                var origins = std.array_list.Managed(place.Place).init(self.allocator.*);
-                try self.collectOpaqueDomainsAccessedBy(state, value.value, &origins);
-                break :blk try origins.toOwnedSlice();
+                break :blk try self.currentOpaqueOriginsForValue(state, value.value);
             },
             .move_value => |value| try self.opaqueOriginsForAccess(value, state),
             .address_of => |value| try self.opaqueOriginsForAccess(value, state),
@@ -723,12 +785,25 @@ pub const SafetyChecker = struct {
             .dereference => |dereference| blk: {
                 const pointer_place = try self.resolvePlace(dereference.pointer, state) orelse break :blk &.{};
                 const pointer = self.getPlace(state, pointer_place) orelse break :blk &.{};
-                var origins = std.array_list.Managed(place.Place).init(self.allocator.*);
-                try self.collectOpaqueDomainsAccessedBy(state, pointer.value, &origins);
-                break :blk try origins.toOwnedSlice();
+                break :blk try self.currentOpaqueOriginsForValue(state, pointer.value);
             },
             else => &.{},
         };
+    }
+
+    /// A newly created reference observes the current generation of every
+    /// opaque domain reached by its source expression. Existing values never
+    /// pass through this normalization and retain their captured generations.
+    fn currentOpaqueOriginsForValue(self: *SafetyChecker, state: *FunctionState, value: facts.ValueFacts) ![]const facts.OpaqueOrigin {
+        var storages = std.array_list.Managed(place.Place).init(self.allocator.*);
+        defer storages.deinit();
+        try self.collectOpaqueDomainsAccessedBy(state, value, &storages);
+        var origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
+        for (storages.items) |storage| try appendOpaqueOrigin(&origins, .{
+            .storage = storage,
+            .generation = try self.storageRootForPlace(storage, state),
+        });
+        return origins.toOwnedSlice();
     }
 
     fn rejectOpaqueRelocation(
@@ -743,7 +818,17 @@ pub const SafetyChecker = struct {
         for (storages.items) |storage| {
             const storage_root = try self.storageRootForPlace(storage, state);
             for (state.opaque_storages.items) |opaque_storage| {
-                if (!opaque_storage.storage.eql(storage) or !containsRoot(opaque_storage.hidden_dependencies, storage_root)) continue;
+                if (!opaque_storage.storage.eql(storage)) continue;
+                var invalidates_dependency = containsRoot(opaque_storage.hidden_dependencies, storage_root);
+                if (!invalidates_dependency) {
+                    const storage_value = self.valueAtPlace(state, storage) orelse facts.ValueFacts{};
+                    for (opaque_storage.hidden_dependencies) |dependency| {
+                        if (!valueContainsOwnedRoot(storage_value, dependency)) continue;
+                        invalidates_dependency = true;
+                        break;
+                    }
+                }
+                if (!invalidates_dependency) continue;
                 try self.diagnostics.add(function.location, .semantic, "relocation would invalidate a hidden opaque dependency", .{});
                 return;
             }
@@ -1259,9 +1344,9 @@ pub const SafetyChecker = struct {
         var authorities = std.array_list.Managed(facts.StorageAuthorityId).init(self.allocator.*);
         for (left.storage_authorities) |authority| try appendStorageAuthority(&authorities, authority);
         for (right.storage_authorities) |authority| try appendStorageAuthority(&authorities, authority);
-        var opaque_origins = std.array_list.Managed(place.Place).init(self.allocator.*);
-        for (left.opaque_origins) |origin| try appendPlace(&opaque_origins, origin);
-        for (right.opaque_origins) |origin| try appendPlace(&opaque_origins, origin);
+        var opaque_origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
+        for (left.opaque_origins) |origin| try appendOpaqueOrigin(&opaque_origins, origin);
+        for (right.opaque_origins) |origin| try appendOpaqueOrigin(&opaque_origins, origin);
         var fields = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
         for (left.fields) |left_field| {
             var merged = left_field.value.*;
@@ -1543,7 +1628,7 @@ pub const SafetyChecker = struct {
         var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
         var field_facts = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
         var storage_authorities = std.array_list.Managed(facts.StorageAuthorityId).init(self.allocator.*);
-        var opaque_origins = std.array_list.Managed(place.Place).init(self.allocator.*);
+        var opaque_origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
         var contains_integer_address = false;
         var contains_foreign_storage = false;
         for (fields, 0..) |field, index| {
@@ -1551,7 +1636,7 @@ pub const SafetyChecker = struct {
             for (value.dependencies) |dependency| try appendDependency(&dependencies, dependency);
             for (value.owned_roots) |root| try appendOwnedRoot(&owned_roots, root);
             for (value.storage_authorities) |authority| try appendStorageAuthority(&storage_authorities, authority);
-            for (value.opaque_origins) |origin| try appendPlace(&opaque_origins, origin);
+            for (value.opaque_origins) |origin| try appendOpaqueOrigin(&opaque_origins, origin);
             const stored = try self.allocator.create(facts.ValueFacts);
             stored.* = value;
             try field_facts.append(.{ .index = @intCast(index), .value = stored });
@@ -3172,7 +3257,8 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
     if (left.referenced_place) |left_place| if (!left_place.eql(right.referenced_place.?)) return false;
     if (left.opaque_origins.len != right.opaque_origins.len) return false;
-    for (left.opaque_origins, right.opaque_origins) |a, b| if (!a.eql(b)) return false;
+    for (left.opaque_origins, right.opaque_origins) |a, b|
+        if (!a.storage.eql(b.storage) or a.generation != b.generation) return false;
     for (left.fields, right.fields) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
     for (left.variants, right.variants) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
     return true;
@@ -3281,6 +3367,12 @@ fn appendDependency(list: *std.array_list.Managed(facts.ReferenceDependency), de
 fn appendPlace(list: *std.array_list.Managed(place.Place), storage: place.Place) !void {
     for (list.items) |existing| if (existing.eql(storage)) return;
     try list.append(storage);
+}
+
+fn appendOpaqueOrigin(list: *std.array_list.Managed(facts.OpaqueOrigin), origin: facts.OpaqueOrigin) !void {
+    for (list.items) |existing|
+        if (existing.generation == origin.generation and existing.storage.eql(origin.storage)) return;
+    try list.append(origin);
 }
 
 fn appendOwnedRoot(list: *std.array_list.Managed(facts.RootId), owned_root: facts.RootId) !void {
@@ -4068,6 +4160,82 @@ test "refreshing storage roots invalidates earlier aliases" {
     try std.testing.expectEqual(.dead, state.tracker.roots.items[@intFromEnum(old_root)].state);
     try std.testing.expect(!state.tracker.dependenciesAreAlive(stale_alias));
     try std.testing.expect(state.tracker.isAlive(fresh_root));
+}
+
+test "stale opaque pointer provenance does not rebind to refreshed storage generation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const storage = place.Place{ .root = undefined };
+    const old_root = try checker.storageRootForPlace(storage, &state);
+    const stale_pointer = facts.ValueFacts{
+        .dependencies = &.{.{ .root = old_root }},
+        .referenced_place = storage,
+        .opaque_origins = &.{.{ .storage = storage, .generation = old_root }},
+    };
+    try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{} });
+
+    try checker.refreshStorageRoot(null, &state, storage);
+    const fresh_root = try checker.storageRootForPlace(storage, &state);
+    var remarked_stale_pointer = stale_pointer;
+    try checker.addOpaqueAccessProvenance(&state, &remarked_stale_pointer, storage);
+    var hidden = std.array_list.Managed(facts.RootId).init(allocator);
+    defer hidden.deinit();
+    try checker.collectOpaqueHiddenDependencies(&state, remarked_stale_pointer, &hidden);
+
+    try std.testing.expect(containsRoot(hidden.items, old_root));
+    try std.testing.expect(!containsRoot(hidden.items, fresh_root));
+    try std.testing.expectEqual(@as(usize, 1), remarked_stale_pointer.opaque_origins.len);
+}
+
+test "fresh opaque pointer provenance observes refreshed storage generation" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const storage = place.Place{ .root = undefined };
+    const old_root = try checker.storageRootForPlace(storage, &state);
+    try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{} });
+    try checker.refreshStorageRoot(null, &state, storage);
+    const fresh_root = try checker.storageRootForPlace(storage, &state);
+    const fresh_pointer = facts.ValueFacts{ .dependencies = &.{.{ .root = fresh_root }} };
+
+    const origins = try checker.currentOpaqueOriginsForValue(&state, fresh_pointer);
+    try std.testing.expectEqual(@as(usize, 1), origins.len);
+    try std.testing.expect(origins[0].storage.eql(storage));
+    try std.testing.expectEqual(fresh_root, origins[0].generation);
+    try std.testing.expect(old_root != origins[0].generation);
+}
+
+test "opaque provenance join preserves distinct generations of one domain" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const storage = place.Place{ .root = undefined };
+    const first = try state.tracker.establish(.fresh);
+    const second = try state.tracker.establish(.fresh);
+    const merged = try checker.mergeValueFacts(
+        .{ .opaque_origins = &.{.{ .storage = storage, .generation = first }} },
+        .{ .opaque_origins = &.{.{ .storage = storage, .generation = second }} },
+    );
+
+    try std.testing.expectEqual(@as(usize, 2), merged.opaque_origins.len);
+    try std.testing.expectEqual(first, merged.opaque_origins[0].generation);
+    try std.testing.expectEqual(second, merged.opaque_origins[1].generation);
 }
 
 test "reference restriction preserves provenance and only adds lifetime dependencies" {

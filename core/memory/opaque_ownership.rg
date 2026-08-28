@@ -12,6 +12,8 @@ trusted_opaque_store_owned#(.t: Type)(.destination: $&t, .source: t) -> () := {
 -- the safety checker uses its Place to retain hidden temporal dependencies.
 -- Dependencies are conservative and monotonic for that domain, including
 -- dependencies introduced later by mutation through an opaque slot pointer.
+-- Pointer provenance retains the concrete storage generation observed when
+-- the pointer was created; refreshing the domain never rebinds old aliases.
 trusted_opaque_store_owned_in#(.t: Type, .storage_type: Type)(.storage: $&storage_type, .destination: $&t, .source: t) -> () := {
     destination& = source
 }

@@ -15,6 +15,14 @@ pub const ReferenceDependency = struct {
     root: RootId,
 };
 
+/// Provenance of a pointer into one opaque storage domain. `storage` names the
+/// structural domain while `generation` permanently names the temporal
+/// generation observed when the provenance was established.
+pub const OpaqueOrigin = struct {
+    storage: place.Place,
+    generation: RootId,
+};
+
 /// Facts travel with values. Dependencies and owned roots are intentionally
 /// separate: copying a reference copies only its dependencies, while moving a
 /// value transfers both lists.
@@ -33,7 +41,7 @@ pub const ValueFacts = struct {
     /// domains. It identifies mutation destinations while the pointer is used
     /// for access and storage-generation dependencies when used as data.
     /// Entries identify domains, never individual slots.
-    opaque_origins: []const place.Place = &.{},
+    opaque_origins: []const OpaqueOrigin = &.{},
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
         return .{

@@ -144,6 +144,15 @@ the representation could leave a stale internal reference. External hidden
 dependencies do not by themselves prevent relocation because moving the opaque
 representation does not end those roots.
 
+Opaque pointer provenance pairs the structural domain Place with the concrete
+storage-generation RootId observed when the provenance is established. Copies,
+aggregates, and control-flow joins preserve that pair. Refreshing the structural
+Place creates a new current generation but never rewrites generations already
+carried by values; a new reference observes the new generation, while an old
+reference remains stale. Retrospective domain inference from a preexisting
+alias may use only a temporal root already carried by that alias, never the
+domain's current root merely because its Place matches.
+
 Reads from opaque contents remain deliberately imprecise. The checker does not
 yet reconstruct the exact dependency of a reference extracted from an opaque
 value; defining conservative extraction/read provenance is separate from
