@@ -3630,6 +3630,46 @@ test "feature_tests/ownership/162X_opaque_read_through_identity_wrapper_keeps_ge
     );
 }
 
+test "feature_tests/ownership/163X_stale_pointer_use_through_wrapper_fails" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/163X_stale_pointer_use_through_wrapper_fails",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/164_stale_pointer_identity_is_allowed" {
+    const test_path = "tests/feature_tests/ownership/164_stale_pointer_identity_is_allowed";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/165X_stale_pointer_use_through_double_wrapper_fails" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/165X_stale_pointer_use_through_double_wrapper_fails",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/166_fresh_pointer_use_through_wrapper" {
+    const test_path = "tests/feature_tests/ownership/166_fresh_pointer_use_through_wrapper";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/167X_stale_array_pointer_use_through_wrapper_fails" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/167X_stale_array_pointer_use_through_wrapper_fails",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/168X_nested_pointer_use_precondition_keeps_projection" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/168X_nested_pointer_use_precondition_keeps_projection",
+        "reference depends on a root that has ended",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

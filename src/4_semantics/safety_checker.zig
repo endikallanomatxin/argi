@@ -160,7 +160,10 @@ pub const SafetyChecker = struct {
                 },
                 .binding_assignment => |assignment| {
                     const value = try self.evaluate(function, assignment.value, state);
-                    try self.setPlace(state, .{ .root = assignment.sym_id }, .initialized, value);
+                    const storage = place.Place{ .root = assignment.sym_id };
+                    if (self.initializednessAtPlace(state, storage) == .deinitialized)
+                        try self.refreshStorageRoot(function, state, storage);
+                    try self.setPlace(state, storage, .initialized, value);
                 },
                 .auto_deinit_binding => |cleanup| {
                     const storage = place.Place{ .root = cleanup.binding };
@@ -181,7 +184,7 @@ pub const SafetyChecker = struct {
                     if (target) |storage| try self.setPlace(state, storage, .initialized, value);
                 },
                 .array_store => |store| {
-                    const pointer = try self.evaluatePointerUse(function, store.array_ptr, state) orelse continue;
+                    const pointer = try self.evaluatePointerUse(function, pointerUseOperand(node).?, state) orelse continue;
                     const projection: place.Projection = if (staticIndex(store.index)) |index|
                         .{ .static_index = index }
                     else
@@ -338,8 +341,8 @@ pub const SafetyChecker = struct {
                     .opaque_origins = opaque_origins,
                 };
             },
-            .dereference => |dereference| blk: {
-                const pointer = try self.evaluatePointerUse(function, dereference.pointer, state) orelse break :blk .{};
+            .dereference => blk: {
+                const pointer = try self.evaluatePointerUse(function, pointerUseOperand(node).?, state) orelse break :blk .{};
                 if (pointer.referenced_place) |target| {
                     if (self.getPlace(state, target)) |place_facts| {
                         try self.requireInitialized(function, place_facts);
@@ -390,8 +393,8 @@ pub const SafetyChecker = struct {
                 }
                 break :blk .{};
             },
-            .array_index => |index| blk: {
-                const pointer = try self.evaluatePointerUse(function, index.array_ptr, state) orelse break :blk .{};
+            .array_index => blk: {
+                const pointer = try self.evaluatePointerUse(function, pointerUseOperand(node).?, state) orelse break :blk .{};
                 if (try self.resolvePlace(node, state)) |storage| {
                     if (self.getPlace(state, storage)) |place_facts| {
                         try self.requireInitialized(function, place_facts);
@@ -557,6 +560,7 @@ pub const SafetyChecker = struct {
             call.callee.output.fields[0].ty == .pointer_type)
             return .{ .foreign_storage = true };
         const summary = self.summaries.get(call.callee) orelse return .{};
+        if (!try self.validateRequiredLiveInputs(function, summary, argument_values, state)) return .{};
         for (summary.input_post_states) |post_state| {
             const index = post_state.target.input_index;
             if (post_state.requires_available_destination and post_state.target.projections.len == 0 and index < arguments.len and
@@ -1037,6 +1041,7 @@ pub const SafetyChecker = struct {
                 try self.diagnostics.add(call.input.location, .semantic, "virtual method '{s}' has incompatible safety effects across implementations", .{call.method_name});
             return .{};
         };
+        if (!try self.validateRequiredLiveInputs(function, summary, argument_values, state)) return .{};
         for (summary.input_post_states) |post_state| {
             const index = post_state.target.input_index;
             if ((post_state.initializedness != .deinitialized and post_state.initializedness != .moved) or
@@ -1070,6 +1075,30 @@ pub const SafetyChecker = struct {
             }
         }
         return self.evaluate(function, virtualize.value, state);
+    }
+
+    fn validateRequiredLiveInputs(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        summary: facts.FunctionSummary,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !bool {
+        for (summary.required_live_inputs) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var value = arguments[path.input_index];
+            if (path.projections.len != 0) {
+                if (value.referenced_place) |argument_place| {
+                    var target = argument_place;
+                    for (path.projections) |projection| target = try self.projectedPlace(target, projection);
+                    value = self.valueAtPlace(state, target) orelse projectValueFacts(value, path.projections);
+                } else value = projectValueFacts(value, path.projections);
+            }
+            if (state.tracker.dependenciesAreAlive(value)) continue;
+            try self.diagnostics.add(function.location, .semantic, "reference depends on a root that has ended", .{});
+            return false;
+        }
+        return true;
     }
 
     fn applyInputEffects(
@@ -2334,8 +2363,12 @@ pub const SafetyChecker = struct {
             try self.recordOpaqueStorageEffect(&opaque_storage_effects, effect.storage, effect.hidden_dependencies);
         for (right.opaque_storage_effects) |effect|
             try self.recordOpaqueStorageEffect(&opaque_storage_effects, effect.storage, effect.hidden_dependencies);
+        var required_live_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        for (left.required_live_inputs) |path| try appendInputPath(&required_live_inputs, path);
+        for (right.required_live_inputs) |path| try appendInputPath(&required_live_inputs, path);
         return .{
             .outputs = outputs,
+            .required_live_inputs = try required_live_inputs.toOwnedSlice(),
             .input_post_states = left.input_post_states,
             .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
         };
@@ -2418,6 +2451,8 @@ pub const SafetyChecker = struct {
         self.inference_place_bindings = &place_bindings;
         defer self.inference_place_bindings = null;
         try self.inferBlock(function, body, outputs);
+        var required_live_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        try self.inferRequiredLiveInputsBlock(function, body, &required_live_inputs);
         var post_states = std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
         try self.inferInputPostStates(function, body, &post_states);
         var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator.*);
@@ -2433,10 +2468,12 @@ pub const SafetyChecker = struct {
         const post_state_slice = try post_states.toOwnedSlice();
         const opaque_storage_effect_slice = try opaque_storage_effects.toOwnedSlice();
         if (effectsEqual(previous.outputs, outputs) and
+            inputPathsEqual(previous.required_live_inputs, required_live_inputs.items) and
             inputPostStatesEqual(previous.input_post_states, post_state_slice) and
             opaqueStorageEffectsEqual(previous.opaque_storage_effects, opaque_storage_effect_slice)) return false;
         try self.summaries.put(function, .{
             .outputs = outputs,
+            .required_live_inputs = try required_live_inputs.toOwnedSlice(),
             .input_post_states = post_state_slice,
             .opaque_storage_effects = opaque_storage_effect_slice,
         });
@@ -2573,6 +2610,166 @@ pub const SafetyChecker = struct {
             },
             else => {},
         };
+    }
+
+    fn inferRequiredLiveInputsBlock(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        block: *const sg.CodeBlock,
+        required: *std.array_list.Managed(facts.InputPath),
+    ) !void {
+        for (block.nodes) |node| try self.inferRequiredLiveInputsNode(function, node, required);
+        if (block.ret_val) |value| try self.inferRequiredLiveInputsNode(function, value, required);
+    }
+
+    fn inferRequiredLiveInputsNode(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        required: *std.array_list.Managed(facts.InputPath),
+    ) anyerror!void {
+        if (pointerUseOperand(node)) |pointer|
+            try self.recordPointerUseRequirement(function, pointer, required);
+        switch (node.content) {
+            .binding_declaration => |binding| if (binding.initialization) |value|
+                try self.inferRequiredLiveInputsNode(function, value, required),
+            .binding_assignment => |assignment| try self.inferRequiredLiveInputsNode(function, assignment.value, required),
+            .move_value, .address_of => |value| try self.inferRequiredLiveInputsNode(function, value, required),
+            .dereference => |dereference| {
+                try self.inferRequiredLiveInputsNode(function, dereference.pointer, required);
+            },
+            .array_index => |index| {
+                try self.inferRequiredLiveInputsNode(function, index.array_ptr, required);
+                try self.inferRequiredLiveInputsNode(function, index.index, required);
+            },
+            .array_store => |store| {
+                try self.inferRequiredLiveInputsNode(function, store.array_ptr, required);
+                try self.inferRequiredLiveInputsNode(function, store.index, required);
+                try self.inferRequiredLiveInputsNode(function, store.value, required);
+            },
+            .pointer_assignment => |assignment| {
+                try self.inferRequiredLiveInputsNode(function, assignment.pointer, required);
+                try self.inferRequiredLiveInputsNode(function, assignment.value, required);
+            },
+            .struct_field_access => |access| try self.inferRequiredLiveInputsNode(function, access.struct_value, required),
+            .choice_payload_access => |access| try self.inferRequiredLiveInputsNode(function, access.choice_value, required),
+            .explicit_cast => |cast| try self.inferRequiredLiveInputsNode(function, cast.value, required),
+            .struct_field_store => |store| {
+                try self.inferRequiredLiveInputsNode(function, store.struct_ptr, required);
+                try self.inferRequiredLiveInputsNode(function, store.value, required);
+            },
+            .struct_value_literal => |literal| for (literal.fields) |field|
+                try self.inferRequiredLiveInputsNode(function, field.value, required),
+            .list_literal => |literal| for (literal.elements) |element|
+                try self.inferRequiredLiveInputsNode(function, element, required),
+            .array_literal => |literal| for (literal.elements) |element|
+                try self.inferRequiredLiveInputsNode(function, element, required),
+            .choice_literal => |literal| if (literal.payload) |payload|
+                try self.inferRequiredLiveInputsNode(function, payload, required),
+            .function_call => |call| {
+                try self.inferRequiredLiveInputsNode(function, call.input, required);
+                if (self.summaries.get(call.callee)) |summary|
+                    try self.substituteRequiredLiveInputs(function, summary.required_live_inputs, call.input, required);
+            },
+            .virtual_call => |call| {
+                try self.inferRequiredLiveInputsNode(function, call.handle, required);
+                try self.inferRequiredLiveInputsNode(function, call.input, required);
+                if (try self.virtualSummary(call.safety_methods)) |summary|
+                    try self.substituteRequiredLiveInputs(function, summary.required_live_inputs, call.input, required);
+            },
+            .virtualize => |virtualize| try self.inferRequiredLiveInputsNode(function, virtualize.value, required),
+            .binary_operation => |operation| {
+                try self.inferRequiredLiveInputsNode(function, operation.left, required);
+                try self.inferRequiredLiveInputsNode(function, operation.right, required);
+            },
+            .comparison => |operation| {
+                try self.inferRequiredLiveInputsNode(function, operation.left, required);
+                try self.inferRequiredLiveInputsNode(function, operation.right, required);
+            },
+            .logical_operation => |operation| {
+                try self.inferRequiredLiveInputsNode(function, operation.left, required);
+                try self.inferRequiredLiveInputsNode(function, operation.right, required);
+            },
+            .nullable_unwrap_or => |unwrap| {
+                try self.inferRequiredLiveInputsNode(function, unwrap.nullable_value, required);
+                try self.inferRequiredLiveInputsNode(function, unwrap.fallback_value, required);
+            },
+            .testing_expect_error => |expectation| {
+                try self.inferRequiredLiveInputsNode(function, expectation.expected_reason, required);
+                try self.inferRequiredLiveInputsNode(function, expectation.actual_result, required);
+            },
+            .error_propagation => |propagation| {
+                try self.inferRequiredLiveInputsNode(function, propagation.errable_value, required);
+                for (propagation.cleanup_nodes) |cleanup| try self.inferRequiredLiveInputsNode(function, cleanup, required);
+            },
+            .error_context => |context| {
+                try self.inferRequiredLiveInputsNode(function, context.errable_value, required);
+                try self.inferRequiredLiveInputsNode(function, context.context, required);
+                for (context.cleanup_nodes) |cleanup| try self.inferRequiredLiveInputsNode(function, cleanup, required);
+            },
+            .if_statement => |statement| {
+                try self.inferRequiredLiveInputsNode(function, statement.condition, required);
+                try self.inferRequiredLiveInputsBlock(function, statement.then_block, required);
+                if (statement.else_block) |else_block| try self.inferRequiredLiveInputsBlock(function, else_block, required);
+            },
+            .while_statement => |statement| {
+                try self.inferRequiredLiveInputsNode(function, statement.condition, required);
+                try self.inferRequiredLiveInputsBlock(function, statement.body, required);
+            },
+            .for_statement => |statement| {
+                if (statement.init) |initialization| try self.inferRequiredLiveInputsNode(function, initialization, required);
+                try self.inferRequiredLiveInputsNode(function, statement.condition, required);
+                if (statement.increment) |increment| try self.inferRequiredLiveInputsNode(function, increment, required);
+                try self.inferRequiredLiveInputsBlock(function, statement.body, required);
+            },
+            .switch_statement => |statement| {
+                try self.inferRequiredLiveInputsNode(function, statement.expression, required);
+                for (statement.cases) |case| {
+                    try self.inferRequiredLiveInputsNode(function, case.value, required);
+                    try self.inferRequiredLiveInputsBlock(function, case.body, required);
+                }
+                if (statement.default_case) |default_case| try self.inferRequiredLiveInputsBlock(function, default_case, required);
+            },
+            .return_statement => |statement| {
+                if (statement.expression) |expression| try self.inferRequiredLiveInputsNode(function, expression, required);
+                for (statement.cleanup_nodes) |cleanup| try self.inferRequiredLiveInputsNode(function, cleanup, required);
+            },
+            .code_block => |block| try self.inferRequiredLiveInputsBlock(function, block, required),
+            .type_initializer => |initializer| try self.inferRequiredLiveInputsNode(function, initializer.args, required),
+            .auto_deinit_binding => |cleanup| if (cleanup.input) |input|
+                try self.inferRequiredLiveInputsNode(function, input, required),
+            else => {},
+        }
+    }
+
+    fn recordPointerUseRequirement(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        pointer: *const sg.SGNode,
+        required: *std.array_list.Managed(facts.InputPath),
+    ) !void {
+        const effect = try self.inferExpression(function, pointer);
+        for (try self.symbolicSourcePaths(function, pointer, effect)) |path|
+            try appendInputPath(required, path);
+    }
+
+    fn substituteRequiredLiveInputs(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        callee_required: []const facts.InputPath,
+        input: *const sg.SGNode,
+        required: *std.array_list.Managed(facts.InputPath),
+    ) !void {
+        if (input.content != .struct_value_literal) return;
+        const arguments = input.content.struct_value_literal.fields;
+        for (callee_required) |path| {
+            if (path.input_index >= arguments.len) continue;
+            const argument = arguments[path.input_index].value;
+            const effect = try self.inferExpression(function, argument);
+            var substituted = try self.symbolicSourcePaths(function, argument, effect);
+            for (path.projections) |projection| substituted = try self.projectInputPaths(substituted, projection);
+            for (substituted) |candidate| try appendInputPath(required, candidate);
+        }
     }
 
     fn inferOpaqueStorageEffects(
@@ -3582,6 +3779,19 @@ fn inputPostStatesEqual(left: []const facts.InputPlaceEffect, right: []const fac
     return true;
 }
 
+fn inputPathsEqual(left: []const facts.InputPath, right: []const facts.InputPath) bool {
+    if (left.len != right.len) return false;
+    for (left) |path| {
+        var found = false;
+        for (right) |other| if (inputPlaceTargetEqual(path, other)) {
+            found = true;
+            break;
+        };
+        if (!found) return false;
+    }
+    return true;
+}
+
 fn opaqueStorageEffectsEqual(left: []const facts.OpaqueStorageEffect, right: []const facts.OpaqueStorageEffect) bool {
     if (left.len != right.len) return false;
     for (left) |effect| {
@@ -3731,6 +3941,17 @@ fn rootBinding(node: *const sg.SGNode) ?*const sg.BindingDeclaration {
     };
 }
 
+/// These nodes all route their operand through `evaluatePointerUse` locally;
+/// summary inference consumes the same classification symbolically.
+fn pointerUseOperand(node: *const sg.SGNode) ?*const sg.SGNode {
+    return switch (node.content) {
+        .dereference => |dereference| dereference.pointer,
+        .array_index => |index| index.array_ptr,
+        .array_store => |store| store.array_ptr,
+        else => null,
+    };
+}
+
 fn staticIndex(node: *const sg.SGNode) ?usize {
     if (node.content != .value_literal) return null;
     return switch (node.content.value_literal) {
@@ -3824,11 +4045,69 @@ test "virtual summaries widen dependencies but require exact provenance" {
     try std.testing.expect(widened != null);
     try std.testing.expectEqual(@as(usize, 2), widened.?.outputs[0].input_dependencies.len);
 
+    const required_union = try checker.mergeVirtualFunctionSummary(
+        .{ .outputs = &.{.{}}, .required_live_inputs = &.{.{ .input_index = 0 }} },
+        .{ .outputs = &.{.{}}, .required_live_inputs = &.{.{ .input_index = 1 }} },
+    );
+    try std.testing.expect(required_union != null);
+    try std.testing.expectEqual(@as(usize, 2), required_union.?.required_live_inputs.len);
+
     const provenance_mismatch = try checker.mergeVirtualFunctionSummary(
         .{ .outputs = &.{.{ .fresh_storage_authorities = &.{1} }} },
         .{ .outputs = &.{.{}} },
     );
     try std.testing.expect(provenance_mismatch == null);
+}
+
+test "required live input validation projects the selected aggregate path" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(&allocator, &diags);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+
+    const live = try state.tracker.establish(.fresh);
+    const stale = try state.tracker.establish(.fresh);
+    state.tracker.end(stale);
+    const live_value = facts.ValueFacts{ .dependencies = &.{.{ .root = live }} };
+    const stale_value = facts.ValueFacts{ .dependencies = &.{.{ .root = stale }} };
+    const aggregate = facts.ValueFacts{ .fields = &.{
+        .{ .index = 0, .value = &live_value },
+        .{ .index = 1, .value = &stale_value },
+    } };
+    const location = @import("../2_tokens/token.zig").Location{
+        .file = "required_live_test.rg",
+        .offset = 0,
+        .line = 1,
+        .column = 1,
+    };
+    const function = sg.FunctionDeclaration{
+        .id = 0,
+        .name = "test",
+        .location = location,
+        .is_once = false,
+        .input = undefined,
+        .output = undefined,
+        .body = null,
+    };
+
+    try std.testing.expect(try checker.validateRequiredLiveInputs(
+        &function,
+        .{ .required_live_inputs = &.{.{ .input_index = 0, .projections = &.{.{ .field = 0 }} }} },
+        &.{aggregate},
+        &state,
+    ));
+    try std.testing.expect(!try checker.validateRequiredLiveInputs(
+        &function,
+        .{ .required_live_inputs = &.{.{ .input_index = 0, .projections = &.{.{ .field = 1 }} }} },
+        &.{aggregate},
+        &state,
+    ));
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
 }
 
 test "output instantiation preserves sparse semantic field indices" {

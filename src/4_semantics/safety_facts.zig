@@ -150,6 +150,7 @@ pub const OpaqueOwnershipConsumption = enum {
 
 pub const FunctionSummary = struct {
     outputs: []const OutputEffect = &.{},
+    required_live_inputs: []const InputPath = &.{},
     input_post_states: []const InputPlaceEffect = &.{},
     opaque_storage_effects: []const OpaqueStorageEffect = &.{},
 };
