@@ -3623,6 +3623,13 @@ test "feature_tests/ownership/161_fresh_opaque_wrapper_extraction_after_refresh"
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/162X_opaque_read_through_identity_wrapper_keeps_generation" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/162X_opaque_read_through_identity_wrapper_keeps_generation",
+        "reference depends on a root that has ended",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

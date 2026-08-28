@@ -991,6 +991,14 @@ pub const SafetyChecker = struct {
             const input = projectValueFacts(arguments[dependency.path.input_index], dependency.path.projections);
             try self.collectOpaqueHiddenDependencies(state, input, hidden);
         }
+        for (effect.opaque_generation_dependencies) |path| {
+            if (path.input_index >= arguments.len) continue;
+            const input = projectValueFacts(arguments[path.input_index], path.projections);
+            var origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
+            defer origins.deinit();
+            try self.collectOpaqueOriginsRecursively(state, input, &origins);
+            for (origins.items) |origin| try appendOwnedRoot(hidden, origin.generation);
+        }
         for (effect.fields) |field|
             try self.instantiateOpaqueDependencies(field.value.*, arguments, state, fresh_roots, hidden);
         for (effect.variants) |variant|
@@ -2826,6 +2834,7 @@ pub const SafetyChecker = struct {
             .dereference => |value| try self.inferOpaqueRead(
                 function,
                 node,
+                value.pointer,
                 try self.inferExpression(function, value.pointer),
             ),
             .struct_value_literal => |literal| try self.inferAggregate(function, literal),
@@ -2833,12 +2842,12 @@ pub const SafetyChecker = struct {
                 try self.choiceOutputEffect(literal.variant_index, try self.inferExpression(function, payload))
             else
                 try self.choiceOutputEffect(literal.variant_index, .{}),
-            .struct_field_access => |access| try self.inferOpaqueRead(
+            .struct_field_access => |access| try self.inferOpaqueReadFromSyntax(
                 function,
                 node,
                 try self.inferProjection(function, access.struct_value, .{ .field = access.field_index }),
             ),
-            .choice_payload_access => |access| try self.inferOpaqueRead(
+            .choice_payload_access => |access| try self.inferOpaqueReadFromSyntax(
                 function,
                 node,
                 try self.inferChoicePayload(function, access.choice_value, access.variant_index),
@@ -2846,6 +2855,7 @@ pub const SafetyChecker = struct {
             .array_index => |index| try self.inferOpaqueRead(
                 function,
                 node,
+                index.array_ptr,
                 try self.inferProjection(function, index.array_ptr, if (staticIndex(index.index)) |value| .{ .static_index = value } else .dynamic_index),
             ),
             .explicit_cast => |cast| try self.inferExpression(function, cast.value),
@@ -2860,17 +2870,36 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         node: *const sg.SGNode,
+        pointer: *const sg.SGNode,
         effect: facts.OutputEffect,
     ) !facts.OutputEffect {
         const ty = node.sem_type orelse return effect;
         if (!typeContainsPointer(ty)) return effect;
+        return self.withOpaqueReadGenerationDependencies(try self.symbolicSourcePaths(function, pointer, effect), effect);
+    }
+
+    fn withOpaqueReadGenerationDependencies(
+        self: *SafetyChecker,
+        accesses: []const facts.InputPath,
+        effect: facts.OutputEffect,
+    ) !facts.OutputEffect {
         var result = effect;
         var dependencies = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         try dependencies.appendSlice(effect.opaque_generation_dependencies);
-        const accesses = try self.inferOpaqueReadInputPaths(function, node);
         for (accesses) |path| try appendInputPath(&dependencies, path);
         result.opaque_generation_dependencies = try dependencies.toOwnedSlice();
         return result;
+    }
+
+    fn inferOpaqueReadFromSyntax(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        effect: facts.OutputEffect,
+    ) !facts.OutputEffect {
+        const ty = node.sem_type orelse return effect;
+        if (!typeContainsPointer(ty)) return effect;
+        return self.withOpaqueReadGenerationDependencies(try self.inferOpaqueReadInputPaths(function, node), effect);
     }
 
     fn inferOpaqueReadInputPaths(
@@ -2886,6 +2915,29 @@ pub const SafetyChecker = struct {
             .array_index => |index| self.inferInputPaths(function, index.array_ptr),
             else => &.{},
         };
+    }
+
+    /// Pointer-producing summaries carry their source as an input Place when
+    /// provenance is explicit, or as an input dependency for transparent
+    /// wrappers such as identity functions. Turning those paths into opaque
+    /// generation dependencies is deliberately deferred until a read occurs.
+    fn opaqueGenerationSourcePaths(self: *SafetyChecker, effect: facts.OutputEffect) ![]const facts.InputPath {
+        if (effect.input_places.len != 0) return effect.input_places;
+        var paths = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        for (effect.input_dependencies) |dependency|
+            try appendInputPath(&paths, dependency.path);
+        return paths.toOwnedSlice();
+    }
+
+    fn symbolicSourcePaths(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        effect: facts.OutputEffect,
+    ) ![]const facts.InputPath {
+        const direct = try self.inferInputPaths(function, node);
+        if (direct.len != 0) return direct;
+        return self.opaqueGenerationSourcePaths(effect);
     }
 
     fn inferInputPaths(self: *SafetyChecker, function: *const sg.FunctionDeclaration, node: *const sg.SGNode) anyerror![]const facts.InputPath {
@@ -3149,7 +3201,8 @@ pub const SafetyChecker = struct {
         var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         for (effect.opaque_generation_dependencies) |path| {
             if (path.input_index >= arguments.len) continue;
-            var substituted = try self.inferInputPaths(function, arguments[path.input_index].value);
+            const argument_effect = try self.inferExpression(function, arguments[path.input_index].value);
+            var substituted = try self.symbolicSourcePaths(function, arguments[path.input_index].value, argument_effect);
             for (path.projections) |projection| substituted = try self.projectInputPaths(substituted, projection);
             for (substituted) |candidate| try appendInputPath(&opaque_generations, candidate);
         }
@@ -4544,7 +4597,16 @@ test "symbolic opaque read generations instantiate without polluting identity ou
     try std.testing.expect(valueDependsOnRoot(extracted, first_generation));
     try std.testing.expect(!valueDependsOnRoot(extracted, ordinary));
 
-    const identity = try checker.instantiateOutput(try checker.inputOutputEffect(0, &.{}), &arguments, &state);
+    const identity_effect = try checker.inputOutputEffect(0, &.{});
+    try std.testing.expectEqual(@as(usize, 0), identity_effect.opaque_generation_dependencies.len);
+    const identity_sources = try checker.opaqueGenerationSourcePaths(identity_effect);
+    const read_through_identity = try checker.withOpaqueReadGenerationDependencies(identity_sources, identity_effect);
+    try std.testing.expectEqual(@as(usize, 1), read_through_identity.opaque_generation_dependencies.len);
+    try std.testing.expectEqual(@as(u32, 0), read_through_identity.opaque_generation_dependencies[0].input_index);
+    const read_through_double_identity = try checker.withOpaqueReadGenerationDependencies(identity_sources, read_through_identity);
+    try std.testing.expectEqual(@as(usize, 1), read_through_double_identity.opaque_generation_dependencies.len);
+
+    const identity = try checker.instantiateOutput(identity_effect, &arguments, &state);
     try std.testing.expect(valueDependsOnRoot(identity, ordinary));
     try std.testing.expect(!valueDependsOnRoot(identity, first_generation));
     try std.testing.expectEqual(@as(usize, 1), identity.opaque_origins.len);
@@ -4565,6 +4627,53 @@ test "symbolic opaque read generations instantiate without polluting identity ou
         &fresh_map,
     )).?;
     try std.testing.expectEqual(@as(usize, 2), virtual_joined.opaque_generation_dependencies.len);
+
+    var virtual_identity_map = std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource).init(allocator);
+    defer virtual_identity_map.deinit();
+    const virtual_identity = (try checker.mergeVirtualOutputEffect(identity_effect, identity_effect, &virtual_identity_map)).?;
+    const virtual_read = try checker.withOpaqueReadGenerationDependencies(
+        try checker.opaqueGenerationSourcePaths(virtual_identity),
+        virtual_identity,
+    );
+    try std.testing.expectEqual(@as(usize, 1), virtual_read.opaque_generation_dependencies.len);
+}
+
+test "opaque generation dependencies instantiate into hidden opaque dependencies" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    var storage_binding: sg.BindingDeclaration = undefined;
+    const storage = place.Place{ .root = &storage_binding };
+    const captured_generation = try checker.storageRootForPlace(storage, &state);
+    try checker.refreshStorageRoot(null, &state, storage);
+    const current_generation = try checker.storageRootForPlace(storage, &state);
+    try std.testing.expect(captured_generation != current_generation);
+
+    const dependency_only = try checker.dependencyOnlyEffect(.{
+        .opaque_generation_dependencies = try checker.oneInputPath(0, &.{}),
+    });
+    var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.RootId).init(allocator);
+    defer fresh_roots.deinit();
+    var hidden = std.array_list.Managed(facts.RootId).init(allocator);
+    defer hidden.deinit();
+    try checker.instantiateOpaqueDependencies(
+        dependency_only,
+        &.{.{ .opaque_origins = &.{.{
+            .storage = storage,
+            .generation = captured_generation,
+        }} }},
+        &state,
+        &fresh_roots,
+        &hidden,
+    );
+
+    try std.testing.expect(containsRoot(hidden.items, captured_generation));
+    try std.testing.expect(!containsRoot(hidden.items, current_generation));
 }
 
 test "array pointer operations reject stale pointer values" {
