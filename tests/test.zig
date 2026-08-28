@@ -3551,6 +3551,32 @@ test "feature_tests/ownership/149X_field_read_through_stale_pointer_fails" {
     );
 }
 
+test "feature_tests/ownership/150X_array_read_through_stale_pointer_fails" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/150X_array_read_through_stale_pointer_fails",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/152X_array_write_through_stale_pointer_fails" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/152X_array_write_through_stale_pointer_fails",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/153_live_array_pointer_accesses" {
+    const test_path = "tests/feature_tests/ownership/153_live_array_pointer_accesses";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/154_precise_pointer_assignment_reinitializes_dead_place" {
+    const test_path = "tests/feature_tests/ownership/154_precise_pointer_assignment_reinitializes_dead_place";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

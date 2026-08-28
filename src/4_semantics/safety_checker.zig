@@ -181,7 +181,7 @@ pub const SafetyChecker = struct {
                     if (target) |storage| try self.setPlace(state, storage, .initialized, value);
                 },
                 .array_store => |store| {
-                    const pointer = try self.evaluate(function, store.array_ptr, state);
+                    const pointer = try self.evaluatePointerUse(function, store.array_ptr, state) orelse continue;
                     const projection: place.Projection = if (staticIndex(store.index)) |index|
                         .{ .static_index = index }
                     else
@@ -307,13 +307,16 @@ pub const SafetyChecker = struct {
                 break :blk .{};
             },
             .move_value => |value| blk: {
-                if (!try self.validateAddressablePath(function, value, state)) break :blk .{};
                 const value_type = value.sem_type orelse if (value.content == .binding_use) value.content.binding_use.ty else null;
                 const moving_choice = value_type != null and value_type.? == .choice_type;
-                const result = if (moving_choice and try self.resolvePlace(value, state) != null)
-                    self.valueAtPlace(state, (try self.resolvePlace(value, state)).?) orelse facts.ValueFacts{}
-                else
-                    try self.evaluate(function, value, state);
+                const resolved = if (moving_choice) try self.resolvePlace(value, state) else null;
+                if (resolved) |source| {
+                    if (!try self.validateAddressablePath(function, value, state)) break :blk .{};
+                    const result = self.valueAtPlace(state, source) orelse facts.ValueFacts{};
+                    try self.setPlace(state, source, .moved, result);
+                    break :blk result;
+                }
+                const result = try self.evaluate(function, value, state);
                 if (try self.resolvePlace(value, state)) |source|
                     try self.setPlace(state, source, .moved, if (moving_choice) result else .{});
                 break :blk result;
@@ -336,10 +339,7 @@ pub const SafetyChecker = struct {
                 };
             },
             .dereference => |dereference| blk: {
-                const pointer = try self.evaluate(function, dereference.pointer, state);
-                if (!state.tracker.dependenciesAreAlive(pointer)) {
-                    try self.diagnostics.add(function.location, .semantic, "reference depends on a root that has ended", .{});
-                }
+                const pointer = try self.evaluatePointerUse(function, dereference.pointer, state) orelse break :blk .{};
                 if (pointer.referenced_place) |target| {
                     if (self.getPlace(state, target)) |place_facts| {
                         try self.requireInitialized(function, place_facts);
@@ -389,7 +389,7 @@ pub const SafetyChecker = struct {
                 break :blk .{};
             },
             .array_index => |index| blk: {
-                _ = try self.evaluate(function, index.array_ptr, state);
+                _ = try self.evaluatePointerUse(function, index.array_ptr, state) orelse break :blk .{};
                 if (try self.resolvePlace(node, state)) |storage| {
                     if (self.getPlace(state, storage)) |place_facts| {
                         try self.requireInitialized(function, place_facts);
@@ -2109,16 +2109,28 @@ pub const SafetyChecker = struct {
             .address_of => |value| self.validateAddressablePath(function, value, state),
             .struct_field_access => |access| self.validateAddressablePath(function, access.struct_value, state),
             .choice_payload_access => |access| self.validateAddressablePath(function, access.choice_value, state),
-            .array_index => |index| self.validateAddressablePath(function, index.array_ptr, state),
+            .array_index => |index| (try self.evaluatePointerUse(function, index.array_ptr, state)) != null,
             .dereference => |dereference| blk: {
-                if (!try self.validateAddressablePath(function, dereference.pointer, state)) break :blk false;
-                const pointer = try self.evaluate(function, dereference.pointer, state);
-                if (state.tracker.dependenciesAreAlive(pointer)) break :blk true;
-                try self.diagnostics.add(function.location, .semantic, "reference depends on a root that has ended", .{});
-                break :blk false;
+                break :blk (try self.evaluatePointerUse(function, dereference.pointer, state)) != null;
             },
             else => true,
         };
+    }
+
+    /// Evaluate one pointer expression exactly once, then validate the
+    /// generation carried by that resulting pointer value.
+    fn evaluatePointerUse(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        pointer_node: *const sg.SGNode,
+        state: *FunctionState,
+    ) !?facts.ValueFacts {
+        const diagnostic_count = self.diagnostics.list.items.len;
+        const pointer = try self.evaluate(function, pointer_node, state);
+        if (self.diagnostics.list.items.len != diagnostic_count) return null;
+        if (state.tracker.dependenciesAreAlive(pointer)) return pointer;
+        try self.diagnostics.add(function.location, .semantic, "reference depends on a root that has ended", .{});
+        return null;
     }
 
     fn oneDependency(self: *SafetyChecker, root: facts.RootId) ![]const facts.ReferenceDependency {
@@ -4269,6 +4281,73 @@ test "opaque provenance join preserves distinct generations of one domain" {
     try std.testing.expectEqual(@as(usize, 2), merged.opaque_origins.len);
     try std.testing.expectEqual(first, merged.opaque_origins[0].generation);
     try std.testing.expectEqual(second, merged.opaque_origins[1].generation);
+}
+
+test "array pointer operations reject stale pointer values" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(&allocator, &diags);
+    defer checker.deinit();
+
+    const location = @import("../2_tokens/token.zig").Location{
+        .file = "stale_array_pointer_test.rg",
+        .offset = 0,
+        .line = 1,
+        .column = 1,
+    };
+    var binding = sg.BindingDeclaration{
+        .name = "pointer",
+        .location = location,
+        .origin_file = location.file,
+        .mutability = undefined,
+        .ty = undefined,
+        .initialization = null,
+    };
+    var pointer_node = sg.SGNode{ .location = location, .content = .{ .binding_use = &binding } };
+    var index_node: sg.SGNode = undefined;
+    var array_type: sg.ArrayType = undefined;
+    var array_index = sg.SGNode{ .location = location, .content = .{ .array_index = .{
+        .array_ptr = &pointer_node,
+        .index = &index_node,
+        .element_type = undefined,
+        .array_type = &array_type,
+    } } };
+    var value_node: sg.SGNode = undefined;
+    var array_store = sg.SGNode{ .location = location, .content = .{ .array_store = .{
+        .array_ptr = &pointer_node,
+        .index = &index_node,
+        .value = &value_node,
+        .element_type = undefined,
+        .array_type = &array_type,
+    } } };
+    var block = sg.CodeBlock{ .nodes = &.{&array_store}, .ret_val = null };
+    const function = sg.FunctionDeclaration{
+        .id = 0,
+        .name = "test",
+        .location = location,
+        .is_once = false,
+        .input = undefined,
+        .output = undefined,
+        .body = null,
+    };
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const stale_root = try state.tracker.establish(.fresh);
+    state.tracker.end(stale_root);
+    try checker.setPlace(&state, .{ .root = &binding }, .initialized, .{
+        .dependencies = &.{.{ .root = stale_root }},
+    });
+
+    try std.testing.expect(!try checker.validateAddressablePath(&function, &array_index, &state));
+    _ = try checker.evaluate(&function, &array_index, &state);
+    try checker.validateBlock(&function, &block, &state);
+    try std.testing.expectEqual(@as(usize, 3), diags.list.items.len);
+    for (diags.list.items) |diagnostic|
+        try std.testing.expectEqualStrings("reference depends on a root that has ended", diagnostic.msg);
 }
 
 test "reference restriction preserves provenance and only adds lifetime dependencies" {
