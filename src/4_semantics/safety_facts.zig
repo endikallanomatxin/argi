@@ -29,6 +29,9 @@ pub const ValueFacts = struct {
     foreign_storage: bool = false,
     storage_authorities: []const StorageAuthorityId = &.{},
     referenced_place: ?place.Place = null,
+    /// Aggregate provenance for a pointer that accesses opaque storage
+    /// domains. Entries identify domains, never individual slots.
+    opaque_origins: []const place.Place = &.{},
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
         return .{
@@ -37,6 +40,7 @@ pub const ValueFacts = struct {
             .foreign_storage = self.foreign_storage,
             .storage_authorities = self.storage_authorities,
             .referenced_place = self.referenced_place,
+            .opaque_origins = self.opaque_origins,
         };
     }
 };

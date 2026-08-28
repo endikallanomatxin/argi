@@ -17,13 +17,12 @@ main(.system: System) -> (.status_code: Int32) := {
             value :: AddressSensitive = (.value = 7, .reference = ..none)
 
             -- The value has no reference dependency when it crosses the
-            -- current opaque-store boundary, so the store accepts it.
+            -- opaque-store boundary.
             trusted_opaque_store_owned(.destination = source_slot, .source = ~value)
 
-            -- Introduce address sensitivity only after storage became opaque.
-            -- The checker does not attach this write to opaque provenance, and
-            -- relocation is an unconditional checker no-op, so this unsafe
-            -- representation move currently passes.
+            -- The retained destination pointer remains an opaque access. This
+            -- later write makes the representation depend on its old address,
+            -- so relocation must not invalidate that hidden dependency.
             source_slot&.reference = ..some(.value = $&source_slot&.value)
             trusted_opaque_relocate_owned(.source = source_slot, .destination = destination_slot)
 

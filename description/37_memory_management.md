@@ -93,12 +93,15 @@ are retained in a conservative storage-level set. They are not tracked per
 slot and are unioned across control-flow joins. While such a dependency remains
 hidden, ending its root is rejected; precise visible references do not impose
 that restriction. The original two-argument store remains available for values
-without external dependencies, where no storage-level obligation is needed.
+without external dependencies. It infers the backing owner from the destination
+pointer so that retaining and later mutating that pointer still updates one
+aggregate opaque domain.
 
 These facts currently grow monotonically. There is no slot removal or
-whole-storage release operation yet. Writes made later through pointers to
-opaque slots also lack opaque provenance, so mutation-after-store remains a
-known separate gap.
+whole-storage release operation yet. Pointers that access opaque storage carry
+domain provenance, never slot identity or contents. A later pointer, field, or
+array write unions only the written value's temporal dependencies into the same
+storage-level hidden set used by the original store.
 
 Function summaries represent hidden dependencies independently from ownership
 consumption. An opaque storage effect pairs a symbolic input storage path with
@@ -133,17 +136,18 @@ the operation source is empty and destination contains that same live value.
 It performs neither cleanup nor opaque-to-precise extraction.
 
 Passing `trusted_opaque_store_owned` is not a permanent relocatability proof.
-The current store boundary rejects dependencies on external roots, but a later
-write through a pointer to the opaque slot can introduce a reference to that
-slot, another slot, or another root. Relocating the representation can then
-leave a hidden stale reference even though the value was safe when stored.
+A later write through an opaque access can introduce a reference to that slot,
+another slot, or another root. References into the opaque domain depend on its
+logical storage generation. `trusted_opaque_relocate_owned` rejects a move when
+that generation appears in the domain's hidden dependency set, because moving
+the representation could leave a stale internal reference. External hidden
+dependencies do not by themselves prevent relocation because moving the opaque
+representation does not end those roots.
 
-Relocation permission must therefore eventually depend on the current facts of
-the opaque storage. The intended direction is a conservative storage-level
-summary of hidden dependencies, not per-slot occupancy or provenance. Until
-that model exists, callers of `trusted_opaque_relocate_owned` must ensure that
-no live opaque value depends on storage invalidated by the move. The checker
-does not enforce that precondition yet.
+Reads from opaque contents remain deliberately imprecise. The checker does not
+yet reconstruct the exact dependency of a reference extracted from an opaque
+value; defining conservative extraction/read provenance is separate from
+tracking dependencies written into the domain.
 
 ## Root ownership
 

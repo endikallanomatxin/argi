@@ -171,10 +171,14 @@ pub const SafetyChecker = struct {
                 },
                 .struct_field_store => |store| {
                     const pointer = try self.evaluate(function, store.struct_ptr, state);
-                    const target = try self.projectedPlace(try self.resolvePlace(store.struct_ptr, state) orelse continue, .{ .field = store.field_index });
-                    const value = try self.evaluate(function, store.value, state);
+                    const target = if (try self.resolvePlace(store.struct_ptr, state)) |base|
+                        try self.projectedPlace(base, .{ .field = store.field_index })
+                    else
+                        null;
+                    const value = try self.evaluateStoredValue(function, store.value, state, pointer);
                     try self.addStoredOwnershipEdges(function, state, pointer, value);
-                    try self.setPlace(state, target, .initialized, value);
+                    try self.hideOpaqueMutationDependencies(state, pointer, value);
+                    if (target) |storage| try self.setPlace(state, storage, .initialized, value);
                 },
                 .array_store => |store| {
                     const pointer = try self.evaluate(function, store.array_ptr, state);
@@ -182,10 +186,14 @@ pub const SafetyChecker = struct {
                         .{ .static_index = index }
                     else
                         .dynamic_index;
-                    const target = try self.projectedPlace(try self.resolvePlace(store.array_ptr, state) orelse continue, projection);
-                    const value = try self.evaluate(function, store.value, state);
+                    const target = if (try self.resolvePlace(store.array_ptr, state)) |base|
+                        try self.projectedPlace(base, projection)
+                    else
+                        null;
+                    const value = try self.evaluateStoredValue(function, store.value, state, pointer);
                     try self.addStoredOwnershipEdges(function, state, pointer, value);
-                    try self.setPlace(state, target, .initialized, value);
+                    try self.hideOpaqueMutationDependencies(state, pointer, value);
+                    if (target) |storage| try self.setPlace(state, storage, .initialized, value);
                 },
                 .pointer_assignment => |assignment| {
                     const pointer = try self.evaluate(function, assignment.pointer, state);
@@ -202,8 +210,9 @@ pub const SafetyChecker = struct {
                         const target = pointer.referenced_place.?;
                         try self.refreshStorageRoot(function, state, target);
                     }
-                    const value = try self.evaluate(function, assignment.value, state);
+                    const value = try self.evaluateStoredValue(function, assignment.value, state, pointer);
                     try self.addStoredOwnershipEdges(function, state, pointer, value);
+                    try self.hideOpaqueMutationDependencies(state, pointer, value);
                     if (pointer.referenced_place) |target| try self.setPlace(state, target, .initialized, value);
                 },
                 .function_call, .virtual_call, .dereference, .explicit_cast, .struct_field_access, .array_index => _ = try self.evaluate(function, node, state),
@@ -310,9 +319,18 @@ pub const SafetyChecker = struct {
             },
             .address_of => |value| blk: {
                 const target = try self.resolvePlace(value, state);
+                const opaque_origins = try self.opaqueOriginsForAccess(value, state);
+                var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
+                if (opaque_origins.len == 0) {
+                    try appendDependency(&dependencies, .{ .root = try self.storageRoot(value, state) });
+                } else {
+                    for (opaque_origins) |origin|
+                        try appendDependency(&dependencies, .{ .root = try self.storageRootForPlace(origin, state) });
+                }
                 break :blk .{
-                    .dependencies = try self.oneDependency(try self.storageRoot(value, state)),
+                    .dependencies = try dependencies.toOwnedSlice(),
                     .referenced_place = target,
+                    .opaque_origins = opaque_origins,
                 };
             },
             .dereference => |dereference| blk: {
@@ -466,21 +484,20 @@ pub const SafetyChecker = struct {
         {
             if (argument_values.len == 3) {
                 try self.closeOpaqueOwnedRoots(function, argument_values[2], state);
-                if (valueHasDependency(argument_values[2])) {
-                    if (argument_values[0].referenced_place) |storage| {
-                        try self.hideOpaqueDependencies(state, storage, argument_values[2]);
-                    } else if (rootBinding(arguments[0].value)) |binding| {
-                        // Pointer inputs name caller storage symbolically. The
-                        // FunctionSummary carries this obligation to the caller,
-                        // where the concrete storage Place is available.
-                        if (inputIndex(function, binding) == null) {
-                            try self.diagnostics.add(function.location, .semantic, "opaque ownership storage requires an identifiable storage domain place", .{});
-                            return .{};
-                        }
-                    } else {
+                if (argument_values[0].referenced_place) |storage| {
+                    try self.markOpaqueAccess(arguments[1].value, state, storage);
+                    try self.hideOpaqueDependencies(state, storage, argument_values[2]);
+                } else if (rootBinding(arguments[0].value)) |binding| {
+                    // Pointer inputs name caller storage symbolically. The
+                    // FunctionSummary carries this obligation to the caller,
+                    // where the concrete storage Place is available.
+                    if (inputIndex(function, binding) == null and valueHasDependency(argument_values[2])) {
                         try self.diagnostics.add(function.location, .semantic, "opaque ownership storage requires an identifiable storage domain place", .{});
                         return .{};
                     }
+                } else if (valueHasDependency(argument_values[2])) {
+                    try self.diagnostics.add(function.location, .semantic, "opaque ownership storage requires an identifiable storage domain place", .{});
+                    return .{};
                 }
             } else if (argument_values.len == 2) {
                 if (hasExternalOpaqueDependency(argument_values[1], argument_values[1].owned_roots)) {
@@ -488,14 +505,21 @@ pub const SafetyChecker = struct {
                     return .{};
                 }
                 try self.closeOpaqueOwnedRoots(function, argument_values[1], state);
+                if (try self.inferOpaqueDomain(state, argument_values[0])) |storage| {
+                    try self.markOpaqueAccess(arguments[0].value, state, storage);
+                    try self.hideOpaqueDependencies(state, storage, argument_values[1]);
+                }
             }
             return .{};
         }
         // Opaque-slot occupancy and contents deliberately have no precise
-        // checker representation. A relocate transfers the runtime value
-        // between two slots without changing roots or dependencies; its
-        // source-live/destination-empty contract is maintained by the caller.
-        if (call.callee.safety_primitive == .trusted_opaque_relocate_owned) return .{};
+        // checker representation. Relocation only consults domain-level
+        // dependencies; its source-live/destination-empty contract remains
+        // the caller's responsibility.
+        if (call.callee.safety_primitive == .trusted_opaque_relocate_owned) {
+            if (argument_values.len != 0) try self.rejectOpaqueRelocation(function, state, argument_values[0]);
+            return .{};
+        }
         if (call.callee.safety_primitive == .raw_allocated_storage) {
             const authority: facts.StorageAuthorityId = @enumFromInt(state.storage_authorities.items.len);
             try state.storage_authorities.append(.available);
@@ -600,6 +624,105 @@ pub const SafetyChecker = struct {
         defer hidden.deinit();
         try collectDependencyRoots(value, &hidden);
         try self.mergeLiveOpaqueDependencies(state, storage, hidden.items);
+    }
+
+    fn hideOpaqueMutationDependencies(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        pointer: facts.ValueFacts,
+        value: facts.ValueFacts,
+    ) !void {
+        var storages = std.array_list.Managed(place.Place).init(self.allocator.*);
+        defer storages.deinit();
+        try self.collectOpaqueDomainsAccessedBy(state, pointer, &storages);
+        for (storages.items) |storage| try self.hideOpaqueDependencies(state, storage, value);
+    }
+
+    fn markOpaqueAccess(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState, storage: place.Place) !void {
+        const pointer_place = try self.resolvePlace(node, state) orelse return;
+        const pointer = self.getPlace(state, pointer_place) orelse return;
+        var origins = std.array_list.Managed(place.Place).init(self.allocator.*);
+        try origins.appendSlice(pointer.value.opaque_origins);
+        try appendPlace(&origins, storage);
+        pointer.value.opaque_origins = try origins.toOwnedSlice();
+    }
+
+    fn inferOpaqueDomain(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts) !?place.Place {
+        var storages = std.array_list.Managed(place.Place).init(self.allocator.*);
+        defer storages.deinit();
+        try self.collectOpaqueDomainsAccessedBy(state, pointer, &storages);
+        if (storages.items.len != 0) return storages.items[0];
+        var index = state.places.items.len;
+        while (index > 0) {
+            index -= 1;
+            const candidate = state.places.items[index];
+            if (candidate.initializedness != .initialized) continue;
+            for (pointer.dependencies) |dependency|
+                if (valueContainsOwnedRoot(candidate.value, dependency.root)) return candidate.storage;
+        }
+        return null;
+    }
+
+    fn collectOpaqueDomainsAccessedBy(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        pointer: facts.ValueFacts,
+        result: *std.array_list.Managed(place.Place),
+    ) !void {
+        for (pointer.opaque_origins) |storage| try appendPlace(result, storage);
+        for (state.opaque_storages.items) |opaque_storage| {
+            if (self.valueAtPlace(state, opaque_storage.storage)) |storage_value| {
+                for (pointer.dependencies) |dependency|
+                    if (valueContainsOwnedRoot(storage_value, dependency.root)) try appendPlace(result, opaque_storage.storage);
+            }
+            for (state.storage_roots.items) |entry| {
+                if (!opaque_storage.storage.isPrefixOf(entry.storage)) continue;
+                for (pointer.dependencies) |dependency|
+                    if (dependency.root == entry.root) try appendPlace(result, opaque_storage.storage);
+            }
+        }
+    }
+
+    fn opaqueOriginsForAccess(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) ![]const place.Place {
+        return switch (node.content) {
+            .binding_use => |binding| blk: {
+                const value = self.getPlace(state, .{ .root = binding }) orelse break :blk &.{};
+                var origins = std.array_list.Managed(place.Place).init(self.allocator.*);
+                try self.collectOpaqueDomainsAccessedBy(state, value.value, &origins);
+                break :blk try origins.toOwnedSlice();
+            },
+            .move_value => |value| try self.opaqueOriginsForAccess(value, state),
+            .address_of => |value| try self.opaqueOriginsForAccess(value, state),
+            .struct_field_access => |access| try self.opaqueOriginsForAccess(access.struct_value, state),
+            .array_index => |index| try self.opaqueOriginsForAccess(index.array_ptr, state),
+            .dereference => |dereference| blk: {
+                const pointer_place = try self.resolvePlace(dereference.pointer, state) orelse break :blk &.{};
+                const pointer = self.getPlace(state, pointer_place) orelse break :blk &.{};
+                var origins = std.array_list.Managed(place.Place).init(self.allocator.*);
+                try self.collectOpaqueDomainsAccessedBy(state, pointer.value, &origins);
+                break :blk try origins.toOwnedSlice();
+            },
+            else => &.{},
+        };
+    }
+
+    fn rejectOpaqueRelocation(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        state: *FunctionState,
+        source: facts.ValueFacts,
+    ) !void {
+        var storages = std.array_list.Managed(place.Place).init(self.allocator.*);
+        defer storages.deinit();
+        try self.collectOpaqueDomainsAccessedBy(state, source, &storages);
+        for (storages.items) |storage| {
+            const storage_root = try self.storageRootForPlace(storage, state);
+            for (state.opaque_storages.items) |opaque_storage| {
+                if (!opaque_storage.storage.eql(storage) or !containsRoot(opaque_storage.hidden_dependencies, storage_root)) continue;
+                try self.diagnostics.add(function.location, .semantic, "relocation would invalidate a hidden opaque dependency", .{});
+                return;
+            }
+        }
     }
 
     fn applyOpaqueStorageEffects(
@@ -760,6 +883,20 @@ pub const SafetyChecker = struct {
         }
         for (summary.input_post_states) |post_state| {
             if (post_state.target.input_index >= arguments.len) continue;
+            if (post_state.opaque_ownership == .none and post_state.initializedness == .initialized and
+                post_state.target.projections.len != 0)
+            {
+                var opaque_storages = std.array_list.Managed(place.Place).init(self.allocator.*);
+                defer opaque_storages.deinit();
+                try self.collectOpaqueDomainsAccessedBy(state, argument_values[post_state.target.input_index], &opaque_storages);
+                if (opaque_storages.items.len != 0) {
+                    var hidden = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+                    defer hidden.deinit();
+                    try self.instantiateOpaqueDependencies(post_state.value, argument_values, state, &fresh_roots, &hidden);
+                    for (opaque_storages.items) |storage|
+                        try self.mergeLiveOpaqueDependencies(state, storage, hidden.items);
+                }
+            }
             if (post_state.opaque_ownership == .maybe) {
                 try self.diagnostics.add(function.location, .semantic, "opaque ownership storage is conditional and cannot be summarized safely", .{});
                 continue;
@@ -1097,6 +1234,9 @@ pub const SafetyChecker = struct {
         var authorities = std.array_list.Managed(facts.StorageAuthorityId).init(self.allocator.*);
         for (left.storage_authorities) |authority| try appendStorageAuthority(&authorities, authority);
         for (right.storage_authorities) |authority| try appendStorageAuthority(&authorities, authority);
+        var opaque_origins = std.array_list.Managed(place.Place).init(self.allocator.*);
+        for (left.opaque_origins) |origin| try appendPlace(&opaque_origins, origin);
+        for (right.opaque_origins) |origin| try appendPlace(&opaque_origins, origin);
         var fields = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
         for (left.fields) |left_field| {
             var merged = left_field.value.*;
@@ -1147,6 +1287,7 @@ pub const SafetyChecker = struct {
                 left.referenced_place
             else
                 null,
+            .opaque_origins = try opaque_origins.toOwnedSlice(),
         };
     }
 
@@ -1332,6 +1473,93 @@ pub const SafetyChecker = struct {
             .foreign_storage = contains_foreign_storage,
             .storage_authorities = try storage_authorities.toOwnedSlice(),
         };
+    }
+
+    fn evaluateStoredValue(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        state: *FunctionState,
+        pointer: facts.ValueFacts,
+    ) anyerror!facts.ValueFacts {
+        var opaque_storages = std.array_list.Managed(place.Place).init(self.allocator.*);
+        defer opaque_storages.deinit();
+        try self.collectOpaqueDomainsAccessedBy(state, pointer, &opaque_storages);
+        if (opaque_storages.items.len == 0) return self.evaluate(function, node, state);
+        return self.evaluateOpaqueMutationValue(function, node, state);
+    }
+
+    fn evaluateOpaqueMutationValue(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        state: *FunctionState,
+    ) anyerror!facts.ValueFacts {
+        return switch (node.content) {
+            .choice_literal => |literal| if (literal.payload) |payload|
+                try self.choiceValue(literal.variant_index, try self.evaluateOpaqueMutationValue(function, payload, state))
+            else
+                try self.choiceValue(literal.variant_index, .{}),
+            .struct_value_literal => |literal| try self.aggregateOpaqueMutation(function, literal.fields, state),
+            .list_literal => |literal| try self.aggregateOpaqueMutationElements(function, literal.elements, state),
+            .array_literal => |literal| try self.aggregateOpaqueMutationElements(function, literal.elements, state),
+            .explicit_cast => |cast| try self.evaluateOpaqueMutationValue(function, cast.value, state),
+            else => try self.evaluate(function, node, state),
+        };
+    }
+
+    fn aggregateOpaqueMutation(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        fields: []const sg.StructValueLiteralField,
+        state: *FunctionState,
+    ) anyerror!facts.ValueFacts {
+        var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
+        var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        var field_facts = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
+        var storage_authorities = std.array_list.Managed(facts.StorageAuthorityId).init(self.allocator.*);
+        var opaque_origins = std.array_list.Managed(place.Place).init(self.allocator.*);
+        var contains_integer_address = false;
+        var contains_foreign_storage = false;
+        for (fields, 0..) |field, index| {
+            const value = try self.evaluateOpaqueMutationValue(function, field.value, state);
+            for (value.dependencies) |dependency| try appendDependency(&dependencies, dependency);
+            for (value.owned_roots) |root| try appendOwnedRoot(&owned_roots, root);
+            for (value.storage_authorities) |authority| try appendStorageAuthority(&storage_authorities, authority);
+            for (value.opaque_origins) |origin| try appendPlace(&opaque_origins, origin);
+            const stored = try self.allocator.create(facts.ValueFacts);
+            stored.* = value;
+            try field_facts.append(.{ .index = @intCast(index), .value = stored });
+            contains_integer_address = contains_integer_address or value.integer_address;
+            contains_foreign_storage = contains_foreign_storage or value.foreign_storage;
+        }
+        return .{
+            .dependencies = try dependencies.toOwnedSlice(),
+            .owned_roots = try owned_roots.toOwnedSlice(),
+            .fields = try field_facts.toOwnedSlice(),
+            .integer_address = contains_integer_address,
+            .foreign_storage = contains_foreign_storage,
+            .storage_authorities = try storage_authorities.toOwnedSlice(),
+            .opaque_origins = try opaque_origins.toOwnedSlice(),
+        };
+    }
+
+    fn aggregateOpaqueMutationElements(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        elements: []const *const sg.SGNode,
+        state: *FunctionState,
+    ) anyerror!facts.ValueFacts {
+        var result: facts.ValueFacts = .{};
+        const fields = try self.allocator.alloc(facts.FieldFacts, elements.len);
+        for (elements, 0..) |element, index| {
+            const value = try self.allocator.create(facts.ValueFacts);
+            value.* = try self.evaluateOpaqueMutationValue(function, element, state);
+            result = try self.mergeValueFacts(result, value.*);
+            fields[index] = .{ .index = @intCast(index), .value = value };
+        }
+        result.fields = fields;
+        return result;
     }
 
     fn storageRoot(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) !facts.RootId {
@@ -2918,6 +3146,8 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     for (left.owned_roots, right.owned_roots) |a, b| if (a != b) return false;
     if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
     if (left.referenced_place) |left_place| if (!left_place.eql(right.referenced_place.?)) return false;
+    if (left.opaque_origins.len != right.opaque_origins.len) return false;
+    for (left.opaque_origins, right.opaque_origins) |a, b| if (!a.eql(b)) return false;
     for (left.fields, right.fields) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
     for (left.variants, right.variants) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
     return true;
@@ -3021,6 +3251,11 @@ fn projectValueFacts(value: facts.ValueFacts, projections: []const place.Project
 fn appendDependency(list: *std.array_list.Managed(facts.ReferenceDependency), dependency: facts.ReferenceDependency) !void {
     for (list.items) |existing| if (existing.root == dependency.root) return;
     try list.append(dependency);
+}
+
+fn appendPlace(list: *std.array_list.Managed(place.Place), storage: place.Place) !void {
+    for (list.items) |existing| if (existing.eql(storage)) return;
+    try list.append(storage);
 }
 
 fn appendOwnedRoot(list: *std.array_list.Managed(facts.RootId), owned_root: facts.RootId) !void {

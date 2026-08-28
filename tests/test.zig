@@ -3397,10 +3397,11 @@ test "feature_tests/ownership/126_opaque_store_external_dependency" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/127_opaque_relocate_mutation_after_store_hole" {
-    // This successful build is an adversarial regression characterization, not
-    // the desired safety result. Opaque provenance must make it fail later.
-    try expectSuccessfulBuild("tests/feature_tests/ownership/127_opaque_relocate_mutation_after_store_hole");
+test "feature_tests/ownership/127X_opaque_relocate_mutation_after_store" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/127X_opaque_relocate_mutation_after_store",
+        "relocation would invalidate a hidden opaque dependency",
+    );
 }
 
 test "feature_tests/ownership/128X_opaque_hidden_dependency_blocks_root_end" {
@@ -3478,6 +3479,26 @@ test "feature_tests/ownership/138_opaque_hidden_dependency_allows_unrelated_owne
 test "feature_tests/ownership/139X_opaque_hidden_dependency_blocks_owner_consumption_through_wrapper" {
     try buildExpectFail(
         "tests/feature_tests/ownership/139X_opaque_hidden_dependency_blocks_owner_consumption_through_wrapper",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/140X_opaque_mutation_hides_external_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/140X_opaque_mutation_hides_external_dependency",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/141_opaque_mutation_allows_unrelated_root_end" {
+    const test_path = "tests/feature_tests/ownership/141_opaque_mutation_allows_unrelated_root_end";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/142X_opaque_mutation_dependency_through_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/142X_opaque_mutation_dependency_through_wrapper",
         "cannot end a root while opaque storage hides a dependency on it",
     );
 }
