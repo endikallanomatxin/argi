@@ -622,8 +622,33 @@ pub const SafetyChecker = struct {
     fn hideOpaqueDependencies(self: *SafetyChecker, state: *FunctionState, storage: place.Place, value: facts.ValueFacts) !void {
         var hidden = std.array_list.Managed(facts.RootId).init(self.allocator.*);
         defer hidden.deinit();
-        try collectDependencyRoots(value, &hidden);
+        try self.collectOpaqueHiddenDependencies(state, value, &hidden);
         try self.mergeLiveOpaqueDependencies(state, storage, hidden.items);
+    }
+
+    /// Opaque origins are destination provenance when a pointer is used for
+    /// access, but temporal value provenance when that pointer is stored as
+    /// data. In the latter role each origin depends on the domain's logical
+    /// storage generation. Domain inference also covers aliases created before
+    /// their backing storage was registered as opaque.
+    fn collectOpaqueHiddenDependencies(
+        self: *SafetyChecker,
+        state: *FunctionState,
+        value: facts.ValueFacts,
+        hidden: *std.array_list.Managed(facts.RootId),
+    ) !void {
+        for (value.dependencies) |dependency| try appendOwnedRoot(hidden, dependency.root);
+
+        var origins = std.array_list.Managed(place.Place).init(self.allocator.*);
+        defer origins.deinit();
+        try self.collectOpaqueDomainsAccessedBy(state, value, &origins);
+        for (origins.items) |origin|
+            try appendOwnedRoot(hidden, try self.storageRootForPlace(origin, state));
+
+        for (value.fields) |field|
+            try self.collectOpaqueHiddenDependencies(state, field.value.*, hidden);
+        for (value.variants) |variant|
+            try self.collectOpaqueHiddenDependencies(state, variant.value.*, hidden);
     }
 
     fn hideOpaqueMutationDependencies(
@@ -778,7 +803,7 @@ pub const SafetyChecker = struct {
         for (effect.input_dependencies) |dependency| {
             if (dependency.path.input_index >= arguments.len) continue;
             const input = projectValueFacts(arguments[dependency.path.input_index], dependency.path.projections);
-            try collectDependencyRoots(input, hidden);
+            try self.collectOpaqueHiddenDependencies(state, input, hidden);
         }
         for (effect.fields) |field|
             try self.instantiateOpaqueDependencies(field.value.*, arguments, state, fresh_roots, hidden);

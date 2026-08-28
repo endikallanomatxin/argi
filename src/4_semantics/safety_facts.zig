@@ -30,7 +30,9 @@ pub const ValueFacts = struct {
     storage_authorities: []const StorageAuthorityId = &.{},
     referenced_place: ?place.Place = null,
     /// Aggregate provenance for a pointer that accesses opaque storage
-    /// domains. Entries identify domains, never individual slots.
+    /// domains. It identifies mutation destinations while the pointer is used
+    /// for access and storage-generation dependencies when used as data.
+    /// Entries identify domains, never individual slots.
     opaque_origins: []const place.Place = &.{},
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {

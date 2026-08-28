@@ -3503,6 +3503,33 @@ test "feature_tests/ownership/142X_opaque_mutation_dependency_through_wrapper" {
     );
 }
 
+test "feature_tests/ownership/143X_opaque_mutation_existing_internal_pointer_blocks_relocation" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/143X_opaque_mutation_existing_internal_pointer_blocks_relocation",
+        "relocation would invalidate a hidden opaque dependency",
+    );
+}
+
+test "feature_tests/ownership/144X_opaque_mutation_cached_internal_pointer_blocks_relocation" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/144X_opaque_mutation_cached_internal_pointer_blocks_relocation",
+        "relocation would invalidate a hidden opaque dependency",
+    );
+}
+
+test "feature_tests/ownership/145_opaque_mutation_external_pointer_allows_relocation" {
+    const test_path = "tests/feature_tests/ownership/145_opaque_mutation_external_pointer_allows_relocation";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/146X_opaque_mutation_cached_internal_pointer_through_wrapper_blocks_relocation" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/146X_opaque_mutation_cached_internal_pointer_through_wrapper_blocks_relocation",
+        "relocation would invalidate a hidden opaque dependency",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

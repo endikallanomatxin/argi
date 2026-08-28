@@ -10,8 +10,8 @@ trusted_opaque_store_owned#(.t: Type)(.destination: $&t, .source: t) -> () := {
 -- Storage-aware form. `storage` is the stable structural domain shared by the
 -- opaque slots whose contents are summarized together. It has no runtime role;
 -- the safety checker uses its Place to retain hidden temporal dependencies.
--- Dependencies are conservative and monotonic for that domain in the current
--- model; mutation through a slot pointer is not tracked yet.
+-- Dependencies are conservative and monotonic for that domain, including
+-- dependencies introduced later by mutation through an opaque slot pointer.
 trusted_opaque_store_owned_in#(.t: Type, .storage_type: Type)(.storage: $&storage_type, .destination: $&t, .source: t) -> () := {
     destination& = source
 }
@@ -21,11 +21,9 @@ trusted_opaque_store_owned_in#(.t: Type, .storage_type: Type)(.storage: $&storag
 -- destination. The caller must ensure that `source` is live, `destination`
 -- is empty, and the two slots are distinct.
 --
--- Passing store_owned once is not a permanent relocatability proof: later
--- mutation through a pointer to an opaque slot can introduce address-sensitive
--- references. A future checker model must condition relocation on the current
--- facts of the opaque storage. Until then, callers must conservatively ensure
--- that no live opaque value depends on storage invalidated by this move.
+-- Passing store_owned once is not a permanent relocatability proof. Relocation
+-- is rejected when current aggregate facts show that later mutation introduced
+-- a dependency on the source opaque domain's storage generation.
 trusted_opaque_relocate_owned#(.t: Type)(.source: $&t, .destination: $&t) -> () := {
 }
 
