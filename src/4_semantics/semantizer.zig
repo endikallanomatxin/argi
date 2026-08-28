@@ -41,6 +41,7 @@ fn safetyPrimitiveForBundledDeclaration(name: []const u8, file: []const u8) sg.S
         if (std.mem.eql(u8, name, "trusted_opaque_store_owned_in")) return .trusted_opaque_store_owned_in;
         if (std.mem.eql(u8, name, "trusted_opaque_relocate_owned")) return .trusted_opaque_relocate_owned;
         if (std.mem.eql(u8, name, "trusted_opaque_drop_owned")) return .trusted_opaque_drop_owned;
+        if (std.mem.eql(u8, name, "trusted_opaque_release_all")) return .trusted_opaque_release_all;
     }
     if (std.mem.endsWith(u8, file, "core/libc/libc.rg") and std.mem.eql(u8, name, "malloc"))
         return .raw_allocated_storage;

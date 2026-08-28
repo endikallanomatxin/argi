@@ -38,3 +38,9 @@ trusted_opaque_drop_owned#(.t: Type)(.slot: $&t) -> () := {
 trusted_opaque_drop_owned#(.t: Type)(.slot: $&t, .allocator: $&Allocator) -> () := {
     deinit(.self = slot)
 }
+
+-- The caller guarantees every opaque runtime value in `storage` was already
+-- destroyed. This discharges only the checker's domain-level hidden temporal
+-- dependencies; it does not free storage or refresh its generation.
+trusted_opaque_release_all#(.t: Type)(.storage: $&t) -> () := {
+}

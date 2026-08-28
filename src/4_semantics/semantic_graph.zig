@@ -416,6 +416,7 @@ pub const SafetyPrimitive = enum {
     trusted_opaque_store_owned_in,
     trusted_opaque_relocate_owned,
     trusted_opaque_drop_owned,
+    trusted_opaque_release_all,
     relocate,
 };
 

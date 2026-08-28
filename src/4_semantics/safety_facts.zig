@@ -153,6 +153,9 @@ pub const FunctionSummary = struct {
     required_live_inputs: []const InputPath = &.{},
     input_post_states: []const InputPlaceEffect = &.{},
     opaque_storage_effects: []const OpaqueStorageEffect = &.{},
+    /// Domains whose opaque runtime contents are definitely gone on return.
+    /// This clears only their conservative hidden temporal dependencies.
+    opaque_storage_releases: []const InputPath = &.{},
 };
 
 /// A storage domain conservatively gains the dependencies described by

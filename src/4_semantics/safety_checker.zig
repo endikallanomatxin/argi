@@ -530,6 +530,14 @@ pub const SafetyChecker = struct {
             if (argument_values.len != 0) try self.rejectOpaqueRelocation(function, state, argument_values[0]);
             return .{};
         }
+        if (call.callee.safety_primitive == .trusted_opaque_release_all) {
+            if (argument_values.len == 1) {
+                const storage = argument_values[0].referenced_place orelse
+                    try self.resolvePlace(arguments[0].value, state) orelse return .{};
+                self.releaseOpaqueStorage(state, storage);
+            }
+            return .{};
+        }
         if (call.callee.safety_primitive == .raw_allocated_storage) {
             const authority: facts.StorageAuthorityId = @enumFromInt(state.storage_authorities.items.len);
             try state.storage_authorities.append(.available);
@@ -575,6 +583,7 @@ pub const SafetyChecker = struct {
             }
         }
         try self.applyInputEffects(function, summary, arguments, argument_values, state);
+        try self.applyOpaqueStorageReleases(summary, arguments, argument_values, state);
         try self.applyOpaqueStorageEffects(summary, arguments, argument_values, state);
         if (summary.outputs.len != 1) return .{};
         return self.instantiateOutput(summary.outputs[0], argument_values, state);
@@ -961,6 +970,22 @@ pub const SafetyChecker = struct {
         }
     }
 
+    fn applyOpaqueStorageReleases(
+        self: *SafetyChecker,
+        summary: facts.FunctionSummary,
+        arguments: []const sg.StructValueLiteralField,
+        argument_values: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !void {
+        for (summary.opaque_storage_releases) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var storage = argument_values[path.input_index].referenced_place orelse
+                try self.resolvePlace(arguments[path.input_index].value, state) orelse continue;
+            for (path.projections) |projection| storage = try self.projectedPlace(storage, projection);
+            self.releaseOpaqueStorage(state, storage);
+        }
+    }
+
     fn mergeLiveOpaqueDependencies(
         self: *SafetyChecker,
         state: *FunctionState,
@@ -1051,6 +1076,7 @@ pub const SafetyChecker = struct {
             }
         }
         try self.applyInputEffects(function, summary, arguments, argument_values, state);
+        try self.applyOpaqueStorageReleases(summary, arguments, argument_values, state);
         try self.applyOpaqueStorageEffects(summary, arguments, argument_values, state);
         if (summary.outputs.len != 1) return .{};
         return self.instantiateOutput(summary.outputs[0], argument_values, state);
@@ -1864,6 +1890,17 @@ pub const SafetyChecker = struct {
         });
     }
 
+    /// The trusted caller proved every opaque runtime value in this exact
+    /// structural domain is gone. Generations and extracted provenance remain.
+    fn releaseOpaqueStorage(self: *SafetyChecker, state: *FunctionState, storage: place.Place) void {
+        _ = self;
+        for (state.opaque_storages.items) |*opaque_storage| {
+            if (!opaque_storage.storage.eql(storage)) continue;
+            opaque_storage.hidden_dependencies = &.{};
+            return;
+        }
+    }
+
     fn rootIsHidden(state: *const FunctionState, root: facts.RootId) bool {
         for (state.opaque_storages.items) |opaque_storage|
             if (containsRoot(opaque_storage.hidden_dependencies, root)) return true;
@@ -2363,6 +2400,7 @@ pub const SafetyChecker = struct {
             try self.recordOpaqueStorageEffect(&opaque_storage_effects, effect.storage, effect.hidden_dependencies);
         for (right.opaque_storage_effects) |effect|
             try self.recordOpaqueStorageEffect(&opaque_storage_effects, effect.storage, effect.hidden_dependencies);
+        const opaque_storage_releases = try self.intersectInputPaths(left.opaque_storage_releases, right.opaque_storage_releases);
         var required_live_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         for (left.required_live_inputs) |path| try appendInputPath(&required_live_inputs, path);
         for (right.required_live_inputs) |path| try appendInputPath(&required_live_inputs, path);
@@ -2371,7 +2409,24 @@ pub const SafetyChecker = struct {
             .required_live_inputs = try required_live_inputs.toOwnedSlice(),
             .input_post_states = left.input_post_states,
             .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
+            .opaque_storage_releases = opaque_storage_releases,
         };
+    }
+
+    /// A virtual call may discharge a domain only when every implementation
+    /// guarantees release of the same input path.
+    fn intersectInputPaths(
+        self: *SafetyChecker,
+        left: []const facts.InputPath,
+        right: []const facts.InputPath,
+    ) ![]const facts.InputPath {
+        var result = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        for (left) |path| for (right) |other| {
+            if (!inputPlaceTargetEqual(path, other)) continue;
+            try appendInputPath(&result, path);
+            break;
+        };
+        return result.toOwnedSlice();
     }
 
     fn mergeVirtualOutputEffect(
@@ -2456,7 +2511,8 @@ pub const SafetyChecker = struct {
         var post_states = std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
         try self.inferInputPostStates(function, body, &post_states);
         var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator.*);
-        try self.inferOpaqueStorageEffects(function, body, &opaque_storage_effects);
+        var opaque_storage_releases = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        try self.inferOpaqueStorageEffects(function, body, &opaque_storage_effects, &opaque_storage_releases, true);
         if (function.is_deinit) {
             for (function.input.fields, 0..) |input_field, index| {
                 if (!std.mem.eql(u8, input_field.name, "self") or input_field.ty != .pointer_type or
@@ -2467,15 +2523,18 @@ pub const SafetyChecker = struct {
         }
         const post_state_slice = try post_states.toOwnedSlice();
         const opaque_storage_effect_slice = try opaque_storage_effects.toOwnedSlice();
+        const opaque_storage_release_slice = try opaque_storage_releases.toOwnedSlice();
         if (effectsEqual(previous.outputs, outputs) and
             inputPathsEqual(previous.required_live_inputs, required_live_inputs.items) and
             inputPostStatesEqual(previous.input_post_states, post_state_slice) and
-            opaqueStorageEffectsEqual(previous.opaque_storage_effects, opaque_storage_effect_slice)) return false;
+            opaqueStorageEffectsEqual(previous.opaque_storage_effects, opaque_storage_effect_slice) and
+            inputPathsEqual(previous.opaque_storage_releases, opaque_storage_release_slice)) return false;
         try self.summaries.put(function, .{
             .outputs = outputs,
             .required_live_inputs = try required_live_inputs.toOwnedSlice(),
             .input_post_states = post_state_slice,
             .opaque_storage_effects = opaque_storage_effect_slice,
+            .opaque_storage_releases = opaque_storage_release_slice,
         });
         return true;
     }
@@ -2777,6 +2836,8 @@ pub const SafetyChecker = struct {
         function: *const sg.FunctionDeclaration,
         block: *const sg.CodeBlock,
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        releases: *std.array_list.Managed(facts.InputPath),
+        definitely_executes: bool,
     ) !void {
         for (block.nodes) |node| switch (node.content) {
             .function_call => |call| {
@@ -2789,7 +2850,25 @@ pub const SafetyChecker = struct {
                     for (storages) |storage| try self.recordOpaqueStorageEffect(effects, storage, hidden);
                     continue;
                 }
+                if (call.callee.safety_primitive == .trusted_opaque_release_all) {
+                    if (!definitely_executes or arguments.len != 1) continue;
+                    const storages = try self.inferInputPaths(function, arguments[0].value);
+                    for (storages) |storage| {
+                        try self.recordOpaqueStorageRelease(releases, storage);
+                        self.removeOpaqueStorageEffects(effects, storage);
+                    }
+                    continue;
+                }
                 const summary = self.summaries.get(call.callee) orelse continue;
+                if (definitely_executes) for (summary.opaque_storage_releases) |release| {
+                    if (release.input_index >= arguments.len) continue;
+                    var storages = try self.inferInputPaths(function, arguments[release.input_index].value);
+                    for (release.projections) |projection| storages = try self.projectInputPaths(storages, projection);
+                    for (storages) |storage| {
+                        try self.recordOpaqueStorageRelease(releases, storage);
+                        self.removeOpaqueStorageEffects(effects, storage);
+                    }
+                };
                 for (summary.opaque_storage_effects) |effect| {
                     if (effect.storage.input_index >= arguments.len) continue;
                     var storages = try self.inferInputPaths(function, arguments[effect.storage.input_index].value);
@@ -2802,6 +2881,15 @@ pub const SafetyChecker = struct {
                 if (call.input.content != .struct_value_literal) continue;
                 const summary = try self.virtualSummary(call.safety_methods) orelse continue;
                 const arguments = call.input.content.struct_value_literal.fields;
+                if (definitely_executes) for (summary.opaque_storage_releases) |release| {
+                    if (release.input_index >= arguments.len) continue;
+                    var storages = try self.inferInputPaths(function, arguments[release.input_index].value);
+                    for (release.projections) |projection| storages = try self.projectInputPaths(storages, projection);
+                    for (storages) |storage| {
+                        try self.recordOpaqueStorageRelease(releases, storage);
+                        self.removeOpaqueStorageEffects(effects, storage);
+                    }
+                };
                 for (summary.opaque_storage_effects) |effect| {
                     if (effect.storage.input_index >= arguments.len) continue;
                     var storages = try self.inferInputPaths(function, arguments[effect.storage.input_index].value);
@@ -2811,14 +2899,14 @@ pub const SafetyChecker = struct {
                 }
             },
             .if_statement => |statement| {
-                try self.inferOpaqueStorageEffects(function, statement.then_block, effects);
-                if (statement.else_block) |else_block| try self.inferOpaqueStorageEffects(function, else_block, effects);
+                try self.inferOpaqueStorageEffects(function, statement.then_block, effects, releases, false);
+                if (statement.else_block) |else_block| try self.inferOpaqueStorageEffects(function, else_block, effects, releases, false);
             },
-            .while_statement => |statement| try self.inferOpaqueStorageEffects(function, statement.body, effects),
-            .for_statement => |statement| try self.inferOpaqueStorageEffects(function, statement.body, effects),
+            .while_statement => |statement| try self.inferOpaqueStorageEffects(function, statement.body, effects, releases, false),
+            .for_statement => |statement| try self.inferOpaqueStorageEffects(function, statement.body, effects, releases, false),
             .switch_statement => |statement| {
-                for (statement.cases) |case| try self.inferOpaqueStorageEffects(function, case.body, effects);
-                if (statement.default_case) |default_case| try self.inferOpaqueStorageEffects(function, default_case, effects);
+                for (statement.cases) |case| try self.inferOpaqueStorageEffects(function, case.body, effects, releases, false);
+                if (statement.default_case) |default_case| try self.inferOpaqueStorageEffects(function, default_case, effects, releases, false);
             },
             else => {},
         };
@@ -2837,6 +2925,29 @@ pub const SafetyChecker = struct {
             return;
         }
         try effects.append(.{ .storage = storage, .hidden_dependencies = dependencies_only });
+    }
+
+    fn recordOpaqueStorageRelease(
+        self: *SafetyChecker,
+        releases: *std.array_list.Managed(facts.InputPath),
+        storage: facts.InputPath,
+    ) !void {
+        _ = self;
+        try appendInputPath(releases, storage);
+    }
+
+    fn removeOpaqueStorageEffects(
+        self: *SafetyChecker,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        storage: facts.InputPath,
+    ) void {
+        _ = self;
+        var index: usize = 0;
+        while (index < effects.items.len) {
+            if (inputPlaceTargetEqual(effects.items[index].storage, storage)) {
+                _ = effects.orderedRemove(index);
+            } else index += 1;
+        }
     }
 
     fn dependencyOnlyEffect(self: *SafetyChecker, effect: facts.OutputEffect) !facts.OutputEffect {
@@ -3250,6 +3361,7 @@ pub const SafetyChecker = struct {
             .trusted_opaque_store_owned_in,
             .trusted_opaque_relocate_owned,
             .trusted_opaque_drop_owned,
+            .trusted_opaque_release_all,
             => .{},
         };
     }
@@ -4060,6 +4172,37 @@ test "virtual summaries widen dependencies but require exact provenance" {
     try std.testing.expect(provenance_mismatch == null);
 }
 
+test "virtual summaries discharge opaque domains only when every implementation agrees" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    const released = facts.InputPath{ .input_index = 0, .projections = &.{.{ .field = 1 }} };
+    const same_release = try checker.mergeVirtualFunctionSummary(
+        .{ .opaque_storage_releases = &.{released} },
+        .{ .opaque_storage_releases = &.{released} },
+    );
+    try std.testing.expect(same_release != null);
+    try std.testing.expectEqual(@as(usize, 1), same_release.?.opaque_storage_releases.len);
+    try std.testing.expect(inputPlaceTargetEqual(released, same_release.?.opaque_storage_releases[0]));
+
+    const absent_release = try checker.mergeVirtualFunctionSummary(
+        .{ .opaque_storage_releases = &.{released} },
+        .{},
+    );
+    try std.testing.expect(absent_release != null);
+    try std.testing.expectEqual(@as(usize, 0), absent_release.?.opaque_storage_releases.len);
+
+    const different_release = try checker.mergeVirtualFunctionSummary(
+        .{ .opaque_storage_releases = &.{released} },
+        .{ .opaque_storage_releases = &.{.{ .input_index = 0, .projections = &.{.{ .field = 0 }} }} },
+    );
+    try std.testing.expect(different_release != null);
+    try std.testing.expectEqual(@as(usize, 0), different_release.?.opaque_storage_releases.len);
+}
+
 test "required live input validation projects the selected aggregate path" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
@@ -4724,6 +4867,28 @@ test "refreshing storage roots invalidates earlier aliases" {
     try std.testing.expectEqual(.dead, state.tracker.roots.items[@intFromEnum(old_root)].state);
     try std.testing.expect(!state.tracker.dependenciesAreAlive(stale_alias));
     try std.testing.expect(state.tracker.isAlive(fresh_root));
+}
+
+test "releasing an opaque domain preserves its storage generation and extracted references" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    const storage = place.Place{ .root = undefined };
+    const generation = try checker.storageRootForPlace(storage, &state);
+    const hidden = try state.tracker.establish(.fresh);
+    try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{hidden} });
+    const extracted = facts.ValueFacts{ .dependencies = &.{.{ .root = generation }} };
+
+    checker.releaseOpaqueStorage(&state, storage);
+
+    try std.testing.expectEqual(generation, try checker.storageRootForPlace(storage, &state));
+    try std.testing.expect(state.tracker.dependenciesAreAlive(extracted));
+    try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
 }
 
 test "stale opaque pointer provenance does not rebind to refreshed storage generation" {
