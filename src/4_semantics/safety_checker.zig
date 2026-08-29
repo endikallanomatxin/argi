@@ -558,7 +558,7 @@ pub const SafetyChecker = struct {
             call.callee.safety_primitive == .trusted_opaque_store_owned_in)
         {
             if (argument_values.len == 3) {
-                try self.closeOpaqueOwnedRoots(function, argument_values[2], state);
+                try self.closeOpaqueOwnedRoots(function, argument_values[2], state, null);
                 if (argument_values[0].referenced_place) |storage| {
                     try self.markOpaqueAccess(arguments[1].value, state, storage);
                     try self.hideOpaqueDependencies(state, storage, argument_values[2]);
@@ -579,7 +579,7 @@ pub const SafetyChecker = struct {
                     try self.diagnostics.add(function.location, .semantic, "opaque ownership storage cannot hide dependencies on external roots", .{});
                     return .{};
                 }
-                try self.closeOpaqueOwnedRoots(function, argument_values[1], state);
+                try self.closeOpaqueOwnedRoots(function, argument_values[1], state, null);
                 if (try self.inferOpaqueDomain(state, argument_values[0])) |storage| {
                     try self.markOpaqueAccess(arguments[0].value, state, storage);
                     try self.hideOpaqueDependencies(state, storage, argument_values[1]);
@@ -776,7 +776,13 @@ pub const SafetyChecker = struct {
         return .{};
     }
 
-    fn closeOpaqueOwnedRoots(self: *SafetyChecker, function: *const sg.FunctionDeclaration, value: facts.ValueFacts, state: *FunctionState) !void {
+    fn closeOpaqueOwnedRoots(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        value: facts.ValueFacts,
+        state: *FunctionState,
+        consumed_source: ?place.Place,
+    ) !void {
         var roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
         defer roots.deinit();
         try collectOwnedRoots(value, &roots);
@@ -784,6 +790,9 @@ pub const SafetyChecker = struct {
         // rejected call must not leave analysis state partly committed.
         for (roots.items) |root| {
             for (state.places.items) |candidate| {
+                // The consumed Place owns the value being transferred; only
+                // other live Places are external aliases to that ownership.
+                if (consumed_source) |source| if (source.isPrefixOf(candidate.storage)) continue;
                 if (candidate.initializedness != .initialized or !valueDependsOnRoot(candidate.value, root)) continue;
                 try self.diagnostics.add(function.location, .semantic, "opaque ownership storage requires no live external aliases to the consumed root", .{});
                 return;
@@ -1322,16 +1331,25 @@ pub const SafetyChecker = struct {
                         try self.mergeLiveOpaqueDependencies(state, storage, hidden.items);
                 }
             }
-            if (post_state.opaque_ownership == .maybe) {
-                try self.diagnostics.add(function.location, .semantic, "opaque ownership storage is conditional and cannot be summarized safely", .{});
+            if (post_state.opaque_ownership == .ambiguous) {
+                try self.diagnostics.add(function.location, .semantic, "opaque ownership consumption has no single representable storage", .{});
                 continue;
             }
-            if (post_state.opaque_ownership == .definite) {
-                const value = projectValueFacts(argument_values[post_state.target.input_index], post_state.target.projections);
+            if (post_state.opaque_ownership == .definite or post_state.opaque_ownership == .conditional) {
+                const source = try self.inputEffectTarget(post_state, arguments, argument_values, state);
+                const argument_value = projectValueFacts(argument_values[post_state.target.input_index], post_state.target.projections);
+                const value = if (source) |target|
+                    if (self.initializednessAtPlace(state, target) == .initialized)
+                        self.valueAtPlace(state, target) orelse argument_value
+                    else
+                        argument_value
+                else
+                    argument_value;
                 const opaque_path = post_state.opaque_storage orelse {
                     if (hasExternalOpaqueDependency(value, value.owned_roots))
                         try self.diagnostics.add(function.location, .semantic, "opaque ownership storage cannot hide dependencies on external roots", .{});
-                    try self.closeOpaqueOwnedRoots(function, value, state);
+                    try self.closeOpaqueOwnedRoots(function, value, state, source);
+                    if (source) |target| try self.setPlace(state, target, .moved, .{});
                     continue;
                 };
                 if (opaque_path.input_index >= arguments.len) continue;
@@ -1341,7 +1359,8 @@ pub const SafetyChecker = struct {
                 // Match the primitive boundary: consuming the old ownership
                 // is validated before the destination storage starts hiding
                 // the transferred value's dependencies.
-                try self.closeOpaqueOwnedRoots(function, value, state);
+                try self.closeOpaqueOwnedRoots(function, value, state, source);
+                if (source) |target| try self.setPlace(state, target, .moved, .{});
                 try self.hideOpaqueDependencies(state, storage, value);
                 continue;
             }
@@ -3788,15 +3807,15 @@ pub const SafetyChecker = struct {
                 merged.refreshes_storage_root = left_state.refreshes_storage_root or right_state.refreshes_storage_root;
                 merged.requires_available_destination = left_state.requires_available_destination or right_state.requires_available_destination;
                 merged.may_repopulate_opaque_storage = left_state.may_repopulate_opaque_storage or right_state.may_repopulate_opaque_storage;
-                merged.opaque_ownership = joinOpaqueOwnership(left_state.opaque_ownership, right_state.opaque_ownership);
-                if (!optionalInputPathEqual(left_state.opaque_storage, right_state.opaque_storage)) merged.opaque_storage = null;
+                joinOpaqueOwnershipEffect(&merged, left_state, right_state);
             } else {
                 if (left_state.initializedness != .initialized) {
                     merged.initializedness = .maybe_initialized;
                 } else {
                     merged.value = try self.mergeOutputEffects(left_state.value, try self.inputOutputEffect(left_state.target.input_index, left_state.target.projections));
                 }
-                merged.opaque_ownership = joinOpaqueOwnership(left_state.opaque_ownership, .none);
+                const unchanged: facts.InputPlaceEffect = .{ .target = left_state.target, .initializedness = .initialized };
+                joinOpaqueOwnershipEffect(&merged, left_state, unchanged);
             }
             try joined.append(merged);
         }
@@ -3807,7 +3826,8 @@ pub const SafetyChecker = struct {
             } else {
                 merged.value = try self.mergeOutputEffects(right_state.value, try self.inputOutputEffect(right_state.target.input_index, right_state.target.projections));
             }
-            merged.opaque_ownership = joinOpaqueOwnership(.none, right_state.opaque_ownership);
+            const unchanged: facts.InputPlaceEffect = .{ .target = right_state.target, .initializedness = .initialized };
+            joinOpaqueOwnershipEffect(&merged, unchanged, right_state);
             try joined.append(merged);
         };
         destination.clearRetainingCapacity();
@@ -4801,10 +4821,40 @@ fn appendFreshSource(list: *std.array_list.Managed(facts.FreshRootSource), sourc
     try list.append(source);
 }
 
-fn joinOpaqueOwnership(left: facts.OpaqueOwnershipConsumption, right: facts.OpaqueOwnershipConsumption) facts.OpaqueOwnershipConsumption {
-    if (left == right) return left;
-    if (left == .none and right == .none) return .none;
-    return .maybe;
+fn joinOpaqueOwnershipEffect(
+    merged: *facts.InputPlaceEffect,
+    left: facts.InputPlaceEffect,
+    right: facts.InputPlaceEffect,
+) void {
+    const left_ownership = left.opaque_ownership;
+    const right_ownership = right.opaque_ownership;
+    if (left_ownership == .ambiguous or right_ownership == .ambiguous) {
+        merged.opaque_ownership = .ambiguous;
+        merged.opaque_storage = null;
+        return;
+    }
+    if (left_ownership == .none and right_ownership == .none) {
+        merged.opaque_ownership = .none;
+        merged.opaque_storage = null;
+        return;
+    }
+
+    const left_storage = if (left_ownership == .none) right.opaque_storage else left.opaque_storage;
+    const right_storage = if (right_ownership == .none) left.opaque_storage else right.opaque_storage;
+    if (!optionalInputPathEqual(left_storage, right_storage)) {
+        merged.opaque_ownership = .ambiguous;
+        merged.opaque_storage = null;
+        return;
+    }
+
+    merged.opaque_storage = left_storage;
+    if (left_ownership == .none or right_ownership == .none or
+        left_ownership == .conditional or right_ownership == .conditional)
+    {
+        merged.opaque_ownership = .conditional;
+    } else {
+        merged.opaque_ownership = .definite;
+    }
 }
 
 fn projectionsEqual(left: []const place.Projection, right: []const place.Projection) bool {
@@ -4932,7 +4982,8 @@ test "virtual summaries require exact ownership transfer and deinitialization" {
         .{ .outputs = &.{.{}}, .input_post_states = &.{.{
             .target = .{ .input_index = 0 },
             .initializedness = .initialized,
-            .opaque_ownership = .maybe,
+            .opaque_ownership = .conditional,
+            .opaque_storage = .{ .input_index = 1 },
         }} },
     );
     try std.testing.expect(opaque_mismatch == null);
@@ -5342,7 +5393,7 @@ test "trivial input writes retain initialized post states" {
     try std.testing.expect(states.items[0].refreshes_storage_root);
 }
 
-test "opaque ownership joins are path-order independent and finite" {
+test "opaque ownership joins preserve conditional storage and reject ambiguity" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -5350,16 +5401,19 @@ test "opaque ownership joins are path-order independent and finite" {
     defer checker.deinit();
 
     const target = facts.InputPath{ .input_index = 0 };
+    const storage = facts.InputPath{ .input_index = 1 };
+    const other_storage = facts.InputPath{ .input_index = 2 };
     var opaque_branch = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
     defer opaque_branch.deinit();
-    try checker.recordOpaqueOwnershipConsumption(&opaque_branch, &.{target}, .definite, null);
+    try checker.recordOpaqueOwnershipConsumption(&opaque_branch, &.{target}, .definite, storage);
     var plain_branch = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
     defer plain_branch.deinit();
 
     var forward = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
     defer forward.deinit();
     try checker.joinInputPostStates(&forward, &opaque_branch, &plain_branch);
-    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.maybe, forward.items[0].opaque_ownership);
+    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.conditional, forward.items[0].opaque_ownership);
+    try std.testing.expect(optionalInputPathEqual(storage, forward.items[0].opaque_storage));
 
     var reverse = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
     defer reverse.deinit();
@@ -5369,8 +5423,30 @@ test "opaque ownership joins are path-order independent and finite" {
     var fixed_point = try cloneInputPostStates(&forward, allocator);
     defer fixed_point.deinit();
     try checker.joinInputPostStates(&fixed_point, &fixed_point, &opaque_branch);
-    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.maybe, fixed_point.items[0].opaque_ownership);
+    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.conditional, fixed_point.items[0].opaque_ownership);
     try std.testing.expectEqual(@as(usize, 1), fixed_point.items.len);
+
+    var same_storage = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    defer same_storage.deinit();
+    try checker.joinInputPostStates(&same_storage, &opaque_branch, &opaque_branch);
+    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.definite, same_storage.items[0].opaque_ownership);
+    try std.testing.expect(optionalInputPathEqual(storage, same_storage.items[0].opaque_storage));
+
+    var other_branch = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    defer other_branch.deinit();
+    try checker.recordOpaqueOwnershipConsumption(&other_branch, &.{target}, .definite, other_storage);
+    var ambiguous = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    defer ambiguous.deinit();
+    try checker.joinInputPostStates(&ambiguous, &opaque_branch, &other_branch);
+    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.ambiguous, ambiguous.items[0].opaque_ownership);
+    try std.testing.expectEqual(@as(?facts.InputPath, null), ambiguous.items[0].opaque_storage);
+
+    var sequential = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    defer sequential.deinit();
+    try checker.recordOpaqueOwnershipConsumption(&sequential, &.{target}, .conditional, storage);
+    try checker.recordOpaqueOwnershipConsumption(&sequential, &.{target}, .definite, storage);
+    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.definite, sequential.items[0].opaque_ownership);
+    try std.testing.expect(optionalInputPathEqual(storage, sequential.items[0].opaque_storage));
 }
 
 test "opaque ownership projections retain sibling facts" {

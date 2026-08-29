@@ -3962,6 +3962,46 @@ test "feature_tests/ownership/212X_structural_auto_deinit_respects_required_live
     );
 }
 
+test "feature_tests/ownership/213_conditional_opaque_consumption_into_known_storage" {
+    const test_path = "tests/feature_tests/ownership/213_conditional_opaque_consumption_into_known_storage";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/214X_conditional_opaque_consumption_invalidates_source" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/214X_conditional_opaque_consumption_invalidates_source",
+        "place rooted at 'source' is moved and cannot be used",
+    );
+}
+
+test "feature_tests/ownership/215X_conditional_opaque_consumption_hides_dependencies" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/215X_conditional_opaque_consumption_hides_dependencies",
+        "opaque storage hides a dependency",
+    );
+}
+
+test "feature_tests/ownership/216_conditional_opaque_consumption_then_release" {
+    const test_path = "tests/feature_tests/ownership/216_conditional_opaque_consumption_then_release";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/217X_conditional_opaque_reference_source_hides_dependencies" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/217X_conditional_opaque_reference_source_hides_dependencies",
+        "opaque storage hides a dependency",
+    );
+}
+
+test "feature_tests/ownership/218X_conditional_opaque_reference_source_closes_owned_roots" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/218X_conditional_opaque_reference_source_closes_owned_roots",
+        "opaque ownership storage requires no live external aliases to the consumed root",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended
