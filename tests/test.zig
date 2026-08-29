@@ -3862,6 +3862,60 @@ test "feature_tests/ownership/197_opaque_expression_order_repopulate_then_releas
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/198X_nested_call_post_state_repopulates_with_new_root" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/198X_nested_call_post_state_repopulates_with_new_root",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/199X_nested_initializer_propagates_input_post_state" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/199X_nested_initializer_propagates_input_post_state",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/200X_return_expression_propagates_input_post_state" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/200X_return_expression_propagates_input_post_state",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/201X_nested_argument_propagates_input_post_state" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/201X_nested_argument_propagates_input_post_state",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/202X_conditional_expression_joins_input_post_state" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/202X_conditional_expression_joins_input_post_state",
+        "place rooted at 'allocation' is maybe_initialized and cannot be used",
+    );
+}
+
+test "feature_tests/ownership/203_auto_deinit_applies_opaque_release_summary" {
+    const test_path = "tests/feature_tests/ownership/203_auto_deinit_applies_opaque_release_summary";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/204X_auto_deinit_respects_required_live_inputs" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/204X_auto_deinit_respects_required_live_inputs",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/205_structural_auto_deinit_applies_field_summary" {
+    const test_path = "tests/feature_tests/ownership/205_structural_auto_deinit_applies_field_summary";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

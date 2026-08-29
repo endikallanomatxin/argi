@@ -191,10 +191,26 @@ pub const SafetyChecker = struct {
                 },
                 .auto_deinit_binding => |cleanup| {
                     const storage = place.Place{ .root = cleanup.binding };
-                    if (self.getPlace(state, storage)) |owned_value| {
-                        if (!try self.endRoots(function, state, owned_value.value.owned_roots)) continue;
+                    switch (self.initializednessAtPlace(state, storage)) {
+                        .initialized => if (cleanup.deinit_fn != null) {
+                            try self.evaluateResolvedAutoDeinit(function, cleanup, storage, state);
+                        } else if (cleanup.fields.len == 0) {
+                            if (self.getPlace(state, storage)) |owned_value| {
+                                if (!try self.endRoots(function, state, owned_value.value.owned_roots)) continue;
+                            }
+                            try self.setPlace(state, storage, .deinitialized, .{});
+                        } else {
+                            const diagnostic_count = self.diagnostics.list.items.len;
+                            try self.evaluateStructuralAutoDeinit(function, cleanup.fields, storage, state);
+                            if (self.diagnostics.list.items.len == diagnostic_count)
+                                try self.setPlace(state, storage, .deinitialized, .{});
+                        },
+                        // The drop flag correlates initializedness with the
+                        // path-specific roots that are unavailable after a
+                        // state join. No deinit effect is definite here.
+                        .maybe_initialized => {},
+                        .moved, .deinitialized => {},
                     }
-                    try self.setPlace(state, storage, .deinitialized, .{});
                 },
                 .struct_field_store => |store| {
                     const pointer = try self.evaluatePointerUse(function, pointerUseOperand(node).?, state) orelse continue;
@@ -606,11 +622,99 @@ pub const SafetyChecker = struct {
                 @constCast(call).consumes_auto_deinit = arguments[index].value.content.address_of;
             }
         }
+        try self.applyFunctionSummaryEffects(function, summary, arguments, argument_values, state);
+        if (summary.outputs.len != 1) return .{};
+        return self.instantiateOutput(summary.outputs[0], argument_values, state);
+    }
+
+    fn evaluateResolvedAutoDeinit(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        cleanup: *const sg.AutoDeinitBinding,
+        storage: place.Place,
+        state: *FunctionState,
+    ) !void {
+        return self.evaluateResolvedDeinit(
+            function,
+            cleanup.deinit_fn orelse return,
+            cleanup.input orelse return,
+            cleanup.self_field_index,
+            storage,
+            state,
+        );
+    }
+
+    fn evaluateStructuralAutoDeinit(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        fields: []const sg.AutoDeinitField,
+        storage: place.Place,
+        state: *FunctionState,
+    ) !void {
+        for (fields) |field| {
+            const field_storage = try self.projectedPlace(storage, .{ .field = field.field_index });
+            if (self.initializednessAtPlace(state, field_storage) != .initialized) continue;
+            if (field.deinit_fn) |deinit_fn| {
+                try self.evaluateResolvedDeinit(
+                    function,
+                    deinit_fn,
+                    field.input orelse continue,
+                    field.self_field_index,
+                    field_storage,
+                    state,
+                );
+            } else {
+                try self.evaluateStructuralAutoDeinit(function, field.fields, field_storage, state);
+                try self.setPlace(state, field_storage, .deinitialized, .{});
+            }
+        }
+    }
+
+    fn evaluateResolvedDeinit(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        deinit_fn: *const sg.FunctionDeclaration,
+        input: *const sg.SGNode,
+        self_field_index: u32,
+        storage: place.Place,
+        state: *FunctionState,
+    ) !void {
+        if (input.content != .struct_value_literal) return;
+        const summary = self.summaries.get(deinit_fn) orelse return;
+        const arguments = input.content.struct_value_literal.fields;
+
+        var candidate = try state.clone(self.allocator.*);
+        defer candidate.deinit();
+        const diagnostic_count = self.diagnostics.list.items.len;
+        const argument_values = try self.allocator.alloc(facts.ValueFacts, arguments.len);
+        for (arguments, 0..) |argument, index| {
+            argument_values[index] = if (index == self_field_index)
+                .{
+                    .dependencies = try self.oneDependency(try self.storageRootForPlace(storage, &candidate)),
+                    .referenced_place = storage,
+                }
+            else
+                try self.evaluate(function, argument.value, &candidate);
+        }
+        if (!try self.validateRequiredLiveInputs(function, summary, argument_values, &candidate)) return;
+        try self.applyFunctionSummaryEffects(function, summary, arguments, argument_values, &candidate);
+        if (self.diagnostics.list.items.len != diagnostic_count) return;
+        const previous = state.*;
+        state.* = candidate;
+        candidate = previous;
+    }
+
+    fn applyFunctionSummaryEffects(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        summary: facts.FunctionSummary,
+        arguments: []const sg.StructValueLiteralField,
+        argument_values: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !void {
         try self.applyInputEffects(function, summary, arguments, argument_values, state);
         try self.applyOpaqueStorageReleases(summary, arguments, argument_values, state);
         try self.applyOpaqueStorageEffects(summary, arguments, argument_values, state);
-        if (summary.outputs.len != 1) return .{};
-        return self.instantiateOutput(summary.outputs[0], argument_values, state);
     }
 
     /// Relocation transfers one existing value representation between distinct
@@ -1099,9 +1203,7 @@ pub const SafetyChecker = struct {
                 @constCast(call).consumes_auto_deinit = arguments[index].value.content.address_of;
             }
         }
-        try self.applyInputEffects(function, summary, arguments, argument_values, state);
-        try self.applyOpaqueStorageReleases(summary, arguments, argument_values, state);
-        try self.applyOpaqueStorageEffects(summary, arguments, argument_values, state);
+        try self.applyFunctionSummaryEffects(function, summary, arguments, argument_values, state);
         if (summary.outputs.len != 1) return .{};
         return self.instantiateOutput(summary.outputs[0], argument_values, state);
     }
@@ -2577,85 +2679,42 @@ pub const SafetyChecker = struct {
         block: *const sg.CodeBlock,
         states: *std.array_list.Managed(facts.InputPlaceEffect),
     ) !void {
-        for (block.nodes) |node| switch (node.content) {
-            .function_call => |call| {
-                if (call.input.content != .struct_value_literal) continue;
-                const arguments = call.input.content.struct_value_literal.fields;
-                if (call.callee.safety_primitive == .trusted_opaque_store_owned or
-                    call.callee.safety_primitive == .trusted_opaque_store_owned_in)
-                {
-                    if (arguments.len >= 2) {
-                        const source_index: usize = if (arguments.len == 3) 2 else 1;
-                        const targets = try self.inferInputPaths(function, arguments[source_index].value);
-                        const storage = if (arguments.len == 3) blk: {
-                            const storage_targets = try self.inferInputPaths(function, arguments[0].value);
-                            break :blk if (storage_targets.len == 1) storage_targets[0] else null;
-                        } else null;
-                        try self.recordOpaqueOwnershipConsumption(states, targets, .definite, storage);
-                    }
-                    continue;
-                }
-                if (call.callee.safety_primitive == .trusted_opaque_relocate_owned) continue;
-                if (call.callee.safety_primitive == .relocate) {
-                    if (arguments.len != 2) continue;
-                    const source_targets = try self.inferInputPaths(function, arguments[0].value);
-                    const destination_targets = try self.inferInputPaths(function, arguments[1].value);
-                    for (source_targets) |source| {
-                        try self.recordInputPostState(states, &.{source}, .moved, .{}, false, false, false, false);
-                        var transferred = try self.inputOutputEffect(source.input_index, source.projections);
-                        transferred = self.withOwnershipTransfer(transferred);
-                        for (destination_targets) |destination|
-                            try self.recordInputPostState(states, &.{destination}, .initialized, transferred, false, false, true, false);
-                    }
-                    continue;
-                }
-                const summary = self.summaries.get(call.callee) orelse continue;
-                for (summary.input_post_states) |post_state| {
-                    if (post_state.target.input_index >= arguments.len) continue;
-                    var targets = try self.inferInputPaths(function, arguments[post_state.target.input_index].value);
-                    for (post_state.target.projections) |projection| targets = try self.projectInputPaths(targets, projection);
-                    if (post_state.opaque_ownership != .none) {
-                        const storage = if (post_state.opaque_storage) |opaque_storage| blk: {
-                            if (opaque_storage.input_index >= arguments.len) break :blk null;
-                            var mapped = try self.inferInputPaths(function, arguments[opaque_storage.input_index].value);
-                            for (opaque_storage.projections) |projection| mapped = try self.projectInputPaths(mapped, projection);
-                            break :blk if (mapped.len == 1) mapped[0] else null;
-                        } else null;
-                        try self.recordOpaqueOwnershipConsumption(states, targets, post_state.opaque_ownership, storage);
-                        continue;
-                    }
-                    const value = try self.substituteOutput(function, post_state.value, arguments);
-                    try self.recordInputPostState(states, targets, post_state.initializedness, value, post_state.ends_previous_roots, post_state.refreshes_storage_root, post_state.requires_available_destination, post_state.may_repopulate_opaque_storage);
-                }
-            },
-            .virtual_call => |call| {
-                if (call.input.content != .struct_value_literal) continue;
-                const summary = try self.virtualSummary(call.safety_methods) orelse continue;
-                const arguments = call.input.content.struct_value_literal.fields;
-                for (summary.input_post_states) |post_state| {
-                    if (post_state.target.input_index >= arguments.len) continue;
-                    var targets = try self.inferInputPaths(function, arguments[post_state.target.input_index].value);
-                    for (post_state.target.projections) |projection| targets = try self.projectInputPaths(targets, projection);
-                    if (post_state.opaque_ownership != .none) {
-                        try self.recordOpaqueOwnershipConsumption(states, targets, post_state.opaque_ownership, null);
-                        continue;
-                    }
-                    try self.recordInputPostState(states, targets, post_state.initializedness, try self.substituteOutput(function, post_state.value, arguments), post_state.ends_previous_roots, post_state.refreshes_storage_root, post_state.requires_available_destination, post_state.may_repopulate_opaque_storage);
-                }
-            },
+        for (block.nodes) |node| try self.inferInputPostStatesNode(function, node, states);
+        if (block.ret_val) |value| try self.inferInputPostStatesExpression(function, value, states);
+    }
+
+    fn inferInputPostStatesNode(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        states: *std.array_list.Managed(facts.InputPlaceEffect),
+    ) anyerror!void {
+        switch (node.content) {
+            .binding_declaration => |binding| if (binding.initialization) |initialization|
+                try self.inferInputPostStatesExpression(function, initialization, states),
+            .binding_assignment => |assignment| try self.inferInputPostStatesExpression(function, assignment.value, states),
+            .function_call, .virtual_call => try self.inferInputPostStatesExpression(function, node, states),
             .pointer_assignment => |assignment| {
+                try self.inferInputPostStatesExpression(function, assignment.pointer, states);
+                try self.inferInputPostStatesExpression(function, assignment.value, states);
                 try self.recordInputPostState(states, try self.inferInputPaths(function, assignment.pointer), .initialized, try self.inferExpression(function, assignment.value), false, false, false, true);
             },
             .struct_field_store => |store| {
+                try self.inferInputPostStatesExpression(function, store.struct_ptr, states);
+                try self.inferInputPostStatesExpression(function, store.value, states);
                 const targets = try self.projectInputPaths(try self.inferInputPaths(function, store.struct_ptr), .{ .field = store.field_index });
                 try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false, false, false, true);
             },
             .array_store => |store| {
+                try self.inferInputPostStatesExpression(function, store.array_ptr, states);
+                try self.inferInputPostStatesExpression(function, store.index, states);
+                try self.inferInputPostStatesExpression(function, store.value, states);
                 const projection: place.Projection = if (staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
                 const targets = try self.projectInputPaths(try self.inferInputPaths(function, store.array_ptr), projection);
                 try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false, false, false, true);
             },
             .if_statement => |statement| {
+                try self.inferInputPostStatesExpression(function, statement.condition, states);
                 var then_states = try cloneInputPostStates(states, self.allocator.*);
                 defer then_states.deinit();
                 try self.inferInputPostStates(function, statement.then_block, &then_states);
@@ -2665,18 +2724,23 @@ pub const SafetyChecker = struct {
                 try self.joinInputPostStates(states, &then_states, &else_states);
             },
             .while_statement => |statement| {
+                try self.inferInputPostStatesExpression(function, statement.condition, states);
                 var body_states = try cloneInputPostStates(states, self.allocator.*);
                 defer body_states.deinit();
                 try self.inferInputPostStates(function, statement.body, &body_states);
                 try self.joinInputPostStates(states, states, &body_states);
             },
             .for_statement => |statement| {
+                if (statement.init) |initialization| try self.inferInputPostStatesNode(function, initialization, states);
+                try self.inferInputPostStatesExpression(function, statement.condition, states);
                 var body_states = try cloneInputPostStates(states, self.allocator.*);
                 defer body_states.deinit();
                 try self.inferInputPostStates(function, statement.body, &body_states);
+                if (statement.increment) |increment| try self.inferInputPostStatesNode(function, increment, &body_states);
                 try self.joinInputPostStates(states, states, &body_states);
             },
             .switch_statement => |statement| {
+                try self.inferInputPostStatesExpression(function, statement.expression, states);
                 var joined: ?std.array_list.Managed(facts.InputPlaceEffect) = null;
                 defer if (joined) |*joined_states| joined_states.deinit();
 
@@ -2699,8 +2763,170 @@ pub const SafetyChecker = struct {
                     try states.appendSlice(joined_states.items);
                 }
             },
+            .return_statement => |statement| {
+                if (statement.expression) |expression| try self.inferInputPostStatesExpression(function, expression, states);
+                for (statement.cleanup_nodes) |cleanup| try self.inferInputPostStatesNode(function, cleanup, states);
+            },
+            .code_block => |nested| try self.inferInputPostStates(function, nested, states),
+            else => try self.inferInputPostStatesExpression(function, node, states),
+        }
+    }
+
+    fn inferInputPostStatesExpression(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        states: *std.array_list.Managed(facts.InputPlaceEffect),
+    ) anyerror!void {
+        switch (node.content) {
+            .move_value, .address_of => |value| try self.inferInputPostStatesExpression(function, value, states),
+            .dereference => |dereference| try self.inferInputPostStatesExpression(function, dereference.pointer, states),
+            .struct_value_literal => |literal| for (literal.fields) |field|
+                try self.inferInputPostStatesExpression(function, field.value, states),
+            .list_literal => |literal| for (literal.elements) |element|
+                try self.inferInputPostStatesExpression(function, element, states),
+            .array_literal => |literal| for (literal.elements) |element|
+                try self.inferInputPostStatesExpression(function, element, states),
+            .choice_literal => |literal| if (literal.payload) |payload|
+                try self.inferInputPostStatesExpression(function, payload, states),
+            .struct_field_access => |access| try self.inferInputPostStatesExpression(function, access.struct_value, states),
+            .choice_payload_access => |access| try self.inferInputPostStatesExpression(function, access.choice_value, states),
+            .array_index => |index| {
+                try self.inferInputPostStatesExpression(function, index.array_ptr, states);
+                try self.inferInputPostStatesExpression(function, index.index, states);
+            },
+            .explicit_cast => |cast| try self.inferInputPostStatesExpression(function, cast.value, states),
+            .binary_operation => |operation| {
+                try self.inferInputPostStatesExpression(function, operation.left, states);
+                try self.inferInputPostStatesExpression(function, operation.right, states);
+            },
+            .comparison => |comparison| {
+                try self.inferInputPostStatesExpression(function, comparison.left, states);
+                try self.inferInputPostStatesExpression(function, comparison.right, states);
+            },
+            .logical_operation => |operation| {
+                try self.inferInputPostStatesExpression(function, operation.left, states);
+                try self.inferConditionalInputPostStatesExpression(function, operation.right, states);
+            },
+            .nullable_unwrap_or => |unwrap| {
+                try self.inferInputPostStatesExpression(function, unwrap.nullable_value, states);
+                try self.inferConditionalInputPostStatesExpression(function, unwrap.fallback_value, states);
+            },
+            .testing_expect_error => |expectation| {
+                try self.inferInputPostStatesExpression(function, expectation.expected_reason, states);
+                try self.inferInputPostStatesExpression(function, expectation.actual_result, states);
+            },
+            .error_propagation => |propagation| {
+                try self.inferInputPostStatesExpression(function, propagation.errable_value, states);
+                var error_states = try cloneInputPostStates(states, self.allocator.*);
+                defer error_states.deinit();
+                for (propagation.cleanup_nodes) |cleanup| try self.inferInputPostStatesNode(function, cleanup, &error_states);
+                try self.joinInputPostStates(states, states, &error_states);
+            },
+            .error_context => |context| {
+                try self.inferInputPostStatesExpression(function, context.errable_value, states);
+                var error_states = try cloneInputPostStates(states, self.allocator.*);
+                defer error_states.deinit();
+                try self.inferInputPostStatesExpression(function, context.context, &error_states);
+                for (context.cleanup_nodes) |cleanup| try self.inferInputPostStatesNode(function, cleanup, &error_states);
+                try self.joinInputPostStates(states, states, &error_states);
+            },
+            .function_call => |call| {
+                try self.inferInputPostStatesExpression(function, call.input, states);
+                try self.applyInputPostStatesFromFunctionCall(function, call, states);
+            },
+            .virtual_call => |call| {
+                try self.inferInputPostStatesExpression(function, call.handle, states);
+                try self.inferInputPostStatesExpression(function, call.input, states);
+                const summary = try self.virtualSummary(call.safety_methods) orelse return;
+                try self.applyInputPostStatesFromSummary(function, summary, call.input, states);
+            },
+            .virtualize => |virtualize| try self.inferInputPostStatesExpression(function, virtualize.value, states),
+            .type_initializer => |initializer| try self.inferInputPostStatesExpression(function, initializer.args, states),
             else => {},
-        };
+        }
+    }
+
+    fn inferConditionalInputPostStatesExpression(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        states: *std.array_list.Managed(facts.InputPlaceEffect),
+    ) !void {
+        var executed = try cloneInputPostStates(states, self.allocator.*);
+        defer executed.deinit();
+        try self.inferInputPostStatesExpression(function, node, &executed);
+        var skipped = try cloneInputPostStates(states, self.allocator.*);
+        defer skipped.deinit();
+        try self.joinInputPostStates(states, &executed, &skipped);
+    }
+
+    fn applyInputPostStatesFromFunctionCall(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        call: *const sg.FunctionCall,
+        states: *std.array_list.Managed(facts.InputPlaceEffect),
+    ) !void {
+        if (call.input.content != .struct_value_literal) return;
+        const arguments = call.input.content.struct_value_literal.fields;
+        if (call.callee.safety_primitive == .trusted_opaque_store_owned or
+            call.callee.safety_primitive == .trusted_opaque_store_owned_in)
+        {
+            if (arguments.len >= 2) {
+                const source_index: usize = if (arguments.len == 3) 2 else 1;
+                const targets = try self.inferInputPaths(function, arguments[source_index].value);
+                const storage = if (arguments.len == 3) blk: {
+                    const storage_targets = try self.inferInputPaths(function, arguments[0].value);
+                    break :blk if (storage_targets.len == 1) storage_targets[0] else null;
+                } else null;
+                try self.recordOpaqueOwnershipConsumption(states, targets, .definite, storage);
+            }
+            return;
+        }
+        if (call.callee.safety_primitive == .trusted_opaque_relocate_owned) return;
+        if (call.callee.safety_primitive == .relocate) {
+            if (arguments.len != 2) return;
+            const source_targets = try self.inferInputPaths(function, arguments[0].value);
+            const destination_targets = try self.inferInputPaths(function, arguments[1].value);
+            for (source_targets) |source| {
+                try self.recordInputPostState(states, &.{source}, .moved, .{}, false, false, false, false);
+                var transferred = try self.inputOutputEffect(source.input_index, source.projections);
+                transferred = self.withOwnershipTransfer(transferred);
+                for (destination_targets) |destination|
+                    try self.recordInputPostState(states, &.{destination}, .initialized, transferred, false, false, true, false);
+            }
+            return;
+        }
+        const summary = self.summaries.get(call.callee) orelse return;
+        try self.applyInputPostStatesFromSummary(function, summary, call.input, states);
+    }
+
+    fn applyInputPostStatesFromSummary(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        summary: facts.FunctionSummary,
+        input: *const sg.SGNode,
+        states: *std.array_list.Managed(facts.InputPlaceEffect),
+    ) !void {
+        if (input.content != .struct_value_literal) return;
+        const arguments = input.content.struct_value_literal.fields;
+        for (summary.input_post_states) |post_state| {
+            if (post_state.target.input_index >= arguments.len) continue;
+            var targets = try self.inferInputPaths(function, arguments[post_state.target.input_index].value);
+            for (post_state.target.projections) |projection| targets = try self.projectInputPaths(targets, projection);
+            if (post_state.opaque_ownership != .none) {
+                const storage = if (post_state.opaque_storage) |opaque_storage| blk: {
+                    if (opaque_storage.input_index >= arguments.len) break :blk null;
+                    var mapped = try self.inferInputPaths(function, arguments[opaque_storage.input_index].value);
+                    for (opaque_storage.projections) |projection| mapped = try self.projectInputPaths(mapped, projection);
+                    break :blk if (mapped.len == 1) mapped[0] else null;
+                } else null;
+                try self.recordOpaqueOwnershipConsumption(states, targets, post_state.opaque_ownership, storage);
+                continue;
+            }
+            const value = try self.substituteOutput(function, post_state.value, arguments);
+            try self.recordInputPostState(states, targets, post_state.initializedness, value, post_state.ends_previous_roots, post_state.refreshes_storage_root, post_state.requires_available_destination, post_state.may_repopulate_opaque_storage);
+        }
     }
 
     fn inferRequiredLiveInputsBlock(
@@ -2827,8 +3053,11 @@ pub const SafetyChecker = struct {
             },
             .code_block => |block| try self.inferRequiredLiveInputsBlock(function, block, required),
             .type_initializer => |initializer| try self.inferRequiredLiveInputsNode(function, initializer.args, required),
-            .auto_deinit_binding => |cleanup| if (cleanup.input) |input|
-                try self.inferRequiredLiveInputsNode(function, input, required),
+            .auto_deinit_binding => |cleanup| if (cleanup.input) |input| {
+                try self.inferRequiredLiveInputsNode(function, input, required);
+                if (cleanup.deinit_fn) |deinit_fn| if (self.summaries.get(deinit_fn)) |summary|
+                    try self.substituteRequiredLiveInputs(function, summary.required_live_inputs, input, required);
+            },
             else => {},
         }
     }
