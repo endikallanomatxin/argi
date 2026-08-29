@@ -140,6 +140,9 @@ pub const InputPlaceEffect = struct {
     /// Storage that conservatively retains the consumed value's dependencies.
     /// This is symbolic so wrappers can map the opaque boundary to a caller Place.
     opaque_storage: ?InputPath = null,
+    /// The write reaches its target through pointer provenance and can add the
+    /// written value's dependencies to an opaque domain at the caller.
+    may_repopulate_opaque_storage: bool = false,
 };
 
 pub const OpaqueOwnershipConsumption = enum {

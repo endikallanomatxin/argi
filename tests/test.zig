@@ -3755,6 +3755,59 @@ test "feature_tests/ownership/181X_fake_opaque_release_all_name" {
     );
 }
 
+test "feature_tests/ownership/182X_opaque_release_after_early_return_is_not_definite" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/182X_opaque_release_after_early_return_is_not_definite",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/183X_opaque_write_after_release_repopulates_domain" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/183X_opaque_write_after_release_repopulates_domain",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/184_opaque_release_in_both_branches_is_definite" {
+    const test_path = "tests/feature_tests/ownership/184_opaque_release_in_both_branches_is_definite";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/185X_opaque_release_in_one_branch_is_not_definite" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/185X_opaque_release_in_one_branch_is_not_definite",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/186_opaque_release_after_write_is_definite" {
+    const test_path = "tests/feature_tests/ownership/186_opaque_release_after_write_is_definite";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/187X_opaque_release_then_write_double_wrapper_repopulates" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/187X_opaque_release_then_write_double_wrapper_repopulates",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/188_opaque_write_then_release_double_wrapper_is_definite" {
+    const test_path = "tests/feature_tests/ownership/188_opaque_write_then_release_double_wrapper_is_definite";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/189X_opaque_pointer_assignment_after_release_repopulates" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/189X_opaque_pointer_assignment_after_release_repopulates",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended
