@@ -3808,6 +3808,60 @@ test "feature_tests/ownership/189X_opaque_pointer_assignment_after_release_repop
     );
 }
 
+test "feature_tests/ownership/190X_opaque_repopulation_inside_initializer_cancels_release" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/190X_opaque_repopulation_inside_initializer_cancels_release",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/191X_opaque_repopulation_inside_return_expression_cancels_release" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/191X_opaque_repopulation_inside_return_expression_cancels_release",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/192X_opaque_repopulation_inside_nested_argument_cancels_release" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/192X_opaque_repopulation_inside_nested_argument_cancels_release",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/193_opaque_release_inside_initializer_is_definite" {
+    const test_path = "tests/feature_tests/ownership/193_opaque_release_inside_initializer_is_definite";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/194X_opaque_release_in_short_circuit_rhs_is_not_definite" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/194X_opaque_release_in_short_circuit_rhs_is_not_definite",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/195X_opaque_repopulation_in_short_circuit_rhs_cancels_release" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/195X_opaque_repopulation_in_short_circuit_rhs_cancels_release",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/196X_opaque_expression_order_release_then_repopulate" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/196X_opaque_expression_order_release_then_repopulate",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/197_opaque_expression_order_repopulate_then_release" {
+    const test_path = "tests/feature_tests/ownership/197_opaque_expression_order_repopulate_then_release";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

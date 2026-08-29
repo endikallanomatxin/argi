@@ -2893,6 +2893,8 @@ pub const SafetyChecker = struct {
             if (!state.reachable) break;
             try self.inferOpaqueReleaseNode(function, node, effects, state, exits);
         }
+        if (state.reachable) if (block.ret_val) |value|
+            try self.inferOpaqueReleaseExpression(function, value, effects, state, exits);
     }
 
     fn inferOpaqueReleaseNode(
@@ -2904,75 +2906,12 @@ pub const SafetyChecker = struct {
         exits: *?std.array_list.Managed(facts.InputPath),
     ) anyerror!void {
         switch (node.content) {
-            .function_call => |call| {
-                if (call.input.content != .struct_value_literal) return;
-                const arguments = call.input.content.struct_value_literal.fields;
-                if (call.callee.safety_primitive == .trusted_opaque_store_owned) {
-                    state.released.clearRetainingCapacity();
-                    return;
-                }
-                if (call.callee.safety_primitive == .trusted_opaque_store_owned_in) {
-                    if (arguments.len != 3) return;
-                    const storages = try self.inferInputPaths(function, arguments[0].value);
-                    const hidden = try self.inferExpression(function, arguments[2].value);
-                    for (storages) |storage| {
-                        self.removeOpaqueStorageRelease(&state.released, storage);
-                        try self.recordOpaqueStorageEffect(effects, storage, hidden);
-                    }
-                    return;
-                }
-                if (call.callee.safety_primitive == .trusted_opaque_release_all) {
-                    if (arguments.len != 1) return;
-                    const storages = try self.inferInputPaths(function, arguments[0].value);
-                    for (storages) |storage| try self.recordOpaqueStorageRelease(&state.released, storage);
-                    return;
-                }
-                const summary = self.summaries.get(call.callee) orelse return;
-                // Projected post-states can become opaque mutations at the
-                // caller through runtime provenance. Their symbolic target
-                // does not identify that domain, so invalidate all currently
-                // known-empty domains before applying the callee's net release.
-                if (summaryMayRepopulateOpaqueStorage(summary)) state.released.clearRetainingCapacity();
-                for (summary.opaque_storage_effects) |effect| {
-                    if (effect.storage.input_index >= arguments.len) continue;
-                    var storages = try self.inferInputPaths(function, arguments[effect.storage.input_index].value);
-                    for (effect.storage.projections) |projection| storages = try self.projectInputPaths(storages, projection);
-                    const hidden = try self.substituteOutput(function, effect.hidden_dependencies, arguments);
-                    for (storages) |storage| {
-                        self.removeOpaqueStorageRelease(&state.released, storage);
-                        try self.recordOpaqueStorageEffect(effects, storage, hidden);
-                    }
-                }
-                for (summary.opaque_storage_releases) |release| {
-                    if (release.input_index >= arguments.len) continue;
-                    var storages = try self.inferInputPaths(function, arguments[release.input_index].value);
-                    for (release.projections) |projection| storages = try self.projectInputPaths(storages, projection);
-                    for (storages) |storage| try self.recordOpaqueStorageRelease(&state.released, storage);
-                }
-            },
-            .virtual_call => |call| {
-                if (call.input.content != .struct_value_literal) return;
-                const summary = try self.virtualSummary(call.safety_methods) orelse return;
-                const arguments = call.input.content.struct_value_literal.fields;
-                if (summaryMayRepopulateOpaqueStorage(summary)) state.released.clearRetainingCapacity();
-                for (summary.opaque_storage_effects) |effect| {
-                    if (effect.storage.input_index >= arguments.len) continue;
-                    var storages = try self.inferInputPaths(function, arguments[effect.storage.input_index].value);
-                    for (effect.storage.projections) |projection| storages = try self.projectInputPaths(storages, projection);
-                    const hidden = try self.substituteOutput(function, effect.hidden_dependencies, arguments);
-                    for (storages) |storage| {
-                        self.removeOpaqueStorageRelease(&state.released, storage);
-                        try self.recordOpaqueStorageEffect(effects, storage, hidden);
-                    }
-                }
-                for (summary.opaque_storage_releases) |release| {
-                    if (release.input_index >= arguments.len) continue;
-                    var storages = try self.inferInputPaths(function, arguments[release.input_index].value);
-                    for (release.projections) |projection| storages = try self.projectInputPaths(storages, projection);
-                    for (storages) |storage| try self.recordOpaqueStorageRelease(&state.released, storage);
-                }
-            },
+            .binding_declaration => |binding| if (binding.initialization) |initialization|
+                try self.inferOpaqueReleaseExpression(function, initialization, effects, state, exits),
+            .binding_assignment => |assignment| try self.inferOpaqueReleaseExpression(function, assignment.value, effects, state, exits),
+            .function_call, .virtual_call => try self.inferOpaqueReleaseExpression(function, node, effects, state, exits),
             .if_statement => |statement| {
+                try self.inferOpaqueReleaseExpression(function, statement.condition, effects, state, exits);
                 var then_state = try state.clone(self.allocator.*);
                 defer then_state.deinit();
                 try self.inferOpaqueReleaseBlock(function, statement.then_block, effects, &then_state, exits);
@@ -2983,6 +2922,7 @@ pub const SafetyChecker = struct {
                 try self.joinOpaqueReleaseFallthrough(state, &then_state, &else_state);
             },
             .while_statement => |statement| {
+                try self.inferOpaqueReleaseExpression(function, statement.condition, effects, state, exits);
                 var body_state = try state.clone(self.allocator.*);
                 defer body_state.deinit();
                 try self.inferOpaqueReleaseBlock(function, statement.body, effects, &body_state, exits);
@@ -2993,6 +2933,7 @@ pub const SafetyChecker = struct {
             .for_statement => |statement| {
                 if (statement.init) |initialization|
                     try self.inferOpaqueReleaseNode(function, initialization, effects, state, exits);
+                try self.inferOpaqueReleaseExpression(function, statement.condition, effects, state, exits);
                 var body_state = try state.clone(self.allocator.*);
                 defer body_state.deinit();
                 try self.inferOpaqueReleaseBlock(function, statement.body, effects, &body_state, exits);
@@ -3001,6 +2942,7 @@ pub const SafetyChecker = struct {
                 state.released.clearRetainingCapacity();
             },
             .switch_statement => |statement| {
+                try self.inferOpaqueReleaseExpression(function, statement.expression, effects, state, exits);
                 var joined: ?OpaqueReleaseState = null;
                 defer if (joined) |*joined_state| joined_state.deinit();
                 for (statement.cases) |case| {
@@ -3020,15 +2962,194 @@ pub const SafetyChecker = struct {
                 if (joined) |*joined_state| try self.copyOpaqueReleaseState(state, joined_state) else state.reachable = false;
             },
             .return_statement => |statement| {
+                if (statement.expression) |expression|
+                    try self.inferOpaqueReleaseExpression(function, expression, effects, state, exits);
                 for (statement.cleanup_nodes) |cleanup|
                     try self.inferOpaqueReleaseNode(function, cleanup, effects, state, exits);
                 try self.recordOpaqueReleaseExit(exits, state.released.items);
                 state.reachable = false;
             },
-            .struct_field_store, .array_store, .pointer_assignment => state.released.clearRetainingCapacity(),
+            .struct_field_store => |store| {
+                try self.inferOpaqueReleaseExpression(function, store.struct_ptr, effects, state, exits);
+                try self.inferOpaqueReleaseExpression(function, store.value, effects, state, exits);
+                state.released.clearRetainingCapacity();
+            },
+            .array_store => |store| {
+                try self.inferOpaqueReleaseExpression(function, store.array_ptr, effects, state, exits);
+                try self.inferOpaqueReleaseExpression(function, store.index, effects, state, exits);
+                try self.inferOpaqueReleaseExpression(function, store.value, effects, state, exits);
+                state.released.clearRetainingCapacity();
+            },
+            .pointer_assignment => |assignment| {
+                try self.inferOpaqueReleaseExpression(function, assignment.pointer, effects, state, exits);
+                try self.inferOpaqueReleaseExpression(function, assignment.value, effects, state, exits);
+                state.released.clearRetainingCapacity();
+            },
             .code_block => |nested| try self.inferOpaqueReleaseBlock(function, nested, effects, state, exits),
             .break_statement, .continue_statement => state.reachable = false,
+            else => try self.inferOpaqueReleaseExpression(function, node, effects, state, exits),
+        }
+    }
+
+    /// Visits expression children in runtime evaluation order, then applies a
+    /// call's net opaque state. Conditional children are joined with the path
+    /// that skips them so they cannot manufacture a definite release.
+    fn inferOpaqueReleaseExpression(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueReleaseState,
+        exits: *?std.array_list.Managed(facts.InputPath),
+    ) anyerror!void {
+        switch (node.content) {
+            .move_value, .address_of => |value| try self.inferOpaqueReleaseExpression(function, value, effects, state, exits),
+            .dereference => |dereference| try self.inferOpaqueReleaseExpression(function, dereference.pointer, effects, state, exits),
+            .struct_value_literal => |literal| for (literal.fields) |field|
+                try self.inferOpaqueReleaseExpression(function, field.value, effects, state, exits),
+            .list_literal => |literal| for (literal.elements) |element|
+                try self.inferOpaqueReleaseExpression(function, element, effects, state, exits),
+            .array_literal => |literal| for (literal.elements) |element|
+                try self.inferOpaqueReleaseExpression(function, element, effects, state, exits),
+            .choice_literal => |literal| if (literal.payload) |payload|
+                try self.inferOpaqueReleaseExpression(function, payload, effects, state, exits),
+            .struct_field_access => |access| try self.inferOpaqueReleaseExpression(function, access.struct_value, effects, state, exits),
+            .choice_payload_access => |access| try self.inferOpaqueReleaseExpression(function, access.choice_value, effects, state, exits),
+            .array_index => |index| {
+                try self.inferOpaqueReleaseExpression(function, index.array_ptr, effects, state, exits);
+                try self.inferOpaqueReleaseExpression(function, index.index, effects, state, exits);
+            },
+            .explicit_cast => |cast| try self.inferOpaqueReleaseExpression(function, cast.value, effects, state, exits),
+            .binary_operation => |operation| {
+                try self.inferOpaqueReleaseExpression(function, operation.left, effects, state, exits);
+                try self.inferOpaqueReleaseExpression(function, operation.right, effects, state, exits);
+            },
+            .comparison => |comparison| {
+                try self.inferOpaqueReleaseExpression(function, comparison.left, effects, state, exits);
+                try self.inferOpaqueReleaseExpression(function, comparison.right, effects, state, exits);
+            },
+            .logical_operation => |operation| {
+                try self.inferOpaqueReleaseExpression(function, operation.left, effects, state, exits);
+                try self.inferConditionalOpaqueReleaseExpression(function, operation.right, effects, state, exits);
+            },
+            .nullable_unwrap_or => |unwrap| {
+                try self.inferOpaqueReleaseExpression(function, unwrap.nullable_value, effects, state, exits);
+                try self.inferConditionalOpaqueReleaseExpression(function, unwrap.fallback_value, effects, state, exits);
+            },
+            .testing_expect_error => |expectation| {
+                try self.inferOpaqueReleaseExpression(function, expectation.expected_reason, effects, state, exits);
+                try self.inferOpaqueReleaseExpression(function, expectation.actual_result, effects, state, exits);
+            },
+            .error_propagation => |propagation| {
+                try self.inferOpaqueReleaseExpression(function, propagation.errable_value, effects, state, exits);
+                var error_state = try state.clone(self.allocator.*);
+                defer error_state.deinit();
+                for (propagation.cleanup_nodes) |cleanup|
+                    try self.inferOpaqueReleaseNode(function, cleanup, effects, &error_state, exits);
+                if (error_state.reachable) try self.recordOpaqueReleaseExit(exits, error_state.released.items);
+            },
+            .error_context => |context| {
+                try self.inferOpaqueReleaseExpression(function, context.errable_value, effects, state, exits);
+                var error_state = try state.clone(self.allocator.*);
+                defer error_state.deinit();
+                try self.inferOpaqueReleaseExpression(function, context.context, effects, &error_state, exits);
+                for (context.cleanup_nodes) |cleanup|
+                    try self.inferOpaqueReleaseNode(function, cleanup, effects, &error_state, exits);
+                if (error_state.reachable) try self.recordOpaqueReleaseExit(exits, error_state.released.items);
+            },
+            .function_call => |call| {
+                try self.inferOpaqueReleaseExpression(function, call.input, effects, state, exits);
+                try self.applyOpaqueReleaseFunctionCall(function, call, effects, state);
+            },
+            .virtual_call => |call| {
+                try self.inferOpaqueReleaseExpression(function, call.handle, effects, state, exits);
+                try self.inferOpaqueReleaseExpression(function, call.input, effects, state, exits);
+                const summary = try self.virtualSummary(call.safety_methods) orelse return;
+                try self.applyOpaqueReleaseSummary(function, summary, call.input, effects, state);
+            },
+            .virtualize => |virtualize| try self.inferOpaqueReleaseExpression(function, virtualize.value, effects, state, exits),
+            .type_initializer => |initializer| try self.inferOpaqueReleaseExpression(function, initializer.args, effects, state, exits),
             else => {},
+        }
+    }
+
+    fn inferConditionalOpaqueReleaseExpression(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        node: *const sg.SGNode,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueReleaseState,
+        exits: *?std.array_list.Managed(facts.InputPath),
+    ) !void {
+        var executed = try state.clone(self.allocator.*);
+        defer executed.deinit();
+        try self.inferOpaqueReleaseExpression(function, node, effects, &executed, exits);
+        var skipped = try state.clone(self.allocator.*);
+        defer skipped.deinit();
+        try self.joinOpaqueReleaseFallthrough(state, &executed, &skipped);
+    }
+
+    fn applyOpaqueReleaseFunctionCall(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        call: *const sg.FunctionCall,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueReleaseState,
+    ) !void {
+        if (call.input.content != .struct_value_literal) return;
+        const arguments = call.input.content.struct_value_literal.fields;
+        if (call.callee.safety_primitive == .trusted_opaque_store_owned) {
+            state.released.clearRetainingCapacity();
+            return;
+        }
+        if (call.callee.safety_primitive == .trusted_opaque_store_owned_in) {
+            if (arguments.len != 3) return;
+            const storages = try self.inferInputPaths(function, arguments[0].value);
+            const hidden = try self.inferExpression(function, arguments[2].value);
+            for (storages) |storage| {
+                self.removeOpaqueStorageRelease(&state.released, storage);
+                try self.recordOpaqueStorageEffect(effects, storage, hidden);
+            }
+            return;
+        }
+        if (call.callee.safety_primitive == .trusted_opaque_release_all) {
+            if (arguments.len != 1) return;
+            const storages = try self.inferInputPaths(function, arguments[0].value);
+            for (storages) |storage| try self.recordOpaqueStorageRelease(&state.released, storage);
+            return;
+        }
+        const summary = self.summaries.get(call.callee) orelse return;
+        try self.applyOpaqueReleaseSummary(function, summary, call.input, effects, state);
+    }
+
+    fn applyOpaqueReleaseSummary(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        summary: facts.FunctionSummary,
+        input: *const sg.SGNode,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueReleaseState,
+    ) !void {
+        if (input.content != .struct_value_literal) return;
+        const arguments = input.content.struct_value_literal.fields;
+        // Projected post-states can become opaque mutations through runtime
+        // provenance even when their symbolic target does not name the domain.
+        if (summaryMayRepopulateOpaqueStorage(summary)) state.released.clearRetainingCapacity();
+        for (summary.opaque_storage_effects) |effect| {
+            if (effect.storage.input_index >= arguments.len) continue;
+            var storages = try self.inferInputPaths(function, arguments[effect.storage.input_index].value);
+            for (effect.storage.projections) |projection| storages = try self.projectInputPaths(storages, projection);
+            const hidden = try self.substituteOutput(function, effect.hidden_dependencies, arguments);
+            for (storages) |storage| {
+                self.removeOpaqueStorageRelease(&state.released, storage);
+                try self.recordOpaqueStorageEffect(effects, storage, hidden);
+            }
+        }
+        for (summary.opaque_storage_releases) |release| {
+            if (release.input_index >= arguments.len) continue;
+            var storages = try self.inferInputPaths(function, arguments[release.input_index].value);
+            for (release.projections) |projection| storages = try self.projectInputPaths(storages, projection);
+            for (storages) |storage| try self.recordOpaqueStorageRelease(&state.released, storage);
         }
     }
 
