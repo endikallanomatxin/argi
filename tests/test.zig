@@ -3916,6 +3916,52 @@ test "feature_tests/ownership/205_structural_auto_deinit_applies_field_summary" 
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/206_auto_deinit_release_propagates_through_wrapper" {
+    const test_path = "tests/feature_tests/ownership/206_auto_deinit_release_propagates_through_wrapper";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/208_structural_auto_deinit_effects_propagate_through_wrapper" {
+    const test_path = "tests/feature_tests/ownership/208_structural_auto_deinit_effects_propagate_through_wrapper";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/209X_input_post_state_before_early_return_is_preserved" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/209X_input_post_state_before_early_return_is_preserved",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/210_identical_return_post_states_remain_precise" {
+    const test_path = "tests/feature_tests/ownership/210_identical_return_post_states_remain_precise";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/211X_distinct_return_post_states_are_joined" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/211X_distinct_return_post_states_are_joined",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/212X_structural_auto_deinit_respects_required_live_inputs" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/212X_structural_auto_deinit_respects_required_live_inputs",
+        "reference depends on a root that has ended",
+    );
+}
+
 test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
     try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
         \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended

@@ -142,6 +142,31 @@ pub const SafetyChecker = struct {
         }
     };
 
+    const InputPostStateFlow = struct {
+        states: std.array_list.Managed(facts.InputPlaceEffect),
+        reachable: bool = true,
+
+        fn init(allocator: std.mem.Allocator) InputPostStateFlow {
+            return .{ .states = std.array_list.Managed(facts.InputPlaceEffect).init(allocator) };
+        }
+
+        fn deinit(self: *InputPostStateFlow) void {
+            self.states.deinit();
+        }
+
+        fn clone(self: *const InputPostStateFlow, allocator: std.mem.Allocator) !InputPostStateFlow {
+            return .{
+                .states = try cloneInputPostStates(&self.states, allocator),
+                .reachable = self.reachable,
+            };
+        }
+    };
+
+    const SymbolicInputOverride = struct {
+        input_index: u32,
+        effect: facts.OutputEffect,
+    };
+
     fn validateFunction(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !void {
         const body = function.body orelse return;
         if (function.safety_primitive != .none) return;
@@ -2643,8 +2668,16 @@ pub const SafetyChecker = struct {
         try self.inferBlock(function, body, outputs);
         var required_live_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         try self.inferRequiredLiveInputsBlock(function, body, &required_live_inputs);
-        var post_states = std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
-        try self.inferInputPostStates(function, body, &post_states);
+        var post_flow = InputPostStateFlow.init(self.allocator.*);
+        defer post_flow.deinit();
+        var post_exits: ?std.array_list.Managed(facts.InputPlaceEffect) = null;
+        defer if (post_exits) |*exits| exits.deinit();
+        try self.inferInputPostStates(function, body, &post_flow, &post_exits);
+        if (post_flow.reachable) try self.recordInputPostStateExit(&post_exits, &post_flow.states);
+        var post_states = if (post_exits) |exits|
+            try cloneInputPostStates(&exits, self.allocator.*)
+        else
+            std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
         var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator.*);
         const opaque_storage_releases = try self.inferOpaqueStorageEffects(function, body, &opaque_storage_effects);
         if (function.is_deinit) {
@@ -2677,98 +2710,107 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         block: *const sg.CodeBlock,
-        states: *std.array_list.Managed(facts.InputPlaceEffect),
+        flow: *InputPostStateFlow,
+        exits: *?std.array_list.Managed(facts.InputPlaceEffect),
     ) !void {
-        for (block.nodes) |node| try self.inferInputPostStatesNode(function, node, states);
-        if (block.ret_val) |value| try self.inferInputPostStatesExpression(function, value, states);
+        for (block.nodes) |node| {
+            if (!flow.reachable) break;
+            try self.inferInputPostStatesNode(function, node, flow, exits);
+        }
+        if (flow.reachable) if (block.ret_val) |value|
+            try self.inferInputPostStatesExpression(function, value, &flow.states, exits);
     }
 
     fn inferInputPostStatesNode(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         node: *const sg.SGNode,
-        states: *std.array_list.Managed(facts.InputPlaceEffect),
+        flow: *InputPostStateFlow,
+        exits: *?std.array_list.Managed(facts.InputPlaceEffect),
     ) anyerror!void {
+        const states = &flow.states;
         switch (node.content) {
             .binding_declaration => |binding| if (binding.initialization) |initialization|
-                try self.inferInputPostStatesExpression(function, initialization, states),
-            .binding_assignment => |assignment| try self.inferInputPostStatesExpression(function, assignment.value, states),
-            .function_call, .virtual_call => try self.inferInputPostStatesExpression(function, node, states),
+                try self.inferInputPostStatesExpression(function, initialization, states, exits),
+            .binding_assignment => |assignment| try self.inferInputPostStatesExpression(function, assignment.value, states, exits),
+            .function_call, .virtual_call => try self.inferInputPostStatesExpression(function, node, states, exits),
             .pointer_assignment => |assignment| {
-                try self.inferInputPostStatesExpression(function, assignment.pointer, states);
-                try self.inferInputPostStatesExpression(function, assignment.value, states);
+                try self.inferInputPostStatesExpression(function, assignment.pointer, states, exits);
+                try self.inferInputPostStatesExpression(function, assignment.value, states, exits);
                 try self.recordInputPostState(states, try self.inferInputPaths(function, assignment.pointer), .initialized, try self.inferExpression(function, assignment.value), false, false, false, true);
             },
             .struct_field_store => |store| {
-                try self.inferInputPostStatesExpression(function, store.struct_ptr, states);
-                try self.inferInputPostStatesExpression(function, store.value, states);
+                try self.inferInputPostStatesExpression(function, store.struct_ptr, states, exits);
+                try self.inferInputPostStatesExpression(function, store.value, states, exits);
                 const targets = try self.projectInputPaths(try self.inferInputPaths(function, store.struct_ptr), .{ .field = store.field_index });
                 try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false, false, false, true);
             },
             .array_store => |store| {
-                try self.inferInputPostStatesExpression(function, store.array_ptr, states);
-                try self.inferInputPostStatesExpression(function, store.index, states);
-                try self.inferInputPostStatesExpression(function, store.value, states);
+                try self.inferInputPostStatesExpression(function, store.array_ptr, states, exits);
+                try self.inferInputPostStatesExpression(function, store.index, states, exits);
+                try self.inferInputPostStatesExpression(function, store.value, states, exits);
                 const projection: place.Projection = if (staticIndex(store.index)) |index| .{ .static_index = index } else .dynamic_index;
                 const targets = try self.projectInputPaths(try self.inferInputPaths(function, store.array_ptr), projection);
                 try self.recordInputPostState(states, targets, .initialized, try self.inferExpression(function, store.value), false, false, false, true);
             },
             .if_statement => |statement| {
-                try self.inferInputPostStatesExpression(function, statement.condition, states);
-                var then_states = try cloneInputPostStates(states, self.allocator.*);
-                defer then_states.deinit();
-                try self.inferInputPostStates(function, statement.then_block, &then_states);
-                var else_states = try cloneInputPostStates(states, self.allocator.*);
-                defer else_states.deinit();
-                if (statement.else_block) |else_block| try self.inferInputPostStates(function, else_block, &else_states);
-                try self.joinInputPostStates(states, &then_states, &else_states);
+                try self.inferInputPostStatesExpression(function, statement.condition, states, exits);
+                var then_flow = try flow.clone(self.allocator.*);
+                defer then_flow.deinit();
+                try self.inferInputPostStates(function, statement.then_block, &then_flow, exits);
+                var else_flow = try flow.clone(self.allocator.*);
+                defer else_flow.deinit();
+                if (statement.else_block) |else_block| try self.inferInputPostStates(function, else_block, &else_flow, exits);
+                try self.joinInputPostStateFallthrough(flow, &then_flow, &else_flow);
             },
             .while_statement => |statement| {
-                try self.inferInputPostStatesExpression(function, statement.condition, states);
-                var body_states = try cloneInputPostStates(states, self.allocator.*);
-                defer body_states.deinit();
-                try self.inferInputPostStates(function, statement.body, &body_states);
-                try self.joinInputPostStates(states, states, &body_states);
+                try self.inferInputPostStatesExpression(function, statement.condition, states, exits);
+                var body_flow = try flow.clone(self.allocator.*);
+                defer body_flow.deinit();
+                try self.inferInputPostStates(function, statement.body, &body_flow, exits);
+                try self.joinInputPostStates(states, states, &body_flow.states);
             },
             .for_statement => |statement| {
-                if (statement.init) |initialization| try self.inferInputPostStatesNode(function, initialization, states);
-                try self.inferInputPostStatesExpression(function, statement.condition, states);
-                var body_states = try cloneInputPostStates(states, self.allocator.*);
-                defer body_states.deinit();
-                try self.inferInputPostStates(function, statement.body, &body_states);
-                if (statement.increment) |increment| try self.inferInputPostStatesNode(function, increment, &body_states);
-                try self.joinInputPostStates(states, states, &body_states);
+                if (statement.init) |initialization| try self.inferInputPostStatesNode(function, initialization, flow, exits);
+                if (!flow.reachable) return;
+                try self.inferInputPostStatesExpression(function, statement.condition, states, exits);
+                var body_flow = try flow.clone(self.allocator.*);
+                defer body_flow.deinit();
+                try self.inferInputPostStates(function, statement.body, &body_flow, exits);
+                if (body_flow.reachable) if (statement.increment) |increment| try self.inferInputPostStatesNode(function, increment, &body_flow, exits);
+                try self.joinInputPostStates(states, states, &body_flow.states);
             },
             .switch_statement => |statement| {
-                try self.inferInputPostStatesExpression(function, statement.expression, states);
-                var joined: ?std.array_list.Managed(facts.InputPlaceEffect) = null;
-                defer if (joined) |*joined_states| joined_states.deinit();
+                try self.inferInputPostStatesExpression(function, statement.expression, states, exits);
+                var joined: ?InputPostStateFlow = null;
+                defer if (joined) |*joined_flow| joined_flow.deinit();
 
                 for (statement.cases) |case| {
-                    var branch = try cloneInputPostStates(states, self.allocator.*);
+                    var branch = try flow.clone(self.allocator.*);
                     defer branch.deinit();
-                    try self.inferInputPostStates(function, case.body, &branch);
-                    try self.joinInputPostStateBranch(&joined, &branch);
+                    try self.inferInputPostStates(function, case.body, &branch, exits);
+                    try self.joinInputPostStateFlowBranch(&joined, &branch);
                 }
                 if (statement.default_case) |default_case| {
-                    var branch = try cloneInputPostStates(states, self.allocator.*);
+                    var branch = try flow.clone(self.allocator.*);
                     defer branch.deinit();
-                    try self.inferInputPostStates(function, default_case, &branch);
-                    try self.joinInputPostStateBranch(&joined, &branch);
+                    try self.inferInputPostStates(function, default_case, &branch, exits);
+                    try self.joinInputPostStateFlowBranch(&joined, &branch);
                 } else if (!statement.exhaustive) {
-                    try self.joinInputPostStateBranch(&joined, states);
+                    try self.joinInputPostStateFlowBranch(&joined, flow);
                 }
-                if (joined) |*joined_states| {
-                    states.clearRetainingCapacity();
-                    try states.appendSlice(joined_states.items);
-                }
+                if (joined) |*joined_flow| try self.copyInputPostStateFlow(flow, joined_flow) else flow.reachable = false;
             },
             .return_statement => |statement| {
-                if (statement.expression) |expression| try self.inferInputPostStatesExpression(function, expression, states);
-                for (statement.cleanup_nodes) |cleanup| try self.inferInputPostStatesNode(function, cleanup, states);
+                if (statement.expression) |expression| try self.inferInputPostStatesExpression(function, expression, states, exits);
+                for (statement.cleanup_nodes) |cleanup| try self.inferInputPostStatesNode(function, cleanup, flow, exits);
+                try self.recordInputPostStateExit(exits, states);
+                flow.reachable = false;
             },
-            .code_block => |nested| try self.inferInputPostStates(function, nested, states),
-            else => try self.inferInputPostStatesExpression(function, node, states),
+            .code_block => |nested| try self.inferInputPostStates(function, nested, flow, exits),
+            .break_statement, .continue_statement => flow.reachable = false,
+            .auto_deinit_binding => |cleanup| try self.applyAutoDeinitInputPostStates(function, cleanup, states),
+            else => try self.inferInputPostStatesExpression(function, node, states, exits),
         }
     }
 
@@ -2777,72 +2819,73 @@ pub const SafetyChecker = struct {
         function: *const sg.FunctionDeclaration,
         node: *const sg.SGNode,
         states: *std.array_list.Managed(facts.InputPlaceEffect),
+        exits: *?std.array_list.Managed(facts.InputPlaceEffect),
     ) anyerror!void {
         switch (node.content) {
-            .move_value, .address_of => |value| try self.inferInputPostStatesExpression(function, value, states),
-            .dereference => |dereference| try self.inferInputPostStatesExpression(function, dereference.pointer, states),
+            .move_value, .address_of => |value| try self.inferInputPostStatesExpression(function, value, states, exits),
+            .dereference => |dereference| try self.inferInputPostStatesExpression(function, dereference.pointer, states, exits),
             .struct_value_literal => |literal| for (literal.fields) |field|
-                try self.inferInputPostStatesExpression(function, field.value, states),
+                try self.inferInputPostStatesExpression(function, field.value, states, exits),
             .list_literal => |literal| for (literal.elements) |element|
-                try self.inferInputPostStatesExpression(function, element, states),
+                try self.inferInputPostStatesExpression(function, element, states, exits),
             .array_literal => |literal| for (literal.elements) |element|
-                try self.inferInputPostStatesExpression(function, element, states),
+                try self.inferInputPostStatesExpression(function, element, states, exits),
             .choice_literal => |literal| if (literal.payload) |payload|
-                try self.inferInputPostStatesExpression(function, payload, states),
-            .struct_field_access => |access| try self.inferInputPostStatesExpression(function, access.struct_value, states),
-            .choice_payload_access => |access| try self.inferInputPostStatesExpression(function, access.choice_value, states),
+                try self.inferInputPostStatesExpression(function, payload, states, exits),
+            .struct_field_access => |access| try self.inferInputPostStatesExpression(function, access.struct_value, states, exits),
+            .choice_payload_access => |access| try self.inferInputPostStatesExpression(function, access.choice_value, states, exits),
             .array_index => |index| {
-                try self.inferInputPostStatesExpression(function, index.array_ptr, states);
-                try self.inferInputPostStatesExpression(function, index.index, states);
+                try self.inferInputPostStatesExpression(function, index.array_ptr, states, exits);
+                try self.inferInputPostStatesExpression(function, index.index, states, exits);
             },
-            .explicit_cast => |cast| try self.inferInputPostStatesExpression(function, cast.value, states),
+            .explicit_cast => |cast| try self.inferInputPostStatesExpression(function, cast.value, states, exits),
             .binary_operation => |operation| {
-                try self.inferInputPostStatesExpression(function, operation.left, states);
-                try self.inferInputPostStatesExpression(function, operation.right, states);
+                try self.inferInputPostStatesExpression(function, operation.left, states, exits);
+                try self.inferInputPostStatesExpression(function, operation.right, states, exits);
             },
             .comparison => |comparison| {
-                try self.inferInputPostStatesExpression(function, comparison.left, states);
-                try self.inferInputPostStatesExpression(function, comparison.right, states);
+                try self.inferInputPostStatesExpression(function, comparison.left, states, exits);
+                try self.inferInputPostStatesExpression(function, comparison.right, states, exits);
             },
             .logical_operation => |operation| {
-                try self.inferInputPostStatesExpression(function, operation.left, states);
-                try self.inferConditionalInputPostStatesExpression(function, operation.right, states);
+                try self.inferInputPostStatesExpression(function, operation.left, states, exits);
+                try self.inferConditionalInputPostStatesExpression(function, operation.right, states, exits);
             },
             .nullable_unwrap_or => |unwrap| {
-                try self.inferInputPostStatesExpression(function, unwrap.nullable_value, states);
-                try self.inferConditionalInputPostStatesExpression(function, unwrap.fallback_value, states);
+                try self.inferInputPostStatesExpression(function, unwrap.nullable_value, states, exits);
+                try self.inferConditionalInputPostStatesExpression(function, unwrap.fallback_value, states, exits);
             },
             .testing_expect_error => |expectation| {
-                try self.inferInputPostStatesExpression(function, expectation.expected_reason, states);
-                try self.inferInputPostStatesExpression(function, expectation.actual_result, states);
+                try self.inferInputPostStatesExpression(function, expectation.expected_reason, states, exits);
+                try self.inferInputPostStatesExpression(function, expectation.actual_result, states, exits);
             },
             .error_propagation => |propagation| {
-                try self.inferInputPostStatesExpression(function, propagation.errable_value, states);
-                var error_states = try cloneInputPostStates(states, self.allocator.*);
-                defer error_states.deinit();
-                for (propagation.cleanup_nodes) |cleanup| try self.inferInputPostStatesNode(function, cleanup, &error_states);
-                try self.joinInputPostStates(states, states, &error_states);
+                try self.inferInputPostStatesExpression(function, propagation.errable_value, states, exits);
+                var error_flow = InputPostStateFlow{ .states = try cloneInputPostStates(states, self.allocator.*) };
+                defer error_flow.deinit();
+                for (propagation.cleanup_nodes) |cleanup| try self.inferInputPostStatesNode(function, cleanup, &error_flow, exits);
+                if (error_flow.reachable) try self.recordInputPostStateExit(exits, &error_flow.states);
             },
             .error_context => |context| {
-                try self.inferInputPostStatesExpression(function, context.errable_value, states);
-                var error_states = try cloneInputPostStates(states, self.allocator.*);
-                defer error_states.deinit();
-                try self.inferInputPostStatesExpression(function, context.context, &error_states);
-                for (context.cleanup_nodes) |cleanup| try self.inferInputPostStatesNode(function, cleanup, &error_states);
-                try self.joinInputPostStates(states, states, &error_states);
+                try self.inferInputPostStatesExpression(function, context.errable_value, states, exits);
+                var error_flow = InputPostStateFlow{ .states = try cloneInputPostStates(states, self.allocator.*) };
+                defer error_flow.deinit();
+                try self.inferInputPostStatesExpression(function, context.context, &error_flow.states, exits);
+                for (context.cleanup_nodes) |cleanup| try self.inferInputPostStatesNode(function, cleanup, &error_flow, exits);
+                if (error_flow.reachable) try self.recordInputPostStateExit(exits, &error_flow.states);
             },
             .function_call => |call| {
-                try self.inferInputPostStatesExpression(function, call.input, states);
+                try self.inferInputPostStatesExpression(function, call.input, states, exits);
                 try self.applyInputPostStatesFromFunctionCall(function, call, states);
             },
             .virtual_call => |call| {
-                try self.inferInputPostStatesExpression(function, call.handle, states);
-                try self.inferInputPostStatesExpression(function, call.input, states);
+                try self.inferInputPostStatesExpression(function, call.handle, states, exits);
+                try self.inferInputPostStatesExpression(function, call.input, states, exits);
                 const summary = try self.virtualSummary(call.safety_methods) orelse return;
-                try self.applyInputPostStatesFromSummary(function, summary, call.input, states);
+                try self.applyInputPostStatesFromSummary(function, summary, call.input, states, null);
             },
-            .virtualize => |virtualize| try self.inferInputPostStatesExpression(function, virtualize.value, states),
-            .type_initializer => |initializer| try self.inferInputPostStatesExpression(function, initializer.args, states),
+            .virtualize => |virtualize| try self.inferInputPostStatesExpression(function, virtualize.value, states, exits),
+            .type_initializer => |initializer| try self.inferInputPostStatesExpression(function, initializer.args, states, exits),
             else => {},
         }
     }
@@ -2852,10 +2895,11 @@ pub const SafetyChecker = struct {
         function: *const sg.FunctionDeclaration,
         node: *const sg.SGNode,
         states: *std.array_list.Managed(facts.InputPlaceEffect),
+        exits: *?std.array_list.Managed(facts.InputPlaceEffect),
     ) !void {
         var executed = try cloneInputPostStates(states, self.allocator.*);
         defer executed.deinit();
-        try self.inferInputPostStatesExpression(function, node, &executed);
+        try self.inferInputPostStatesExpression(function, node, &executed, exits);
         var skipped = try cloneInputPostStates(states, self.allocator.*);
         defer skipped.deinit();
         try self.joinInputPostStates(states, &executed, &skipped);
@@ -2898,7 +2942,7 @@ pub const SafetyChecker = struct {
             return;
         }
         const summary = self.summaries.get(call.callee) orelse return;
-        try self.applyInputPostStatesFromSummary(function, summary, call.input, states);
+        try self.applyInputPostStatesFromSummary(function, summary, call.input, states, null);
     }
 
     fn applyInputPostStatesFromSummary(
@@ -2907,25 +2951,51 @@ pub const SafetyChecker = struct {
         summary: facts.FunctionSummary,
         input: *const sg.SGNode,
         states: *std.array_list.Managed(facts.InputPlaceEffect),
+        symbolic_override: ?SymbolicInputOverride,
     ) !void {
         if (input.content != .struct_value_literal) return;
         const arguments = input.content.struct_value_literal.fields;
         for (summary.input_post_states) |post_state| {
             if (post_state.target.input_index >= arguments.len) continue;
-            var targets = try self.inferInputPaths(function, arguments[post_state.target.input_index].value);
-            for (post_state.target.projections) |projection| targets = try self.projectInputPaths(targets, projection);
+            const targets = try self.substituteInputPathWithOverride(function, post_state.target, arguments, symbolic_override);
             if (post_state.opaque_ownership != .none) {
                 const storage = if (post_state.opaque_storage) |opaque_storage| blk: {
                     if (opaque_storage.input_index >= arguments.len) break :blk null;
-                    var mapped = try self.inferInputPaths(function, arguments[opaque_storage.input_index].value);
-                    for (opaque_storage.projections) |projection| mapped = try self.projectInputPaths(mapped, projection);
+                    const mapped = try self.substituteInputPathWithOverride(function, opaque_storage, arguments, symbolic_override);
                     break :blk if (mapped.len == 1) mapped[0] else null;
                 } else null;
                 try self.recordOpaqueOwnershipConsumption(states, targets, post_state.opaque_ownership, storage);
                 continue;
             }
-            const value = try self.substituteOutput(function, post_state.value, arguments);
+            const value = try self.substituteOutputWithOverride(function, post_state.value, arguments, symbolic_override);
             try self.recordInputPostState(states, targets, post_state.initializedness, value, post_state.ends_previous_roots, post_state.refreshes_storage_root, post_state.requires_available_destination, post_state.may_repopulate_opaque_storage);
+        }
+    }
+
+    fn applyAutoDeinitInputPostStates(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        cleanup: *const sg.AutoDeinitBinding,
+        states: *std.array_list.Managed(facts.InputPlaceEffect),
+    ) !void {
+        const binding_effect = if (self.inference_bindings) |bindings| bindings.get(cleanup.binding) else null;
+        if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| if (self.summaries.get(deinit_fn)) |summary|
+            try self.applyInputPostStatesFromSummary(function, summary, input, states, if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null);
+        if (binding_effect) |effect| try self.applyAutoDeinitFieldInputPostStates(function, cleanup.fields, states, effect);
+    }
+
+    fn applyAutoDeinitFieldInputPostStates(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        fields: []const sg.AutoDeinitField,
+        states: *std.array_list.Managed(facts.InputPlaceEffect),
+        parent_effect: facts.OutputEffect,
+    ) !void {
+        for (fields) |field| {
+            const field_effect = try self.projectOutputEffect(parent_effect, .{ .field = field.field_index });
+            if (field.deinit_fn) |deinit_fn| if (field.input) |input| if (self.summaries.get(deinit_fn)) |summary|
+                try self.applyInputPostStatesFromSummary(function, summary, input, states, .{ .input_index = field.self_field_index, .effect = field_effect });
+            try self.applyAutoDeinitFieldInputPostStates(function, field.fields, states, field_effect);
         }
     }
 
@@ -3053,12 +3123,41 @@ pub const SafetyChecker = struct {
             },
             .code_block => |block| try self.inferRequiredLiveInputsBlock(function, block, required),
             .type_initializer => |initializer| try self.inferRequiredLiveInputsNode(function, initializer.args, required),
-            .auto_deinit_binding => |cleanup| if (cleanup.input) |input| {
-                try self.inferRequiredLiveInputsNode(function, input, required);
-                if (cleanup.deinit_fn) |deinit_fn| if (self.summaries.get(deinit_fn)) |summary|
-                    try self.substituteRequiredLiveInputs(function, summary.required_live_inputs, input, required);
-            },
+            .auto_deinit_binding => |cleanup| try self.inferAutoDeinitRequiredLiveInputs(function, cleanup, required),
             else => {},
+        }
+    }
+
+    fn inferAutoDeinitRequiredLiveInputs(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        cleanup: *const sg.AutoDeinitBinding,
+        required: *std.array_list.Managed(facts.InputPath),
+    ) !void {
+        const binding_effect = if (self.inference_bindings) |bindings| bindings.get(cleanup.binding) else null;
+        if (cleanup.input) |input| {
+            try self.inferRequiredLiveInputsNode(function, input, required);
+            if (cleanup.deinit_fn) |deinit_fn| if (self.summaries.get(deinit_fn)) |summary|
+                try self.substituteRequiredLiveInputsWithOverride(function, summary.required_live_inputs, input, required, if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null);
+        }
+        if (binding_effect) |effect| try self.inferAutoDeinitFieldRequiredLiveInputs(function, cleanup.fields, required, effect);
+    }
+
+    fn inferAutoDeinitFieldRequiredLiveInputs(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        fields: []const sg.AutoDeinitField,
+        required: *std.array_list.Managed(facts.InputPath),
+        parent_effect: facts.OutputEffect,
+    ) !void {
+        for (fields) |field| {
+            const field_effect = try self.projectOutputEffect(parent_effect, .{ .field = field.field_index });
+            if (field.input) |input| {
+                try self.inferRequiredLiveInputsNode(function, input, required);
+                if (field.deinit_fn) |deinit_fn| if (self.summaries.get(deinit_fn)) |summary|
+                    try self.substituteRequiredLiveInputsWithOverride(function, summary.required_live_inputs, input, required, .{ .input_index = field.self_field_index, .effect = field_effect });
+            }
+            try self.inferAutoDeinitFieldRequiredLiveInputs(function, field.fields, required, field_effect);
         }
     }
 
@@ -3080,14 +3179,22 @@ pub const SafetyChecker = struct {
         input: *const sg.SGNode,
         required: *std.array_list.Managed(facts.InputPath),
     ) !void {
+        try self.substituteRequiredLiveInputsWithOverride(function, callee_required, input, required, null);
+    }
+
+    fn substituteRequiredLiveInputsWithOverride(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        callee_required: []const facts.InputPath,
+        input: *const sg.SGNode,
+        required: *std.array_list.Managed(facts.InputPath),
+        symbolic_override: ?SymbolicInputOverride,
+    ) !void {
         if (input.content != .struct_value_literal) return;
         const arguments = input.content.struct_value_literal.fields;
         for (callee_required) |path| {
             if (path.input_index >= arguments.len) continue;
-            const argument = arguments[path.input_index].value;
-            const effect = try self.inferExpression(function, argument);
-            var substituted = try self.symbolicSourcePaths(function, argument, effect);
-            for (path.projections) |projection| substituted = try self.projectInputPaths(substituted, projection);
+            const substituted = try self.substituteInputPathWithOverride(function, path, arguments, symbolic_override);
             for (substituted) |candidate| try appendInputPath(required, candidate);
         }
     }
@@ -3216,7 +3323,37 @@ pub const SafetyChecker = struct {
             },
             .code_block => |nested| try self.inferOpaqueReleaseBlock(function, nested, effects, state, exits),
             .break_statement, .continue_statement => state.reachable = false,
+            .auto_deinit_binding => |cleanup| try self.applyAutoDeinitOpaqueEffects(function, cleanup, effects, state),
             else => try self.inferOpaqueReleaseExpression(function, node, effects, state, exits),
+        }
+    }
+
+    fn applyAutoDeinitOpaqueEffects(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        cleanup: *const sg.AutoDeinitBinding,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueReleaseState,
+    ) !void {
+        const binding_effect = if (self.inference_bindings) |bindings| bindings.get(cleanup.binding) else null;
+        if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| if (self.summaries.get(deinit_fn)) |summary|
+            try self.applyOpaqueReleaseSummary(function, summary, input, effects, state, if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null);
+        if (binding_effect) |effect| try self.applyAutoDeinitFieldOpaqueEffects(function, cleanup.fields, effects, state, effect);
+    }
+
+    fn applyAutoDeinitFieldOpaqueEffects(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        fields: []const sg.AutoDeinitField,
+        effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
+        state: *OpaqueReleaseState,
+        parent_effect: facts.OutputEffect,
+    ) !void {
+        for (fields) |field| {
+            const field_effect = try self.projectOutputEffect(parent_effect, .{ .field = field.field_index });
+            if (field.deinit_fn) |deinit_fn| if (field.input) |input| if (self.summaries.get(deinit_fn)) |summary|
+                try self.applyOpaqueReleaseSummary(function, summary, input, effects, state, .{ .input_index = field.self_field_index, .effect = field_effect });
+            try self.applyAutoDeinitFieldOpaqueEffects(function, field.fields, effects, state, field_effect);
         }
     }
 
@@ -3294,7 +3431,7 @@ pub const SafetyChecker = struct {
                 try self.inferOpaqueReleaseExpression(function, call.handle, effects, state, exits);
                 try self.inferOpaqueReleaseExpression(function, call.input, effects, state, exits);
                 const summary = try self.virtualSummary(call.safety_methods) orelse return;
-                try self.applyOpaqueReleaseSummary(function, summary, call.input, effects, state);
+                try self.applyOpaqueReleaseSummary(function, summary, call.input, effects, state, null);
             },
             .virtualize => |virtualize| try self.inferOpaqueReleaseExpression(function, virtualize.value, effects, state, exits),
             .type_initializer => |initializer| try self.inferOpaqueReleaseExpression(function, initializer.args, effects, state, exits),
@@ -3348,7 +3485,7 @@ pub const SafetyChecker = struct {
             return;
         }
         const summary = self.summaries.get(call.callee) orelse return;
-        try self.applyOpaqueReleaseSummary(function, summary, call.input, effects, state);
+        try self.applyOpaqueReleaseSummary(function, summary, call.input, effects, state, null);
     }
 
     fn applyOpaqueReleaseSummary(
@@ -3358,6 +3495,7 @@ pub const SafetyChecker = struct {
         input: *const sg.SGNode,
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
         state: *OpaqueReleaseState,
+        symbolic_override: ?SymbolicInputOverride,
     ) !void {
         if (input.content != .struct_value_literal) return;
         const arguments = input.content.struct_value_literal.fields;
@@ -3366,9 +3504,8 @@ pub const SafetyChecker = struct {
         if (summaryMayRepopulateOpaqueStorage(summary)) state.released.clearRetainingCapacity();
         for (summary.opaque_storage_effects) |effect| {
             if (effect.storage.input_index >= arguments.len) continue;
-            var storages = try self.inferInputPaths(function, arguments[effect.storage.input_index].value);
-            for (effect.storage.projections) |projection| storages = try self.projectInputPaths(storages, projection);
-            const hidden = try self.substituteOutput(function, effect.hidden_dependencies, arguments);
+            const storages = try self.substituteInputPathWithOverride(function, effect.storage, arguments, symbolic_override);
+            const hidden = try self.substituteOutputWithOverride(function, effect.hidden_dependencies, arguments, symbolic_override);
             for (storages) |storage| {
                 self.removeOpaqueStorageRelease(&state.released, storage);
                 try self.recordOpaqueStorageEffect(effects, storage, hidden);
@@ -3376,8 +3513,7 @@ pub const SafetyChecker = struct {
         }
         for (summary.opaque_storage_releases) |release| {
             if (release.input_index >= arguments.len) continue;
-            var storages = try self.inferInputPaths(function, arguments[release.input_index].value);
-            for (release.projections) |projection| storages = try self.projectInputPaths(storages, projection);
+            const storages = try self.substituteInputPathWithOverride(function, release, arguments, symbolic_override);
             for (storages) |storage| try self.recordOpaqueStorageRelease(&state.released, storage);
         }
     }
@@ -3531,6 +3667,62 @@ pub const SafetyChecker = struct {
         } else {
             joined.* = try cloneInputPostStates(branch, self.allocator.*);
         }
+    }
+
+    fn recordInputPostStateExit(
+        self: *SafetyChecker,
+        exits: *?std.array_list.Managed(facts.InputPlaceEffect),
+        states: *const std.array_list.Managed(facts.InputPlaceEffect),
+    ) !void {
+        if (exits.*) |*current| {
+            var combined = std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
+            try self.joinInputPostStates(&combined, current, states);
+            current.deinit();
+            current.* = combined;
+        } else exits.* = try cloneInputPostStates(states, self.allocator.*);
+    }
+
+    fn copyInputPostStateFlow(
+        self: *SafetyChecker,
+        destination: *InputPostStateFlow,
+        source: *const InputPostStateFlow,
+    ) !void {
+        _ = self;
+        destination.states.clearRetainingCapacity();
+        try destination.states.appendSlice(source.states.items);
+        destination.reachable = source.reachable;
+    }
+
+    fn joinInputPostStateFallthrough(
+        self: *SafetyChecker,
+        destination: *InputPostStateFlow,
+        left: *const InputPostStateFlow,
+        right: *const InputPostStateFlow,
+    ) !void {
+        if (!left.reachable and !right.reachable) {
+            destination.states.clearRetainingCapacity();
+            destination.reachable = false;
+        } else if (!left.reachable) {
+            try self.copyInputPostStateFlow(destination, right);
+        } else if (!right.reachable) {
+            try self.copyInputPostStateFlow(destination, left);
+        } else {
+            try self.joinInputPostStates(&destination.states, &left.states, &right.states);
+            destination.reachable = true;
+        }
+    }
+
+    fn joinInputPostStateFlowBranch(
+        self: *SafetyChecker,
+        joined: *?InputPostStateFlow,
+        branch: *const InputPostStateFlow,
+    ) !void {
+        if (joined.*) |*current| {
+            var combined = InputPostStateFlow.init(self.allocator.*);
+            try self.joinInputPostStateFallthrough(&combined, current, branch);
+            current.deinit();
+            current.* = combined;
+        } else joined.* = try branch.clone(self.allocator.*);
     }
 
     fn recordInputPostState(self: *SafetyChecker, states: *std.array_list.Managed(facts.InputPlaceEffect), targets: []const facts.InputPath, initializedness: value_state.Initializedness, value: facts.OutputEffect, ends_roots: bool, refreshes_storage_root: bool, requires_available_destination: bool, may_repopulate_opaque_storage: bool) !void {
@@ -3820,6 +4012,42 @@ pub const SafetyChecker = struct {
         return result;
     }
 
+    fn substituteInputPath(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        path: facts.InputPath,
+        arguments: []const sg.StructValueLiteralField,
+    ) ![]const facts.InputPath {
+        return self.substituteInputPathWithOverride(function, path, arguments, null);
+    }
+
+    fn substituteInputPathWithOverride(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        path: facts.InputPath,
+        arguments: []const sg.StructValueLiteralField,
+        symbolic_override: ?SymbolicInputOverride,
+    ) ![]const facts.InputPath {
+        if (path.input_index >= arguments.len) return &.{};
+        if (symbolic_override) |override| if (override.input_index == path.input_index) {
+            // The synthetic self denotes local storage. Only projections that
+            // reach values stored inside it can escape through provenance.
+            if (path.projections.len == 0) return &.{};
+            var effect = override.effect;
+            for (path.projections) |projection| effect = try self.projectOutputEffect(effect, projection);
+            return self.opaqueGenerationSourcePaths(effect);
+        };
+        const argument = arguments[path.input_index].value;
+        var direct = try self.inferInputPaths(function, argument);
+        if (direct.len != 0) {
+            for (path.projections) |projection| direct = try self.projectInputPaths(direct, projection);
+            return direct;
+        }
+        var effect = try self.inferExpression(function, argument);
+        for (path.projections) |projection| effect = try self.projectOutputEffect(effect, projection);
+        return self.opaqueGenerationSourcePaths(effect);
+    }
+
     fn inferCall(self: *SafetyChecker, function: *const sg.FunctionDeclaration, call: *const sg.FunctionCall) !facts.OutputEffect {
         if (call.callee.safety_primitive != .none) {
             const effect = try self.primitiveOutputEffect(call.callee.safety_primitive, @intFromPtr(call));
@@ -4038,6 +4266,16 @@ pub const SafetyChecker = struct {
         effect: facts.OutputEffect,
         arguments: []const sg.StructValueLiteralField,
     ) !facts.OutputEffect {
+        return self.substituteOutputWithOverride(function, effect, arguments, null);
+    }
+
+    fn substituteOutputWithOverride(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        effect: facts.OutputEffect,
+        arguments: []const sg.StructValueLiteralField,
+        symbolic_override: ?SymbolicInputOverride,
+    ) !facts.OutputEffect {
         var result: facts.OutputEffect = .{
             .fresh_dependencies = effect.fresh_dependencies,
             .fresh_owned_roots = effect.fresh_owned_roots,
@@ -4048,23 +4286,25 @@ pub const SafetyChecker = struct {
         var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         for (effect.input_places) |path| {
             if (path.input_index >= arguments.len) continue;
-            var substituted = try self.inferInputPaths(function, arguments[path.input_index].value);
-            for (path.projections) |projection| substituted = try self.projectInputPaths(substituted, projection);
+            const substituted = try self.substituteInputPathWithOverride(function, path, arguments, symbolic_override);
             for (substituted) |candidate| try appendInputPath(&input_places, candidate);
         }
         result.input_places = try input_places.toOwnedSlice();
         var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         for (effect.opaque_generation_dependencies) |path| {
             if (path.input_index >= arguments.len) continue;
-            const argument_effect = try self.inferExpression(function, arguments[path.input_index].value);
-            var substituted = try self.symbolicSourcePaths(function, arguments[path.input_index].value, argument_effect);
-            for (path.projections) |projection| substituted = try self.projectInputPaths(substituted, projection);
+            const substituted = try self.substituteInputPathWithOverride(function, path, arguments, symbolic_override);
             for (substituted) |candidate| try appendInputPath(&opaque_generations, candidate);
         }
         result.opaque_generation_dependencies = try opaque_generations.toOwnedSlice();
         for (effect.input_dependencies) |dependency| {
             if (dependency.path.input_index >= arguments.len) continue;
-            var argument = try self.inferExpression(function, arguments[dependency.path.input_index].value);
+            if (symbolic_override) |override| if (override.input_index == dependency.path.input_index and dependency.path.projections.len == 0)
+                continue;
+            var argument = if (symbolic_override) |override|
+                if (override.input_index == dependency.path.input_index) override.effect else try self.inferExpression(function, arguments[dependency.path.input_index].value)
+            else
+                try self.inferExpression(function, arguments[dependency.path.input_index].value);
             for (dependency.path.projections) |projection| argument = try self.projectOutputEffect(argument, projection);
             if (dependency.transfers_ownership) argument = self.withOwnershipTransfer(argument) else argument = try self.withoutOwnershipTransfer(argument);
             result = try self.mergeOutputEffects(result, argument);
@@ -4073,7 +4313,7 @@ pub const SafetyChecker = struct {
             const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
                 const value = try self.allocator.create(facts.OutputEffect);
-                value.* = try self.substituteOutput(function, field.value.*, arguments);
+                value.* = try self.substituteOutputWithOverride(function, field.value.*, arguments, symbolic_override);
                 fields[index] = .{ .index = field.index, .value = value };
             }
             result.fields = fields;
@@ -4082,7 +4322,7 @@ pub const SafetyChecker = struct {
             const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
             for (effect.variants, 0..) |variant, index| {
                 const value = try self.allocator.create(facts.OutputEffect);
-                value.* = try self.substituteOutput(function, variant.value.*, arguments);
+                value.* = try self.substituteOutputWithOverride(function, variant.value.*, arguments, symbolic_override);
                 variants[index] = .{ .index = variant.index, .value = value };
             }
             result.variants = variants;
