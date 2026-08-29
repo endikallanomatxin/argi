@@ -4173,6 +4173,47 @@ test "feature_tests/polymorphism/30X_virtual_dependency_union" {
 test "feature_tests/polymorphism/31X_virtual_incompatible_deinit" {
     try buildExpectFail(
         "tests/feature_tests/polymorphism/31X_virtual_incompatible_deinit",
+        "place rooted at 'value' is maybe_initialized and cannot be used",
+    );
+}
+
+test "feature_tests/ownership/219_virtual_post_state_allows_optional_self_mutation" {
+    const test_path = "tests/feature_tests/ownership/219_virtual_post_state_allows_optional_self_mutation";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/220X_virtual_post_state_dependency_union" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/220X_virtual_post_state_dependency_union",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/221X_virtual_post_state_initializedness_join" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/221X_virtual_post_state_initializedness_join",
+        "maybe_initialized",
+    );
+}
+
+test "feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage",
+        "opaque storage hides a dependency",
+    );
+}
+
+test "feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage_invalidates_source" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage_invalidates_source",
+        "place rooted at 'source' is moved and cannot be used",
+    );
+}
+
+test "feature_tests/ownership/223X_virtual_opaque_ownership_different_storages_incompatible" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/223X_virtual_opaque_ownership_different_storages_incompatible",
         "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
     );
 }

@@ -1223,6 +1223,16 @@ pub const SafetyChecker = struct {
         const arguments = call.input.content.struct_value_literal.fields;
         const argument_values = try self.allocator.alloc(facts.ValueFacts, arguments.len);
         for (arguments, 0..) |argument, index| argument_values[index] = try self.evaluate(function, argument.value, state);
+        // A virtual receiver is a pointer value stored in the Virtual wrapper.
+        // Safety summaries describe the concrete Self Place behind that value,
+        // not the wrapper binding used to issue the dispatch.
+        if (arguments.len != 0 and std.mem.eql(u8, arguments[0].name, "self")) {
+            if (argument_values[0].referenced_place) |wrapper| {
+                if (self.valueAtPlace(state, wrapper)) |concrete| {
+                    if (concrete.referenced_place != null) argument_values[0] = concrete;
+                }
+            }
+        }
         const summary = try self.virtualSummary(call.safety_methods) orelse {
             if (self.invalid_virtual_summaries.contains(call.safety_methods))
                 try self.diagnostics.add(call.input.location, .semantic, "virtual method '{s}' has incompatible safety effects across implementations", .{call.method_name});
@@ -2556,8 +2566,12 @@ pub const SafetyChecker = struct {
         left: facts.FunctionSummary,
         right: facts.FunctionSummary,
     ) !?facts.FunctionSummary {
-        if (!inputPostStatesEqual(left.input_post_states, right.input_post_states) or
-            left.outputs.len != right.outputs.len) return null;
+        if (left.outputs.len != right.outputs.len) return null;
+
+        const input_post_states = (try self.mergeVirtualInputPostStates(
+            left.input_post_states,
+            right.input_post_states,
+        )) orelse return null;
 
         var fresh_map = std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource).init(self.allocator.*);
         defer fresh_map.deinit();
@@ -2586,10 +2600,67 @@ pub const SafetyChecker = struct {
         return .{
             .outputs = outputs,
             .required_live_inputs = try required_live_inputs.toOwnedSlice(),
-            .input_post_states = left.input_post_states,
+            .input_post_states = input_post_states,
             .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
             .opaque_storage_releases = try opaque_storage_releases.toOwnedSlice(),
         };
+    }
+
+    /// Virtual dispatch merges alternatives selected after the caller has
+    /// satisfied the contract. Preconditions therefore accumulate, while
+    /// caller-visible post-states retain every representable possibility.
+    fn mergeVirtualInputPostStates(
+        self: *SafetyChecker,
+        left: []const facts.InputPlaceEffect,
+        right: []const facts.InputPlaceEffect,
+    ) !?[]const facts.InputPlaceEffect {
+        var merged = std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
+        for (left) |left_state| {
+            const right_state = findInputPostState(right, left_state.target) orelse facts.InputPlaceEffect{
+                .target = left_state.target,
+                .initializedness = .initialized,
+                .value = try self.inputOutputEffect(left_state.target.input_index, left_state.target.projections),
+            };
+            try merged.append((try self.mergeVirtualInputPlaceEffect(left_state, right_state)) orelse return null);
+        }
+        for (right) |right_state| if (findInputPostState(left, right_state.target) == null) {
+            const unchanged = facts.InputPlaceEffect{
+                .target = right_state.target,
+                .initializedness = .initialized,
+                .value = try self.inputOutputEffect(right_state.target.input_index, right_state.target.projections),
+            };
+            try merged.append((try self.mergeVirtualInputPlaceEffect(unchanged, right_state)) orelse return null);
+        };
+        const result: []const facts.InputPlaceEffect = try merged.toOwnedSlice();
+        return result;
+    }
+
+    fn mergeVirtualInputPlaceEffect(
+        self: *SafetyChecker,
+        left: facts.InputPlaceEffect,
+        right: facts.InputPlaceEffect,
+    ) !?facts.InputPlaceEffect {
+        if (!inputPlaceTargetEqual(left.target, right.target)) return null;
+        const value = if (outputEffectEqual(left.value, right.value))
+            left.value
+        else blk: {
+            // Fresh roles and ordinary ownership transfers require correlation
+            // that InputPlaceEffect cannot currently express across variants.
+            if (outputEffectHasFreshRole(left.value) or outputEffectHasFreshRole(right.value) or
+                outputEffectTransfersOwnership(left.value) or outputEffectTransfersOwnership(right.value)) return null;
+            break :blk try self.mergeOutputEffects(left.value, right.value);
+        };
+        var result = facts.InputPlaceEffect{
+            .target = left.target,
+            .initializedness = joinInitializedness(left.initializedness, right.initializedness),
+            .value = value,
+            .ends_previous_roots = left.ends_previous_roots or right.ends_previous_roots,
+            .refreshes_storage_root = left.refreshes_storage_root or right.refreshes_storage_root,
+            .requires_available_destination = left.requires_available_destination or right.requires_available_destination,
+            .may_repopulate_opaque_storage = left.may_repopulate_opaque_storage or right.may_repopulate_opaque_storage,
+        };
+        if (!mergeVirtualOpaqueOwnershipEffect(&result, left, right)) return null;
+        return result;
     }
 
     /// A virtual call may discharge a domain only when every implementation
@@ -4679,6 +4750,21 @@ fn inputDependencyEqual(left: facts.InputDependency, right: facts.InputDependenc
     return true;
 }
 
+fn outputEffectHasFreshRole(effect: facts.OutputEffect) bool {
+    if (effect.fresh_dependencies.len != 0 or effect.fresh_owned_roots.len != 0 or
+        effect.fresh_storage_authorities.len != 0) return true;
+    for (effect.fields) |field| if (outputEffectHasFreshRole(field.value.*)) return true;
+    for (effect.variants) |variant| if (outputEffectHasFreshRole(variant.value.*)) return true;
+    return false;
+}
+
+fn outputEffectTransfersOwnership(effect: facts.OutputEffect) bool {
+    for (effect.input_dependencies) |dependency| if (dependency.transfers_ownership) return true;
+    for (effect.fields) |field| if (outputEffectTransfersOwnership(field.value.*)) return true;
+    for (effect.variants) |variant| if (outputEffectTransfersOwnership(variant.value.*)) return true;
+    return false;
+}
+
 fn findInputPostState(states: []const facts.InputPlaceEffect, target: facts.InputPath) ?facts.InputPlaceEffect {
     for (states) |state| if (inputPlaceTargetEqual(state.target, target)) return state;
     return null;
@@ -4857,6 +4943,32 @@ fn joinOpaqueOwnershipEffect(
     }
 }
 
+fn mergeVirtualOpaqueOwnershipEffect(
+    merged: *facts.InputPlaceEffect,
+    left: facts.InputPlaceEffect,
+    right: facts.InputPlaceEffect,
+) bool {
+    const left_ownership = left.opaque_ownership;
+    const right_ownership = right.opaque_ownership;
+    if (left_ownership == .ambiguous or right_ownership == .ambiguous) return false;
+    if (left_ownership == .none and right_ownership == .none) {
+        merged.opaque_ownership = .none;
+        merged.opaque_storage = null;
+        return true;
+    }
+
+    const left_storage = if (left_ownership == .none) right.opaque_storage else left.opaque_storage;
+    const right_storage = if (right_ownership == .none) left.opaque_storage else right.opaque_storage;
+    if (!optionalInputPathEqual(left_storage, right_storage)) return false;
+    merged.opaque_storage = left_storage;
+    merged.opaque_ownership = if (left_ownership == .none or right_ownership == .none or
+        left_ownership == .conditional or right_ownership == .conditional)
+        .conditional
+    else
+        .definite;
+    return true;
+}
+
 fn projectionsEqual(left: []const place.Projection, right: []const place.Projection) bool {
     if (left.len != right.len) return false;
     for (left, right) |a, b| if (!a.eql(b)) return false;
@@ -4949,7 +5061,7 @@ test "virtual summaries require exact ownership and align fresh root roles" {
     try std.testing.expect(incompatible == null);
 }
 
-test "virtual summaries require exact ownership transfer and deinitialization" {
+test "virtual summaries require exact ownership transfer and merge initializedness" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -4963,7 +5075,7 @@ test "virtual summaries require exact ownership transfer and deinitialization" {
     );
     try std.testing.expect(transfer_mismatch == null);
 
-    const deinit_mismatch = try checker.mergeVirtualFunctionSummary(
+    const deinit_alternative = try checker.mergeVirtualFunctionSummary(
         .{ .outputs = &.{.{}}, .input_post_states = &.{.{
             .target = .{ .input_index = 0 },
             .initializedness = .deinitialized,
@@ -4971,7 +5083,9 @@ test "virtual summaries require exact ownership transfer and deinitialization" {
         }} },
         .{ .outputs = &.{.{}} },
     );
-    try std.testing.expect(deinit_mismatch == null);
+    try std.testing.expect(deinit_alternative != null);
+    try std.testing.expectEqual(value_state.Initializedness.maybe_initialized, deinit_alternative.?.input_post_states[0].initializedness);
+    try std.testing.expect(deinit_alternative.?.input_post_states[0].ends_previous_roots);
 
     const opaque_mismatch = try checker.mergeVirtualFunctionSummary(
         .{ .outputs = &.{.{}}, .input_post_states = &.{.{
@@ -4987,6 +5101,111 @@ test "virtual summaries require exact ownership transfer and deinitialization" {
         }} },
     );
     try std.testing.expect(opaque_mismatch == null);
+}
+
+test "virtual input post states merge absent targets and caller-visible effects" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    const target = facts.InputPath{ .input_index = 0 };
+    const rewritten = facts.InputPlaceEffect{
+        .target = target,
+        .initializedness = .initialized,
+        .value = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} },
+        .ends_previous_roots = true,
+        .refreshes_storage_root = true,
+        .requires_available_destination = true,
+        .may_repopulate_opaque_storage = true,
+    };
+    const optional = try checker.mergeVirtualFunctionSummary(
+        .{ .input_post_states = &.{rewritten} },
+        .{},
+    );
+    try std.testing.expect(optional != null);
+    const merged = optional.?.input_post_states[0];
+    try std.testing.expectEqual(value_state.Initializedness.initialized, merged.initializedness);
+    try std.testing.expect(containsInputDependency(merged.value.input_dependencies, .{ .path = target }));
+    try std.testing.expect(containsInputDependency(merged.value.input_dependencies, .{ .path = .{ .input_index = 1 } }));
+    try std.testing.expect(merged.ends_previous_roots);
+    try std.testing.expect(merged.refreshes_storage_root);
+    try std.testing.expect(merged.requires_available_destination);
+    try std.testing.expect(merged.may_repopulate_opaque_storage);
+
+    const identical = try checker.mergeVirtualFunctionSummary(
+        .{ .input_post_states = &.{rewritten} },
+        .{ .input_post_states = &.{rewritten} },
+    );
+    try std.testing.expect(identical != null);
+    try std.testing.expect(inputPostStatesEqual(&.{rewritten}, identical.?.input_post_states));
+
+    const fresh_mismatch = try checker.mergeVirtualFunctionSummary(
+        .{ .input_post_states = &.{.{
+            .target = target,
+            .initializedness = .initialized,
+            .value = .{ .fresh_owned_roots = &.{1} },
+        }} },
+        .{},
+    );
+    try std.testing.expect(fresh_mismatch == null);
+
+    const transfer_mismatch = try checker.mergeVirtualFunctionSummary(
+        .{ .input_post_states = &.{.{
+            .target = target,
+            .initializedness = .initialized,
+            .value = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 }, .transfers_ownership = true }} },
+        }} },
+        .{},
+    );
+    try std.testing.expect(transfer_mismatch == null);
+}
+
+test "virtual opaque ownership merges only a shared storage" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    const target = facts.InputPath{ .input_index = 0 };
+    const storage = facts.InputPath{ .input_index = 1 };
+    const other_storage = facts.InputPath{ .input_index = 2 };
+    const none = facts.InputPlaceEffect{ .target = target, .initializedness = .initialized };
+    const definite = facts.InputPlaceEffect{
+        .target = target,
+        .initializedness = .initialized,
+        .opaque_ownership = .definite,
+        .opaque_storage = storage,
+    };
+    const conditional = facts.InputPlaceEffect{
+        .target = target,
+        .initializedness = .initialized,
+        .opaque_ownership = .conditional,
+        .opaque_storage = storage,
+    };
+
+    const optional = (try checker.mergeVirtualInputPlaceEffect(none, definite)).?;
+    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.conditional, optional.opaque_ownership);
+    try std.testing.expect(optionalInputPathEqual(storage, optional.opaque_storage));
+    const optional_conditional = (try checker.mergeVirtualInputPlaceEffect(none, conditional)).?;
+    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.conditional, optional_conditional.opaque_ownership);
+    try std.testing.expect(optionalInputPathEqual(storage, optional_conditional.opaque_storage));
+    const weakened = (try checker.mergeVirtualInputPlaceEffect(definite, conditional)).?;
+    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.conditional, weakened.opaque_ownership);
+    const conditional_same = (try checker.mergeVirtualInputPlaceEffect(conditional, conditional)).?;
+    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.conditional, conditional_same.opaque_ownership);
+    const same = (try checker.mergeVirtualInputPlaceEffect(definite, definite)).?;
+    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.definite, same.opaque_ownership);
+
+    var different = definite;
+    different.opaque_storage = other_storage;
+    try std.testing.expect((try checker.mergeVirtualInputPlaceEffect(definite, different)) == null);
+    var ambiguous = definite;
+    ambiguous.opaque_ownership = .ambiguous;
+    ambiguous.opaque_storage = null;
+    try std.testing.expect((try checker.mergeVirtualInputPlaceEffect(definite, ambiguous)) == null);
 }
 
 test "virtual summaries widen dependencies but require exact provenance" {
