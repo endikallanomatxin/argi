@@ -4173,7 +4173,7 @@ test "feature_tests/polymorphism/30X_virtual_dependency_union" {
 test "feature_tests/polymorphism/31X_virtual_incompatible_deinit" {
     try buildExpectFail(
         "tests/feature_tests/polymorphism/31X_virtual_incompatible_deinit",
-        "place rooted at 'value' is maybe_initialized and cannot be used",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
     );
 }
 
@@ -4193,27 +4193,55 @@ test "feature_tests/ownership/220X_virtual_post_state_dependency_union" {
 test "feature_tests/ownership/221X_virtual_post_state_initializedness_join" {
     try buildExpectFail(
         "tests/feature_tests/ownership/221X_virtual_post_state_initializedness_join",
-        "maybe_initialized",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
     );
 }
 
 test "feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage" {
     try buildExpectFail(
         "tests/feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage",
-        "opaque storage hides a dependency",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
     );
 }
 
 test "feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage_invalidates_source" {
     try buildExpectFail(
         "tests/feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage_invalidates_source",
-        "place rooted at 'source' is moved and cannot be used",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
     );
 }
 
 test "feature_tests/ownership/223X_virtual_opaque_ownership_different_storages_incompatible" {
     try buildExpectFail(
         "tests/feature_tests/ownership/223X_virtual_opaque_ownership_different_storages_incompatible",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+    );
+}
+
+test "feature_tests/ownership/224X_virtual_definite_self_destruction_incompatible" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/224X_virtual_definite_self_destruction_incompatible",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+    );
+}
+
+test "feature_tests/ownership/225X_virtual_receiver_uses_self_input_index" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/225X_virtual_receiver_uses_self_input_index",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/226X_virtual_conditional_opaque_ownership_drop_state_incompatible" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/226X_virtual_conditional_opaque_ownership_drop_state_incompatible",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+    );
+}
+
+test "feature_tests/ownership/227X_virtual_definite_opaque_ownership_drop_state_incompatible" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/227X_virtual_definite_opaque_ownership_drop_state_incompatible",
         "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
     );
 }

@@ -1226,10 +1226,11 @@ pub const SafetyChecker = struct {
         // A virtual receiver is a pointer value stored in the Virtual wrapper.
         // Safety summaries describe the concrete Self Place behind that value,
         // not the wrapper binding used to issue the dispatch.
-        if (arguments.len != 0 and std.mem.eql(u8, arguments[0].name, "self")) {
-            if (argument_values[0].referenced_place) |wrapper| {
+        const self_input_index: usize = call.self_input_index;
+        if (self_input_index < argument_values.len) {
+            if (argument_values[self_input_index].referenced_place) |wrapper| {
                 if (self.valueAtPlace(state, wrapper)) |concrete| {
-                    if (concrete.referenced_place != null) argument_values[0] = concrete;
+                    if (concrete.referenced_place != null) argument_values[self_input_index] = concrete;
                 }
             }
         }
@@ -2550,8 +2551,16 @@ pub const SafetyChecker = struct {
         if (registry.implementations.items.len == 0) return null;
 
         var merged = self.summaries.get(registry.implementations.items[0]) orelse return null;
+        if (!virtualInputPostStatesRuntimeRepresentable(merged.input_post_states)) {
+            try self.invalid_virtual_summaries.put(registry, {});
+            return null;
+        }
         for (registry.implementations.items[1..]) |implementation| {
             const next = self.summaries.get(implementation) orelse return null;
+            if (!virtualInputPostStatesRuntimeRepresentable(next.input_post_states)) {
+                try self.invalid_virtual_summaries.put(registry, {});
+                return null;
+            }
             merged = (try self.mergeVirtualFunctionSummary(merged, next)) orelse {
                 try self.invalid_virtual_summaries.put(registry, {});
                 return null;
@@ -2567,6 +2576,8 @@ pub const SafetyChecker = struct {
         right: facts.FunctionSummary,
     ) !?facts.FunctionSummary {
         if (left.outputs.len != right.outputs.len) return null;
+        if (!virtualInputPostStatesRuntimeRepresentable(left.input_post_states) or
+            !virtualInputPostStatesRuntimeRepresentable(right.input_post_states)) return null;
 
         const input_post_states = (try self.mergeVirtualInputPostStates(
             left.input_post_states,
@@ -2641,6 +2652,13 @@ pub const SafetyChecker = struct {
         right: facts.InputPlaceEffect,
     ) !?facts.InputPlaceEffect {
         if (!inputPlaceTargetEqual(left.target, right.target)) return null;
+        // The runtime drop state is attached to the caller's backing binding,
+        // while virtual dispatch only carries an erased data pointer. Until
+        // those identities can be correlated, a virtual contract cannot
+        // safely consume or conditionally destroy an input. Ordinary rewrites
+        // remain mergeable because they do not change cleanup responsibility.
+        if (!virtualInputPostStateRuntimeRepresentable(left) or
+            !virtualInputPostStateRuntimeRepresentable(right)) return null;
         const value = if (outputEffectEqual(left.value, right.value))
             left.value
         else blk: {
@@ -2661,6 +2679,15 @@ pub const SafetyChecker = struct {
         };
         if (!mergeVirtualOpaqueOwnershipEffect(&result, left, right)) return null;
         return result;
+    }
+
+    fn virtualInputPostStatesRuntimeRepresentable(states: []const facts.InputPlaceEffect) bool {
+        for (states) |state| if (!virtualInputPostStateRuntimeRepresentable(state)) return false;
+        return true;
+    }
+
+    fn virtualInputPostStateRuntimeRepresentable(state: facts.InputPlaceEffect) bool {
+        return state.initializedness == .initialized and state.opaque_ownership == .none;
     }
 
     /// A virtual call may discharge a domain only when every implementation
@@ -5061,7 +5088,7 @@ test "virtual summaries require exact ownership and align fresh root roles" {
     try std.testing.expect(incompatible == null);
 }
 
-test "virtual summaries require exact ownership transfer and merge initializedness" {
+test "virtual summaries reject destructive input state and require exact ownership transfer" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -5083,9 +5110,7 @@ test "virtual summaries require exact ownership transfer and merge initializedne
         }} },
         .{ .outputs = &.{.{}} },
     );
-    try std.testing.expect(deinit_alternative != null);
-    try std.testing.expectEqual(value_state.Initializedness.maybe_initialized, deinit_alternative.?.input_post_states[0].initializedness);
-    try std.testing.expect(deinit_alternative.?.input_post_states[0].ends_previous_roots);
+    try std.testing.expect(deinit_alternative == null);
 
     const opaque_mismatch = try checker.mergeVirtualFunctionSummary(
         .{ .outputs = &.{.{}}, .input_post_states = &.{.{
@@ -5162,7 +5187,7 @@ test "virtual input post states merge absent targets and caller-visible effects"
     try std.testing.expect(transfer_mismatch == null);
 }
 
-test "virtual opaque ownership merges only a shared storage" {
+test "virtual input effects reject opaque ownership without runtime drop correlation" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -5186,18 +5211,11 @@ test "virtual opaque ownership merges only a shared storage" {
         .opaque_storage = storage,
     };
 
-    const optional = (try checker.mergeVirtualInputPlaceEffect(none, definite)).?;
-    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.conditional, optional.opaque_ownership);
-    try std.testing.expect(optionalInputPathEqual(storage, optional.opaque_storage));
-    const optional_conditional = (try checker.mergeVirtualInputPlaceEffect(none, conditional)).?;
-    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.conditional, optional_conditional.opaque_ownership);
-    try std.testing.expect(optionalInputPathEqual(storage, optional_conditional.opaque_storage));
-    const weakened = (try checker.mergeVirtualInputPlaceEffect(definite, conditional)).?;
-    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.conditional, weakened.opaque_ownership);
-    const conditional_same = (try checker.mergeVirtualInputPlaceEffect(conditional, conditional)).?;
-    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.conditional, conditional_same.opaque_ownership);
-    const same = (try checker.mergeVirtualInputPlaceEffect(definite, definite)).?;
-    try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.definite, same.opaque_ownership);
+    try std.testing.expect((try checker.mergeVirtualInputPlaceEffect(none, definite)) == null);
+    try std.testing.expect((try checker.mergeVirtualInputPlaceEffect(none, conditional)) == null);
+    try std.testing.expect((try checker.mergeVirtualInputPlaceEffect(definite, conditional)) == null);
+    try std.testing.expect((try checker.mergeVirtualInputPlaceEffect(conditional, conditional)) == null);
+    try std.testing.expect((try checker.mergeVirtualInputPlaceEffect(definite, definite)) == null);
 
     var different = definite;
     different.opaque_storage = other_storage;
@@ -5806,7 +5824,13 @@ fn expectRejectedMultiEffectCallRestoresState(comptime use_virtual_call: bool) !
     }
 
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
-    try std.testing.expectEqualStrings("opaque ownership storage cannot hide dependencies on external roots", diags.list.items[0].msg);
+    try std.testing.expectEqualStrings(
+        if (use_virtual_call)
+            "virtual method 'store_pair' has incompatible safety effects across implementations"
+        else
+            "opaque ownership storage cannot hide dependencies on external roots",
+        diags.list.items[0].msg,
+    );
     try std.testing.expect(state.tracker.isAlive(first_root));
     try std.testing.expect(state.tracker.isAlive(second_root));
     try std.testing.expect(state.tracker.isAlive(external_root));
