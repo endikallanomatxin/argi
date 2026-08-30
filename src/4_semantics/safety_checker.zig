@@ -205,7 +205,12 @@ pub const SafetyChecker = struct {
                         try self.evaluate(function, initialization, state)
                     else
                         facts.ValueFacts{};
-                    try self.setPlace(state, .{ .root = binding }, .initialized, value);
+                    const storage = place.Place{ .root = binding };
+                    // A declaration inside a repeated block starts a new
+                    // lifetime after the previous iteration's cleanup.
+                    if (self.initializednessAtPlace(state, storage) == .deinitialized)
+                        try self.refreshStorageRoot(function, state, storage);
+                    try self.setPlace(state, storage, .initialized, value);
                 },
                 .binding_assignment => |assignment| {
                     const value = try self.evaluate(function, assignment.value, state);
@@ -1514,6 +1519,16 @@ pub const SafetyChecker = struct {
             if (!dependency.transfers_ownership) input.owned_roots = &.{};
             result = try self.mergeValueFacts(result, input);
         }
+        for (effect.input_place_values) |path| {
+            if (path.input_index >= arguments.len) continue;
+            var input = arguments[path.input_index];
+            if (input.referenced_place) |argument_place| {
+                var target = argument_place;
+                for (path.projections) |projection| target = try self.projectedPlace(target, projection);
+                input = self.valueAtPlace(state, target) orelse projectValueFacts(input, path.projections);
+            } else input = projectValueFacts(input, path.projections);
+            result = try self.mergeValueFacts(result, input);
+        }
         if (effect.fields.len != 0) {
             const enclosing_variants = result.variants;
             const fields = try self.allocator.alloc(facts.FieldFacts, effect.fields.len);
@@ -1821,8 +1836,18 @@ pub const SafetyChecker = struct {
         const root_count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);
         for (0..root_count) |index| {
             const id: facts.RootId = @enumFromInt(index);
-            const left_state = if (index < left.tracker.roots.items.len) left.tracker.roots.items[index].state else .dead;
-            const right_state = if (index < right.tracker.roots.items.len) right.tracker.roots.items[index].state else .dead;
+            const left_state: @TypeOf(left.tracker.roots.items[0].state) = if (index < left.tracker.roots.items.len)
+                left.tracker.roots.items[index].state
+            else if (self.storageRootWasOnlyMaterializedIn(id, right, left))
+                .alive
+            else
+                .dead;
+            const right_state: @TypeOf(right.tracker.roots.items[0].state) = if (index < right.tracker.roots.items.len)
+                right.tracker.roots.items[index].state
+            else if (self.storageRootWasOnlyMaterializedIn(id, left, right))
+                .alive
+            else
+                .dead;
             const root_state: @TypeOf(left_state) = if (left_state == right_state)
                 left_state
             else
@@ -1877,6 +1902,34 @@ pub const SafetyChecker = struct {
         joined.ownership_conflict_reported = left.ownership_conflict_reported or right.ownership_conflict_reported;
         destination.deinit();
         destination.* = joined;
+    }
+
+    /// Storage roots are compiler facts created lazily when a Place first has
+    /// its address taken. If only one branch needed that fact, the other branch
+    /// still preserves the same generation when the Place existed there.
+    fn storageRootWasOnlyMaterializedIn(
+        self: *SafetyChecker,
+        root: facts.RootId,
+        materialized: *const FunctionState,
+        other: *const FunctionState,
+    ) bool {
+        _ = self;
+        var storage: ?place.Place = null;
+        for (materialized.storage_roots.items) |entry| if (entry.root == root) {
+            storage = entry.storage;
+            break;
+        };
+        const target = storage orelse return false;
+        for (other.storage_roots.items) |entry| if (entry.storage.eql(target)) return false;
+
+        var projection_count = target.projections.len;
+        while (true) {
+            const prefix = place.Place{ .root = target.root, .projections = target.projections[0..projection_count] };
+            if (findPlace(other.places.items, prefix)) |stored|
+                return stored.initializedness == .initialized;
+            if (projection_count == 0) return false;
+            projection_count -= 1;
+        }
     }
 
     fn validateLoop(
@@ -2630,7 +2683,7 @@ pub const SafetyChecker = struct {
             const right_state = findInputPostState(right, left_state.target) orelse facts.InputPlaceEffect{
                 .target = left_state.target,
                 .initializedness = .initialized,
-                .value = try self.inputOutputEffect(left_state.target.input_index, left_state.target.projections),
+                .value = try self.inputPlaceValueEffect(left_state.target),
             };
             try merged.append((try self.mergeVirtualInputPlaceEffect(left_state, right_state)) orelse return null);
         }
@@ -2638,7 +2691,7 @@ pub const SafetyChecker = struct {
             const unchanged = facts.InputPlaceEffect{
                 .target = right_state.target,
                 .initializedness = .initialized,
-                .value = try self.inputOutputEffect(right_state.target.input_index, right_state.target.projections),
+                .value = try self.inputPlaceValueEffect(right_state.target),
             };
             try merged.append((try self.mergeVirtualInputPlaceEffect(unchanged, right_state)) orelse return null);
         };
@@ -2736,6 +2789,9 @@ pub const SafetyChecker = struct {
         var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         for (left.input_places) |path| try appendInputPath(&input_places, path);
         for (right.input_places) |path| try appendInputPath(&input_places, path);
+        var input_place_values = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        for (left.input_place_values) |path| try appendInputPath(&input_place_values, path);
+        for (right.input_place_values) |path| try appendInputPath(&input_place_values, path);
         var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         for (left.opaque_generation_dependencies) |path| try appendInputPath(&opaque_generations, path);
         for (right.opaque_generation_dependencies) |path| try appendInputPath(&opaque_generations, path);
@@ -2757,6 +2813,7 @@ pub const SafetyChecker = struct {
         return .{
             .input_dependencies = try dependencies.toOwnedSlice(),
             .input_places = try input_places.toOwnedSlice(),
+            .input_place_values = try input_place_values.toOwnedSlice(),
             .opaque_generation_dependencies = try opaque_generations.toOwnedSlice(),
             .fields = fields,
             .variants = variants,
@@ -3764,6 +3821,7 @@ pub const SafetyChecker = struct {
         return .{
             .input_dependencies = input_dependencies,
             .input_places = effect.input_places,
+            .input_place_values = effect.input_place_values,
             .opaque_generation_dependencies = effect.opaque_generation_dependencies,
             .fields = fields,
             .variants = variants,
@@ -3910,7 +3968,7 @@ pub const SafetyChecker = struct {
                 if (left_state.initializedness != .initialized) {
                     merged.initializedness = .maybe_initialized;
                 } else {
-                    merged.value = try self.mergeOutputEffects(left_state.value, try self.inputOutputEffect(left_state.target.input_index, left_state.target.projections));
+                    merged.value = try self.mergeOutputEffects(left_state.value, try self.inputPlaceValueEffect(left_state.target));
                 }
                 const unchanged: facts.InputPlaceEffect = .{ .target = left_state.target, .initializedness = .initialized };
                 joinOpaqueOwnershipEffect(&merged, left_state, unchanged);
@@ -3922,7 +3980,7 @@ pub const SafetyChecker = struct {
             if (right_state.initializedness != .initialized) {
                 merged.initializedness = .maybe_initialized;
             } else {
-                merged.value = try self.mergeOutputEffects(right_state.value, try self.inputOutputEffect(right_state.target.input_index, right_state.target.projections));
+                merged.value = try self.mergeOutputEffects(right_state.value, try self.inputPlaceValueEffect(right_state.target));
             }
             const unchanged: facts.InputPlaceEffect = .{ .target = right_state.target, .initializedness = .initialized };
             joinOpaqueOwnershipEffect(&merged, unchanged, right_state);
@@ -4037,9 +4095,16 @@ pub const SafetyChecker = struct {
         pointer: *const sg.SGNode,
         effect: facts.OutputEffect,
     ) !facts.OutputEffect {
-        const ty = node.sem_type orelse return effect;
-        if (!typeContainsPointer(ty)) return effect;
-        return self.withOpaqueReadGenerationDependencies(try self.symbolicSourcePaths(function, pointer, effect), effect);
+        const input_paths = try self.inferInputPaths(function, pointer);
+        var pointee = effect;
+        if (input_paths.len != 0) {
+            pointee.input_dependencies = &.{};
+            pointee.input_places = &.{};
+            pointee.input_place_values = input_paths;
+        }
+        const ty = node.sem_type orelse return pointee;
+        if (!typeContainsPointer(ty)) return pointee;
+        return self.withOpaqueReadGenerationDependencies(try self.symbolicSourcePaths(function, pointer, pointee), pointee);
     }
 
     fn withOpaqueReadGenerationDependencies(
@@ -4221,6 +4286,10 @@ pub const SafetyChecker = struct {
         return .{ .input_dependencies = try self.oneInputDependency(input_index, projections) };
     }
 
+    fn inputPlaceValueEffect(self: *SafetyChecker, target: facts.InputPath) !facts.OutputEffect {
+        return .{ .input_place_values = try self.oneInputPath(target.input_index, target.projections) };
+    }
+
     fn oneInputDependency(self: *SafetyChecker, input_index: u32, projections: []const place.Projection) ![]const facts.InputDependency {
         const dependencies = try self.allocator.alloc(facts.InputDependency, 1);
         dependencies[0] = .{ .path = .{ .input_index = input_index, .projections = projections } };
@@ -4366,9 +4435,11 @@ pub const SafetyChecker = struct {
             dependencies[index].path.projections = projections;
         }
         const input_places = try self.projectInputPaths(effect.input_places, projection);
+        const input_place_values = try self.projectInputPaths(effect.input_place_values, projection);
         return .{
             .input_dependencies = dependencies,
             .input_places = input_places,
+            .input_place_values = input_place_values,
             .opaque_generation_dependencies = effect.opaque_generation_dependencies,
             .fresh_dependencies = effect.fresh_dependencies,
             .fresh_owned_roots = effect.fresh_owned_roots,
@@ -4408,6 +4479,21 @@ pub const SafetyChecker = struct {
             for (substituted) |candidate| try appendInputPath(&input_places, candidate);
         }
         result.input_places = try input_places.toOwnedSlice();
+        var input_place_values = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        var input_place_value_overrides: facts.OutputEffect = .{};
+        for (effect.input_place_values) |path| {
+            if (path.input_index >= arguments.len) continue;
+            if (symbolic_override) |override| if (override.input_index == path.input_index) {
+                var value = override.effect;
+                for (path.projections) |projection| value = try self.projectOutputEffect(value, projection);
+                input_place_value_overrides = try self.mergeOutputEffects(input_place_value_overrides, value);
+                continue;
+            };
+            const substituted = try self.substituteInputPathWithOverride(function, path, arguments, symbolic_override);
+            for (substituted) |candidate| try appendInputPath(&input_place_values, candidate);
+        }
+        result.input_place_values = try input_place_values.toOwnedSlice();
+        result = try self.mergeOutputEffects(result, input_place_value_overrides);
         var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         for (effect.opaque_generation_dependencies) |path| {
             if (path.input_index >= arguments.len) continue;
@@ -4455,6 +4541,9 @@ pub const SafetyChecker = struct {
         var input_places = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         for (left.input_places) |path| try appendInputPath(&input_places, path);
         for (right.input_places) |path| try appendInputPath(&input_places, path);
+        var input_place_values = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        for (left.input_place_values) |path| try appendInputPath(&input_place_values, path);
+        for (right.input_place_values) |path| try appendInputPath(&input_place_values, path);
         var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         for (left.opaque_generation_dependencies) |path| try appendInputPath(&opaque_generations, path);
         for (right.opaque_generation_dependencies) |path| try appendInputPath(&opaque_generations, path);
@@ -4499,6 +4588,7 @@ pub const SafetyChecker = struct {
         return .{
             .input_dependencies = try dependencies.toOwnedSlice(),
             .input_places = try input_places.toOwnedSlice(),
+            .input_place_values = try input_place_values.toOwnedSlice(),
             .opaque_generation_dependencies = try opaque_generations.toOwnedSlice(),
             .fields = try fields.toOwnedSlice(),
             .fresh_dependencies = try self.mergeFreshSources(left.fresh_dependencies, right.fresh_dependencies),
@@ -5010,12 +5100,14 @@ fn outputEffectEqual(left: facts.OutputEffect, right: facts.OutputEffect) bool {
         !std.mem.eql(facts.FreshRootSource, left.fresh_storage_authorities, right.fresh_storage_authorities)) return false;
     if (left.input_dependencies.len != right.input_dependencies.len or
         left.input_places.len != right.input_places.len or
+        left.input_place_values.len != right.input_place_values.len or
         left.opaque_generation_dependencies.len != right.opaque_generation_dependencies.len or
         left.fields.len != right.fields.len or left.variants.len != right.variants.len) return false;
     for (left.input_dependencies, right.input_dependencies) |a, b| {
         if (!inputDependencyEqual(a, b)) return false;
     }
     for (left.input_places, right.input_places) |a, b| if (!inputPlaceTargetEqual(a, b)) return false;
+    for (left.input_place_values, right.input_place_values) |a, b| if (!inputPlaceTargetEqual(a, b)) return false;
     for (left.opaque_generation_dependencies, right.opaque_generation_dependencies) |a, b|
         if (!inputPlaceTargetEqual(a, b)) return false;
     for (left.fields, right.fields) |a, b| {
@@ -5152,7 +5244,8 @@ test "virtual input post states merge absent targets and caller-visible effects"
     try std.testing.expect(optional != null);
     const merged = optional.?.input_post_states[0];
     try std.testing.expectEqual(value_state.Initializedness.initialized, merged.initializedness);
-    try std.testing.expect(containsInputDependency(merged.value.input_dependencies, .{ .path = target }));
+    try std.testing.expectEqual(@as(usize, 1), merged.value.input_place_values.len);
+    try std.testing.expect(inputPlaceTargetEqual(target, merged.value.input_place_values[0]));
     try std.testing.expect(containsInputDependency(merged.value.input_dependencies, .{ .path = .{ .input_index = 1 } }));
     try std.testing.expect(merged.ends_previous_roots);
     try std.testing.expect(merged.refreshes_storage_root);
@@ -6223,6 +6316,31 @@ test "symbolic opaque read generations instantiate without polluting identity ou
         virtual_identity,
     );
     try std.testing.expectEqual(@as(usize, 1), virtual_read.opaque_generation_dependencies.len);
+}
+
+test "input Place values instantiate the pointee rather than the pointer" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    var binding: sg.BindingDeclaration = undefined;
+    const storage = place.Place{ .root = &binding };
+    const pointer_root = try state.tracker.establish(.fresh);
+    const pointee_root = try state.tracker.establish(.fresh);
+    try checker.setPlace(&state, storage, .initialized, .{ .dependencies = &.{.{ .root = pointee_root }} });
+
+    const effect = try checker.inputPlaceValueEffect(.{ .input_index = 0 });
+    const value = try checker.instantiateOutput(effect, &.{.{
+        .dependencies = &.{.{ .root = pointer_root }},
+        .referenced_place = storage,
+    }}, &state);
+    try std.testing.expect(valueDependsOnRoot(value, pointee_root));
+    try std.testing.expect(!valueDependsOnRoot(value, pointer_root));
+    try std.testing.expect(value.referenced_place == null);
 }
 
 test "opaque generation dependencies instantiate into hidden opaque dependencies" {

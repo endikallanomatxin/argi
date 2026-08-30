@@ -4246,6 +4246,31 @@ test "feature_tests/ownership/227X_virtual_definite_opaque_ownership_drop_state_
     );
 }
 
+test "feature_tests/ownership/228_virtual_mutation_preserves_existing_alias" {
+    const test_path = "tests/feature_tests/ownership/228_virtual_mutation_preserves_existing_alias";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/229_virtual_mutation_preserves_stored_reference" {
+    const test_path = "tests/feature_tests/ownership/229_virtual_mutation_preserves_stored_reference";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/230_virtual_unchanged_alternative_preserves_pointee_facts" {
+    const test_path = "tests/feature_tests/ownership/230_virtual_unchanged_alternative_preserves_pointee_facts";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/231X_control_flow_unchanged_preserves_pointee_dependencies" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/231X_control_flow_unchanged_preserves_pointee_dependencies",
+        "reference depends on a root that has ended",
+    );
+}
+
 test "feature_tests/polymorphism/32_static_abstract_generic_fields" {
     const test_path = "tests/feature_tests/polymorphism/32_static_abstract_generic_fields";
     try expectSuccessfulBuild(test_path);

@@ -101,6 +101,10 @@ pub const FreshRootSource = usize;
 pub const OutputEffect = struct {
     input_dependencies: []const InputDependency = &.{},
     input_places: []const InputPath = &.{},
+    /// Values currently stored in Places reached through function inputs.
+    /// This differs from `input_dependencies`: for a pointer input, the
+    /// argument value is the pointer while this denotes its pointee value.
+    input_place_values: []const InputPath = &.{},
     /// Opaque reads cannot name caller RootIds directly. Each path records
     /// that instantiation must add the concrete generations carried by that
     /// caller value as temporal dependencies of this output.
