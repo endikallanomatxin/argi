@@ -33,6 +33,9 @@ pub const ValueFacts = struct {
     /// Mutually exclusive payload facts for a choice value. Unlike `fields`,
     /// these values do not all exist at once and are refined by a match arm.
     variants: []const VariantFacts = &.{},
+    /// Runtime tag intrinsic to this concrete value. General choice values
+    /// keep this null even when `variants` contains possible payload facts.
+    known_choice_variant: ?u32 = null,
     integer_address: bool = false,
     foreign_storage: bool = false,
     storage_authorities: []const StorageAuthorityId = &.{},
@@ -113,6 +116,8 @@ pub const OutputEffect = struct {
     /// Alternative effects selected by the runtime choice tag. Fresh roots
     /// below an alternative are never promoted to the enclosing output.
     variants: []const OutputVariantEffect = &.{},
+    /// Concrete tag guaranteed for this output on every summarized exit.
+    known_choice_variant: ?u32 = null,
     fresh_dependencies: []const FreshRootSource = &.{},
     fresh_owned_roots: []const FreshRootSource = &.{},
     integer_address: bool = false,

@@ -4284,6 +4284,95 @@ test "feature_tests/ownership/233_opaque_effect_input_place_value_release_all" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/types/234_known_choice_literal_payload" {
+    const test_path = "tests/feature_tests/types/234_known_choice_literal_payload";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/235X_wrong_known_choice_literal_payload" {
+    try buildExpectFail(
+        "tests/feature_tests/types/235X_wrong_known_choice_literal_payload",
+        "choice payload '..0' is not active",
+    );
+}
+
+test "feature_tests/types/236_choice_equality_refines_payload" {
+    const test_path = "tests/feature_tests/types/236_choice_equality_refines_payload";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/237_choice_inequality_refines_remaining_payload" {
+    const test_path = "tests/feature_tests/types/237_choice_inequality_refines_remaining_payload";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/237X_choice_inequality_does_not_over_refine" {
+    try buildExpectFail(
+        "tests/feature_tests/types/237X_choice_inequality_does_not_over_refine",
+        "choice payload '..0' is not active",
+    );
+}
+
+test "feature_tests/types/238_choice_join_preserves_same_variant" {
+    const test_path = "tests/feature_tests/types/238_choice_join_preserves_same_variant";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/239X_choice_join_different_variants_is_unknown" {
+    try buildExpectFail(
+        "tests/feature_tests/types/239X_choice_join_different_variants_is_unknown",
+        "choice payload '..0' requires its variant to be proven active",
+    );
+}
+
+test "feature_tests/types/240_match_temporary_refines_payload" {
+    const test_path = "tests/feature_tests/types/240_match_temporary_refines_payload";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/241X_choice_reassignment_invalidates_refinement" {
+    try buildExpectFail(
+        "tests/feature_tests/types/241X_choice_reassignment_invalidates_refinement",
+        "choice payload '..0' is not active",
+    );
+}
+
+test "feature_tests/types/242_choice_move_preserves_known_variant" {
+    const test_path = "tests/feature_tests/types/242_choice_move_preserves_known_variant";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/242X_choice_move_invalidates_source" {
+    try buildExpectFail(
+        "tests/feature_tests/types/242X_choice_move_invalidates_source",
+        "choice payload '..0' requires its variant to be proven active",
+    );
+}
+
+test "feature_tests/types/243_choice_field_preserves_known_variant" {
+    const test_path = "tests/feature_tests/types/243_choice_field_preserves_known_variant";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/244_choice_refinement_survives_breaking_branch" {
+    const test_path = "tests/feature_tests/types/244_choice_refinement_survives_breaking_branch";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/245_function_output_preserves_known_choice_variant" {
+    const test_path = "tests/feature_tests/types/245_function_output_preserves_known_choice_variant";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/polymorphism/32_static_abstract_generic_fields" {
     const test_path = "tests/feature_tests/polymorphism/32_static_abstract_generic_fields";
     try expectSuccessfulBuild(test_path);

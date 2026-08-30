@@ -3,8 +3,16 @@ Choice : Type = (
     ..b Int32
 )
 
-main() -> (.status_code: Int32) := {
-    value :: Choice = ..a 7
+choose(.condition: Bool) -> (.value: Choice) := {
+    if condition {
+        value = ..a 7
+    } else {
+        value = ..b 8
+    }
+}
+
+main(.condition: Bool = true) -> (.status_code: Int32) := {
+    value ::= choose(.condition = condition)
     payload ::= value..a
     status_code = payload
 }
