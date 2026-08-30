@@ -289,7 +289,7 @@ pub const SafetyChecker = struct {
                     if (target) |storage| try self.setPlace(state, storage, .initialized, value);
                 },
                 .pointer_assignment => |assignment| {
-                    const pointer = try self.evaluate(function, assignment.pointer, state);
+                    var pointer = try self.evaluate(function, assignment.pointer, state);
                     const reinitializes_dead_place = if (pointer.referenced_place) |target|
                         if (self.getPlace(state, target)) |target_facts|
                             target_facts.initializedness == .deinitialized
@@ -301,7 +301,20 @@ pub const SafetyChecker = struct {
                         try self.diagnostics.add(function.location, .semantic, "reference depends on a root that has ended", .{});
                     if (reinitializes_dead_place) {
                         const target = pointer.referenced_place.?;
+                        const pointer_storage = try self.resolvePlace(assignment.pointer, state);
+                        const old_root = try self.storageRootForPlace(target, state);
                         try self.refreshStorageRoot(function, state, target);
+                        const fresh_root = try self.storageRootForPlace(target, state);
+                        // The precise pointer used as the reinitialization
+                        // authority follows the new generation. Other aliases
+                        // retain their dependency on the ended generation.
+                        if (pointer_storage) |storage| if (!storage.eql(target)) {
+                            const dependencies = try self.allocator.alloc(facts.ReferenceDependency, pointer.dependencies.len);
+                            for (pointer.dependencies, 0..) |dependency, index|
+                                dependencies[index] = .{ .root = if (dependency.root == old_root) fresh_root else dependency.root };
+                            pointer.dependencies = dependencies;
+                            try self.setPlace(state, storage, .initialized, pointer);
+                        };
                     }
                     const value = try self.evaluateStoredValue(function, assignment.value, state, pointer);
                     try self.addStoredOwnershipEdges(function, state, pointer, value);

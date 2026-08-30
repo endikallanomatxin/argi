@@ -4427,6 +4427,19 @@ test "feature_tests/types/253X_choice_payload_integer_address_rejected_across_ca
     );
 }
 
+test "feature_tests/ownership/254X_reinitializing_alias_does_not_refresh_sibling" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/254X_reinitializing_alias_does_not_refresh_sibling",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/255_live_pointer_assignment_preserves_sibling_alias" {
+    const test_path = "tests/feature_tests/ownership/255_live_pointer_assignment_preserves_sibling_alias";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/polymorphism/32_static_abstract_generic_fields" {
     const test_path = "tests/feature_tests/polymorphism/32_static_abstract_generic_fields";
     try expectSuccessfulBuild(test_path);
