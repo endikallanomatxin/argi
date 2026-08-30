@@ -15,6 +15,9 @@ pub const SafetyChecker = struct {
     invalid_virtual_summaries: std.AutoHashMap(*const sg.VirtualMethodRegistry, void),
     inference_bindings: ?*std.AutoHashMap(*const sg.BindingDeclaration, facts.OutputEffect),
     inference_place_bindings: ?*std.AutoHashMap(*const sg.BindingDeclaration, []const facts.InputPath),
+    // Choice construction retains invalid-address provenance in nested
+    // default values and diagnoses it when that pointer is actually used.
+    choice_payload_depth: usize,
 
     pub fn init(allocator: *const std.mem.Allocator, diags: *diagnostics.Diagnostics) SafetyChecker {
         return .{
@@ -25,6 +28,7 @@ pub const SafetyChecker = struct {
             .invalid_virtual_summaries = std.AutoHashMap(*const sg.VirtualMethodRegistry, void).init(allocator.*),
             .inference_bindings = null,
             .inference_place_bindings = null,
+            .choice_payload_depth = 0,
         };
     }
 
@@ -458,10 +462,7 @@ pub const SafetyChecker = struct {
                 break :blk try self.envelopeOpaqueRead(state, .{}, node.sem_type, pointer);
             },
             .struct_value_literal => |literal| try self.aggregate(function, literal.fields, state),
-            // Payload facts are represented by interprocedural and match
-            // effects independently. A literal establishes its concrete tag
-            // here without re-evaluating its already-lowered payload.
-            .choice_literal => |literal| try self.choiceValue(literal.variant_index, .{}),
+            .choice_literal => |literal| try self.evaluateChoiceLiteral(function, literal, state),
             .struct_field_access => |access| blk: {
                 if (try self.resolvePlace(node, state)) |storage| {
                     if (!try self.validateAddressablePath(function, access.struct_value, state)) break :blk .{};
@@ -538,7 +539,13 @@ pub const SafetyChecker = struct {
                         .storage_authorities = value.storage_authorities,
                     };
                 if (target_is_reference and !target_is_raw_any and (source_is_integer or value.integer_address)) {
-                    try self.diagnostics.add(function.location, .semantic, "an integer address cannot establish a safe reference; use RawPointer and explicit root establishment", .{});
+                    if (self.choice_payload_depth == 0)
+                        try self.diagnostics.add(function.location, .semantic, "an integer address cannot establish a safe reference; use RawPointer and explicit root establishment", .{});
+                    break :blk facts.ValueFacts{
+                        .integer_address = true,
+                        .foreign_storage = value.foreign_storage,
+                        .storage_authorities = value.storage_authorities,
+                    };
                 }
                 break :blk .{};
             },
@@ -568,6 +575,18 @@ pub const SafetyChecker = struct {
             },
             else => .{},
         };
+    }
+
+    fn evaluateChoiceLiteral(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        literal: *const sg.ChoiceLiteral,
+        state: *FunctionState,
+    ) anyerror!facts.ValueFacts {
+        const payload = literal.payload orelse return self.choiceValue(literal.variant_index, .{});
+        self.choice_payload_depth += 1;
+        defer self.choice_payload_depth -= 1;
+        return self.choiceValue(literal.variant_index, try self.evaluate(function, payload, state));
     }
 
     fn evaluateCall(
@@ -2451,14 +2470,14 @@ pub const SafetyChecker = struct {
         var index: usize = 0;
         while (index < state.choice_active.items.len) {
             const refined = state.choice_active.items[index].storage;
-            if (storage.isPrefixOf(refined) or refined.isPrefixOf(storage)) {
+            if (storage.isPrefixOf(refined)) {
                 _ = state.choice_active.orderedRemove(index);
             } else index += 1;
         }
         index = 0;
         while (index < state.choice_rejected.items.len) {
             const refined = state.choice_rejected.items[index].storage;
-            if (storage.isPrefixOf(refined) or refined.isPrefixOf(storage)) {
+            if (storage.isPrefixOf(refined)) {
                 _ = state.choice_rejected.orderedRemove(index);
             } else index += 1;
         }
@@ -2716,6 +2735,10 @@ pub const SafetyChecker = struct {
         const diagnostic_count = self.diagnostics.list.items.len;
         const pointer = try self.evaluate(function, pointer_node, state);
         if (self.diagnostics.list.items.len != diagnostic_count) return null;
+        if (pointer.integer_address) {
+            try self.diagnostics.add(function.location, .semantic, "an integer address cannot establish a safe reference; use RawPointer and explicit root establishment", .{});
+            return null;
+        }
         if (state.tracker.dependenciesAreAlive(pointer)) return pointer;
         try self.diagnostics.add(function.location, .semantic, "reference depends on a root that has ended", .{});
         return null;

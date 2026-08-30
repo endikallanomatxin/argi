@@ -8,8 +8,16 @@ Outer : Type = (
     ..error
 )
 
-main() -> (.status_code: Int32) := {
-    inner_value :: Inner = ..a 7
+choose(.condition: Bool) -> (.value: Inner) := {
+    if condition {
+        value = ..a 7
+    } else {
+        value = ..b 8
+    }
+}
+
+main(.condition: Bool = true) -> (.status_code: Int32) := {
+    inner_value ::= choose(.condition = condition)
     value :: Outer = ..ok inner_value
     if is(value, ..ok) {
         inner ::= value..ok

@@ -4373,6 +4373,53 @@ test "feature_tests/types/245_function_output_preserves_known_choice_variant" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/types/246X_choice_literal_payload_preserves_reference_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/types/246X_choice_literal_payload_preserves_reference_dependency",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/types/247X_choice_literal_payload_move_consumes_source" {
+    try buildExpectFail(
+        "tests/feature_tests/types/247X_choice_literal_payload_move_consumes_source",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/types/248_choice_payload_mutation_preserves_parent_tag" {
+    const test_path = "tests/feature_tests/types/248_choice_payload_mutation_preserves_parent_tag";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/249_choice_sibling_mutation_preserves_tag" {
+    const test_path = "tests/feature_tests/types/249_choice_sibling_mutation_preserves_tag";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/250X_choice_field_overwrite_invalidates_tag" {
+    try buildExpectFail(
+        "tests/feature_tests/types/250X_choice_field_overwrite_invalidates_tag",
+        "choice payload '..0' is not active",
+    );
+}
+
+test "feature_tests/types/251X_choice_parent_overwrite_invalidates_tag" {
+    try buildExpectFail(
+        "tests/feature_tests/types/251X_choice_parent_overwrite_invalidates_tag",
+        "choice payload '..0' is not active",
+    );
+}
+
+test "feature_tests/types/252X_choice_payload_integer_address_rejected_on_use" {
+    try buildExpectFail(
+        "tests/feature_tests/types/252X_choice_payload_integer_address_rejected_on_use",
+        "an integer address cannot establish a safe reference",
+    );
+}
+
 test "feature_tests/polymorphism/32_static_abstract_generic_fields" {
     const test_path = "tests/feature_tests/polymorphism/32_static_abstract_generic_fields";
     try expectSuccessfulBuild(test_path);
