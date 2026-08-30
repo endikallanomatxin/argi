@@ -1187,6 +1187,11 @@ pub const SafetyChecker = struct {
             const input = projectValueFacts(arguments[dependency.path.input_index], dependency.path.projections);
             try self.collectOpaqueHiddenDependencies(state, input, hidden);
         }
+        for (effect.input_place_values) |path| {
+            if (path.input_index >= arguments.len) continue;
+            const input = try self.instantiateInputPlaceValue(path, arguments, state);
+            try self.collectOpaqueHiddenDependencies(state, input, hidden);
+        }
         for (effect.opaque_generation_dependencies) |path| {
             if (path.input_index >= arguments.len) continue;
             const input = projectValueFacts(arguments[path.input_index], path.projections);
@@ -1521,12 +1526,7 @@ pub const SafetyChecker = struct {
         }
         for (effect.input_place_values) |path| {
             if (path.input_index >= arguments.len) continue;
-            var input = arguments[path.input_index];
-            if (input.referenced_place) |argument_place| {
-                var target = argument_place;
-                for (path.projections) |projection| target = try self.projectedPlace(target, projection);
-                input = self.valueAtPlace(state, target) orelse projectValueFacts(input, path.projections);
-            } else input = projectValueFacts(input, path.projections);
+            const input = try self.instantiateInputPlaceValue(path, arguments, state);
             result = try self.mergeValueFacts(result, input);
         }
         if (effect.fields.len != 0) {
@@ -1558,6 +1558,24 @@ pub const SafetyChecker = struct {
         result.foreign_storage = result.foreign_storage or effect.foreign_storage;
         if (referenced_place) |target| result.referenced_place = target;
         return result;
+    }
+
+    fn instantiateInputPlaceValue(
+        self: *SafetyChecker,
+        path: facts.InputPath,
+        arguments: []const facts.ValueFacts,
+        state: *FunctionState,
+    ) !facts.ValueFacts {
+        const input = arguments[path.input_index];
+        if (input.referenced_place) |argument_place| {
+            var target = argument_place;
+            for (path.projections) |projection| target = try self.projectedPlace(target, projection);
+            return self.valueAtPlace(state, target) orelse projectValueFacts(input, path.projections);
+        }
+        // Some symbolic callers cannot name a concrete pointee Place. Their
+        // argument facts are the only conservative value approximation
+        // available; no synthetic storage identity is introduced here.
+        return projectValueFacts(input, path.projections);
     }
 
     fn collectOpaqueOriginsRecursively(
@@ -6341,6 +6359,45 @@ test "input Place values instantiate the pointee rather than the pointer" {
     try std.testing.expect(valueDependsOnRoot(value, pointee_root));
     try std.testing.expect(!valueDependsOnRoot(value, pointer_root));
     try std.testing.expect(value.referenced_place == null);
+}
+
+test "opaque input Place values hide pointee dependencies rather than pointer facts" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+    var binding: sg.BindingDeclaration = undefined;
+    const storage = place.Place{ .root = &binding };
+    const pointer_root = try state.tracker.establish(.fresh);
+    const pointee_root = try state.tracker.establish(.fresh);
+    const pointee_owned_root = try state.tracker.establish(.fresh);
+    try checker.setPlace(&state, storage, .initialized, .{
+        .dependencies = &.{.{ .root = pointee_root }},
+        .owned_roots = &.{pointee_owned_root},
+    });
+
+    var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.RootId).init(allocator);
+    defer fresh_roots.deinit();
+    var hidden = std.array_list.Managed(facts.RootId).init(allocator);
+    defer hidden.deinit();
+    try checker.instantiateOpaqueDependencies(
+        try checker.inputPlaceValueEffect(.{ .input_index = 0 }),
+        &.{.{
+            .dependencies = &.{.{ .root = pointer_root }},
+            .referenced_place = storage,
+        }},
+        &state,
+        &fresh_roots,
+        &hidden,
+    );
+
+    try std.testing.expect(containsRoot(hidden.items, pointee_root));
+    try std.testing.expect(!containsRoot(hidden.items, pointer_root));
+    try std.testing.expect(!containsRoot(hidden.items, pointee_owned_root));
 }
 
 test "opaque generation dependencies instantiate into hidden opaque dependencies" {

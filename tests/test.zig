@@ -4271,6 +4271,19 @@ test "feature_tests/ownership/231X_control_flow_unchanged_preserves_pointee_depe
     );
 }
 
+test "feature_tests/ownership/232X_opaque_effect_instantiates_input_place_value_dependencies" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/232X_opaque_effect_instantiates_input_place_value_dependencies",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/233_opaque_effect_input_place_value_release_all" {
+    const test_path = "tests/feature_tests/ownership/233_opaque_effect_input_place_value_release_all";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/polymorphism/32_static_abstract_generic_fields" {
     const test_path = "tests/feature_tests/polymorphism/32_static_abstract_generic_fields";
     try expectSuccessfulBuild(test_path);
