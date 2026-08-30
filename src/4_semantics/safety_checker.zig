@@ -1364,9 +1364,7 @@ pub const SafetyChecker = struct {
                     value = self.valueAtPlace(state, target) orelse projectValueFacts(value, path.projections);
                 } else value = projectValueFacts(value, path.projections);
             }
-            if (state.tracker.dependenciesAreAlive(value)) continue;
-            try self.diagnostics.add(function.location, .semantic, "reference depends on a root that has ended", .{});
-            return false;
+            if (!try self.validateLiveValueUse(function, value, state)) return false;
         }
         return true;
     }
@@ -2735,13 +2733,22 @@ pub const SafetyChecker = struct {
         const diagnostic_count = self.diagnostics.list.items.len;
         const pointer = try self.evaluate(function, pointer_node, state);
         if (self.diagnostics.list.items.len != diagnostic_count) return null;
-        if (pointer.integer_address) {
+        return if (try self.validateLiveValueUse(function, pointer, state)) pointer else null;
+    }
+
+    fn validateLiveValueUse(
+        self: *SafetyChecker,
+        function: *const sg.FunctionDeclaration,
+        value: facts.ValueFacts,
+        state: *const FunctionState,
+    ) !bool {
+        if (value.integer_address) {
             try self.diagnostics.add(function.location, .semantic, "an integer address cannot establish a safe reference; use RawPointer and explicit root establishment", .{});
-            return null;
+            return false;
         }
-        if (state.tracker.dependenciesAreAlive(pointer)) return pointer;
+        if (state.tracker.dependenciesAreAlive(value)) return true;
         try self.diagnostics.add(function.location, .semantic, "reference depends on a root that has ended", .{});
-        return null;
+        return false;
     }
 
     fn oneDependency(self: *SafetyChecker, root: facts.RootId) ![]const facts.ReferenceDependency {
@@ -5686,6 +5693,46 @@ test "required live input validation projects the selected aggregate path" {
         &state,
     ));
     try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+}
+
+test "required live input validation rejects integer-derived safe references" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var diags = diagnostics.Diagnostics.init(&allocator, &.{});
+    defer diags.deinit();
+    var checker = SafetyChecker.init(&allocator, &diags);
+    defer checker.deinit();
+    var state = SafetyChecker.FunctionState.init(allocator);
+    defer state.deinit();
+
+    const location = @import("../2_tokens/token.zig").Location{
+        .file = "required_live_integer_address_test.rg",
+        .offset = 0,
+        .line = 1,
+        .column = 1,
+    };
+    const function = sg.FunctionDeclaration{
+        .id = 0,
+        .name = "test",
+        .location = location,
+        .is_once = false,
+        .input = undefined,
+        .output = undefined,
+        .body = null,
+    };
+
+    try std.testing.expect(!try checker.validateRequiredLiveInputs(
+        &function,
+        .{ .required_live_inputs = &.{.{ .input_index = 0 }} },
+        &.{.{ .integer_address = true }},
+        &state,
+    ));
+    try std.testing.expectEqual(@as(usize, 1), diags.list.items.len);
+    try std.testing.expectEqualStrings(
+        "an integer address cannot establish a safe reference; use RawPointer and explicit root establishment",
+        diags.list.items[0].msg,
+    );
 }
 
 test "output instantiation preserves sparse semantic field indices" {

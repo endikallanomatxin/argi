@@ -4420,6 +4420,13 @@ test "feature_tests/types/252X_choice_payload_integer_address_rejected_on_use" {
     );
 }
 
+test "feature_tests/types/253X_choice_payload_integer_address_rejected_across_call" {
+    try buildExpectFail(
+        "tests/feature_tests/types/253X_choice_payload_integer_address_rejected_across_call",
+        "an integer address cannot establish a safe reference",
+    );
+}
+
 test "feature_tests/polymorphism/32_static_abstract_generic_fields" {
     const test_path = "tests/feature_tests/polymorphism/32_static_abstract_generic_fields";
     try expectSuccessfulBuild(test_path);
