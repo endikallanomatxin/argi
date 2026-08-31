@@ -302,19 +302,7 @@ pub const SafetyChecker = struct {
                     if (reinitializes_dead_place) {
                         const target = pointer.referenced_place.?;
                         const pointer_storage = try self.resolvePlace(assignment.pointer, state);
-                        const old_root = try self.storageRootForPlace(target, state);
-                        try self.refreshStorageRoot(function, state, target);
-                        const fresh_root = try self.storageRootForPlace(target, state);
-                        // The precise pointer used as the reinitialization
-                        // authority follows the new generation. Other aliases
-                        // retain their dependency on the ended generation.
-                        if (pointer_storage) |storage| if (!storage.eql(target)) {
-                            const dependencies = try self.allocator.alloc(facts.ReferenceDependency, pointer.dependencies.len);
-                            for (pointer.dependencies, 0..) |dependency, index|
-                                dependencies[index] = .{ .root = if (dependency.root == old_root) fresh_root else dependency.root };
-                            pointer.dependencies = dependencies;
-                            try self.setPlace(state, storage, .initialized, pointer);
-                        };
+                        pointer = try self.refreshStorageRootThroughPointer(function, state, target, pointer_storage, pointer);
                     }
                     const value = try self.evaluateStoredValue(function, assignment.value, state, pointer);
                     try self.addStoredOwnershipEdges(function, state, pointer, value);
@@ -1482,8 +1470,16 @@ pub const SafetyChecker = struct {
                 }
             }
             if (post_state.initializedness == .deinitialized) try self.endStorageRootsUnder(function, state, target);
-            if (!post_state.requires_available_destination and (reinitializes_dead_place or post_state.refreshes_storage_root))
-                try self.refreshStorageRoot(function, state, target);
+            if (!post_state.requires_available_destination and (reinitializes_dead_place or post_state.refreshes_storage_root)) {
+                const pointer_storage = try self.resolvePlace(arguments[index].value, state);
+                _ = try self.refreshStorageRootThroughPointer(
+                    function,
+                    state,
+                    target,
+                    pointer_storage,
+                    argument_values[index],
+                );
+            }
             const value = if (post_state.initializedness == .initialized)
                 try self.instantiateOutputWithFresh(post_state.value, argument_values, state, &fresh_roots, &fresh_authorities)
             else
@@ -1505,6 +1501,37 @@ pub const SafetyChecker = struct {
         for (post_state.target.projections) |projection|
             target = try self.projectedPlace(target, projection);
         return target;
+    }
+
+    fn refreshStorageRootThroughPointer(
+        self: *SafetyChecker,
+        function: ?*const sg.FunctionDeclaration,
+        state: *FunctionState,
+        target: place.Place,
+        pointer_storage: ?place.Place,
+        pointer: facts.ValueFacts,
+    ) !facts.ValueFacts {
+        const old_root = try self.storageRootForPlace(target, state);
+        try self.refreshStorageRoot(function, state, target);
+        const fresh_root = try self.storageRootForPlace(target, state);
+        const storage = pointer_storage orelse return pointer;
+        if (storage.eql(target)) return pointer;
+
+        var refreshed = pointer;
+        const dependencies = try self.allocator.alloc(facts.ReferenceDependency, pointer.dependencies.len);
+        var retargeted = false;
+        for (pointer.dependencies, 0..) |dependency, index| {
+            dependencies[index] = .{ .root = if (dependency.root == old_root) blk: {
+                retargeted = true;
+                break :blk fresh_root;
+            } else dependency.root };
+        }
+        if (!retargeted) return pointer;
+        refreshed.dependencies = dependencies;
+        // The precise pointer used as the reinitialization authority follows
+        // the new generation. Other aliases retain the ended generation.
+        try self.setPlace(state, storage, .initialized, refreshed);
+        return refreshed;
     }
 
     /// Relocation receives storage; it never destroys the representation that

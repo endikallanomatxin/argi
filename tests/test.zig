@@ -4440,6 +4440,25 @@ test "feature_tests/ownership/255_live_pointer_assignment_preserves_sibling_alia
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/256_function_reinitializing_alias_refreshes_itself" {
+    const test_path = "tests/feature_tests/ownership/256_function_reinitializing_alias_refreshes_itself";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/257X_function_reinitializing_alias_keeps_sibling_stale" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/257X_function_reinitializing_alias_keeps_sibling_stale",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/258_function_live_write_preserves_sibling_alias" {
+    const test_path = "tests/feature_tests/ownership/258_function_live_write_preserves_sibling_alias";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/polymorphism/32_static_abstract_generic_fields" {
     const test_path = "tests/feature_tests/polymorphism/32_static_abstract_generic_fields";
     try expectSuccessfulBuild(test_path);
