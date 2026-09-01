@@ -13,12 +13,12 @@ main(.system: System) -> (.status_code: Int32) := {
             slots ::= ~first_payload
             stale_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Value)(.base = slots.data).reference
             value :: Value = (.number = 7)
-            trusted_opaque_store_owned_in#(.t: Value, .storage_type: Allocation)(
+            trusted_opaque_move_in#(.t: Value, .storage_type: Allocation)(
                 .storage = $&slots,
                 .destination = stale_slot,
                 .source = ~value,
             )
-            trusted_opaque_drop_owned(.slot = stale_slot)
+            trusted_opaque_drop(.slot = stale_slot)
             deinit(.self = $&slots)
 
             second_result ::= allocate(.self = system.allocator, .size = size_of(.type = Value))

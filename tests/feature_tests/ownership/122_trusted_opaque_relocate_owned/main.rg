@@ -53,24 +53,24 @@ main(.system: System) -> (.status_code: Int32) := {
                             match third_result {
                                 ..error _ { status_code = 4 }
                                 ..ok ~ third_payload {
-                                    trusted_opaque_store_owned(.destination = a, .source = ~first_payload)
-                                    trusted_opaque_store_owned(.destination = e, .source = ~second_payload)
-                                    trusted_opaque_store_owned(.destination = g, .source = ~third_payload)
+                                    trusted_opaque_store(.destination = a, .source = ~first_payload)
+                                    trusted_opaque_store(.destination = e, .source = ~second_payload)
+                                    trusted_opaque_store(.destination = g, .source = ~third_payload)
 
-                                    trusted_opaque_relocate_owned(.source = a, .destination = b)
-                                    trusted_opaque_relocate_owned(.source = b, .destination = c)
-                                    trusted_opaque_relocate_owned(.source = c, .destination = d)
-                                    trusted_opaque_relocate_owned(.source = e, .destination = f)
-                                    trusted_opaque_relocate_owned(.source = g, .destination = h)
+                                    trusted_opaque_relocate(.source = a, .destination = b)
+                                    trusted_opaque_relocate(.source = b, .destination = c)
+                                    trusted_opaque_relocate(.source = c, .destination = d)
+                                    trusted_opaque_relocate(.source = e, .destination = f)
+                                    trusted_opaque_relocate(.source = g, .destination = h)
 
                                     if first_drops != 0 or second_drops != 0 or third_drops != 0 {
                                         status_code = 5
                                         return
                                     }
 
-                                    trusted_opaque_drop_owned(.slot = d)
-                                    trusted_opaque_drop_owned(.slot = f)
-                                    trusted_opaque_drop_owned(.slot = h)
+                                    trusted_opaque_drop(.slot = d)
+                                    trusted_opaque_drop(.slot = f)
+                                    trusted_opaque_drop(.slot = h)
                                     deinit(.self = $&slots)
 
                                     if first_drops == 1 and second_drops == 1 and third_drops == 1 {

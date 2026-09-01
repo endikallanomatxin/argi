@@ -2,7 +2,7 @@ Owner : Type = (.allocation: Allocation)
 deinit(.self: $&Owner) -> () := { deinit(.self = $&self&.allocation) }
 
 store_one(.storage: $&Allocation, .slot: $&Owner, .value: Owner) -> () := {
-    trusted_opaque_store_owned_in#(.t: Owner, .storage_type: Allocation)(.storage = storage, .destination = slot, .source = ~value)
+    trusted_opaque_move_in#(.t: Owner, .storage_type: Allocation)(.storage = storage, .destination = slot, .source = ~value)
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
@@ -18,8 +18,8 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                     value ::= Owner(.allocation = ~owned_payload)
                     slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Owner)(.base = slots.data).reference
                     store_one(.storage = $&slots, .slot = slot, .value = ~value)
-                    trusted_opaque_drop_owned(.slot = slot)
-                    trusted_opaque_release_all(.storage = $&slots)
+                    trusted_opaque_drop(.slot = slot)
+                    trusted_opaque_mark_empty(.storage = $&slots)
                     deinit(.self = $&slots)
                 }
             }

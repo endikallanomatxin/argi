@@ -10,10 +10,10 @@ const value_state = @import("value_state.zig");
 pub const SafetyChecker = struct {
     allocator: *const std.mem.Allocator,
     diagnostics: *diagnostics.Diagnostics,
-    summaries: std.AutoHashMap(*const sg.FunctionDeclaration, facts.FunctionSummary),
-    virtual_summaries: std.AutoHashMap(*const sg.VirtualMethodRegistry, facts.FunctionSummary),
+    summaries: std.AutoHashMap(*const sg.FunctionDeclaration, facts.SafetySummary),
+    virtual_summaries: std.AutoHashMap(*const sg.VirtualMethodRegistry, facts.SafetySummary),
     invalid_virtual_summaries: std.AutoHashMap(*const sg.VirtualMethodRegistry, void),
-    inference_bindings: ?*std.AutoHashMap(*const sg.BindingDeclaration, facts.OutputEffect),
+    inference_bindings: ?*std.AutoHashMap(*const sg.BindingDeclaration, facts.ValueEffect),
     inference_place_bindings: ?*std.AutoHashMap(*const sg.BindingDeclaration, []const facts.InputPath),
     // Choice construction retains invalid-address provenance in nested
     // default values and diagnoses it when that pointer is actually used.
@@ -23,8 +23,8 @@ pub const SafetyChecker = struct {
         return .{
             .allocator = allocator,
             .diagnostics = diags,
-            .summaries = std.AutoHashMap(*const sg.FunctionDeclaration, facts.FunctionSummary).init(allocator.*),
-            .virtual_summaries = std.AutoHashMap(*const sg.VirtualMethodRegistry, facts.FunctionSummary).init(allocator.*),
+            .summaries = std.AutoHashMap(*const sg.FunctionDeclaration, facts.SafetySummary).init(allocator.*),
+            .virtual_summaries = std.AutoHashMap(*const sg.VirtualMethodRegistry, facts.SafetySummary).init(allocator.*),
             .invalid_virtual_summaries = std.AutoHashMap(*const sg.VirtualMethodRegistry, void).init(allocator.*),
             .inference_bindings = null,
             .inference_place_bindings = null,
@@ -64,19 +64,19 @@ pub const SafetyChecker = struct {
     }
 
     const FunctionState = struct {
-        const OwnershipEdge = struct { owner: facts.RootId, owned: facts.RootId };
-        const StorageRoot = struct { storage: place.Place, root: facts.RootId };
-        const OpaqueStorage = struct { storage: place.Place, hidden_dependencies: []const facts.RootId };
+        const OwnershipEdge = struct { owner: facts.ValidityRootId, owned: facts.ValidityRootId };
+        const StorageRoot = struct { storage: place.Place, root: facts.ValidityRootId };
+        const OpaqueStorage = struct { storage: place.Place, hidden_dependencies: []const facts.ValidityRootId };
         const ChoiceActive = struct { storage: place.Place, variant_index: u32 };
         const ChoiceRejected = struct { storage: place.Place, variant_index: u32 };
         const ChoiceTemporaryActive = struct { expression: *const sg.SGNode, variant_index: u32 };
-        const StorageAuthorityState = enum { available, conditional, maybe_consumed, consumed };
+        const StorageCapabilityState = enum { available, conditional, maybe_consumed, consumed };
         tracker: facts.Tracker,
-        storage_authorities: std.array_list.Managed(StorageAuthorityState),
+        storage_authorities: std.array_list.Managed(StorageCapabilityState),
         places: std.array_list.Managed(facts.PlaceFacts),
         ownership_edges: std.array_list.Managed(OwnershipEdge),
         storage_roots: std.array_list.Managed(StorageRoot),
-        lexical_storage_roots: std.array_list.Managed(facts.RootId),
+        lexical_storage_roots: std.array_list.Managed(facts.ValidityRootId),
         opaque_storages: std.array_list.Managed(OpaqueStorage),
         choice_active: std.array_list.Managed(ChoiceActive),
         choice_rejected: std.array_list.Managed(ChoiceRejected),
@@ -87,11 +87,11 @@ pub const SafetyChecker = struct {
         fn init(allocator: std.mem.Allocator) FunctionState {
             return .{
                 .tracker = facts.Tracker.init(allocator),
-                .storage_authorities = std.array_list.Managed(StorageAuthorityState).init(allocator),
+                .storage_authorities = std.array_list.Managed(StorageCapabilityState).init(allocator),
                 .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
                 .ownership_edges = std.array_list.Managed(OwnershipEdge).init(allocator),
                 .storage_roots = std.array_list.Managed(StorageRoot).init(allocator),
-                .lexical_storage_roots = std.array_list.Managed(facts.RootId).init(allocator),
+                .lexical_storage_roots = std.array_list.Managed(facts.ValidityRootId).init(allocator),
                 .opaque_storages = std.array_list.Managed(OpaqueStorage).init(allocator),
                 .choice_active = std.array_list.Managed(ChoiceActive).init(allocator),
                 .choice_rejected = std.array_list.Managed(ChoiceRejected).init(allocator),
@@ -156,11 +156,11 @@ pub const SafetyChecker = struct {
     };
 
     const InputPostStateFlow = struct {
-        states: std.array_list.Managed(facts.InputPlaceEffect),
+        states: std.array_list.Managed(facts.PlacePostState),
         reachable: bool = true,
 
         fn init(allocator: std.mem.Allocator) InputPostStateFlow {
-            return .{ .states = std.array_list.Managed(facts.InputPlaceEffect).init(allocator) };
+            return .{ .states = std.array_list.Managed(facts.PlacePostState).init(allocator) };
         }
 
         fn deinit(self: *InputPostStateFlow) void {
@@ -187,7 +187,7 @@ pub const SafetyChecker = struct {
 
     const LoopRootPhi = struct {
         storage: place.Place,
-        root: facts.RootId,
+        root: facts.ValidityRootId,
     };
 
     const LoopJoinContext = struct {
@@ -204,7 +204,7 @@ pub const SafetyChecker = struct {
 
     const SymbolicInputOverride = struct {
         input_index: u32,
-        effect: facts.OutputEffect,
+        effect: facts.ValueEffect,
     };
 
     fn validateFunction(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !void {
@@ -215,7 +215,7 @@ pub const SafetyChecker = struct {
         // Argi pointer parameters may alias. Until a call-site proof can
         // partition them, one shared root conservatively represents any
         // temporal invalidation observable through compatible inputs.
-        var pointer_input_root: ?facts.RootId = null;
+        var pointer_input_root: ?facts.ValidityRootId = null;
         for (function.input_bindings) |binding| {
             if (binding.ty == .pointer_type) {
                 const root = pointer_input_root orelse blk: {
@@ -439,7 +439,7 @@ pub const SafetyChecker = struct {
     /// Value cleanup is represented explicitly in the semantic graph and has
     /// already run when control reaches a block boundary. What remains is the
     /// lexical lifetime of addressable local storage: end its temporal roots,
-    /// remove its structural facts, and retain only dead RootIds still
+    /// remove its structural facts, and retain only dead ValidityRootIds still
     /// observable through values that escaped into an outer Place.
     fn endBlockLocalStorage(
         self: *SafetyChecker,
@@ -514,7 +514,7 @@ pub const SafetyChecker = struct {
                 if (!try self.validateAddressablePath(function, value, state)) break :blk .{};
                 const target = try self.resolvePlace(value, state);
                 const opaque_origins = try self.opaqueOriginsForAccess(value, state);
-                var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
+                var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator.*);
                 if (opaque_origins.len == 0) {
                     try appendDependency(&dependencies, .{ .root = try self.storageRoot(value, state) });
                 } else {
@@ -698,8 +698,8 @@ pub const SafetyChecker = struct {
         for (arguments, 0..) |argument, index| argument_values[index] = try self.evaluate(function, argument.value, state);
         if (call.callee.safety_primitive == .relocate)
             return self.relocatePlaces(function, arguments, argument_values, state);
-        if (call.callee.safety_primitive == .trusted_opaque_store_owned or
-            call.callee.safety_primitive == .trusted_opaque_store_owned_in)
+        if (call.callee.safety_primitive == .trusted_opaque_store or
+            call.callee.safety_primitive == .trusted_opaque_move_in)
         {
             if (argument_values.len == 3) {
                 try self.closeOpaqueOwnedRoots(function, argument_values[2], state, null);
@@ -708,7 +708,7 @@ pub const SafetyChecker = struct {
                     try self.hideOpaqueDependencies(state, storage, argument_values[2]);
                 } else if (rootBinding(arguments[0].value)) |binding| {
                     // Pointer inputs name caller storage symbolically. The
-                    // FunctionSummary carries this obligation to the caller,
+                    // SafetySummary carries this obligation to the caller,
                     // where the concrete storage Place is available.
                     if (inputIndex(function, binding) == null and valueHasDependency(argument_values[2])) {
                         try self.diagnostics.add(function.location, .semantic, "opaque ownership storage requires an identifiable storage domain place", .{});
@@ -731,19 +731,19 @@ pub const SafetyChecker = struct {
             }
             return .{};
         }
-        if (call.callee.safety_primitive == .trusted_opaque_take_owned_in) {
+        if (call.callee.safety_primitive == .trusted_opaque_move_out) {
             const source: facts.FreshRootSource = @intFromPtr(call);
-            return self.instantiateOutput(try self.primitiveOutputEffect(.trusted_opaque_take_owned_in, source), argument_values, state);
+            return self.instantiateOutput(try self.primitiveValueEffect(.trusted_opaque_move_out, source), argument_values, state);
         }
         // Opaque-slot occupancy and contents deliberately have no precise
         // checker representation. Relocation only consults domain-level
         // dependencies; its source-live/destination-empty contract remains
         // the caller's responsibility.
-        if (call.callee.safety_primitive == .trusted_opaque_relocate_owned) {
+        if (call.callee.safety_primitive == .trusted_opaque_relocate) {
             if (argument_values.len != 0) try self.rejectOpaqueRelocation(function, state, argument_values[0]);
             return .{};
         }
-        if (call.callee.safety_primitive == .trusted_opaque_release_all) {
+        if (call.callee.safety_primitive == .trusted_opaque_mark_empty) {
             if (argument_values.len == 1) {
                 const storage = argument_values[0].referenced_place orelse
                     try self.resolvePlace(arguments[0].value, state) orelse return .{};
@@ -752,9 +752,9 @@ pub const SafetyChecker = struct {
             return .{};
         }
         if (call.callee.safety_primitive == .raw_allocated_storage) {
-            const authority: facts.StorageAuthorityId = @enumFromInt(state.storage_authorities.items.len);
+            const authority: facts.StorageCapabilityId = @enumFromInt(state.storage_authorities.items.len);
             try state.storage_authorities.append(.available);
-            return .{ .foreign_storage = true, .storage_authorities = try self.oneStorageAuthority(authority) };
+            return .{ .foreign_storage = true, .storage_authorities = try self.oneStorageCapability(authority) };
         }
         if (call.callee.safety_primitive == .establish_fresh_reference)
             try self.diagnostics.add(function.location, .semantic, "fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries", .{});
@@ -795,7 +795,7 @@ pub const SafetyChecker = struct {
                 @constCast(call).consumes_auto_deinit = arguments[index].value.content.address_of;
             }
         }
-        try self.applyFunctionSummaryEffects(function, summary, arguments, argument_values, state);
+        try self.applySafetySummaryEffects(function, summary, arguments, argument_values, state);
         if (summary.outputs.len != 1) return .{};
         return self.instantiateOutput(summary.outputs[0], argument_values, state);
     }
@@ -870,17 +870,17 @@ pub const SafetyChecker = struct {
                 try self.evaluate(function, argument.value, &candidate);
         }
         if (!try self.validateRequiredLiveInputs(function, summary, argument_values, &candidate)) return;
-        try self.applyFunctionSummaryEffects(function, summary, arguments, argument_values, &candidate);
+        try self.applySafetySummaryEffects(function, summary, arguments, argument_values, &candidate);
         if (self.diagnostics.list.items.len != diagnostic_count) return;
         const previous = state.*;
         state.* = candidate;
         candidate = previous;
     }
 
-    fn applyFunctionSummaryEffects(
+    fn applySafetySummaryEffects(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
-        summary: facts.FunctionSummary,
+        summary: facts.SafetySummary,
         arguments: []const sg.StructValueLiteralField,
         argument_values: []const facts.ValueFacts,
         state: *FunctionState,
@@ -937,7 +937,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         consumed_source: ?place.Place,
     ) !void {
-        var roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        var roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
         defer roots.deinit();
         try collectOwnedRoots(value, &roots);
         // Validate the complete boundary before changing root liveness. A
@@ -956,7 +956,7 @@ pub const SafetyChecker = struct {
     }
 
     fn hideOpaqueDependencies(self: *SafetyChecker, state: *FunctionState, storage: place.Place, value: facts.ValueFacts) !void {
-        var hidden = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
         defer hidden.deinit();
         try self.collectOpaqueHiddenDependencies(state, value, &hidden);
         try self.mergeLiveOpaqueDependencies(state, storage, hidden.items);
@@ -971,13 +971,13 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         state: *FunctionState,
         value: facts.ValueFacts,
-        hidden: *std.array_list.Managed(facts.RootId),
+        hidden: *std.array_list.Managed(facts.ValidityRootId),
     ) !void {
         for (value.dependencies) |dependency| try appendOwnedRoot(hidden, dependency.root);
 
-        var origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
+        var origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
         defer origins.deinit();
-        try self.collectOpaqueOriginsCarriedBy(state, value, &origins);
+        try self.collectOpaqueProvenancesCarriedBy(state, value, &origins);
         for (origins.items) |origin| try appendOwnedRoot(hidden, origin.generation);
 
         for (value.fields) |field|
@@ -1010,15 +1010,15 @@ pub const SafetyChecker = struct {
         pointer: *facts.ValueFacts,
         storage: place.Place,
     ) !void {
-        var origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
+        var origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
         try origins.appendSlice(pointer.opaque_origins);
         for (origins.items) |origin| if (origin.storage.eql(storage)) return;
 
-        var inferred = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
+        var inferred = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
         defer inferred.deinit();
-        try self.collectOpaqueOriginsCarriedBy(state, pointer.*, &inferred);
+        try self.collectOpaqueProvenancesCarriedBy(state, pointer.*, &inferred);
         for (inferred.items) |origin|
-            if (origin.storage.eql(storage)) try appendOpaqueOrigin(&origins, origin);
+            if (origin.storage.eql(storage)) try appendOpaqueProvenance(&origins, origin);
 
         var found = false;
         for (origins.items) |origin| if (origin.storage.eql(storage)) {
@@ -1034,7 +1034,7 @@ pub const SafetyChecker = struct {
             // The first opaque-store boundary establishes provenance for its
             // destination pointer now. Once the domain already exists, an
             // unproven old alias must never be rebound to its current root.
-            if (!domain_already_opaque) try appendOpaqueOrigin(&origins, .{
+            if (!domain_already_opaque) try appendOpaqueProvenance(&origins, .{
                 .storage = storage,
                 .generation = try self.storageRootForPlace(storage, state),
             });
@@ -1082,17 +1082,17 @@ pub const SafetyChecker = struct {
     /// Place against its current storage root. Retrospective inference is only
     /// allowed when one of the pointer's existing dependency roots itself
     /// proves the association with the opaque domain.
-    fn collectOpaqueOriginsCarriedBy(
+    fn collectOpaqueProvenancesCarriedBy(
         self: *SafetyChecker,
         state: *FunctionState,
         pointer: facts.ValueFacts,
-        result: *std.array_list.Managed(facts.OpaqueOrigin),
+        result: *std.array_list.Managed(facts.OpaqueProvenance),
     ) !void {
-        for (pointer.opaque_origins) |origin| try appendOpaqueOrigin(result, origin);
+        for (pointer.opaque_origins) |origin| try appendOpaqueProvenance(result, origin);
         for (state.opaque_storages.items) |opaque_storage| {
             if (self.valueAtPlace(state, opaque_storage.storage)) |storage_value| {
                 for (pointer.dependencies) |dependency|
-                    if (valueContainsOwnedRoot(storage_value, dependency.root)) try appendOpaqueOrigin(result, .{
+                    if (valueContainsOwnedRoot(storage_value, dependency.root)) try appendOpaqueProvenance(result, .{
                         .storage = opaque_storage.storage,
                         .generation = dependency.root,
                     });
@@ -1100,7 +1100,7 @@ pub const SafetyChecker = struct {
             for (state.storage_roots.items) |entry| {
                 if (!opaque_storage.storage.isPrefixOf(entry.storage)) continue;
                 for (pointer.dependencies) |dependency|
-                    if (dependency.root == entry.root) try appendOpaqueOrigin(result, .{
+                    if (dependency.root == entry.root) try appendOpaqueProvenance(result, .{
                         .storage = opaque_storage.storage,
                         .generation = dependency.root,
                     });
@@ -1118,9 +1118,9 @@ pub const SafetyChecker = struct {
         ty: ?sg.Type,
         pointer: facts.ValueFacts,
     ) !facts.ValueFacts {
-        var origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
+        var origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
         defer origins.deinit();
-        try self.collectOpaqueOriginsCarriedBy(state, pointer, &origins);
+        try self.collectOpaqueProvenancesCarriedBy(state, pointer, &origins);
         return self.addOpaqueReadEnvelope(value, ty, origins.items);
     }
 
@@ -1128,7 +1128,7 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         node: *const sg.SGNode,
         state: *FunctionState,
-    ) ![]const facts.OpaqueOrigin {
+    ) ![]const facts.OpaqueProvenance {
         return switch (node.content) {
             .move_value => |value| self.opaqueOriginsCarriedByAccess(value, state),
             .struct_field_access => |access| self.opaqueOriginsCarriedByAccess(access.struct_value, state),
@@ -1143,11 +1143,11 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         node: *const sg.SGNode,
         state: *FunctionState,
-    ) ![]const facts.OpaqueOrigin {
+    ) ![]const facts.OpaqueProvenance {
         const pointer_place = try self.resolvePlace(node, state) orelse return &.{};
         const pointer = self.getPlace(state, pointer_place) orelse return &.{};
-        var origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
-        try self.collectOpaqueOriginsCarriedBy(state, pointer.value, &origins);
+        var origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
+        try self.collectOpaqueProvenancesCarriedBy(state, pointer.value, &origins);
         return origins.toOwnedSlice();
     }
 
@@ -1155,13 +1155,13 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         value: facts.ValueFacts,
         ty: ?sg.Type,
-        origins: []const facts.OpaqueOrigin,
+        origins: []const facts.OpaqueProvenance,
     ) !facts.ValueFacts {
         const value_type = ty orelse return value;
         if (!typeContainsPointer(value_type) or origins.len == 0) return value;
 
         var result = value;
-        var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator.*);
         try dependencies.appendSlice(value.dependencies);
         for (origins) |origin| try appendDependency(&dependencies, .{ .root = origin.generation });
         result.dependencies = try dependencies.toOwnedSlice();
@@ -1202,11 +1202,11 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn opaqueOriginsForAccess(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) ![]const facts.OpaqueOrigin {
+    fn opaqueOriginsForAccess(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) ![]const facts.OpaqueProvenance {
         return switch (node.content) {
             .binding_use => |binding| blk: {
                 const value = self.getPlace(state, .{ .root = binding }) orelse break :blk &.{};
-                break :blk try self.currentOpaqueOriginsForValue(state, value.value);
+                break :blk try self.currentOpaqueProvenancesForValue(state, value.value);
             },
             .move_value => |value| try self.opaqueOriginsForAccess(value, state),
             .address_of => |value| try self.opaqueOriginsForAccess(value, state),
@@ -1215,7 +1215,7 @@ pub const SafetyChecker = struct {
             .dereference => |dereference| blk: {
                 const pointer_place = try self.resolvePlace(dereference.pointer, state) orelse break :blk &.{};
                 const pointer = self.getPlace(state, pointer_place) orelse break :blk &.{};
-                break :blk try self.currentOpaqueOriginsForValue(state, pointer.value);
+                break :blk try self.currentOpaqueProvenancesForValue(state, pointer.value);
             },
             else => &.{},
         };
@@ -1224,12 +1224,12 @@ pub const SafetyChecker = struct {
     /// A newly created reference observes the current generation of every
     /// opaque domain reached by its source expression. Existing values never
     /// pass through this normalization and retain their captured generations.
-    fn currentOpaqueOriginsForValue(self: *SafetyChecker, state: *FunctionState, value: facts.ValueFacts) ![]const facts.OpaqueOrigin {
+    fn currentOpaqueProvenancesForValue(self: *SafetyChecker, state: *FunctionState, value: facts.ValueFacts) ![]const facts.OpaqueProvenance {
         var storages = std.array_list.Managed(place.Place).init(self.allocator.*);
         defer storages.deinit();
         try self.collectOpaqueDomainsAccessedBy(state, value, &storages);
-        var origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
-        for (storages.items) |storage| try appendOpaqueOrigin(&origins, .{
+        var origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
+        for (storages.items) |storage| try appendOpaqueProvenance(&origins, .{
             .storage = storage,
             .generation = try self.storageRootForPlace(storage, state),
         });
@@ -1267,7 +1267,7 @@ pub const SafetyChecker = struct {
 
     fn applyOpaqueStorageEffects(
         self: *SafetyChecker,
-        summary: facts.FunctionSummary,
+        summary: facts.SafetySummary,
         arguments: []const sg.StructValueLiteralField,
         argument_values: []const facts.ValueFacts,
         state: *FunctionState,
@@ -1277,14 +1277,14 @@ pub const SafetyChecker = struct {
             var storage = argument_values[effect.storage.input_index].referenced_place orelse
                 try self.resolvePlace(arguments[effect.storage.input_index].value, state) orelse continue;
             for (effect.storage.projections) |projection| storage = try self.projectedPlace(storage, projection);
-            var hidden = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+            var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
             defer hidden.deinit();
-            var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.RootId).init(self.allocator.*);
+            var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId).init(self.allocator.*);
             defer fresh_roots.deinit();
             try self.instantiateOpaqueDependencies(effect.hidden_dependencies, argument_values, state, &fresh_roots, &hidden);
-            var external = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+            var external = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
             defer external.deinit();
-            var hidden_value_owned = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+            var hidden_value_owned = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
             defer hidden_value_owned.deinit();
             for (effect.hidden_dependencies.input_dependencies) |dependency| {
                 if (dependency.path.input_index >= argument_values.len) continue;
@@ -1306,7 +1306,7 @@ pub const SafetyChecker = struct {
 
     fn applyOpaqueStorageReleases(
         self: *SafetyChecker,
-        summary: facts.FunctionSummary,
+        summary: facts.SafetySummary,
         arguments: []const sg.StructValueLiteralField,
         argument_values: []const facts.ValueFacts,
         state: *FunctionState,
@@ -1324,9 +1324,9 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         state: *FunctionState,
         storage: place.Place,
-        dependencies: []const facts.RootId,
+        dependencies: []const facts.ValidityRootId,
     ) !void {
-        var live = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        var live = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
         defer live.deinit();
         for (dependencies) |dependency|
             if (state.tracker.isAlive(dependency)) try appendOwnedRoot(&live, dependency);
@@ -1335,11 +1335,11 @@ pub const SafetyChecker = struct {
 
     fn instantiateOpaqueDependencies(
         self: *SafetyChecker,
-        effect: facts.OutputEffect,
+        effect: facts.ValueEffect,
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
-        fresh_roots: *std.AutoHashMap(facts.FreshRootSource, facts.RootId),
-        hidden: *std.array_list.Managed(facts.RootId),
+        fresh_roots: *std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId),
+        hidden: *std.array_list.Managed(facts.ValidityRootId),
     ) !void {
         for (effect.fresh_dependencies) |source|
             try appendOwnedRoot(hidden, try self.instantiateFreshRoot(source, state, fresh_roots));
@@ -1362,9 +1362,9 @@ pub const SafetyChecker = struct {
         for (effect.opaque_generation_dependencies) |path| {
             if (path.input_index >= arguments.len) continue;
             const input = projectValueFacts(arguments[path.input_index], path.projections);
-            var origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
+            var origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
             defer origins.deinit();
-            try self.collectOpaqueOriginsRecursively(state, input, &origins);
+            try self.collectOpaqueProvenancesRecursively(state, input, &origins);
             for (origins.items) |origin| try appendOwnedRoot(hidden, origin.generation);
         }
         for (effect.opaque_storage_dependencies) |path| {
@@ -1436,7 +1436,7 @@ pub const SafetyChecker = struct {
                 @constCast(call).consumes_auto_deinit = arguments[index].value.content.address_of;
             }
         }
-        try self.applyFunctionSummaryEffects(function, summary, arguments, argument_values, state);
+        try self.applySafetySummaryEffects(function, summary, arguments, argument_values, state);
         if (summary.outputs.len != 1) return .{};
         return self.instantiateOutput(summary.outputs[0], argument_values, state);
     }
@@ -1465,7 +1465,7 @@ pub const SafetyChecker = struct {
     fn validateRequiredLiveInputs(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
-        summary: facts.FunctionSummary,
+        summary: facts.SafetySummary,
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
     ) !bool {
@@ -1487,14 +1487,14 @@ pub const SafetyChecker = struct {
     fn applyInputEffects(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
-        summary: facts.FunctionSummary,
+        summary: facts.SafetySummary,
         arguments: []const sg.StructValueLiteralField,
         argument_values: []const facts.ValueFacts,
         state: *FunctionState,
     ) !void {
-        var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.RootId).init(self.allocator.*);
+        var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId).init(self.allocator.*);
         defer fresh_roots.deinit();
-        var fresh_authorities = std.AutoHashMap(facts.FreshRootSource, facts.StorageAuthorityId).init(self.allocator.*);
+        var fresh_authorities = std.AutoHashMap(facts.FreshRootSource, facts.StorageCapabilityId).init(self.allocator.*);
         defer fresh_authorities.deinit();
         // A relocation summary is only valid when its two Places remain
         // distinct at the caller. Check this before applying either side so
@@ -1521,7 +1521,7 @@ pub const SafetyChecker = struct {
                 defer opaque_storages.deinit();
                 try self.collectOpaqueDomainsAccessedBy(state, argument_values[post_state.target.input_index], &opaque_storages);
                 if (opaque_storages.items.len != 0) {
-                    var hidden = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+                    var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
                     defer hidden.deinit();
                     try self.instantiateOpaqueDependencies(post_state.value, argument_values, state, &fresh_roots, &hidden);
                     for (opaque_storages.items) |storage|
@@ -1617,14 +1617,14 @@ pub const SafetyChecker = struct {
         state: *const FunctionState,
     ) !facts.ValueFacts {
         var result = value;
-        var old_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        var old_roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
         defer old_roots.deinit();
         for (previous.owned_roots) |root| {
             const index = @intFromEnum(root);
             if (valueContainsOwnedRoot(value, root) and index < state.tracker.roots.items.len and !state.tracker.isAlive(root))
                 try appendOwnedRoot(&old_roots, root);
         }
-        var replacements = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        var replacements = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
         defer replacements.deinit();
         for (value.owned_roots) |root| {
             if (containsRoot(old_roots.items, root)) continue;
@@ -1666,7 +1666,7 @@ pub const SafetyChecker = struct {
 
     fn inputEffectTarget(
         self: *SafetyChecker,
-        post_state: facts.InputPlaceEffect,
+        post_state: facts.PlacePostState,
         arguments: []const sg.StructValueLiteralField,
         argument_values: []const facts.ValueFacts,
         state: *FunctionState,
@@ -1694,7 +1694,7 @@ pub const SafetyChecker = struct {
         if (storage.eql(target)) return pointer;
 
         var refreshed = pointer;
-        const dependencies = try self.allocator.alloc(facts.ReferenceDependency, pointer.dependencies.len);
+        const dependencies = try self.allocator.alloc(facts.ValidityDependency, pointer.dependencies.len);
         var retargeted = false;
         for (pointer.dependencies, 0..) |dependency, index| {
             dependencies[index] = .{ .root = if (dependency.root == old_root) blk: {
@@ -1736,27 +1736,27 @@ pub const SafetyChecker = struct {
 
     fn instantiateOutput(
         self: *SafetyChecker,
-        effect: facts.OutputEffect,
+        effect: facts.ValueEffect,
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
     ) !facts.ValueFacts {
-        var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.RootId).init(self.allocator.*);
+        var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId).init(self.allocator.*);
         defer fresh_roots.deinit();
-        var fresh_authorities = std.AutoHashMap(facts.FreshRootSource, facts.StorageAuthorityId).init(self.allocator.*);
+        var fresh_authorities = std.AutoHashMap(facts.FreshRootSource, facts.StorageCapabilityId).init(self.allocator.*);
         defer fresh_authorities.deinit();
         return self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, &fresh_authorities);
     }
 
     fn instantiateOutputWithFresh(
         self: *SafetyChecker,
-        effect: facts.OutputEffect,
+        effect: facts.ValueEffect,
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
-        fresh_roots: *std.AutoHashMap(facts.FreshRootSource, facts.RootId),
-        fresh_authorities: *std.AutoHashMap(facts.FreshRootSource, facts.StorageAuthorityId),
+        fresh_roots: *std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId),
+        fresh_authorities: *std.AutoHashMap(facts.FreshRootSource, facts.StorageCapabilityId),
     ) !facts.ValueFacts {
         var result: facts.ValueFacts = .{};
-        var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator.*);
         for (effect.fresh_dependencies) |source| {
             const root = try self.instantiateFreshRoot(source, state, fresh_roots);
             try appendDependency(&dependencies, .{ .root = root });
@@ -1764,9 +1764,9 @@ pub const SafetyChecker = struct {
         for (effect.opaque_generation_dependencies) |path| {
             if (path.input_index >= arguments.len) continue;
             const input = projectValueFacts(arguments[path.input_index], path.projections);
-            var origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
+            var origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
             defer origins.deinit();
-            try self.collectOpaqueOriginsRecursively(state, input, &origins);
+            try self.collectOpaqueProvenancesRecursively(state, input, &origins);
             for (origins.items) |origin| try appendDependency(&dependencies, .{ .root = origin.generation });
         }
         for (effect.opaque_storage_dependencies) |path| {
@@ -1780,16 +1780,16 @@ pub const SafetyChecker = struct {
                         try appendDependency(&dependencies, .{ .root = dependency });
             }
         }
-        var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        var owned_roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
         for (effect.fresh_owned_roots) |source| {
             const root = try self.instantiateFreshRoot(source, state, fresh_roots);
             state.tracker.roots.items[@intFromEnum(root)].owned_resource = true;
             try appendOwnedRoot(&owned_roots, root);
         }
         result.owned_roots = try owned_roots.toOwnedSlice();
-        var authorities = std.array_list.Managed(facts.StorageAuthorityId).init(self.allocator.*);
+        var authorities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator.*);
         for (effect.fresh_storage_authorities) |source|
-            try appendStorageAuthority(&authorities, try self.instantiateFreshStorageAuthority(source, state, fresh_authorities));
+            try appendStorageCapability(&authorities, try self.instantiateFreshStorageCapability(source, state, fresh_authorities));
         result.storage_authorities = try authorities.toOwnedSlice();
         // `input_places` names the provenance of the output. Apply it after
         // dependencies: an effect may intentionally combine a reference with
@@ -1867,15 +1867,15 @@ pub const SafetyChecker = struct {
         return projectValueFacts(input, path.projections);
     }
 
-    fn collectOpaqueOriginsRecursively(
+    fn collectOpaqueProvenancesRecursively(
         self: *SafetyChecker,
         state: *FunctionState,
         value: facts.ValueFacts,
-        origins: *std.array_list.Managed(facts.OpaqueOrigin),
+        origins: *std.array_list.Managed(facts.OpaqueProvenance),
     ) !void {
-        try self.collectOpaqueOriginsCarriedBy(state, value, origins);
-        for (value.fields) |field| try self.collectOpaqueOriginsRecursively(state, field.value.*, origins);
-        for (value.variants) |variant| try self.collectOpaqueOriginsRecursively(state, variant.value.*, origins);
+        try self.collectOpaqueProvenancesCarriedBy(state, value, origins);
+        for (value.fields) |field| try self.collectOpaqueProvenancesRecursively(state, field.value.*, origins);
+        for (value.variants) |variant| try self.collectOpaqueProvenancesRecursively(state, variant.value.*, origins);
     }
 
     fn activateChoiceVariant(self: *SafetyChecker, choice: facts.ValueFacts, variant_index: u32, state: *FunctionState) void {
@@ -2032,10 +2032,10 @@ pub const SafetyChecker = struct {
         return false;
     }
 
-    fn instantiateFreshStorageAuthority(self: *SafetyChecker, source: facts.FreshRootSource, state: *FunctionState, fresh: *std.AutoHashMap(facts.FreshRootSource, facts.StorageAuthorityId)) !facts.StorageAuthorityId {
+    fn instantiateFreshStorageCapability(self: *SafetyChecker, source: facts.FreshRootSource, state: *FunctionState, fresh: *std.AutoHashMap(facts.FreshRootSource, facts.StorageCapabilityId)) !facts.StorageCapabilityId {
         _ = self;
         if (fresh.get(source)) |authority| return authority;
-        const authority: facts.StorageAuthorityId = @enumFromInt(state.storage_authorities.items.len);
+        const authority: facts.StorageCapabilityId = @enumFromInt(state.storage_authorities.items.len);
         try state.storage_authorities.append(.available);
         try fresh.put(source, authority);
         return authority;
@@ -2045,8 +2045,8 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         source: facts.FreshRootSource,
         state: *FunctionState,
-        fresh_roots: *std.AutoHashMap(facts.FreshRootSource, facts.RootId),
-    ) !facts.RootId {
+        fresh_roots: *std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId),
+    ) !facts.ValidityRootId {
         _ = self;
         if (fresh_roots.get(source)) |root| return root;
         const root = try state.tracker.establish(.fresh);
@@ -2055,18 +2055,18 @@ pub const SafetyChecker = struct {
     }
 
     fn mergeValueFacts(self: *SafetyChecker, left: facts.ValueFacts, right: facts.ValueFacts) !facts.ValueFacts {
-        var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator.*);
         for (left.dependencies) |dependency| try appendDependency(&dependencies, dependency);
         for (right.dependencies) |dependency| try appendDependency(&dependencies, dependency);
-        var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        var owned_roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
         for (left.owned_roots) |owned_root| try appendOwnedRoot(&owned_roots, owned_root);
         for (right.owned_roots) |owned_root| try appendOwnedRoot(&owned_roots, owned_root);
-        var authorities = std.array_list.Managed(facts.StorageAuthorityId).init(self.allocator.*);
-        for (left.storage_authorities) |authority| try appendStorageAuthority(&authorities, authority);
-        for (right.storage_authorities) |authority| try appendStorageAuthority(&authorities, authority);
-        var opaque_origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
-        for (left.opaque_origins) |origin| try appendOpaqueOrigin(&opaque_origins, origin);
-        for (right.opaque_origins) |origin| try appendOpaqueOrigin(&opaque_origins, origin);
+        var authorities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator.*);
+        for (left.storage_authorities) |authority| try appendStorageCapability(&authorities, authority);
+        for (right.storage_authorities) |authority| try appendStorageCapability(&authorities, authority);
+        var opaque_origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
+        for (left.opaque_origins) |origin| try appendOpaqueProvenance(&opaque_origins, origin);
+        for (right.opaque_origins) |origin| try appendOpaqueProvenance(&opaque_origins, origin);
         var fields = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
         for (left.fields) |left_field| {
             var merged = left_field.value.*;
@@ -2182,7 +2182,7 @@ pub const SafetyChecker = struct {
         errdefer joined.deinit();
         const root_count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);
         for (0..root_count) |index| {
-            const id: facts.RootId = @enumFromInt(index);
+            const id: facts.ValidityRootId = @enumFromInt(index);
             const left_state: @TypeOf(left.tracker.roots.items[0].state) = if (index < left.tracker.roots.items.len)
                 left.tracker.roots.items[index].state
             else if (self.storageRootWasOnlyMaterializedIn(id, right, left))
@@ -2205,8 +2205,8 @@ pub const SafetyChecker = struct {
         }
         const authority_count = @max(left.storage_authorities.items.len, right.storage_authorities.items.len);
         for (0..authority_count) |index| {
-            const left_state: FunctionState.StorageAuthorityState = if (index < left.storage_authorities.items.len) left.storage_authorities.items[index] else .consumed;
-            const right_state: FunctionState.StorageAuthorityState = if (index < right.storage_authorities.items.len) right.storage_authorities.items[index] else .consumed;
+            const left_state: FunctionState.StorageCapabilityState = if (index < left.storage_authorities.items.len) left.storage_authorities.items[index] else .consumed;
+            const right_state: FunctionState.StorageCapabilityState = if (index < right.storage_authorities.items.len) right.storage_authorities.items[index] else .consumed;
             try joined.storage_authorities.append(if (left_state == right_state) left_state else .maybe_consumed);
         }
         for (left.places.items) |left_place| {
@@ -2264,7 +2264,7 @@ pub const SafetyChecker = struct {
     /// still preserves the same generation when the Place existed there.
     fn storageRootWasOnlyMaterializedIn(
         self: *SafetyChecker,
-        root: facts.RootId,
+        root: facts.ValidityRootId,
         materialized: *const FunctionState,
         other: *const FunctionState,
     ) bool {
@@ -2351,11 +2351,11 @@ pub const SafetyChecker = struct {
             const right_value = self.valueAtPlace(@constCast(right), joined_place.storage) orelse facts.ValueFacts{};
 
             const existing_phi = loopRootPhiForStorage(context, joined_place.storage);
-            var left_only = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+            var left_only = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
             defer left_only.deinit();
             for (left_value.owned_roots) |root|
                 if ((existing_phi == null or root != existing_phi.?) and !containsRoot(right_value.owned_roots, root)) try appendOwnedRoot(&left_only, root);
-            var right_only = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+            var right_only = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
             defer right_only.deinit();
             for (right_value.owned_roots) |root|
                 if ((existing_phi == null or root != existing_phi.?) and !containsRoot(left_value.owned_roots, root)) try appendOwnedRoot(&right_only, root);
@@ -2368,7 +2368,7 @@ pub const SafetyChecker = struct {
                 if (left_alive and !right_alive) try appendOwnedRoot(&left_only, root);
                 if (right_alive and !left_alive) try appendOwnedRoot(&right_only, root);
             }
-            var stale_alternative: ?facts.RootId = null;
+            var stale_alternative: ?facts.ValidityRootId = null;
             if (left_only.items.len == 0 and right_only.items.len == 1) {
                 for (right_value.owned_roots) |root| {
                     if (!containsRoot(left_value.owned_roots, root)) continue;
@@ -2380,7 +2380,7 @@ pub const SafetyChecker = struct {
                     stale_alternative = root;
                     break;
                 }
-                var left_dependencies = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+                var left_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
                 defer left_dependencies.deinit();
                 try collectDependencyRoots(left_value, &left_dependencies);
                 for (left_dependencies.items) |root| {
@@ -2395,7 +2395,7 @@ pub const SafetyChecker = struct {
                     break;
                 }
                 if (stale_alternative == null) {
-                    var right_dependencies = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+                    var right_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
                     defer right_dependencies.deinit();
                     try collectDependencyRoots(right_value, &right_dependencies);
                     for (right_dependencies.items) |root| {
@@ -2419,7 +2419,7 @@ pub const SafetyChecker = struct {
                     stale_alternative = root;
                     break;
                 }
-                var right_dependencies = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+                var right_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
                 defer right_dependencies.deinit();
                 try collectDependencyRoots(right_value, &right_dependencies);
                 for (right_dependencies.items) |root| {
@@ -2434,7 +2434,7 @@ pub const SafetyChecker = struct {
                     break;
                 }
                 if (stale_alternative == null) {
-                    var left_dependencies = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+                    var left_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
                     defer left_dependencies.deinit();
                     try collectDependencyRoots(left_value, &left_dependencies);
                     for (left_dependencies.items) |root| {
@@ -2449,10 +2449,10 @@ pub const SafetyChecker = struct {
                 }
             }
             if (left_only.items.len == 0 and right_only.items.len == 0) {
-                var left_dependencies = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+                var left_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
                 defer left_dependencies.deinit();
                 try collectDependencyRoots(left_value, &left_dependencies);
-                var right_dependencies = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+                var right_dependencies = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
                 defer right_dependencies.deinit();
                 try collectDependencyRoots(right_value, &right_dependencies);
                 for (left_dependencies.items) |root| {
@@ -2491,7 +2491,7 @@ pub const SafetyChecker = struct {
                 if (left_only.items.len != 0 or alive != 1) continue;
             }
 
-            var alternatives: [2]facts.RootId = undefined;
+            var alternatives: [2]facts.ValidityRootId = undefined;
             var alternative_count: usize = 0;
             for (left_only.items) |root| {
                 alternatives[alternative_count] = root;
@@ -2531,7 +2531,7 @@ pub const SafetyChecker = struct {
 
     fn trimUnreferencedLoopRoots(self: *SafetyChecker, context: *const LoopJoinContext, state: *FunctionState) void {
         while (state.tracker.roots.items.len != 0) {
-            const root: facts.RootId = @enumFromInt(state.tracker.roots.items.len - 1);
+            const root: facts.ValidityRootId = @enumFromInt(state.tracker.roots.items.len - 1);
             var referenced = false;
             for (context.roots.items) |entry| if (entry.root == root) {
                 referenced = true;
@@ -2546,7 +2546,7 @@ pub const SafetyChecker = struct {
 
     fn trimUnreferencedRoots(self: *SafetyChecker, state: *FunctionState) void {
         while (state.tracker.roots.items.len != 0) {
-            const root: facts.RootId = @enumFromInt(state.tracker.roots.items.len - 1);
+            const root: facts.ValidityRootId = @enumFromInt(state.tracker.roots.items.len - 1);
             if (rootIsStructurallyReferenced(state, root)) return;
             var lexical_index: usize = 0;
             while (lexical_index < state.lexical_storage_roots.items.len) {
@@ -2563,7 +2563,7 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         state: *const FunctionState,
         fallback: place.Place,
-        roots: []const facts.RootId,
+        roots: []const facts.ValidityRootId,
     ) place.Place {
         _ = self;
         var result = fallback;
@@ -2582,8 +2582,8 @@ pub const SafetyChecker = struct {
     fn replaceOwnershipEdgeRoots(
         self: *SafetyChecker,
         state: *FunctionState,
-        sources: []const facts.RootId,
-        replacement: facts.RootId,
+        sources: []const facts.ValidityRootId,
+        replacement: facts.ValidityRootId,
     ) void {
         var write: usize = 0;
         for (state.ownership_edges.items) |edge| {
@@ -2612,7 +2612,7 @@ pub const SafetyChecker = struct {
         context: *LoopJoinContext,
         state: *FunctionState,
         storage: place.Place,
-    ) !facts.RootId {
+    ) !facts.ValidityRootId {
         _ = self;
         for (context.roots.items) |entry| if (entry.storage.eql(storage)) {
             const index = @intFromEnum(entry.root);
@@ -2628,7 +2628,7 @@ pub const SafetyChecker = struct {
         return root;
     }
 
-    fn loopRootPhiForStorage(context: *const LoopJoinContext, storage: place.Place) ?facts.RootId {
+    fn loopRootPhiForStorage(context: *const LoopJoinContext, storage: place.Place) ?facts.ValidityRootId {
         var result: ?LoopRootPhi = null;
         for (context.roots.items) |entry| {
             if (!entry.storage.isPrefixOf(storage)) continue;
@@ -2637,7 +2637,7 @@ pub const SafetyChecker = struct {
         return if (result) |entry| entry.root else null;
     }
 
-    fn loopRootPhiStorage(context: *const LoopJoinContext, root: facts.RootId) ?place.Place {
+    fn loopRootPhiStorage(context: *const LoopJoinContext, root: facts.ValidityRootId) ?place.Place {
         for (context.roots.items) |entry| if (entry.root == root) return entry.storage;
         return null;
     }
@@ -2645,15 +2645,15 @@ pub const SafetyChecker = struct {
     fn replaceValueRoots(
         self: *SafetyChecker,
         value: facts.ValueFacts,
-        sources: []const facts.RootId,
-        replacement: facts.RootId,
+        sources: []const facts.ValidityRootId,
+        replacement: facts.ValidityRootId,
     ) !facts.ValueFacts {
         var result = value;
-        var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator.*);
         for (value.dependencies) |dependency|
             try appendDependency(&dependencies, .{ .root = if (containsRoot(sources, dependency.root)) replacement else dependency.root });
         result.dependencies = try dependencies.toOwnedSlice();
-        var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        var owned_roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
         for (value.owned_roots) |root|
             try appendOwnedRoot(&owned_roots, if (containsRoot(sources, root)) replacement else root);
         result.owned_roots = try owned_roots.toOwnedSlice();
@@ -2706,12 +2706,12 @@ pub const SafetyChecker = struct {
         fields: []const sg.StructValueLiteralField,
         state: *FunctionState,
     ) anyerror!facts.ValueFacts {
-        var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
-        var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator.*);
+        var owned_roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
         var field_facts = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
         var contains_integer_address = false;
         var contains_foreign_storage = false;
-        var storage_authorities = std.array_list.Managed(facts.StorageAuthorityId).init(self.allocator.*);
+        var storage_authorities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator.*);
         for (fields, 0..) |field, index| {
             const value = try self.evaluate(function, field.value, state);
             try dependencies.appendSlice(value.dependencies);
@@ -2721,7 +2721,7 @@ pub const SafetyChecker = struct {
             try field_facts.append(.{ .index = @intCast(index), .value = stored });
             contains_integer_address = contains_integer_address or value.integer_address;
             contains_foreign_storage = contains_foreign_storage or value.foreign_storage;
-            for (value.storage_authorities) |authority| try appendStorageAuthority(&storage_authorities, authority);
+            for (value.storage_authorities) |authority| try appendStorageCapability(&storage_authorities, authority);
         }
         return .{
             .dependencies = try dependencies.toOwnedSlice(),
@@ -2772,19 +2772,19 @@ pub const SafetyChecker = struct {
         fields: []const sg.StructValueLiteralField,
         state: *FunctionState,
     ) anyerror!facts.ValueFacts {
-        var dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
-        var owned_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator.*);
+        var owned_roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
         var field_facts = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
-        var storage_authorities = std.array_list.Managed(facts.StorageAuthorityId).init(self.allocator.*);
-        var opaque_origins = std.array_list.Managed(facts.OpaqueOrigin).init(self.allocator.*);
+        var storage_authorities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator.*);
+        var opaque_origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
         var contains_integer_address = false;
         var contains_foreign_storage = false;
         for (fields, 0..) |field, index| {
             const value = try self.evaluateOpaqueMutationValue(function, field.value, state);
             for (value.dependencies) |dependency| try appendDependency(&dependencies, dependency);
             for (value.owned_roots) |root| try appendOwnedRoot(&owned_roots, root);
-            for (value.storage_authorities) |authority| try appendStorageAuthority(&storage_authorities, authority);
-            for (value.opaque_origins) |origin| try appendOpaqueOrigin(&opaque_origins, origin);
+            for (value.storage_authorities) |authority| try appendStorageCapability(&storage_authorities, authority);
+            for (value.opaque_origins) |origin| try appendOpaqueProvenance(&opaque_origins, origin);
             const stored = try self.allocator.create(facts.ValueFacts);
             stored.* = value;
             try field_facts.append(.{ .index = @intCast(index), .value = stored });
@@ -2820,12 +2820,12 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn storageRoot(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) !facts.RootId {
+    fn storageRoot(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) !facts.ValidityRootId {
         const storage = try self.resolvePlace(node, state) orelse return state.tracker.establish(.fresh);
         return self.storageRootForPlace(storage, state);
     }
 
-    fn storageRootForPlace(self: *SafetyChecker, storage: place.Place, state: *FunctionState) !facts.RootId {
+    fn storageRootForPlace(self: *SafetyChecker, storage: place.Place, state: *FunctionState) !facts.ValidityRootId {
         _ = self;
         for (state.storage_roots.items) |entry| if (entry.storage.eql(storage)) return entry.root;
         const root = try state.tracker.establish(.fresh);
@@ -2837,17 +2837,17 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         state: *FunctionState,
         storage: place.Place,
-        dependencies: []const facts.RootId,
+        dependencies: []const facts.ValidityRootId,
     ) !void {
         for (state.opaque_storages.items) |*opaque_storage| {
             if (!opaque_storage.storage.eql(storage)) continue;
-            var merged = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+            var merged = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
             try merged.appendSlice(opaque_storage.hidden_dependencies);
             for (dependencies) |dependency| try appendOwnedRoot(&merged, dependency);
             opaque_storage.hidden_dependencies = try merged.toOwnedSlice();
             return;
         }
-        var hidden = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
         for (dependencies) |dependency| try appendOwnedRoot(&hidden, dependency);
         try state.opaque_storages.append(.{
             .storage = storage,
@@ -2866,7 +2866,7 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn rootIsHidden(state: *const FunctionState, root: facts.RootId) bool {
+    fn rootIsHidden(state: *const FunctionState, root: facts.ValidityRootId) bool {
         for (state.opaque_storages.items) |opaque_storage|
             if (containsRoot(opaque_storage.hidden_dependencies, root)) return true;
         return false;
@@ -2876,7 +2876,7 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         state: *FunctionState,
         storage: place.Place,
-        root: facts.RootId,
+        root: facts.ValidityRootId,
     ) bool {
         if (self.valueAtPlace(state, storage)) |storage_value|
             if (valueContainsOwnedRoot(storage_value, root) or valueDependsOnRoot(storage_value, root)) return true;
@@ -2891,7 +2891,7 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         function: ?*const sg.FunctionDeclaration,
         state: *FunctionState,
-        root: facts.RootId,
+        root: facts.ValidityRootId,
     ) !bool {
         return self.endRoots(function, state, &.{root});
     }
@@ -2900,9 +2900,9 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         function: ?*const sg.FunctionDeclaration,
         state: *FunctionState,
-        roots: []const facts.RootId,
+        roots: []const facts.ValidityRootId,
     ) !bool {
-        // Root termination is a transaction: opaque barriers are checked for
+        // ValidityRoot termination is a transaction: opaque barriers are checked for
         // the complete batch before any liveness fact changes.
         for (roots) |root| {
             var externally_hidden = false;
@@ -3087,7 +3087,7 @@ pub const SafetyChecker = struct {
         };
         const old_field = findField(container.fields, field_index) orelse return container;
 
-        var direct_roots = std.array_list.Managed(facts.RootId).init(self.allocator.*);
+        var direct_roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
         for (container.owned_roots) |root| {
             var belongs_to_field = false;
             for (container.fields) |field| if (valueContainsOwnedRoot(field.value.*, root)) {
@@ -3096,7 +3096,7 @@ pub const SafetyChecker = struct {
             };
             if (!belongs_to_field) try appendOwnedRoot(&direct_roots, root);
         }
-        var direct_dependencies = std.array_list.Managed(facts.ReferenceDependency).init(self.allocator.*);
+        var direct_dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator.*);
         for (container.dependencies) |dependency| {
             var belongs_to_field = false;
             for (container.fields) |field| if (valueDependsOnRoot(field.value.*, dependency.root)) {
@@ -3136,7 +3136,7 @@ pub const SafetyChecker = struct {
     }
 
     const OwnerLocation = struct {
-        root: facts.RootId,
+        root: facts.ValidityRootId,
         storage: place.Place,
     };
 
@@ -3187,8 +3187,8 @@ pub const SafetyChecker = struct {
     fn ownershipPathExists(
         self: *SafetyChecker,
         state: *const FunctionState,
-        from: facts.RootId,
-        target: facts.RootId,
+        from: facts.ValidityRootId,
+        target: facts.ValidityRootId,
     ) bool {
         _ = self;
         return ownershipPathExistsFrom(state, from, target, state.tracker.roots.items.len);
@@ -3344,8 +3344,8 @@ pub const SafetyChecker = struct {
         return false;
     }
 
-    fn oneDependency(self: *SafetyChecker, root: facts.RootId) ![]const facts.ReferenceDependency {
-        const result = try self.allocator.alloc(facts.ReferenceDependency, 1);
+    fn oneDependency(self: *SafetyChecker, root: facts.ValidityRootId) ![]const facts.ValidityDependency {
+        const result = try self.allocator.alloc(facts.ValidityDependency, 1);
         result[0] = .{ .root = root };
         return result;
     }
@@ -3367,26 +3367,26 @@ pub const SafetyChecker = struct {
         return result.toOwnedSlice();
     }
 
-    fn oneOwnedRoot(self: *SafetyChecker, root: facts.RootId) ![]const facts.RootId {
-        const result = try self.allocator.alloc(facts.RootId, 1);
+    fn oneOwnedRoot(self: *SafetyChecker, root: facts.ValidityRootId) ![]const facts.ValidityRootId {
+        const result = try self.allocator.alloc(facts.ValidityRootId, 1);
         result[0] = root;
         return result;
     }
 
-    fn oneStorageAuthority(self: *SafetyChecker, authority: facts.StorageAuthorityId) ![]const facts.StorageAuthorityId {
-        const result = try self.allocator.alloc(facts.StorageAuthorityId, 1);
+    fn oneStorageCapability(self: *SafetyChecker, authority: facts.StorageCapabilityId) ![]const facts.StorageCapabilityId {
+        const result = try self.allocator.alloc(facts.StorageCapabilityId, 1);
         result[0] = authority;
         return result;
     }
 
     fn ensureEmptySummary(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !void {
         if (self.summaries.contains(function)) return;
-        const outputs = try self.allocator.alloc(facts.OutputEffect, function.output.fields.len);
+        const outputs = try self.allocator.alloc(facts.ValueEffect, function.output.fields.len);
         @memset(outputs, .{});
         try self.summaries.put(function, .{ .outputs = outputs });
     }
 
-    fn virtualSummary(self: *SafetyChecker, registry: *const sg.VirtualMethodRegistry) !?facts.FunctionSummary {
+    fn virtualSummary(self: *SafetyChecker, registry: *const sg.VirtualMethodRegistry) !?facts.SafetySummary {
         if (self.invalid_virtual_summaries.contains(registry)) return null;
         if (self.virtual_summaries.get(registry)) |summary| return summary;
         if (registry.implementations.items.len == 0) return null;
@@ -3402,7 +3402,7 @@ pub const SafetyChecker = struct {
                 try self.invalid_virtual_summaries.put(registry, {});
                 return null;
             }
-            merged = (try self.mergeVirtualFunctionSummary(merged, next)) orelse {
+            merged = (try self.mergeVirtualSafetySummary(merged, next)) orelse {
                 try self.invalid_virtual_summaries.put(registry, {});
                 return null;
             };
@@ -3411,11 +3411,11 @@ pub const SafetyChecker = struct {
         return merged;
     }
 
-    fn mergeVirtualFunctionSummary(
+    fn mergeVirtualSafetySummary(
         self: *SafetyChecker,
-        left: facts.FunctionSummary,
-        right: facts.FunctionSummary,
-    ) !?facts.FunctionSummary {
+        left: facts.SafetySummary,
+        right: facts.SafetySummary,
+    ) !?facts.SafetySummary {
         if (left.outputs.len != right.outputs.len) return null;
         if (!virtualInputPostStatesRuntimeRepresentable(left.input_post_states) or
             !virtualInputPostStatesRuntimeRepresentable(right.input_post_states)) return null;
@@ -3427,9 +3427,9 @@ pub const SafetyChecker = struct {
 
         var fresh_map = std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource).init(self.allocator.*);
         defer fresh_map.deinit();
-        const outputs = try self.allocator.alloc(facts.OutputEffect, left.outputs.len);
+        const outputs = try self.allocator.alloc(facts.ValueEffect, left.outputs.len);
         for (left.outputs, right.outputs, 0..) |left_output, right_output, index| {
-            outputs[index] = (try self.mergeVirtualOutputEffect(left_output, right_output, &fresh_map)) orelse return null;
+            outputs[index] = (try self.mergeVirtualValueEffect(left_output, right_output, &fresh_map)) orelse return null;
         }
         var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator.*);
         for (left.opaque_storage_effects) |effect|
@@ -3463,35 +3463,35 @@ pub const SafetyChecker = struct {
     /// caller-visible post-states retain every representable possibility.
     fn mergeVirtualInputPostStates(
         self: *SafetyChecker,
-        left: []const facts.InputPlaceEffect,
-        right: []const facts.InputPlaceEffect,
-    ) !?[]const facts.InputPlaceEffect {
-        var merged = std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
+        left: []const facts.PlacePostState,
+        right: []const facts.PlacePostState,
+    ) !?[]const facts.PlacePostState {
+        var merged = std.array_list.Managed(facts.PlacePostState).init(self.allocator.*);
         for (left) |left_state| {
-            const right_state = findInputPostState(right, left_state.target) orelse facts.InputPlaceEffect{
+            const right_state = findInputPostState(right, left_state.target) orelse facts.PlacePostState{
                 .target = left_state.target,
                 .initializedness = .initialized,
                 .value = try self.inputPlaceValueEffect(left_state.target),
             };
-            try merged.append((try self.mergeVirtualInputPlaceEffect(left_state, right_state)) orelse return null);
+            try merged.append((try self.mergeVirtualPlacePostState(left_state, right_state)) orelse return null);
         }
         for (right) |right_state| if (findInputPostState(left, right_state.target) == null) {
-            const unchanged = facts.InputPlaceEffect{
+            const unchanged = facts.PlacePostState{
                 .target = right_state.target,
                 .initializedness = .initialized,
                 .value = try self.inputPlaceValueEffect(right_state.target),
             };
-            try merged.append((try self.mergeVirtualInputPlaceEffect(unchanged, right_state)) orelse return null);
+            try merged.append((try self.mergeVirtualPlacePostState(unchanged, right_state)) orelse return null);
         };
-        const result: []const facts.InputPlaceEffect = try merged.toOwnedSlice();
+        const result: []const facts.PlacePostState = try merged.toOwnedSlice();
         return result;
     }
 
-    fn mergeVirtualInputPlaceEffect(
+    fn mergeVirtualPlacePostState(
         self: *SafetyChecker,
-        left: facts.InputPlaceEffect,
-        right: facts.InputPlaceEffect,
-    ) !?facts.InputPlaceEffect {
+        left: facts.PlacePostState,
+        right: facts.PlacePostState,
+    ) !?facts.PlacePostState {
         if (!inputPlaceTargetEqual(left.target, right.target)) return null;
         // The runtime drop state is attached to the caller's backing binding,
         // while virtual dispatch only carries an erased data pointer. Until
@@ -3504,12 +3504,12 @@ pub const SafetyChecker = struct {
             left.value
         else blk: {
             // Fresh roles and ordinary ownership transfers require correlation
-            // that InputPlaceEffect cannot currently express across variants.
+            // that PlacePostState cannot currently express across variants.
             if (outputEffectHasFreshRole(left.value) or outputEffectHasFreshRole(right.value) or
                 outputEffectTransfersOwnership(left.value) or outputEffectTransfersOwnership(right.value)) return null;
-            break :blk try self.mergeOutputEffects(left.value, right.value);
+            break :blk try self.mergeValueEffects(left.value, right.value);
         };
-        var result = facts.InputPlaceEffect{
+        var result = facts.PlacePostState{
             .target = left.target,
             .initializedness = joinInitializedness(left.initializedness, right.initializedness),
             .value = value,
@@ -3522,12 +3522,12 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn virtualInputPostStatesRuntimeRepresentable(states: []const facts.InputPlaceEffect) bool {
+    fn virtualInputPostStatesRuntimeRepresentable(states: []const facts.PlacePostState) bool {
         for (states) |state| if (!virtualInputPostStateRuntimeRepresentable(state)) return false;
         return true;
     }
 
-    fn virtualInputPostStateRuntimeRepresentable(state: facts.InputPlaceEffect) bool {
+    fn virtualInputPostStateRuntimeRepresentable(state: facts.PlacePostState) bool {
         return state.initializedness == .initialized and state.opaque_ownership == .none;
     }
 
@@ -3547,12 +3547,12 @@ pub const SafetyChecker = struct {
         return result.toOwnedSlice();
     }
 
-    fn mergeVirtualOutputEffect(
+    fn mergeVirtualValueEffect(
         self: *SafetyChecker,
-        left: facts.OutputEffect,
-        right: facts.OutputEffect,
+        left: facts.ValueEffect,
+        right: facts.ValueEffect,
         fresh_map: *std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource),
-    ) !?facts.OutputEffect {
+    ) !?facts.ValueEffect {
         if (left.integer_address != right.integer_address or
             left.foreign_storage != right.foreign_storage or
             left.fresh_dependencies.len != right.fresh_dependencies.len or
@@ -3590,15 +3590,15 @@ pub const SafetyChecker = struct {
         const fields = try self.allocator.alloc(facts.OutputFieldEffect, left.fields.len);
         for (left.fields, right.fields, 0..) |left_field, right_field, index| {
             if (left_field.index != right_field.index) return null;
-            const value = try self.allocator.create(facts.OutputEffect);
-            value.* = (try self.mergeVirtualOutputEffect(left_field.value.*, right_field.value.*, fresh_map)) orelse return null;
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = (try self.mergeVirtualValueEffect(left_field.value.*, right_field.value.*, fresh_map)) orelse return null;
             fields[index] = .{ .index = left_field.index, .value = value };
         }
         const variants = try self.allocator.alloc(facts.OutputVariantEffect, left.variants.len);
         for (left.variants, right.variants, 0..) |left_variant, right_variant, index| {
             if (left_variant.index != right_variant.index) return null;
-            const value = try self.allocator.create(facts.OutputEffect);
-            value.* = (try self.mergeVirtualOutputEffect(left_variant.value.*, right_variant.value.*, fresh_map)) orelse return null;
+            const value = try self.allocator.create(facts.ValueEffect);
+            value.* = (try self.mergeVirtualValueEffect(left_variant.value.*, right_variant.value.*, fresh_map)) orelse return null;
             variants[index] = .{ .index = left_variant.index, .value = value };
         }
         return .{
@@ -3623,11 +3623,11 @@ pub const SafetyChecker = struct {
 
     fn infer(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !bool {
         if (function.safety_primitive != .none)
-            return self.replaceSingleOutput(function, try self.primitiveOutputEffect(function.safety_primitive, @intFromPtr(function)));
+            return self.replaceSingleOutput(function, try self.primitiveValueEffect(function.safety_primitive, @intFromPtr(function)));
         const body = function.body orelse return false;
         const previous = self.summaries.get(function).?;
-        const outputs = try self.allocator.dupe(facts.OutputEffect, previous.outputs);
-        var bindings = std.AutoHashMap(*const sg.BindingDeclaration, facts.OutputEffect).init(self.allocator.*);
+        const outputs = try self.allocator.dupe(facts.ValueEffect, previous.outputs);
+        var bindings = std.AutoHashMap(*const sg.BindingDeclaration, facts.ValueEffect).init(self.allocator.*);
         defer bindings.deinit();
         var place_bindings = std.AutoHashMap(*const sg.BindingDeclaration, []const facts.InputPath).init(self.allocator.*);
         defer place_bindings.deinit();
@@ -3640,14 +3640,14 @@ pub const SafetyChecker = struct {
         try self.inferRequiredLiveInputsBlock(function, body, &required_live_inputs);
         var post_flow = InputPostStateFlow.init(self.allocator.*);
         defer post_flow.deinit();
-        var post_exits: ?std.array_list.Managed(facts.InputPlaceEffect) = null;
+        var post_exits: ?std.array_list.Managed(facts.PlacePostState) = null;
         defer if (post_exits) |*exits| exits.deinit();
         try self.inferInputPostStates(function, body, &post_flow, &post_exits);
         if (post_flow.reachable) try self.recordInputPostStateExit(&post_exits, &post_flow.states);
         var post_states = if (post_exits) |exits|
             try cloneInputPostStates(&exits, self.allocator.*)
         else
-            std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
+            std.array_list.Managed(facts.PlacePostState).init(self.allocator.*);
         var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator.*);
         const opaque_storage_releases = try self.inferOpaqueStorageEffects(function, body, &opaque_storage_effects);
         if (function.is_deinit) {
@@ -3681,7 +3681,7 @@ pub const SafetyChecker = struct {
         function: *const sg.FunctionDeclaration,
         block: *const sg.CodeBlock,
         flow: *InputPostStateFlow,
-        exits: *?std.array_list.Managed(facts.InputPlaceEffect),
+        exits: *?std.array_list.Managed(facts.PlacePostState),
     ) !void {
         for (block.nodes) |node| {
             if (!flow.reachable) break;
@@ -3696,7 +3696,7 @@ pub const SafetyChecker = struct {
         function: *const sg.FunctionDeclaration,
         node: *const sg.SGNode,
         flow: *InputPostStateFlow,
-        exits: *?std.array_list.Managed(facts.InputPlaceEffect),
+        exits: *?std.array_list.Managed(facts.PlacePostState),
     ) anyerror!void {
         const states = &flow.states;
         switch (node.content) {
@@ -3788,8 +3788,8 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         node: *const sg.SGNode,
-        states: *std.array_list.Managed(facts.InputPlaceEffect),
-        exits: *?std.array_list.Managed(facts.InputPlaceEffect),
+        states: *std.array_list.Managed(facts.PlacePostState),
+        exits: *?std.array_list.Managed(facts.PlacePostState),
     ) anyerror!void {
         switch (node.content) {
             .move_value, .address_of => |value| try self.inferInputPostStatesExpression(function, value, states, exits),
@@ -3864,8 +3864,8 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         node: *const sg.SGNode,
-        states: *std.array_list.Managed(facts.InputPlaceEffect),
-        exits: *?std.array_list.Managed(facts.InputPlaceEffect),
+        states: *std.array_list.Managed(facts.PlacePostState),
+        exits: *?std.array_list.Managed(facts.PlacePostState),
     ) !void {
         var executed = try cloneInputPostStates(states, self.allocator.*);
         defer executed.deinit();
@@ -3879,12 +3879,12 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         call: *const sg.FunctionCall,
-        states: *std.array_list.Managed(facts.InputPlaceEffect),
+        states: *std.array_list.Managed(facts.PlacePostState),
     ) !void {
         if (call.input.content != .struct_value_literal) return;
         const arguments = call.input.content.struct_value_literal.fields;
-        if (call.callee.safety_primitive == .trusted_opaque_store_owned or
-            call.callee.safety_primitive == .trusted_opaque_store_owned_in)
+        if (call.callee.safety_primitive == .trusted_opaque_store or
+            call.callee.safety_primitive == .trusted_opaque_move_in)
         {
             if (arguments.len >= 2) {
                 const source_index: usize = if (arguments.len == 3) 2 else 1;
@@ -3897,14 +3897,14 @@ pub const SafetyChecker = struct {
             }
             return;
         }
-        if (call.callee.safety_primitive == .trusted_opaque_relocate_owned) return;
+        if (call.callee.safety_primitive == .trusted_opaque_relocate) return;
         if (call.callee.safety_primitive == .relocate) {
             if (arguments.len != 2) return;
             const source_targets = try self.inferInputPaths(function, arguments[0].value);
             const destination_targets = try self.inferInputPaths(function, arguments[1].value);
             for (source_targets) |source| {
                 try self.recordInputPostState(states, &.{source}, .moved, .{}, false, false, false, false);
-                var transferred = try self.inputOutputEffect(source.input_index, source.projections);
+                var transferred = try self.inputValueEffect(source.input_index, source.projections);
                 transferred = self.withOwnershipTransfer(transferred);
                 for (destination_targets) |destination|
                     try self.recordInputPostState(states, &.{destination}, .initialized, transferred, false, false, true, false);
@@ -3918,9 +3918,9 @@ pub const SafetyChecker = struct {
     fn applyInputPostStatesFromSummary(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
-        summary: facts.FunctionSummary,
+        summary: facts.SafetySummary,
         input: *const sg.SGNode,
-        states: *std.array_list.Managed(facts.InputPlaceEffect),
+        states: *std.array_list.Managed(facts.PlacePostState),
         symbolic_override: ?SymbolicInputOverride,
     ) !void {
         if (input.content != .struct_value_literal) return;
@@ -3946,7 +3946,7 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         cleanup: *const sg.AutoDeinitBinding,
-        states: *std.array_list.Managed(facts.InputPlaceEffect),
+        states: *std.array_list.Managed(facts.PlacePostState),
     ) !void {
         const binding_effect = if (self.inference_bindings) |bindings| bindings.get(cleanup.binding) else null;
         if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| if (self.summaries.get(deinit_fn)) |summary|
@@ -3958,11 +3958,11 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         fields: []const sg.AutoDeinitField,
-        states: *std.array_list.Managed(facts.InputPlaceEffect),
-        parent_effect: facts.OutputEffect,
+        states: *std.array_list.Managed(facts.PlacePostState),
+        parent_effect: facts.ValueEffect,
     ) !void {
         for (fields) |field| {
-            const field_effect = try self.projectOutputEffect(parent_effect, .{ .field = field.field_index });
+            const field_effect = try self.projectValueEffect(parent_effect, .{ .field = field.field_index });
             if (field.deinit_fn) |deinit_fn| if (field.input) |input| if (self.summaries.get(deinit_fn)) |summary|
                 try self.applyInputPostStatesFromSummary(function, summary, input, states, .{ .input_index = field.self_field_index, .effect = field_effect });
             try self.applyAutoDeinitFieldInputPostStates(function, field.fields, states, field_effect);
@@ -4118,10 +4118,10 @@ pub const SafetyChecker = struct {
         function: *const sg.FunctionDeclaration,
         fields: []const sg.AutoDeinitField,
         required: *std.array_list.Managed(facts.InputPath),
-        parent_effect: facts.OutputEffect,
+        parent_effect: facts.ValueEffect,
     ) !void {
         for (fields) |field| {
-            const field_effect = try self.projectOutputEffect(parent_effect, .{ .field = field.field_index });
+            const field_effect = try self.projectValueEffect(parent_effect, .{ .field = field.field_index });
             if (field.input) |input| {
                 try self.inferRequiredLiveInputsNode(function, input, required);
                 if (field.deinit_fn) |deinit_fn| if (self.summaries.get(deinit_fn)) |summary|
@@ -4317,10 +4317,10 @@ pub const SafetyChecker = struct {
         fields: []const sg.AutoDeinitField,
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
         state: *OpaqueReleaseState,
-        parent_effect: facts.OutputEffect,
+        parent_effect: facts.ValueEffect,
     ) !void {
         for (fields) |field| {
-            const field_effect = try self.projectOutputEffect(parent_effect, .{ .field = field.field_index });
+            const field_effect = try self.projectValueEffect(parent_effect, .{ .field = field.field_index });
             if (field.deinit_fn) |deinit_fn| if (field.input) |input| if (self.summaries.get(deinit_fn)) |summary|
                 try self.applyOpaqueReleaseSummary(function, summary, input, effects, state, .{ .input_index = field.self_field_index, .effect = field_effect });
             try self.applyAutoDeinitFieldOpaqueEffects(function, field.fields, effects, state, field_effect);
@@ -4434,11 +4434,11 @@ pub const SafetyChecker = struct {
     ) !void {
         if (call.input.content != .struct_value_literal) return;
         const arguments = call.input.content.struct_value_literal.fields;
-        if (call.callee.safety_primitive == .trusted_opaque_store_owned) {
+        if (call.callee.safety_primitive == .trusted_opaque_store) {
             state.released.clearRetainingCapacity();
             return;
         }
-        if (call.callee.safety_primitive == .trusted_opaque_store_owned_in) {
+        if (call.callee.safety_primitive == .trusted_opaque_move_in) {
             if (arguments.len != 3) return;
             const storages = try self.inferInputPaths(function, arguments[0].value);
             const hidden = try self.inferExpression(function, arguments[2].value);
@@ -4448,7 +4448,7 @@ pub const SafetyChecker = struct {
             }
             return;
         }
-        if (call.callee.safety_primitive == .trusted_opaque_release_all) {
+        if (call.callee.safety_primitive == .trusted_opaque_mark_empty) {
             if (arguments.len != 1) return;
             const storages = try self.inferInputPaths(function, arguments[0].value);
             for (storages) |storage| try self.recordOpaqueStorageRelease(&state.released, storage);
@@ -4461,7 +4461,7 @@ pub const SafetyChecker = struct {
     fn applyOpaqueReleaseSummary(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
-        summary: facts.FunctionSummary,
+        summary: facts.SafetySummary,
         input: *const sg.SGNode,
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
         state: *OpaqueReleaseState,
@@ -4565,12 +4565,12 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
         storage: facts.InputPath,
-        hidden: facts.OutputEffect,
+        hidden: facts.ValueEffect,
     ) !void {
         const dependencies_only = try self.dependencyOnlyEffect(hidden);
         for (effects.items) |*existing| {
             if (!inputPlaceTargetEqual(existing.storage, storage)) continue;
-            existing.hidden_dependencies = try self.mergeOutputEffects(existing.hidden_dependencies, dependencies_only);
+            existing.hidden_dependencies = try self.mergeValueEffects(existing.hidden_dependencies, dependencies_only);
             return;
         }
         try effects.append(.{ .storage = storage, .hidden_dependencies = dependencies_only });
@@ -4599,7 +4599,7 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn dependencyOnlyEffect(self: *SafetyChecker, effect: facts.OutputEffect) !facts.OutputEffect {
+    fn dependencyOnlyEffect(self: *SafetyChecker, effect: facts.ValueEffect) !facts.ValueEffect {
         var owned_sources = std.array_list.Managed(facts.FreshRootSource).init(self.allocator.*);
         try self.collectFreshOwnedSources(effect, &owned_sources);
         return self.dependencyOnlyEffectExcludingOwned(effect, owned_sources.items);
@@ -4607,7 +4607,7 @@ pub const SafetyChecker = struct {
 
     fn collectFreshOwnedSources(
         self: *SafetyChecker,
-        effect: facts.OutputEffect,
+        effect: facts.ValueEffect,
         sources: *std.array_list.Managed(facts.FreshRootSource),
     ) !void {
         for (effect.fresh_owned_roots) |source| try appendFreshSource(sources, source);
@@ -4617,9 +4617,9 @@ pub const SafetyChecker = struct {
 
     fn dependencyOnlyEffectExcludingOwned(
         self: *SafetyChecker,
-        effect: facts.OutputEffect,
+        effect: facts.ValueEffect,
         owned_sources: []const facts.FreshRootSource,
-    ) !facts.OutputEffect {
+    ) !facts.ValueEffect {
         const input_dependencies = try self.allocator.dupe(facts.InputDependency, effect.input_dependencies);
         for (input_dependencies) |*dependency| dependency.transfers_ownership = false;
         var fresh_dependencies = std.array_list.Managed(facts.FreshRootSource).init(self.allocator.*);
@@ -4633,13 +4633,13 @@ pub const SafetyChecker = struct {
         }
         const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
         for (effect.fields, 0..) |field, index| {
-            const value = try self.allocator.create(facts.OutputEffect);
+            const value = try self.allocator.create(facts.ValueEffect);
             value.* = try self.dependencyOnlyEffectExcludingOwned(field.value.*, owned_sources);
             fields[index] = .{ .index = field.index, .value = value };
         }
         const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
         for (effect.variants, 0..) |variant, index| {
-            const value = try self.allocator.create(facts.OutputEffect);
+            const value = try self.allocator.create(facts.ValueEffect);
             value.* = try self.dependencyOnlyEffectExcludingOwned(variant.value.*, owned_sources);
             variants[index] = .{ .index = variant.index, .value = value };
         }
@@ -4657,11 +4657,11 @@ pub const SafetyChecker = struct {
 
     fn joinInputPostStateBranch(
         self: *SafetyChecker,
-        joined: *?std.array_list.Managed(facts.InputPlaceEffect),
-        branch: *const std.array_list.Managed(facts.InputPlaceEffect),
+        joined: *?std.array_list.Managed(facts.PlacePostState),
+        branch: *const std.array_list.Managed(facts.PlacePostState),
     ) !void {
         if (joined.*) |*previous| {
-            var combined = std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
+            var combined = std.array_list.Managed(facts.PlacePostState).init(self.allocator.*);
             try self.joinInputPostStates(&combined, previous, branch);
             previous.deinit();
             joined.* = combined;
@@ -4672,11 +4672,11 @@ pub const SafetyChecker = struct {
 
     fn recordInputPostStateExit(
         self: *SafetyChecker,
-        exits: *?std.array_list.Managed(facts.InputPlaceEffect),
-        states: *const std.array_list.Managed(facts.InputPlaceEffect),
+        exits: *?std.array_list.Managed(facts.PlacePostState),
+        states: *const std.array_list.Managed(facts.PlacePostState),
     ) !void {
         if (exits.*) |*current| {
-            var combined = std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
+            var combined = std.array_list.Managed(facts.PlacePostState).init(self.allocator.*);
             try self.joinInputPostStates(&combined, current, states);
             current.deinit();
             current.* = combined;
@@ -4726,10 +4726,10 @@ pub const SafetyChecker = struct {
         } else joined.* = try branch.clone(self.allocator.*);
     }
 
-    fn recordInputPostState(self: *SafetyChecker, states: *std.array_list.Managed(facts.InputPlaceEffect), targets: []const facts.InputPath, initializedness: value_state.Initializedness, value: facts.OutputEffect, ends_roots: bool, refreshes_storage_root: bool, requires_available_destination: bool, may_repopulate_opaque_storage: bool) !void {
+    fn recordInputPostState(self: *SafetyChecker, states: *std.array_list.Managed(facts.PlacePostState), targets: []const facts.InputPath, initializedness: value_state.Initializedness, value: facts.ValueEffect, ends_roots: bool, refreshes_storage_root: bool, requires_available_destination: bool, may_repopulate_opaque_storage: bool) !void {
         _ = self;
         for (targets) |target| {
-            var existing_state: ?*facts.InputPlaceEffect = null;
+            var existing_state: ?*facts.PlacePostState = null;
             for (states.items) |*existing| if (inputPlaceTargetEqual(existing.target, target)) {
                 existing_state = existing;
                 break;
@@ -4754,10 +4754,10 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn recordOpaqueOwnershipConsumption(self: *SafetyChecker, states: *std.array_list.Managed(facts.InputPlaceEffect), targets: []const facts.InputPath, consumption: facts.OpaqueOwnershipConsumption, storage: ?facts.InputPath) !void {
+    fn recordOpaqueOwnershipConsumption(self: *SafetyChecker, states: *std.array_list.Managed(facts.PlacePostState), targets: []const facts.InputPath, consumption: facts.OpaqueOwnershipConsumption, storage: ?facts.InputPath) !void {
         _ = self;
         for (targets) |target| {
-            var existing_state: ?*facts.InputPlaceEffect = null;
+            var existing_state: ?*facts.PlacePostState = null;
             for (states.items) |*existing| if (inputPlaceTargetEqual(existing.target, target)) {
                 existing_state = existing;
                 break;
@@ -4778,13 +4778,13 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn joinInputPostStates(self: *SafetyChecker, destination: *std.array_list.Managed(facts.InputPlaceEffect), left: *const std.array_list.Managed(facts.InputPlaceEffect), right: *const std.array_list.Managed(facts.InputPlaceEffect)) !void {
-        var joined = std.array_list.Managed(facts.InputPlaceEffect).init(self.allocator.*);
+    fn joinInputPostStates(self: *SafetyChecker, destination: *std.array_list.Managed(facts.PlacePostState), left: *const std.array_list.Managed(facts.PlacePostState), right: *const std.array_list.Managed(facts.PlacePostState)) !void {
+        var joined = std.array_list.Managed(facts.PlacePostState).init(self.allocator.*);
         for (left.items) |left_state| {
             var merged = left_state;
             if (findInputPostState(right.items, left_state.target)) |right_state| {
                 merged.initializedness = joinInitializedness(left_state.initializedness, right_state.initializedness);
-                merged.value = try self.mergeOutputEffects(left_state.value, right_state.value);
+                merged.value = try self.mergeValueEffects(left_state.value, right_state.value);
                 merged.ends_previous_roots = left_state.ends_previous_roots or right_state.ends_previous_roots;
                 merged.refreshes_storage_root = left_state.refreshes_storage_root or right_state.refreshes_storage_root;
                 merged.requires_available_destination = left_state.requires_available_destination or right_state.requires_available_destination;
@@ -4794,9 +4794,9 @@ pub const SafetyChecker = struct {
                 if (left_state.initializedness != .initialized) {
                     merged.initializedness = .maybe_initialized;
                 } else {
-                    merged.value = try self.mergeOutputEffects(left_state.value, try self.inputPlaceValueEffect(left_state.target));
+                    merged.value = try self.mergeValueEffects(left_state.value, try self.inputPlaceValueEffect(left_state.target));
                 }
-                const unchanged: facts.InputPlaceEffect = .{ .target = left_state.target, .initializedness = .initialized };
+                const unchanged: facts.PlacePostState = .{ .target = left_state.target, .initializedness = .initialized };
                 joinOpaqueOwnershipEffect(&merged, left_state, unchanged);
             }
             try joined.append(merged);
@@ -4806,9 +4806,9 @@ pub const SafetyChecker = struct {
             if (right_state.initializedness != .initialized) {
                 merged.initializedness = .maybe_initialized;
             } else {
-                merged.value = try self.mergeOutputEffects(right_state.value, try self.inputPlaceValueEffect(right_state.target));
+                merged.value = try self.mergeValueEffects(right_state.value, try self.inputPlaceValueEffect(right_state.target));
             }
-            const unchanged: facts.InputPlaceEffect = .{ .target = right_state.target, .initializedness = .initialized };
+            const unchanged: facts.PlacePostState = .{ .target = right_state.target, .initializedness = .initialized };
             joinOpaqueOwnershipEffect(&merged, unchanged, right_state);
             try joined.append(merged);
         };
@@ -4820,11 +4820,11 @@ pub const SafetyChecker = struct {
     fn replaceSingleOutput(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
-        effect: facts.OutputEffect,
+        effect: facts.ValueEffect,
     ) !bool {
         const previous = self.summaries.get(function).?;
         if (previous.outputs.len != 1 or std.meta.eql(previous.outputs[0], effect)) return false;
-        const outputs = try self.allocator.alloc(facts.OutputEffect, 1);
+        const outputs = try self.allocator.alloc(facts.ValueEffect, 1);
         outputs[0] = effect;
         try self.summaries.put(function, .{ .outputs = outputs });
         return true;
@@ -4834,7 +4834,7 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         block: *const sg.CodeBlock,
-        outputs: []facts.OutputEffect,
+        outputs: []facts.ValueEffect,
     ) !void {
         for (block.nodes) |node| switch (node.content) {
             .binding_declaration => |binding| {
@@ -4846,7 +4846,7 @@ pub const SafetyChecker = struct {
                 const effect = try self.inferExpression(function, assignment.value);
                 if (bindingIndex(function.output_bindings, assignment.sym_id)) |output_index| {
                     outputs[output_index] = if (outputs[output_index].variants.len != 0 or effect.variants.len != 0)
-                        try self.mergeOutputEffects(outputs[output_index], effect)
+                        try self.mergeValueEffects(outputs[output_index], effect)
                     else
                         effect;
                 } else {
@@ -4872,10 +4872,10 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         node: *const sg.SGNode,
-    ) anyerror!facts.OutputEffect {
+    ) anyerror!facts.ValueEffect {
         return switch (node.content) {
             .binding_use => |binding| if (inputIndex(function, binding)) |index|
-                try self.inputOutputEffect(@intCast(index), &.{})
+                try self.inputValueEffect(@intCast(index), &.{})
             else if (self.inference_bindings) |bindings| bindings.get(binding) orelse .{} else .{},
             .move_value => |value| self.withOwnershipTransfer(try self.inferExpression(function, value)),
             .address_of => |value| .{ .input_places = try self.inferInputPaths(function, value) },
@@ -4887,9 +4887,9 @@ pub const SafetyChecker = struct {
             ),
             .struct_value_literal => |literal| try self.inferAggregate(function, literal),
             .choice_literal => |literal| if (literal.payload) |payload|
-                try self.choiceOutputEffect(literal.variant_index, try self.inferExpression(function, payload))
+                try self.choiceValueEffect(literal.variant_index, try self.inferExpression(function, payload))
             else
-                try self.choiceOutputEffect(literal.variant_index, .{}),
+                try self.choiceValueEffect(literal.variant_index, .{}),
             .struct_field_access => |access| try self.inferOpaqueReadFromSyntax(
                 function,
                 node,
@@ -4919,8 +4919,8 @@ pub const SafetyChecker = struct {
         function: *const sg.FunctionDeclaration,
         node: *const sg.SGNode,
         pointer: *const sg.SGNode,
-        effect: facts.OutputEffect,
-    ) !facts.OutputEffect {
+        effect: facts.ValueEffect,
+    ) !facts.ValueEffect {
         const input_paths = try self.inferInputPaths(function, pointer);
         var pointee = effect;
         if (input_paths.len != 0) {
@@ -4936,8 +4936,8 @@ pub const SafetyChecker = struct {
     fn withOpaqueReadGenerationDependencies(
         self: *SafetyChecker,
         accesses: []const facts.InputPath,
-        effect: facts.OutputEffect,
-    ) !facts.OutputEffect {
+        effect: facts.ValueEffect,
+    ) !facts.ValueEffect {
         var result = effect;
         var dependencies = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         try dependencies.appendSlice(effect.opaque_generation_dependencies);
@@ -4950,8 +4950,8 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         node: *const sg.SGNode,
-        effect: facts.OutputEffect,
-    ) !facts.OutputEffect {
+        effect: facts.ValueEffect,
+    ) !facts.ValueEffect {
         const ty = node.sem_type orelse return effect;
         if (!typeContainsPointer(ty)) return effect;
         return self.withOpaqueReadGenerationDependencies(try self.inferOpaqueReadInputPaths(function, node), effect);
@@ -4976,7 +4976,7 @@ pub const SafetyChecker = struct {
     /// provenance is explicit, or as an input dependency for transparent
     /// wrappers such as identity functions. Turning those paths into opaque
     /// generation dependencies is deliberately deferred until a read occurs.
-    fn opaqueGenerationSourcePaths(self: *SafetyChecker, effect: facts.OutputEffect) ![]const facts.InputPath {
+    fn opaqueGenerationSourcePaths(self: *SafetyChecker, effect: facts.ValueEffect) ![]const facts.InputPath {
         if (effect.input_places.len != 0) return effect.input_places;
         var paths = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         for (effect.input_dependencies) |dependency|
@@ -4988,7 +4988,7 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         node: *const sg.SGNode,
-        effect: facts.OutputEffect,
+        effect: facts.ValueEffect,
     ) ![]const facts.InputPath {
         const direct = try self.inferInputPaths(function, node);
         if (direct.len != 0) return direct;
@@ -5043,7 +5043,7 @@ pub const SafetyChecker = struct {
             // reach values stored inside it can escape through provenance.
             if (path.projections.len == 0) return &.{};
             var effect = override.effect;
-            for (path.projections) |projection| effect = try self.projectOutputEffect(effect, projection);
+            for (path.projections) |projection| effect = try self.projectValueEffect(effect, projection);
             return self.opaqueGenerationSourcePaths(effect);
         };
         const argument = arguments[path.input_index].value;
@@ -5053,13 +5053,13 @@ pub const SafetyChecker = struct {
             return direct;
         }
         var effect = try self.inferExpression(function, argument);
-        for (path.projections) |projection| effect = try self.projectOutputEffect(effect, projection);
+        for (path.projections) |projection| effect = try self.projectValueEffect(effect, projection);
         return self.opaqueGenerationSourcePaths(effect);
     }
 
-    fn inferCall(self: *SafetyChecker, function: *const sg.FunctionDeclaration, call: *const sg.FunctionCall) !facts.OutputEffect {
+    fn inferCall(self: *SafetyChecker, function: *const sg.FunctionDeclaration, call: *const sg.FunctionCall) !facts.ValueEffect {
         if (call.callee.safety_primitive != .none) {
-            const effect = try self.primitiveOutputEffect(call.callee.safety_primitive, @intFromPtr(call));
+            const effect = try self.primitiveValueEffect(call.callee.safety_primitive, @intFromPtr(call));
             if (call.input.content != .struct_value_literal) return effect;
             return self.substituteOutput(function, effect, call.input.content.struct_value_literal.fields);
         }
@@ -5069,14 +5069,14 @@ pub const SafetyChecker = struct {
         return self.rebaseFreshSources(substituted, @intFromPtr(call));
     }
 
-    fn inferVirtualCall(self: *SafetyChecker, function: *const sg.FunctionDeclaration, call: *const sg.VirtualCall) !facts.OutputEffect {
+    fn inferVirtualCall(self: *SafetyChecker, function: *const sg.FunctionDeclaration, call: *const sg.VirtualCall) !facts.ValueEffect {
         const summary = try self.virtualSummary(call.safety_methods) orelse return .{};
         if (summary.outputs.len != 1 or call.input.content != .struct_value_literal) return .{};
         const substituted = try self.substituteOutput(function, summary.outputs[0], call.input.content.struct_value_literal.fields);
         return self.rebaseFreshSources(substituted, @intFromPtr(call));
     }
 
-    fn rebaseFreshSources(self: *SafetyChecker, effect: facts.OutputEffect, call_site: usize) !facts.OutputEffect {
+    fn rebaseFreshSources(self: *SafetyChecker, effect: facts.ValueEffect, call_site: usize) !facts.ValueEffect {
         const Context = struct { call_site: usize, source: facts.FreshRootSource };
         var result = effect;
         const dependencies = try self.allocator.alloc(facts.FreshRootSource, effect.fresh_dependencies.len);
@@ -5093,14 +5093,14 @@ pub const SafetyChecker = struct {
         result.fresh_storage_authorities = authorities;
         const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
         for (effect.fields, 0..) |field, index| {
-            const value = try self.allocator.create(facts.OutputEffect);
+            const value = try self.allocator.create(facts.ValueEffect);
             value.* = try self.rebaseFreshSources(field.value.*, call_site);
             fields[index] = .{ .index = field.index, .value = value };
         }
         result.fields = fields;
         const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
         for (effect.variants, 0..) |variant, index| {
-            const value = try self.allocator.create(facts.OutputEffect);
+            const value = try self.allocator.create(facts.ValueEffect);
             value.* = try self.rebaseFreshSources(variant.value.*, call_site);
             variants[index] = .{ .index = variant.index, .value = value };
         }
@@ -5108,11 +5108,11 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn inputOutputEffect(self: *SafetyChecker, input_index: u32, projections: []const place.Projection) !facts.OutputEffect {
+    fn inputValueEffect(self: *SafetyChecker, input_index: u32, projections: []const place.Projection) !facts.ValueEffect {
         return .{ .input_dependencies = try self.oneInputDependency(input_index, projections) };
     }
 
-    fn inputPlaceValueEffect(self: *SafetyChecker, target: facts.InputPath) !facts.OutputEffect {
+    fn inputPlaceValueEffect(self: *SafetyChecker, target: facts.InputPath) !facts.ValueEffect {
         return .{ .input_place_values = try self.oneInputPath(target.input_index, target.projections) };
     }
 
@@ -5128,13 +5128,13 @@ pub const SafetyChecker = struct {
         return paths;
     }
 
-    fn primitiveOutputEffect(self: *SafetyChecker, primitive: sg.SafetyPrimitive, source: facts.FreshRootSource) !facts.OutputEffect {
+    fn primitiveValueEffect(self: *SafetyChecker, primitive: sg.SafetyPrimitive, source: facts.FreshRootSource) !facts.ValueEffect {
         return switch (primitive) {
             .none => .{},
             .relocate => .{},
             .establish_fresh_reference => .{ .fresh_dependencies = try self.oneFreshSource(source) },
-            .establish_inherited_reference => self.inputOutputEffect(1, &.{}),
-            .establish_inherited_storage => self.inputOutputEffect(1, &.{}),
+            .establish_inherited_reference => self.inputValueEffect(1, &.{}),
+            .establish_inherited_storage => self.inputValueEffect(1, &.{}),
             .establish_allocation => self.ownedAllocationEffect(source),
             .raw_allocated_storage => .{ .foreign_storage = true, .fresh_storage_authorities = try self.oneFreshSource(source) },
             .reference_offset,
@@ -5142,17 +5142,17 @@ pub const SafetyChecker = struct {
             .reinterpret_reference,
             .mutable_reinterpret_reference,
             .read_reference,
-            => self.inputOutputEffect(0, &.{}),
+            => self.inputValueEffect(0, &.{}),
             .restrict_reference => self.restrictReferenceEffect(),
-            .trusted_opaque_take_owned_in => .{
+            .trusted_opaque_move_out => .{
                 .opaque_storage_dependencies = try self.oneInputPath(0, &.{}),
                 .fresh_owned_roots = try self.oneFreshSource(source),
             },
-            .trusted_opaque_store_owned,
-            .trusted_opaque_store_owned_in,
-            .trusted_opaque_relocate_owned,
-            .trusted_opaque_drop_owned,
-            .trusted_opaque_release_all,
+            .trusted_opaque_store,
+            .trusted_opaque_move_in,
+            .trusted_opaque_relocate,
+            .trusted_opaque_drop,
+            .trusted_opaque_mark_empty,
             => .{},
         };
     }
@@ -5161,21 +5161,21 @@ pub const SafetyChecker = struct {
     /// storage generation of the lifetime Place. `input_places` preserves the
     /// input reference's provenance; neither root ownership nor authority is
     /// transferred by either dependency.
-    fn restrictReferenceEffect(self: *SafetyChecker) !facts.OutputEffect {
-        var result = try self.inputOutputEffect(0, &.{});
-        result = try self.mergeOutputEffects(result, try self.inputOutputEffect(1, &.{}));
+    fn restrictReferenceEffect(self: *SafetyChecker) !facts.ValueEffect {
+        var result = try self.inputValueEffect(0, &.{});
+        result = try self.mergeValueEffects(result, try self.inputValueEffect(1, &.{}));
         result.input_places = try self.oneInputPath(0, &.{});
         return result;
     }
 
-    fn ownedAllocationEffect(self: *SafetyChecker, source: facts.FreshRootSource) !facts.OutputEffect {
+    fn ownedAllocationEffect(self: *SafetyChecker, source: facts.FreshRootSource) !facts.ValueEffect {
         const fields = try self.allocator.alloc(facts.OutputFieldEffect, 3);
-        const data = try self.allocator.create(facts.OutputEffect);
+        const data = try self.allocator.create(facts.ValueEffect);
         data.* = .{ .fresh_dependencies = try self.oneFreshSource(source) };
-        const size = try self.allocator.create(facts.OutputEffect);
+        const size = try self.allocator.create(facts.ValueEffect);
         size.* = .{};
-        const allocator = try self.allocator.create(facts.OutputEffect);
-        allocator.* = try self.inputOutputEffect(2, &.{});
+        const allocator = try self.allocator.create(facts.ValueEffect);
+        allocator.* = try self.inputValueEffect(2, &.{});
         fields[0] = .{ .index = 0, .value = data };
         fields[1] = .{ .index = 1, .value = size };
         fields[2] = .{ .index = 2, .value = allocator };
@@ -5185,13 +5185,13 @@ pub const SafetyChecker = struct {
         };
     }
 
-    fn withOwnershipTransfer(self: *SafetyChecker, effect: facts.OutputEffect) facts.OutputEffect {
+    fn withOwnershipTransfer(self: *SafetyChecker, effect: facts.ValueEffect) facts.ValueEffect {
         _ = self;
         for (effect.input_dependencies) |*dependency| @constCast(dependency).transfers_ownership = true;
         return effect;
     }
 
-    fn withoutOwnershipTransfer(self: *SafetyChecker, effect: facts.OutputEffect) !facts.OutputEffect {
+    fn withoutOwnershipTransfer(self: *SafetyChecker, effect: facts.ValueEffect) !facts.ValueEffect {
         const dependencies = try self.allocator.dupe(facts.InputDependency, effect.input_dependencies);
         for (dependencies) |*dependency| dependency.transfers_ownership = false;
         var result = effect;
@@ -5199,9 +5199,9 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn inferAggregate(self: *SafetyChecker, function: *const sg.FunctionDeclaration, literal: *const sg.StructValueLiteral) !facts.OutputEffect {
+    fn inferAggregate(self: *SafetyChecker, function: *const sg.FunctionDeclaration, literal: *const sg.StructValueLiteral) !facts.ValueEffect {
         const output_fields = try self.allocator.alloc(facts.OutputFieldEffect, literal.fields.len);
-        var result: facts.OutputEffect = .{};
+        var result: facts.ValueEffect = .{};
         for (literal.fields, 0..) |field, position| {
             var field_index: ?u32 = null;
             for (literal.ty.struct_type.fields, 0..) |type_field, index| {
@@ -5214,10 +5214,10 @@ pub const SafetyChecker = struct {
             // rather than by the incidental order in which the literal wrote
             // its named fields.
             const semantic_index = field_index orelse return error.InvalidType;
-            const value = try self.allocator.create(facts.OutputEffect);
+            const value = try self.allocator.create(facts.ValueEffect);
             value.* = try self.inferExpression(function, field.value);
             output_fields[position] = .{ .index = semantic_index, .value = value };
-            result = try self.mergeOutputEffects(result, value.*);
+            result = try self.mergeValueEffects(result, value.*);
             // A struct contains the choice; it is not itself refined by the
             // tags of choice-valued fields.
             result.variants = &.{};
@@ -5235,25 +5235,25 @@ pub const SafetyChecker = struct {
         return .{ .variants = variants, .known_choice_variant = variant_index };
     }
 
-    fn choiceOutputEffect(self: *SafetyChecker, variant_index: u32, payload: facts.OutputEffect) !facts.OutputEffect {
+    fn choiceValueEffect(self: *SafetyChecker, variant_index: u32, payload: facts.ValueEffect) !facts.ValueEffect {
         const variants = try self.allocator.alloc(facts.OutputVariantEffect, 1);
-        const stored = try self.allocator.create(facts.OutputEffect);
+        const stored = try self.allocator.create(facts.ValueEffect);
         stored.* = payload;
         variants[0] = .{ .index = variant_index, .value = stored };
         return .{ .variants = variants, .known_choice_variant = variant_index };
     }
 
-    fn inferProjection(self: *SafetyChecker, function: *const sg.FunctionDeclaration, base_node: *const sg.SGNode, projection: place.Projection) !facts.OutputEffect {
-        return self.projectOutputEffect(try self.inferExpression(function, base_node), projection);
+    fn inferProjection(self: *SafetyChecker, function: *const sg.FunctionDeclaration, base_node: *const sg.SGNode, projection: place.Projection) !facts.ValueEffect {
+        return self.projectValueEffect(try self.inferExpression(function, base_node), projection);
     }
 
-    fn inferChoicePayload(self: *SafetyChecker, function: *const sg.FunctionDeclaration, base_node: *const sg.SGNode, variant_index: u32) !facts.OutputEffect {
+    fn inferChoicePayload(self: *SafetyChecker, function: *const sg.FunctionDeclaration, base_node: *const sg.SGNode, variant_index: u32) !facts.ValueEffect {
         const effect = try self.inferExpression(function, base_node);
         for (effect.variants) |variant| if (variant.index == variant_index) return variant.value.*;
         return .{};
     }
 
-    fn projectOutputEffect(self: *SafetyChecker, effect: facts.OutputEffect, projection: place.Projection) !facts.OutputEffect {
+    fn projectValueEffect(self: *SafetyChecker, effect: facts.ValueEffect, projection: place.Projection) !facts.ValueEffect {
         if (projection == .field) {
             for (effect.fields) |field| if (field.index == projection.field) return field.value.*;
         }
@@ -5284,20 +5284,20 @@ pub const SafetyChecker = struct {
     fn substituteOutput(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
-        effect: facts.OutputEffect,
+        effect: facts.ValueEffect,
         arguments: []const sg.StructValueLiteralField,
-    ) !facts.OutputEffect {
+    ) !facts.ValueEffect {
         return self.substituteOutputWithOverride(function, effect, arguments, null);
     }
 
     fn substituteOutputWithOverride(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
-        effect: facts.OutputEffect,
+        effect: facts.ValueEffect,
         arguments: []const sg.StructValueLiteralField,
         symbolic_override: ?SymbolicInputOverride,
-    ) !facts.OutputEffect {
-        var result: facts.OutputEffect = .{
+    ) !facts.ValueEffect {
+        var result: facts.ValueEffect = .{
             .fresh_dependencies = effect.fresh_dependencies,
             .fresh_owned_roots = effect.fresh_owned_roots,
             .fresh_storage_authorities = effect.fresh_storage_authorities,
@@ -5312,20 +5312,20 @@ pub const SafetyChecker = struct {
         }
         result.input_places = try input_places.toOwnedSlice();
         var input_place_values = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
-        var input_place_value_overrides: facts.OutputEffect = .{};
+        var input_place_value_overrides: facts.ValueEffect = .{};
         for (effect.input_place_values) |path| {
             if (path.input_index >= arguments.len) continue;
             if (symbolic_override) |override| if (override.input_index == path.input_index) {
                 var value = override.effect;
-                for (path.projections) |projection| value = try self.projectOutputEffect(value, projection);
-                input_place_value_overrides = try self.mergeOutputEffects(input_place_value_overrides, value);
+                for (path.projections) |projection| value = try self.projectValueEffect(value, projection);
+                input_place_value_overrides = try self.mergeValueEffects(input_place_value_overrides, value);
                 continue;
             };
             const substituted = try self.substituteInputPathWithOverride(function, path, arguments, symbolic_override);
             for (substituted) |candidate| try appendInputPath(&input_place_values, candidate);
         }
         result.input_place_values = try input_place_values.toOwnedSlice();
-        result = try self.mergeOutputEffects(result, input_place_value_overrides);
+        result = try self.mergeValueEffects(result, input_place_value_overrides);
         var opaque_generations = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         for (effect.opaque_generation_dependencies) |path| {
             if (path.input_index >= arguments.len) continue;
@@ -5348,14 +5348,14 @@ pub const SafetyChecker = struct {
                 if (override.input_index == dependency.path.input_index) override.effect else try self.inferExpression(function, arguments[dependency.path.input_index].value)
             else
                 try self.inferExpression(function, arguments[dependency.path.input_index].value);
-            for (dependency.path.projections) |projection| argument = try self.projectOutputEffect(argument, projection);
+            for (dependency.path.projections) |projection| argument = try self.projectValueEffect(argument, projection);
             if (dependency.transfers_ownership) argument = self.withOwnershipTransfer(argument) else argument = try self.withoutOwnershipTransfer(argument);
-            result = try self.mergeOutputEffects(result, argument);
+            result = try self.mergeValueEffects(result, argument);
         }
         if (effect.fields.len != 0) {
             const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
-                const value = try self.allocator.create(facts.OutputEffect);
+                const value = try self.allocator.create(facts.ValueEffect);
                 value.* = try self.substituteOutputWithOverride(function, field.value.*, arguments, symbolic_override);
                 fields[index] = .{ .index = field.index, .value = value };
             }
@@ -5364,7 +5364,7 @@ pub const SafetyChecker = struct {
         if (effect.variants.len != 0) {
             const variants = try self.allocator.alloc(facts.OutputVariantEffect, effect.variants.len);
             for (effect.variants, 0..) |variant, index| {
-                const value = try self.allocator.create(facts.OutputEffect);
+                const value = try self.allocator.create(facts.ValueEffect);
                 value.* = try self.substituteOutputWithOverride(function, variant.value.*, arguments, symbolic_override);
                 variants[index] = .{ .index = variant.index, .value = value };
             }
@@ -5373,7 +5373,7 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn mergeOutputEffects(self: *SafetyChecker, left: facts.OutputEffect, right: facts.OutputEffect) !facts.OutputEffect {
+    fn mergeValueEffects(self: *SafetyChecker, left: facts.ValueEffect, right: facts.ValueEffect) !facts.ValueEffect {
         var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator.*);
         for (left.input_dependencies) |dependency| try appendInputDependency(&dependencies, dependency);
         for (right.input_dependencies) |dependency| try appendInputDependency(&dependencies, dependency);
@@ -5393,10 +5393,10 @@ pub const SafetyChecker = struct {
         for (left.fields) |left_field| {
             var merged = left_field.value.*;
             for (right.fields) |right_field| if (right_field.index == left_field.index) {
-                merged = try self.mergeOutputEffects(merged, right_field.value.*);
+                merged = try self.mergeValueEffects(merged, right_field.value.*);
                 break;
             };
-            const stored = try self.allocator.create(facts.OutputEffect);
+            const stored = try self.allocator.create(facts.ValueEffect);
             stored.* = merged;
             try fields.append(.{ .index = left_field.index, .value = stored });
         }
@@ -5412,10 +5412,10 @@ pub const SafetyChecker = struct {
         for (left.variants) |left_variant| {
             var merged = left_variant.value.*;
             for (right.variants) |right_variant| if (right_variant.index == left_variant.index) {
-                merged = try self.mergeOutputEffects(merged, right_variant.value.*);
+                merged = try self.mergeValueEffects(merged, right_variant.value.*);
                 break;
             };
-            const stored = try self.allocator.create(facts.OutputEffect);
+            const stored = try self.allocator.create(facts.ValueEffect);
             stored.* = merged;
             try variants.append(.{ .index = left_variant.index, .value = stored });
         }
@@ -5502,32 +5502,32 @@ fn findVariant(variants: []const facts.VariantFacts, index: u32) ?facts.VariantF
     return null;
 }
 
-fn containsRoot(roots: []const facts.RootId, target: facts.RootId) bool {
+fn containsRoot(roots: []const facts.ValidityRootId, target: facts.ValidityRootId) bool {
     for (roots) |root| if (root == target) return true;
     return false;
 }
 
-fn collectOwnedRoots(value: facts.ValueFacts, roots: *std.array_list.Managed(facts.RootId)) !void {
+fn collectOwnedRoots(value: facts.ValueFacts, roots: *std.array_list.Managed(facts.ValidityRootId)) !void {
     for (value.owned_roots) |root| try appendOwnedRoot(roots, root);
     for (value.fields) |field| try collectOwnedRoots(field.value.*, roots);
     for (value.variants) |variant| try collectOwnedRoots(variant.value.*, roots);
 }
 
-fn hasExternalOpaqueDependency(value: facts.ValueFacts, owned: []const facts.RootId) bool {
+fn hasExternalOpaqueDependency(value: facts.ValueFacts, owned: []const facts.ValidityRootId) bool {
     for (value.dependencies) |dependency| if (!containsRoot(owned, dependency.root)) return true;
     for (value.fields) |field| if (hasExternalOpaqueDependency(field.value.*, owned)) return true;
     for (value.variants) |variant| if (hasExternalOpaqueDependency(variant.value.*, owned)) return true;
     return false;
 }
 
-fn valueContainsOwnedRoot(value: facts.ValueFacts, target: facts.RootId) bool {
+fn valueContainsOwnedRoot(value: facts.ValueFacts, target: facts.ValidityRootId) bool {
     if (containsRoot(value.owned_roots, target)) return true;
     for (value.fields) |field| if (valueContainsOwnedRoot(field.value.*, target)) return true;
     for (value.variants) |variant| if (valueContainsOwnedRoot(variant.value.*, target)) return true;
     return false;
 }
 
-fn valueContainsOpaqueGeneration(value: facts.ValueFacts, storage: place.Place, root: facts.RootId) bool {
+fn valueContainsOpaqueGeneration(value: facts.ValueFacts, storage: place.Place, root: facts.ValidityRootId) bool {
     for (value.opaque_origins) |origin|
         if (origin.generation == root and origin.storage.eql(storage)) return true;
     for (value.fields) |field| if (valueContainsOpaqueGeneration(field.value.*, storage, root)) return true;
@@ -5535,7 +5535,7 @@ fn valueContainsOpaqueGeneration(value: facts.ValueFacts, storage: place.Place, 
     return false;
 }
 
-fn valueDependsOnRoot(value: facts.ValueFacts, target: facts.RootId) bool {
+fn valueDependsOnRoot(value: facts.ValueFacts, target: facts.ValidityRootId) bool {
     for (value.dependencies) |dependency| if (dependency.root == target) return true;
     for (value.fields) |field| if (valueDependsOnRoot(field.value.*, target)) return true;
     for (value.variants) |variant| if (valueDependsOnRoot(variant.value.*, target)) return true;
@@ -5549,7 +5549,7 @@ fn valueHasDependency(value: facts.ValueFacts) bool {
     return false;
 }
 
-fn collectDependencyRoots(value: facts.ValueFacts, roots: *std.array_list.Managed(facts.RootId)) !void {
+fn collectDependencyRoots(value: facts.ValueFacts, roots: *std.array_list.Managed(facts.ValidityRootId)) !void {
     for (value.dependencies) |dependency| try appendOwnedRoot(roots, dependency.root);
     for (value.fields) |field| try collectDependencyRoots(field.value.*, roots);
     for (value.variants) |variant| try collectDependencyRoots(variant.value.*, roots);
@@ -5602,7 +5602,7 @@ fn appendOwnershipEdge(
     try edges.append(candidate);
 }
 
-fn rootIsStructurallyReferenced(state: *const SafetyChecker.FunctionState, root: facts.RootId) bool {
+fn rootIsStructurallyReferenced(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) bool {
     for (state.places.items) |stored|
         if (valueContainsOwnedRoot(stored.value, root) or valueDependsOnRoot(stored.value, root)) return true;
     for (state.storage_roots.items) |storage_root|
@@ -5616,8 +5616,8 @@ fn rootIsStructurallyReferenced(state: *const SafetyChecker.FunctionState, root:
 
 fn ownershipPathExistsFrom(
     state: *const SafetyChecker.FunctionState,
-    current: facts.RootId,
-    target: facts.RootId,
+    current: facts.ValidityRootId,
+    target: facts.ValidityRootId,
     remaining: usize,
 ) bool {
     if (current == target) return true;
@@ -5631,7 +5631,7 @@ fn ownershipPathExistsFrom(
 fn isLocalStorageRoot(
     function: *const sg.FunctionDeclaration,
     state: *const SafetyChecker.FunctionState,
-    root: facts.RootId,
+    root: facts.ValidityRootId,
 ) bool {
     if (containsRoot(state.lexical_storage_roots.items, root)) return true;
     for (state.storage_roots.items) |entry| {
@@ -5732,7 +5732,7 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     if (left.integer_address != right.integer_address or
         left.foreign_storage != right.foreign_storage or
         left.known_choice_variant != right.known_choice_variant or
-        !std.mem.eql(facts.StorageAuthorityId, left.storage_authorities, right.storage_authorities) or
+        !std.mem.eql(facts.StorageCapabilityId, left.storage_authorities, right.storage_authorities) or
         left.dependencies.len != right.dependencies.len or
         left.owned_roots.len != right.owned_roots.len or
         left.fields.len != right.fields.len or
@@ -5757,7 +5757,7 @@ fn inputIndex(function: *const sg.FunctionDeclaration, target: *const sg.Binding
     return null;
 }
 
-fn effectsEqual(left: []const facts.OutputEffect, right: []const facts.OutputEffect) bool {
+fn effectsEqual(left: []const facts.ValueEffect, right: []const facts.ValueEffect) bool {
     if (left.len != right.len) return false;
     for (left, right) |a, b| if (!outputEffectEqual(a, b)) return false;
     return true;
@@ -5770,7 +5770,7 @@ fn inputDependencyEqual(left: facts.InputDependency, right: facts.InputDependenc
     return true;
 }
 
-fn outputEffectHasFreshRole(effect: facts.OutputEffect) bool {
+fn outputEffectHasFreshRole(effect: facts.ValueEffect) bool {
     if (effect.fresh_dependencies.len != 0 or effect.fresh_owned_roots.len != 0 or
         effect.fresh_storage_authorities.len != 0) return true;
     for (effect.fields) |field| if (outputEffectHasFreshRole(field.value.*)) return true;
@@ -5778,19 +5778,19 @@ fn outputEffectHasFreshRole(effect: facts.OutputEffect) bool {
     return false;
 }
 
-fn outputEffectTransfersOwnership(effect: facts.OutputEffect) bool {
+fn outputEffectTransfersOwnership(effect: facts.ValueEffect) bool {
     for (effect.input_dependencies) |dependency| if (dependency.transfers_ownership) return true;
     for (effect.fields) |field| if (outputEffectTransfersOwnership(field.value.*)) return true;
     for (effect.variants) |variant| if (outputEffectTransfersOwnership(variant.value.*)) return true;
     return false;
 }
 
-fn findInputPostState(states: []const facts.InputPlaceEffect, target: facts.InputPath) ?facts.InputPlaceEffect {
+fn findInputPostState(states: []const facts.PlacePostState, target: facts.InputPath) ?facts.PlacePostState {
     for (states) |state| if (inputPlaceTargetEqual(state.target, target)) return state;
     return null;
 }
 
-fn inputPostStatesEqual(left: []const facts.InputPlaceEffect, right: []const facts.InputPlaceEffect) bool {
+fn inputPostStatesEqual(left: []const facts.PlacePostState, right: []const facts.PlacePostState) bool {
     if (left.len != right.len) return false;
     for (left, right) |a, b| {
         if (!inputPlaceTargetEqual(a.target, b.target) or a.initializedness != b.initializedness or
@@ -5832,7 +5832,7 @@ fn opaqueStorageEffectsEqual(left: []const facts.OpaqueStorageEffect, right: []c
     return true;
 }
 
-fn summaryMayRepopulateOpaqueStorage(summary: facts.FunctionSummary) bool {
+fn summaryMayRepopulateOpaqueStorage(summary: facts.SafetySummary) bool {
     for (summary.input_post_states) |post_state| {
         if (post_state.opaque_ownership == .none and
             post_state.initializedness == .initialized and
@@ -5850,8 +5850,8 @@ fn optionalInputPathEqual(left: ?facts.InputPath, right: ?facts.InputPath) bool 
     return if (left) |path| inputPlaceTargetEqual(path, right.?) else true;
 }
 
-fn cloneInputPostStates(source: *const std.array_list.Managed(facts.InputPlaceEffect), allocator: std.mem.Allocator) !std.array_list.Managed(facts.InputPlaceEffect) {
-    var result = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+fn cloneInputPostStates(source: *const std.array_list.Managed(facts.PlacePostState), allocator: std.mem.Allocator) !std.array_list.Managed(facts.PlacePostState) {
+    var result = std.array_list.Managed(facts.PlacePostState).init(allocator);
     try result.appendSlice(source.items);
     return result;
 }
@@ -5882,7 +5882,7 @@ fn projectValueFacts(value: facts.ValueFacts, projections: []const place.Project
     return current;
 }
 
-fn appendDependency(list: *std.array_list.Managed(facts.ReferenceDependency), dependency: facts.ReferenceDependency) !void {
+fn appendDependency(list: *std.array_list.Managed(facts.ValidityDependency), dependency: facts.ValidityDependency) !void {
     for (list.items) |existing| if (existing.root == dependency.root) return;
     try list.append(dependency);
 }
@@ -5892,18 +5892,18 @@ fn appendPlace(list: *std.array_list.Managed(place.Place), storage: place.Place)
     try list.append(storage);
 }
 
-fn appendOpaqueOrigin(list: *std.array_list.Managed(facts.OpaqueOrigin), origin: facts.OpaqueOrigin) !void {
+fn appendOpaqueProvenance(list: *std.array_list.Managed(facts.OpaqueProvenance), origin: facts.OpaqueProvenance) !void {
     for (list.items) |existing|
         if (existing.generation == origin.generation and existing.storage.eql(origin.storage)) return;
     try list.append(origin);
 }
 
-fn appendOwnedRoot(list: *std.array_list.Managed(facts.RootId), owned_root: facts.RootId) !void {
+fn appendOwnedRoot(list: *std.array_list.Managed(facts.ValidityRootId), owned_root: facts.ValidityRootId) !void {
     for (list.items) |existing| if (existing == owned_root) return;
     try list.append(owned_root);
 }
 
-fn appendStorageAuthority(list: *std.array_list.Managed(facts.StorageAuthorityId), authority: facts.StorageAuthorityId) !void {
+fn appendStorageCapability(list: *std.array_list.Managed(facts.StorageCapabilityId), authority: facts.StorageCapabilityId) !void {
     for (list.items) |existing| if (existing == authority) return;
     try list.append(authority);
 }
@@ -5928,9 +5928,9 @@ fn appendFreshSource(list: *std.array_list.Managed(facts.FreshRootSource), sourc
 }
 
 fn joinOpaqueOwnershipEffect(
-    merged: *facts.InputPlaceEffect,
-    left: facts.InputPlaceEffect,
-    right: facts.InputPlaceEffect,
+    merged: *facts.PlacePostState,
+    left: facts.PlacePostState,
+    right: facts.PlacePostState,
 ) void {
     const left_ownership = left.opaque_ownership;
     const right_ownership = right.opaque_ownership;
@@ -5964,9 +5964,9 @@ fn joinOpaqueOwnershipEffect(
 }
 
 fn mergeVirtualOpaqueOwnershipEffect(
-    merged: *facts.InputPlaceEffect,
-    left: facts.InputPlaceEffect,
-    right: facts.InputPlaceEffect,
+    merged: *facts.PlacePostState,
+    left: facts.PlacePostState,
+    right: facts.PlacePostState,
 ) bool {
     const left_ownership = left.opaque_ownership;
     const right_ownership = right.opaque_ownership;
@@ -5995,7 +5995,7 @@ fn projectionsEqual(left: []const place.Projection, right: []const place.Project
     return true;
 }
 
-fn outputEffectEqual(left: facts.OutputEffect, right: facts.OutputEffect) bool {
+fn outputEffectEqual(left: facts.ValueEffect, right: facts.ValueEffect) bool {
     if (left.known_choice_variant != right.known_choice_variant or
         left.integer_address != right.integer_address or
         left.foreign_storage != right.foreign_storage or
@@ -6066,7 +6066,7 @@ test "virtual summaries require exact ownership and align fresh root roles" {
 
     const left_source: facts.FreshRootSource = 11;
     const right_source: facts.FreshRootSource = 29;
-    const compatible = try checker.mergeVirtualFunctionSummary(
+    const compatible = try checker.mergeVirtualSafetySummary(
         .{ .outputs = &.{.{
             .fresh_dependencies = &.{left_source},
             .fresh_owned_roots = &.{left_source},
@@ -6080,7 +6080,7 @@ test "virtual summaries require exact ownership and align fresh root roles" {
     try std.testing.expectEqual(left_source, compatible.?.outputs[0].fresh_dependencies[0]);
     try std.testing.expectEqual(left_source, compatible.?.outputs[0].fresh_owned_roots[0]);
 
-    const incompatible = try checker.mergeVirtualFunctionSummary(
+    const incompatible = try checker.mergeVirtualSafetySummary(
         .{ .outputs = &.{.{ .fresh_owned_roots = &.{left_source} }} },
         .{ .outputs = &.{.{}} },
     );
@@ -6095,13 +6095,13 @@ test "virtual summaries reject destructive input state and require exact ownersh
     defer checker.deinit();
 
     const transfer = facts.InputDependency{ .path = .{ .input_index = 0 }, .transfers_ownership = true };
-    const transfer_mismatch = try checker.mergeVirtualFunctionSummary(
+    const transfer_mismatch = try checker.mergeVirtualSafetySummary(
         .{ .outputs = &.{.{ .input_dependencies = &.{transfer} }} },
         .{ .outputs = &.{.{}} },
     );
     try std.testing.expect(transfer_mismatch == null);
 
-    const deinit_alternative = try checker.mergeVirtualFunctionSummary(
+    const deinit_alternative = try checker.mergeVirtualSafetySummary(
         .{ .outputs = &.{.{}}, .input_post_states = &.{.{
             .target = .{ .input_index = 0 },
             .initializedness = .deinitialized,
@@ -6111,7 +6111,7 @@ test "virtual summaries reject destructive input state and require exact ownersh
     );
     try std.testing.expect(deinit_alternative == null);
 
-    const opaque_mismatch = try checker.mergeVirtualFunctionSummary(
+    const opaque_mismatch = try checker.mergeVirtualSafetySummary(
         .{ .outputs = &.{.{}}, .input_post_states = &.{.{
             .target = .{ .input_index = 0 },
             .initializedness = .initialized,
@@ -6135,7 +6135,7 @@ test "virtual input post states merge absent targets and caller-visible effects"
     defer checker.deinit();
 
     const target = facts.InputPath{ .input_index = 0 };
-    const rewritten = facts.InputPlaceEffect{
+    const rewritten = facts.PlacePostState{
         .target = target,
         .initializedness = .initialized,
         .value = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} },
@@ -6144,7 +6144,7 @@ test "virtual input post states merge absent targets and caller-visible effects"
         .requires_available_destination = true,
         .may_repopulate_opaque_storage = true,
     };
-    const optional = try checker.mergeVirtualFunctionSummary(
+    const optional = try checker.mergeVirtualSafetySummary(
         .{ .input_post_states = &.{rewritten} },
         .{},
     );
@@ -6159,14 +6159,14 @@ test "virtual input post states merge absent targets and caller-visible effects"
     try std.testing.expect(merged.requires_available_destination);
     try std.testing.expect(merged.may_repopulate_opaque_storage);
 
-    const identical = try checker.mergeVirtualFunctionSummary(
+    const identical = try checker.mergeVirtualSafetySummary(
         .{ .input_post_states = &.{rewritten} },
         .{ .input_post_states = &.{rewritten} },
     );
     try std.testing.expect(identical != null);
     try std.testing.expect(inputPostStatesEqual(&.{rewritten}, identical.?.input_post_states));
 
-    const fresh_mismatch = try checker.mergeVirtualFunctionSummary(
+    const fresh_mismatch = try checker.mergeVirtualSafetySummary(
         .{ .input_post_states = &.{.{
             .target = target,
             .initializedness = .initialized,
@@ -6176,7 +6176,7 @@ test "virtual input post states merge absent targets and caller-visible effects"
     );
     try std.testing.expect(fresh_mismatch == null);
 
-    const transfer_mismatch = try checker.mergeVirtualFunctionSummary(
+    const transfer_mismatch = try checker.mergeVirtualSafetySummary(
         .{ .input_post_states = &.{.{
             .target = target,
             .initializedness = .initialized,
@@ -6197,33 +6197,33 @@ test "virtual input effects reject opaque ownership without runtime drop correla
     const target = facts.InputPath{ .input_index = 0 };
     const storage = facts.InputPath{ .input_index = 1 };
     const other_storage = facts.InputPath{ .input_index = 2 };
-    const none = facts.InputPlaceEffect{ .target = target, .initializedness = .initialized };
-    const definite = facts.InputPlaceEffect{
+    const none = facts.PlacePostState{ .target = target, .initializedness = .initialized };
+    const definite = facts.PlacePostState{
         .target = target,
         .initializedness = .initialized,
         .opaque_ownership = .definite,
         .opaque_storage = storage,
     };
-    const conditional = facts.InputPlaceEffect{
+    const conditional = facts.PlacePostState{
         .target = target,
         .initializedness = .initialized,
         .opaque_ownership = .conditional,
         .opaque_storage = storage,
     };
 
-    try std.testing.expect((try checker.mergeVirtualInputPlaceEffect(none, definite)) == null);
-    try std.testing.expect((try checker.mergeVirtualInputPlaceEffect(none, conditional)) == null);
-    try std.testing.expect((try checker.mergeVirtualInputPlaceEffect(definite, conditional)) == null);
-    try std.testing.expect((try checker.mergeVirtualInputPlaceEffect(conditional, conditional)) == null);
-    try std.testing.expect((try checker.mergeVirtualInputPlaceEffect(definite, definite)) == null);
+    try std.testing.expect((try checker.mergeVirtualPlacePostState(none, definite)) == null);
+    try std.testing.expect((try checker.mergeVirtualPlacePostState(none, conditional)) == null);
+    try std.testing.expect((try checker.mergeVirtualPlacePostState(definite, conditional)) == null);
+    try std.testing.expect((try checker.mergeVirtualPlacePostState(conditional, conditional)) == null);
+    try std.testing.expect((try checker.mergeVirtualPlacePostState(definite, definite)) == null);
 
     var different = definite;
     different.opaque_storage = other_storage;
-    try std.testing.expect((try checker.mergeVirtualInputPlaceEffect(definite, different)) == null);
+    try std.testing.expect((try checker.mergeVirtualPlacePostState(definite, different)) == null);
     var ambiguous = definite;
     ambiguous.opaque_ownership = .ambiguous;
     ambiguous.opaque_storage = null;
-    try std.testing.expect((try checker.mergeVirtualInputPlaceEffect(definite, ambiguous)) == null);
+    try std.testing.expect((try checker.mergeVirtualPlacePostState(definite, ambiguous)) == null);
 }
 
 test "virtual summaries widen dependencies but require exact provenance" {
@@ -6235,21 +6235,21 @@ test "virtual summaries widen dependencies but require exact provenance" {
 
     const from_self = facts.InputDependency{ .path = .{ .input_index = 0 } };
     const from_other = facts.InputDependency{ .path = .{ .input_index = 1 } };
-    const widened = try checker.mergeVirtualFunctionSummary(
+    const widened = try checker.mergeVirtualSafetySummary(
         .{ .outputs = &.{.{ .input_dependencies = &.{from_self} }} },
         .{ .outputs = &.{.{ .input_dependencies = &.{ from_self, from_other } }} },
     );
     try std.testing.expect(widened != null);
     try std.testing.expectEqual(@as(usize, 2), widened.?.outputs[0].input_dependencies.len);
 
-    const required_union = try checker.mergeVirtualFunctionSummary(
+    const required_union = try checker.mergeVirtualSafetySummary(
         .{ .outputs = &.{.{}}, .required_live_inputs = &.{.{ .input_index = 0 }} },
         .{ .outputs = &.{.{}}, .required_live_inputs = &.{.{ .input_index = 1 }} },
     );
     try std.testing.expect(required_union != null);
     try std.testing.expectEqual(@as(usize, 2), required_union.?.required_live_inputs.len);
 
-    const provenance_mismatch = try checker.mergeVirtualFunctionSummary(
+    const provenance_mismatch = try checker.mergeVirtualSafetySummary(
         .{ .outputs = &.{.{ .fresh_storage_authorities = &.{1} }} },
         .{ .outputs = &.{.{}} },
     );
@@ -6264,7 +6264,7 @@ test "virtual summaries discharge opaque domains only when every implementation 
     defer checker.deinit();
 
     const released = facts.InputPath{ .input_index = 0, .projections = &.{.{ .field = 1 }} };
-    const same_release = try checker.mergeVirtualFunctionSummary(
+    const same_release = try checker.mergeVirtualSafetySummary(
         .{ .opaque_storage_releases = &.{released} },
         .{ .opaque_storage_releases = &.{released} },
     );
@@ -6272,21 +6272,21 @@ test "virtual summaries discharge opaque domains only when every implementation 
     try std.testing.expectEqual(@as(usize, 1), same_release.?.opaque_storage_releases.len);
     try std.testing.expect(inputPlaceTargetEqual(released, same_release.?.opaque_storage_releases[0]));
 
-    const absent_release = try checker.mergeVirtualFunctionSummary(
+    const absent_release = try checker.mergeVirtualSafetySummary(
         .{ .opaque_storage_releases = &.{released} },
         .{},
     );
     try std.testing.expect(absent_release != null);
     try std.testing.expectEqual(@as(usize, 0), absent_release.?.opaque_storage_releases.len);
 
-    const release_then_write_implementation = facts.FunctionSummary{
+    const release_then_write_implementation = facts.SafetySummary{
         .input_post_states = &.{.{
             .target = .{ .input_index = 1, .projections = &.{.{ .field = 0 }} },
             .initializedness = .initialized,
             .may_repopulate_opaque_storage = true,
         }},
     };
-    const virtual_with_repopulation = try checker.mergeVirtualFunctionSummary(
+    const virtual_with_repopulation = try checker.mergeVirtualSafetySummary(
         .{
             .input_post_states = release_then_write_implementation.input_post_states,
             .opaque_storage_releases = &.{released},
@@ -6296,17 +6296,17 @@ test "virtual summaries discharge opaque domains only when every implementation 
     try std.testing.expect(virtual_with_repopulation != null);
     try std.testing.expectEqual(@as(usize, 0), virtual_with_repopulation.?.opaque_storage_releases.len);
 
-    const hidden = facts.OutputEffect{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} };
-    const inconsistent_release = facts.FunctionSummary{
+    const hidden = facts.ValueEffect{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} };
+    const inconsistent_release = facts.SafetySummary{
         .opaque_storage_effects = &.{.{ .storage = released, .hidden_dependencies = hidden }},
         .opaque_storage_releases = &.{released},
     };
-    const normalized = try checker.mergeVirtualFunctionSummary(inconsistent_release, inconsistent_release);
+    const normalized = try checker.mergeVirtualSafetySummary(inconsistent_release, inconsistent_release);
     try std.testing.expect(normalized != null);
     try std.testing.expectEqual(@as(usize, 0), normalized.?.opaque_storage_releases.len);
     try std.testing.expectEqual(@as(usize, 1), normalized.?.opaque_storage_effects.len);
 
-    const different_release = try checker.mergeVirtualFunctionSummary(
+    const different_release = try checker.mergeVirtualSafetySummary(
         .{ .opaque_storage_releases = &.{released} },
         .{ .opaque_storage_releases = &.{.{ .input_index = 0, .projections = &.{.{ .field = 0 }} }} },
     );
@@ -6412,15 +6412,15 @@ test "output instantiation preserves sparse semantic field indices" {
     var checker = SafetyChecker.init(&allocator, undefined);
     defer checker.deinit();
 
-    const dependency = try checker.allocator.create(facts.OutputEffect);
+    const dependency = try checker.allocator.create(facts.ValueEffect);
     dependency.* = .{ .fresh_dependencies = &.{91} };
-    const empty = try checker.allocator.create(facts.OutputEffect);
+    const empty = try checker.allocator.create(facts.ValueEffect);
     empty.* = .{};
     const fields = try checker.allocator.alloc(facts.OutputFieldEffect, 2);
     // The representation is deliberately sparse and out of semantic order.
     fields[0] = .{ .index = 2, .value = dependency };
     fields[1] = .{ .index = 0, .value = empty };
-    const effect = facts.OutputEffect{
+    const effect = facts.ValueEffect{
         .fresh_owned_roots = &.{91},
         .fields = fields,
     };
@@ -6447,9 +6447,9 @@ test "choice values preserve complete payload facts" {
 
     const binding = try checker.allocator.create(sg.BindingDeclaration);
     binding.* = undefined;
-    const dependency_root: facts.RootId = @enumFromInt(1);
-    const owned_root: facts.RootId = @enumFromInt(2);
-    const authority: facts.StorageAuthorityId = @enumFromInt(3);
+    const dependency_root: facts.ValidityRootId = @enumFromInt(1);
+    const owned_root: facts.ValidityRootId = @enumFromInt(2);
+    const authority: facts.StorageCapabilityId = @enumFromInt(3);
 
     const nested = try checker.allocator.create(facts.ValueFacts);
     nested.* = .{
@@ -6490,7 +6490,7 @@ test "choice output effects preserve complete payload facts" {
     var checker = SafetyChecker.init(&allocator, undefined);
     defer checker.deinit();
 
-    const nested = try checker.allocator.create(facts.OutputEffect);
+    const nested = try checker.allocator.create(facts.ValueEffect);
     nested.* = .{
         .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }},
         .input_places = &.{.{ .input_index = 2 }},
@@ -6502,7 +6502,7 @@ test "choice output effects preserve complete payload facts" {
     };
     const payload_fields = try checker.allocator.alloc(facts.OutputFieldEffect, 1);
     payload_fields[0] = .{ .index = 17, .value = nested };
-    const payload = facts.OutputEffect{
+    const payload = facts.ValueEffect{
         .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }},
         .input_places = &.{.{ .input_index = 2 }},
         .fields = payload_fields,
@@ -6513,13 +6513,13 @@ test "choice output effects preserve complete payload facts" {
         .fresh_storage_authorities = &.{13},
     };
 
-    const wrapped = try checker.choiceOutputEffect(5, payload);
+    const wrapped = try checker.choiceValueEffect(5, payload);
     try std.testing.expectEqual(@as(usize, 0), wrapped.fields.len);
     try std.testing.expectEqual(@as(usize, 1), wrapped.variants.len);
     try std.testing.expectEqual(@as(u32, 5), wrapped.variants[0].index);
     try std.testing.expect(outputEffectEqual(payload, wrapped.variants[0].value.*));
 
-    const nested_wrapped = try checker.choiceOutputEffect(9, wrapped);
+    const nested_wrapped = try checker.choiceValueEffect(9, wrapped);
     const extracted = nested_wrapped.variants[0].value.variants[0].value.*;
     try std.testing.expect(outputEffectEqual(payload, extracted));
 }
@@ -6531,10 +6531,10 @@ test "choice alternatives activate fresh ownership by variant" {
     var checker = SafetyChecker.init(&allocator, undefined);
     defer checker.deinit();
 
-    const owned = facts.OutputEffect{ .fresh_owned_roots = &.{41} };
-    const ok = try checker.choiceOutputEffect(0, owned);
-    const failed = try checker.choiceOutputEffect(1, .{});
-    const alternatives = try checker.mergeOutputEffects(ok, failed);
+    const owned = facts.ValueEffect{ .fresh_owned_roots = &.{41} };
+    const ok = try checker.choiceValueEffect(0, owned);
+    const failed = try checker.choiceValueEffect(1, .{});
+    const alternatives = try checker.mergeValueEffects(ok, failed);
     try std.testing.expectEqual(@as(usize, 0), alternatives.fields.len);
     try std.testing.expectEqual(@as(usize, 2), alternatives.variants.len);
     try std.testing.expectEqual(@as(usize, 0), alternatives.fresh_owned_roots.len);
@@ -6654,7 +6654,7 @@ test "trivial input writes retain initialized post states" {
     var checker = SafetyChecker.init(&allocator, undefined);
     defer checker.deinit();
 
-    var states = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    var states = std.array_list.Managed(facts.PlacePostState).init(allocator);
     defer states.deinit();
     const target = facts.InputPath{ .input_index = 0 };
 
@@ -6680,19 +6680,19 @@ test "opaque ownership joins preserve conditional storage and reject ambiguity" 
     const target = facts.InputPath{ .input_index = 0 };
     const storage = facts.InputPath{ .input_index = 1 };
     const other_storage = facts.InputPath{ .input_index = 2 };
-    var opaque_branch = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    var opaque_branch = std.array_list.Managed(facts.PlacePostState).init(allocator);
     defer opaque_branch.deinit();
     try checker.recordOpaqueOwnershipConsumption(&opaque_branch, &.{target}, .definite, storage);
-    var plain_branch = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    var plain_branch = std.array_list.Managed(facts.PlacePostState).init(allocator);
     defer plain_branch.deinit();
 
-    var forward = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    var forward = std.array_list.Managed(facts.PlacePostState).init(allocator);
     defer forward.deinit();
     try checker.joinInputPostStates(&forward, &opaque_branch, &plain_branch);
     try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.conditional, forward.items[0].opaque_ownership);
     try std.testing.expect(optionalInputPathEqual(storage, forward.items[0].opaque_storage));
 
-    var reverse = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    var reverse = std.array_list.Managed(facts.PlacePostState).init(allocator);
     defer reverse.deinit();
     try checker.joinInputPostStates(&reverse, &plain_branch, &opaque_branch);
     try std.testing.expect(inputPostStatesEqual(forward.items, reverse.items));
@@ -6703,22 +6703,22 @@ test "opaque ownership joins preserve conditional storage and reject ambiguity" 
     try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.conditional, fixed_point.items[0].opaque_ownership);
     try std.testing.expectEqual(@as(usize, 1), fixed_point.items.len);
 
-    var same_storage = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    var same_storage = std.array_list.Managed(facts.PlacePostState).init(allocator);
     defer same_storage.deinit();
     try checker.joinInputPostStates(&same_storage, &opaque_branch, &opaque_branch);
     try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.definite, same_storage.items[0].opaque_ownership);
     try std.testing.expect(optionalInputPathEqual(storage, same_storage.items[0].opaque_storage));
 
-    var other_branch = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    var other_branch = std.array_list.Managed(facts.PlacePostState).init(allocator);
     defer other_branch.deinit();
     try checker.recordOpaqueOwnershipConsumption(&other_branch, &.{target}, .definite, other_storage);
-    var ambiguous = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    var ambiguous = std.array_list.Managed(facts.PlacePostState).init(allocator);
     defer ambiguous.deinit();
     try checker.joinInputPostStates(&ambiguous, &opaque_branch, &other_branch);
     try std.testing.expectEqual(facts.OpaqueOwnershipConsumption.ambiguous, ambiguous.items[0].opaque_ownership);
     try std.testing.expectEqual(@as(?facts.InputPath, null), ambiguous.items[0].opaque_storage);
 
-    var sequential = std.array_list.Managed(facts.InputPlaceEffect).init(allocator);
+    var sequential = std.array_list.Managed(facts.PlacePostState).init(allocator);
     defer sequential.deinit();
     try checker.recordOpaqueOwnershipConsumption(&sequential, &.{target}, .conditional, storage);
     try checker.recordOpaqueOwnershipConsumption(&sequential, &.{target}, .definite, storage);
@@ -6734,15 +6734,15 @@ test "opaque ownership projections retain sibling facts" {
         .{ .index = 1, .value = &sibling },
     } };
     const projected = projectValueFacts(value, &.{.{ .field = 0 }});
-    var roots = std.array_list.Managed(facts.RootId).init(std.testing.allocator);
+    var roots = std.array_list.Managed(facts.ValidityRootId).init(std.testing.allocator);
     defer roots.deinit();
     try collectOwnedRoots(projected, &roots);
-    try std.testing.expectEqualSlices(facts.RootId, &.{@as(facts.RootId, @enumFromInt(0))}, roots.items);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{@as(facts.ValidityRootId, @enumFromInt(0))}, roots.items);
 }
 
 test "opaque ownership distinguishes internal from external dependencies recursively" {
-    const owned: facts.RootId = @enumFromInt(0);
-    const external: facts.RootId = @enumFromInt(1);
+    const owned: facts.ValidityRootId = @enumFromInt(0);
+    const external: facts.ValidityRootId = @enumFromInt(1);
     const internal_value = facts.ValueFacts{
         .owned_roots = &.{owned},
         .fields = &.{.{ .index = 0, .value = &facts.ValueFacts{ .dependencies = &.{.{ .root = owned }} } }},
@@ -7035,7 +7035,7 @@ test "loop root widening is stable and preserves historical aliases" {
     try std.testing.expectEqual(@as(usize, 1), context.roots.items.len);
     const phi = context.roots.items[0].root;
     const widened_owner = checker.getPlace(&joined, owner).?.value;
-    try std.testing.expectEqualSlices(facts.RootId, &.{phi}, widened_owner.owned_roots);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{phi}, widened_owner.owned_roots);
     try std.testing.expect(joined.tracker.dependenciesAreAlive(widened_owner));
     try std.testing.expect(!joined.tracker.dependenciesAreAlive(checker.getPlace(&joined, alias).?.value));
     try std.testing.expectEqual(@as(usize, 1), joined.ownership_edges.items.len);
@@ -7079,11 +7079,11 @@ test "replacement collapse preserves simultaneous live owned roots" {
     const combined = facts.ValueFacts{ .owned_roots = &.{ old, fresh } };
 
     const preserved = try checker.collapseReplacedOwnedRoots(combined, previous, &state);
-    try std.testing.expectEqualSlices(facts.RootId, &.{ old, fresh }, preserved.owned_roots);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{ old, fresh }, preserved.owned_roots);
 
     state.tracker.end(old);
     const collapsed = try checker.collapseReplacedOwnedRoots(combined, previous, &state);
-    try std.testing.expectEqualSlices(facts.RootId, &.{fresh}, collapsed.owned_roots);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{fresh}, collapsed.owned_roots);
 }
 
 test "replacement collapse preserves a stale sibling alias" {
@@ -7122,7 +7122,7 @@ test "replacement collapse preserves a stale sibling alias" {
     } };
 
     const collapsed = try checker.collapseReplacedOwnedRoots(replacement, previous, &state);
-    try std.testing.expectEqualSlices(facts.RootId, &.{fresh}, collapsed.fields[0].value.owned_roots);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{fresh}, collapsed.fields[0].value.owned_roots);
     try std.testing.expectEqual(fresh, collapsed.fields[0].value.dependencies[0].root);
     try std.testing.expectEqual(old, collapsed.fields[1].value.dependencies[0].root);
 }
@@ -7210,7 +7210,7 @@ test "relocation transfers storage authority into refreshed destination storage"
     const source = place.Place{ .root = source_binding };
     const destination = place.Place{ .root = destination_binding };
     const resource = try state.tracker.establish(.fresh);
-    const authority: facts.StorageAuthorityId = @enumFromInt(0);
+    const authority: facts.StorageCapabilityId = @enumFromInt(0);
     try state.storage_authorities.append(.available);
     try state.places.append(.{
         .storage = source,
@@ -7234,8 +7234,8 @@ test "relocation transfers storage authority into refreshed destination storage"
 
     const destination_facts = checker.getPlace(&state, destination).?;
     try std.testing.expectEqual(value_state.Initializedness.initialized, destination_facts.initializedness);
-    try std.testing.expectEqualSlices(facts.RootId, &.{resource}, destination_facts.value.owned_roots);
-    try std.testing.expectEqualSlices(facts.StorageAuthorityId, &.{authority}, destination_facts.value.storage_authorities);
+    try std.testing.expectEqualSlices(facts.ValidityRootId, &.{resource}, destination_facts.value.owned_roots);
+    try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{authority}, destination_facts.value.storage_authorities);
     try std.testing.expectEqual(value_state.Initializedness.moved, checker.getPlace(&state, source).?.initializedness);
     const new_destination_root = try checker.storageRootForPlace(destination, &state);
     try std.testing.expect(old_destination_root != new_destination_root);
@@ -7311,7 +7311,7 @@ test "stale opaque pointer provenance does not rebind to refreshed storage gener
     const fresh_root = try checker.storageRootForPlace(storage, &state);
     var remarked_stale_pointer = stale_pointer;
     try checker.addOpaqueAccessProvenance(&state, &remarked_stale_pointer, storage);
-    var hidden = std.array_list.Managed(facts.RootId).init(allocator);
+    var hidden = std.array_list.Managed(facts.ValidityRootId).init(allocator);
     defer hidden.deinit();
     try checker.collectOpaqueHiddenDependencies(&state, remarked_stale_pointer, &hidden);
 
@@ -7336,7 +7336,7 @@ test "fresh opaque pointer provenance observes refreshed storage generation" {
     const fresh_root = try checker.storageRootForPlace(storage, &state);
     const fresh_pointer = facts.ValueFacts{ .dependencies = &.{.{ .root = fresh_root }} };
 
-    const origins = try checker.currentOpaqueOriginsForValue(&state, fresh_pointer);
+    const origins = try checker.currentOpaqueProvenancesForValue(&state, fresh_pointer);
     try std.testing.expectEqual(@as(usize, 1), origins.len);
     try std.testing.expect(origins[0].storage.eql(storage));
     try std.testing.expectEqual(fresh_root, origins[0].generation);
@@ -7433,14 +7433,14 @@ test "symbolic opaque read generations instantiate without polluting identity ou
         },
     };
 
-    const opaque_read = facts.OutputEffect{
+    const opaque_read = facts.ValueEffect{
         .opaque_generation_dependencies = try checker.oneInputPath(0, &.{}),
     };
     const extracted = try checker.instantiateOutput(opaque_read, &arguments, &state);
     try std.testing.expect(valueDependsOnRoot(extracted, first_generation));
     try std.testing.expect(!valueDependsOnRoot(extracted, ordinary));
 
-    const identity_effect = try checker.inputOutputEffect(0, &.{});
+    const identity_effect = try checker.inputValueEffect(0, &.{});
     try std.testing.expectEqual(@as(usize, 0), identity_effect.opaque_generation_dependencies.len);
     const identity_sources = try checker.opaqueGenerationSourcePaths(identity_effect);
     const read_through_identity = try checker.withOpaqueReadGenerationDependencies(identity_sources, identity_effect);
@@ -7455,7 +7455,7 @@ test "symbolic opaque read generations instantiate without polluting identity ou
     try std.testing.expectEqual(@as(usize, 1), identity.opaque_origins.len);
     try std.testing.expectEqual(first_generation, identity.opaque_origins[0].generation);
 
-    const joined_effect = try checker.mergeOutputEffects(opaque_read, .{
+    const joined_effect = try checker.mergeValueEffects(opaque_read, .{
         .opaque_generation_dependencies = try checker.oneInputPath(1, &.{}),
     });
     const joined = try checker.instantiateOutput(joined_effect, &arguments, &state);
@@ -7464,7 +7464,7 @@ test "symbolic opaque read generations instantiate without polluting identity ou
 
     var fresh_map = std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource).init(allocator);
     defer fresh_map.deinit();
-    const virtual_joined = (try checker.mergeVirtualOutputEffect(
+    const virtual_joined = (try checker.mergeVirtualValueEffect(
         opaque_read,
         .{ .opaque_generation_dependencies = try checker.oneInputPath(1, &.{}) },
         &fresh_map,
@@ -7473,7 +7473,7 @@ test "symbolic opaque read generations instantiate without polluting identity ou
 
     var virtual_identity_map = std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource).init(allocator);
     defer virtual_identity_map.deinit();
-    const virtual_identity = (try checker.mergeVirtualOutputEffect(identity_effect, identity_effect, &virtual_identity_map)).?;
+    const virtual_identity = (try checker.mergeVirtualValueEffect(identity_effect, identity_effect, &virtual_identity_map)).?;
     const virtual_read = try checker.withOpaqueReadGenerationDependencies(
         try checker.opaqueGenerationSourcePaths(virtual_identity),
         virtual_identity,
@@ -7525,9 +7525,9 @@ test "opaque input Place values hide pointee dependencies rather than pointer fa
         .owned_roots = &.{pointee_owned_root},
     });
 
-    var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.RootId).init(allocator);
+    var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId).init(allocator);
     defer fresh_roots.deinit();
-    var hidden = std.array_list.Managed(facts.RootId).init(allocator);
+    var hidden = std.array_list.Managed(facts.ValidityRootId).init(allocator);
     defer hidden.deinit();
     try checker.instantiateOpaqueDependencies(
         try checker.inputPlaceValueEffect(.{ .input_index = 0 }),
@@ -7564,9 +7564,9 @@ test "opaque generation dependencies instantiate into hidden opaque dependencies
     const dependency_only = try checker.dependencyOnlyEffect(.{
         .opaque_generation_dependencies = try checker.oneInputPath(0, &.{}),
     });
-    var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.RootId).init(allocator);
+    var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId).init(allocator);
     defer fresh_roots.deinit();
-    var hidden = std.array_list.Managed(facts.RootId).init(allocator);
+    var hidden = std.array_list.Managed(facts.ValidityRootId).init(allocator);
     defer hidden.deinit();
     try checker.instantiateOpaqueDependencies(
         dependency_only,
@@ -7757,9 +7757,9 @@ test "opaque dependency projection cannot instantiate ownership or authorities" 
 
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
-    var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.RootId).init(allocator);
+    var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId).init(allocator);
     defer fresh_roots.deinit();
-    var hidden = std.array_list.Managed(facts.RootId).init(allocator);
+    var hidden = std.array_list.Managed(facts.ValidityRootId).init(allocator);
     defer hidden.deinit();
     try checker.instantiateOpaqueDependencies(projected, &.{.{}}, &state, &fresh_roots, &hidden);
     try std.testing.expectEqual(@as(usize, 1), state.tracker.roots.items.len);

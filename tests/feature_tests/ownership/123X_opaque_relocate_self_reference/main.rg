@@ -17,7 +17,7 @@ main(.system: System) -> (.status_code: Int32) := {
             -- The reference depends on `value`'s structural storage. Opaque
             -- ownership rejects it rather than allowing a later physical move
             -- to leave the representation address-sensitive.
-            trusted_opaque_store_owned(.destination = slot, .source = ~value)
+            trusted_opaque_store(.destination = slot, .source = ~value)
             deinit(.self = $&slots)
             status_code = 0
         }

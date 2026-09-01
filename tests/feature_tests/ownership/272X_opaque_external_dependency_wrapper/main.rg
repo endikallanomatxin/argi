@@ -2,7 +2,7 @@ BorrowingOwner : Type = (.allocation: Allocation, .borrowed: $&UInt8)
 deinit(.self: $&BorrowingOwner) -> () := { deinit(.self = $&self&.allocation) }
 
 store_one(.storage: $&Allocation, .slot: $&BorrowingOwner, .value: BorrowingOwner) -> () := {
-    trusted_opaque_store_owned_in#(.t: BorrowingOwner, .storage_type: Allocation)(.storage = storage, .destination = slot, .source = ~value)
+    trusted_opaque_move_in#(.t: BorrowingOwner, .storage_type: Allocation)(.storage = storage, .destination = slot, .source = ~value)
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {

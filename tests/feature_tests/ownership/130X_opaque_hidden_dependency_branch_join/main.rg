@@ -16,7 +16,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     if slots.size > 0 {
                         slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = slots.data).reference
                         hidden :: Borrowing = (.reference = target.data)
-                        trusted_opaque_store_owned_in#(.t: Borrowing, .storage_type: Allocation)(
+                        trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
                             .storage = $&slots,
                             .destination = slot,
                             .source = ~hidden,

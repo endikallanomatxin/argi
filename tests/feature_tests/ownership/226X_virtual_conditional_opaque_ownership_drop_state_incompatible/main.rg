@@ -17,7 +17,7 @@ deinit(.self: $&Tracked) -> () := {
 store(.self: $&Keeping, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> () := {}
 
 store(.self: $&Consuming, .storage: $&Allocation, .slot: $&Tracked, .source: $&Tracked) -> () := {
-    trusted_opaque_store_owned_in#(.t: Tracked, .storage_type: Allocation)(
+    trusted_opaque_move_in#(.t: Tracked, .storage_type: Allocation)(
         .storage = storage,
         .destination = slot,
         .source = ~source&,
@@ -51,7 +51,7 @@ main(.system: System) -> (.status_code: Int32) := {
             virtual ::= to_virtual#(.abstract: OpaqueStorer)(.value = $&implementation)
             source :: Tracked = (.id = 1)
             store(.self = $&virtual, .storage = $&storage, .slot = slot, .source = $&source)
-            trusted_opaque_drop_owned#(.t: Tracked)(.slot = slot)
+            trusted_opaque_drop#(.t: Tracked)(.slot = slot)
             deinit(.self = $&storage)
         }
     }

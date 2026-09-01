@@ -12,7 +12,7 @@ store_conditionally(
     if skip {
         return
     }
-    trusted_opaque_store_owned_in#(.t: Borrowing, .storage_type: Container)(
+    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Container)(
         .storage = storage,
         .destination = slot,
         .source = ~source&,

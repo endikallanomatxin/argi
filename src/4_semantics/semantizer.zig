@@ -37,12 +37,12 @@ fn safetyPrimitiveForBundledDeclaration(name: []const u8, file: []const u8) sg.S
     // The canonical path only identifies the trusted declaration, so another
     // bundled-core helper with the same name cannot become a primitive.
     if (std.mem.endsWith(u8, file, "core/memory/opaque_ownership.rg")) {
-        if (std.mem.eql(u8, name, "trusted_opaque_store_owned")) return .trusted_opaque_store_owned;
-        if (std.mem.eql(u8, name, "trusted_opaque_store_owned_in")) return .trusted_opaque_store_owned_in;
-        if (std.mem.eql(u8, name, "trusted_opaque_take_owned_in")) return .trusted_opaque_take_owned_in;
-        if (std.mem.eql(u8, name, "trusted_opaque_relocate_owned")) return .trusted_opaque_relocate_owned;
-        if (std.mem.eql(u8, name, "trusted_opaque_drop_owned")) return .trusted_opaque_drop_owned;
-        if (std.mem.eql(u8, name, "trusted_opaque_release_all")) return .trusted_opaque_release_all;
+        if (std.mem.eql(u8, name, "trusted_opaque_store")) return .trusted_opaque_store;
+        if (std.mem.eql(u8, name, "trusted_opaque_move_in")) return .trusted_opaque_move_in;
+        if (std.mem.eql(u8, name, "trusted_opaque_move_out")) return .trusted_opaque_move_out;
+        if (std.mem.eql(u8, name, "trusted_opaque_relocate")) return .trusted_opaque_relocate;
+        if (std.mem.eql(u8, name, "trusted_opaque_drop")) return .trusted_opaque_drop;
+        if (std.mem.eql(u8, name, "trusted_opaque_mark_empty")) return .trusted_opaque_mark_empty;
     }
     if (std.mem.endsWith(u8, file, "core/libc/libc.rg") and std.mem.eql(u8, name, "malloc"))
         return .raw_allocated_storage;
@@ -1852,7 +1852,7 @@ pub const Semantizer = struct {
         // turns a representation load into an ownership transfer. Its body is
         // type-checked like ordinary core code, but this one read is not a
         // language-level copy even when `t` is non-copyable.
-        if (s.current_fn != null and s.current_fn.?.safety_primitive == .trusted_opaque_take_owned_in) return expr;
+        if (s.current_fn != null and s.current_fn.?.safety_primitive == .trusted_opaque_move_out) return expr;
         const implicitly_copyable = self.isImplicitlyCopyableType(expr.ty, s);
         if (implicitly_copyable and typ.isTypeTriviallyCopyable(expr.ty, s)) return expr;
 
@@ -7047,7 +7047,7 @@ pub const Semantizer = struct {
         if (try self.tryHandleVirtualCall(call, tv_in, s)) |virtual_call| return virtual_call;
 
         const trusted_drop_without_destructor = s.current_fn != null and
-            s.current_fn.?.safety_primitive == .trusted_opaque_drop_owned and
+            s.current_fn.?.safety_primitive == .trusted_opaque_drop and
             std.mem.eql(u8, call.callee, "deinit");
         const chosen = (if (trusted_drop_without_destructor)
             self.tryResolveRegularCallCallee(call, tv_in, s, call.input.*.location)

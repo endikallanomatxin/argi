@@ -71,9 +71,9 @@ mutability, provenance, and all previous dependencies; it creates no root,
 ownership, or storage authority. Thus it can only shorten a usable lifetime,
 never extend one.
 
-`trusted_opaque_store_owned`, its storage-aware form
-`trusted_opaque_store_owned_in`, `trusted_opaque_take_owned_in`, and
-`trusted_opaque_drop_owned` are explicit trusted primitives. Any library may
+`trusted_opaque_store`, its storage-aware form
+`trusted_opaque_move_in`, `trusted_opaque_move_out`, and
+`trusted_opaque_drop` are explicit trusted primitives. Any library may
 invoke them: there is no global unsafe mode and bundled core has no extra
 privilege. The checker still enforces moves, known ownership roots, alias
 barriers, and dependency validity. The caller assumes only the runtime-slot
@@ -81,7 +81,7 @@ invariant that the checker cannot represent: initializedness and exactly-once
 destruction in opaque storage. Taking a slot ends its opaque occupancy and
 creates a fresh precise ownership identity for the extracted value; it does
 not add per-slot state to the opaque domain.
-In particular, `trusted_opaque_drop_owned` requires its slot to contain exactly
+In particular, `trusted_opaque_drop` requires its slot to contain exactly
 one live value that has not already been dropped. Calling it twice, or calling
 it after a value has been taken by some future trusted operation, violates the
 primitive's manual trusted precondition. The checker deliberately does not add
@@ -99,7 +99,7 @@ without external dependencies. It infers the backing owner from the destination
 pointer so that retaining and later mutating that pointer still updates one
 aggregate opaque domain.
 
-These facts grow monotonically until `trusted_opaque_release_all` discharges a
+These facts grow monotonically until `trusted_opaque_mark_empty` discharges a
 domain after its caller has made every runtime slot in that domain empty.
 Relocating slots within the same logical domain does not justify a release.
 Pointers that access opaque storage carry domain provenance, never slot
@@ -133,23 +133,23 @@ separate structural operation between Places known to the checker. Its source
 and destination storage identities remain distinct, and it does not retarget
 references into the source.
 
-`trusted_opaque_relocate_owned` is instead a runtime representation move
+`trusted_opaque_relocate` is instead a runtime representation move
 between opaque slots. It has no precise ownership effect: source contains one
 live opaque-owned value, destination is empty, the slots are distinct; after
 the operation source is empty and destination contains that same live value.
 It performs neither cleanup nor opaque-to-precise extraction.
 
-Passing `trusted_opaque_store_owned` is not a permanent relocatability proof.
+Passing `trusted_opaque_store` is not a permanent relocatability proof.
 A later write through an opaque access can introduce a reference to that slot,
 another slot, or another root. References into the opaque domain depend on its
-logical storage generation. `trusted_opaque_relocate_owned` rejects a move when
+logical storage generation. `trusted_opaque_relocate` rejects a move when
 that generation appears in the domain's hidden dependency set, because moving
 the representation could leave a stale internal reference. External hidden
 dependencies do not by themselves prevent relocation because moving the opaque
 representation does not end those roots.
 
 Opaque pointer provenance pairs the structural domain Place with the concrete
-storage-generation RootId observed when the provenance is established. Copies,
+storage-generation ValidityRootId observed when the provenance is established. Copies,
 aggregates, and control-flow joins preserve that pair. Refreshing the structural
 Place creates a new current generation but never rewrites generations already
 carried by values; a new reference observes the new generation, while an old
@@ -162,7 +162,7 @@ yet reconstruct the exact dependency of a reference extracted from an opaque
 value; defining conservative extraction/read provenance is separate from
 tracking dependencies written into the domain.
 
-## Root ownership
+## ValidityRoot ownership
 
 A value that owns a root is the unique logical owner responsible for ending it
 as part of cleanup. A value may own zero, one, or several roots while any number
@@ -172,7 +172,7 @@ the compiler, heap roots by an Allocation value, arena roots by an arena value,
 and foreign roots may have no Argi value owner.
 
 Each root has at most one value owner. Move transfers ownership; reference copy
-does not. Root ownership is acyclic and therefore forms a forest, independently
+does not. ValidityRoot ownership is acyclic and therefore forms a forest, independently
 of the arbitrary dependency graph. Argi does not infer destruction order from
 reference cycles or provide implicit tracing, reference counting, or SCC
 destruction.
@@ -222,15 +222,15 @@ normal safe traversal mechanism.
 Physical allocation and temporal policy are separate:
 
 ```text
-allocator -> raw storage + StorageAuthority -> establish fresh / inherit R -> safe reference
+allocator -> raw storage + StorageCapability -> establish fresh / inherit R -> safe reference
 ```
 
-An allocator determines how bytes are obtained and returned. Root
+An allocator determines how bytes are obtained and returned. ValidityRoot
 establishment determines their validity domain.
 
 Failure is decided at the raw-storage boundary. `..error ..out_of_memory`
-therefore carries no `Allocation`, safe reference, Root, or cleanup obligation;
-`StorageAuthority` is consumed only on successful establishment.
+therefore carries no `Allocation`, safe reference, ValidityRoot, or cleanup obligation;
+`StorageCapability` is consumed only on successful establishment.
 
 `ArenaAllocator(backing_allocator)` composes a caller-selected physical
 allocator with grouped lifetime. Its safe allocations inherit one arena root;

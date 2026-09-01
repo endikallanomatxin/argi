@@ -7,7 +7,7 @@ consume_into_storage(
     .slot: $&Allocation,
     .owner: Allocation,
 ) -> () := {
-    trusted_opaque_store_owned_in#(.t: Allocation, .storage_type: Allocation)(
+    trusted_opaque_move_in#(.t: Allocation, .storage_type: Allocation)(
         .storage = storage,
         .destination = slot,
         .source = ~owner,
@@ -28,7 +28,7 @@ main(.system: System) -> (.status_code: Int32) := {
     )
     borrowing_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = borrowing_slots.data).reference
     hidden :: Borrowing = (.reference = target.data)
-    trusted_opaque_store_owned_in#(.t: Borrowing, .storage_type: Allocation)(
+    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
         .storage = $&borrowing_slots,
         .destination = borrowing_slot,
         .source = ~hidden,

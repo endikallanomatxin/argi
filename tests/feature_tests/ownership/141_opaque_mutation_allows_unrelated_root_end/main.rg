@@ -20,7 +20,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     unrelated ::= ~unrelated_payload
                     slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: AddressSensitive)(.base = slots.data).reference
                     value :: AddressSensitive = (.reference = ..none)
-                    trusted_opaque_store_owned_in#(.t: AddressSensitive, .storage_type: Allocation)(
+                    trusted_opaque_move_in#(.t: AddressSensitive, .storage_type: Allocation)(
                         .storage = $&slots,
                         .destination = slot,
                         .source = ~value,
@@ -28,7 +28,7 @@ main(.system: System) -> (.status_code: Int32) := {
 
                     slot&.reference = ..some(.value = &external)
                     deinit(.self = $&unrelated)
-                    trusted_opaque_drop_owned(.slot = slot)
+                    trusted_opaque_drop(.slot = slot)
                     deinit(.self = $&slots)
                     status_code = 0
                 }

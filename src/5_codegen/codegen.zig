@@ -2448,11 +2448,11 @@ pub const CodeGenerator = struct {
 
     fn genFunctionCall(self: *CodeGenerator, fc: *const sem.FunctionCall) CodegenError!?TypedValue {
         if (fc.callee.safety_primitive == .relocate) return self.genRelocate(fc);
-        if (fc.callee.safety_primitive == .trusted_opaque_store_owned or
-            fc.callee.safety_primitive == .trusted_opaque_store_owned_in)
+        if (fc.callee.safety_primitive == .trusted_opaque_store or
+            fc.callee.safety_primitive == .trusted_opaque_move_in)
             return self.genOpaqueStore(fc);
-        if (fc.callee.safety_primitive == .trusted_opaque_take_owned_in) return self.genOpaqueTake(fc);
-        if (fc.callee.safety_primitive == .trusted_opaque_relocate_owned) return self.genOpaqueRelocate(fc);
+        if (fc.callee.safety_primitive == .trusted_opaque_move_out) return self.genOpaqueTake(fc);
+        if (fc.callee.safety_primitive == .trusted_opaque_relocate) return self.genOpaqueRelocate(fc);
         const key_name = try self.functionSymbolKey(fc.callee);
         const callee_decl = fc.callee;
         const is_extern = (callee_decl.body == null);

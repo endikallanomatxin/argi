@@ -13,8 +13,8 @@ store_pair(
     .second_slot: $&Router,
     .second: Router,
 ) -> () := {
-    trusted_opaque_store_owned#(.t: Allocation)(.destination = first_slot, .source = ~first)
-    trusted_opaque_store_owned#(.t: Router)(.destination = second_slot, .source = ~second)
+    trusted_opaque_store#(.t: Allocation)(.destination = first_slot, .source = ~first)
+    trusted_opaque_store#(.t: Router)(.destination = second_slot, .source = ~second)
 }
 
 main(.system: System) -> (.status_code: Int32) := {

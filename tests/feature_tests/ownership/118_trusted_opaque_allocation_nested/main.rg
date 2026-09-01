@@ -1,5 +1,5 @@
 inner#(.t: Type)(.slot: $&t, .value: t) -> () := {
-    trusted_opaque_store_owned#(.t: t)(.destination = slot, .source = ~value)
+    trusted_opaque_store#(.t: t)(.destination = slot, .source = ~value)
 }
 
 outer#(.t: Type)(.slot: $&t, .value: t) -> () := {
@@ -20,7 +20,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     slot_allocation ::= ~slot_payload
                     slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = slot_allocation.data).reference
                     outer#(.t: Allocation)(.slot = slot, .value = ~allocation)
-                    trusted_opaque_drop_owned#(.t: Allocation)(.slot = slot)
+                    trusted_opaque_drop#(.t: Allocation)(.slot = slot)
                     deinit(.self = $&slot_allocation)
                     status_code = 0
                 }

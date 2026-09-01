@@ -21,7 +21,7 @@ store(
     .slot: $&Int32,
     .source: $&Int32,
 ) -> () := {
-    trusted_opaque_store_owned_in#(.t: Int32, .storage_type: Container)(
+    trusted_opaque_move_in#(.t: Int32, .storage_type: Container)(
         .storage = first_storage,
         .destination = slot,
         .source = ~source&,
@@ -35,7 +35,7 @@ store(
     .slot: $&Int32,
     .source: $&Int32,
 ) -> () := {
-    trusted_opaque_store_owned_in#(.t: Int32, .storage_type: Container)(
+    trusted_opaque_move_in#(.t: Int32, .storage_type: Container)(
         .storage = second_storage,
         .destination = slot,
         .source = ~source&,

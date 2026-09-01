@@ -9,7 +9,7 @@ store_conditionally(
     if skip {
         return
     }
-    trusted_opaque_store_owned_in#(.t: Int32, .storage_type: Container)(
+    trusted_opaque_move_in#(.t: Int32, .storage_type: Container)(
         .storage = storage,
         .destination = slot,
         .source = ~source&,
@@ -21,6 +21,6 @@ main(.skip: Bool = false) -> (.status_code: Int32) := {
     slot :: Int32 = 0
     source :: Int32 = 7
     store_conditionally(.storage = $&container, .slot = $&slot, .source = $&source, .skip = skip)
-    trusted_opaque_release_all(.storage = $&container)
+    trusted_opaque_mark_empty(.storage = $&container)
     status_code = 0
 }

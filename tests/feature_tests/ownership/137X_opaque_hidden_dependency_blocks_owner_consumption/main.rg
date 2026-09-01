@@ -16,7 +16,7 @@ main(.system: System) -> (.status_code: Int32) := {
     )
     borrowing_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = borrowing_slots.data).reference
     hidden :: Borrowing = (.reference = target.data)
-    trusted_opaque_store_owned_in#(.t: Borrowing, .storage_type: Allocation)(
+    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
         .storage = $&borrowing_slots,
         .destination = borrowing_slot,
         .source = ~hidden,
@@ -32,7 +32,7 @@ main(.system: System) -> (.status_code: Int32) := {
 
     -- Consuming `target` must not end its root while another opaque storage
     -- still hides the dependency carried by `target.data`.
-    trusted_opaque_store_owned_in#(.t: Allocation, .storage_type: Allocation)(
+    trusted_opaque_move_in#(.t: Allocation, .storage_type: Allocation)(
         .storage = $&owner_slots,
         .destination = owner_slot,
         .source = ~target,

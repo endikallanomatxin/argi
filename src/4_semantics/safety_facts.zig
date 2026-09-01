@@ -2,33 +2,33 @@ const std = @import("std");
 const place = @import("place.zig");
 const value_state = @import("value_state.zig");
 
-pub const RootId = enum(u32) { _ };
-pub const StorageAuthorityId = enum(u32) { _ };
+pub const ValidityRootId = enum(u32) { _ };
+pub const StorageCapabilityId = enum(u32) { _ };
 
-pub const Root = struct {
-    id: RootId,
+pub const ValidityRoot = struct {
+    id: ValidityRootId,
     state: enum { alive, conditional, maybe_alive, dead } = .alive,
     owned_resource: bool = false,
 };
 
-pub const ReferenceDependency = struct {
-    root: RootId,
+pub const ValidityDependency = struct {
+    root: ValidityRootId,
 };
 
 /// Provenance of a pointer into one opaque storage domain. `storage` names the
 /// structural domain while `generation` permanently names the temporal
 /// generation observed when the provenance was established.
-pub const OpaqueOrigin = struct {
+pub const OpaqueProvenance = struct {
     storage: place.Place,
-    generation: RootId,
+    generation: ValidityRootId,
 };
 
 /// Facts travel with values. Dependencies and owned roots are intentionally
 /// separate: copying a reference copies only its dependencies, while moving a
 /// value transfers both lists.
 pub const ValueFacts = struct {
-    dependencies: []const ReferenceDependency = &.{},
-    owned_roots: []const RootId = &.{},
+    dependencies: []const ValidityDependency = &.{},
+    owned_roots: []const ValidityRootId = &.{},
     fields: []const FieldFacts = &.{},
     /// Mutually exclusive payload facts for a choice value. Unlike `fields`,
     /// these values do not all exist at once and are refined by a match arm.
@@ -38,13 +38,13 @@ pub const ValueFacts = struct {
     known_choice_variant: ?u32 = null,
     integer_address: bool = false,
     foreign_storage: bool = false,
-    storage_authorities: []const StorageAuthorityId = &.{},
+    storage_authorities: []const StorageCapabilityId = &.{},
     referenced_place: ?place.Place = null,
     /// Aggregate provenance for a pointer that accesses opaque storage
     /// domains. It identifies mutation destinations while the pointer is used
     /// for access and storage-generation dependencies when used as data.
     /// Entries identify domains, never individual slots.
-    opaque_origins: []const OpaqueOrigin = &.{},
+    opaque_origins: []const OpaqueProvenance = &.{},
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
         return .{
@@ -74,9 +74,9 @@ pub const PlaceFacts = struct {
     value: ValueFacts = .{},
 };
 
-pub const RootEstablishment = union(enum) {
+pub const ValidityRootEstablishment = union(enum) {
     fresh,
-    inherit: RootId,
+    inherit: ValidityRootId,
 };
 
 pub const InputPath = struct {
@@ -91,24 +91,24 @@ pub const InputDependency = struct {
 
 pub const OutputFieldEffect = struct {
     index: u32,
-    value: *const OutputEffect,
+    value: *const ValueEffect,
 };
 
 /// Stable compiler-owned identity for one fresh root produced while evaluating
 /// a summarized expression. Calls instantiate each distinct source as a new
-/// runtime RootId; fields naming the same source share that root.
+/// runtime ValidityRootId; fields naming the same source share that root.
 pub const FreshRootSource = usize;
 
 /// Symbolic ValueFacts for a function output. Input dependencies retain their
 /// structural path until a call instantiates them with the caller's facts.
-pub const OutputEffect = struct {
+pub const ValueEffect = struct {
     input_dependencies: []const InputDependency = &.{},
     input_places: []const InputPath = &.{},
     /// Values currently stored in Places reached through function inputs.
     /// This differs from `input_dependencies`: for a pointer input, the
     /// argument value is the pointer while this denotes its pointee value.
     input_place_values: []const InputPath = &.{},
-    /// Opaque reads cannot name caller RootIds directly. Each path records
+    /// Opaque reads cannot name caller ValidityRootIds directly. Each path records
     /// that instantiation must add the concrete generations carried by that
     /// caller value as temporal dependencies of this output.
     opaque_generation_dependencies: []const InputPath = &.{},
@@ -131,16 +131,16 @@ pub const OutputEffect = struct {
 
 pub const OutputVariantEffect = struct {
     index: u32,
-    value: *const OutputEffect,
+    value: *const ValueEffect,
 };
 
 /// Symbolic post-state of a Place reached through a function input.  The
-/// target uses the same input/projection vocabulary as OutputEffect, so call
+/// target uses the same input/projection vocabulary as ValueEffect, so call
 /// composition can substitute it without inventing a second Place model.
-pub const InputPlaceEffect = struct {
+pub const PlacePostState = struct {
     target: InputPath,
     initializedness: value_state.Initializedness,
-    value: OutputEffect = .{},
+    value: ValueEffect = .{},
     ends_previous_roots: bool = false,
     refreshes_storage_root: bool = false,
     /// This post-state comes from relocation, which requires the caller to
@@ -167,10 +167,10 @@ pub const OpaqueOwnershipConsumption = enum {
     ambiguous,
 };
 
-pub const FunctionSummary = struct {
-    outputs: []const OutputEffect = &.{},
+pub const SafetySummary = struct {
+    outputs: []const ValueEffect = &.{},
     required_live_inputs: []const InputPath = &.{},
-    input_post_states: []const InputPlaceEffect = &.{},
+    input_post_states: []const PlacePostState = &.{},
     opaque_storage_effects: []const OpaqueStorageEffect = &.{},
     /// Domains whose opaque runtime contents are definitely gone on return.
     /// This clears only their conservative hidden temporal dependencies.
@@ -183,37 +183,37 @@ pub const FunctionSummary = struct {
 /// originate in function inputs.
 pub const OpaqueStorageEffect = struct {
     storage: InputPath,
-    hidden_dependencies: OutputEffect,
+    hidden_dependencies: ValueEffect,
 };
 
 pub const Tracker = struct {
     allocator: std.mem.Allocator,
-    roots: std.array_list.Managed(Root),
+    roots: std.array_list.Managed(ValidityRoot),
 
     pub fn init(allocator: std.mem.Allocator) Tracker {
-        return .{ .allocator = allocator, .roots = std.array_list.Managed(Root).init(allocator) };
+        return .{ .allocator = allocator, .roots = std.array_list.Managed(ValidityRoot).init(allocator) };
     }
 
     pub fn deinit(self: *Tracker) void {
         self.roots.deinit();
     }
 
-    pub fn establish(self: *Tracker, rooting: RootEstablishment) !RootId {
+    pub fn establish(self: *Tracker, rooting: ValidityRootEstablishment) !ValidityRootId {
         return switch (rooting) {
             .inherit => |root| root,
             .fresh => blk: {
-                const id: RootId = @enumFromInt(self.roots.items.len);
+                const id: ValidityRootId = @enumFromInt(self.roots.items.len);
                 try self.roots.append(.{ .id = id });
                 break :blk id;
             },
         };
     }
 
-    pub fn end(self: *Tracker, id: RootId) void {
+    pub fn end(self: *Tracker, id: ValidityRootId) void {
         self.roots.items[@intFromEnum(id)].state = .dead;
     }
 
-    pub fn isAlive(self: *const Tracker, id: RootId) bool {
+    pub fn isAlive(self: *const Tracker, id: ValidityRootId) bool {
         return self.roots.items[@intFromEnum(id)].state == .alive;
     }
 
@@ -252,7 +252,7 @@ test "fresh roots are independent and inherit preserves identity" {
 test "move transfers owned roots without changing root identity" {
     const binding: *const @import("semantic_graph.zig").BindingDeclaration = undefined;
     const storage = place.Place{ .root = binding };
-    const root: RootId = @enumFromInt(3);
+    const root: ValidityRootId = @enumFromInt(3);
     var source = PlaceFacts{
         .storage = storage,
         .value = .{
@@ -268,7 +268,7 @@ test "move transfers owned roots without changing root identity" {
 }
 
 test "copying a reference does not duplicate root ownership" {
-    const root: RootId = @enumFromInt(7);
+    const root: ValidityRootId = @enumFromInt(7);
     const original = ValueFacts{
         .dependencies = &.{.{ .root = root }},
         .owned_roots = &.{root},

@@ -9,7 +9,7 @@ store_conditionally(
     if skip {
         return
     }
-    trusted_opaque_store_owned_in#(.t: Allocation, .storage_type: Container)(
+    trusted_opaque_move_in#(.t: Allocation, .storage_type: Container)(
         .storage = storage,
         .destination = slot,
         .source = ~source&,
@@ -30,7 +30,7 @@ main(.system: System, .skip: Bool = false) -> (.status_code: Int32) := {
                     slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = slot_storage.data).reference
                     container ::= Container(.marker = 0)
                     store_conditionally(.storage = $&container, .slot = slot, .source = $&source, .skip = skip)
-                    trusted_opaque_release_all(.storage = $&container)
+                    trusted_opaque_mark_empty(.storage = $&container)
                     if source.size == 1 {
                         status_code = 0
                     }

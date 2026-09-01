@@ -8,7 +8,7 @@ store_inner(
     .target: $&UInt8,
 ) -> () := {
     local :: Borrowing = (.reference = target)
-    trusted_opaque_store_owned_in#(.t: Borrowing, .storage_type: Allocation)(
+    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
         .storage = storage,
         .destination = slot,
         .source = ~local,

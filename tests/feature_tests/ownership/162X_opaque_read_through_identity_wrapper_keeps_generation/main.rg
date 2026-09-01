@@ -31,14 +31,14 @@ main(.system: System) -> (.status_code: Int32) := {
                     backing ::= ~backing_payload
                     slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = backing.data).reference
                     value :: Borrowing = (.reference = $&external)
-                    trusted_opaque_store_owned_in#(.t: Borrowing, .storage_type: Allocation)(
+                    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
                         .storage = $&domain,
                         .destination = slot,
                         .source = ~value,
                     )
                     extracted ::= extract(.slot = slot).result
 
-                    trusted_opaque_drop_owned(.slot = slot)
+                    trusted_opaque_drop(.slot = slot)
                     deinit(.self = $&domain)
 
                     observed ::= extracted&

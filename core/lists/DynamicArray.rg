@@ -55,10 +55,10 @@ deinit #(.t: Type) (
     i :: UIntNative = 0
     while i < self&.length {
         slot ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = i).pointer
-        trusted_opaque_drop_owned(.slot = slot, .allocator = allocator)
+        trusted_opaque_drop(.slot = slot, .allocator = allocator)
         i = i + 1
     }
-    trusted_opaque_release_all(.storage = $&self&.allocation)
+    trusted_opaque_mark_empty(.storage = $&self&.allocation)
     deinit(.self = $&self&.allocation)
 }
 
@@ -160,7 +160,7 @@ dynamic_array_grow_growing #(.t: Type) (
             while i < array&.length {
                 old_slot ::= mutable_reference_offset#(.t: t)(.base = old_base, .elements = i).reference
                 new_slot ::= mutable_reference_offset#(.t: t)(.base = new_base, .elements = i).reference
-                trusted_opaque_relocate_owned(.source = old_slot, .destination = new_slot)
+                trusted_opaque_relocate(.source = old_slot, .destination = new_slot)
                 i = i + 1
             }
 
@@ -192,7 +192,7 @@ push #(.t: Type) (
             ..ok _ {
             }
             ..error _ {
-                trusted_opaque_drop_owned(.slot = $&value, .allocator = allocator)
+                trusted_opaque_drop(.slot = $&value, .allocator = allocator)
                 result = ..error(.reason = ..out_of_memory)
                 return
             }
@@ -211,7 +211,7 @@ push_assume_capacity #(.t: Type) (
 ) -> () := {
     offset ::= self&.length
     ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = offset).pointer
-    trusted_opaque_store_owned_in#(.t: t, .storage_type: Allocation)(
+    trusted_opaque_move_in#(.t: t, .storage_type: Allocation)(
         .storage = $&self&.allocation,
         .destination = ptr,
         .source = ~value,
@@ -225,7 +225,7 @@ pop #(.t: Type) (
     one :: UIntNative = 1
     new_length ::= self&.length - one
     ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = new_length).pointer
-    taken ::= trusted_opaque_take_owned_in#(.t: t, .storage_type: Allocation)(
+    taken ::= trusted_opaque_move_out#(.t: t, .storage_type: Allocation)(
         .storage = $&self&.allocation,
         .slot = ptr,
     )

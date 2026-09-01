@@ -15,7 +15,7 @@ main(.system: System) -> (.status_code: Int32) := {
     )
     borrowing_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = borrowing_slots.data).reference
     hidden :: Borrowing = (.reference = &external)
-    trusted_opaque_store_owned_in#(.t: Borrowing, .storage_type: Allocation)(
+    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
         .storage = $&borrowing_slots,
         .destination = borrowing_slot,
         .source = ~hidden,
@@ -30,14 +30,14 @@ main(.system: System) -> (.status_code: Int32) := {
         .deallocator = deallocator,
     )
     owner_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Allocation)(.base = owner_slots.data).reference
-    trusted_opaque_store_owned_in#(.t: Allocation, .storage_type: Allocation)(
+    trusted_opaque_move_in#(.t: Allocation, .storage_type: Allocation)(
         .storage = $&owner_slots,
         .destination = owner_slot,
         .source = ~unrelated,
     )
 
-    trusted_opaque_drop_owned(.slot = owner_slot)
-    trusted_opaque_drop_owned(.slot = borrowing_slot)
+    trusted_opaque_drop(.slot = owner_slot)
+    trusted_opaque_drop(.slot = borrowing_slot)
     deinit(.self = $&owner_slots)
     deinit(.self = $&borrowing_slots)
     status_code = 0

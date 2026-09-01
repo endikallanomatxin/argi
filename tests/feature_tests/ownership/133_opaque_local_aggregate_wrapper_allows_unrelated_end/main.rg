@@ -13,7 +13,7 @@ store_borrow(
     .target: &UInt8,
 ) -> () := {
     local :: Borrowing = (.reference = target)
-    trusted_opaque_store_owned_in#(.t: Borrowing, .storage_type: Allocation)(
+    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
         .storage = storage,
         .destination = slot,
         .source = ~local,
@@ -34,7 +34,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = slots.data).reference
                     store_borrow(.storage = $&slots, .slot = slot, .target = &external)
                     deinit(.self = $&unrelated)
-                    trusted_opaque_drop_owned(.slot = slot)
+                    trusted_opaque_drop(.slot = slot)
                     deinit(.self = $&slots)
                     status_code = 0
                 }

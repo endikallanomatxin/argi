@@ -18,7 +18,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     slots ::= ~slots_payload
                     slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: AddressSensitive)(.base = slots.data).reference
                     value :: AddressSensitive = (.reference = ..none)
-                    trusted_opaque_store_owned_in#(.t: AddressSensitive, .storage_type: Allocation)(
+                    trusted_opaque_move_in#(.t: AddressSensitive, .storage_type: Allocation)(
                         .storage = $&slots,
                         .destination = slot,
                         .source = ~value,

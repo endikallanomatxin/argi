@@ -1,5 +1,5 @@
 inner#(.t: Type)(.slot: $&t, .value: t) -> () := {
-    trusted_opaque_store_owned#(.t: t)(.destination = slot, .source = ~value)
+    trusted_opaque_store#(.t: t)(.destination = slot, .source = ~value)
 }
 
 outer#(.t: Type)(.slot: $&t, .value: t) -> () := {

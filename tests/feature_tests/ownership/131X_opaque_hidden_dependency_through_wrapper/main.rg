@@ -7,7 +7,7 @@ store_borrow(
     .slot: $&Borrowing,
     .value: Borrowing,
 ) -> () := {
-    trusted_opaque_store_owned_in#(.t: Borrowing, .storage_type: Allocation)(
+    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
         .storage = storage,
         .destination = slot,
         .source = ~value,

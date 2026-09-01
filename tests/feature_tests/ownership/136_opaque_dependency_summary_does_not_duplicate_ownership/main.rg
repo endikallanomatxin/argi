@@ -19,7 +19,7 @@ store_local(
         .id = 1,
         .reference = target,
     )
-    trusted_opaque_store_owned_in#(.t: TrackedBorrowing, .storage_type: Allocation)(
+    trusted_opaque_move_in#(.t: TrackedBorrowing, .storage_type: Allocation)(
         .storage = storage,
         .destination = slot,
         .source = ~local,
@@ -38,7 +38,7 @@ main(.system: System) -> (.status_code: Int32) := {
                 .slot = slot,
                 .target = &external,
             )
-            trusted_opaque_drop_owned(.slot = slot)
+            trusted_opaque_drop(.slot = slot)
             deinit(.self = $&slots)
             if drops == 1 {
                 status_code = 0

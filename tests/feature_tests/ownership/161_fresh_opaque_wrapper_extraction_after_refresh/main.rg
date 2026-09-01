@@ -19,12 +19,12 @@ main(.system: System) -> (.status_code: Int32) := {
             storage ::= ~first_payload
             first_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = storage.data).reference
             first_value :: Borrowing = (.reference = $&external)
-            trusted_opaque_store_owned_in#(.t: Borrowing, .storage_type: Allocation)(
+            trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
                 .storage = $&storage,
                 .destination = first_slot,
                 .source = ~first_value,
             )
-            trusted_opaque_drop_owned(.slot = first_slot)
+            trusted_opaque_drop(.slot = first_slot)
             deinit(.self = $&storage)
 
             second_result ::= allocate(.self = system.allocator, .size = size_of(.type = Borrowing))
@@ -34,7 +34,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     storage = ~second_payload
                     second_slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Borrowing)(.base = storage.data).reference
                     second_value :: Borrowing = (.reference = $&external)
-                    trusted_opaque_store_owned_in#(.t: Borrowing, .storage_type: Allocation)(
+                    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
                         .storage = $&storage,
                         .destination = second_slot,
                         .source = ~second_value,
@@ -46,7 +46,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     } else {
                         status_code = 3
                     }
-                    trusted_opaque_drop_owned(.slot = second_slot)
+                    trusted_opaque_drop(.slot = second_slot)
                     deinit(.self = $&storage)
                 }
             }

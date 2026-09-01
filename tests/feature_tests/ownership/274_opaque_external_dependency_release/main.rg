@@ -2,11 +2,11 @@ BorrowingOwner : Type = (.allocation: Allocation, .borrowed: $&UInt8)
 deinit(.self: $&BorrowingOwner) -> () := { deinit(.self = $&self&.allocation) }
 
 store_one(.storage: $&Allocation, .slot: $&BorrowingOwner, .value: BorrowingOwner) -> () := {
-    trusted_opaque_store_owned_in#(.t: BorrowingOwner, .storage_type: Allocation)(.storage = storage, .destination = slot, .source = ~value)
+    trusted_opaque_move_in#(.t: BorrowingOwner, .storage_type: Allocation)(.storage = storage, .destination = slot, .source = ~value)
 }
 
 release(.storage: $&Allocation) -> () := {
-    trusted_opaque_release_all(.storage = storage)
+    trusted_opaque_mark_empty(.storage = storage)
 }
 
 main(.system: System) -> (.status_code: Int32 = 0) := {
@@ -27,7 +27,7 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                             value ::= BorrowingOwner(.allocation = ~owned_payload, .borrowed = external.data)
                             slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: BorrowingOwner)(.base = slots.data).reference
                             store_one(.storage = $&slots, .slot = slot, .value = ~value)
-                            trusted_opaque_drop_owned(.slot = slot)
+                            trusted_opaque_drop(.slot = slot)
                             release(.storage = $&slots)
                             deinit(.self = $&external)
                             deinit(.self = $&slots)

@@ -29,7 +29,7 @@ store(
     .slot: $&Borrowing,
     .source: $&Borrowing,
 ) -> () := {
-    trusted_opaque_store_owned_in#(.t: Borrowing, .storage_type: Container)(
+    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Container)(
         .storage = storage,
         .destination = slot,
         .source = ~source&,
@@ -59,7 +59,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     virtual ::= to_virtual#(.abstract: OpaqueStorer)(.value = $&implementation)
                     source ::= Borrowing(.reference = target.data)
                     store(.self = $&virtual, .storage = $&container, .slot = slot, .source = $&source)
-                    trusted_opaque_release_all(.storage = $&container)
+                    trusted_opaque_mark_empty(.storage = $&container)
                     if source.reference& == 0 {
                         status_code = 0
                     }

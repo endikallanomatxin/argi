@@ -24,10 +24,10 @@ main(.system: System) -> (.status_code: Int32 = 0) := {
                         ..ok ~ owned_payload {
                             value ::= BorrowingOwner(.allocation = ~owned_payload, .borrowed = external.data)
                             slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: BorrowingOwner)(.base = slots.data).reference
-                            trusted_opaque_store_owned_in#(.t: BorrowingOwner, .storage_type: Allocation)(.storage = $&slots, .destination = slot, .source = ~value)
+                            trusted_opaque_move_in#(.t: BorrowingOwner, .storage_type: Allocation)(.storage = $&slots, .destination = slot, .source = ~value)
                             deinit(.self = $&external)
-                            trusted_opaque_drop_owned(.slot = slot)
-                            trusted_opaque_release_all(.storage = $&slots)
+                            trusted_opaque_drop(.slot = slot)
+                            trusted_opaque_mark_empty(.storage = $&slots)
                             deinit(.self = $&slots)
                         }
                     }

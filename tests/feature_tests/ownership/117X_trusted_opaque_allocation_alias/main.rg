@@ -1,5 +1,5 @@
 store_wrapper#(.t: Type)(.slot: $&t, .value: t) -> () := {
-    trusted_opaque_store_owned#(.t: t)(.destination = slot, .source = ~value)
+    trusted_opaque_store#(.t: t)(.destination = slot, .source = ~value)
 }
 
 main(.system: System) -> (.status_code: Int32) := {

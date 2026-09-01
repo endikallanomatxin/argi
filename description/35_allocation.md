@@ -17,7 +17,7 @@ Allocator : Abstract = (
 ```
 
 Allocation failure is represented only by `..error ..out_of_memory`. The error
-variant contains no `Allocation`, establishes no safe reference or Root, and
+variant contains no `Allocation`, establishes no safe reference or Validity Root, and
 leaves no allocation cleanup pending. Physical storage is checked before it is
 converted into safe storage. A successful zero-size request is valid and its
 `Allocation` is still passed to the stored deallocator by `deinit()`.

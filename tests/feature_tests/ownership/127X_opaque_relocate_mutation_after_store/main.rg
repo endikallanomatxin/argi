@@ -18,15 +18,15 @@ main(.system: System) -> (.status_code: Int32) := {
 
             -- The value has no reference dependency when it crosses the
             -- opaque-store boundary.
-            trusted_opaque_store_owned(.destination = source_slot, .source = ~value)
+            trusted_opaque_store(.destination = source_slot, .source = ~value)
 
             -- The retained destination pointer remains an opaque access. This
             -- later write makes the representation depend on its old address,
             -- so relocation must not invalidate that hidden dependency.
             source_slot&.reference = ..some(.value = $&source_slot&.value)
-            trusted_opaque_relocate_owned(.source = source_slot, .destination = destination_slot)
+            trusted_opaque_relocate(.source = source_slot, .destination = destination_slot)
 
-            trusted_opaque_drop_owned(.slot = destination_slot)
+            trusted_opaque_drop(.slot = destination_slot)
             deinit(.self = $&slots)
             status_code = 0
         }

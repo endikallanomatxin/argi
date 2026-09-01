@@ -21,7 +21,7 @@ main(.system: System) -> (.status_code: Int32) := {
                     slots ::= ~slots_payload
                     slot ::= mutable_reinterpret_reference#(.from: UInt8, .to: Tracked)(.base = slots.data).reference
                     value :: Tracked = (.allocation = ~owned_payload)
-                    trusted_opaque_store_owned_in#(.t: Tracked, .storage_type: Allocation)(
+                    trusted_opaque_move_in#(.t: Tracked, .storage_type: Allocation)(
                         .storage = $&slots,
                         .destination = slot,
                         .source = ~value,
@@ -31,7 +31,7 @@ main(.system: System) -> (.status_code: Int32) := {
                         status_code = 3
                         return
                     }
-                    trusted_opaque_drop_owned(.slot = slot)
+                    trusted_opaque_drop(.slot = slot)
                     deinit(.self = $&slots)
                     if drops == 1 {
                         status_code = 0

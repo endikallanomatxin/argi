@@ -12,7 +12,7 @@ store_conditionally(
     if skip {
         return
     }
-    trusted_opaque_store_owned_in#(.t: Borrowing, .storage_type: Container)(
+    trusted_opaque_move_in#(.t: Borrowing, .storage_type: Container)(
         .storage = storage,
         .destination = slot,
         .source = ~source,
@@ -34,7 +34,7 @@ main(.system: System, .skip: Bool = false) -> (.status_code: Int32) := {
                     container ::= Container(.marker = 0)
                     source ::= Borrowing(.reference = target.data)
                     store_conditionally(.storage = $&container, .slot = slot, .source = ~source, .skip = skip)
-                    trusted_opaque_release_all(.storage = $&container)
+                    trusted_opaque_mark_empty(.storage = $&container)
                     deinit(.self = $&target)
                     deinit(.self = $&slot_storage)
                     status_code = 0

@@ -14,7 +14,7 @@ main(.system: System) -> (.status_code: Int32) := {
 
             -- Precision is discarded at the slot boundary, but the dependency
             -- on `external` survives in the storage-level opaque summary.
-            trusted_opaque_store_owned_in#(.t: Borrowing, .storage_type: Allocation)(
+            trusted_opaque_move_in#(.t: Borrowing, .storage_type: Allocation)(
                 .storage = $&slots,
                 .destination = slot,
                 .source = ~value,

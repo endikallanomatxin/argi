@@ -17,11 +17,11 @@ main(.system: System) -> (.status_code: Int32) := {
             destination_slot ::= mutable_reference_offset#(.t: AddressSensitive)(.base = source_slot, .elements = 1).reference
             value :: AddressSensitive = (.next = ..none)
 
-            trusted_opaque_store_owned(.destination = source_slot, .source = ~value)
+            trusted_opaque_store(.destination = source_slot, .source = ~value)
             source_slot&.next = ..some(.value = $&external)
-            trusted_opaque_relocate_owned(.source = source_slot, .destination = destination_slot)
+            trusted_opaque_relocate(.source = source_slot, .destination = destination_slot)
 
-            trusted_opaque_drop_owned(.slot = destination_slot)
+            trusted_opaque_drop(.slot = destination_slot)
             deinit(.self = $&slots)
             status_code = 0
         }
