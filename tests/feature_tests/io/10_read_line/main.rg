@@ -39,20 +39,25 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     }
 
     outer ::= ~result..ok
-    line ::= ~outer..ok
-
-    if line.length != 2 {
+    if is(.value = outer, .variant = ..ok) {
+    } else {
         status_code = 2
         return
     }
+    line ::= ~outer..ok
 
-    if bytes_get(.string = &line, .index = 0).byte != 79 {
+    if line.length != 2 {
         status_code = 3
         return
     }
 
-    if bytes_get(.string = &line, .index = 1).byte != 75 {
+    if bytes_get(.string = &line, .index = 0).byte != 79 {
         status_code = 4
+        return
+    }
+
+    if bytes_get(.string = &line, .index = 1).byte != 75 {
+        status_code = 5
         return
     }
 

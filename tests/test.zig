@@ -4459,6 +4459,83 @@ test "feature_tests/ownership/258_function_live_write_preserves_sibling_alias" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/259_loop_owned_generation_join" {
+    const test_path = "tests/feature_tests/ownership/259_loop_owned_generation_join";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/260X_loop_owned_generation_keeps_old_alias_stale" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/260X_loop_owned_generation_keeps_old_alias_stale",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/261_loop_owned_generation_allows_fresh_alias" {
+    const test_path = "tests/feature_tests/ownership/261_loop_owned_generation_allows_fresh_alias";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/262_loop_owned_generation_preserves_sibling" {
+    const test_path = "tests/feature_tests/ownership/262_loop_owned_generation_preserves_sibling";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/263_loop_optional_owned_generation" {
+    const test_path = "tests/feature_tests/ownership/263_loop_optional_owned_generation";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/264_loop_local_storage" {
+    const test_path = "tests/feature_tests/ownership/264_loop_local_storage";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/265_loop_local_field_storage" {
+    const test_path = "tests/feature_tests/ownership/265_loop_local_field_storage";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/266X_loop_local_storage_escape" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/266X_loop_local_storage_escape",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/267X_loop_local_storage_escape_break" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/267X_loop_local_storage_escape_break",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/268X_loop_local_storage_escape_continue" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/268X_loop_local_storage_escape_continue",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/269_loop_local_owning_cleanup" {
+    const test_path = "tests/feature_tests/ownership/269_loop_local_owning_cleanup";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/270X_return_local_storage" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/270X_return_local_storage",
+        "function output cannot depend on a local storage root that ends before return",
+    );
+}
+
 test "feature_tests/polymorphism/32_static_abstract_generic_fields" {
     const test_path = "tests/feature_tests/polymorphism/32_static_abstract_generic_fields";
     try expectSuccessfulBuild(test_path);
