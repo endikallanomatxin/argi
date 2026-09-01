@@ -112,6 +112,10 @@ pub const OutputEffect = struct {
     /// that instantiation must add the concrete generations carried by that
     /// caller value as temporal dependencies of this output.
     opaque_generation_dependencies: []const InputPath = &.{},
+    /// Opaque take operations recover the domain's conservatively hidden
+    /// borrows. The domain remains imprecise and release_all is still needed
+    /// when its runtime slots are all empty.
+    opaque_storage_dependencies: []const InputPath = &.{},
     fields: []const OutputFieldEffect = &.{},
     /// Alternative effects selected by the runtime choice tag. Fresh roots
     /// below an alternative are never promoted to the enclosing output.

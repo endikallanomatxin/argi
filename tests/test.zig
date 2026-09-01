@@ -2183,6 +2183,19 @@ test "feature_tests/collections/31_dynamic_array_owning_pop_auto_deinit" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/collections/32_dynamic_array_borrowing_owner" {
+    const test_path = "tests/feature_tests/collections/32_dynamic_array_borrowing_owner";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/33X_dynamic_array_retains_external_borrow" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/33X_dynamic_array_retains_external_borrow",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
 test "feature_tests/control_flow/11_range_default_start_with_step" {
     const test_path = "tests/feature_tests/control_flow/11_range_default_start_with_step";
     try expectSuccessfulBuild(test_path);
@@ -4577,6 +4590,46 @@ test "feature_tests/ownership/270X_return_local_storage" {
     try buildExpectFail(
         "tests/feature_tests/ownership/270X_return_local_storage",
         "function output cannot depend on a local storage root that ends before return",
+    );
+}
+
+test "feature_tests/ownership/271X_opaque_external_dependency_direct" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/271X_opaque_external_dependency_direct",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/272X_opaque_external_dependency_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/272X_opaque_external_dependency_wrapper",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/273X_opaque_external_dependency_nested_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/273X_opaque_external_dependency_nested_wrapper",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/274_opaque_external_dependency_release" {
+    const test_path = "tests/feature_tests/ownership/274_opaque_external_dependency_release";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/275_opaque_wrapper_self_contained_owner" {
+    const test_path = "tests/feature_tests/ownership/275_opaque_wrapper_self_contained_owner";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/276X_opaque_take_preserves_external_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/276X_opaque_take_preserves_external_dependency",
+        "reference depends on a root that has ended",
     );
 }
 

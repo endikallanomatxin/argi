@@ -232,7 +232,11 @@ push_assume_capacity #(.t: Type) (
 ) -> () := {
     offset ::= self&.length
     ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = offset).pointer
-    trusted_opaque_store_owned(.destination = ptr, .source = ~value)
+    trusted_opaque_store_owned_in#(.t: t, .storage_type: Allocation)(
+        .storage = $&self&.allocation,
+        .destination = ptr,
+        .source = ~value,
+    )
     self&.length = offset + 1
 }
 
