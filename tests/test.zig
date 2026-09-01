@@ -2139,6 +2139,50 @@ test "feature_tests/collections/24_dynamic_array_owning_assume_capacity" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/collections/25X_dynamic_array_owning_push_moves_source" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/25X_dynamic_array_owning_push_moves_source",
+        "binding 'value' was moved and cannot be used again",
+    );
+}
+
+test "feature_tests/collections/26_dynamic_array_owning_pop" {
+    const test_path = "tests/feature_tests/collections/26_dynamic_array_owning_pop";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/27_dynamic_array_owning_pop_preserves_rest" {
+    const test_path = "tests/feature_tests/collections/27_dynamic_array_owning_pop_preserves_rest";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/28_dynamic_array_owning_growth" {
+    const test_path = "tests/feature_tests/collections/28_dynamic_array_owning_growth";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/29X_dynamic_array_growth_invalidates_old_alias" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/29X_dynamic_array_growth_invalidates_old_alias",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/collections/30_dynamic_array_owning_growth_failure_atomic" {
+    const test_path = "tests/feature_tests/collections/30_dynamic_array_owning_growth_failure_atomic";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/31_dynamic_array_owning_pop_auto_deinit" {
+    const test_path = "tests/feature_tests/collections/31_dynamic_array_owning_pop_auto_deinit";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/control_flow/11_range_default_start_with_step" {
     const test_path = "tests/feature_tests/control_flow/11_range_default_start_with_step";
     try expectSuccessfulBuild(test_path);

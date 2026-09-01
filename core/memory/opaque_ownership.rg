@@ -18,6 +18,14 @@ trusted_opaque_store_owned_in#(.t: Type, .storage_type: Type)(.storage: $&storag
     destination& = source
 }
 
+-- Extracts one live opaque-owned representation into precise ownership. The
+-- slot becomes empty and the returned value becomes responsible for cleanup.
+-- `storage` identifies the conservative domain; it has no runtime role. The
+-- caller guarantees that `slot` contains exactly one live value.
+trusted_opaque_take_owned_in#(.t: Type, .storage_type: Type)(.storage: $&storage_type, .slot: $&t) -> (.result: t) := {
+    result = slot&
+}
+
 -- Moves one live opaque-owned representation between slots. It neither
 -- destroys the source representation nor creates precise ownership for the
 -- destination. The caller must ensure that `source` is live, `destination`

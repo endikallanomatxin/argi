@@ -39,6 +39,7 @@ fn safetyPrimitiveForBundledDeclaration(name: []const u8, file: []const u8) sg.S
     if (std.mem.endsWith(u8, file, "core/memory/opaque_ownership.rg")) {
         if (std.mem.eql(u8, name, "trusted_opaque_store_owned")) return .trusted_opaque_store_owned;
         if (std.mem.eql(u8, name, "trusted_opaque_store_owned_in")) return .trusted_opaque_store_owned_in;
+        if (std.mem.eql(u8, name, "trusted_opaque_take_owned_in")) return .trusted_opaque_take_owned_in;
         if (std.mem.eql(u8, name, "trusted_opaque_relocate_owned")) return .trusted_opaque_relocate_owned;
         if (std.mem.eql(u8, name, "trusted_opaque_drop_owned")) return .trusted_opaque_drop_owned;
         if (std.mem.eql(u8, name, "trusted_opaque_release_all")) return .trusted_opaque_release_all;
@@ -1847,6 +1848,11 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         if (!typ.expressionNeedsCopyForValuePosition(expr.node)) return expr;
+        // The canonical opaque-take primitive is the trusted boundary that
+        // turns a representation load into an ownership transfer. Its body is
+        // type-checked like ordinary core code, but this one read is not a
+        // language-level copy even when `t` is non-copyable.
+        if (s.current_fn != null and s.current_fn.?.safety_primitive == .trusted_opaque_take_owned_in) return expr;
         if (typ.isTypeTriviallyCopyable(expr.ty, s)) return expr;
 
         const named_input = try self.buildNamedCallInput(&[_]CallArg{

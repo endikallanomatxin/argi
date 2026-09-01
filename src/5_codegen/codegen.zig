@@ -2451,6 +2451,7 @@ pub const CodeGenerator = struct {
         if (fc.callee.safety_primitive == .trusted_opaque_store_owned or
             fc.callee.safety_primitive == .trusted_opaque_store_owned_in)
             return self.genOpaqueStore(fc);
+        if (fc.callee.safety_primitive == .trusted_opaque_take_owned_in) return self.genOpaqueTake(fc);
         if (fc.callee.safety_primitive == .trusted_opaque_relocate_owned) return self.genOpaqueRelocate(fc);
         const key_name = try self.functionSymbolKey(fc.callee);
         const callee_decl = fc.callee;
@@ -2582,7 +2583,10 @@ pub const CodeGenerator = struct {
     }
 
     fn genOpaqueStore(self: *CodeGenerator, call: *const sem.FunctionCall) !?TypedValue {
-        const input = switch (call.input.content) { .struct_value_literal => |literal| literal, else => return CodegenError.InvalidType };
+        const input = switch (call.input.content) {
+            .struct_value_literal => |literal| literal,
+            else => return CodegenError.InvalidType,
+        };
         if (input.fields.len != 2 and input.fields.len != 3) return CodegenError.InvalidType;
         // The storage domain in the three-argument form exists only for the
         // safety checker. Both forms lower to the same representation store.
@@ -2592,6 +2596,24 @@ pub const CodeGenerator = struct {
         const source = (try self.visitNode(input.fields[source_index].value)) orelse return CodegenError.ValueNotFound;
         _ = c.LLVMBuildStore(self.builder, source.value_ref, destination.value_ref);
         return null;
+    }
+
+    fn genOpaqueTake(self: *CodeGenerator, call: *const sem.FunctionCall) !?TypedValue {
+        const input = switch (call.input.content) {
+            .struct_value_literal => |literal| literal,
+            else => return CodegenError.InvalidType,
+        };
+        if (input.fields.len != 2) return CodegenError.InvalidType;
+        _ = try self.visitNode(input.fields[0].value);
+        const slot = (try self.visitNode(input.fields[1].value)) orelse return CodegenError.ValueNotFound;
+        const pointer_type = input.fields[1].value.sem_type orelse return CodegenError.InvalidType;
+        if (pointer_type != .pointer_type) return CodegenError.InvalidType;
+        const value_type = try self.toLLVMType(pointer_type.pointer_type.child.*);
+        return .{
+            .value_ref = c.LLVMBuildLoad2(self.builder, value_type, slot.value_ref, "opaque_take.load"),
+            .type_ref = value_type,
+            .sem_type = pointer_type.pointer_type.child.*,
+        };
     }
 
     fn markAutoDeinitConsumed(self: *CodeGenerator, fc: *const sem.FunctionCall) void {

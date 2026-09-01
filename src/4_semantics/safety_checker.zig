@@ -731,6 +731,10 @@ pub const SafetyChecker = struct {
             }
             return .{};
         }
+        if (call.callee.safety_primitive == .trusted_opaque_take_owned_in) {
+            const source: facts.FreshRootSource = @intFromPtr(call);
+            return self.instantiateOutput(.{ .fresh_owned_roots = try self.oneFreshSource(source) }, argument_values, state);
+        }
         // Opaque-slot occupancy and contents deliberately have no precise
         // checker representation. Relocation only consults domain-level
         // dependencies; its source-live/destination-empty contract remains
@@ -5038,6 +5042,7 @@ pub const SafetyChecker = struct {
             .read_reference,
             => self.inputOutputEffect(0, &.{}),
             .restrict_reference => self.restrictReferenceEffect(),
+            .trusted_opaque_take_owned_in => .{ .fresh_owned_roots = try self.oneFreshSource(source) },
             .trusted_opaque_store_owned,
             .trusted_opaque_store_owned_in,
             .trusted_opaque_relocate_owned,

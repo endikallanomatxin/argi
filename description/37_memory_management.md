@@ -72,13 +72,15 @@ ownership, or storage authority. Thus it can only shorten a usable lifetime,
 never extend one.
 
 `trusted_opaque_store_owned`, its storage-aware form
-`trusted_opaque_store_owned_in`, and `trusted_opaque_drop_owned` are explicit
-trusted primitives. Any library may invoke them: there is no global unsafe
-mode and bundled core has no extra privilege. The checker still enforces moves,
-known ownership roots, alias barriers, and dependency validity. The caller
-assumes only the runtime-slot invariant that the checker cannot represent:
-initializedness and exactly-once destruction in opaque storage. Opaque
-contents cannot yet be extracted back into precise ownership.
+`trusted_opaque_store_owned_in`, `trusted_opaque_take_owned_in`, and
+`trusted_opaque_drop_owned` are explicit trusted primitives. Any library may
+invoke them: there is no global unsafe mode and bundled core has no extra
+privilege. The checker still enforces moves, known ownership roots, alias
+barriers, and dependency validity. The caller assumes only the runtime-slot
+invariant that the checker cannot represent: initializedness and exactly-once
+destruction in opaque storage. Taking a slot ends its opaque occupancy and
+creates a fresh precise ownership identity for the extracted value; it does
+not add per-slot state to the opaque domain.
 In particular, `trusted_opaque_drop_owned` requires its slot to contain exactly
 one live value that has not already been dropped. Calling it twice, or calling
 it after a value has been taken by some future trusted operation, violates the
@@ -97,11 +99,13 @@ without external dependencies. It infers the backing owner from the destination
 pointer so that retaining and later mutating that pointer still updates one
 aggregate opaque domain.
 
-These facts currently grow monotonically. There is no slot removal or
-whole-storage release operation yet. Pointers that access opaque storage carry
-domain provenance, never slot identity or contents. A later pointer, field, or
-array write unions only the written value's temporal dependencies into the same
-storage-level hidden set used by the original store.
+These facts grow monotonically until `trusted_opaque_release_all` discharges a
+domain after its caller has made every runtime slot in that domain empty.
+Relocating slots within the same logical domain does not justify a release.
+Pointers that access opaque storage carry domain provenance, never slot
+identity or contents. A later pointer, field, or array write unions only the
+written value's temporal dependencies into the same storage-level hidden set
+used by the original store.
 
 Function summaries represent hidden dependencies independently from ownership
 consumption. An opaque storage effect pairs a symbolic input storage path with

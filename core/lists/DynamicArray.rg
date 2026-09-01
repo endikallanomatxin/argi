@@ -5,9 +5,9 @@ DynamicArray #(.t: Type) : Type = (
     -- It owns heap memory through `Allocation` and should serve as the default
     -- resizable list shape in `core`.
     --
-    -- Fixed-capacity append and destruction support owning elements. Growth,
-    -- shifting, and extraction by value remain limited to elements for which
-    -- the existing byte-copy or value-copy operation is valid.
+    -- Append, destruction, extraction, and growth support opaque-owned
+    -- elements. Insert, replacement, value indexing, and value iteration
+    -- remain limited to elements for which their existing copy is valid.
     --
     .allocation : Allocation
     -- `length` is the runtime opaque-slot invariant: indices below it contain
@@ -82,6 +82,7 @@ deinit #(.t: Type) (
         trusted_opaque_drop_owned(.slot = slot, .allocator = allocator)
         i = i + 1
     }
+    trusted_opaque_release_all(.storage = $&self&.allocation)
     deinit(.self = $&self&.allocation)
 }
 
@@ -156,8 +157,6 @@ dynamic_array_grow_growing #(.t: Type) (
     .array: $&DynamicArray#(.t: t),
     .min_capacity: UIntNative,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    -- Bytewise growth is not yet valid for arbitrary owning `t`: opaque slots
-    -- need a settled relocatability rule and a trusted relocation operation.
     element_size :: UIntNative = size_of(.type = t)
     new_capacity ::= array&.capacity
     zero :: UIntNative = 0
@@ -176,13 +175,14 @@ dynamic_array_grow_growing #(.t: Type) (
     match allocate_result {
         ..ok ~ payload {
             new_allocation ::= ~payload
-            new_data ::= new_allocation.data
-
-            if array&.length > zero {
-                bytes_to_copy :: UIntNative = array&.length * element_size
-                dst_view ::= array_view#(.t: UInt8)(.data = new_data, .length = bytes_to_copy)
-                src_view ::= array_view#(.t: UInt8)(.data = array&.allocation.data, .length = bytes_to_copy)
-                memcpy_bytes(.dst = dst_view, .src = src_view)
+            old_base ::= mutable_reinterpret_reference#(.from: UInt8, .to: t)(.base = array&.allocation.data).reference
+            new_base ::= mutable_reinterpret_reference#(.from: UInt8, .to: t)(.base = new_allocation.data).reference
+            i :: UIntNative = 0
+            while i < array&.length {
+                old_slot ::= mutable_reference_offset#(.t: t)(.base = old_base, .elements = i).reference
+                new_slot ::= mutable_reference_offset#(.t: t)(.base = new_base, .elements = i).reference
+                trusted_opaque_relocate_owned(.source = old_slot, .destination = new_slot)
+                i = i + 1
             }
 
             deinit(.self = $&array&.allocation)
@@ -208,13 +208,12 @@ push #(.t: Type) (
     one :: UIntNative = 1
 
     if self&.length == self&.capacity {
-        -- The existing growth implementation remains restricted as documented
-        -- above. Owning callers currently require spare capacity.
         growth_result ::= dynamic_array_grow_growing#(.t: t)(.allocator = allocator, .array = self, .min_capacity = self&.length + one)
         match growth_result {
             ..ok _ {
             }
             ..error _ {
+                trusted_opaque_drop_owned(.slot = $&value, .allocator = allocator)
                 result = ..error(.reason = ..out_of_memory)
                 return
             }
@@ -240,12 +239,15 @@ push_assume_capacity #(.t: Type) (
 pop #(.t: Type) (
     .self: $&DynamicArray#(.t: t),
 ) -> (.value: t) := {
-    -- Owning extraction requires opaque take support; this read remains a copy.
     one :: UIntNative = 1
     new_length ::= self&.length - one
+    ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = new_length).pointer
+    taken ::= trusted_opaque_take_owned_in#(.t: t, .storage_type: Allocation)(
+        .storage = $&self&.allocation,
+        .slot = ptr,
+    )
+    value = ~taken
     self&.length = new_length
-    ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = new_length).pointer
-    value = ptr&
 }
 
 insert #(.t: Type) (
