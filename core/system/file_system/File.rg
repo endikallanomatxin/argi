@@ -3,6 +3,8 @@ FileOpenMode : Type = (
     ..write
     ..append
 )
+
+FileOpenMode implements ImplicitlyCopyable
 ..file_open_failed
 
 File : Type = (

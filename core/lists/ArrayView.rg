@@ -15,6 +15,9 @@ ArrayViewRO#(.t: Type) : Type = (
     .length : UIntNative
 )
 
+ArrayView#(.t: Type) implements ImplicitlyCopyable
+ArrayViewRO#(.t: Type) implements ImplicitlyCopyable
+
 array_view_ro#(.t: Type)(.data: &t, .length: UIntNative) -> (.array: ArrayViewRO#(.t: t)) := {
     array = (.data = data, .length = length)
 }

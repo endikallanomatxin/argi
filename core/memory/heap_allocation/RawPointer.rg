@@ -2,6 +2,8 @@ RawPointer#(.t: Type) : Type = (
     .address: UIntNative
 )
 
+RawPointer#(.t: Type) implements ImplicitlyCopyable
+
 raw_pointer#(.t: Type)(.address: UIntNative) -> (.raw: RawPointer#(.t: t)) := {
     raw = (.address = address)
 }

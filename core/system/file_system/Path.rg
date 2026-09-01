@@ -105,11 +105,11 @@ deinit(
     deinit(.self = $&self&.text, .allocator = allocator)
 }
 
-copy_fallible(
+copy(
     .self: &Path,
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: Path, .reasons: (..out_of_memory))) := {
-    copied ::= copy_fallible(.self = &self&.text, .allocator = allocator)
+    copied ::= copy(.self = &self&.text, .allocator = allocator)
     match copied {
         ..ok ~ payload { result = ..ok (.text = ~payload) }
         ..error _ { result = ..error(.reason = ..out_of_memory) }

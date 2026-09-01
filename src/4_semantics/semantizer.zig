@@ -1853,10 +1853,43 @@ pub const Semantizer = struct {
         // type-checked like ordinary core code, but this one read is not a
         // language-level copy even when `t` is non-copyable.
         if (s.current_fn != null and s.current_fn.?.safety_primitive == .trusted_opaque_take_owned_in) return expr;
-        if (typ.isTypeTriviallyCopyable(expr.ty, s)) return expr;
+        const implicitly_copyable = self.isImplicitlyCopyableType(expr.ty, s);
+        if (implicitly_copyable and typ.isTypeTriviallyCopyable(expr.ty, s)) return expr;
+
+        if (!implicitly_copyable) {
+            const ty_text = try self.formatTypeText(expr.ty, s);
+            defer ty_text.deinit();
+            const has_explicit_copy = abs.typeImplementsAbstract("InfalliblyCopyable", expr.ty, s) or
+                abs.typeImplementsAbstract("FalliblyCopyable", expr.ty, s);
+            if (has_explicit_copy) {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "type '{s}' cannot be copied implicitly; use 'copy(&value)' to duplicate it or '~value' to transfer ownership",
+                    .{ty_text.bytes},
+                );
+            } else {
+                try self.diags.add(
+                    loc,
+                    .semantic,
+                    "type '{s}' cannot be copied implicitly; use '~value' to transfer ownership",
+                    .{ty_text.bytes},
+                );
+            }
+            return error.Reported;
+        }
+
+        const self_reference = try typ.makeAddressablePointer(
+            expr.node,
+            expr.ty,
+            .read_only,
+            loc,
+            self.allocator,
+            self.diags,
+        );
 
         const named_input = try self.buildNamedCallInput(&[_]CallArg{
-            .{ .name = "self", .expr = expr },
+            .{ .name = "self", .expr = self_reference },
         });
         if (self.tryResolveCopyCallWithInput(named_input, loc, s)) |copy_expr_opt| {
             if (copy_expr_opt) |copy_expr| return copy_expr;
@@ -1870,7 +1903,7 @@ pub const Semantizer = struct {
         }
 
         const positional_input = try self.buildCallInputWithPositionalPrefix(&[_]CallArg{
-            .{ .name = "__arg0", .expr = expr },
+            .{ .name = "__arg0", .expr = self_reference },
         }, 1);
         if (self.tryResolveCopyCallWithInput(positional_input, loc, s)) |copy_expr_opt| {
             if (copy_expr_opt) |copy_expr| return copy_expr;
@@ -1892,6 +1925,39 @@ pub const Semantizer = struct {
             .{ty_text.bytes},
         );
         return error.Reported;
+    }
+
+    fn isImplicitlyCopyableType(self: *Semantizer, ty: sg.Type, s: *Scope) bool {
+        if (ty == .pointer_type) return true;
+        if (typ.genericIdentityOf(ty)) |identity| {
+            if (std.mem.eql(u8, identity.base_name, "Virtual")) return true;
+        }
+        if (abs.typeImplementsAbstract("ImplicitlyCopyable", ty, s)) return true;
+        return switch (ty) {
+            .builtin => |builtin| switch (builtin) {
+                .Int8, .Int16, .Int32, .Int64,
+                .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64,
+                .Float16, .Float32, .Float64, .Char, .Bool, .Void => true,
+                else => false,
+            },
+            .array_type => |array| self.isImplicitlyCopyableType(array.element_type.*, s),
+            .choice_type => |choice| blk: {
+                for (choice.variants) |variant| {
+                    if (variant.payload_type) |payload| {
+                        if (!self.isImplicitlyCopyableType(payload, s)) break :blk false;
+                    }
+                }
+                break :blk true;
+            },
+            .struct_type => |struct_type| blk: {
+                if (self.lookupTypeDeclarationForType(ty, s) != null) break :blk false;
+                for (struct_type.fields) |field| {
+                    if (!self.isImplicitlyCopyableType(field.ty, s)) break :blk false;
+                }
+                break :blk true;
+            },
+            else => false,
+        };
     }
 
     fn formatTypePairText(self: *Semantizer, expected: sg.Type, actual: sg.Type, s: *Scope) !TypePairText {
@@ -3213,6 +3279,45 @@ pub const Semantizer = struct {
     }
 
     //──────────────────────────────────────────────────── ABSTRACT DECLARATION
+    fn abstractRequirementTypeContainsParam(ty: syn.Type, generic_params: []const []const u8) bool {
+        return switch (ty) {
+            .type_name => |name| blk: {
+                if (std.mem.eql(u8, name.string, "Self")) break :blk true;
+                for (generic_params) |param| {
+                    if (std.mem.eql(u8, name.string, param)) break :blk true;
+                }
+                break :blk false;
+            },
+            .pointer_type => |pointer| abstractRequirementTypeContainsParam(pointer.child.*, generic_params),
+            .array_type => |array| abstractRequirementTypeContainsParam(array.element.*, generic_params),
+            .inferred_errable => |inner| abstractRequirementTypeContainsParam(inner.*, generic_params),
+            .generic_type_instantiation => |generic| blk: {
+                for (generic.args.fields) |field| {
+                    if (field.type) |field_type| {
+                        if (abstractRequirementTypeContainsParam(field_type, generic_params)) break :blk true;
+                    }
+                }
+                break :blk false;
+            },
+            .struct_type_literal => |struct_type| blk: {
+                for (struct_type.fields) |field| {
+                    if (field.type) |field_type| {
+                        if (abstractRequirementTypeContainsParam(field_type, generic_params)) break :blk true;
+                    }
+                }
+                break :blk false;
+            },
+            .choice_type_literal => |choice| blk: {
+                for (choice.variants) |variant| {
+                    if (variant.payload_type) |payload| {
+                        if (abstractRequirementTypeContainsParam(payload, generic_params)) break :blk true;
+                    }
+                }
+                break :blk false;
+            },
+        };
+    }
+
     fn handleAbstractDecl(
         self: *Semantizer,
         ad: syn.AbstractDeclaration,
@@ -3226,6 +3331,7 @@ pub const Semantizer = struct {
             var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
             var input_generic = std.array_list.Managed(?u32).init(self.allocator.*);
             var input_abstract = std.array_list.Managed(?[]const u8).init(self.allocator.*);
+            var input_nested = std.array_list.Managed(?syn.Type).init(self.allocator.*);
             var self_idxs = std.array_list.Managed(u32).init(self.allocator.*);
             var input_pointer_self_idxs = std.array_list.Managed(u32).init(self.allocator.*);
 
@@ -3233,6 +3339,7 @@ pub const Semantizer = struct {
                 var ty: sg.Type = .{ .builtin = .Any };
                 var generic_idx_opt: ?u32 = null;
                 var abstract_req: ?[]const u8 = null;
+                var nested_pattern: ?syn.Type = null;
 
                 if (fld.type) |t| {
                     switch (t) {
@@ -3261,6 +3368,8 @@ pub const Semantizer = struct {
                         .generic_type_instantiation => |g| {
                             if (s.lookupAbstractInfo(g.base_name.string) != null) {
                                 abstract_req = g.base_name.string;
+                            } else if (abstractRequirementTypeContainsParam(t, generic_params)) {
+                                nested_pattern = t;
                             } else {
                                 ty = try self.resolveType(t, s);
                             }
@@ -3301,20 +3410,24 @@ pub const Semantizer = struct {
                 try in_fields.append(.{ .name = fld.name.string, .ty = ty, .default_value = null });
                 try input_generic.append(generic_idx_opt);
                 try input_abstract.append(abstract_req);
+                try input_nested.append(nested_pattern);
             }
 
             const in_struct = sg.StructType{ .fields = try in_fields.toOwnedSlice() };
             const input_generic_slice = try input_generic.toOwnedSlice();
             const input_abstract_slice = try input_abstract.toOwnedSlice();
+            const input_nested_slice = try input_nested.toOwnedSlice();
 
             in_fields.deinit();
             input_generic.deinit();
             input_abstract.deinit();
+            input_nested.deinit();
 
             // Build output struct, tracking generics/abstracts similarly
             var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
             var output_generic = std.array_list.Managed(?u32).init(self.allocator.*);
             var output_abstract = std.array_list.Managed(?[]const u8).init(self.allocator.*);
+            var output_nested = std.array_list.Managed(?syn.Type).init(self.allocator.*);
             var output_self_idxs = std.array_list.Managed(u32).init(self.allocator.*);
             var output_pointer_self_idxs = std.array_list.Managed(u32).init(self.allocator.*);
 
@@ -3322,6 +3435,7 @@ pub const Semantizer = struct {
                 var ty: sg.Type = .{ .builtin = .Any };
                 var generic_idx_opt: ?u32 = null;
                 var abstract_req: ?[]const u8 = null;
+                var nested_pattern: ?syn.Type = null;
 
                 if (fld.type) |t| {
                     switch (t) {
@@ -3350,6 +3464,8 @@ pub const Semantizer = struct {
                         .generic_type_instantiation => |g| {
                             if (s.lookupAbstractInfo(g.base_name.string) != null) {
                                 abstract_req = g.base_name.string;
+                            } else if (abstractRequirementTypeContainsParam(t, generic_params)) {
+                                nested_pattern = t;
                             } else {
                                 ty = try self.resolveType(t, s);
                             }
@@ -3390,15 +3506,18 @@ pub const Semantizer = struct {
                 try out_fields.append(.{ .name = fld.name.string, .ty = ty, .default_value = null });
                 try output_generic.append(generic_idx_opt);
                 try output_abstract.append(abstract_req);
+                try output_nested.append(nested_pattern);
             }
 
             const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
             const output_generic_slice = try output_generic.toOwnedSlice();
             const output_abstract_slice = try output_abstract.toOwnedSlice();
+            const output_nested_slice = try output_nested.toOwnedSlice();
 
             out_fields.deinit();
             output_generic.deinit();
             output_abstract.deinit();
+            output_nested.deinit();
 
             try reqs.append(.{
                 .name = rf.name.string,
@@ -3412,6 +3531,9 @@ pub const Semantizer = struct {
                 .output_generic_param_indices = output_generic_slice,
                 .input_abstract_requirements = input_abstract_slice,
                 .output_abstract_requirements = output_abstract_slice,
+                .input_nested_patterns = input_nested_slice,
+                .output_nested_patterns = output_nested_slice,
+                .abstract_param_names = generic_params,
             });
             self_idxs.deinit();
             output_self_idxs.deinit();
@@ -3531,7 +3653,7 @@ pub const Semantizer = struct {
         const concrete_pattern = try self.concreteTypePatternFromImplements(rel, s, loc);
 
         if (rel.generic_params_struct == null and rel.generic_params.len == 0) {
-            const concrete_direct = self.resolveType(concrete_pattern, s) catch |err| switch (err) {
+            const concrete_direct = self.resolveTypePreservingAbstracts(concrete_pattern, s) catch |err| switch (err) {
                 error.UnknownType, error.AbstractNeedsDefault => null,
                 else => return err,
             };

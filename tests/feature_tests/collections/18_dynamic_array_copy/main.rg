@@ -5,7 +5,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     push(.self = $&arr, .value = 10, .allocator = system.allocator)
     push(.self = $&arr, .value = 20, .allocator = system.allocator)
 
-    copied_result ::= copy_fallible#(.t: Int32)(.self = &arr, .allocator = system.allocator)
+    copied_result ::= copy#(.t: Int32)(.self = &arr)
     if is(.value = copied_result, .variant = ..error) {
         status_code = 5
         return

@@ -5,7 +5,7 @@ main(.system: System) -> (.status_code: Int32) := {
     bytes_set(.string = $&original, .index = 1, .value = 114)
     bytes_set(.string = $&original, .index = 2, .value = 103)
 
-    copied_result ::= copy_fallible(.self = &original)
+    copied_result ::= copy(.self = &original)
     match copied_result {
     ..error _ { status_code = 4 }
     ..ok ~ copied_payload {

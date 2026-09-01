@@ -112,9 +112,9 @@ deinit (
     deinit(.self = $&self&.allocation)
 }
 
-copy_fallible (
-    .allocator: $&Allocator = #reach allocator, system.allocator,
+copy (
     .self: &String,
+    .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     allocation_size ::= self&.length + 1
     allocated ::= allocate(.self = allocator, .size = allocation_size)
@@ -440,6 +440,8 @@ operator +(
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     result = concat_views(.left = left, .right = right)
 }
+
+String implements FalliblyCopyable#(.reasons: (..out_of_memory))
 
 operator +(
     .left: &StringView,
