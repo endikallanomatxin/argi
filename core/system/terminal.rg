@@ -86,28 +86,32 @@ read_line_into_buffer(
         }
 
         next ::= read_byte(.self = stdin)
-        if is(.value = next, .variant = ..error) {
-            result = ..error(.reason = ..stream_read_failed)
-            return
-        }
-
-        next_value ::= next..ok
-        if is(.value = next_value, .variant = ..end) {
-            break
-        }
-
-        payload ::= next_value..ok
-        if payload == 10 {
-            break
-        }
-
-        pushed ::= push_byte(.self = buffer, .byte = payload, .allocator = allocator)
-        match pushed {
-            ..ok _ {
-            }
+        match next {
             ..error _ {
                 result = ..error(.reason = ..stream_read_failed)
                 return
+            }
+            ..ok next_value {
+                match next_value {
+                    ..end {
+                        break
+                    }
+                    ..ok payload {
+                        if payload == 10 {
+                            break
+                        }
+
+                        pushed ::= push_byte(.self = buffer, .byte = payload, .allocator = allocator)
+                        match pushed {
+                            ..ok _ {
+                            }
+                            ..error _ {
+                                result = ..error(.reason = ..stream_read_failed)
+                                return
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -139,38 +143,42 @@ read_line(
     line_complete :: Bool = false
     while 1 == 1 {
         next ::= read_byte(.self = stdin)
-        if is(.value = next, .variant = ..error) {
-            deinit(.self = $&line, .allocator = allocator)
-            result = ..error(.reason = ..stream_read_failed)
-            return
-        }
-
-        next_value ::= next..ok
-        if is(.value = next_value, .variant = ..end) {
-            if line.length == 0 {
-                deinit(.self = $&line, .allocator = allocator)
-                result = ..ok ..end
-                return
-            }
-
-            line_complete = true
-            break
-        }
-
-        payload ::= next_value..ok
-        if payload == 10 {
-            line_complete = true
-            break
-        }
-
-        grew ::= push_byte(.self = $&line, .byte = payload, .allocator = allocator)
-        match grew {
-            ..ok _ {
-            }
+        match next {
             ..error _ {
                 deinit(.self = $&line, .allocator = allocator)
-                result = ..error(.reason = ..out_of_memory)
+                result = ..error(.reason = ..stream_read_failed)
                 return
+            }
+            ..ok next_value {
+                match next_value {
+                    ..end {
+                        if line.length == 0 {
+                            deinit(.self = $&line, .allocator = allocator)
+                            result = ..ok ..end
+                            return
+                        }
+
+                        line_complete = true
+                        break
+                    }
+                    ..ok payload {
+                        if payload == 10 {
+                            line_complete = true
+                            break
+                        }
+
+                        grew ::= push_byte(.self = $&line, .byte = payload, .allocator = allocator)
+                        match grew {
+                            ..ok _ {
+                            }
+                            ..error _ {
+                                deinit(.self = $&line, .allocator = allocator)
+                                result = ..error(.reason = ..out_of_memory)
+                                return
+                            }
+                        }
+                    }
+                }
             }
         }
     }
