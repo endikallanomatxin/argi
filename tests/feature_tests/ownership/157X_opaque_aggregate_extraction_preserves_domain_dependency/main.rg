@@ -7,9 +7,11 @@ external :: UInt8 = 7
 deinit(.self: $&Borrowing) -> () := {
 }
 
-copy(.value: Borrowing) -> (.result: Borrowing) := {
-    result = (.reference = value.reference)
+copy(.self: &Borrowing) -> (.value: Borrowing) := {
+    value = (.reference = self&.reference)
 }
+
+Borrowing implements InfalliblyCopyable
 
 main(.system: System) -> (.status_code: Int32) := {
     allocation_result ::= allocate(.self = system.allocator, .size = size_of(.type = Borrowing))
@@ -24,7 +26,7 @@ main(.system: System) -> (.status_code: Int32) := {
                 .destination = slot,
                 .source = ~value,
             )
-            extracted ::= slot&
+            extracted ::= copy(.self = slot)
 
             trusted_opaque_drop(.slot = slot)
             deinit(.self = $&storage)

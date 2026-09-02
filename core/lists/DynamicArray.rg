@@ -303,7 +303,7 @@ insert_growing #(.t: Type) (
     result = ..ok Void()
 }
 
-operator get[] #(.t: Type) (
+operator get[] #(.t: Type: ImplicitlyCopyable) (
     .self: &DynamicArray#(.t: t),
     .index: UIntNative,
 ) -> (.value: t) := {

@@ -6,6 +6,8 @@ ErrorTraceEntry : Type = (
     .source_file: &Char
 )
 
+ErrorTraceEntry implements ImplicitlyCopyable
+
 ErrorTrace : Type = (
     .entries: DynamicArray#(.t: ErrorTraceEntry)
 )

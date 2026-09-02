@@ -75,6 +75,10 @@ arena_free_blocks(
         i = i + 1
     }
 
+    -- Every runtime block descriptor has been consumed by the loop above.
+    -- The backing DynamicArray remains allocated but its opaque slots are now
+    -- logically empty.
+    trusted_opaque_mark_empty(.storage = $&self&.blocks.allocation)
     self&.blocks.length = 0
     self&.current_block_offset = 0
 }

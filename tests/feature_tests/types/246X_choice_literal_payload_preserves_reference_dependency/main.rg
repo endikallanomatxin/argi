@@ -11,6 +11,12 @@ Result : Type = (
     ..error Int32
 )
 
+copy(.self: &Borrowing) -> (.value: Borrowing) := {
+    value = (.reference = self&.reference)
+}
+
+Borrowing implements InfalliblyCopyable
+
 deinit(.self: $&Target) -> () := {}
 
 read(.pointer: $&UInt8) -> (.value: UInt8) := {
@@ -20,7 +26,7 @@ read(.pointer: $&UInt8) -> (.value: UInt8) := {
 main() -> (.status_code: Int32 = 0) := {
     target :: Target = (.value = 7)
     result : Result = ..ok Borrowing(.reference = $&target.value)
-    payload ::= result..ok
+    payload ::= copy(.self = &result..ok)
 
     deinit(.self = $&target)
     observed ::= read(.pointer = payload.reference)

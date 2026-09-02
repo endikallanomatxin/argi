@@ -4,6 +4,8 @@ StringHashMapEntry#(.value: Type) : Type = (
     .next  : UIntNative
 )
 
+StringHashMapEntry#(.value: Type: ImplicitlyCopyable) implements ImplicitlyCopyable
+
 StringHashMap#(.value: Type) : Type = (
     --
     -- Borrowed string-keyed hash map baseline.

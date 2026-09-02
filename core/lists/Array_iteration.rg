@@ -50,60 +50,43 @@ to_rw_pointer_iterator#(.n: UIntNative, .t: Type) (
 has_next#(.n: UIntNative, .t: Type) (
     .self: &ArrayIterator#(.n = n, .t: t)
 ) -> (.ok: Bool) := {
-    iterator :: ArrayIterator#(.n = n, .t: t) = self&
-    ok = iterator.index < n
+    ok = self&.index < n
 }
 
-next#(.n: UIntNative, .t: Type) (
+next#(.n: UIntNative, .t: Type: ImplicitlyCopyable) (
     .self: $&ArrayIterator#(.n = n, .t: t)
 ) -> (.value: t) := {
-    iterator :: ArrayIterator#(.n = n, .t: t) = self&
-    current_index :: UIntNative = iterator.index
-    array :: &Array#(.n = n, .t: t) = iterator.array
-    array_value :: Array#(.n = n, .t: t) = array&
-    value = array_value[current_index]
-    self& = (
-        .array = iterator.array,
-        .index = current_index + 1,
-    )
+    current_index :: UIntNative = self&.index
+    value = self&.array&[current_index]
+    self&.index = current_index + 1
 }
 
 has_next#(.n: UIntNative, .t: Type) (
     .self: &ArrayROPointerIterator#(.n = n, .t: t)
 ) -> (.ok: Bool) := {
-    iterator :: ArrayROPointerIterator#(.n = n, .t: t) = self&
-    ok = iterator.index < n
+    ok = self&.index < n
 }
 
 next#(.n: UIntNative, .t: Type) (
     .self: $&ArrayROPointerIterator#(.n = n, .t: t)
 ) -> (.value: &t) := {
-    iterator :: ArrayROPointerIterator#(.n = n, .t: t) = self&
-    current_index :: UIntNative = iterator.index
-    base ::= reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = iterator.array).reference
+    current_index :: UIntNative = self&.index
+    base ::= reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = self&.array).reference
     value = reference_offset#(.t: t)(.base = base, .elements = current_index).reference
-    self& = (
-        .array = iterator.array,
-        .index = current_index + 1,
-    )
+    self&.index = current_index + 1
 }
 
 has_next#(.n: UIntNative, .t: Type) (
     .self: &ArrayRWPointerIterator#(.n = n, .t: t)
 ) -> (.ok: Bool) := {
-    iterator :: ArrayRWPointerIterator#(.n = n, .t: t) = self&
-    ok = iterator.index < n
+    ok = self&.index < n
 }
 
 next#(.n: UIntNative, .t: Type) (
     .self: $&ArrayRWPointerIterator#(.n = n, .t: t)
 ) -> (.value: $&t) := {
-    iterator :: ArrayRWPointerIterator#(.n = n, .t: t) = self&
-    current_index :: UIntNative = iterator.index
-    base ::= mutable_reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = iterator.array).reference
+    current_index :: UIntNative = self&.index
+    base ::= mutable_reinterpret_reference#(.from: Array#(.n = n, .t: t), .to: t)(.base = self&.array).reference
     value = mutable_reference_offset#(.t: t)(.base = base, .elements = current_index).reference
-    self& = (
-        .array = iterator.array,
-        .index = current_index + 1,
-    )
+    self&.index = current_index + 1
 }

@@ -1621,7 +1621,7 @@ test "feature_tests/ownership/04_noncopyable_temporary_values" {
 
 test "feature_tests/ownership/05X_noncopyable_assignment" {
     try buildExpectFailExact("tests/feature_tests/ownership/05X_noncopyable_assignment",
-        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:9:15: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:9:15: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      second := first
         \\                ^
         \\
@@ -1630,7 +1630,7 @@ test "feature_tests/ownership/05X_noncopyable_assignment" {
 
 test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/06X_noncopyable_argument_by_value",
-        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:13:34: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:13:34: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      status_code = consume(.res = handle)
         \\                                   ^
         \\
@@ -1639,7 +1639,7 @@ test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
 
 test "feature_tests/ownership/07X_noncopyable_struct_field" {
     try buildExpectFailExact("tests/feature_tests/ownership/07X_noncopyable_struct_field",
-        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:13:33: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:13:33: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      wrapped : Wrapper = (.res = handle)
         \\                                  ^
         \\
@@ -1648,7 +1648,7 @@ test "feature_tests/ownership/07X_noncopyable_struct_field" {
 
 test "feature_tests/ownership/08X_noncopyable_output_binding" {
     try buildExpectFailExact("tests/feature_tests/ownership/08X_noncopyable_output_binding",
-        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:8:11: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:8:11: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      out = res
         \\            ^
         \\
@@ -1858,7 +1858,7 @@ test "feature_tests/types/28X_match_omit_payload_pattern" {
 
 test "feature_tests/types/32X_match_value_noncopyable_payload" {
     try buildExpectFailExact("tests/feature_tests/types/32X_match_value_noncopyable_payload",
-        \\tests/feature_tests/types/32X_match_value_noncopyable_payload/main.rg:17:14: error: type '{...}' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/types/32X_match_value_noncopyable_payload/main.rg:17:14: error: type '{...}' cannot be copied implicitly; use '~value' to transfer ownership
         \\          ..ok payload {
         \\               ^
         \\
@@ -1866,14 +1866,7 @@ test "feature_tests/types/32X_match_value_noncopyable_payload" {
 }
 
 test "feature_tests/types/47X_match_value_payload_ambiguous_copy" {
-    try buildExpectFailExact("tests/feature_tests/types/47X_match_value_payload_ambiguous_copy",
-        \\tests/feature_tests/types/47X_match_value_payload_ambiguous_copy/main.rg:26:14: error: ambiguous call to 'copy' for arguments (.__arg0: Payload). Possible overloads:
-        \\  - copy (.payload: Payload, .tag: Int32) -> (.out: Payload)
-        \\  - copy (.payload: Payload, .flag: Bool) -> (.out: Payload)
-        \\          ..ok payload {
-        \\               ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/types/47X_match_value_payload_ambiguous_copy", "cannot be copied implicitly");
 }
 
 test "feature_tests/types/48X_match_move_payload_consumes_binding" {
@@ -1886,25 +1879,11 @@ test "feature_tests/types/48X_match_move_payload_consumes_binding" {
 }
 
 test "feature_tests/types/49X_choice_payload_access_ambiguous_copy" {
-    try buildExpectFailExact("tests/feature_tests/types/49X_choice_payload_access_ambiguous_copy",
-        \\tests/feature_tests/types/49X_choice_payload_access_ambiguous_copy/main.rg:24:21: error: ambiguous call to 'copy' for arguments (.__arg0: Payload). Possible overloads:
-        \\  - copy (.payload: Payload, .tag: Int32) -> (.out: Payload)
-        \\  - copy (.payload: Payload, .flag: Bool) -> (.out: Payload)
-        \\      payload := value..ok
-        \\                      ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/types/49X_choice_payload_access_ambiguous_copy", "cannot be copied implicitly");
 }
 
 test "feature_tests/types/50X_choice_literal_payload_ambiguous_copy" {
-    try buildExpectFailExact("tests/feature_tests/types/50X_choice_literal_payload_ambiguous_copy",
-        \\tests/feature_tests/types/50X_choice_literal_payload_ambiguous_copy/main.rg:24:28: error: ambiguous call to 'copy' for arguments (.__arg0: Payload). Possible overloads:
-        \\  - copy (.payload: Payload, .tag: Int32) -> (.out: Payload)
-        \\  - copy (.payload: Payload, .flag: Bool) -> (.out: Payload)
-        \\      result : Result = ..ok payload
-        \\                             ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/types/50X_choice_literal_payload_ambiguous_copy", "cannot be copied implicitly");
 }
 
 test "feature_tests/collections/01_list_literal_length" {
@@ -2691,7 +2670,7 @@ test "feature_tests/system/14_file_system_capability" {
 
 test "feature_tests/ownership/18X_system_noncopyable_assignment" {
     try buildExpectFailExact("tests/feature_tests/ownership/18X_system_noncopyable_assignment",
-        \\tests/feature_tests/ownership/18X_system_noncopyable_assignment/main.rg:2:15: error: type 'System' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/ownership/18X_system_noncopyable_assignment/main.rg:2:15: error: type 'System' cannot be copied implicitly; use '~value' to transfer ownership
         \\      copied := system
         \\                ^
         \\
@@ -2700,7 +2679,7 @@ test "feature_tests/ownership/18X_system_noncopyable_assignment" {
 
 test "feature_tests/ownership/19X_system_noncopyable_argument" {
     try buildExpectFailExact("tests/feature_tests/ownership/19X_system_noncopyable_argument",
-        \\tests/feature_tests/ownership/19X_system_noncopyable_argument/main.rg:6:37: error: type 'System' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/ownership/19X_system_noncopyable_argument/main.rg:6:37: error: type 'System' cannot be copied implicitly; use '~value' to transfer ownership
         \\      status_code = consume(.system = system)
         \\                                      ^
         \\
@@ -2912,47 +2891,19 @@ test "feature_tests/ownership/26_distinct_fields_do_not_alias_same_call" {
 }
 
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
-    try buildExpectFailExact("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
-        \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
-        \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
-        \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
-        \\      values : [2]Resource = (source, source)
-        \\                             ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal", "type 'Resource' is not copyable");
 }
 
 test "feature_tests/ownership/28X_ambiguous_copy_assignment" {
-    try buildExpectFailExact("tests/feature_tests/ownership/28X_ambiguous_copy_assignment",
-        \\tests/feature_tests/ownership/28X_ambiguous_copy_assignment/main.rg:17:15: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
-        \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
-        \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
-        \\      copied := source
-        \\                ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/ownership/28X_ambiguous_copy_assignment", "cannot be copied implicitly");
 }
 
 test "feature_tests/ownership/37X_ambiguous_copy_return" {
-    try buildExpectFailExact("tests/feature_tests/ownership/37X_ambiguous_copy_return",
-        \\tests/feature_tests/ownership/37X_ambiguous_copy_return/main.rg:16:12: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
-        \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
-        \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
-        \\      return source
-        \\             ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/ownership/37X_ambiguous_copy_return", "cannot be copied implicitly");
 }
 
 test "feature_tests/ownership/38X_ambiguous_copy_struct_field" {
-    try buildExpectFailExact("tests/feature_tests/ownership/38X_ambiguous_copy_struct_field",
-        \\tests/feature_tests/ownership/38X_ambiguous_copy_struct_field/main.rg:21:33: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
-        \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
-        \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
-        \\      wrapped : Wrapper = (.res = handle)
-        \\                                  ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/ownership/38X_ambiguous_copy_struct_field", "cannot be copied implicitly");
 }
 
 test "feature_tests/ownership/39_stable_field_reference_survives_replacement" {
@@ -4153,7 +4104,7 @@ test "feature_tests/ownership/31_array_of_pointers_is_copyable" {
 
 test "feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable" {
     try buildExpectFailExact("tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable",
-        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:9:15: error: type '[2]Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:9:15: error: type '[2]Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      copied := resources
         \\                ^
         \\
@@ -4631,6 +4582,44 @@ test "feature_tests/ownership/276X_opaque_take_preserves_external_dependency" {
         "tests/feature_tests/ownership/276X_opaque_take_preserves_external_dependency",
         "reference depends on a root that has ended",
     );
+}
+
+test "feature_tests/ownership/277_implicit_scalar_copy" {
+    const test_path = "tests/feature_tests/ownership/277_implicit_scalar_copy";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/278_implicit_struct_copy" {
+    const test_path = "tests/feature_tests/ownership/278_implicit_struct_copy";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/279X_infallible_copy_is_not_implicit" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/279X_infallible_copy_is_not_implicit",
+        "type 'LargeValue' cannot be copied implicitly",
+    );
+}
+
+test "feature_tests/ownership/280_explicit_infallible_copy" {
+    const test_path = "tests/feature_tests/ownership/280_explicit_infallible_copy";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/281X_fallible_copy_is_not_implicit" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/281X_fallible_copy_is_not_implicit",
+        "type 'FallibleValue' cannot be copied implicitly",
+    );
+}
+
+test "feature_tests/ownership/282_explicit_fallible_copy" {
+    const test_path = "tests/feature_tests/ownership/282_explicit_fallible_copy";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
 }
 
 test "feature_tests/polymorphism/32_static_abstract_generic_fields" {

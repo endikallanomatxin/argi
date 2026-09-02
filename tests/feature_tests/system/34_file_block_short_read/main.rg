@@ -16,7 +16,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         status_code = 2
         return
     }
-    file ::= create_result..ok
+    file ::= ~create_result..ok
 
     write_allocation_result ::= allocate(.self = system.allocator, .size = 2)
     if is(.value = write_allocation_result, .variant = ..error) {
@@ -55,7 +55,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         status_code = 6
         return
     }
-    file = open_result..ok
+    file = ~open_result..ok
 
     read_allocation_result ::= allocate(.self = system.allocator, .size = 4)
     if is(.value = read_allocation_result, .variant = ..error) {

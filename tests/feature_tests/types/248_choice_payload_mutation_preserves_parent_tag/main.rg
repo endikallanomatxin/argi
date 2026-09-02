@@ -2,6 +2,8 @@ Payload : Type = (
     .value: Int32
 )
 
+Payload implements ImplicitlyCopyable
+
 Result : Type = (
     ..ok Payload
     ..error Int32

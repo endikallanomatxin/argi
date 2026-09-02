@@ -4,6 +4,8 @@ Pair : Type = (
     .y: Int32,
 )
 
+Pair implements ImplicitlyCopyable
+
 -- Define the index get operator as a normal function
 -- Convention: op_index_get(.self: T, .i: Int32) -> (.v: T)
 operator get[](.self: &Pair, .i: Int32) -> (.v: Int32) := {

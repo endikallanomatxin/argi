@@ -3,16 +3,18 @@ Container : Type = (.marker: UInt8)
 
 deinit(.self: $&Borrowing) -> () := {}
 
-copy(.value: Borrowing) -> (.result: Borrowing) := {
-    result = (.reference = value.reference)
+copy(.self: &Borrowing) -> (.value: Borrowing) := {
+    value = (.reference = self&.reference)
 }
+
+Borrowing implements InfalliblyCopyable
 
 store_copy(
     .storage: $&Container,
     .slot: $&Borrowing,
     .source: $&Borrowing,
 ) -> () := {
-    copy ::= source&
+    copy ::= copy(.self = source)
     trusted_opaque_move_in#(.t: Borrowing, .storage_type: Container)(
         .storage = storage,
         .destination = slot,

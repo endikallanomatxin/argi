@@ -6,6 +6,8 @@ Dog : Type = (
     .value: Int32 = 0
 )
 
+Dog implements ImplicitlyCopyable
+
 clone(.who: Dog) -> (.copy: Dog) := {
     copy = who
 }

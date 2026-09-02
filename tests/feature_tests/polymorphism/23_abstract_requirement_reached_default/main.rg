@@ -1,7 +1,6 @@
 Touched : Abstract = (
     touch(
         .self: $&Self,
-        .allocator: $&Allocator = #reach allocator, system.allocator,
     ) -> ()
 )
 
@@ -11,10 +10,7 @@ Thing : Type = (
 
 touch(
     .self: $&Thing,
-    .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> () := {
-    allocator2 ::= allocator
-    _ ::= allocator2
 }
 
 Thing implements Touched
