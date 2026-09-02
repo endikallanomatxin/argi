@@ -235,44 +235,20 @@ join_views(
     match created {
         ..ok ~ created_text {
             text ::= ~created_text
-
-            pushed_left ::= push_view(.self = $&text, .view = left&, .allocator = allocator)
-            match pushed_left {
-                ..ok _ {
-                }
-                ..error _ {
-                    deinit(.self = $&text, .allocator = allocator)
-                    result = ..error(.reason = ..out_of_memory)
-                    return
-                }
-            }
+            left_bytes ::= array_view_ro#(.t: UInt8)(.data = left&.data, .length = left&.length)
+            string_append_bytes(.self = $&text, .source = left_bytes)
 
             if left&.length > 0 and right&.length > 0 {
                 if path_is_separator(.byte = bytes_get(.view = left, .index = left&.length - 1).byte).ok {
                 } else {
-                    pushed_sep ::= push_byte(.self = $&text, .byte = 47, .allocator = allocator)
-                    match pushed_sep {
-                        ..ok _ {
-                        }
-                        ..error _ {
-                            deinit(.self = $&text, .allocator = allocator)
-                            result = ..error(.reason = ..out_of_memory)
-                            return
-                        }
-                    }
+                    string_append_byte(.self = $&text, .byte = 47)
                 }
             }
 
-            pushed_right ::= push_view(.self = $&text, .view = right&, .allocator = allocator)
-            match pushed_right {
-                ..ok _ {
-                    result = ..ok (.text = ~text)
-                    return
-                }
-                ..error _ {
-                    result = ..error(.reason = ..out_of_memory)
-                }
-            }
+            right_bytes ::= array_view_ro#(.t: UInt8)(.data = right&.data, .length = right&.length)
+            string_append_bytes(.self = $&text, .source = right_bytes)
+            result = ..ok (.text = ~text)
+            return
         }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
