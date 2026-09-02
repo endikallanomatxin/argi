@@ -50,58 +50,43 @@ to_rw_pointer_iterator#(.t: Type) (
 has_next#(.t: Type) (
     .self: &DynamicArrayIterator#(.t: t)
 ) -> (.ok: Bool) := {
-    iterator :: DynamicArrayIterator#(.t: t) = self&
-    ok = iterator.index < iterator.array&.length
+    ok = self&.index < self&.array&.length
 }
 
 next#(.t: Type) (
     .self: $&DynamicArrayIterator#(.t: t)
 ) -> (.value: t) := {
     -- The value iterator copies; owning iteration remains reference-only.
-    iterator :: DynamicArrayIterator#(.t: t) = self&
-    current_index :: UIntNative = iterator.index
-    ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = iterator.array, .offset = current_index).pointer
+    current_index :: UIntNative = self&.index
+    ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = self&.array, .offset = current_index).pointer
     value = ptr&
-    self& = (
-        .array = iterator.array,
-        .index = current_index + 1,
-    )
+    self&.index = current_index + 1
 }
 
 has_next#(.t: Type) (
     .self: &DynamicArrayROPointerIterator#(.t: t)
 ) -> (.ok: Bool) := {
-    iterator :: DynamicArrayROPointerIterator#(.t: t) = self&
-    ok = iterator.index < iterator.array&.length
+    ok = self&.index < self&.array&.length
 }
 
 next#(.t: Type) (
     .self: $&DynamicArrayROPointerIterator#(.t: t)
 ) -> (.value: &t) := {
-    iterator :: DynamicArrayROPointerIterator#(.t: t) = self&
-    current_index :: UIntNative = iterator.index
-    value = dynamic_array_element_ro_pointer#(.t: t)(.array = iterator.array, .offset = current_index).pointer
-    self& = (
-        .array = iterator.array,
-        .index = current_index + 1,
-    )
+    current_index :: UIntNative = self&.index
+    value = dynamic_array_element_ro_pointer#(.t: t)(.array = self&.array, .offset = current_index).pointer
+    self&.index = current_index + 1
 }
 
 has_next#(.t: Type) (
     .self: &DynamicArrayRWPointerIterator#(.t: t)
 ) -> (.ok: Bool) := {
-    iterator :: DynamicArrayRWPointerIterator#(.t: t) = self&
-    ok = iterator.index < iterator.array&.length
+    ok = self&.index < self&.array&.length
 }
 
 next#(.t: Type) (
     .self: $&DynamicArrayRWPointerIterator#(.t: t)
 ) -> (.value: $&t) := {
-    iterator :: DynamicArrayRWPointerIterator#(.t: t) = self&
-    current_index :: UIntNative = iterator.index
-    value = dynamic_array_element_rw_pointer#(.t: t)(.array = iterator.array, .offset = current_index).pointer
-    self& = (
-        .array = iterator.array,
-        .index = current_index + 1,
-    )
+    current_index :: UIntNative = self&.index
+    value = dynamic_array_element_rw_pointer#(.t: t)(.array = self&.array, .offset = current_index).pointer
+    self&.index = current_index + 1
 }
