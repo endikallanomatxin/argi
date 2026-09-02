@@ -89,6 +89,9 @@ reset(
     arena_free_blocks(.self = self)
     deinit(.self = $&self&.domain)
     init(.p = $&self&.domain)
+    -- Re-establishing the arena generation does not repopulate its block
+    -- storage. Keep that fact visible in the composed safety summary.
+    trusted_opaque_mark_empty(.storage = $&self&.blocks.allocation)
 }
 
 deinit(
