@@ -8,7 +8,7 @@ ReferenceChoice : Type = (
     ..none
 )
 
-restrict_twice#(.t: Type)(.input: &t, .first: &Any, .second: &Any) -> (.reference: &t) := {
+restrict_twice#(.t: Type)(.input: t, .first: &Any, .second: &Any) -> (.reference: t) := {
     intermediate ::= restrict_reference#(.t: t)(.input = input, .lifetime = first).reference
     reference = restrict_reference#(.t: t)(.input = intermediate, .lifetime = second).reference
 }
@@ -35,7 +35,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
                             readonly_restricted ::= restrict_reference#(.t: &UInt8)(.input = readonly, .lifetime = &pair.marker).reference
                             chained ::= restrict_twice(.input = restricted, .first = &pair.marker, .second = &second).reference
                             relocated :: &UInt8 = chained
-                            relocated = restricted
+                            relocated = read_reference(.base = restricted).reference
                             choice :: ReferenceChoice = ..some readonly_restricted
                             match choice {
                                 ..none { status_code = 4 }
