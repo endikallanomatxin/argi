@@ -8,23 +8,31 @@ main(.system: System = System()) -> (.status_code: Int32) := {
 
     first_result ::= allocate(.self = $&arena, .size = 8)
     match first_result {
-        ..error _ { status_code = 2 }
+        ..error _ {
+            deinit(.self = $&arena)
+            status_code = 2
+            return
+        }
         ..ok ~ first_payload {
             first ::= ~first_payload
             first.data& = 1
-            reset(.self = $&arena)
-
-            second_result ::= allocate(.self = $&arena, .size = 8)
-            match second_result {
-                ..error _ { status_code = 3 }
-                ..ok ~ second_payload {
-                    second ::= ~second_payload
-                    second.data& = 2
-                    reset(.self = $&arena)
-                    deinit(.self = $&second)
-                }
-            }
             deinit(.self = $&first)
+            reset(.self = $&arena)
+        }
+    }
+
+    second_result ::= allocate(.self = $&arena, .size = 8)
+    match second_result {
+        ..error _ {
+            deinit(.self = $&arena)
+            status_code = 3
+            return
+        }
+        ..ok ~ second_payload {
+            second ::= ~second_payload
+            second.data& = 2
+            deinit(.self = $&second)
+            reset(.self = $&arena)
         }
     }
     deinit(.self = $&arena)
