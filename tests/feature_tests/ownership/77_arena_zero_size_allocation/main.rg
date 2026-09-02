@@ -9,6 +9,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     result ::= allocate(.self = $&arena, .size = 0)
     match result {
         ..error _ {
+            deinit(.self = $&arena)
             status_code = 2
         }
         ..ok ~ payload {
