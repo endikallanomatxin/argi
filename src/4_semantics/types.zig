@@ -360,7 +360,35 @@ pub fn ensureValuePositionAllowed(
 // Structural equality is deliberately narrower than assignment compatibility.
 // Use it only where matching type shape is intended, such as selected
 // anonymous/inferred forms and codegen checks.
+pub const StructuralEqualityStats = struct {
+    calls: u64 = 0,
+    // Counts recursive type-pair visits as a cheap proxy for comparison cost.
+    comparison_steps: u64 = 0,
+    max_depth: u32 = 0,
+};
+
+var active_structural_equality_stats: ?*StructuralEqualityStats = null;
+
+pub fn beginStructuralEqualityStats(stats: *StructuralEqualityStats) void {
+    stats.* = .{};
+    active_structural_equality_stats = stats;
+}
+
+pub fn endStructuralEqualityStats() void {
+    active_structural_equality_stats = null;
+}
+
 pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
+    const stats = active_structural_equality_stats;
+    if (stats) |active| active.calls += 1;
+    return typesStructurallyEqualInner(a, b, stats, 1);
+}
+
+fn typesStructurallyEqualInner(a: sg.Type, b: sg.Type, stats: ?*StructuralEqualityStats, depth: u32) bool {
+    if (stats) |active| {
+        active.comparison_steps += 1;
+        active.max_depth = @max(active.max_depth, depth);
+    }
     return switch (a) {
         .builtin => |ab| switch (b) {
             .builtin => |bb| ab == bb,
@@ -394,7 +422,7 @@ pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
                     const fa = ast.fields[i];
                     const fb = bst.fields[i];
                     if (!std.mem.eql(u8, fa.name, fb.name)) break :blk false;
-                    if (!typesStructurallyEqual(fa.ty, fb.ty)) break :blk false;
+                    if (!typesStructurallyEqualInner(fa.ty, fb.ty, stats, depth + 1)) break :blk false;
                 }
                 break :blk true;
             },
@@ -416,7 +444,7 @@ pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
 
                 if (isAny(sub_a) or isAny(sub_b)) break :blk true;
 
-                break :blk typesStructurallyEqual(sub_a, sub_b);
+                break :blk typesStructurallyEqualInner(sub_a, sub_b, stats, depth + 1);
             },
             else => false,
         },
@@ -426,7 +454,7 @@ pub fn typesStructurallyEqual(a: sg.Type, b: sg.Type) bool {
                 const aat = aat_ptr.*;
                 const bat = bat_ptr.*;
                 if (aat.length != bat.length) break :blk_arr false;
-                break :blk_arr typesStructurallyEqual(aat.element_type.*, bat.element_type.*);
+                break :blk_arr typesStructurallyEqualInner(aat.element_type.*, bat.element_type.*, stats, depth + 1);
             },
             else => false,
         },
@@ -933,6 +961,7 @@ pub fn makeIntLiteral(
     ty: sg.Type,
 ) !TypedExpr {
     const node = try allocator.create(sg.SGNode);
+    sg.recordNodeAllocation();
     node.* = .{
         .location = loc,
         .sem_type = ty,
@@ -949,6 +978,7 @@ pub fn makeTypeLiteral(
     const type_node = try allocator.create(sg.TypeLiteral);
     type_node.* = .{ .ty = ty };
     const node = try allocator.create(sg.SGNode);
+    sg.recordNodeAllocation();
     node.* = .{
         .location = loc,
         .sem_type = .{ .builtin = .Type },
@@ -1029,6 +1059,7 @@ fn floatLiteralAs(
     return switch (target) {
         .Float16, .Float32, .Float64 => blk: {
             const node = try allocator.create(sg.SGNode);
+            sg.recordNodeAllocation();
             node.* = .{
                 .location = loc,
                 .content = .{ .value_literal = .{ .float_literal = value } },
@@ -1346,6 +1377,7 @@ pub fn convertListLiteralToArray(
             };
 
             const node = try allocator.create(sg.SGNode);
+            sg.recordNodeAllocation();
             node.* = .{
                 .location = loc,
                 .content = .{ .array_literal = arr_lit },
@@ -1477,6 +1509,7 @@ pub fn coerceStructLiteral(
     };
 
     const node = try allocator.create(sg.SGNode);
+    sg.recordNodeAllocation();
     node.* = .{
         .location = expr_node.location,
         .content = .{ .struct_value_literal = lit_ptr },
@@ -1530,6 +1563,7 @@ fn coerceUnionLiteral(
     };
 
     const node = try allocator.create(sg.SGNode);
+    sg.recordNodeAllocation();
     node.* = .{
         .location = expr_node.location,
         .content = .{ .struct_value_literal = lit_ptr },
@@ -1573,6 +1607,7 @@ fn synthesizeImplicitFieldValue(
 
     const zero_native = try makeIntLiteral(allocator, loc, 0, .{ .builtin = .UIntNative });
     const null_data = try allocator.create(sg.SGNode);
+    sg.recordNodeAllocation();
     null_data.* = .{
         .location = loc,
         .sem_type = data_field.ty,
@@ -1592,6 +1627,7 @@ fn synthesizeImplicitFieldValue(
         .dispatch_prefix_positional_count = 0,
     };
     const allocation_node = try allocator.create(sg.SGNode);
+    sg.recordNodeAllocation();
     allocation_node.* = .{
         .location = loc,
         .sem_type = allocation_field.ty,
@@ -1609,6 +1645,7 @@ fn synthesizeImplicitFieldValue(
         .dispatch_prefix_positional_count = 0,
     };
     const entries_node = try allocator.create(sg.SGNode);
+    sg.recordNodeAllocation();
     entries_node.* = .{
         .location = loc,
         .sem_type = entries_field.ty,
@@ -1624,6 +1661,7 @@ fn synthesizeImplicitFieldValue(
         .dispatch_prefix_positional_count = 0,
     };
     const trace_node = try allocator.create(sg.SGNode);
+    sg.recordNodeAllocation();
     trace_node.* = .{
         .location = loc,
         .sem_type = field.ty,
@@ -1644,6 +1682,7 @@ pub fn ensureReadOnlyPointer(expr_node: *const syn.STNode, te: TypedExpr, alloca
     ptr_info.* = .{ .mutability = .read_only, .child = child_ty };
 
     const addr_node = try allocator.create(sg.SGNode);
+    sg.recordNodeAllocation();
     addr_node.* = .{
         .location = expr_node.location,
         .sem_type = .{ .pointer_type = ptr_info },
@@ -1669,6 +1708,7 @@ pub fn makeAddressablePointer(
     ptr_info.* = .{ .mutability = mutability, .child = child_ty };
 
     const addr_node = try allocator.create(sg.SGNode);
+    sg.recordNodeAllocation();
     addr_node.* = .{
         .location = loc,
         .sem_type = .{ .pointer_type = ptr_info },
@@ -1709,6 +1749,7 @@ pub fn ensureMutablePointer(
     ptr_info.* = .{ .mutability = .read_write, .child = child_ty };
 
     const addr_node = try allocator.create(sg.SGNode);
+    sg.recordNodeAllocation();
     addr_node.* = .{
         .location = expr_node.location,
         .sem_type = .{ .pointer_type = ptr_info },

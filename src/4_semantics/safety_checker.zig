@@ -8,6 +8,18 @@ const value_state = @import("value_state.zig");
 /// Infers temporal effects from semantized bodies. Summaries are deliberately
 /// compiler-owned: ordinary functions have no source contract to maintain.
 pub const SafetyChecker = struct {
+    pub const Stats = struct {
+        functions: usize = 0,
+        inference_rounds: usize = 0,
+        inference_runs: usize = 0,
+        function_state_clones: u64 = 0,
+        function_state_elements_copied: u64 = 0,
+
+        pub fn reinferences(self: Stats) usize {
+            return self.inference_runs -| self.functions;
+        }
+    };
+
     allocator: *const std.mem.Allocator,
     diagnostics: *diagnostics.Diagnostics,
     summaries: std.AutoHashMap(*const sg.FunctionDeclaration, facts.SafetySummary),
@@ -18,6 +30,8 @@ pub const SafetyChecker = struct {
     // Choice construction retains invalid-address provenance in nested
     // default values and diagnoses it when that pointer is actually used.
     choice_payload_depth: usize,
+    collect_stats: bool,
+    stats: Stats,
 
     pub fn init(allocator: *const std.mem.Allocator, diags: *diagnostics.Diagnostics) SafetyChecker {
         return .{
@@ -29,7 +43,13 @@ pub const SafetyChecker = struct {
             .inference_bindings = null,
             .inference_place_bindings = null,
             .choice_payload_depth = 0,
+            .collect_stats = false,
+            .stats = .{},
         };
+    }
+
+    pub fn enableStats(self: *SafetyChecker) void {
+        self.collect_stats = true;
     }
 
     pub fn deinit(self: *SafetyChecker) void {
@@ -39,6 +59,7 @@ pub const SafetyChecker = struct {
     }
 
     pub fn analyze(self: *SafetyChecker, nodes: []const *sg.SGNode) !void {
+        self.stats = .{};
         const diagnostic_count = self.diagnostics.list.items.len;
         var functions = std.array_list.Managed(*const sg.FunctionDeclaration).init(self.allocator.*);
         defer functions.deinit();
@@ -47,10 +68,15 @@ pub const SafetyChecker = struct {
             .test_declaration => |test_decl| try functions.append(test_decl.function),
             else => {},
         };
+        if (self.collect_stats) self.stats.functions = functions.items.len;
 
         for (functions.items) |function| try self.ensureEmptySummary(function);
         const limit = @max(functions.items.len + 1, 1);
         for (0..limit) |_| {
+            if (self.collect_stats) {
+                self.stats.inference_rounds += 1;
+                self.stats.inference_runs += functions.items.len;
+            }
             self.virtual_summaries.clearRetainingCapacity();
             self.invalid_virtual_summaries.clearRetainingCapacity();
             var changed = false;
@@ -81,6 +107,7 @@ pub const SafetyChecker = struct {
         choice_active: std.array_list.Managed(ChoiceActive),
         choice_rejected: std.array_list.Managed(ChoiceRejected),
         choice_temporary_active: std.array_list.Managed(ChoiceTemporaryActive),
+        stats: ?*Stats = null,
         reachable: bool = true,
         ownership_conflict_reported: bool = false,
 
@@ -125,8 +152,22 @@ pub const SafetyChecker = struct {
             try result.choice_active.appendSlice(self.choice_active.items);
             try result.choice_rejected.appendSlice(self.choice_rejected.items);
             try result.choice_temporary_active.appendSlice(self.choice_temporary_active.items);
+            result.stats = self.stats;
             result.reachable = self.reachable;
             result.ownership_conflict_reported = self.ownership_conflict_reported;
+            if (self.stats) |stats| {
+                stats.function_state_clones += 1;
+                stats.function_state_elements_copied += @intCast(self.tracker.roots.items.len +
+                    self.storage_capabilities.items.len +
+                    self.places.items.len +
+                    self.ownership_edges.items.len +
+                    self.storage_generations.items.len +
+                    self.lexical_storage_generations.items.len +
+                    self.opaque_storages.items.len +
+                    self.choice_active.items.len +
+                    self.choice_rejected.items.len +
+                    self.choice_temporary_active.items.len);
+            }
             return result;
         }
     };
@@ -211,6 +252,7 @@ pub const SafetyChecker = struct {
         const body = function.body orelse return;
         if (function.safety_primitive != .none) return;
         var state = FunctionState.init(self.allocator.*);
+        state.stats = if (self.collect_stats) &self.stats else null;
         defer state.deinit();
         // Argi pointer parameters may alias. Until a call-site proof can
         // partition them, one shared root conservatively represents any
@@ -2176,6 +2218,7 @@ pub const SafetyChecker = struct {
         if (!left.reachable) return self.copyState(destination, right);
         if (!right.reachable) return self.copyState(destination, left);
         var joined = FunctionState.init(self.allocator.*);
+        joined.stats = left.stats orelse right.stats;
         errdefer joined.deinit();
         const root_count = @max(left.tracker.roots.items.len, right.tracker.roots.items.len);
         for (0..root_count) |index| {
