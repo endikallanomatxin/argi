@@ -4479,6 +4479,26 @@ test "feature_tests/types/256X_abstract_associated_arg_mismatch" {
     );
 }
 
+test "feature_tests/types/257X_abstract_impl_template_checks_associated_args" {
+    try buildExpectFail(
+        "tests/feature_tests/types/257X_abstract_impl_template_checks_associated_args",
+        "no function named 'require_other' exists",
+    );
+}
+
+test "feature_tests/types/258_abstract_associated_comptime_values" {
+    const test_path = "tests/feature_tests/types/258_abstract_associated_comptime_values";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/259X_abstract_associated_comptime_mismatch" {
+    try buildExpectFail(
+        "tests/feature_tests/types/259X_abstract_associated_comptime_mismatch",
+        "no function named 'require_four_rows' exists",
+    );
+}
+
 test "feature_tests/ownership/254X_reinitializing_alias_does_not_refresh_sibling" {
     try buildExpectFail(
         "tests/feature_tests/ownership/254X_reinitializing_alias_does_not_refresh_sibling",
