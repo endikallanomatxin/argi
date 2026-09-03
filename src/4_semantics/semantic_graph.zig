@@ -397,13 +397,17 @@ pub const FunctionDeclaration = struct {
     input: StructType, // Arguments
     output: StructType, // Named return params
     body: ?*const CodeBlock,
+    /// Distinguishes an extern declaration from a source body which has not
+    /// been semantized yet. Lazy body semantizing makes `body == null`
+    /// ambiguous until the reachable-body worklist has completed.
+    has_declared_body: bool = false,
     uses_inferred_error_reasons: bool = false,
     input_bindings: []const *const BindingDeclaration = &.{},
     output_bindings: []const *const BindingDeclaration = &.{},
     inferred_error_reasons: ?*const ChoiceType = null,
 
     pub fn isExtern(self: *const FunctionDeclaration) bool {
-        return self.body == null;
+        return !self.has_declared_body;
     }
 
     pub const OriginKind = enum {

@@ -63,6 +63,7 @@ pub const CompileOptions = struct {
     frontend_options: frontend.FrontendPipeline.Options = .{},
     codegen_options: codegen.CodeGenerator.Options = .{},
     success_message: ?[]const u8 = "✔ Build completed\n",
+    check_only: bool = false,
 };
 
 /// Argi keeps project-local transient artifacts under `.argi-cache/`.
@@ -195,6 +196,7 @@ fn printSemantizingTimings(timings: semantizer_mod.Semantizer.SemantizeTimings) 
         timings.generic_specializations_created,
         timings.generic_specialization_cache_hits,
     });
+    std.debug.print("  declared bodies semantized: {d}\n", .{timings.declared_function_bodies_semantized});
     std.debug.print("  final retry resolve:   {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.final_retry_resolution_ns)) / 1_000_000.0});
     std.debug.print("  verify abstracts:      {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.abstract_verify_ns)) / 1_000_000.0});
     std.debug.print("  verify once:           {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.once_verify_ns)) / 1_000_000.0});
@@ -634,9 +636,11 @@ fn compileResolvedPlan(
         null;
     const emit_object_only = flags.just_object_path != null;
 
-    if (!emit_object_only) try ensureParentDir(io, final_output_path);
-    if (final_ir_path) |path| try ensureParentDir(io, path);
-    if (final_obj_path) |path| try ensureParentDir(io, path);
+    if (!options.check_only) {
+        if (!emit_object_only) try ensureParentDir(io, final_output_path);
+        if (final_ir_path) |path| try ensureParentDir(io, path);
+        if (final_obj_path) |path| try ensureParentDir(io, path);
+    }
 
     // 1. Reunir ficheros ──────────────────────────────────────────────────
     const collect_start = nowNs(io);
@@ -706,6 +710,12 @@ fn compileResolvedPlan(
         }
         dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
         return error.CompilationFailed;
+    }
+
+    if (options.check_only) {
+        if (flags.stats) printCompilerStats(timings, &pipeline, files.items.len, type_stats, codegen_stats, flags.optimization_mode);
+        if (options.success_message) |message| std.debug.print("{s}", .{message});
+        return;
     }
 
     // 7. Generación de código ──────────────────────────────────────────────
@@ -840,6 +850,29 @@ fn compileResolvedPlan(
 pub fn compile(io: std.Io, environ_map: ?*const std.process.Environ.Map, args: []const []const u8) !void {
     const parsed = try parseBuildArgs(args);
     try compileTarget(parsed.target_path, parsed.flags, .{}, io, environ_map);
+}
+
+/// Check every function body without producing machine code. Build, run, and
+/// test intentionally semantize only their reachable execution graph.
+pub fn check(io: std.Io, environ_map: ?*const std.process.Environ.Map, args: []const []const u8) !void {
+    const parsed = try parseBuildArgs(args);
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    const core_dir = try sf.resolveToolCoreDir(&allocator, io, .{
+        .explicit_sysroot = parsed.flags.sysroot_path,
+        .environ_map = environ_map,
+    });
+    const testing_module_dir = try std.fs.path.join(allocator, &.{ core_dir, "testing" });
+    try compileTarget(parsed.target_path, parsed.flags, .{
+        .frontend_options = .{ .semantizer = .{
+            .include_tests = true,
+            .implicit_testing_module_dir = testing_module_dir,
+            .exhaustive_function_bodies = true,
+        } },
+        .success_message = "✔ Check completed\n",
+        .check_only = true,
+    }, io, environ_map);
 }
 
 test "parse build flags keeps diagnostics toggles and output paths" {

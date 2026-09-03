@@ -112,6 +112,8 @@ const SignatureTypeCacheKey = struct {
 };
 
 const PendingFunctionBody = struct {
+    const State = enum { unseen, queued, done };
+
     top_node: *const syn.STNode,
     decl: syn.FunctionDeclaration,
     location: tok.Location,
@@ -119,12 +121,14 @@ const PendingFunctionBody = struct {
     is_test: bool = false,
     prepared_scope: ?*Scope = null,
     prepared_input_struct: ?*sg.StructType = null,
+    state: State = .unseen,
 };
 
 pub const SemantizerOptions = struct {
     include_tests: bool = false,
     selected_test_name: ?[]const u8 = null,
     implicit_testing_module_dir: ?[]const u8 = null,
+    exhaustive_function_bodies: bool = false,
 };
 
 const OnceConsumption = struct {
@@ -236,6 +240,8 @@ pub const Semantizer = struct {
     retry_other_nodes: u32 = 0,
     function_semantize_mode: FunctionSemantizeMode = .full,
     pending_function_bodies: std.array_list.Managed(PendingFunctionBody),
+    function_body_worklist: std.array_list.Managed(usize),
+    discover_function_references: bool = false,
     signature_type_cache: std.AutoHashMap(SignatureTypeCacheKey, sg.Type),
     generic_specializations: std.array_list.Managed(GenericSpecialization),
     generic_specializations_created: u32 = 0,
@@ -272,6 +278,7 @@ pub const Semantizer = struct {
             .pending_now = std.array_list.Managed(*const syn.STNode).init(alloc.*),
             .pending_next = std.array_list.Managed(*const syn.STNode).init(alloc.*),
             .pending_function_bodies = std.array_list.Managed(PendingFunctionBody).init(alloc.*),
+            .function_body_worklist = std.array_list.Managed(usize).init(alloc.*),
             .signature_type_cache = std.AutoHashMap(SignatureTypeCacheKey, sg.Type).init(alloc.*),
             .generic_specializations = std.array_list.Managed(GenericSpecialization).init(alloc.*),
             .function_reach_stack = std.array_list.Managed(ReachFunctionContext).init(alloc.*),
@@ -328,6 +335,7 @@ pub const Semantizer = struct {
         retry_other_nodes: u32 = 0,
         generic_specializations_created: u32 = 0,
         generic_specialization_cache_hits: u32 = 0,
+        declared_function_bodies_semantized: u32 = 0,
 
         pub fn total(self: SemantizeTimings) u64 {
             return self.initial_pass_ns +
@@ -399,6 +407,8 @@ pub const Semantizer = struct {
         self.generic_specialization_cache_hits = 0;
         self.function_semantize_mode = .full;
         self.pending_function_bodies.items.len = 0;
+        self.function_body_worklist.items.len = 0;
+        self.discover_function_references = false;
 
         // 1) Pasada inicial: estabiliza primero top-level de soporte y sólo
         // después entra en funciones. Esto evita que los cuerpos se conviertan
@@ -566,6 +576,10 @@ pub const Semantizer = struct {
         timings.retry_other_nodes = self.retry_other_nodes;
         timings.generic_specializations_created = self.generic_specializations_created;
         timings.generic_specialization_cache_hits = self.generic_specialization_cache_hits;
+        timings.declared_function_bodies_semantized = 0;
+        for (self.pending_function_bodies.items) |pending| {
+            if (pending.state == .done) timings.declared_function_bodies_semantized += 1;
+        }
 
         self.root_nodes = try self.root_list.toOwnedSlice();
         self.root_list.deinit();
@@ -631,26 +645,56 @@ pub const Semantizer = struct {
         }
         timings.input_defaults_ns = @intCast(nowNs(self.io) - input_defaults_start);
 
-        // Output defaults belong to the body-facing execution state, so only
-        // stage them once every callable interface is complete.
-        const output_defaults_start = nowNs(self.io);
-        for (self.pending_function_bodies.items, 0..) |*pending, idx| {
+        if (self.options.exhaustive_function_bodies) {
+            for (self.pending_function_bodies.items) |pending| try self.enqueueFunctionBody(pending.function);
+            // The worklist is normally a dependency-first stack. Exhaustive
+            // checking deliberately retains declaration order so that it
+            // continues to provide the established whole-program diagnostic
+            // behavior.
+            std.mem.reverse(usize, self.function_body_worklist.items);
+        } else {
+            for (self.pending_function_bodies.items) |pending| {
+                const is_selected_test = self.options.selected_test_name != null and pending.is_test and
+                    std.mem.eql(u8, pending.function.name, self.options.selected_test_name.?);
+                const is_main = self.options.selected_test_name == null and !pending.is_test and
+                    std.mem.eql(u8, pending.function.name, "main");
+                if (is_selected_test or is_main) {
+                    try self.enqueueFunctionBody(pending.function);
+                    try self.enqueueEntrypointRuntimeFunctions(pending.function);
+                }
+            }
+        }
+
+        // Output defaults and bodies are discovered together. Calls resolved
+        // while processing either part extend the worklist.
+        var output_defaults_ns: u64 = 0;
+        var body_ns: u64 = 0;
+        const previous_defer_unknown = self.defer_unknown_top_level;
+        self.defer_unknown_top_level = false;
+        defer self.defer_unknown_top_level = previous_defer_unknown;
+        self.discover_function_references = true;
+        defer self.discover_function_references = false;
+        // Process as a stack, so a just-discovered dependency is semantized
+        // before an unrelated pending root. This matters for `#reach` and
+        // virtual dispatch: constructing a runtime value can materialize the
+        // concrete generic implementations needed by a later reachable call.
+        while (self.function_body_worklist.items.len > 0) {
+            const idx = self.function_body_worklist.pop().?;
             if (deferred[idx]) continue;
+            const pending = &self.pending_function_bodies.items[idx];
             self.current_top_node = pending.top_node;
+            const defaults_start = nowNs(self.io);
             self.prepareRegularFunctionBodyScope(pending, global) catch |err| switch (err) {
                 error.UnknownType, error.SymbolNotFound => {
                     try self.pushTopLevelForRetry();
                     deferred[idx] = true;
+                    continue;
                 },
                 else => return err,
             };
-        }
-        timings.output_defaults_ns = @intCast(nowNs(self.io) - output_defaults_start);
+            output_defaults_ns += @intCast(nowNs(self.io) - defaults_start);
 
-        const body_start = nowNs(self.io);
-        for (self.pending_function_bodies.items, 0..) |*pending, idx| {
-            if (deferred[idx]) continue;
-            self.current_top_node = pending.top_node;
+            const body_start = nowNs(self.io);
             self.semantizePreparedFunctionBody(pending) catch |err| switch (err) {
                 error.UnknownType, error.SymbolNotFound => {
                     try self.pushTopLevelForRetry();
@@ -658,10 +702,51 @@ pub const Semantizer = struct {
                 },
                 else => return err,
             };
+            body_ns += @intCast(nowNs(self.io) - body_start);
+            pending.state = .done;
         }
-        timings.body_ns = @intCast(nowNs(self.io) - body_start);
+        timings.output_defaults_ns = output_defaults_ns;
+        timings.body_ns = body_ns;
         self.current_top_node = null;
         return timings;
+    }
+
+    fn enqueueFunctionBody(self: *Semantizer, function: *const sg.FunctionDeclaration) !void {
+        for (self.pending_function_bodies.items, 0..) |*pending, idx| {
+            if (pending.function != function) continue;
+            if (pending.state != .unseen) return;
+            pending.state = .queued;
+            try self.function_body_worklist.append(idx);
+            return;
+        }
+    }
+
+    fn discoverFunctionReference(self: *Semantizer, function: *const sg.FunctionDeclaration) !void {
+        if (!self.discover_function_references) return;
+        try self.enqueueFunctionBody(function);
+    }
+
+    fn enqueueEntrypointRuntimeFunctions(self: *Semantizer, entry: *const sg.FunctionDeclaration) !void {
+        for (entry.input.fields) |entry_field| {
+            for (self.pending_function_bodies.items) |pending| {
+                const candidate = pending.function;
+                if (!std.mem.eql(u8, candidate.name, "init") and
+                    !std.mem.eql(u8, candidate.name, "deinit")) continue;
+                if (candidate.input.fields.len == 0) continue;
+                const receiver = candidate.input.fields[0].ty;
+                if (receiver != .pointer_type) continue;
+                if (!typ.typesExactlyEqual(receiver.pointer_type.child.*, entry_field.ty)) continue;
+
+                var callable_by_runtime = true;
+                for (candidate.input.fields[1..]) |field| {
+                    if (field.default_value == null) {
+                        callable_by_runtime = false;
+                        break;
+                    }
+                }
+                if (callable_by_runtime) try self.enqueueFunctionBody(candidate);
+            }
+        }
     }
 
     fn predeclareTopLevelSymbols(self: *Semantizer, global: *Scope) SemErr!void {
@@ -922,6 +1007,7 @@ pub const Semantizer = struct {
             .input = in_struct_ptr.*,
             .output = .{ .fields = try out_fields.toOwnedSlice() },
             .body = null,
+            .has_declared_body = decl.body != null,
             .uses_inferred_error_reasons = uses_inferred_error_reasons,
             .output_bindings = &.{},
         };
@@ -1885,6 +1971,7 @@ pub const Semantizer = struct {
             else => return err,
         };
 
+        try self.discoverFunctionReference(chosen);
         const fc_ptr = self.allocator.create(sg.FunctionCall) catch return null;
         fc_ptr.* = .{ .callee = chosen, .input = coerced_input.node };
         const call_node = sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator) catch return null;
@@ -4925,6 +5012,7 @@ pub const Semantizer = struct {
                 .input = in_struct_ptr.*,
                 .output = out_struct,
                 .body = null,
+                .has_declared_body = f.body != null,
                 .uses_inferred_error_reasons = uses_inferred_error_reasons,
                 .input_bindings = input_binding_slice,
                 .output_bindings = output_binding_slice,
@@ -5129,6 +5217,7 @@ pub const Semantizer = struct {
                 cand.input = in_struct_ptr.*;
                 cand.output = out_struct;
                 cand.is_test = is_test;
+                cand.has_declared_body = f.body != null;
                 cand.uses_inferred_error_reasons = uses_inferred_error_reasons;
                 cand.input_bindings = input_binding_slice;
                 cand.output_bindings = output_binding_slice;
@@ -5147,6 +5236,7 @@ pub const Semantizer = struct {
                 .input = in_struct_ptr.*,
                 .output = out_struct,
                 .body = null,
+                .has_declared_body = f.body != null,
                 .uses_inferred_error_reasons = uses_inferred_error_reasons,
                 .input_bindings = input_binding_slice,
                 .output_bindings = output_binding_slice,
@@ -6749,6 +6839,7 @@ pub const Semantizer = struct {
             try self.addMissingFunctionDiagnostic(name, input_te.ty, s, call_loc);
             return error.Reported;
         };
+        try self.discoverFunctionReference(chosen_fn);
         input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, index_node, s);
 
         const call_ptr = try self.allocator.create(sg.FunctionCall);
@@ -6899,6 +6990,7 @@ pub const Semantizer = struct {
             try self.addMissingFunctionDiagnostic(name, input_te.ty, s, ia.target.*.location);
             return error.Reported;
         };
+        try self.discoverFunctionReference(chosen_fn);
         input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, ia.target, s);
 
         const call_ptr = try self.allocator.create(sg.FunctionCall);
@@ -7091,6 +7183,11 @@ pub const Semantizer = struct {
             if (!known) try abstract_info.virtual_methods[index].implementations.append(methods[index]);
         }
         try self.registerKnownVirtualImplementations(abstract_info, s);
+        for (abstract_info.virtual_methods) |registry| {
+            for (registry.implementations.items) |implementation| {
+                try self.discoverFunctionReference(implementation);
+            }
+        }
         const virtualize = try self.allocator.create(sg.Virtualize);
         virtualize.* = .{
             .value = value.node,
@@ -7309,6 +7406,7 @@ pub const Semantizer = struct {
             },
         };
         const coerced_input = try self.coerceCallInputToExpected(&chosen.input, tv_in, call.input, s);
+        try self.discoverFunctionReference(chosen);
         const consumed_auto_deinit = self.explicitDeinitAutoCleanupTarget(chosen, coerced_input, s);
 
         const fc_ptr = try self.allocator.create(sg.FunctionCall);
@@ -7376,6 +7474,9 @@ pub const Semantizer = struct {
                 }
                 if (!compatible) continue;
                 const coerced_input = try self.coerceCallInputToExpected(&requirement.input, input, call.input, s);
+                for (info.virtual_methods[method_index].implementations.items) |implementation| {
+                    try self.discoverFunctionReference(implementation);
+                }
                 if (coerced_input.node.content != .struct_value_literal) return error.InvalidType;
                 const coerced_value = coerced_input.node.content.struct_value_literal;
                 const virtual_call = try self.allocator.create(sg.VirtualCall);
@@ -8670,6 +8771,7 @@ pub const Semantizer = struct {
                 loc,
             );
             input_te = try self.coerceCallInputToExpected(&chosen.input, input_te, call.input, s);
+            try self.discoverFunctionReference(chosen);
 
             const fc_ptr = try self.allocator.create(sg.FunctionCall);
             fc_ptr.* = .{ .callee = chosen, .input = input_te.node };
@@ -9698,6 +9800,7 @@ pub const Semantizer = struct {
             };
         };
 
+        try self.discoverFunctionReference(init_fn);
         const expected_user_fields = try self.allocator.alloc(sg.StructTypeField, init_fn.input.fields.len - 1);
         std.mem.copyForwards(sg.StructTypeField, expected_user_fields, init_fn.input.fields[1..]);
         const expected_user_struct = try self.allocator.create(sg.StructType);
@@ -10990,6 +11093,7 @@ pub const Semantizer = struct {
             .input = in_struct_ptr.*,
             .output = out_struct_ptr.*,
             .body = null,
+            .has_declared_body = tmpl.body != null,
         };
 
         var child = try Scope.init(self.allocator, s, s.current_fn);
@@ -11287,6 +11391,7 @@ pub const Semantizer = struct {
             }
 
             if (chosen) |chosen_fn| {
+                try self.discoverFunctionReference(chosen_fn);
                 input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, bo.left, s);
 
                 const result_ty = typ.functionReturnType(chosen_fn);
@@ -11375,6 +11480,7 @@ pub const Semantizer = struct {
             }
 
             if (chosen) |chosen_fn| {
+                try self.discoverFunctionReference(chosen_fn);
                 input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, c.left, s);
 
                 const result_ty = typ.functionReturnType(chosen_fn);
@@ -13856,6 +13962,7 @@ pub const Semantizer = struct {
         if (s.parent == null) return;
         if (typeCanHaveVisibleAutoDeinit(binding.ty)) {
             if (try self.findVisibleAutoDeinit(binding, loc, s)) |resolved| {
+                try self.discoverFunctionReference(resolved.function);
                 const auto_ptr = try self.allocator.create(sg.AutoDeinitBinding);
                 auto_ptr.* = .{
                     .binding = binding,
@@ -13873,6 +13980,7 @@ pub const Semantizer = struct {
 
         const fields = try buildStructuralAutoDeinitFields(self, binding.ty, loc, s, self.allocator);
         if (fields.len == 0) return;
+        try self.discoverAutoDeinitFieldFunctions(fields);
         const auto_ptr = try self.allocator.create(sg.AutoDeinitBinding);
         auto_ptr.* = .{
             .binding = binding,
@@ -13883,6 +13991,13 @@ pub const Semantizer = struct {
 
         const call_node = try sg.makeSGNode(.{ .auto_deinit_binding = auto_ptr }, loc, self.allocator);
         try self.registerDefer(s, &[_]*sg.SGNode{call_node});
+    }
+
+    fn discoverAutoDeinitFieldFunctions(self: *Semantizer, fields: []const sg.AutoDeinitField) !void {
+        for (fields) |field| {
+            if (field.deinit_fn) |function| try self.discoverFunctionReference(function);
+            try self.discoverAutoDeinitFieldFunctions(field.fields);
+        }
     }
 
     // ─────────────────────────────────────────────────── Helpers reintento
