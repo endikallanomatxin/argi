@@ -117,6 +117,7 @@ pub const CodeGenerator = struct {
         semantic_functions: usize = 0,
         llvm_functions_with_body: usize = 0,
         reachable_llvm_functions_with_body: usize = 0,
+        pruned_llvm_function_bodies: usize = 0,
         basic_blocks: usize = 0,
         instructions: usize = 0,
         ir_bytes: usize = 0,
@@ -142,6 +143,7 @@ pub const CodeGenerator = struct {
     runtime_argv_global: ?llvm.c.LLVMValueRef = null,
     string_literal_counter: u32 = 0,
     virtual_table_counter: u32 = 0,
+    pruned_function_bodies: usize = 0,
 
     loop_stack: std.array_list.Managed(LoopContext),
     binding_storage: std.AutoHashMap(*const sem.BindingDeclaration, BindingStorage),
@@ -211,13 +213,10 @@ pub const CodeGenerator = struct {
             else => {},
         };
 
-        var defined = std.AutoHashMap(llvm.c.LLVMValueRef, void).init(self.allocator.*);
-        defer defined.deinit();
         var function = c.LLVMGetFirstFunction(self.module);
         while (function != null) : (function = c.LLVMGetNextFunction(function)) {
             if (c.LLVMGetFirstBasicBlock(function) == null) continue;
             stats.llvm_functions_with_body += 1;
-            try defined.put(function, {});
 
             var block = c.LLVMGetFirstBasicBlock(function);
             while (block != null) : (block = c.LLVMGetNextBasicBlock(block)) {
@@ -228,8 +227,28 @@ pub const CodeGenerator = struct {
             }
         }
 
-        var reachable = std.AutoHashMap(llvm.c.LLVMValueRef, void).init(self.allocator.*);
+        var reachable = try self.computeReachableFunctionBodies();
         defer reachable.deinit();
+        stats.reachable_llvm_functions_with_body = reachable.count();
+        stats.pruned_llvm_function_bodies = self.pruned_function_bodies;
+
+        const ir = c.LLVMPrintModuleToString(self.module);
+        if (ir != null) {
+            stats.ir_bytes = std.mem.span(ir).len;
+            c.LLVMDisposeMessage(ir);
+        }
+        return stats;
+    }
+
+    fn computeReachableFunctionBodies(self: *const CodeGenerator) !std.AutoHashMap(llvm.c.LLVMValueRef, void) {
+        var defined = std.AutoHashMap(llvm.c.LLVMValueRef, void).init(self.allocator.*);
+        defer defined.deinit();
+        var function = c.LLVMGetFirstFunction(self.module);
+        while (function != null) : (function = c.LLVMGetNextFunction(function))
+            if (c.LLVMGetFirstBasicBlock(function) != null) try defined.put(function, {});
+
+        var reachable = std.AutoHashMap(llvm.c.LLVMValueRef, void).init(self.allocator.*);
+        errdefer reachable.deinit();
         var worklist = std.array_list.Managed(llvm.c.LLVMValueRef).init(self.allocator.*);
         defer worklist.deinit();
         // Start at the executable wrapper and conservatively retain every
@@ -279,14 +298,23 @@ pub const CodeGenerator = struct {
                 }
             }
         }
-        stats.reachable_llvm_functions_with_body = reachable.count();
+        return reachable;
+    }
 
-        const ir = c.LLVMPrintModuleToString(self.module);
-        if (ir != null) {
-            stats.ir_bytes = std.mem.span(ir).len;
-            c.LLVMDisposeMessage(ir);
+    fn pruneUnreachableFunctionBodies(self: *CodeGenerator) !void {
+        // Lowering all functions first keeps symbol resolution and indirect
+        // dispatch conservative. Removing dead bodies here leaves their
+        // declarations intact while keeping them out of LLVM object emission.
+        if (c.LLVMGetNamedFunction(self.module, "main") == null) return;
+        var reachable = try self.computeReachableFunctionBodies();
+        defer reachable.deinit();
+
+        var function = c.LLVMGetFirstFunction(self.module);
+        while (function != null) : (function = c.LLVMGetNextFunction(function)) {
+            if (c.LLVMGetFirstBasicBlock(function) == null or reachable.contains(function)) continue;
+            while (c.LLVMGetFirstBasicBlock(function)) |block| c.LLVMDeleteBasicBlock(block);
+            self.pruned_function_bodies += 1;
         }
-        return stats;
     }
 
     // ──── Scope helpers ─────────────────────────────────────────
@@ -321,6 +349,8 @@ pub const CodeGenerator = struct {
         } else if (self.main_candidate) |f| {
             try self.genCMainWrapper(f);
         }
+
+        try self.pruneUnreachableFunctionBodies();
 
         var msg: [*c]u8 = null;
         const failed = c.LLVMVerifyModule(self.module, c.LLVMReturnStatusAction, &msg) != 0;
