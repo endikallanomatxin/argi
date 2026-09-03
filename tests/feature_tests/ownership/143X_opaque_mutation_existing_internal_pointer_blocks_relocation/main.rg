@@ -15,7 +15,7 @@ main(.system: System) -> (.status_code: Int32) := {
             destination_slot ::= mutable_reference_offset#(.t: AddressSensitive)(.base = source_slot, .elements = 1).reference
             value :: AddressSensitive = (.next = ..none)
 
-            trusted_opaque_store(.destination = source_slot, .source = ~value)
+            trusted_opaque_move(.destination = source_slot, .source = ~value)
             internal ::= mutable_reinterpret_reference#(.from: AddressSensitive, .to: UInt8)(.base = source_slot).reference
             source_slot&.next = ..some(.value = internal)
             trusted_opaque_relocate(.source = source_slot, .destination = destination_slot)

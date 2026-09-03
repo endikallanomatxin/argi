@@ -38,22 +38,22 @@ pub const ValueFacts = struct {
     known_choice_variant: ?u32 = null,
     integer_address: bool = false,
     foreign_storage: bool = false,
-    storage_authorities: []const StorageCapabilityId = &.{},
+    storage_capabilities: []const StorageCapabilityId = &.{},
     referenced_place: ?place.Place = null,
     /// Aggregate provenance for a pointer that accesses opaque storage
     /// domains. It identifies mutation destinations while the pointer is used
     /// for access and storage-generation dependencies when used as data.
     /// Entries identify domains, never individual slots.
-    opaque_origins: []const OpaqueProvenance = &.{},
+    opaque_provenance: []const OpaqueProvenance = &.{},
 
     pub fn referenceCopy(self: ValueFacts) ValueFacts {
         return .{
             .dependencies = self.dependencies,
             .integer_address = self.integer_address,
             .foreign_storage = self.foreign_storage,
-            .storage_authorities = self.storage_authorities,
+            .storage_capabilities = self.storage_capabilities,
             .referenced_place = self.referenced_place,
-            .opaque_origins = self.opaque_origins,
+            .opaque_provenance = self.opaque_provenance,
         };
     }
 };
@@ -113,7 +113,7 @@ pub const ValueEffect = struct {
     /// caller value as temporal dependencies of this output.
     opaque_generation_dependencies: []const InputPath = &.{},
     /// Opaque take operations recover the domain's conservatively hidden
-    /// borrows. The domain remains imprecise and release_all is still needed
+    /// borrows. The domain remains imprecise and mark_empty is still needed
     /// when its runtime slots are all empty.
     opaque_storage_dependencies: []const InputPath = &.{},
     fields: []const OutputFieldEffect = &.{},
@@ -126,7 +126,7 @@ pub const ValueEffect = struct {
     fresh_owned_roots: []const FreshRootSource = &.{},
     integer_address: bool = false,
     foreign_storage: bool = false,
-    fresh_storage_authorities: []const FreshRootSource = &.{},
+    fresh_storage_capabilities: []const FreshRootSource = &.{},
 };
 
 pub const OutputVariantEffect = struct {
@@ -174,7 +174,7 @@ pub const SafetySummary = struct {
     opaque_storage_effects: []const OpaqueStorageEffect = &.{},
     /// Domains whose opaque runtime contents are definitely gone on return.
     /// This clears only their conservative hidden temporal dependencies.
-    opaque_storage_releases: []const InputPath = &.{},
+    opaque_storage_empties: []const InputPath = &.{},
 };
 
 /// A storage domain conservatively gains the dependencies described by

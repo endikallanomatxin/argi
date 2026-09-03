@@ -1,9 +1,9 @@
 -- Explicit trusted ownership boundaries usable by any library. The checker
 -- still enforces every invariant it can prove; callers maintain runtime-slot
 -- initializedness and exactly-once destruction manually. In particular,
--- drop_owned requires exactly one live value that has not already been taken
+-- trusted_opaque_drop requires exactly one live value that has not already been taken
 -- or dropped; opaque slots intentionally have no dynamic occupancy tracking.
-trusted_opaque_store#(.t: Type)(.destination: $&t, .source: t) -> () := {
+trusted_opaque_move#(.t: Type)(.destination: $&t, .source: t) -> () := {
     destination& = source
 }
 
@@ -31,7 +31,7 @@ trusted_opaque_move_out#(.t: Type, .storage_type: Type)(.storage: $&storage_type
 -- destination. The caller must ensure that `source` is live, `destination`
 -- is empty, and the two slots are distinct.
 --
--- Passing store_owned once is not a permanent relocatability proof. Relocation
+-- Passing trusted_opaque_move_in once is not a permanent relocatability proof. Relocation
 -- is rejected when current aggregate facts show that later mutation introduced
 -- a dependency on the source opaque domain's storage generation.
 trusted_opaque_relocate#(.t: Type)(.source: $&t, .destination: $&t) -> () := {

@@ -412,7 +412,7 @@ pub const SafetyPrimitive = enum {
     mutable_reinterpret_reference,
     read_reference,
     restrict_reference,
-    trusted_opaque_store,
+    trusted_opaque_move,
     trusted_opaque_move_in,
     trusted_opaque_move_out,
     trusted_opaque_relocate,

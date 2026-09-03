@@ -1,9 +1,9 @@
 store_wrapper#(.t: Type)(.slot: $&t, .value: t) -> () := {
-    trusted_opaque_store#(.t: t)(.destination = slot, .source = ~value)
+    trusted_opaque_move#(.t: t)(.destination = slot, .source = ~value)
 }
 
 inner#(.t: Type)(.slot: $&t, .value: t) -> () := {
-    trusted_opaque_store#(.t: t)(.destination = slot, .source = ~value)
+    trusted_opaque_move#(.t: t)(.destination = slot, .source = ~value)
 }
 
 outer#(.t: Type)(.slot: $&t, .value: t) -> () := {
