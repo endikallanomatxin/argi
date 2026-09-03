@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const sf = @import("../1_base/source_files.zig");
+const source_db = @import("../1_base/source_db.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const token = @import("../2_tokens/token.zig");
 const tokenizer = @import("../2_tokens/tokenizer.zig");
@@ -15,6 +16,11 @@ const safety_checker = @import("../4_semantics/safety_checker.zig");
 // tokenizing/syntaxing/semantizing path so architectural changes in the
 // compiler do not fork into subtly different command-specific pipelines.
 pub const FrontendPipeline = struct {
+    pub const FileTokens = struct {
+        file_id: source_db.FileId,
+        tokens: []const token.Token,
+    };
+
     pub const Options = struct {
         semantizer: semantizer.SemantizerOptions = .{},
         collect_stats: bool = false,
@@ -24,7 +30,9 @@ pub const FrontendPipeline = struct {
     io: std.Io,
     diagnostics: *diag.Diagnostics,
     options: Options,
-    tokens: std.array_list.Managed(token.Token),
+    source_db: source_db.SourceDb = .{},
+    token_files: std.array_list.Managed(FileTokens),
+    st_list: std.array_list.Managed(*st.STNode),
     syntax_ctx: ?syntaxer.Syntaxer = null,
     sem_ctx: ?semantizer.Semantizer = null,
     safety_ctx: ?safety_checker.SafetyChecker = null,
@@ -46,41 +54,67 @@ pub const FrontendPipeline = struct {
             .io = io,
             .diagnostics = diagnostics,
             .options = options,
-            .tokens = std.array_list.Managed(token.Token).init(allocator),
+            .token_files = std.array_list.Managed(FileTokens).init(allocator),
+            .st_list = std.array_list.Managed(*st.STNode).init(allocator),
         };
     }
 
     pub fn deinit(self: *FrontendPipeline) void {
         if (self.safety_ctx) |*ctx| ctx.deinit();
-        self.tokens.deinit();
+        for (self.token_files.items) |file_tokens| self.allocator.free(file_tokens.tokens);
+        self.token_files.deinit();
+        self.st_list.deinit();
     }
 
     pub fn tokenizeFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !void {
-        self.tokens.clearRetainingCapacity();
+        for (self.token_files.items) |file_tokens| self.allocator.free(file_tokens.tokens);
+        self.token_files.clearRetainingCapacity();
+        self.source_db = try source_db.SourceDb.init(self.allocator, files);
 
-        for (files, 0..) |source_file, idx| {
+        for (files, 0..) |source_file, index| {
             var tokenizer_ctx = tokenizer.Tokenizer.init(
                 self.allocator,
                 self.diagnostics,
                 source_file.code,
                 source_file.path,
             );
-            const token_slice = try tokenizer_ctx.tokenize();
-
-            const slice = if (idx == files.len - 1)
-                token_slice
-            else
-                token_slice[0 .. token_slice.len - 1];
-
-            try self.tokens.appendSlice(slice);
+            _ = try tokenizer_ctx.tokenize();
+            try self.token_files.append(.{
+                .file_id = self.source_db.fileId(index),
+                .tokens = try tokenizer_ctx.takeTokens(),
+            });
         }
     }
 
     pub fn syntax(self: *FrontendPipeline) ![]const *st.STNode {
-        self.syntax_ctx = syntaxer.Syntaxer.init(self.allocator, self.tokens.items, self.diagnostics);
-        self.st_nodes = try self.syntax_ctx.?.parse();
-        self.st_node_count = self.syntax_ctx.?.nodeCount();
+        self.st_list.clearRetainingCapacity();
+        self.st_node_count = 0;
+        for (self.token_files.items) |file_tokens| {
+            self.syntax_ctx = syntaxer.Syntaxer.init(self.allocator, file_tokens.tokens, self.diagnostics);
+            const nodes = try self.syntax_ctx.?.parse();
+            try self.st_list.appendSlice(nodes);
+            self.st_node_count += self.syntax_ctx.?.nodeCount();
+        }
+        self.st_nodes = self.st_list.items;
         return self.st_nodes;
+    }
+
+    pub fn tokenCount(self: *const FrontendPipeline) usize {
+        var count: usize = 0;
+        for (self.token_files.items) |file_tokens| count += file_tokens.tokens.len;
+        return count;
+    }
+
+    pub fn tokenStorageBytes(self: *const FrontendPipeline) usize {
+        return self.tokenCount() * @sizeOf(token.Token);
+    }
+
+    pub fn tokensForPath(self: *const FrontendPipeline, path: []const u8) ?[]const token.Token {
+        const file_id = self.source_db.findPath(path) orelse return null;
+        for (self.token_files.items) |file_tokens| {
+            if (file_tokens.file_id == file_id) return file_tokens.tokens;
+        }
+        return null;
     }
 
     pub fn parseFiles(self: *FrontendPipeline, files: []const sf.SourceFile) ![]const *st.STNode {

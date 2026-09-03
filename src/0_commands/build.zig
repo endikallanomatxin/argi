@@ -147,11 +147,15 @@ fn parseFlags(args: []const []const u8) !BuildFlags {
     return parsed.flags;
 }
 
-fn printTokenList(all: []const token.Token) void {
+fn printTokenList(files: []const frontend.FrontendPipeline.FileTokens) void {
     std.debug.print("\nTOKENS\n", .{});
-    for (all, 0..) |t, i| {
-        std.debug.print("{d}: ", .{i});
-        tokp.printTokenWithLocation(t, t.location);
+    var index: usize = 0;
+    for (files) |file_tokens| {
+        for (file_tokens.tokens) |t| {
+            std.debug.print("{d}: ", .{index});
+            tokp.printTokenWithLocation(t, t.location);
+            index += 1;
+        }
     }
 }
 
@@ -218,7 +222,8 @@ fn printCompilerStats(
 
     std.debug.print("Frontend\n", .{});
     std.debug.print("  source files: {d}\n", .{file_count});
-    std.debug.print("  tokens:       {d}\n", .{pipeline.tokens.items.len});
+    std.debug.print("  tokens:       {d}\n", .{pipeline.tokenCount()});
+    std.debug.print("  token bytes:  {d} ({d} each)\n", .{ pipeline.tokenStorageBytes(), @sizeOf(token.Token) });
     std.debug.print("  ST nodes:     {d}\n", .{pipeline.st_node_count});
     std.debug.print("  SG nodes:     {d}\n", .{pipeline.sg_node_count});
 
@@ -662,7 +667,7 @@ fn compileResolvedPlan(
     const tokenize_start = nowNs(io);
     pipeline.tokenizeFiles(files.items) catch {
         timings.tokenize_ns = elapsedSince(io, tokenize_start);
-        if (flags.show_token_list) printTokenList(pipeline.tokens.items);
+        if (flags.show_token_list) printTokenList(pipeline.token_files.items);
         dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
         return error.CompilationFailed;
     };
@@ -672,7 +677,7 @@ fn compileResolvedPlan(
     const syntax_start = nowNs(io);
     _ = pipeline.syntax() catch {
         timings.syntax_ns = elapsedSince(io, syntax_start);
-        if (flags.show_token_list) printTokenList(pipeline.tokens.items);
+        if (flags.show_token_list) printTokenList(pipeline.token_files.items);
         if (pipeline.syntax_ctx) |*syntax_ctx| {
             if (flags.show_syntax_tree) syntax_ctx.printST();
         }
@@ -685,7 +690,7 @@ fn compileResolvedPlan(
     const semantizing_start = nowNs(io);
     const sg = pipeline.semantize() catch |err| {
         timings.semantizing_ns = elapsedSince(io, semantizing_start);
-        if (flags.show_token_list) printTokenList(pipeline.tokens.items);
+        if (flags.show_token_list) printTokenList(pipeline.token_files.items);
         if (pipeline.syntax_ctx) |*syntax_ctx| {
             if (flags.show_syntax_tree) syntax_ctx.printST();
         }
@@ -701,7 +706,7 @@ fn compileResolvedPlan(
 
     // 6. Si hubo errores semánticos, parar antes de codegen ───────────────
     if (diagnostics.hasErrors()) {
-        if (flags.show_token_list) printTokenList(pipeline.tokens.items);
+        if (flags.show_token_list) printTokenList(pipeline.token_files.items);
         if (pipeline.syntax_ctx) |*syntax_ctx| {
             if (flags.show_syntax_tree) syntax_ctx.printST();
         }
@@ -727,7 +732,7 @@ fn compileResolvedPlan(
     defer gen.deinit();
     const module = gen.generate() catch {
         timings.codegen_ns = elapsedSince(io, codegen_start);
-        if (flags.show_token_list) printTokenList(pipeline.tokens.items);
+        if (flags.show_token_list) printTokenList(pipeline.token_files.items);
         if (pipeline.sem_ctx) |*semantizer_ctx| {
             if (flags.show_semantic_graph) semantizer_ctx.printSG();
         }
