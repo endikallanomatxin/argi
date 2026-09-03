@@ -188,6 +188,10 @@ fn printSemantizingTimings(timings: semantizer_mod.Semantizer.SemantizeTimings) 
         timings.retry_symbol_nodes,
         timings.retry_other_nodes,
     });
+    std.debug.print("  generic specializations: created={d} reused={d}\n", .{
+        timings.generic_specializations_created,
+        timings.generic_specialization_cache_hits,
+    });
     std.debug.print("  final retry resolve:   {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.final_retry_resolution_ns)) / 1_000_000.0});
     std.debug.print("  verify abstracts:      {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.abstract_verify_ns)) / 1_000_000.0});
     std.debug.print("  verify once:           {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.once_verify_ns)) / 1_000_000.0});
