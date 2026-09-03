@@ -4716,6 +4716,12 @@ test "feature_tests/polymorphism/34X_static_abstract_generic_field_identity" {
     );
 }
 
+test "feature_tests/polymorphism/35_generic_specialization_cache_nominal_identity" {
+    const test_path = "tests/feature_tests/polymorphism/35_generic_specialization_cache_nominal_identity";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 12);
+}
+
 test "feature_tests/text/10_string_view_c_string_storage" {
     const test_path = "tests/feature_tests/text/10_string_view_c_string_storage";
     try expectSuccessfulBuild(test_path);
