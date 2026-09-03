@@ -39,11 +39,14 @@ pub const AbstractInfo = struct {
 };
 pub const AbstractImplEntry = struct {
     ty: sg.Type,
+    args: []const ?sg.Type = &.{},
     location: tok.Location,
 };
 pub const AbstractImplTemplate = struct {
     params: []const gen.GenericParam,
+    param_abstract_constraints: []const ?gen.AbstractConstraint,
     ty: syn.Type,
+    args: ?syn.StructTypeLiteral,
     location: tok.Location,
 };
 pub const AbstractDefaultEntry = struct {
@@ -67,7 +70,7 @@ const MissingRequirementContext = struct {
     location: tok.Location,
 };
 
-const TemplateBindings = struct {
+pub const TemplateBindings = struct {
     allocator: *const std.mem.Allocator,
     types: std.StringHashMap(sg.Type),
     ints: std.StringHashMap(i64),
@@ -80,7 +83,7 @@ const TemplateBindings = struct {
         };
     }
 
-    fn deinit(self: *TemplateBindings) void {
+    pub fn deinit(self: *TemplateBindings) void {
         self.types.deinit();
         self.ints.deinit();
     }
@@ -175,7 +178,10 @@ fn matchTemplateType(pattern: syn.Type, actual: sg.Type, params: []const gen.Gen
             // `Errable#(.t: ..., .reasons: ...)` spelling.  Semantic types
             // retain the canonical generic identity, so compare its value
             // type here instead of rejecting every abstract Errable result.
-            const choice = switch (actual) { .choice_type => |value| value, else => break :blk false };
+            const choice = switch (actual) {
+                .choice_type => |value| value,
+                else => break :blk false,
+            };
             for (choice.variants) |variant| {
                 if (!std.mem.eql(u8, variant.name, "ok")) continue;
                 const payload = variant.payload_type orelse break :blk false;
@@ -234,10 +240,34 @@ fn matchGenericInstantiationType(
     return matchCanonicalGenericInstantiation(g, actual, params, bindings);
 }
 
-fn templateImplementsCandidate(tmpl: AbstractImplTemplate, candidate: sg.Type, allocator: *const std.mem.Allocator) bool {
+pub fn matchAbstractImplTemplate(tmpl: AbstractImplTemplate, candidate: sg.Type, allocator: *const std.mem.Allocator) ?TemplateBindings {
     var bindings = TemplateBindings.init(allocator);
+    if (!matchTemplateType(tmpl.ty, candidate, tmpl.params, &bindings)) {
+        bindings.deinit();
+        return null;
+    }
+    return bindings;
+}
+
+fn abstractImplTemplateBindingsSatisfyConstraints(
+    tmpl: AbstractImplTemplate,
+    bindings: *const TemplateBindings,
+    s: *Scope,
+) bool {
+    for (tmpl.param_abstract_constraints, 0..) |constraint_opt, i| {
+        const constraint = constraint_opt orelse continue;
+        const param = tmpl.params[i];
+        if (param.kind != .type) continue;
+        const actual = bindings.types.get(param.name) orelse return false;
+        if (!typeImplementsAbstract(constraint.name, actual, s)) return false;
+    }
+    return true;
+}
+
+fn templateImplementsCandidate(tmpl: AbstractImplTemplate, candidate: sg.Type, s: *Scope) bool {
+    var bindings = matchAbstractImplTemplate(tmpl, candidate, s.allocator) orelse return false;
     defer bindings.deinit();
-    return matchTemplateType(tmpl.ty, candidate, tmpl.params, &bindings);
+    return abstractImplTemplateBindingsSatisfyConstraints(tmpl, &bindings, s);
 }
 
 pub fn typeImplementsAbstract(
@@ -262,7 +292,7 @@ pub fn typeImplementsAbstract(
         if (sc.abstract_impl_templates.getPtr(abs_name)) |list_ptr| {
             const templates = list_ptr.*;
             for (templates.items) |tmpl| {
-                if (templateImplementsCandidate(tmpl, candidate, s.allocator)) return true;
+                if (templateImplementsCandidate(tmpl, candidate, s)) return true;
             }
         }
     }
@@ -456,6 +486,11 @@ pub fn funcInputMatchesRequirement(
 
         if (!typ.typesExactlyEqual(rf.ty, cf.ty)) return false;
     }
+    for (rq.abstract_param_names, 0..) |name, param_index| {
+        if (param_index >= param_bindings.len) continue;
+        const inferred = nested_bindings.types.get(name) orelse continue;
+        if (!typ.isAny(inferred)) param_bindings[param_index] = inferred;
+    }
     return true;
 }
 
@@ -520,6 +555,11 @@ pub fn funcOutputMatchesRequirement(
         }
 
         if (!typ.typesExactlyEqual(ro.ty, co.ty)) return false;
+    }
+    for (rq.abstract_param_names, 0..) |name, param_index| {
+        if (param_index >= param_bindings.len) continue;
+        const inferred = nested_bindings.types.get(name) orelse continue;
+        if (!typ.isAny(inferred)) param_bindings[param_index] = inferred;
     }
     return true;
 }
@@ -759,7 +799,7 @@ fn templateBindingsSatisfyConstraints(
         const param = tmpl.params[i];
         if (param.kind != .type) continue;
         const actual = bindings.types.get(param.name) orelse return false;
-        if (!typeImplementsAbstract(constraint, actual, s)) return false;
+        if (!typeImplementsAbstract(constraint.name, actual, s)) return false;
     }
     return true;
 }

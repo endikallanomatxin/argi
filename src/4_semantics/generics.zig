@@ -28,12 +28,17 @@ pub const GenericValueBinding = struct {
     value: GenericArgValue,
 };
 
+pub const AbstractConstraint = struct {
+    name: []const u8,
+    args: ?syn.StructTypeLiteral = null,
+};
+
 // Generic function template used for monomorphization
 pub const GenericTemplate = struct {
     name: []const u8,
     location: tok.Location,
     params: []const GenericParam,
-    param_abstract_constraints: []const ?[]const u8,
+    param_abstract_constraints: []const ?AbstractConstraint,
     dispatch_kind: GenericDispatchKind = .regular,
     input: syn.StructTypeLiteral,
     output: syn.StructTypeLiteral,
@@ -45,6 +50,6 @@ pub const GenericTypeTemplate = struct {
     name: []const u8,
     location: tok.Location,
     params: []const GenericParam,
-    param_abstract_constraints: []const ?[]const u8,
+    param_abstract_constraints: []const ?AbstractConstraint,
     body: *syn.STNode,
 };

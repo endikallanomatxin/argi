@@ -92,12 +92,18 @@ copy #(.t: Type: InfalliblyCopyable) (
 
 DynamicArray#(.t: Type: InfalliblyCopyable) implements FalliblyCopyable#(.reasons: (..out_of_memory))
 
-copy (
-    .self: &DynamicArray#(.t: String),
+copy #(
+    .t: Type: FalliblyCopyable#(.reasons: element_reasons),
+    .element_reasons: Type,
+) (
+    .self: &DynamicArray#(.t: t),
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> (.result: Errable#(.t: DynamicArray#(.t: String), .reasons: (..out_of_memory))) := {
-    out :: DynamicArray#(.t: String)
-    initialized ::= init#(.t: String)(.p = $&out, .allocator = allocator, .capacity = self&.length)
+) -> (.result: Errable#(
+    .t: DynamicArray#(.t: t),
+    .reasons: choice_union#(.a: element_reasons, .b: (..out_of_memory)),
+)) := {
+    out :: DynamicArray#(.t: t)
+    initialized ::= init#(.t: t)(.p = $&out, .allocator = allocator, .capacity = self&.length)
     if is(.value = initialized, .variant = ..error) {
         result = ..error(.reason = ..out_of_memory)
         return
@@ -105,29 +111,17 @@ copy (
 
     i :: UIntNative = 0
     while i < self&.length {
-        ptr ::= dynamic_array_element_ro_pointer#(.t: String)(.array = self, .offset = i).pointer
-        copied ::= copy(.self = ptr, .allocator = allocator)
-        match copied {
-            ..error _ {
-                -- `out.length` counts only copies already moved into opaque
-                -- storage, so this destroys precisely the completed prefix.
-                deinit#(.t: String)(.allocator = allocator, .self = $&out)
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-            ..ok ~ element {
-                push_assume_capacity#(.t: String)(.self = $&out, .value = ~element)
-            }
-        }
+        ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
+        element ::= copy(.self = ptr)!
+        push_assume_capacity#(.t: t)(.self = $&out, .value = ~element)
         i = i + 1
     }
     result = ..ok ~out
 }
 
--- Parameterized abstract constraints currently retain the abstract identity
--- but not its `reasons` argument during generic dispatch. Keep this overload
--- concrete until a generic implementation can prove compatible error reasons.
-DynamicArray#(.t: String) implements FalliblyCopyable#(.reasons: (..out_of_memory))
+DynamicArray#(.t: Type: FalliblyCopyable#(.reasons: element_reasons)) implements FalliblyCopyable#(
+    .reasons: choice_union#(.a: element_reasons, .b: (..out_of_memory)),
+)
 
 dynamic_array_element_ro_pointer #(.t: Type) (
     .array: &DynamicArray#(.t: t),
