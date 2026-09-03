@@ -1204,7 +1204,7 @@ fn coerceChoiceLiteral(
             return error.Reported;
         };
         if (std.mem.startsWith(u8, variant_name, "_")) {
-            const requester_dir = std.fs.path.dirname(loc.file) orelse ".";
+            const requester_dir = std.fs.path.dirname(diags.path(loc)) orelse ".";
             if (!std.mem.eql(u8, requester_dir, module_dir)) {
                 try diags.add(loc, .semantic, "choice option '{s}' is private to its module", .{variant_name});
                 return error.Reported;

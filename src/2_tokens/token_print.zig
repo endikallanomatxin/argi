@@ -1,7 +1,7 @@
 const std = @import("std");
 const tok = @import("token.zig");
 
-pub fn printToken(token: tok.Token) void {
+pub fn printToken(token: tok.Token, source: []const u8) void {
     switch (token.content) {
         .eof => {
             std.debug.print("eof\n", .{});
@@ -9,11 +9,11 @@ pub fn printToken(token: tok.Token) void {
         .new_line => {
             std.debug.print("new_line\n", .{});
         },
-        .comment => |val| {
-            std.debug.print("comment: {s}\n", .{val});
+        .comment => |range| {
+            std.debug.print("comment: {s}\n", .{range.slice(source)});
         },
-        .identifier => |val| {
-            std.debug.print("identifier: {s}\n", .{val});
+        .identifier => |range| {
+            std.debug.print("identifier: {s}\n", .{range.slice(source)});
         },
         .open_parenthesis => {
             std.debug.print("open_parenthesis\n", .{});
@@ -89,29 +89,29 @@ pub fn printToken(token: tok.Token) void {
                 .bool_literal => |val| {
                     std.debug.print("bool_literal: {}\n", .{val});
                 },
-                .decimal_int_literal => |val| {
-                    std.debug.print("decimal_int_literal: {s}\n", .{val});
+                .decimal_int_literal => |range| {
+                    std.debug.print("decimal_int_literal: {s}\n", .{range.slice(source)});
                 },
-                .hexadecimal_int_literal => |val| {
-                    std.debug.print("hexadecimal_int_literal: {s}\n", .{val});
+                .hexadecimal_int_literal => |range| {
+                    std.debug.print("hexadecimal_int_literal: {s}\n", .{range.slice(source)});
                 },
-                .octal_int_literal => |val| {
-                    std.debug.print("octal_int_literal: {s}\n", .{val});
+                .octal_int_literal => |range| {
+                    std.debug.print("octal_int_literal: {s}\n", .{range.slice(source)});
                 },
-                .binary_int_literal => |val| {
-                    std.debug.print("binary_int_literal: {s}\n", .{val});
+                .binary_int_literal => |range| {
+                    std.debug.print("binary_int_literal: {s}\n", .{range.slice(source)});
                 },
-                .regular_float_literal => |val| {
-                    std.debug.print("float_literal: {s}\n", .{val});
+                .regular_float_literal => |range| {
+                    std.debug.print("float_literal: {s}\n", .{range.slice(source)});
                 },
-                .scientific_float_literal => |val| {
-                    std.debug.print("scientific_float_literal: {s}\n", .{val});
+                .scientific_float_literal => |range| {
+                    std.debug.print("scientific_float_literal: {s}\n", .{range.slice(source)});
                 },
                 .char_literal => |val| {
                     std.debug.print("char_literal: {c}\n", .{val});
                 },
-                .string_literal => |val| {
-                    std.debug.print("string_literal: {s}\n", .{val});
+                .string_literal => |range| {
+                    std.debug.print("string_literal: {s}\n", .{range.slice(source)});
                 },
             }
         },
@@ -192,11 +192,11 @@ pub fn printToken(token: tok.Token) void {
     }
 }
 
-pub fn printTokenWithLocation(token: tok.Token, location: tok.Location) void {
+pub fn printTokenWithLocation(token: tok.Token, source: []const u8, path: []const u8, line: u32, column: u32) void {
     std.debug.print("at {s}:{d}:{d}\t", .{
-        location.file,
-        location.line,
-        location.column,
+        path,
+        line,
+        column,
     });
-    printToken(token);
+    printToken(token, source);
 }

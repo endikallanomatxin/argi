@@ -5,6 +5,7 @@ const sg = @import("semantic_graph.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 const source_files = @import("../1_base/source_files.zig");
+const source_db = @import("../1_base/source_db.zig");
 const log = std.log.scoped(.semantizer);
 
 const typ = @import("types.zig");
@@ -356,8 +357,15 @@ pub const Semantizer = struct {
         timings: SemantizeTimings,
     };
 
+    fn locationPath(self: *const Semantizer, loc: tok.Location) []const u8 {
+        return self.diags.path(loc);
+    }
+
+    fn locationLineColumn(self: *const Semantizer, loc: tok.Location) source_db.LineColumn {
+        return self.diags.lineColumn(loc);
+    }
+
     fn ignoreOrLogStagedTopLevelError(self: *Semantizer, n: *const syn.STNode, err: anyerror) void {
-        _ = self;
         switch (err) {
             error.Reported, error.UnknownType, error.SymbolNotFound => return,
             else => {},
@@ -367,9 +375,9 @@ pub const Semantizer = struct {
             "staged top-level semantizing of '{s}' failed at {s}:{d}:{d} with {s}",
             .{
                 @tagName(std.meta.activeTag(n.content)),
-                n.location.file,
-                n.location.line,
-                n.location.column,
+                self.locationPath(n.location),
+                self.locationLineColumn(n.location).line,
+                self.locationLineColumn(n.location).column,
                 @errorName(err),
             },
         );
@@ -613,7 +621,7 @@ pub const Semantizer = struct {
         is_test: bool,
     ) !void {
         for (self.pending_function_bodies.items) |pending| {
-            if (std.mem.eql(u8, pending.location.file, loc.file) and pending.location.offset == loc.offset) return;
+            if (pending.location.file == loc.file and pending.location.offset == loc.offset) return;
         }
 
         try self.pending_function_bodies.append(.{
@@ -788,7 +796,7 @@ pub const Semantizer = struct {
         const td = try self.allocator.create(sg.TypeDeclaration);
         td.* = .{
             .name = decl.name.string,
-            .origin_file = decl.name.location.file,
+            .origin_file = self.locationPath(decl.name.location),
             .ty = .{ .abstract_type = abs_ty },
         };
 
@@ -829,7 +837,7 @@ pub const Semantizer = struct {
         if (value.*.content != .import_statement) return;
         if (global.module_aliases.contains(decl.name.string)) return;
 
-        const resolved = source_files.resolveImportDir(self.allocator, self.io, loc.file, value.*.content.import_statement.path) catch return;
+        const resolved = source_files.resolveImportDir(self.allocator, self.io, self.locationPath(loc), value.*.content.import_statement.path) catch return;
         try global.module_aliases.put(decl.name.string, resolved);
     }
 
@@ -859,7 +867,7 @@ pub const Semantizer = struct {
         bd.* = .{
             .name = decl.name.string,
             .location = loc,
-            .origin_file = loc.file,
+            .origin_file = self.locationPath(loc),
             .mutability = decl.mutability,
             .ty = ty,
             .initialization = null,
@@ -883,7 +891,7 @@ pub const Semantizer = struct {
                 const td = try self.allocator.create(sg.TypeDeclaration);
                 td.* = .{
                     .name = decl.name.string,
-                    .origin_file = decl.value.location.file,
+                    .origin_file = self.locationPath(decl.value.location),
                     .ty = .{ .struct_type = stub },
                 };
                 try global.types.put(decl.name.string, td);
@@ -895,7 +903,7 @@ pub const Semantizer = struct {
                 const td = try self.allocator.create(sg.TypeDeclaration);
                 td.* = .{
                     .name = decl.name.string,
-                    .origin_file = decl.value.location.file,
+                    .origin_file = self.locationPath(decl.value.location),
                     .ty = .{ .choice_type = stub },
                 };
                 try global.types.put(decl.name.string, td);
@@ -915,7 +923,7 @@ pub const Semantizer = struct {
         const option_decl = try self.allocator.create(sg.ChoiceOptionDeclaration);
         option_decl.* = .{
             .name = decl.name.string,
-            .origin_file = loc.file,
+            .origin_file = self.locationPath(loc),
             .id = self.next_choice_option_id,
         };
         self.next_choice_option_id += 1;
@@ -936,7 +944,7 @@ pub const Semantizer = struct {
 
         if (global.functions.getPtr(decl.name.string)) |list_ptr| {
             for (list_ptr.items) |cand| {
-                if (std.mem.eql(u8, cand.location.file, loc.file) and cand.location.offset == loc.offset) return;
+                if (cand.location.file == loc.file and cand.location.offset == loc.offset) return;
             }
         }
 
@@ -961,7 +969,7 @@ pub const Semantizer = struct {
             bd.* = .{
                 .name = fld.name.string,
                 .location = fld.name.location,
-                .origin_file = loc.file,
+                .origin_file = self.locationPath(loc),
                 .mutability = .constant,
                 .ty = ty,
                 .initialization = null,
@@ -1000,7 +1008,7 @@ pub const Semantizer = struct {
             .id = self.freshFunctionId(),
             .name = decl.name.string,
             .location = loc,
-            .safety_primitive = self.safetyPrimitiveForDeclaration(decl.name.string, loc.file),
+            .safety_primitive = self.safetyPrimitiveForDeclaration(decl.name.string, self.locationPath(loc)),
             .is_deinit = std.mem.eql(u8, decl.name.string, "deinit"),
             .is_once = decl.is_once,
             .is_test = is_test,
@@ -1192,13 +1200,14 @@ pub const Semantizer = struct {
     }
 
     fn sourceLineText(self: *Semantizer, loc: tok.Location) []const u8 {
+        const position = self.locationLineColumn(loc);
         for (self.diags.source_files) |f| {
-            if (!std.mem.eql(u8, f.path, loc.file)) continue;
+            if (!std.mem.eql(u8, f.path, self.locationPath(loc))) continue;
 
             var lines = std.mem.splitScalar(u8, f.code, '\n');
             var line_index: u32 = 1;
             while (lines.next()) |line| : (line_index += 1) {
-                if (line_index != loc.line) continue;
+                if (line_index != position.line) continue;
                 return std.mem.trim(u8, line, "\r");
             }
         }
@@ -1852,7 +1861,7 @@ pub const Semantizer = struct {
         fake_binding.* = .{
             .name = "__auto_deinit_target",
             .location = loc,
-            .origin_file = loc.file,
+            .origin_file = self.locationPath(loc),
             .mutability = .variable,
             .ty = ty,
             .initialization = null,
@@ -2224,9 +2233,9 @@ pub const Semantizer = struct {
             "once function '{s}' is consumed more than once from the reachable entrypoint graph (first use at {s}:{d}:{d} via '{s}')",
             .{
                 once_fn.name,
-                first.first_location.file,
-                first.first_location.line,
-                first.first_location.column,
+                self.locationPath(first.first_location),
+                self.locationLineColumn(first.first_location).line,
+                self.locationLineColumn(first.first_location).column,
                 first.first_consumer.name,
             },
         );
@@ -2428,6 +2437,7 @@ pub const Semantizer = struct {
             input_ty,
             s,
             self.allocator,
+            self.diags,
         ));
     }
 
@@ -2463,7 +2473,7 @@ pub const Semantizer = struct {
         module_dir: ?[]const u8,
     ) !bool {
         if (module_dir) |dir| {
-            if (!std.mem.startsWith(u8, cand.location.file, dir)) return false;
+            if (!std.mem.startsWith(u8, self.locationPath(cand.location), dir)) return false;
         }
         return self.functionIsVisible(cand, requester_file);
     }
@@ -3389,7 +3399,7 @@ pub const Semantizer = struct {
 
     fn functionIsVisible(self: *Semantizer, fd: *const sg.FunctionDeclaration, requester_file: []const u8) !bool {
         if (!isPrivateName(fd.name)) return true;
-        return try self.isSameModule(requester_file, fd.location.file);
+        return try self.isSameModule(requester_file, self.locationPath(fd.location));
     }
 
     fn typeDeclIsReady(td: *const sg.TypeDeclaration) bool {
@@ -3711,7 +3721,7 @@ pub const Semantizer = struct {
             const abs_ty = try self.allocator.create(sg.AbstractType);
             abs_ty.* = .{ .name = ad.name.string };
             const created = try self.allocator.create(sg.TypeDeclaration);
-            created.* = .{ .name = ad.name.string, .origin_file = ad.name.location.file, .ty = .{ .abstract_type = abs_ty } };
+            created.* = .{ .name = ad.name.string, .origin_file = self.locationPath(ad.name.location), .ty = .{ .abstract_type = abs_ty } };
             try s.types.put(ad.name.string, created);
             break :blk created;
         };
@@ -4001,7 +4011,7 @@ pub const Semantizer = struct {
             const module_dir = s.lookupModuleAlias(module_name) orelse return error.SymbolNotFound;
             if (s.lookupChoiceOptionInModule(module_dir, name)) |decl| {
                 if (isPrivateName(name)) {
-                    const requester_dir = self.moduleDirForFile(loc.file);
+                    const requester_dir = self.moduleDirForFile(self.locationPath(loc));
                     if (!std.mem.eql(u8, requester_dir, module_dir)) {
                         try self.addPrivateMemberDiag(loc, "choice option", name);
                         return error.Reported;
@@ -4030,7 +4040,7 @@ pub const Semantizer = struct {
             const created = try self.allocator.create(sg.ChoiceOptionDeclaration);
             created.* = .{
                 .name = decl.name.string,
-                .origin_file = loc.file,
+                .origin_file = self.locationPath(loc),
                 .id = self.next_choice_option_id,
             };
             self.next_choice_option_id += 1;
@@ -4050,9 +4060,9 @@ pub const Semantizer = struct {
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
         if (s.bindingMoveLocation(name)) |move_loc| {
-            if (std.mem.eql(u8, move_loc.file, loc.file) and move_loc.line == loc.line and move_loc.column == loc.column) {
+            if (move_loc.file == loc.file and move_loc.offset == loc.offset) {
                 const b = s.lookupBinding(name) orelse return error.SymbolNotFound;
-                if (!(try self.bindingIsVisible(b, loc.file))) {
+                if (!(try self.bindingIsVisible(b, self.locationPath(loc)))) {
                     try self.addPrivateMemberDiag(loc, "value", name);
                     return error.Reported;
                 }
@@ -4064,7 +4074,7 @@ pub const Semantizer = struct {
                 loc,
                 .semantic,
                 "binding '{s}' was moved and cannot be used again (moved at {s}:{d}:{d})",
-                .{ name, move_loc.file, move_loc.line, move_loc.column },
+                .{ name, self.locationPath(move_loc), self.locationLineColumn(move_loc).line, self.locationLineColumn(move_loc).column },
             );
             return error.Reported;
         }
@@ -4086,7 +4096,7 @@ pub const Semantizer = struct {
         }
 
         const b = s.lookupBinding(name) orelse return error.SymbolNotFound;
-        if (!(try self.bindingIsVisible(b, loc.file))) {
+        if (!(try self.bindingIsVisible(b, self.locationPath(loc)))) {
             try self.addPrivateMemberDiag(loc, "value", name);
             return error.Reported;
         }
@@ -4169,7 +4179,7 @@ pub const Semantizer = struct {
 
         if (isPrivateName(field_name)) {
             if (self.lookupTypeDeclarationForType(base.ty, s)) |td| {
-                if (!(try self.isSameModule(field_loc.file, td.origin_file))) {
+                if (!(try self.isSameModule(self.locationPath(field_loc), td.origin_file))) {
                     try self.addPrivateMemberDiag(field_loc, "field", field_name);
                     return error.Reported;
                 }
@@ -4301,7 +4311,7 @@ pub const Semantizer = struct {
         binding.* = .{
             .name = field_name,
             .location = loc,
-            .origin_file = ctx.location.file,
+            .origin_file = self.locationPath(ctx.location),
             .mutability = .constant,
             .ty = expected_ty,
             .initialization = new_fields[new_len - 1].default_value,
@@ -4454,7 +4464,7 @@ pub const Semantizer = struct {
 
         const name = inner.content.identifier;
         const binding = s.lookupBinding(name) orelse return error.SymbolNotFound;
-        if (!(try self.bindingIsVisible(binding, loc.file))) {
+        if (!(try self.bindingIsVisible(binding, self.locationPath(loc)))) {
             try self.addPrivateMemberDiag(loc, "value", name);
             return error.Reported;
         }
@@ -4468,12 +4478,12 @@ pub const Semantizer = struct {
             return error.Reported;
         }
         if (s.bindingMoveLocation(binding.name)) |move_loc| {
-            if (!(std.mem.eql(u8, move_loc.file, loc.file) and move_loc.line == loc.line and move_loc.column == loc.column)) {
+            if (!(move_loc.file == loc.file and move_loc.offset == loc.offset)) {
                 try self.diags.add(
                     inner.location,
                     .semantic,
                     "binding '{s}' was moved and cannot be used again (moved at {s}:{d}:{d})",
-                    .{ binding.name, move_loc.file, move_loc.line, move_loc.column },
+                    .{ binding.name, self.locationPath(move_loc), self.locationLineColumn(move_loc).line, self.locationLineColumn(move_loc).column },
                 );
                 return error.Reported;
             }
@@ -4542,7 +4552,7 @@ pub const Semantizer = struct {
     ) SemErr!typ.TypedExpr {
         if (d.value) |v| {
             if (v.*.content == .import_statement) {
-                const resolved = source_files.resolveImportDir(self.allocator, self.io, loc.file, v.*.content.import_statement.path) catch {
+                const resolved = source_files.resolveImportDir(self.allocator, self.io, self.locationPath(loc), v.*.content.import_statement.path) catch {
                     try self.diags.add(
                         v.*.location,
                         .semantic,
@@ -4565,7 +4575,7 @@ pub const Semantizer = struct {
 
         const predeclared_binding = if (s.parent == null) s.bindings.get(d.name.string) else null;
         const reuses_predeclared_binding = if (predeclared_binding) |bd|
-            std.mem.eql(u8, bd.location.file, loc.file) and bd.location.offset == loc.offset
+            bd.location.file == loc.file and bd.location.offset == loc.offset
         else
             false;
 
@@ -4654,7 +4664,7 @@ pub const Semantizer = struct {
             created.* = .{
                 .name = d.name.string,
                 .location = loc,
-                .origin_file = loc.file,
+                .origin_file = self.locationPath(loc),
                 .mutability = d.mutability,
                 .ty = ty,
                 .initialization = null,
@@ -4712,7 +4722,7 @@ pub const Semantizer = struct {
                         const stub = try self.allocator.create(sg.StructType);
                         stub.* = .{ .fields = &.{}, .layout = if (d.kind == .c_union) .c_union else .regular };
                         td = try self.allocator.create(sg.TypeDeclaration);
-                        td.* = .{ .name = d.name.string, .origin_file = d.value.location.file, .ty = .{ .struct_type = stub } };
+                        td.* = .{ .name = d.name.string, .origin_file = self.locationPath(d.value.location), .ty = .{ .struct_type = stub } };
                         try s.types.put(d.name.string, td);
                         _ = try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
                     }
@@ -4748,7 +4758,7 @@ pub const Semantizer = struct {
                         td = try self.allocator.create(sg.TypeDeclaration);
                         td.* = .{
                             .name = d.name.string,
-                            .origin_file = d.value.location.file,
+                            .origin_file = self.locationPath(d.value.location),
                             .ty = .{ .choice_type = stub },
                         };
                         try s.types.put(d.name.string, td);
@@ -4927,7 +4937,7 @@ pub const Semantizer = struct {
             bd.* = .{
                 .name = fld.name.string,
                 .location = fld.name.location,
-                .origin_file = loc.file,
+                .origin_file = self.locationPath(loc),
                 .mutability = .constant,
                 .ty = ty,
                 .initialization = dvp,
@@ -4966,7 +4976,7 @@ pub const Semantizer = struct {
             bd.* = .{
                 .name = fld.name.string,
                 .location = fld.name.location,
-                .origin_file = loc.file,
+                .origin_file = self.locationPath(loc),
                 .mutability = .variable,
                 .ty = ty,
                 .initialization = dvp,
@@ -4982,7 +4992,7 @@ pub const Semantizer = struct {
         var existing_fn: ?*sg.FunctionDeclaration = null;
         if (p.functions.getPtr(f.name.string)) |list_ptr| {
             for (list_ptr.items) |cand| {
-                if (std.mem.eql(u8, cand.location.file, loc.file) and cand.location.offset == loc.offset) {
+                if (cand.location.file == loc.file and cand.location.offset == loc.offset) {
                     existing_fn = cand;
                     break;
                 }
@@ -5005,7 +5015,7 @@ pub const Semantizer = struct {
                 .id = self.freshFunctionId(),
                 .name = f.name.string,
                 .location = loc,
-                .safety_primitive = self.safetyPrimitiveForDeclaration(f.name.string, loc.file),
+                .safety_primitive = self.safetyPrimitiveForDeclaration(f.name.string, self.locationPath(loc)),
                 .is_deinit = std.mem.eql(u8, f.name.string, "deinit"),
                 .is_once = f.is_once,
                 .is_test = is_test,
@@ -5157,7 +5167,7 @@ pub const Semantizer = struct {
             bd.* = .{
                 .name = fld.name.string,
                 .location = fld.name.location,
-                .origin_file = loc.file,
+                .origin_file = self.locationPath(loc),
                 .mutability = .constant,
                 .ty = ty,
                 .initialization = null,
@@ -5190,7 +5200,7 @@ pub const Semantizer = struct {
             bd.* = .{
                 .name = fld.name.string,
                 .location = fld.name.location,
-                .origin_file = loc.file,
+                .origin_file = self.locationPath(loc),
                 .mutability = .variable,
                 .ty = ty,
                 .initialization = null,
@@ -5201,7 +5211,7 @@ pub const Semantizer = struct {
         var existing_fn: ?*sg.FunctionDeclaration = null;
         if (p.functions.getPtr(f.name.string)) |list_ptr| {
             for (list_ptr.items) |cand| {
-                if (std.mem.eql(u8, cand.location.file, loc.file) and cand.location.offset == loc.offset) {
+                if (cand.location.file == loc.file and cand.location.offset == loc.offset) {
                     existing_fn = cand;
                     break;
                 }
@@ -5229,7 +5239,7 @@ pub const Semantizer = struct {
                 .id = self.freshFunctionId(),
                 .name = f.name.string,
                 .location = loc,
-                .safety_primitive = self.safetyPrimitiveForDeclaration(f.name.string, loc.file),
+                .safety_primitive = self.safetyPrimitiveForDeclaration(f.name.string, self.locationPath(loc)),
                 .is_deinit = std.mem.eql(u8, f.name.string, "deinit"),
                 .is_once = f.is_once,
                 .is_test = is_test,
@@ -5283,7 +5293,7 @@ pub const Semantizer = struct {
                 bd.* = .{
                     .name = fld.name.string,
                     .location = fld.name.location,
-                    .origin_file = loc.file,
+                    .origin_file = self.locationPath(loc),
                     .mutability = .constant,
                     .ty = fn_ptr.input.fields[idx].ty,
                     .initialization = null,
@@ -5316,7 +5326,7 @@ pub const Semantizer = struct {
             bd.* = .{
                 .name = fld.name.string,
                 .location = fld.name.location,
-                .origin_file = loc.file,
+                .origin_file = self.locationPath(loc),
                 .mutability = .constant,
                 .ty = ty,
                 .initialization = dvp,
@@ -6370,7 +6380,7 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         const b = s.lookupBinding(a.name.string) orelse return error.SymbolNotFound;
-        if (!(try self.bindingIsVisible(b, a.name.location.file))) {
+        if (!(try self.bindingIsVisible(b, self.locationPath(a.name.location)))) {
             try self.addPrivateMemberDiag(a.name.location, "value", a.name.string);
             return error.Reported;
         }
@@ -6379,7 +6389,7 @@ pub const Semantizer = struct {
                 a.name.location,
                 .semantic,
                 "binding '{s}' was moved and cannot be reassigned (moved at {s}:{d}:{d})",
-                .{ b.name, move_loc.file, move_loc.line, move_loc.column },
+                .{ b.name, self.locationPath(move_loc), self.locationLineColumn(move_loc).line, self.locationLineColumn(move_loc).column },
             );
             return error.Reported;
         }
@@ -6615,7 +6625,7 @@ pub const Semantizer = struct {
             );
             return error.Reported;
         };
-        if (!(try self.bindingIsVisible(binding, loc.file))) {
+        if (!(try self.bindingIsVisible(binding, self.locationPath(loc)))) {
             try self.addPrivateMemberDiag(loc, "value", field_name);
             return error.Reported;
         }
@@ -7315,7 +7325,7 @@ pub const Semantizer = struct {
             }
         }
         if (s.lookupType(call.callee)) |type_decl| {
-            if (!(try self.typeIsVisible(type_decl, call.input.*.location.file))) {
+            if (!(try self.typeIsVisible(type_decl, self.locationPath(call.input.*.location)))) {
                 try self.addPrivateMemberDiag(call.input.*.location, "type", call.callee);
                 return error.Reported;
             }
@@ -7337,7 +7347,7 @@ pub const Semantizer = struct {
                 const type_decl = try self.allocator.create(sg.TypeDeclaration);
                 type_decl.* = .{
                     .name = call.callee,
-                    .origin_file = call.input.*.location.file,
+                    .origin_file = self.locationPath(call.input.*.location),
                     .ty = ty,
                 };
                 return self.handleTypeInitializer(call, tv_in, type_decl, s);
@@ -7362,7 +7372,7 @@ pub const Semantizer = struct {
                 const type_decl = try self.allocator.create(sg.TypeDeclaration);
                 type_decl.* = .{
                     .name = call.callee,
-                    .origin_file = call.input.*.location.file,
+                    .origin_file = self.locationPath(call.input.*.location),
                     .ty = ty,
                 };
                 return self.handleTypeInitializer(call, tv_in, type_decl, s);
@@ -7947,19 +7957,19 @@ pub const Semantizer = struct {
             null;
         var chosen: *sg.FunctionDeclaration = undefined;
         if (call.type_arguments_struct) |stargs| {
-            chosen = self.instantiateGenericNamedVisible(call.callee, stargs, input_te, s, .regular, qualified_module_dir, loc.file) catch |err| switch (err) {
-                error.SymbolNotFound => try self.instantiateGenericNamedVisible(call.callee, stargs, input_te, s, .abstract_contract, qualified_module_dir, loc.file),
+            chosen = self.instantiateGenericNamedVisible(call.callee, stargs, input_te, s, .regular, qualified_module_dir, self.locationPath(loc)) catch |err| switch (err) {
+                error.SymbolNotFound => try self.instantiateGenericNamedVisible(call.callee, stargs, input_te, s, .abstract_contract, qualified_module_dir, self.locationPath(loc)),
                 else => return err,
             };
         } else if (call.type_arguments) |targs| {
-            chosen = self.instantiateGenericVisible(call.callee, targs, input_te, s, .regular, qualified_module_dir, loc.file) catch |err| switch (err) {
-                error.SymbolNotFound => try self.instantiateGenericVisible(call.callee, targs, input_te, s, .abstract_contract, qualified_module_dir, loc.file),
+            chosen = self.instantiateGenericVisible(call.callee, targs, input_te, s, .regular, qualified_module_dir, self.locationPath(loc)) catch |err| switch (err) {
+                error.SymbolNotFound => try self.instantiateGenericVisible(call.callee, targs, input_te, s, .abstract_contract, qualified_module_dir, self.locationPath(loc)),
                 else => return err,
             };
         } else {
             const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
             var has_unknown_candidate = false;
-            const inferred = self.instantiateGenericNamedVisible(call.callee, empty_args, input_te, s, .regular, qualified_module_dir, loc.file) catch |err| switch (err) {
+            const inferred = self.instantiateGenericNamedVisible(call.callee, empty_args, input_te, s, .regular, qualified_module_dir, self.locationPath(loc)) catch |err| switch (err) {
                 error.SymbolNotFound => null,
                 error.UnknownType => blk: {
                     has_unknown_candidate = true;
@@ -7980,7 +7990,7 @@ pub const Semantizer = struct {
                     s,
                     .abstract_contract,
                     qualified_module_dir,
-                    loc.file,
+                    self.locationPath(loc),
                 ) catch |inner_err| switch (inner_err) {
                     error.SymbolNotFound => null,
                     error.UnknownType => blk: {
@@ -8171,7 +8181,7 @@ pub const Semantizer = struct {
             return error.Reported;
         };
         if (isPrivateName(fn_name)) {
-            const requester_dir = self.moduleDirForFile(loc.file);
+            const requester_dir = self.moduleDirForFile(self.locationPath(loc));
             if (!std.mem.eql(u8, requester_dir, module_dir)) {
                 try self.addPrivateMemberDiag(loc, "function", fn_name);
                 return error.Reported;
@@ -8187,8 +8197,8 @@ pub const Semantizer = struct {
             if (sc.functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
                     if (cand.origin_kind != .declared) continue;
-                    if (!std.mem.startsWith(u8, cand.location.file, module_dir)) continue;
-                    if (!(try self.functionIsVisible(cand, loc.file))) continue;
+                    if (!std.mem.startsWith(u8, self.locationPath(cand.location), module_dir)) continue;
+                    if (!(try self.functionIsVisible(cand, self.locationPath(loc)))) continue;
                     if (!self.callInputMatchesDispatch(&cand.input, input_te, s)) continue;
 
                     const score = self.callInputSpecificityScore(&cand.input, input_te, s);
@@ -8228,7 +8238,7 @@ pub const Semantizer = struct {
                 for (list_ptr.items) |cand| {
                     if (cand.origin_kind != .declared) continue;
                     if (!self.callInputMatchesDispatch(&cand.input, input_te, s)) continue;
-                    if (!(try self.functionMatchesVisibilityFilter(cand, loc.file, null))) {
+                    if (!(try self.functionMatchesVisibilityFilter(cand, self.locationPath(loc), null))) {
                         hidden_private_match = true;
                         continue;
                     }
@@ -8665,7 +8675,7 @@ pub const Semantizer = struct {
         fake_binding.* = .{
             .name = "__init_target",
             .location = loc,
-            .origin_file = loc.file,
+            .origin_file = self.locationPath(loc),
             .mutability = .variable,
             .ty = init_struct.fields[0].ty,
             .initialization = null,
@@ -8906,6 +8916,7 @@ pub const Semantizer = struct {
         const result_info = try self.errableInfoOf(result_type, call.callee_loc, "testing.expect_error result", s);
 
         const expect_err = try self.allocator.create(sg.TestingExpectError);
+        const call_position = self.locationLineColumn(call.callee_loc);
         expect_err.* = .{
             .expected_reason = expected_reason_te.node,
             .actual_result = input_value.fields[actual_idx].value,
@@ -8919,9 +8930,9 @@ pub const Semantizer = struct {
                 .choice_literal => |lit| lit.variant_name,
                 else => null,
             },
-            .line = call.callee_loc.line,
-            .column = call.callee_loc.column,
-            .source_file = call.callee_loc.file,
+            .line = call_position.line,
+            .column = call_position.column,
+            .source_file = self.locationPath(call.callee_loc),
             .source_line = self.sourceLineText(call.callee_loc),
         };
 
@@ -8949,7 +8960,7 @@ pub const Semantizer = struct {
             return error.Reported;
         };
         if (isPrivateName(fn_name)) {
-            const requester_dir = self.moduleDirForFile(loc.file);
+            const requester_dir = self.moduleDirForFile(self.locationPath(loc));
             if (!std.mem.eql(u8, requester_dir, module_dir)) {
                 try self.addPrivateMemberDiag(loc, "function", fn_name);
                 return error.Reported;
@@ -8964,8 +8975,8 @@ pub const Semantizer = struct {
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
-                    if (!std.mem.startsWith(u8, cand.location.file, module_dir)) continue;
-                    if (!(try self.functionIsVisible(cand, loc.file))) continue;
+                    if (!std.mem.startsWith(u8, self.locationPath(cand.location), module_dir)) continue;
+                    if (!(try self.functionIsVisible(cand, self.locationPath(loc)))) continue;
                     if (!self.callInputMatchesDispatch(&cand.input, input_te, s)) continue;
 
                     const score = self.callInputSpecificityScore(&cand.input, input_te, s);
@@ -9016,7 +9027,7 @@ pub const Semantizer = struct {
             if (sc.functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
                     if (!self.callInputMatchesDispatch(&cand.input, input_te, s)) continue;
-                    if (!(try self.functionMatchesVisibilityFilter(cand, loc.file, null))) {
+                    if (!(try self.functionMatchesVisibilityFilter(cand, self.locationPath(loc), null))) {
                         hidden_private_match = true;
                         continue;
                     }
@@ -9057,7 +9068,7 @@ pub const Semantizer = struct {
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
-                    if (try self.functionMatchesVisibilityFilter(cand, loc.file, null)) return true;
+                    if (try self.functionMatchesVisibilityFilter(cand, self.locationPath(loc), null)) return true;
                 }
             }
         }
@@ -9078,7 +9089,7 @@ pub const Semantizer = struct {
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
-                    if (!(try self.functionMatchesVisibilityFilter(cand, loc.file, null))) continue;
+                    if (!(try self.functionMatchesVisibilityFilter(cand, self.locationPath(loc), null))) continue;
                     if (!first) try buf.appendSlice("\n");
                     first = false;
                     try buf.appendSlice("  - ");
@@ -9089,8 +9100,8 @@ pub const Semantizer = struct {
                 for (list_ptr.items) |tmpl| {
                     if (tmpl.dispatch_kind != .abstract_contract) continue;
                     if (isPrivateName(fn_name)) {
-                        const requester_dir = self.moduleDirForFile(loc.file);
-                        const tmpl_dir = self.moduleDirForFile(tmpl.location.file);
+                        const requester_dir = self.moduleDirForFile(self.locationPath(loc));
+                        const tmpl_dir = self.moduleDirForFile(self.locationPath(tmpl.location));
                         if (!std.mem.eql(u8, requester_dir, tmpl_dir)) continue;
                     }
                     if (!first) try buf.appendSlice("\n");
@@ -9116,7 +9127,7 @@ pub const Semantizer = struct {
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
-                    if (try self.functionMatchesVisibilityFilter(cand, loc.file, module_dir)) return true;
+                    if (try self.functionMatchesVisibilityFilter(cand, self.locationPath(loc), module_dir)) return true;
                 }
             }
         }
@@ -9138,7 +9149,7 @@ pub const Semantizer = struct {
         while (cur) |sc| : (cur = sc.parent) {
             if (sc.functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |cand| {
-                    if (!(try self.functionMatchesVisibilityFilter(cand, loc.file, module_dir))) continue;
+                    if (!(try self.functionMatchesVisibilityFilter(cand, self.locationPath(loc), module_dir))) continue;
                     if (!first) try buf.appendSlice("\n");
                     first = false;
                     try buf.appendSlice("  - ");
@@ -9148,9 +9159,9 @@ pub const Semantizer = struct {
             if (sc.generic_functions.getPtr(fn_name)) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
                     if (tmpl.dispatch_kind != .abstract_contract) continue;
-                    if (!std.mem.startsWith(u8, tmpl.location.file, module_dir)) continue;
+                    if (!std.mem.startsWith(u8, self.locationPath(tmpl.location), module_dir)) continue;
                     if (isPrivateName(fn_name)) {
-                        const requester_dir = self.moduleDirForFile(loc.file);
+                        const requester_dir = self.moduleDirForFile(self.locationPath(loc));
                         if (!std.mem.eql(u8, requester_dir, module_dir)) continue;
                     }
                     if (!first) try buf.appendSlice("\n");
@@ -9393,7 +9404,7 @@ pub const Semantizer = struct {
 
     fn syntaxFunctionVisibleFrom(self: *Semantizer, decl: syn.FunctionDeclaration, decl_loc: tok.Location, requester_file: []const u8) !bool {
         if (!isPrivateName(decl.name.string)) return true;
-        return try self.isSameModule(requester_file, decl_loc.file);
+        return try self.isSameModule(requester_file, self.locationPath(decl_loc));
     }
 
     fn appendReachDefaultHintForDecl(
@@ -9472,7 +9483,7 @@ pub const Semantizer = struct {
         loc: tok.Location,
     ) !void {
         if (!(try self.hasVisibleFunctionNamed(fn_name, s, loc))) {
-            if (try self.buildReachDefaultDiagnosticText(fn_name, loc.file)) |details| {
+            if (try self.buildReachDefaultDiagnosticText(fn_name, self.locationPath(loc))) |details| {
                 defer details.deinit();
                 try self.diags.add(
                     loc,
@@ -9549,7 +9560,7 @@ pub const Semantizer = struct {
                 for (list_ptr.items) |tmpl| {
                     if (tmpl.dispatch_kind != .abstract_contract) continue;
                     if (module_dir_filter) |module_dir| {
-                        if (!std.mem.startsWith(u8, tmpl.location.file, module_dir)) continue;
+                        if (!std.mem.startsWith(u8, self.locationPath(tmpl.location), module_dir)) continue;
                     }
 
                     var subst = GenericSubst.init(self.allocator);
@@ -9573,7 +9584,7 @@ pub const Semantizer = struct {
                         const actual_str = try self.formatTypeText(actual, s);
                         defer actual_str.deinit();
                         const field_name = self.findTemplateFieldUsingParam(tmpl, param.name) orelse param.name;
-                        if (try abs.buildConformanceDetails(constraint.name, actual, s, self.allocator)) |details| {
+                        if (try abs.buildConformanceDetails(constraint.name, actual, s, self.allocator, self.diags)) |details| {
                             defer details.deinit();
                             try self.diags.add(
                                 loc,
@@ -9769,13 +9780,13 @@ pub const Semantizer = struct {
 
             break :blk self.tryResolveRegularCallCallee(synthetic_init_call, init_input_te, s, call.input.*.location) catch |err| switch (err) {
                 error.SymbolNotFound => {
-                    if (type_decl.ty == .struct_type and !(try self.hasVisibleTypeInitializerInit(type_decl.ty, call.input.*.location.file, s))) {
+                    if (type_decl.ty == .struct_type and !(try self.hasVisibleTypeInitializerInit(type_decl.ty, self.locationPath(call.input.*.location), s))) {
                         return try self.coerceCallInputToExpected(type_decl.ty.struct_type, tv_in, call.input, s);
                     }
 
                     const actual = self.formatOwnedText(try typ.formatCallInput(user_struct, s, self.allocator));
                     defer actual.deinit();
-                    const available = self.formatOwnedText(try self.collectVisibleTypeInitializerSignatures(type_decl.ty, call.input.*.location.file, s));
+                    const available = self.formatOwnedText(try self.collectVisibleTypeInitializerSignatures(type_decl.ty, self.locationPath(call.input.*.location), s));
                     defer available.deinit();
                     try self.diags.add(
                         call.input.*.location,
@@ -9786,7 +9797,7 @@ pub const Semantizer = struct {
                     return error.Reported;
                 },
                 error.AmbiguousOverload => {
-                    const candidates = self.formatOwnedText(try self.collectVisibleTypeInitializerSignatures(type_decl.ty, call.input.*.location.file, s));
+                    const candidates = self.formatOwnedText(try self.collectVisibleTypeInitializerSignatures(type_decl.ty, self.locationPath(call.input.*.location), s));
                     defer candidates.deinit();
                     try self.diags.add(
                         call.input.*.location,
@@ -10325,7 +10336,7 @@ pub const Semantizer = struct {
                 for (list_ptr.items) |tmpl| {
                     if (tmpl.dispatch_kind != allowed_kind) continue;
                     if (module_dir_filter) |module_dir| {
-                        if (!std.mem.startsWith(u8, tmpl.location.file, module_dir)) continue;
+                        if (!std.mem.startsWith(u8, self.locationPath(tmpl.location), module_dir)) continue;
                         if (requester_file) |requester| {
                             if (isPrivateName(name)) {
                                 const requester_dir = self.moduleDirForFile(requester);
@@ -10654,7 +10665,7 @@ pub const Semantizer = struct {
                 for (list_ptr.items) |tmpl| {
                     if (tmpl.dispatch_kind != allowed_kind) continue;
                     if (module_dir_filter) |module_dir| {
-                        if (!std.mem.startsWith(u8, tmpl.location.file, module_dir)) continue;
+                        if (!std.mem.startsWith(u8, self.locationPath(tmpl.location), module_dir)) continue;
                         if (requester_file) |requester| {
                             if (isPrivateName(name)) {
                                 const requester_dir = self.moduleDirForFile(requester);
@@ -11083,7 +11094,7 @@ pub const Semantizer = struct {
             .name = tmpl.name,
             .location = tmpl.location,
             .origin_kind = .generic_instantiation,
-            .safety_primitive = self.safetyPrimitiveForDeclaration(tmpl.name, tmpl.location.file),
+            .safety_primitive = self.safetyPrimitiveForDeclaration(tmpl.name, self.locationPath(tmpl.location)),
             .is_deinit = std.mem.eql(u8, tmpl.name, "deinit"),
             .generic_dispatch_kind = switch (tmpl.dispatch_kind) {
                 .regular => .regular,
@@ -11101,7 +11112,7 @@ pub const Semantizer = struct {
         var it = subst.types.iterator();
         while (it.next()) |entry| {
             const td = try self.allocator.create(sg.TypeDeclaration);
-            td.* = .{ .name = entry.key_ptr.*, .origin_file = tmpl.location.file, .ty = entry.value_ptr.* };
+            td.* = .{ .name = entry.key_ptr.*, .origin_file = self.locationPath(tmpl.location), .ty = entry.value_ptr.* };
             try child.types.put(entry.key_ptr.*, td);
         }
         var it_int = subst.ints.iterator();
@@ -11115,14 +11126,14 @@ pub const Semantizer = struct {
         var input_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
         for (in_struct_ptr.fields) |fld| {
             const bd = try self.allocator.create(sg.BindingDeclaration);
-            bd.* = .{ .name = fld.name, .location = tmpl.location, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
+            bd.* = .{ .name = fld.name, .location = tmpl.location, .origin_file = self.locationPath(tmpl.location), .mutability = .variable, .ty = fld.ty, .initialization = null };
             try child.bindings.put(fld.name, bd);
             try input_bindings.append(bd);
         }
         var output_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
         for (out_struct_ptr.fields) |fld| {
             const bd = try self.allocator.create(sg.BindingDeclaration);
-            bd.* = .{ .name = fld.name, .location = tmpl.location, .origin_file = tmpl.location.file, .mutability = .variable, .ty = fld.ty, .initialization = null };
+            bd.* = .{ .name = fld.name, .location = tmpl.location, .origin_file = self.locationPath(tmpl.location), .mutability = .variable, .ty = fld.ty, .initialization = null };
             try child.bindings.put(fld.name, bd);
             try output_bindings.append(bd);
         }
@@ -11209,7 +11220,7 @@ pub const Semantizer = struct {
             if (specialization.dispatch_kind != tmpl.dispatch_kind) continue;
             if (!std.mem.eql(u8, specialization.template_name, tmpl.name)) continue;
             if (specialization.template_location.offset != tmpl.location.offset or
-                !std.mem.eql(u8, specialization.template_location.file, tmpl.location.file)) continue;
+                specialization.template_location.file != tmpl.location.file) continue;
             if (!genericSubstitutionsEqual(&specialization.subst, subst)) continue;
             if (!genericSignatureStructsEqual(specialization.input, input)) continue;
             if (!genericSignatureStructsEqual(specialization.output, output)) continue;
@@ -11805,6 +11816,7 @@ pub const Semantizer = struct {
         const node = if (context_te) |ctx| blk: {
             const err_ctx = try self.allocator.create(sg.ErrorContext);
             const source_line = self.sourceLineText(loc);
+            const position = self.locationLineColumn(loc);
             err_ctx.* = .{
                 .errable_value = value_te.node,
                 .context = ctx.node,
@@ -11817,15 +11829,16 @@ pub const Semantizer = struct {
                 .ok_payload_type = operand_info.ok_payload_type,
                 .error_payload_type = operand_info.error_payload_type,
                 .propagated_error_payload_type = return_info.error_payload_type,
-                .line = loc.line,
-                .column = loc.column,
-                .source_file = loc.file,
+                .line = position.line,
+                .column = position.column,
+                .source_file = self.locationPath(loc),
                 .source_line = source_line,
             };
             break :blk try sg.makeSGNode(.{ .error_context = err_ctx }, loc, self.allocator);
         } else blk: {
             const err_prop = try self.allocator.create(sg.ErrorPropagation);
             const source_line = self.sourceLineText(loc);
+            const position = self.locationLineColumn(loc);
             err_prop.* = .{
                 .errable_value = value_te.node,
                 .cleanup_nodes = try self.collectActiveEarlyCleanupNodes(s),
@@ -11837,9 +11850,9 @@ pub const Semantizer = struct {
                 .ok_payload_type = operand_info.ok_payload_type,
                 .error_payload_type = operand_info.error_payload_type,
                 .propagated_error_payload_type = return_info.error_payload_type,
-                .line = loc.line,
-                .column = loc.column,
-                .source_file = loc.file,
+                .line = position.line,
+                .column = position.column,
+                .source_file = self.locationPath(loc),
                 .source_line = source_line,
             };
             break :blk try sg.makeSGNode(.{ .error_propagation = err_prop }, loc, self.allocator);
@@ -12420,7 +12433,7 @@ pub const Semantizer = struct {
             tmp_binding.* = .{
                 .name = iterable_name,
                 .location = loc,
-                .origin_file = loc.file,
+                .origin_file = self.locationPath(loc),
                 .mutability = if (iterable_needs_mutability) .variable else .constant,
                 .ty = iterable_ty,
                 .initialization = null,
@@ -12717,7 +12730,7 @@ pub const Semantizer = struct {
                 bd.* = .{
                     .name = binding_name.string,
                     .location = binding_name.location,
-                    .origin_file = binding_name.location.file,
+                    .origin_file = self.locationPath(binding_name.location),
                     .mutability = .constant,
                     .ty = init_expr.ty,
                     .initialization = init_expr.node,
@@ -13345,7 +13358,7 @@ pub const Semantizer = struct {
                     const type_name = id[dot_idx + 1 ..];
                     const module_dir = s.lookupModuleAlias(module_name) orelse break :blk error.UnknownType;
                     if (s.lookupTypeInModule(module_dir, type_name)) |td| {
-                        if (!(try self.typeIsVisible(td, tn.location.file))) {
+                        if (!(try self.typeIsVisible(td, self.locationPath(tn.location)))) {
                             try self.addPrivateMemberDiag(tn.location, "type", type_name);
                             return error.Reported;
                         }
@@ -13362,7 +13375,7 @@ pub const Semantizer = struct {
                 }
                 if (s.lookupType(id)) |td| {
                     if (!typeDeclIsReady(td)) break :blk error.UnknownType;
-                    if (!(try self.typeIsVisible(td, tn.location.file))) {
+                    if (!(try self.typeIsVisible(td, self.locationPath(tn.location)))) {
                         try self.addPrivateMemberDiag(tn.location, "type", id);
                         return error.Reported;
                     }
@@ -13427,7 +13440,7 @@ pub const Semantizer = struct {
                     const type_name = id[dot_idx + 1 ..];
                     const module_dir = s.lookupModuleAlias(module_name) orelse break :blk error.UnknownType;
                     if (s.lookupTypeInModule(module_dir, type_name)) |td| {
-                        if (!(try self.typeIsVisible(td, tn.location.file))) {
+                        if (!(try self.typeIsVisible(td, self.locationPath(tn.location)))) {
                             try self.addPrivateMemberDiag(tn.location, "type", type_name);
                             return error.Reported;
                         }
@@ -13443,7 +13456,7 @@ pub const Semantizer = struct {
                 }
                 if (s.lookupType(id)) |td| {
                     if (!typeDeclIsReady(td)) break :blk error.UnknownType;
-                    if (!(try self.typeIsVisible(td, tn.location.file))) {
+                    if (!(try self.typeIsVisible(td, self.locationPath(tn.location)))) {
                         try self.addPrivateMemberDiag(tn.location, "type", id);
                         return error.Reported;
                     }
@@ -13497,7 +13510,7 @@ pub const Semantizer = struct {
                     const type_name = id[dot_idx + 1 ..];
                     const module_dir = s.lookupModuleAlias(module_name) orelse break :blk error.UnknownType;
                     if (s.lookupTypeInModule(module_dir, type_name)) |td| {
-                        if (!(try self.typeIsVisible(td, tn.location.file))) {
+                        if (!(try self.typeIsVisible(td, self.locationPath(tn.location)))) {
                             try self.addPrivateMemberDiag(tn.location, "type", type_name);
                             return error.Reported;
                         }
@@ -13511,7 +13524,7 @@ pub const Semantizer = struct {
                     break :blk error.UnknownType;
                 }
                 if (s.lookupType(id)) |td| {
-                    if (!(try self.typeIsVisible(td, tn.location.file))) {
+                    if (!(try self.typeIsVisible(td, self.locationPath(tn.location)))) {
                         try self.addPrivateMemberDiag(tn.location, "type", id);
                         return error.Reported;
                     }

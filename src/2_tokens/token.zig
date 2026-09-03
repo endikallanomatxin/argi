@@ -1,27 +1,41 @@
+const source_db = @import("../1_base/source_db.zig");
+
 pub const Token = struct {
     content: Content,
     location: Location,
 };
 
 pub const Location = struct {
-    file: []const u8,
+    file: source_db.FileId,
     offset: u32,
-    line: u32,
-    column: u32,
 };
 
-pub const Content = union(enum) {
+/// Source-relative text payload. Unlike a slice, this is stable across arena
+/// lifetimes and can be written to disk verbatim with the token stream.
+pub const TextRange = struct {
+    start: u32,
+    len: u32,
+
+    pub fn slice(self: TextRange, source: []const u8) []const u8 {
+        const start: usize = self.start;
+        return source[start .. start + self.len];
+    }
+};
+
+/// The explicit byte tag keeps the serialized token representation compact
+/// while leaving room for the language's punctuation and keyword vocabulary.
+pub const Content = union(enum(u8)) {
     eof: struct {},
     new_line: struct {},
 
     // Comments
-    comment: []const u8,
+    comment: TextRange,
 
     // Names
-    identifier: []const u8,
+    identifier: TextRange,
 
     // Literals
-    literal: Literal,
+    literal: TokenLiteral,
 
     // Delimiters
     open_parenthesis: struct {},
@@ -82,18 +96,33 @@ pub const Content = union(enum) {
     // comptime_run: struct {},
 };
 
-pub const Literal = union(enum) {
+pub const TokenLiteral = union(enum(u8)) {
     bool_literal: bool,
 
+    decimal_int_literal: TextRange,
+    hexadecimal_int_literal: TextRange,
+    octal_int_literal: TextRange,
+    binary_int_literal: TextRange,
+
+    regular_float_literal: TextRange,
+    scientific_float_literal: TextRange,
+    // TODO: Usar una r como separador para periódicos.
+
+    char_literal: u8,
+    string_literal: TextRange,
+};
+
+/// Materialized literal payload used by the current pointer-based syntax
+/// tree. Token streams use TokenLiteral ranges; SyntaxStore will eventually
+/// remove this transient representation.
+pub const Literal = union(enum) {
+    bool_literal: bool,
     decimal_int_literal: []const u8,
     hexadecimal_int_literal: []const u8,
     octal_int_literal: []const u8,
     binary_int_literal: []const u8,
-
     regular_float_literal: []const u8,
     scientific_float_literal: []const u8,
-    // TODO: Usar una r como separador para periódicos.
-
     char_literal: u8,
     string_literal: []const u8,
 };
@@ -114,3 +143,8 @@ pub const ComparisonOperator = enum {
     less_than_or_equal,
     greater_than_or_equal,
 };
+
+test "token stream records remain compact" {
+    try @import("std").testing.expectEqual(@as(usize, 8), @sizeOf(Location));
+    try @import("std").testing.expectEqual(@as(usize, 24), @sizeOf(Token));
+}
