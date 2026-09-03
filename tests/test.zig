@@ -2175,6 +2175,18 @@ test "feature_tests/collections/33X_dynamic_array_retains_external_borrow" {
     );
 }
 
+test "feature_tests/collections/34_dynamic_array_string_copy" {
+    const test_path = "tests/feature_tests/collections/34_dynamic_array_string_copy";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/35_dynamic_array_fallible_copy_cleanup" {
+    const test_path = "tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/control_flow/11_range_default_start_with_step" {
     const test_path = "tests/feature_tests/control_flow/11_range_default_start_with_step";
     try expectSuccessfulBuild(test_path);
