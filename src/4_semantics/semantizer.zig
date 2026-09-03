@@ -186,6 +186,20 @@ const GenericSubst = struct {
     }
 };
 
+const GenericSpecialization = struct {
+    template_name: []const u8,
+    template_location: tok.Location,
+    dispatch_kind: gen.GenericDispatchKind,
+    input: *const sg.StructType,
+    output: *const sg.StructType,
+    subst: GenericSubst,
+    function: *sg.FunctionDeclaration,
+
+    fn deinit(self: *GenericSpecialization) void {
+        self.subst.deinit();
+    }
+};
+
 //──────────────────────────────────────────────────────────────────────────────
 //  SEMANTIZER
 //──────────────────────────────────────────────────────────────────────────────
@@ -223,6 +237,9 @@ pub const Semantizer = struct {
     function_semantize_mode: FunctionSemantizeMode = .full,
     pending_function_bodies: std.array_list.Managed(PendingFunctionBody),
     signature_type_cache: std.AutoHashMap(SignatureTypeCacheKey, sg.Type),
+    generic_specializations: std.array_list.Managed(GenericSpecialization),
+    generic_specializations_created: u32 = 0,
+    generic_specialization_cache_hits: u32 = 0,
     synthetic_name_counter: u32 = 0,
     next_function_id: u32 = 1,
     next_choice_option_id: u32 = 1,
@@ -256,6 +273,7 @@ pub const Semantizer = struct {
             .pending_next = std.array_list.Managed(*const syn.STNode).init(alloc.*),
             .pending_function_bodies = std.array_list.Managed(PendingFunctionBody).init(alloc.*),
             .signature_type_cache = std.AutoHashMap(SignatureTypeCacheKey, sg.Type).init(alloc.*),
+            .generic_specializations = std.array_list.Managed(GenericSpecialization).init(alloc.*),
             .function_reach_stack = std.array_list.Managed(ReachFunctionContext).init(alloc.*),
         };
     }
@@ -308,6 +326,8 @@ pub const Semantizer = struct {
         retry_type_nodes: u32 = 0,
         retry_symbol_nodes: u32 = 0,
         retry_other_nodes: u32 = 0,
+        generic_specializations_created: u32 = 0,
+        generic_specialization_cache_hits: u32 = 0,
 
         pub fn total(self: SemantizeTimings) u64 {
             return self.initial_pass_ns +
@@ -361,6 +381,8 @@ pub const Semantizer = struct {
 
     pub fn semantizeWithTimings(self: *Semantizer) SemErr!SemantizeResult {
         self.signature_type_cache.clearRetainingCapacity();
+        self.clearGenericSpecializationCache();
+        defer self.clearGenericSpecializationCache();
         var global = try Scope.init(self.allocator, null, null);
         if (self.options.implicit_testing_module_dir) |testing_module_dir| {
             try global.module_aliases.put("testing", testing_module_dir);
@@ -373,6 +395,8 @@ pub const Semantizer = struct {
         self.retry_type_nodes = 0;
         self.retry_symbol_nodes = 0;
         self.retry_other_nodes = 0;
+        self.generic_specializations_created = 0;
+        self.generic_specialization_cache_hits = 0;
         self.function_semantize_mode = .full;
         self.pending_function_bodies.items.len = 0;
 
@@ -540,6 +564,8 @@ pub const Semantizer = struct {
         timings.retry_type_nodes = self.retry_type_nodes;
         timings.retry_symbol_nodes = self.retry_symbol_nodes;
         timings.retry_other_nodes = self.retry_other_nodes;
+        timings.generic_specializations_created = self.generic_specializations_created;
+        timings.generic_specialization_cache_hits = self.generic_specialization_cache_hits;
 
         self.root_nodes = try self.root_list.toOwnedSlice();
         self.root_list.deinit();
@@ -10942,11 +10968,11 @@ pub const Semantizer = struct {
         }
         if (!self.callInputMatchesDispatch(in_struct_ptr, call_input, s)) return null;
 
-        if (try self.findExistingFunctionExactInputInModule(name, in_struct_ptr, tmpl.location.file, tmpl.dispatch_kind, s)) |existing| {
+        const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, subst);
+        if (self.findGenericSpecialization(tmpl, in_struct_ptr, out_struct_ptr, subst)) |existing| {
+            self.generic_specialization_cache_hits += 1;
             return existing;
         }
-
-        const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, subst);
 
         const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
         fn_ptr.* = .{
@@ -11018,41 +11044,78 @@ pub const Semantizer = struct {
         try s.appendFunction(name, fn_ptr);
         const node = try sg.makeSGNode(.{ .function_declaration = fn_ptr }, tmpl.location, self.allocator);
         try self.root_list.append(node);
+        try self.cacheGenericSpecialization(tmpl, in_struct_ptr, out_struct_ptr, subst, fn_ptr);
+        self.generic_specializations_created += 1;
         self.clearDeferred(&child);
         return fn_ptr;
     }
 
-    fn findExistingFunctionExactInputInModule(
-        self: *Semantizer,
-        name: []const u8,
-        input: *const sg.StructType,
-        module_file: []const u8,
-        dispatch_kind: gen.GenericDispatchKind,
-        s: *Scope,
-    ) !?*sg.FunctionDeclaration {
-        _ = self;
-        const module_dir = std.fs.path.dirname(module_file) orelse ".";
+    fn clearGenericSpecializationCache(self: *Semantizer) void {
+        for (self.generic_specializations.items) |*specialization| specialization.deinit();
+        self.generic_specializations.items.len = 0;
+    }
 
-        var cur: ?*Scope = s;
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.functions.getPtr(name)) |fns| {
-                for (fns.items) |cand| {
-                    if (!std.mem.startsWith(u8, cand.location.file, module_dir)) continue;
-                    if (cand.origin_kind != .generic_instantiation) continue;
-                    const cand_dispatch_kind = cand.generic_dispatch_kind orelse .regular;
-                    const expected_dispatch_kind: sg.FunctionDeclaration.GenericDispatchKind = switch (dispatch_kind) {
-                        .regular => .regular,
-                        .abstract_contract => .abstract_contract,
-                    };
-                    if (cand_dispatch_kind != expected_dispatch_kind) continue;
-                    if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = input })) {
-                        return cand;
-                    }
-                }
-            }
+    // Specializations are shared across sibling call-site scopes. Until types
+    // have canonical ids, the small cache is deliberately searched with
+    // structural comparisons of the fully resolved substitution and callable
+    // signature rather than pointer identity or an IR-level equivalence.
+    fn genericSubstitutionsEqual(a: *const GenericSubst, b: *const GenericSubst) bool {
+        if (a.types.count() != b.types.count() or a.ints.count() != b.ints.count()) return false;
+
+        var type_it = a.types.iterator();
+        while (type_it.next()) |entry| {
+            const other = b.types.get(entry.key_ptr.*) orelse return false;
+            if (!typ.typesStructurallyEqual(entry.value_ptr.*, other)) return false;
         }
 
+        var int_it = a.ints.iterator();
+        while (int_it.next()) |entry| {
+            const other = b.ints.get(entry.key_ptr.*) orelse return false;
+            if (entry.value_ptr.* != other) return false;
+        }
+        return true;
+    }
+
+    fn findGenericSpecialization(
+        self: *Semantizer,
+        tmpl: gen.GenericTemplate,
+        input: *const sg.StructType,
+        output: *const sg.StructType,
+        subst: *const GenericSubst,
+    ) ?*sg.FunctionDeclaration {
+        for (self.generic_specializations.items) |*specialization| {
+            if (specialization.dispatch_kind != tmpl.dispatch_kind) continue;
+            if (!std.mem.eql(u8, specialization.template_name, tmpl.name)) continue;
+            if (specialization.template_location.offset != tmpl.location.offset or
+                !std.mem.eql(u8, specialization.template_location.file, tmpl.location.file)) continue;
+            if (!genericSubstitutionsEqual(&specialization.subst, subst)) continue;
+            if (!typ.typesStructurallyEqual(.{ .struct_type = specialization.input }, .{ .struct_type = input })) continue;
+            if (!typ.typesStructurallyEqual(.{ .struct_type = specialization.output }, .{ .struct_type = output })) continue;
+            return specialization.function;
+        }
         return null;
+    }
+
+    fn cacheGenericSpecialization(
+        self: *Semantizer,
+        tmpl: gen.GenericTemplate,
+        input: *const sg.StructType,
+        output: *const sg.StructType,
+        subst: *const GenericSubst,
+        function: *sg.FunctionDeclaration,
+    ) !void {
+        var owned_subst = GenericSubst.init(self.allocator);
+        errdefer owned_subst.deinit();
+        try owned_subst.cloneFrom(subst);
+        try self.generic_specializations.append(.{
+            .template_name = tmpl.name,
+            .template_location = tmpl.location,
+            .dispatch_kind = tmpl.dispatch_kind,
+            .input = input,
+            .output = output,
+            .subst = owned_subst,
+            .function = function,
+        });
     }
 
     pub fn instantiateGenericTypeNamed(
