@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const sf = @import("../1_base/source_files.zig");
+const source_db = @import("../1_base/source_db.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const token = @import("../2_tokens/token.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
@@ -247,6 +248,7 @@ const SymbolTarget = union(SymbolTargetTag) {
 };
 
 const ModuleAnalysis = struct {
+    source_db: source_db.SourceDb,
     tokens: []const token.Token,
     st_nodes: []const *st.STNode,
     sg_nodes: []const *sg.SGNode,
@@ -263,6 +265,14 @@ const ModuleAnalysis = struct {
     semantic_binding_decls: []const SemanticBindingDeclRef,
     semantic_binding_uses: []const SemanticBindingUseRef,
     semantic_field_accesses: []const SemanticFieldAccessRef,
+
+    fn path(self: *const ModuleAnalysis, loc: token.Location) []const u8 {
+        return self.source_db.path(loc.file);
+    }
+
+    fn isPath(self: *const ModuleAnalysis, loc: token.Location, wanted_path: []const u8) bool {
+        return std.mem.eql(u8, self.path(loc), wanted_path);
+    }
 };
 
 const Document = struct {
@@ -465,11 +475,11 @@ pub const LanguageService = struct {
         }
 
         for (diagnostics.list.items) |entry| {
-            if (!std.mem.eql(u8, entry.loc.file, primary_path)) continue;
+            if (!std.mem.eql(u8, pipeline.source_db.path(entry.loc.file), primary_path)) continue;
             const msg_copy = self.allocator.dupe(u8, entry.msg) catch |err| {
                 return err;
             };
-            const range = locationToRange(entry.loc);
+            const range = locationToRange(pipeline.source_db, entry.loc);
             const severity = mapSeverity(entry.kind);
             out.append(.{ .range = range, .severity = severity, .message = msg_copy }) catch |err| {
                 self.allocator.free(msg_copy);
@@ -571,6 +581,7 @@ pub const LanguageService = struct {
         try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses, &semantic_field_accesses);
 
         return .{
+            .source_db = try pipeline.source_db.clone(analysis_allocator.*),
             .tokens = try analysis_allocator.dupe(token.Token, pipeline.tokensForPath(doc.path) orelse &.{}),
             .st_nodes = st_nodes,
             .sg_nodes = sg_nodes,
@@ -641,7 +652,7 @@ pub const LanguageService = struct {
             const toks = pipeline.tokensForPath(doc.path) orelse &.{};
             if (toks.len == 0) return out;
 
-            try emitLexical(&out, gpa, text, toks);
+            try emitLexical(&out, gpa, pipeline.source_db, text, toks);
             return out;
         };
 
@@ -658,7 +669,7 @@ pub const LanguageService = struct {
         var collected = std.array_list.Managed(SemanticToken).init(work);
         defer collected.deinit();
 
-        try appendLexicalSemanticTokens(&collected, text, toks);
+        try appendLexicalSemanticTokens(&collected, pipeline.source_db, text, toks);
 
         // AST overlay
         const DECL: u32 = (1 << MOD_INDEX.declaration);
@@ -668,6 +679,7 @@ pub const LanguageService = struct {
             sink: *std.array_list.Managed(SemanticToken),
             toks: []const token.Token,
             off2ix: *std.AutoHashMap(usize, usize),
+            source_db: *const source_db.SourceDb,
 
             fn identAt(this: *@This(), loc: token.Location, ty_idx: u32, mods: u32) !void {
                 const start_off = loc.offset;
@@ -676,8 +688,9 @@ pub const LanguageService = struct {
                 if (tk.content != .identifier) return;
 
                 const len_bytes: u32 = @intCast(@min(tokenLenBytes(tk), @as(usize, std.math.maxInt(u32))));
-                const line0: u32 = if (loc.line == 0) 0 else loc.line - 1;
-                const col0: u32 = if (loc.column == 0) 0 else loc.column - 1;
+                const position = this.source_db.lineColumn(loc.file, loc.offset);
+                const line0: u32 = position.line - 1;
+                const col0: u32 = position.column - 1;
 
                 try this.sink.append(.{
                     .line = line0,
@@ -729,6 +742,7 @@ pub const LanguageService = struct {
             .sink = &collected,
             .toks = toks,
             .off2ix = &off2ix,
+            .source_db = pipeline.source_db,
         };
 
         var stack = std.array_list.Managed(*const st.STNode).init(work);
@@ -897,11 +911,12 @@ pub const LanguageService = struct {
         var analysis_allocator = arena.allocator();
         const analysis = (try self.collectModuleAnalysis(&analysis_allocator, doc)) orelse return null;
         for (analysis.syntax_functions) |syntax_fn| {
-            if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc.path)) continue;
-            if (!positionWithinName(position, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len)) continue;
+            if (!analysis.isPath(syntax_fn.decl.name.location, doc.path)) continue;
+            if (!positionWithinName(&analysis.source_db, position, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len)) continue;
             const contents = if (findSemanticFunctionDecl(analysis.semantic_functions, syntax_fn.decl.name.location, syntax_fn.decl.name.string)) |semantic_fn|
                 try buildFunctionHoverMarkdown(
                     self.allocator,
+                    &analysis.source_db,
                     semantic_fn.decl,
                     syntax_fn.decl,
                     analysis.semantic_types,
@@ -910,16 +925,16 @@ pub const LanguageService = struct {
                     analysis.tokens,
                 )
             else
-                try buildSyntaxFunctionHoverMarkdown(self.allocator, syntax_fn.decl, doc.path, doc.text, analysis.tokens);
+                try buildSyntaxFunctionHoverMarkdown(self.allocator, &analysis.source_db, syntax_fn.decl, doc.path, doc.text, analysis.tokens);
             return .{
-                .range = nameRange(syntax_fn.decl.name.location, syntax_fn.decl.name.string.len),
+                .range = nameRange(&analysis.source_db, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len),
                 .contents = contents,
             };
         }
 
         for (analysis.syntax_calls) |syntax_call| {
-            if (!std.mem.eql(u8, syntax_call.call.callee_loc.file, doc.path)) continue;
-            if (!positionWithinName(position, syntax_call.call.callee_loc, syntax_call.call.callee.len)) continue;
+            if (!analysis.isPath(syntax_call.call.callee_loc, doc.path)) continue;
+            if (!positionWithinName(&analysis.source_db, position, syntax_call.call.callee_loc, syntax_call.call.callee.len)) continue;
             if (findSemanticTypeInitializerAtLocation(analysis.semantic_type_inits, syntax_call.call.callee_loc)) |type_init| {
                 const syntax_decl = findSyntaxFunctionDecl(
                     analysis.syntax_functions,
@@ -928,6 +943,7 @@ pub const LanguageService = struct {
                 );
                 const contents = try buildFunctionHoverMarkdown(
                     self.allocator,
+                    &analysis.source_db,
                     type_init.init.init_fn,
                     if (syntax_decl) |decl_ref| decl_ref.decl else null,
                     analysis.semantic_types,
@@ -936,7 +952,7 @@ pub const LanguageService = struct {
                     analysis.tokens,
                 );
                 return .{
-                    .range = nameRange(syntax_call.call.callee_loc, syntax_call.call.callee.len),
+                    .range = nameRange(&analysis.source_db, syntax_call.call.callee_loc, syntax_call.call.callee.len),
                     .contents = contents,
                 };
             }
@@ -945,15 +961,16 @@ pub const LanguageService = struct {
             else if (findSemanticFunctionDeclByName(analysis.semantic_functions, syntax_call.call.callee)) |semantic_fn|
                 semantic_fn.decl
             else if (findSyntaxFunctionDeclByName(analysis.syntax_functions, syntax_call.call.callee)) |syntax_decl| {
-                const contents = try buildSyntaxFunctionHoverMarkdown(self.allocator, syntax_decl.decl, doc.path, doc.text, analysis.tokens);
+                const contents = try buildSyntaxFunctionHoverMarkdown(self.allocator, &analysis.source_db, syntax_decl.decl, doc.path, doc.text, analysis.tokens);
                 return .{
-                    .range = nameRange(syntax_call.call.callee_loc, syntax_call.call.callee.len),
+                    .range = nameRange(&analysis.source_db, syntax_call.call.callee_loc, syntax_call.call.callee.len),
                     .contents = contents,
                 };
             } else continue;
             const syntax_decl = findSyntaxFunctionDecl(analysis.syntax_functions, callee.location, callee.name);
             const contents = try buildFunctionHoverMarkdown(
                 self.allocator,
+                &analysis.source_db,
                 callee,
                 if (syntax_decl) |decl_ref| decl_ref.decl else null,
                 analysis.semantic_types,
@@ -962,17 +979,18 @@ pub const LanguageService = struct {
                 analysis.tokens,
             );
             return .{
-                .range = nameRange(syntax_call.call.callee_loc, syntax_call.call.callee.len),
+                .range = nameRange(&analysis.source_db, syntax_call.call.callee_loc, syntax_call.call.callee.len),
                 .contents = contents,
             };
         }
         for (analysis.syntax_operators) |syntax_op| {
-            if (!std.mem.eql(u8, syntax_op.location.file, doc.path)) continue;
-            if (!positionWithinName(position, syntax_op.location, syntax_op.len)) continue;
+            if (!analysis.isPath(syntax_op.location, doc.path)) continue;
+            if (!positionWithinName(&analysis.source_db, position, syntax_op.location, syntax_op.len)) continue;
             const semantic_call = findSemanticFunctionCallAtLocation(analysis.semantic_calls, syntax_op.location) orelse continue;
             const syntax_decl = findSyntaxFunctionDecl(analysis.syntax_functions, semantic_call.call.callee.location, semantic_call.call.callee.name);
             const contents = try buildFunctionHoverMarkdown(
                 self.allocator,
+                &analysis.source_db,
                 semantic_call.call.callee,
                 if (syntax_decl) |decl_ref| decl_ref.decl else null,
                 analysis.semantic_types,
@@ -981,18 +999,19 @@ pub const LanguageService = struct {
                 analysis.tokens,
             );
             return .{
-                .range = nameRange(syntax_op.location, syntax_op.len),
+                .range = nameRange(&analysis.source_db, syntax_op.location, syntax_op.len),
                 .contents = contents,
             };
         }
 
         for (analysis.syntax_type_refs) |type_ref| {
-            if (!std.mem.eql(u8, type_ref.location.file, doc.path)) continue;
-            if (!positionWithinName(position, type_ref.location, type_ref.name.len)) continue;
+            if (!analysis.isPath(type_ref.location, doc.path)) continue;
+            if (!positionWithinName(&analysis.source_db, position, type_ref.location, type_ref.name.len)) continue;
             const semantic_type_decl = findSemanticTypeDeclByName(analysis.semantic_types, type_ref.name) orelse continue;
             const syntax_type_decl = findSyntaxTypeDeclByName(analysis.syntax_type_decls, type_ref.name);
             const contents = try buildTypeHoverMarkdown(
                 self.allocator,
+                &analysis.source_db,
                 semantic_type_decl.decl,
                 syntax_type_decl,
                 analysis.semantic_types,
@@ -1000,27 +1019,27 @@ pub const LanguageService = struct {
                 doc.text,
             );
             return .{
-                .range = nameRange(type_ref.location, type_ref.name.len),
+                .range = nameRange(&analysis.source_db, type_ref.location, type_ref.name.len),
                 .contents = contents,
             };
         }
 
         for (analysis.semantic_binding_decls) |binding_decl| {
-            if (!std.mem.eql(u8, binding_decl.node.location.file, doc.path)) continue;
-            if (!positionWithinName(position, binding_decl.node.location, binding_decl.decl.name.len)) continue;
+            if (!analysis.isPath(binding_decl.node.location, doc.path)) continue;
+            if (!positionWithinName(&analysis.source_db, position, binding_decl.node.location, binding_decl.decl.name.len)) continue;
             const contents = try buildBindingHoverMarkdown(self.allocator, binding_decl.decl, analysis.semantic_types);
             return .{
-                .range = nameRange(binding_decl.node.location, binding_decl.decl.name.len),
+                .range = nameRange(&analysis.source_db, binding_decl.node.location, binding_decl.decl.name.len),
                 .contents = contents,
             };
         }
 
         for (analysis.semantic_binding_uses) |binding_use| {
-            if (!std.mem.eql(u8, binding_use.node.location.file, doc.path)) continue;
-            if (!positionWithinName(position, binding_use.node.location, binding_use.binding.name.len)) continue;
+            if (!analysis.isPath(binding_use.node.location, doc.path)) continue;
+            if (!positionWithinName(&analysis.source_db, position, binding_use.node.location, binding_use.binding.name.len)) continue;
             const contents = try buildBindingHoverMarkdown(self.allocator, binding_use.binding, analysis.semantic_types);
             return .{
-                .range = nameRange(binding_use.node.location, binding_use.binding.name.len),
+                .range = nameRange(&analysis.source_db, binding_use.node.location, binding_use.binding.name.len),
                 .contents = contents,
             };
         }
@@ -1036,93 +1055,93 @@ pub const LanguageService = struct {
         var analysis_allocator = arena.allocator();
         const analysis = (try self.collectModuleAnalysis(&analysis_allocator, doc)) orelse return null;
         for (analysis.syntax_functions) |syntax_fn| {
-            if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc.path)) continue;
-            if (!positionWithinName(position, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len)) continue;
+            if (!analysis.isPath(syntax_fn.decl.name.location, doc.path)) continue;
+            if (!positionWithinName(&analysis.source_db, position, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len)) continue;
             return .{
-                .path = try self.ownedDefinitionPath(syntax_fn.decl.name.location.file),
-                .range = nameRange(syntax_fn.decl.name.location, syntax_fn.decl.name.string.len),
+                .path = try self.ownedDefinitionPath(analysis.path(syntax_fn.decl.name.location)),
+                .range = nameRange(&analysis.source_db, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len),
             };
         }
 
         for (analysis.syntax_calls) |syntax_call| {
-            if (!std.mem.eql(u8, syntax_call.call.callee_loc.file, doc.path)) continue;
-            if (!positionWithinName(position, syntax_call.call.callee_loc, syntax_call.call.callee.len)) continue;
+            if (!analysis.isPath(syntax_call.call.callee_loc, doc.path)) continue;
+            if (!positionWithinName(&analysis.source_db, position, syntax_call.call.callee_loc, syntax_call.call.callee.len)) continue;
             if (findSemanticTypeInitializerAtLocation(analysis.semantic_type_inits, syntax_call.call.callee_loc)) |type_init| {
                 return .{
-                    .path = try self.ownedDefinitionPath(type_init.init.init_fn.location.file),
-                    .range = nameRange(type_init.init.init_fn.location, type_init.init.init_fn.name.len),
+                    .path = try self.ownedDefinitionPath(analysis.path(type_init.init.init_fn.location)),
+                    .range = nameRange(&analysis.source_db, type_init.init.init_fn.location, type_init.init.init_fn.name.len),
                 };
             }
             const semantic_call = findSemanticFunctionCallAtLocation(analysis.semantic_calls, syntax_call.call.callee_loc) orelse continue;
             return .{
-                .path = try self.ownedDefinitionPath(semantic_call.call.callee.location.file),
-                .range = nameRange(semantic_call.call.callee.location, semantic_call.call.callee.name.len),
+                .path = try self.ownedDefinitionPath(analysis.path(semantic_call.call.callee.location)),
+                .range = nameRange(&analysis.source_db, semantic_call.call.callee.location, semantic_call.call.callee.name.len),
             };
         }
 
         for (analysis.syntax_operators) |syntax_op| {
-            if (!std.mem.eql(u8, syntax_op.location.file, doc.path)) continue;
-            if (!positionWithinName(position, syntax_op.location, syntax_op.len)) continue;
+            if (!analysis.isPath(syntax_op.location, doc.path)) continue;
+            if (!positionWithinName(&analysis.source_db, position, syntax_op.location, syntax_op.len)) continue;
             const semantic_call = findSemanticFunctionCallAtLocation(analysis.semantic_calls, syntax_op.location) orelse continue;
             return .{
-                .path = try self.ownedDefinitionPath(semantic_call.call.callee.location.file),
-                .range = nameRange(semantic_call.call.callee.location, semantic_call.call.callee.name.len),
+                .path = try self.ownedDefinitionPath(analysis.path(semantic_call.call.callee.location)),
+                .range = nameRange(&analysis.source_db, semantic_call.call.callee.location, semantic_call.call.callee.name.len),
             };
         }
 
         for (analysis.syntax_type_decls) |syntax_decl| {
-            if (!std.mem.eql(u8, syntax_decl.name.location.file, doc.path)) continue;
-            if (!positionWithinName(position, syntax_decl.name.location, syntax_decl.name.string.len)) continue;
+            if (!analysis.isPath(syntax_decl.name.location, doc.path)) continue;
+            if (!positionWithinName(&analysis.source_db, position, syntax_decl.name.location, syntax_decl.name.string.len)) continue;
             return .{
-                .path = try self.ownedDefinitionPath(syntax_decl.name.location.file),
-                .range = nameRange(syntax_decl.name.location, syntax_decl.name.string.len),
+                .path = try self.ownedDefinitionPath(analysis.path(syntax_decl.name.location)),
+                .range = nameRange(&analysis.source_db, syntax_decl.name.location, syntax_decl.name.string.len),
             };
         }
 
         for (analysis.syntax_type_refs) |type_ref| {
-            if (!std.mem.eql(u8, type_ref.location.file, doc.path)) continue;
-            if (!positionWithinName(position, type_ref.location, type_ref.name.len)) continue;
+            if (!analysis.isPath(type_ref.location, doc.path)) continue;
+            if (!positionWithinName(&analysis.source_db, position, type_ref.location, type_ref.name.len)) continue;
             const target = findSyntaxTypeDeclByName(analysis.syntax_type_decls, type_ref.name) orelse continue;
             return .{
-                .path = try self.ownedDefinitionPath(target.name.location.file),
-                .range = nameRange(target.name.location, target.name.string.len),
+                .path = try self.ownedDefinitionPath(analysis.path(target.name.location)),
+                .range = nameRange(&analysis.source_db, target.name.location, target.name.string.len),
             };
         }
 
         for (analysis.semantic_field_accesses) |field_access| {
-            if (!std.mem.eql(u8, field_access.node.location.file, doc.path)) continue;
-            if (!positionWithinName(position, field_access.node.location, field_access.access.field_name.len)) continue;
-            const target = findFieldDefinition(field_access, analysis.semantic_types, analysis.syntax_type_decls) orelse continue;
+            if (!analysis.isPath(field_access.node.location, doc.path)) continue;
+            if (!positionWithinName(&analysis.source_db, position, field_access.node.location, field_access.access.field_name.len)) continue;
+            const target = findFieldDefinition(&analysis.source_db, field_access, analysis.semantic_types, analysis.syntax_type_decls) orelse continue;
             return .{
-                .path = try self.ownedDefinitionPath(target.location.file),
-                .range = nameRange(target.location, target.string.len),
+                .path = try self.ownedDefinitionPath(analysis.path(target.location)),
+                .range = nameRange(&analysis.source_db, target.location, target.string.len),
             };
         }
 
         for (analysis.syntax_binding_decls) |syntax_decl| {
-            if (!std.mem.eql(u8, syntax_decl.location.file, doc.path)) continue;
-            if (!positionWithinName(position, syntax_decl.location, syntax_decl.name.len)) continue;
+            if (!analysis.isPath(syntax_decl.location, doc.path)) continue;
+            if (!positionWithinName(&analysis.source_db, position, syntax_decl.location, syntax_decl.name.len)) continue;
             return .{
-                .path = try self.ownedDefinitionPath(syntax_decl.location.file),
-                .range = nameRange(syntax_decl.location, syntax_decl.name.len),
+                .path = try self.ownedDefinitionPath(analysis.path(syntax_decl.location)),
+                .range = nameRange(&analysis.source_db, syntax_decl.location, syntax_decl.name.len),
             };
         }
 
         for (analysis.semantic_binding_decls) |binding_decl| {
-            if (!std.mem.eql(u8, binding_decl.node.location.file, doc.path)) continue;
-            if (!positionWithinName(position, binding_decl.node.location, binding_decl.decl.name.len)) continue;
+            if (!analysis.isPath(binding_decl.node.location, doc.path)) continue;
+            if (!positionWithinName(&analysis.source_db, position, binding_decl.node.location, binding_decl.decl.name.len)) continue;
             return .{
-                .path = try self.ownedDefinitionPath(binding_decl.decl.location.file),
-                .range = nameRange(binding_decl.decl.location, binding_decl.decl.name.len),
+                .path = try self.ownedDefinitionPath(analysis.path(binding_decl.decl.location)),
+                .range = nameRange(&analysis.source_db, binding_decl.decl.location, binding_decl.decl.name.len),
             };
         }
 
         for (analysis.semantic_binding_uses) |binding_use| {
-            if (!std.mem.eql(u8, binding_use.node.location.file, doc.path)) continue;
-            if (!positionWithinName(position, binding_use.node.location, binding_use.binding.name.len)) continue;
+            if (!analysis.isPath(binding_use.node.location, doc.path)) continue;
+            if (!positionWithinName(&analysis.source_db, position, binding_use.node.location, binding_use.binding.name.len)) continue;
             return .{
-                .path = try self.ownedDefinitionPath(binding_use.binding.location.file),
-                .range = nameRange(binding_use.binding.location, binding_use.binding.name.len),
+                .path = try self.ownedDefinitionPath(analysis.path(binding_use.binding.location)),
+                .range = nameRange(&analysis.source_db, binding_use.binding.location, binding_use.binding.name.len),
             };
         }
 
@@ -1143,6 +1162,7 @@ pub const LanguageService = struct {
         const analysis = (try self.collectModuleAnalysis(&analysis_allocator, doc)) orelse return LocationsResult.empty(self.allocator);
 
         const target = resolveSymbolTarget(
+            &analysis.source_db,
             doc.path,
             position,
             analysis.syntax_functions,
@@ -1169,30 +1189,30 @@ pub const LanguageService = struct {
             .function_decl => |fn_decl| {
                 if (include_declaration) {
                     try out.append(.{
-                        .path = try self.ownedDefinitionPath(fn_decl.location.file),
-                        .range = nameRange(fn_decl.location, fn_decl.name.len),
+                        .path = try self.ownedDefinitionPath(analysis.path(fn_decl.location)),
+                        .range = nameRange(&analysis.source_db, fn_decl.location, fn_decl.name.len),
                     });
                 }
                 for (analysis.semantic_calls) |call_ref| {
                     if (call_ref.call.callee != fn_decl) continue;
                     try out.append(.{
-                        .path = try self.ownedDefinitionPath(call_ref.node.location.file),
-                        .range = nameRange(call_ref.node.location, call_ref.call.callee.name.len),
+                        .path = try self.ownedDefinitionPath(analysis.path(call_ref.node.location)),
+                        .range = nameRange(&analysis.source_db, call_ref.node.location, call_ref.call.callee.name.len),
                     });
                 }
             },
             .binding_decl => |binding_decl| {
                 if (include_declaration) {
                     try out.append(.{
-                        .path = try self.ownedDefinitionPath(binding_decl.location.file),
-                        .range = nameRange(binding_decl.location, binding_decl.name.len),
+                        .path = try self.ownedDefinitionPath(analysis.path(binding_decl.location)),
+                        .range = nameRange(&analysis.source_db, binding_decl.location, binding_decl.name.len),
                     });
                 }
                 for (analysis.semantic_binding_uses) |use_ref| {
                     if (use_ref.binding != binding_decl) continue;
                     try out.append(.{
-                        .path = try self.ownedDefinitionPath(use_ref.node.location.file),
-                        .range = nameRange(use_ref.node.location, binding_decl.name.len),
+                        .path = try self.ownedDefinitionPath(analysis.path(use_ref.node.location)),
+                        .range = nameRange(&analysis.source_db, use_ref.node.location, binding_decl.name.len),
                     });
                 }
             },
@@ -1200,15 +1220,15 @@ pub const LanguageService = struct {
                 if (include_declaration) {
                     const syntax_decl = findSyntaxTypeDeclByName(analysis.syntax_type_decls, type_decl.name) orelse return LocationsResult.empty(self.allocator);
                     try out.append(.{
-                        .path = try self.ownedDefinitionPath(syntax_decl.name.location.file),
-                        .range = nameRange(syntax_decl.name.location, type_decl.name.len),
+                        .path = try self.ownedDefinitionPath(analysis.path(syntax_decl.name.location)),
+                        .range = nameRange(&analysis.source_db, syntax_decl.name.location, type_decl.name.len),
                     });
                 }
                 for (analysis.syntax_type_refs) |type_ref| {
                     if (!std.mem.eql(u8, type_ref.name, type_decl.name)) continue;
                     try out.append(.{
-                        .path = try self.ownedDefinitionPath(type_ref.location.file),
-                        .range = nameRange(type_ref.location, type_ref.name.len),
+                        .path = try self.ownedDefinitionPath(analysis.path(type_ref.location)),
+                        .range = nameRange(&analysis.source_db, type_ref.location, type_ref.name.len),
                     });
                 }
             },
@@ -1271,6 +1291,7 @@ pub const LanguageService = struct {
         const analysis = (try self.collectModuleAnalysis(&analysis_allocator, doc)) orelse return null;
 
         const target = resolveSymbolTarget(
+            &analysis.source_db,
             doc.path,
             position,
             analysis.syntax_functions,
@@ -1289,17 +1310,17 @@ pub const LanguageService = struct {
 
         return switch (target) {
             .function_decl => |fn_decl| .{
-                .range = nameRange(fn_decl.location, fn_decl.name.len),
+                .range = nameRange(&analysis.source_db, fn_decl.location, fn_decl.name.len),
                 .placeholder = try self.allocator.dupe(u8, fn_decl.name),
             },
             .binding_decl => |binding_decl| .{
-                .range = nameRange(binding_decl.location, binding_decl.name.len),
+                .range = nameRange(&analysis.source_db, binding_decl.location, binding_decl.name.len),
                 .placeholder = try self.allocator.dupe(u8, binding_decl.name),
             },
             .type_decl => |type_decl| .{
                 .range = blk: {
                     const syntax_decl = findSyntaxTypeDeclByName(analysis.syntax_type_decls, type_decl.name) orelse return null;
-                    break :blk nameRange(syntax_decl.name.location, type_decl.name.len);
+                    break :blk nameRange(&analysis.source_db, syntax_decl.name.location, type_decl.name.len);
                 },
                 .placeholder = try self.allocator.dupe(u8, type_decl.name),
             },
@@ -1585,6 +1606,7 @@ fn collectSemanticRefs(
 
 fn buildFunctionHoverMarkdown(
     allocator: std.mem.Allocator,
+    db: *const source_db.SourceDb,
     decl: *const sg.FunctionDeclaration,
     syntax_decl_opt: ?st.FunctionDeclaration,
     type_refs: []const SemanticTypeDeclRef,
@@ -1596,7 +1618,7 @@ fn buildFunctionHoverMarkdown(
     errdefer out.deinit();
 
     if (syntax_decl_opt) |syntax_decl| {
-        if (std.mem.eql(u8, syntax_decl.name.location.file, source_path)) {
+        if (std.mem.eql(u8, db.path(syntax_decl.name.location.file), source_path)) {
             if (try collectLeadingCommentBlock(source_text, syntax_decl.name.location)) |comments| {
                 try out.appendSlice(comments);
                 try out.appendSlice("\n");
@@ -1619,6 +1641,7 @@ fn buildFunctionHoverMarkdown(
 
 fn buildSyntaxFunctionHoverMarkdown(
     allocator: std.mem.Allocator,
+    db: *const source_db.SourceDb,
     syntax_decl: st.FunctionDeclaration,
     source_path: []const u8,
     source_text: []const u8,
@@ -1627,7 +1650,7 @@ fn buildSyntaxFunctionHoverMarkdown(
     var out = std.array_list.Managed(u8).init(allocator);
     errdefer out.deinit();
 
-    if (std.mem.eql(u8, syntax_decl.name.location.file, source_path)) {
+    if (std.mem.eql(u8, db.path(syntax_decl.name.location.file), source_path)) {
         if (try collectLeadingCommentBlock(source_text, syntax_decl.name.location)) |comments| {
             try out.appendSlice(comments);
             try out.appendSlice("\n");
@@ -1644,6 +1667,7 @@ fn buildSyntaxFunctionHoverMarkdown(
 
 fn buildTypeHoverMarkdown(
     allocator: std.mem.Allocator,
+    db: *const source_db.SourceDb,
     decl: *const sg.TypeDeclaration,
     syntax_decl_opt: ?SyntaxTypeDeclRef,
     type_refs: []const SemanticTypeDeclRef,
@@ -1654,7 +1678,7 @@ fn buildTypeHoverMarkdown(
     errdefer out.deinit();
 
     if (syntax_decl_opt) |syntax_decl| {
-        if (std.mem.eql(u8, syntax_decl.name.location.file, source_path)) {
+        if (std.mem.eql(u8, db.path(syntax_decl.name.location.file), source_path)) {
             if (try collectLeadingCommentBlock(source_text, syntax_decl.name.location)) |comments| {
                 try out.appendSlice(comments);
                 try out.appendSlice("\n");
@@ -1874,7 +1898,7 @@ fn extractFunctionHeaderSource(
     var idx = start_idx;
     while (idx < toks.len) : (idx += 1) {
         const tk = toks[idx];
-        if (!std.mem.eql(u8, tk.location.file, syntax_decl.name.location.file)) continue;
+        if (tk.location.file != syntax_decl.name.location.file) continue;
         if (tk.location.offset > source_text.len) return null;
         switch (tk.content) {
             .open_parenthesis => paren_depth += 1,
@@ -1897,7 +1921,7 @@ fn extractFunctionHeaderSource(
 
 fn findTokenIndexAtOffset(toks: []const token.Token, loc: token.Location) ?usize {
     for (toks, 0..) |tk, idx| {
-        if (!std.mem.eql(u8, tk.location.file, loc.file)) continue;
+        if (tk.location.file != loc.file) continue;
         if (tk.location.offset == loc.offset) return idx;
     }
     return null;
@@ -2213,12 +2237,13 @@ fn findSyntaxFunctionDeclByName(
 }
 
 fn findSyntaxTypeDecl(
+    db: *const source_db.SourceDb,
     refs: []const SyntaxTypeDeclRef,
     file_path: []const u8,
     name: []const u8,
 ) ?SyntaxTypeDeclRef {
     for (refs) |ref| {
-        if (!std.mem.eql(u8, ref.name.location.file, file_path)) continue;
+        if (!std.mem.eql(u8, db.path(ref.name.location.file), file_path)) continue;
         if (!std.mem.eql(u8, ref.name.string, name)) continue;
         return ref;
     }
@@ -2315,6 +2340,7 @@ fn findSemanticTypeDeclByType(
 }
 
 fn findFieldDefinition(
+    db: *const source_db.SourceDb,
     field_access: SemanticFieldAccessRef,
     semantic_types: []const SemanticTypeDeclRef,
     syntax_type_decls: []const SyntaxTypeDeclRef,
@@ -2323,7 +2349,7 @@ fn findFieldDefinition(
     if (base_ty != .struct_type) return null;
 
     const semantic_decl = findSemanticTypeDeclByType(semantic_types, base_ty) orelse return null;
-    const syntax_decl = findSyntaxTypeDecl(syntax_type_decls, semantic_decl.decl.origin_file, semantic_decl.decl.name) orelse return null;
+    const syntax_decl = findSyntaxTypeDecl(db, syntax_type_decls, semantic_decl.decl.origin_file, semantic_decl.decl.name) orelse return null;
     if (syntax_decl.node.content != .type_declaration) return null;
     if (syntax_decl.node.content.type_declaration.value.content != .struct_type_literal) return null;
 
@@ -2368,6 +2394,7 @@ fn comparisonOperatorTokenLen(op: token.ComparisonOperator) usize {
 }
 
 fn resolveSymbolTarget(
+    db: *const source_db.SourceDb,
     doc_path: []const u8,
     position: Position,
     syntax_functions: []const SyntaxFunctionDeclRef,
@@ -2384,8 +2411,8 @@ fn resolveSymbolTarget(
     semantic_binding_uses: []const SemanticBindingUseRef,
 ) ?SymbolTarget {
     for (syntax_functions) |syntax_fn| {
-        if (!std.mem.eql(u8, syntax_fn.decl.name.location.file, doc_path)) continue;
-        if (!positionWithinName(position, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len)) continue;
+        if (!std.mem.eql(u8, db.path(syntax_fn.decl.name.location.file), doc_path)) continue;
+        if (!positionWithinName(db, position, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len)) continue;
         const semantic_fn = findSemanticFunctionDecl(semantic_functions, syntax_fn.decl.name.location, syntax_fn.decl.name.string);
         if (semantic_fn) |resolved| {
             return .{ .function_decl = resolved.decl };
@@ -2393,8 +2420,8 @@ fn resolveSymbolTarget(
     }
 
     for (syntax_calls) |syntax_call| {
-        if (!std.mem.eql(u8, syntax_call.call.callee_loc.file, doc_path)) continue;
-        if (!positionWithinName(position, syntax_call.call.callee_loc, syntax_call.call.callee.len)) continue;
+        if (!std.mem.eql(u8, db.path(syntax_call.call.callee_loc.file), doc_path)) continue;
+        if (!positionWithinName(db, position, syntax_call.call.callee_loc, syntax_call.call.callee.len)) continue;
         if (findSemanticTypeInitializerAtLocation(semantic_type_inits, syntax_call.call.callee_loc)) |type_init| {
             return .{ .function_decl = type_init.init.init_fn };
         }
@@ -2404,32 +2431,32 @@ fn resolveSymbolTarget(
     }
 
     for (syntax_operators) |syntax_op| {
-        if (!std.mem.eql(u8, syntax_op.location.file, doc_path)) continue;
-        if (!positionWithinName(position, syntax_op.location, syntax_op.len)) continue;
+        if (!std.mem.eql(u8, db.path(syntax_op.location.file), doc_path)) continue;
+        if (!positionWithinName(db, position, syntax_op.location, syntax_op.len)) continue;
         if (findSemanticFunctionCallAtLocation(semantic_calls, syntax_op.location)) |semantic_call| {
             return .{ .function_decl = semantic_call.call.callee };
         }
     }
 
     for (syntax_type_decls) |syntax_decl| {
-        if (!std.mem.eql(u8, syntax_decl.name.location.file, doc_path)) continue;
-        if (!positionWithinName(position, syntax_decl.name.location, syntax_decl.name.string.len)) continue;
+        if (!std.mem.eql(u8, db.path(syntax_decl.name.location.file), doc_path)) continue;
+        if (!positionWithinName(db, position, syntax_decl.name.location, syntax_decl.name.string.len)) continue;
         if (findSemanticTypeDeclByName(semantic_types, syntax_decl.name.string)) |semantic_decl| {
             return .{ .type_decl = semantic_decl.decl };
         }
     }
 
     for (syntax_type_refs) |type_ref| {
-        if (!std.mem.eql(u8, type_ref.location.file, doc_path)) continue;
-        if (!positionWithinName(position, type_ref.location, type_ref.name.len)) continue;
+        if (!std.mem.eql(u8, db.path(type_ref.location.file), doc_path)) continue;
+        if (!positionWithinName(db, position, type_ref.location, type_ref.name.len)) continue;
         if (findSemanticTypeDeclByName(semantic_types, type_ref.name)) |semantic_decl| {
             return .{ .type_decl = semantic_decl.decl };
         }
     }
 
     for (syntax_binding_decls) |syntax_decl| {
-        if (!std.mem.eql(u8, syntax_decl.location.file, doc_path)) continue;
-        if (!positionWithinName(position, syntax_decl.location, syntax_decl.name.len)) continue;
+        if (!std.mem.eql(u8, db.path(syntax_decl.location.file), doc_path)) continue;
+        if (!positionWithinName(db, position, syntax_decl.location, syntax_decl.name.len)) continue;
         for (semantic_binding_decls) |binding_decl| {
             if (!sameLocation(binding_decl.decl.location, syntax_decl.location)) continue;
             return .{ .binding_decl = binding_decl.decl };
@@ -2437,14 +2464,14 @@ fn resolveSymbolTarget(
     }
 
     for (semantic_binding_decls) |binding_decl| {
-        if (!std.mem.eql(u8, binding_decl.node.location.file, doc_path)) continue;
-        if (!positionWithinName(position, binding_decl.node.location, binding_decl.decl.name.len)) continue;
+        if (!std.mem.eql(u8, db.path(binding_decl.node.location.file), doc_path)) continue;
+        if (!positionWithinName(db, position, binding_decl.node.location, binding_decl.decl.name.len)) continue;
         return .{ .binding_decl = binding_decl.decl };
     }
 
     for (semantic_binding_uses) |binding_use| {
-        if (!std.mem.eql(u8, binding_use.node.location.file, doc_path)) continue;
-        if (!positionWithinName(position, binding_use.node.location, binding_use.binding.name.len)) continue;
+        if (!std.mem.eql(u8, db.path(binding_use.node.location.file), doc_path)) continue;
+        if (!positionWithinName(db, position, binding_use.node.location, binding_use.binding.name.len)) continue;
         return .{ .binding_decl = binding_use.binding };
     }
 
@@ -2452,7 +2479,7 @@ fn resolveSymbolTarget(
 }
 
 fn sameLocation(a: token.Location, b: token.Location) bool {
-    return std.mem.eql(u8, a.file, b.file) and a.offset == b.offset;
+    return a.file == b.file and a.offset == b.offset;
 }
 
 fn sortLocations(items: []Location) void {
@@ -2466,17 +2493,18 @@ fn sortLocations(items: []Location) void {
     }.lessThan);
 }
 
-fn nameRange(loc: token.Location, byte_len: usize) Range {
-    const line = if (loc.line == 0) 0 else loc.line - 1;
-    const start_char = if (loc.column == 0) 0 else loc.column - 1;
+fn nameRange(db: *const source_db.SourceDb, loc: token.Location, byte_len: usize) Range {
+    const position = db.lineColumn(loc.file, loc.offset);
+    const line = position.line - 1;
+    const start_char = position.column - 1;
     return .{
         .start = .{ .line = line, .character = start_char },
         .end = .{ .line = line, .character = start_char + @as(u32, @intCast(byte_len)) },
     };
 }
 
-fn positionWithinName(pos: Position, loc: token.Location, byte_len: usize) bool {
-    const range = nameRange(loc, byte_len);
+fn positionWithinName(db: *const source_db.SourceDb, pos: Position, loc: token.Location, byte_len: usize) bool {
+    const range = nameRange(db, loc, byte_len);
     return positionLessOrEqual(range.start, pos) and positionLessOrEqual(pos, range.end);
 }
 
@@ -2562,19 +2590,20 @@ fn appendReachDirective(out: *std.array_list.Managed(u8), reach: *const sg.Reach
     }
 }
 
-fn positionAfterName(loc: token.Location, byte_len: usize) Position {
-    const line = if (loc.line == 0) 0 else loc.line - 1;
-    const start_char = if (loc.column == 0) 0 else loc.column - 1;
+fn positionAfterName(db: *const source_db.SourceDb, loc: token.Location, byte_len: usize) Position {
+    const position = db.lineColumn(loc.file, loc.offset);
+    const line = position.line - 1;
+    const start_char = position.column - 1;
     return .{
         .line = line,
         .character = start_char + @as(u32, @intCast(byte_len)),
     };
 }
 
-fn positionAfterCallInput(toks: []const token.Token, input_loc: token.Location) ?Position {
+fn positionAfterCallInput(db: *const source_db.SourceDb, toks: []const token.Token, input_loc: token.Location) ?Position {
     var start_idx: ?usize = null;
     for (toks, 0..) |tk, idx| {
-        if (!std.mem.eql(u8, tk.location.file, input_loc.file)) continue;
+        if (tk.location.file != input_loc.file) continue;
         if (tk.location.offset != input_loc.offset) continue;
         if (tk.content != .open_parenthesis) continue;
         start_idx = idx;
@@ -2586,15 +2615,16 @@ fn positionAfterCallInput(toks: []const token.Token, input_loc: token.Location) 
     var idx = idx0;
     while (idx < toks.len) : (idx += 1) {
         const tk = toks[idx];
-        if (!std.mem.eql(u8, tk.location.file, input_loc.file)) continue;
+        if (tk.location.file != input_loc.file) continue;
         switch (tk.content) {
             .open_parenthesis => depth += 1,
             .close_parenthesis => {
                 if (depth == 0) return null;
                 depth -= 1;
                 if (depth == 0) {
-                    const line = if (tk.location.line == 0) 0 else tk.location.line - 1;
-                    const start_char = if (tk.location.column == 0) 0 else tk.location.column - 1;
+                    const position = db.lineColumn(tk.location.file, tk.location.offset);
+                    const line = position.line - 1;
+                    const start_char = position.column - 1;
                     return .{
                         .line = line,
                         .character = start_char + 1,
@@ -2625,9 +2655,10 @@ fn documentShouldAcceptVersion(doc: Document, incoming_version: ?i64) bool {
     return incoming >= current;
 }
 
-fn locationToRange(loc: token.Location) Range {
-    const start_line = if (loc.line == 0) 0 else loc.line - 1;
-    const start_char = if (loc.column == 0) 0 else loc.column - 1;
+fn locationToRange(db: *const source_db.SourceDb, loc: token.Location) Range {
+    const position = db.lineColumn(loc.file, loc.offset);
+    const start_line = position.line - 1;
+    const start_char = position.column - 1;
     return .{
         .start = .{ .line = start_line, .character = start_char },
         .end = .{ .line = start_line, .character = start_char + 1 },
@@ -2734,6 +2765,7 @@ inline fn classify(c: token.Content) ?u32 {
 fn emitLexical(
     out: *std.array_list.Managed(u32),
     gpa: std.mem.Allocator,
+    db: *const source_db.SourceDb,
     text: []const u8,
     toks: []const token.Token,
 ) !void {
@@ -2741,7 +2773,7 @@ fn emitLexical(
 
     var collected = std.array_list.Managed(SemanticToken).init(std.heap.page_allocator);
     defer collected.deinit();
-    try appendLexicalSemanticTokens(&collected, text, toks);
+    try appendLexicalSemanticTokens(&collected, db, text, toks);
 
     var prev_line: u32 = 0;
     var prev_char: u32 = 0;
@@ -2754,6 +2786,7 @@ const SemanticToken = struct { line: u32, start: u32, len: u32, type_index: u32,
 
 fn appendLexicalSemanticTokens(
     sink: *std.array_list.Managed(SemanticToken),
+    db: *const source_db.SourceDb,
     text: []const u8,
     toks: []const token.Token,
 ) !void {
@@ -2794,8 +2827,9 @@ fn appendLexicalSemanticTokens(
         const len_u: usize = tokenLenBytesInSource(text, tk);
         const end_off: usize = start_off + len_u;
 
-        var line0: u32 = if (tk.location.line == 0) 0 else tk.location.line - 1;
-        var col0: u32 = if (tk.location.column == 0) 0 else tk.location.column - 1;
+        const position = db.lineColumn(tk.location.file, tk.location.offset);
+        var line0: u32 = position.line - 1;
+        var col0: u32 = position.column - 1;
 
         var off: usize = start_off;
         while (off < end_off) {
