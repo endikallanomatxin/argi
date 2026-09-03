@@ -2187,6 +2187,12 @@ test "feature_tests/collections/35_dynamic_array_fallible_copy_cleanup" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/collections/36_dynamic_array_owning_mutations" {
+    const test_path = "tests/feature_tests/collections/36_dynamic_array_owning_mutations";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/control_flow/11_range_default_start_with_step" {
     const test_path = "tests/feature_tests/control_flow/11_range_default_start_with_step";
     try expectSuccessfulBuild(test_path);

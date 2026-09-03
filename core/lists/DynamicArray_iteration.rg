@@ -13,14 +13,14 @@ DynamicArrayRWPointerIterator#(.t: Type) : Type = (
     .index : UIntNative
 )
 
-DynamicArrayIterator#(.t: Type) implements Iterator#(.t: t)
+DynamicArrayIterator#(.t: Type: ImplicitlyCopyable) implements Iterator#(.t: t)
 DynamicArrayROPointerIterator#(.t: Type) implements Iterator#(.t: &t)
 DynamicArrayRWPointerIterator#(.t: Type) implements Iterator#(.t: $&t)
-DynamicArray#(.t: Type) implements Iterable#(.t: t)
+DynamicArray#(.t: Type: ImplicitlyCopyable) implements Iterable#(.t: t)
 DynamicArray#(.t: Type) implements ROPointerIterable#(.t: t)
 DynamicArray#(.t: Type) implements RWPointerIterable#(.t: t)
 
-to_iterator#(.t: Type) (
+to_iterator#(.t: Type: ImplicitlyCopyable) (
     .value: &DynamicArray#(.t: t)
 ) -> (.iterator: DynamicArrayIterator#(.t: t)) := {
     iterator = (
@@ -47,16 +47,16 @@ to_rw_pointer_iterator#(.t: Type) (
     )
 }
 
-has_next#(.t: Type) (
+has_next#(.t: Type: ImplicitlyCopyable) (
     .self: &DynamicArrayIterator#(.t: t)
 ) -> (.ok: Bool) := {
     ok = self&.index < self&.array&.length
 }
 
-next#(.t: Type) (
+next#(.t: Type: ImplicitlyCopyable) (
     .self: $&DynamicArrayIterator#(.t: t)
 ) -> (.value: t) := {
-    -- The value iterator copies; owning iteration remains reference-only.
+    -- Value iteration is the array's conditional implicit-copy capability.
     current_index :: UIntNative = self&.index
     ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = self&.array, .offset = current_index).pointer
     value = ptr&
