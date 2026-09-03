@@ -2448,7 +2448,7 @@ pub const CodeGenerator = struct {
 
     fn genFunctionCall(self: *CodeGenerator, fc: *const sem.FunctionCall) CodegenError!?TypedValue {
         if (fc.callee.safety_primitive == .relocate) return self.genRelocate(fc);
-        if (fc.callee.safety_primitive == .trusted_opaque_store or
+        if (fc.callee.safety_primitive == .trusted_opaque_move or
             fc.callee.safety_primitive == .trusted_opaque_move_in)
             return self.genOpaqueStore(fc);
         if (fc.callee.safety_primitive == .trusted_opaque_move_out) return self.genOpaqueTake(fc);

@@ -2,9 +2,10 @@
 
 Argi combines ordinary value semantics with explicit references and structural
 temporal checking. The checker has three fundamental kinds of fact: places are
-stable structural storage, roots are temporal validity domains, and values can
-depend on or own roots. Physical allocation remains a separate runtime concern;
-no reference qualifier encodes all of these properties.
+stable structural storage, Validity Roots are temporal identities, and values
+can depend on or own roots. A Validity Domain is the set of values and storage
+whose validity is governed by one root. Physical allocation remains a separate
+runtime concern; no reference qualifier encodes all of these properties.
 
 ## Values, copy, and move
 
@@ -50,14 +51,26 @@ inline elements can invalidate references to their slots. A reference value
 copied out of a slot keeps the referenced object's root, not the container's
 backing root.
 
-## Roots and dependencies
+## Validity Roots, domains, and dependencies
 
-A root is a temporal validity domain. Using a reference requires its root to be
-alive. A dependency does not keep a root alive, so a reference binding may stay
-in scope after root end; its later use is the error.
+A Validity Root is the temporal identity that anchors a Validity Domain. The
+domain is the conceptual set of values and storage governed by that root; the
+root itself is not that set. Using a reference requires every root it depends
+on to be alive. A dependency does not keep a root alive, so a reference binding
+may stay in scope after root end; its later use is the error.
 
-- `fresh` creates an independent domain.
-- `inherit R` uses exactly domain `R`.
+```text
+             Validity Root R
+                    |
+          +---------+---------+
+          |         |         |
+          v         v         v
+         v1        v2        v3
+          \------ Validity Domain ------/
+```
+
+- `fresh` creates a new root and therefore an independent domain.
+- `inherit R` attaches the value to the domain governed by `R`.
 
 Inheritance is common identity, not merely a shorter lifetime. Arena objects
 can share one root without universal object IDs, epochs, or generations.
@@ -70,10 +83,10 @@ other live roots remain usable.
 `restrict_reference(.input, .lifetime)` adds the current storage generation of
 `lifetime` to an already safe reference. It preserves the input's pointee,
 mutability, provenance, and all previous dependencies; it creates no root,
-ownership, or storage authority. Thus it can only shorten a usable lifetime,
+ownership, or storage capability. Thus it can only shorten a usable lifetime,
 never extend one.
 
-`trusted_opaque_store`, its storage-aware form
+`trusted_opaque_move`, its storage-aware form
 `trusted_opaque_move_in`, `trusted_opaque_move_out`, and
 `trusted_opaque_drop` are explicit trusted primitives. Any library may
 invoke them: there is no global unsafe mode and bundled core has no extra
@@ -91,23 +104,23 @@ per-slot occupancy state to diagnose that contract dynamically.
 Canonical primitive identity is based on the bundled declaration; its trusted
 meaning is not granted merely by reusing the name in user code.
 
-The storage-aware store receives a structural `storage` Place in addition to
+The storage-aware move receives a structural `storage` Place in addition to
 the runtime slot. Dependencies present when the value crosses this boundary
 are retained in a conservative storage-level set. They are not tracked per
 slot and are unioned across control-flow joins. While such a dependency remains
 hidden, ending its root is rejected; precise visible references do not impose
-that restriction. The original two-argument store remains available for values
+that restriction. The original two-argument move remains available for values
 without external dependencies. It infers the backing owner from the destination
 pointer so that retaining and later mutating that pointer still updates one
 aggregate opaque domain.
 
 These facts grow monotonically until `trusted_opaque_mark_empty` discharges a
 domain after its caller has made every runtime slot in that domain empty.
-Relocating slots within the same logical domain does not justify a release.
+Relocating slots within the same logical domain does not prove that domain empty.
 Pointers that access opaque storage carry domain provenance, never slot
 identity or contents. A later pointer, field, or array write unions only the
 written value's temporal dependencies into the same storage-level hidden set
-used by the original store.
+used by the original move.
 
 Function summaries represent hidden dependencies independently from ownership
 consumption. An opaque storage effect pairs a symbolic input storage path with
@@ -118,12 +131,12 @@ storage path and the dependency effect into the caller, and control-flow joins
 union these effects conservatively.
 
 Before storing that summary, the checker projects it to dependency-only facts:
-ownership transfer, owned roots, storage authorities, foreign-storage markers,
+ownership transfer, owned roots, storage capabilities, foreign-storage markers,
 and integer-address markers are discarded recursively. Applying the effect
 instantiates only input dependencies, input-place provenance, and fresh
 temporal dependencies. Fresh temporal identities remain necessary when a
 wrapper creates a new lifetime whose reference is hidden, but they are never
-marked owned and do not create storage authority.
+marked owned and do not create storage capability.
 
 ## Relocatability and opaque ownership
 
@@ -141,7 +154,7 @@ live opaque-owned value, destination is empty, the slots are distinct; after
 the operation source is empty and destination contains that same live value.
 It performs neither cleanup nor opaque-to-precise extraction.
 
-Passing `trusted_opaque_store` is not a permanent relocatability proof.
+Passing `trusted_opaque_move` is not a permanent relocatability proof.
 A later write through an opaque access can introduce a reference to that slot,
 another slot, or another root. References into the opaque domain depend on its
 logical storage generation. `trusted_opaque_relocate` rejects a move when
@@ -229,8 +242,8 @@ Physical allocation and temporal policy are separate:
 allocator -> raw storage + StorageCapability -> establish fresh / inherit R -> safe reference
 ```
 
-An allocator determines how bytes are obtained and returned. ValidityRoot
-establishment determines their validity domain.
+An allocator determines how bytes are obtained and returned. Validity Root
+establishment determines which root anchors their Validity Domain.
 
 Failure is decided at the raw-storage boundary. `..error ..out_of_memory`
 therefore carries no `Allocation`, safe reference, ValidityRoot, or cleanup obligation;

@@ -72,7 +72,7 @@ pub const SafetyChecker = struct {
         const ChoiceTemporaryActive = struct { expression: *const sg.SGNode, variant_index: u32 };
         const StorageCapabilityState = enum { available, conditional, maybe_consumed, consumed };
         tracker: facts.Tracker,
-        storage_authorities: std.array_list.Managed(StorageCapabilityState),
+        storage_capabilities: std.array_list.Managed(StorageCapabilityState),
         places: std.array_list.Managed(facts.PlaceFacts),
         ownership_edges: std.array_list.Managed(OwnershipEdge),
         storage_roots: std.array_list.Managed(StorageRoot),
@@ -87,7 +87,7 @@ pub const SafetyChecker = struct {
         fn init(allocator: std.mem.Allocator) FunctionState {
             return .{
                 .tracker = facts.Tracker.init(allocator),
-                .storage_authorities = std.array_list.Managed(StorageCapabilityState).init(allocator),
+                .storage_capabilities = std.array_list.Managed(StorageCapabilityState).init(allocator),
                 .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
                 .ownership_edges = std.array_list.Managed(OwnershipEdge).init(allocator),
                 .storage_roots = std.array_list.Managed(StorageRoot).init(allocator),
@@ -101,7 +101,7 @@ pub const SafetyChecker = struct {
 
         fn deinit(self: *FunctionState) void {
             self.tracker.deinit();
-            self.storage_authorities.deinit();
+            self.storage_capabilities.deinit();
             self.places.deinit();
             self.ownership_edges.deinit();
             self.storage_roots.deinit();
@@ -116,7 +116,7 @@ pub const SafetyChecker = struct {
             var result = FunctionState.init(allocator);
             errdefer result.deinit();
             try result.tracker.roots.appendSlice(self.tracker.roots.items);
-            try result.storage_authorities.appendSlice(self.storage_authorities.items);
+            try result.storage_capabilities.appendSlice(self.storage_capabilities.items);
             try result.places.appendSlice(self.places.items);
             try result.ownership_edges.appendSlice(self.ownership_edges.items);
             try result.storage_roots.appendSlice(self.storage_roots.items);
@@ -133,23 +133,23 @@ pub const SafetyChecker = struct {
 
     /// Domains proven empty on every path reaching the current program point.
     /// Explicit returns are accumulated separately so unreachable fallthrough
-    /// never makes a later lexical release look definite.
-    const OpaqueReleaseState = struct {
-        released: std.array_list.Managed(facts.InputPath),
+    /// never makes a later lexical empty look definite.
+    const OpaqueEmptyState = struct {
+        emptied: std.array_list.Managed(facts.InputPath),
         reachable: bool = true,
 
-        fn init(allocator: std.mem.Allocator) OpaqueReleaseState {
-            return .{ .released = std.array_list.Managed(facts.InputPath).init(allocator) };
+        fn init(allocator: std.mem.Allocator) OpaqueEmptyState {
+            return .{ .emptied = std.array_list.Managed(facts.InputPath).init(allocator) };
         }
 
-        fn deinit(self: *OpaqueReleaseState) void {
-            self.released.deinit();
+        fn deinit(self: *OpaqueEmptyState) void {
+            self.emptied.deinit();
         }
 
-        fn clone(self: *const OpaqueReleaseState, allocator: std.mem.Allocator) !OpaqueReleaseState {
-            var result = OpaqueReleaseState.init(allocator);
+        fn clone(self: *const OpaqueEmptyState, allocator: std.mem.Allocator) !OpaqueEmptyState {
+            var result = OpaqueEmptyState.init(allocator);
             errdefer result.deinit();
-            try result.released.appendSlice(self.released.items);
+            try result.emptied.appendSlice(self.emptied.items);
             result.reachable = self.reachable;
             return result;
         }
@@ -513,18 +513,18 @@ pub const SafetyChecker = struct {
             .address_of => |value| blk: {
                 if (!try self.validateAddressablePath(function, value, state)) break :blk .{};
                 const target = try self.resolvePlace(value, state);
-                const opaque_origins = try self.opaqueOriginsForAccess(value, state);
+                const opaque_provenance = try self.opaqueProvenanceForAccess(value, state);
                 var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator.*);
-                if (opaque_origins.len == 0) {
+                if (opaque_provenance.len == 0) {
                     try appendDependency(&dependencies, .{ .root = try self.storageRoot(value, state) });
                 } else {
-                    for (opaque_origins) |origin|
-                        try appendDependency(&dependencies, .{ .root = origin.generation });
+                    for (opaque_provenance) |provenance|
+                        try appendDependency(&dependencies, .{ .root = provenance.generation });
                 }
                 break :blk .{
                     .dependencies = try dependencies.toOwnedSlice(),
                     .referenced_place = target,
-                    .opaque_origins = opaque_origins,
+                    .opaque_provenance = opaque_provenance,
                 };
             },
             .dereference => blk: {
@@ -544,8 +544,8 @@ pub const SafetyChecker = struct {
                     if (!try self.validateAddressablePath(function, access.struct_value, state)) break :blk .{};
                     if (self.getPlace(state, storage)) |place_facts| {
                         try self.requireInitialized(function, place_facts);
-                        const origins = try self.opaqueOriginsCarriedByAccess(access.struct_value, state);
-                        break :blk try self.addOpaqueReadEnvelope(place_facts.value, node.sem_type, origins);
+                        const provenance = try self.opaqueProvenanceCarriedByAccess(access.struct_value, state);
+                        break :blk try self.addOpaqueReadEnvelope(place_facts.value, node.sem_type, provenance);
                     }
                 }
                 const aggregate_value = try self.evaluate(function, access.struct_value, state);
@@ -563,8 +563,8 @@ pub const SafetyChecker = struct {
                 if (resolved != null and !try self.validateAddressablePath(function, access.choice_value, state)) break :blk .{};
                 const choice = if (resolved) |storage| stored_blk: {
                     const stored = self.valueAtPlace(state, storage) orelse facts.ValueFacts{};
-                    const origins = try self.opaqueOriginsCarriedByAccess(access.choice_value, state);
-                    break :stored_blk try self.addOpaqueReadEnvelope(stored, access.choice_value.sem_type, origins);
+                    const provenance = try self.opaqueProvenanceCarriedByAccess(access.choice_value, state);
+                    break :stored_blk try self.addOpaqueReadEnvelope(stored, access.choice_value.sem_type, provenance);
                 } else try self.evaluate(function, access.choice_value, state);
                 if (resolved) |storage| {
                     if (!self.choiceVariantIsActive(state, storage, access.variant_index)) {
@@ -609,7 +609,7 @@ pub const SafetyChecker = struct {
                     break :blk facts.ValueFacts{
                         .integer_address = true,
                         .foreign_storage = value.foreign_storage or value.dependencies.len == 0,
-                        .storage_authorities = value.storage_authorities,
+                        .storage_capabilities = value.storage_capabilities,
                     };
                 if (target_is_reference and (source_is_integer or value.integer_address)) {
                     if (self.choice_payload_depth == 0)
@@ -617,7 +617,7 @@ pub const SafetyChecker = struct {
                     break :blk facts.ValueFacts{
                         .integer_address = true,
                         .foreign_storage = value.foreign_storage,
-                        .storage_authorities = value.storage_authorities,
+                        .storage_capabilities = value.storage_capabilities,
                     };
                 }
                 break :blk .{};
@@ -695,7 +695,7 @@ pub const SafetyChecker = struct {
         for (arguments, 0..) |argument, index| argument_values[index] = try self.evaluate(function, argument.value, state);
         if (call.callee.safety_primitive == .relocate)
             return self.relocatePlaces(function, arguments, argument_values, state);
-        if (call.callee.safety_primitive == .trusted_opaque_store or
+        if (call.callee.safety_primitive == .trusted_opaque_move or
             call.callee.safety_primitive == .trusted_opaque_move_in)
         {
             if (argument_values.len == 3) {
@@ -749,9 +749,9 @@ pub const SafetyChecker = struct {
             return .{};
         }
         if (call.callee.safety_primitive == .raw_allocated_storage) {
-            const authority: facts.StorageCapabilityId = @enumFromInt(state.storage_authorities.items.len);
-            try state.storage_authorities.append(.available);
-            return .{ .foreign_storage = true, .storage_authorities = try self.oneStorageCapability(authority) };
+            const capability: facts.StorageCapabilityId = @enumFromInt(state.storage_capabilities.items.len);
+            try state.storage_capabilities.append(.available);
+            return .{ .foreign_storage = true, .storage_capabilities = try self.oneStorageCapability(capability) };
         }
         if (call.callee.safety_primitive == .establish_fresh_reference)
             try self.diagnostics.add(function.location, .semantic, "fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries", .{});
@@ -759,17 +759,17 @@ pub const SafetyChecker = struct {
             call.callee.safety_primitive == .establish_inherited_reference or
             call.callee.safety_primitive == .establish_inherited_storage)
         {
-            const requires_authority = call.callee.safety_primitive == .establish_allocation or
+            const requires_capability = call.callee.safety_primitive == .establish_allocation or
                 call.callee.safety_primitive == .establish_inherited_storage;
-            if (requires_authority and (argument_values.len == 0 or argument_values[0].storage_authorities.len == 0)) {
+            if (requires_capability and (argument_values.len == 0 or argument_values[0].storage_capabilities.len == 0)) {
                 try self.diagnostics.add(function.location, .semantic, "allocation root establishment requires storage returned by an authorized allocator boundary", .{});
             } else if (argument_values.len != 0) {
-                for (argument_values[0].storage_authorities) |authority| {
-                    const index = @intFromEnum(authority);
-                    if (index >= state.storage_authorities.items.len or state.storage_authorities.items[index] != .available) {
-                        try self.diagnostics.add(function.location, .semantic, "physical storage authority has already been consumed", .{});
+                for (argument_values[0].storage_capabilities) |capability| {
+                    const index = @intFromEnum(capability);
+                    if (index >= state.storage_capabilities.items.len or state.storage_capabilities.items[index] != .available) {
+                        try self.diagnostics.add(function.location, .semantic, "physical storage capability has already been consumed", .{});
                     } else {
-                        state.storage_authorities.items[index] = .consumed;
+                        state.storage_capabilities.items[index] = .consumed;
                     }
                 }
             }
@@ -882,14 +882,14 @@ pub const SafetyChecker = struct {
         argument_values: []const facts.ValueFacts,
         state: *FunctionState,
     ) !void {
-        // A release recorded in a summary is guaranteed on every exit and is
+        // An empty-domain effect recorded in a summary is guaranteed on every exit and is
         // removed during inference if the domain is subsequently repopulated.
-        // Clear it before input post-states so a wrapper can release a domain
+        // Clear it before input post-states so a wrapper can empty a domain
         // before deinitializing its storage, then reaffirm it after opaque
         // consumption effects have been instantiated.
-        try self.applyOpaqueStorageReleases(summary, arguments, argument_values, state);
+        try self.applyOpaqueStorageEmpties(summary, arguments, argument_values, state);
         try self.applyInputEffects(function, summary, arguments, argument_values, state);
-        try self.applyOpaqueStorageReleases(summary, arguments, argument_values, state);
+        try self.applyOpaqueStorageEmpties(summary, arguments, argument_values, state);
         try self.applyOpaqueStorageEffects(summary, arguments, argument_values, state);
     }
 
@@ -959,9 +959,9 @@ pub const SafetyChecker = struct {
         try self.mergeLiveOpaqueDependencies(state, storage, hidden.items);
     }
 
-    /// Opaque origins are destination provenance when a pointer is used for
+    /// Opaque provenance are destination provenance when a pointer is used for
     /// access, but temporal value provenance when that pointer is stored as
-    /// data. In the latter role each origin depends on the domain's logical
+    /// data. In the latter role each provenance depends on the domain's logical
     /// storage generation. Domain inference also covers aliases created before
     /// their backing storage was registered as opaque.
     fn collectOpaqueHiddenDependencies(
@@ -972,10 +972,10 @@ pub const SafetyChecker = struct {
     ) !void {
         for (value.dependencies) |dependency| try appendOwnedRoot(hidden, dependency.root);
 
-        var origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
-        defer origins.deinit();
-        try self.collectOpaqueProvenancesCarriedBy(state, value, &origins);
-        for (origins.items) |origin| try appendOwnedRoot(hidden, origin.generation);
+        var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
+        defer provenances.deinit();
+        try self.collectOpaqueProvenancesCarriedBy(state, value, &provenances);
+        for (provenances.items) |provenance| try appendOwnedRoot(hidden, provenance.generation);
 
         for (value.fields) |field|
             try self.collectOpaqueHiddenDependencies(state, field.value.*, hidden);
@@ -1007,18 +1007,18 @@ pub const SafetyChecker = struct {
         pointer: *facts.ValueFacts,
         storage: place.Place,
     ) !void {
-        var origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
-        try origins.appendSlice(pointer.opaque_origins);
-        for (origins.items) |origin| if (origin.storage.eql(storage)) return;
+        var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
+        try provenances.appendSlice(pointer.opaque_provenance);
+        for (provenances.items) |provenance| if (provenance.storage.eql(storage)) return;
 
         var inferred = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
         defer inferred.deinit();
         try self.collectOpaqueProvenancesCarriedBy(state, pointer.*, &inferred);
-        for (inferred.items) |origin|
-            if (origin.storage.eql(storage)) try appendOpaqueProvenance(&origins, origin);
+        for (inferred.items) |provenance|
+            if (provenance.storage.eql(storage)) try appendOpaqueProvenance(&provenances, provenance);
 
         var found = false;
-        for (origins.items) |origin| if (origin.storage.eql(storage)) {
+        for (provenances.items) |provenance| if (provenance.storage.eql(storage)) {
             found = true;
             break;
         };
@@ -1031,12 +1031,12 @@ pub const SafetyChecker = struct {
             // The first opaque-store boundary establishes provenance for its
             // destination pointer now. Once the domain already exists, an
             // unproven old alias must never be rebound to its current root.
-            if (!domain_already_opaque) try appendOpaqueProvenance(&origins, .{
+            if (!domain_already_opaque) try appendOpaqueProvenance(&provenances, .{
                 .storage = storage,
                 .generation = try self.storageRootForPlace(storage, state),
             });
         }
-        pointer.opaque_origins = try origins.toOwnedSlice();
+        pointer.opaque_provenance = try provenances.toOwnedSlice();
     }
 
     fn inferOpaqueDomain(self: *SafetyChecker, state: *FunctionState, pointer: facts.ValueFacts) !?place.Place {
@@ -1061,7 +1061,7 @@ pub const SafetyChecker = struct {
         pointer: facts.ValueFacts,
         result: *std.array_list.Managed(place.Place),
     ) !void {
-        for (pointer.opaque_origins) |origin| try appendPlace(result, origin.storage);
+        for (pointer.opaque_provenance) |provenance| try appendPlace(result, provenance.storage);
         for (state.opaque_storages.items) |opaque_storage| {
             if (self.valueAtPlace(state, opaque_storage.storage)) |storage_value| {
                 for (pointer.dependencies) |dependency|
@@ -1085,7 +1085,7 @@ pub const SafetyChecker = struct {
         pointer: facts.ValueFacts,
         result: *std.array_list.Managed(facts.OpaqueProvenance),
     ) !void {
-        for (pointer.opaque_origins) |origin| try appendOpaqueProvenance(result, origin);
+        for (pointer.opaque_provenance) |provenance| try appendOpaqueProvenance(result, provenance);
         for (state.opaque_storages.items) |opaque_storage| {
             if (self.valueAtPlace(state, opaque_storage.storage)) |storage_value| {
                 for (pointer.dependencies) |dependency|
@@ -1115,52 +1115,52 @@ pub const SafetyChecker = struct {
         ty: ?sg.Type,
         pointer: facts.ValueFacts,
     ) !facts.ValueFacts {
-        var origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
-        defer origins.deinit();
-        try self.collectOpaqueProvenancesCarriedBy(state, pointer, &origins);
-        return self.addOpaqueReadEnvelope(value, ty, origins.items);
+        var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
+        defer provenances.deinit();
+        try self.collectOpaqueProvenancesCarriedBy(state, pointer, &provenances);
+        return self.addOpaqueReadEnvelope(value, ty, provenances.items);
     }
 
-    fn opaqueOriginsCarriedByAccess(
+    fn opaqueProvenanceCarriedByAccess(
         self: *SafetyChecker,
         node: *const sg.SGNode,
         state: *FunctionState,
     ) ![]const facts.OpaqueProvenance {
         return switch (node.content) {
-            .move_value => |value| self.opaqueOriginsCarriedByAccess(value, state),
-            .struct_field_access => |access| self.opaqueOriginsCarriedByAccess(access.struct_value, state),
-            .choice_payload_access => |access| self.opaqueOriginsCarriedByAccess(access.choice_value, state),
-            .array_index => |index| self.opaqueOriginsCarriedByPointerNode(index.array_ptr, state),
-            .dereference => |dereference| self.opaqueOriginsCarriedByPointerNode(dereference.pointer, state),
+            .move_value => |value| self.opaqueProvenanceCarriedByAccess(value, state),
+            .struct_field_access => |access| self.opaqueProvenanceCarriedByAccess(access.struct_value, state),
+            .choice_payload_access => |access| self.opaqueProvenanceCarriedByAccess(access.choice_value, state),
+            .array_index => |index| self.opaqueProvenanceCarriedByPointerNode(index.array_ptr, state),
+            .dereference => |dereference| self.opaqueProvenanceCarriedByPointerNode(dereference.pointer, state),
             else => &.{},
         };
     }
 
-    fn opaqueOriginsCarriedByPointerNode(
+    fn opaqueProvenanceCarriedByPointerNode(
         self: *SafetyChecker,
         node: *const sg.SGNode,
         state: *FunctionState,
     ) ![]const facts.OpaqueProvenance {
         const pointer_place = try self.resolvePlace(node, state) orelse return &.{};
         const pointer = self.getPlace(state, pointer_place) orelse return &.{};
-        var origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
-        try self.collectOpaqueProvenancesCarriedBy(state, pointer.value, &origins);
-        return origins.toOwnedSlice();
+        var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
+        try self.collectOpaqueProvenancesCarriedBy(state, pointer.value, &provenances);
+        return provenances.toOwnedSlice();
     }
 
     fn addOpaqueReadEnvelope(
         self: *SafetyChecker,
         value: facts.ValueFacts,
         ty: ?sg.Type,
-        origins: []const facts.OpaqueProvenance,
+        provenances: []const facts.OpaqueProvenance,
     ) !facts.ValueFacts {
         const value_type = ty orelse return value;
-        if (!typeContainsPointer(value_type) or origins.len == 0) return value;
+        if (!typeContainsPointer(value_type) or provenances.len == 0) return value;
 
         var result = value;
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator.*);
         try dependencies.appendSlice(value.dependencies);
-        for (origins) |origin| try appendDependency(&dependencies, .{ .root = origin.generation });
+        for (provenances) |provenance| try appendDependency(&dependencies, .{ .root = provenance.generation });
         result.dependencies = try dependencies.toOwnedSlice();
 
         if (value.fields.len != 0) {
@@ -1175,7 +1175,7 @@ pub const SafetyChecker = struct {
                     else => null,
                 };
                 const stored = try self.allocator.create(facts.ValueFacts);
-                stored.* = try self.addOpaqueReadEnvelope(field.value.*, field_type, origins);
+                stored.* = try self.addOpaqueReadEnvelope(field.value.*, field_type, provenances);
                 fields[index] = .{ .index = field.index, .value = stored };
             }
             result.fields = fields;
@@ -1191,7 +1191,7 @@ pub const SafetyChecker = struct {
                     else => null,
                 };
                 const stored = try self.allocator.create(facts.ValueFacts);
-                stored.* = try self.addOpaqueReadEnvelope(variant.value.*, payload_type, origins);
+                stored.* = try self.addOpaqueReadEnvelope(variant.value.*, payload_type, provenances);
                 variants[index] = .{ .index = variant.index, .value = stored };
             }
             result.variants = variants;
@@ -1199,16 +1199,16 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn opaqueOriginsForAccess(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) ![]const facts.OpaqueProvenance {
+    fn opaqueProvenanceForAccess(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) ![]const facts.OpaqueProvenance {
         return switch (node.content) {
             .binding_use => |binding| blk: {
                 const value = self.getPlace(state, .{ .root = binding }) orelse break :blk &.{};
                 break :blk try self.currentOpaqueProvenancesForValue(state, value.value);
             },
-            .move_value => |value| try self.opaqueOriginsForAccess(value, state),
-            .address_of => |value| try self.opaqueOriginsForAccess(value, state),
-            .struct_field_access => |access| try self.opaqueOriginsForAccess(access.struct_value, state),
-            .array_index => |index| try self.opaqueOriginsForAccess(index.array_ptr, state),
+            .move_value => |value| try self.opaqueProvenanceForAccess(value, state),
+            .address_of => |value| try self.opaqueProvenanceForAccess(value, state),
+            .struct_field_access => |access| try self.opaqueProvenanceForAccess(access.struct_value, state),
+            .array_index => |index| try self.opaqueProvenanceForAccess(index.array_ptr, state),
             .dereference => |dereference| blk: {
                 const pointer_place = try self.resolvePlace(dereference.pointer, state) orelse break :blk &.{};
                 const pointer = self.getPlace(state, pointer_place) orelse break :blk &.{};
@@ -1225,12 +1225,12 @@ pub const SafetyChecker = struct {
         var storages = std.array_list.Managed(place.Place).init(self.allocator.*);
         defer storages.deinit();
         try self.collectOpaqueDomainsAccessedBy(state, value, &storages);
-        var origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
-        for (storages.items) |storage| try appendOpaqueProvenance(&origins, .{
+        var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
+        for (storages.items) |storage| try appendOpaqueProvenance(&provenances, .{
             .storage = storage,
             .generation = try self.storageRootForPlace(storage, state),
         });
-        return origins.toOwnedSlice();
+        return provenances.toOwnedSlice();
     }
 
     fn rejectOpaqueRelocation(
@@ -1301,14 +1301,14 @@ pub const SafetyChecker = struct {
         }
     }
 
-    fn applyOpaqueStorageReleases(
+    fn applyOpaqueStorageEmpties(
         self: *SafetyChecker,
         summary: facts.SafetySummary,
         arguments: []const sg.StructValueLiteralField,
         argument_values: []const facts.ValueFacts,
         state: *FunctionState,
     ) !void {
-        for (summary.opaque_storage_releases) |path| {
+        for (summary.opaque_storage_empties) |path| {
             if (path.input_index >= arguments.len) continue;
             var storage = argument_values[path.input_index].referenced_place orelse
                 try self.resolvePlace(arguments[path.input_index].value, state) orelse continue;
@@ -1359,10 +1359,10 @@ pub const SafetyChecker = struct {
         for (effect.opaque_generation_dependencies) |path| {
             if (path.input_index >= arguments.len) continue;
             const input = projectValueFacts(arguments[path.input_index], path.projections);
-            var origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
-            defer origins.deinit();
-            try self.collectOpaqueProvenancesRecursively(state, input, &origins);
-            for (origins.items) |origin| try appendOwnedRoot(hidden, origin.generation);
+            var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
+            defer provenances.deinit();
+            try self.collectOpaqueProvenancesRecursively(state, input, &provenances);
+            for (provenances.items) |provenance| try appendOwnedRoot(hidden, provenance.generation);
         }
         for (effect.opaque_storage_dependencies) |path| {
             if (path.input_index >= arguments.len) continue;
@@ -1491,8 +1491,8 @@ pub const SafetyChecker = struct {
     ) !void {
         var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId).init(self.allocator.*);
         defer fresh_roots.deinit();
-        var fresh_authorities = std.AutoHashMap(facts.FreshRootSource, facts.StorageCapabilityId).init(self.allocator.*);
-        defer fresh_authorities.deinit();
+        var fresh_capabilities = std.AutoHashMap(facts.FreshRootSource, facts.StorageCapabilityId).init(self.allocator.*);
+        defer fresh_capabilities.deinit();
         // A relocation summary is only valid when its two Places remain
         // distinct at the caller. Check this before applying either side so
         // an invalid call cannot partially move its source.
@@ -1593,7 +1593,7 @@ pub const SafetyChecker = struct {
                 );
             }
             var value = if (post_state.initializedness == .initialized)
-                try self.instantiateOutputWithFresh(post_state.value, argument_values, state, &fresh_roots, &fresh_authorities)
+                try self.instantiateOutputWithFresh(post_state.value, argument_values, state, &fresh_roots, &fresh_capabilities)
             else
                 facts.ValueFacts{};
             if (previous_value) |old|
@@ -1701,7 +1701,7 @@ pub const SafetyChecker = struct {
         }
         if (!retargeted) return pointer;
         refreshed.dependencies = dependencies;
-        // The precise pointer used as the reinitialization authority follows
+        // The precise pointer used as the reinitialization capability follows
         // the new generation. Other aliases retain the ended generation.
         try self.setPlace(state, storage, .initialized, refreshed);
         return refreshed;
@@ -1739,9 +1739,9 @@ pub const SafetyChecker = struct {
     ) !facts.ValueFacts {
         var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId).init(self.allocator.*);
         defer fresh_roots.deinit();
-        var fresh_authorities = std.AutoHashMap(facts.FreshRootSource, facts.StorageCapabilityId).init(self.allocator.*);
-        defer fresh_authorities.deinit();
-        return self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, &fresh_authorities);
+        var fresh_capabilities = std.AutoHashMap(facts.FreshRootSource, facts.StorageCapabilityId).init(self.allocator.*);
+        defer fresh_capabilities.deinit();
+        return self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, &fresh_capabilities);
     }
 
     fn instantiateOutputWithFresh(
@@ -1750,7 +1750,7 @@ pub const SafetyChecker = struct {
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
         fresh_roots: *std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId),
-        fresh_authorities: *std.AutoHashMap(facts.FreshRootSource, facts.StorageCapabilityId),
+        fresh_capabilities: *std.AutoHashMap(facts.FreshRootSource, facts.StorageCapabilityId),
     ) !facts.ValueFacts {
         var result: facts.ValueFacts = .{};
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator.*);
@@ -1761,10 +1761,10 @@ pub const SafetyChecker = struct {
         for (effect.opaque_generation_dependencies) |path| {
             if (path.input_index >= arguments.len) continue;
             const input = projectValueFacts(arguments[path.input_index], path.projections);
-            var origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
-            defer origins.deinit();
-            try self.collectOpaqueProvenancesRecursively(state, input, &origins);
-            for (origins.items) |origin| try appendDependency(&dependencies, .{ .root = origin.generation });
+            var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
+            defer provenances.deinit();
+            try self.collectOpaqueProvenancesRecursively(state, input, &provenances);
+            for (provenances.items) |provenance| try appendDependency(&dependencies, .{ .root = provenance.generation });
         }
         for (effect.opaque_storage_dependencies) |path| {
             if (path.input_index >= arguments.len) continue;
@@ -1784,10 +1784,10 @@ pub const SafetyChecker = struct {
             try appendOwnedRoot(&owned_roots, root);
         }
         result.owned_roots = try owned_roots.toOwnedSlice();
-        var authorities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator.*);
-        for (effect.fresh_storage_authorities) |source|
-            try appendStorageCapability(&authorities, try self.instantiateFreshStorageCapability(source, state, fresh_authorities));
-        result.storage_authorities = try authorities.toOwnedSlice();
+        var capabilities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator.*);
+        for (effect.fresh_storage_capabilities) |source|
+            try appendStorageCapability(&capabilities, try self.instantiateFreshStorageCapability(source, state, fresh_capabilities));
+        result.storage_capabilities = try capabilities.toOwnedSlice();
         // `input_places` names the provenance of the output. Apply it after
         // dependencies: an effect may intentionally combine a reference with
         // unrelated lifetime dependencies without changing where it points.
@@ -1819,7 +1819,7 @@ pub const SafetyChecker = struct {
             const fields = try self.allocator.alloc(facts.FieldFacts, effect.fields.len);
             for (effect.fields, 0..) |field, index| {
                 const value = try self.allocator.create(facts.ValueFacts);
-                value.* = try self.instantiateOutputWithFresh(field.value.*, arguments, state, fresh_roots, fresh_authorities);
+                value.* = try self.instantiateOutputWithFresh(field.value.*, arguments, state, fresh_roots, fresh_capabilities);
                 fields[index] = .{ .index = field.index, .value = value };
                 result = try self.mergeValueFacts(result, value.*);
             }
@@ -1830,11 +1830,11 @@ pub const SafetyChecker = struct {
             const variants = try self.allocator.alloc(facts.VariantFacts, effect.variants.len);
             for (effect.variants, 0..) |variant, index| {
                 const first_root = state.tracker.roots.items.len;
-                const first_authority = state.storage_authorities.items.len;
+                const first_capability = state.storage_capabilities.items.len;
                 const value = try self.allocator.create(facts.ValueFacts);
-                value.* = try self.instantiateOutputWithFresh(variant.value.*, arguments, state, fresh_roots, fresh_authorities);
+                value.* = try self.instantiateOutputWithFresh(variant.value.*, arguments, state, fresh_roots, fresh_capabilities);
                 for (state.tracker.roots.items[first_root..]) |*root| root.state = .conditional;
-                for (state.storage_authorities.items[first_authority..]) |*authority| authority.* = .conditional;
+                for (state.storage_capabilities.items[first_capability..]) |*capability| capability.* = .conditional;
                 variants[index] = .{ .index = variant.index, .value = value };
             }
             result.variants = variants;
@@ -1868,11 +1868,11 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         state: *FunctionState,
         value: facts.ValueFacts,
-        origins: *std.array_list.Managed(facts.OpaqueProvenance),
+        provenance: *std.array_list.Managed(facts.OpaqueProvenance),
     ) !void {
-        try self.collectOpaqueProvenancesCarriedBy(state, value, origins);
-        for (value.fields) |field| try self.collectOpaqueProvenancesRecursively(state, field.value.*, origins);
-        for (value.variants) |variant| try self.collectOpaqueProvenancesRecursively(state, variant.value.*, origins);
+        try self.collectOpaqueProvenancesCarriedBy(state, value, provenance);
+        for (value.fields) |field| try self.collectOpaqueProvenancesRecursively(state, field.value.*, provenance);
+        for (value.variants) |variant| try self.collectOpaqueProvenancesRecursively(state, variant.value.*, provenance);
     }
 
     fn activateChoiceVariant(self: *SafetyChecker, choice: facts.ValueFacts, variant_index: u32, state: *FunctionState) void {
@@ -2031,11 +2031,11 @@ pub const SafetyChecker = struct {
 
     fn instantiateFreshStorageCapability(self: *SafetyChecker, source: facts.FreshRootSource, state: *FunctionState, fresh: *std.AutoHashMap(facts.FreshRootSource, facts.StorageCapabilityId)) !facts.StorageCapabilityId {
         _ = self;
-        if (fresh.get(source)) |authority| return authority;
-        const authority: facts.StorageCapabilityId = @enumFromInt(state.storage_authorities.items.len);
-        try state.storage_authorities.append(.available);
-        try fresh.put(source, authority);
-        return authority;
+        if (fresh.get(source)) |capability| return capability;
+        const capability: facts.StorageCapabilityId = @enumFromInt(state.storage_capabilities.items.len);
+        try state.storage_capabilities.append(.available);
+        try fresh.put(source, capability);
+        return capability;
     }
 
     fn instantiateFreshRoot(
@@ -2058,12 +2058,12 @@ pub const SafetyChecker = struct {
         var owned_roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
         for (left.owned_roots) |owned_root| try appendOwnedRoot(&owned_roots, owned_root);
         for (right.owned_roots) |owned_root| try appendOwnedRoot(&owned_roots, owned_root);
-        var authorities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator.*);
-        for (left.storage_authorities) |authority| try appendStorageCapability(&authorities, authority);
-        for (right.storage_authorities) |authority| try appendStorageCapability(&authorities, authority);
-        var opaque_origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
-        for (left.opaque_origins) |origin| try appendOpaqueProvenance(&opaque_origins, origin);
-        for (right.opaque_origins) |origin| try appendOpaqueProvenance(&opaque_origins, origin);
+        var capabilities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator.*);
+        for (left.storage_capabilities) |capability| try appendStorageCapability(&capabilities, capability);
+        for (right.storage_capabilities) |capability| try appendStorageCapability(&capabilities, capability);
+        var opaque_provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
+        for (left.opaque_provenance) |provenance| try appendOpaqueProvenance(&opaque_provenances, provenance);
+        for (right.opaque_provenance) |provenance| try appendOpaqueProvenance(&opaque_provenances, provenance);
         var fields = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
         for (left.fields) |left_field| {
             var merged = left_field.value.*;
@@ -2113,12 +2113,12 @@ pub const SafetyChecker = struct {
                 null,
             .integer_address = left.integer_address or right.integer_address,
             .foreign_storage = left.foreign_storage or right.foreign_storage,
-            .storage_authorities = try authorities.toOwnedSlice(),
+            .storage_capabilities = try capabilities.toOwnedSlice(),
             .referenced_place = if (left.referenced_place != null and right.referenced_place != null and left.referenced_place.?.eql(right.referenced_place.?))
                 left.referenced_place
             else
                 null,
-            .opaque_origins = try opaque_origins.toOwnedSlice(),
+            .opaque_provenance = try opaque_provenances.toOwnedSlice(),
         };
     }
 
@@ -2200,11 +2200,11 @@ pub const SafetyChecker = struct {
             const right_owned = index < right.tracker.roots.items.len and right.tracker.roots.items[index].owned_resource;
             try joined.tracker.roots.append(.{ .id = id, .state = root_state, .owned_resource = left_owned or right_owned });
         }
-        const authority_count = @max(left.storage_authorities.items.len, right.storage_authorities.items.len);
-        for (0..authority_count) |index| {
-            const left_state: FunctionState.StorageCapabilityState = if (index < left.storage_authorities.items.len) left.storage_authorities.items[index] else .consumed;
-            const right_state: FunctionState.StorageCapabilityState = if (index < right.storage_authorities.items.len) right.storage_authorities.items[index] else .consumed;
-            try joined.storage_authorities.append(if (left_state == right_state) left_state else .maybe_consumed);
+        const capability_count = @max(left.storage_capabilities.items.len, right.storage_capabilities.items.len);
+        for (0..capability_count) |index| {
+            const left_state: FunctionState.StorageCapabilityState = if (index < left.storage_capabilities.items.len) left.storage_capabilities.items[index] else .consumed;
+            const right_state: FunctionState.StorageCapabilityState = if (index < right.storage_capabilities.items.len) right.storage_capabilities.items[index] else .consumed;
+            try joined.storage_capabilities.append(if (left_state == right_state) left_state else .maybe_consumed);
         }
         for (left.places.items) |left_place| {
             var merged = left_place;
@@ -2708,7 +2708,7 @@ pub const SafetyChecker = struct {
         var field_facts = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
         var contains_integer_address = false;
         var contains_foreign_storage = false;
-        var storage_authorities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator.*);
+        var storage_capabilities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator.*);
         for (fields, 0..) |field, index| {
             const value = try self.evaluate(function, field.value, state);
             try dependencies.appendSlice(value.dependencies);
@@ -2718,7 +2718,7 @@ pub const SafetyChecker = struct {
             try field_facts.append(.{ .index = @intCast(index), .value = stored });
             contains_integer_address = contains_integer_address or value.integer_address;
             contains_foreign_storage = contains_foreign_storage or value.foreign_storage;
-            for (value.storage_authorities) |authority| try appendStorageCapability(&storage_authorities, authority);
+            for (value.storage_capabilities) |capability| try appendStorageCapability(&storage_capabilities, capability);
         }
         return .{
             .dependencies = try dependencies.toOwnedSlice(),
@@ -2726,7 +2726,7 @@ pub const SafetyChecker = struct {
             .fields = try field_facts.toOwnedSlice(),
             .integer_address = contains_integer_address,
             .foreign_storage = contains_foreign_storage,
-            .storage_authorities = try storage_authorities.toOwnedSlice(),
+            .storage_capabilities = try storage_capabilities.toOwnedSlice(),
         };
     }
 
@@ -2772,16 +2772,16 @@ pub const SafetyChecker = struct {
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator.*);
         var owned_roots = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
         var field_facts = std.array_list.Managed(facts.FieldFacts).init(self.allocator.*);
-        var storage_authorities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator.*);
-        var opaque_origins = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
+        var storage_capabilities = std.array_list.Managed(facts.StorageCapabilityId).init(self.allocator.*);
+        var opaque_provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
         var contains_integer_address = false;
         var contains_foreign_storage = false;
         for (fields, 0..) |field, index| {
             const value = try self.evaluateOpaqueMutationValue(function, field.value, state);
             for (value.dependencies) |dependency| try appendDependency(&dependencies, dependency);
             for (value.owned_roots) |root| try appendOwnedRoot(&owned_roots, root);
-            for (value.storage_authorities) |authority| try appendStorageCapability(&storage_authorities, authority);
-            for (value.opaque_origins) |origin| try appendOpaqueProvenance(&opaque_origins, origin);
+            for (value.storage_capabilities) |capability| try appendStorageCapability(&storage_capabilities, capability);
+            for (value.opaque_provenance) |provenance| try appendOpaqueProvenance(&opaque_provenances, provenance);
             const stored = try self.allocator.create(facts.ValueFacts);
             stored.* = value;
             try field_facts.append(.{ .index = @intCast(index), .value = stored });
@@ -2794,8 +2794,8 @@ pub const SafetyChecker = struct {
             .fields = try field_facts.toOwnedSlice(),
             .integer_address = contains_integer_address,
             .foreign_storage = contains_foreign_storage,
-            .storage_authorities = try storage_authorities.toOwnedSlice(),
-            .opaque_origins = try opaque_origins.toOwnedSlice(),
+            .storage_capabilities = try storage_capabilities.toOwnedSlice(),
+            .opaque_provenance = try opaque_provenances.toOwnedSlice(),
         };
     }
 
@@ -3370,9 +3370,9 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn oneStorageCapability(self: *SafetyChecker, authority: facts.StorageCapabilityId) ![]const facts.StorageCapabilityId {
+    fn oneStorageCapability(self: *SafetyChecker, capability: facts.StorageCapabilityId) ![]const facts.StorageCapabilityId {
         const result = try self.allocator.alloc(facts.StorageCapabilityId, 1);
-        result[0] = authority;
+        result[0] = capability;
         return result;
     }
 
@@ -3433,15 +3433,15 @@ pub const SafetyChecker = struct {
             try self.recordOpaqueStorageEffect(&opaque_storage_effects, effect.storage, effect.hidden_dependencies);
         for (right.opaque_storage_effects) |effect|
             try self.recordOpaqueStorageEffect(&opaque_storage_effects, effect.storage, effect.hidden_dependencies);
-        const release_intersection = try self.intersectInputPaths(left.opaque_storage_releases, right.opaque_storage_releases);
-        var opaque_storage_releases = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
-        for (release_intersection) |release| {
+        const empty_intersection = try self.intersectInputPaths(left.opaque_storage_empties, right.opaque_storage_empties);
+        var opaque_storage_empties = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
+        for (empty_intersection) |empty| {
             var repopulated = false;
-            for (opaque_storage_effects.items) |effect| if (inputPlaceTargetEqual(release, effect.storage)) {
+            for (opaque_storage_effects.items) |effect| if (inputPlaceTargetEqual(empty, effect.storage)) {
                 repopulated = true;
                 break;
             };
-            if (!repopulated) try appendInputPath(&opaque_storage_releases, release);
+            if (!repopulated) try appendInputPath(&opaque_storage_empties, empty);
         }
         var required_live_inputs = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
         for (left.required_live_inputs) |path| try appendInputPath(&required_live_inputs, path);
@@ -3451,7 +3451,7 @@ pub const SafetyChecker = struct {
             .required_live_inputs = try required_live_inputs.toOwnedSlice(),
             .input_post_states = input_post_states,
             .opaque_storage_effects = try opaque_storage_effects.toOwnedSlice(),
-            .opaque_storage_releases = try opaque_storage_releases.toOwnedSlice(),
+            .opaque_storage_empties = try opaque_storage_empties.toOwnedSlice(),
         };
     }
 
@@ -3529,7 +3529,7 @@ pub const SafetyChecker = struct {
     }
 
     /// A virtual call may discharge a domain only when every implementation
-    /// guarantees release of the same input path.
+    /// guarantees empty of the same input path.
     fn intersectInputPaths(
         self: *SafetyChecker,
         left: []const facts.InputPath,
@@ -3554,13 +3554,13 @@ pub const SafetyChecker = struct {
             left.foreign_storage != right.foreign_storage or
             left.fresh_dependencies.len != right.fresh_dependencies.len or
             left.fresh_owned_roots.len != right.fresh_owned_roots.len or
-            left.fresh_storage_authorities.len != right.fresh_storage_authorities.len or
+            left.fresh_storage_capabilities.len != right.fresh_storage_capabilities.len or
             left.fields.len != right.fields.len or
             left.variants.len != right.variants.len) return null;
 
         if (!try alignFreshSources(left.fresh_dependencies, right.fresh_dependencies, fresh_map) or
             !try alignFreshSources(left.fresh_owned_roots, right.fresh_owned_roots, fresh_map) or
-            !try alignFreshSources(left.fresh_storage_authorities, right.fresh_storage_authorities, fresh_map)) return null;
+            !try alignFreshSources(left.fresh_storage_capabilities, right.fresh_storage_capabilities, fresh_map)) return null;
 
         var dependencies = std.array_list.Managed(facts.InputDependency).init(self.allocator.*);
         for (left.input_dependencies) |dependency| try appendInputDependency(&dependencies, dependency);
@@ -3612,7 +3612,7 @@ pub const SafetyChecker = struct {
                 null,
             .fresh_dependencies = left.fresh_dependencies,
             .fresh_owned_roots = left.fresh_owned_roots,
-            .fresh_storage_authorities = left.fresh_storage_authorities,
+            .fresh_storage_capabilities = left.fresh_storage_capabilities,
             .integer_address = left.integer_address,
             .foreign_storage = left.foreign_storage,
         };
@@ -3646,7 +3646,7 @@ pub const SafetyChecker = struct {
         else
             std.array_list.Managed(facts.PlacePostState).init(self.allocator.*);
         var opaque_storage_effects = std.array_list.Managed(facts.OpaqueStorageEffect).init(self.allocator.*);
-        const opaque_storage_releases = try self.inferOpaqueStorageEffects(function, body, &opaque_storage_effects);
+        const opaque_storage_empties = try self.inferOpaqueStorageEffects(function, body, &opaque_storage_effects);
         if (function.is_deinit) {
             for (function.input.fields, 0..) |input_field, index| {
                 if (!std.mem.eql(u8, input_field.name, "self") or input_field.ty != .pointer_type or
@@ -3657,18 +3657,18 @@ pub const SafetyChecker = struct {
         }
         const post_state_slice = try post_states.toOwnedSlice();
         const opaque_storage_effect_slice = try opaque_storage_effects.toOwnedSlice();
-        const opaque_storage_release_slice = opaque_storage_releases;
+        const opaque_storage_empty_slice = opaque_storage_empties;
         if (effectsEqual(previous.outputs, outputs) and
             inputPathsEqual(previous.required_live_inputs, required_live_inputs.items) and
             inputPostStatesEqual(previous.input_post_states, post_state_slice) and
             opaqueStorageEffectsEqual(previous.opaque_storage_effects, opaque_storage_effect_slice) and
-            inputPathsEqual(previous.opaque_storage_releases, opaque_storage_release_slice)) return false;
+            inputPathsEqual(previous.opaque_storage_empties, opaque_storage_empty_slice)) return false;
         try self.summaries.put(function, .{
             .outputs = outputs,
             .required_live_inputs = try required_live_inputs.toOwnedSlice(),
             .input_post_states = post_state_slice,
             .opaque_storage_effects = opaque_storage_effect_slice,
-            .opaque_storage_releases = opaque_storage_release_slice,
+            .opaque_storage_empties = opaque_storage_empty_slice,
         });
         return true;
     }
@@ -3880,7 +3880,7 @@ pub const SafetyChecker = struct {
     ) !void {
         if (call.input.content != .struct_value_literal) return;
         const arguments = call.input.content.struct_value_literal.fields;
-        if (call.callee.safety_primitive == .trusted_opaque_store or
+        if (call.callee.safety_primitive == .trusted_opaque_move or
             call.callee.safety_primitive == .trusted_opaque_move_in)
         {
             if (arguments.len >= 2) {
@@ -4172,126 +4172,126 @@ pub const SafetyChecker = struct {
         block: *const sg.CodeBlock,
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
     ) ![]const facts.InputPath {
-        var state = OpaqueReleaseState.init(self.allocator.*);
+        var state = OpaqueEmptyState.init(self.allocator.*);
         defer state.deinit();
         var exits: ?std.array_list.Managed(facts.InputPath) = null;
-        defer if (exits) |*released| released.deinit();
-        try self.inferOpaqueReleaseBlock(function, block, effects, &state, &exits);
-        if (state.reachable) try self.recordOpaqueReleaseExit(&exits, state.released.items);
+        defer if (exits) |*emptied| emptied.deinit();
+        try self.inferOpaqueEmptyBlock(function, block, effects, &state, &exits);
+        if (state.reachable) try self.recordOpaqueEmptyExit(&exits, state.emptied.items);
 
-        const released = if (exits) |released| try self.allocator.dupe(facts.InputPath, released.items) else &.{};
-        for (released) |storage| self.removeOpaqueStorageEffects(effects, storage);
-        return released;
+        const emptied = if (exits) |emptied| try self.allocator.dupe(facts.InputPath, emptied.items) else &.{};
+        for (emptied) |storage| self.removeOpaqueStorageEffects(effects, storage);
+        return emptied;
     }
 
-    fn inferOpaqueReleaseBlock(
+    fn inferOpaqueEmptyBlock(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         block: *const sg.CodeBlock,
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
-        state: *OpaqueReleaseState,
+        state: *OpaqueEmptyState,
         exits: *?std.array_list.Managed(facts.InputPath),
     ) !void {
         for (block.nodes) |node| {
             if (!state.reachable) break;
-            try self.inferOpaqueReleaseNode(function, node, effects, state, exits);
+            try self.inferOpaqueEmptyNode(function, node, effects, state, exits);
         }
         if (state.reachable) if (block.ret_val) |value|
-            try self.inferOpaqueReleaseExpression(function, value, effects, state, exits);
+            try self.inferOpaqueEmptyExpression(function, value, effects, state, exits);
     }
 
-    fn inferOpaqueReleaseNode(
+    fn inferOpaqueEmptyNode(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         node: *const sg.SGNode,
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
-        state: *OpaqueReleaseState,
+        state: *OpaqueEmptyState,
         exits: *?std.array_list.Managed(facts.InputPath),
     ) anyerror!void {
         switch (node.content) {
             .binding_declaration => |binding| if (binding.initialization) |initialization|
-                try self.inferOpaqueReleaseExpression(function, initialization, effects, state, exits),
-            .binding_assignment => |assignment| try self.inferOpaqueReleaseExpression(function, assignment.value, effects, state, exits),
-            .function_call, .virtual_call => try self.inferOpaqueReleaseExpression(function, node, effects, state, exits),
+                try self.inferOpaqueEmptyExpression(function, initialization, effects, state, exits),
+            .binding_assignment => |assignment| try self.inferOpaqueEmptyExpression(function, assignment.value, effects, state, exits),
+            .function_call, .virtual_call => try self.inferOpaqueEmptyExpression(function, node, effects, state, exits),
             .if_statement => |statement| {
-                try self.inferOpaqueReleaseExpression(function, statement.condition, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, statement.condition, effects, state, exits);
                 var then_state = try state.clone(self.allocator.*);
                 defer then_state.deinit();
-                try self.inferOpaqueReleaseBlock(function, statement.then_block, effects, &then_state, exits);
+                try self.inferOpaqueEmptyBlock(function, statement.then_block, effects, &then_state, exits);
                 var else_state = try state.clone(self.allocator.*);
                 defer else_state.deinit();
                 if (statement.else_block) |else_block|
-                    try self.inferOpaqueReleaseBlock(function, else_block, effects, &else_state, exits);
-                try self.joinOpaqueReleaseFallthrough(state, &then_state, &else_state);
+                    try self.inferOpaqueEmptyBlock(function, else_block, effects, &else_state, exits);
+                try self.joinOpaqueEmptyFallthrough(state, &then_state, &else_state);
             },
             .while_statement => |statement| {
-                try self.inferOpaqueReleaseExpression(function, statement.condition, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, statement.condition, effects, state, exits);
                 var body_state = try state.clone(self.allocator.*);
                 defer body_state.deinit();
-                try self.inferOpaqueReleaseBlock(function, statement.body, effects, &body_state, exits);
+                try self.inferOpaqueEmptyBlock(function, statement.body, effects, &body_state, exits);
                 // A loop may execute zero or more times; without loop proofs,
                 // no domain is known empty on every fallthrough path.
-                state.released.clearRetainingCapacity();
+                state.emptied.clearRetainingCapacity();
             },
             .for_statement => |statement| {
                 if (statement.init) |initialization|
-                    try self.inferOpaqueReleaseNode(function, initialization, effects, state, exits);
-                try self.inferOpaqueReleaseExpression(function, statement.condition, effects, state, exits);
+                    try self.inferOpaqueEmptyNode(function, initialization, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, statement.condition, effects, state, exits);
                 var body_state = try state.clone(self.allocator.*);
                 defer body_state.deinit();
-                try self.inferOpaqueReleaseBlock(function, statement.body, effects, &body_state, exits);
+                try self.inferOpaqueEmptyBlock(function, statement.body, effects, &body_state, exits);
                 if (body_state.reachable) if (statement.increment) |increment|
-                    try self.inferOpaqueReleaseNode(function, increment, effects, &body_state, exits);
-                state.released.clearRetainingCapacity();
+                    try self.inferOpaqueEmptyNode(function, increment, effects, &body_state, exits);
+                state.emptied.clearRetainingCapacity();
             },
             .switch_statement => |statement| {
-                try self.inferOpaqueReleaseExpression(function, statement.expression, effects, state, exits);
-                var joined: ?OpaqueReleaseState = null;
+                try self.inferOpaqueEmptyExpression(function, statement.expression, effects, state, exits);
+                var joined: ?OpaqueEmptyState = null;
                 defer if (joined) |*joined_state| joined_state.deinit();
                 for (statement.cases) |case| {
                     var branch = try state.clone(self.allocator.*);
                     defer branch.deinit();
-                    try self.inferOpaqueReleaseBlock(function, case.body, effects, &branch, exits);
-                    try self.joinOpaqueReleaseBranch(&joined, &branch);
+                    try self.inferOpaqueEmptyBlock(function, case.body, effects, &branch, exits);
+                    try self.joinOpaqueEmptyBranch(&joined, &branch);
                 }
                 if (statement.default_case) |default_case| {
                     var branch = try state.clone(self.allocator.*);
                     defer branch.deinit();
-                    try self.inferOpaqueReleaseBlock(function, default_case, effects, &branch, exits);
-                    try self.joinOpaqueReleaseBranch(&joined, &branch);
+                    try self.inferOpaqueEmptyBlock(function, default_case, effects, &branch, exits);
+                    try self.joinOpaqueEmptyBranch(&joined, &branch);
                 } else if (!statement.exhaustive) {
-                    try self.joinOpaqueReleaseBranch(&joined, state);
+                    try self.joinOpaqueEmptyBranch(&joined, state);
                 }
-                if (joined) |*joined_state| try self.copyOpaqueReleaseState(state, joined_state) else state.reachable = false;
+                if (joined) |*joined_state| try self.copyOpaqueEmptyState(state, joined_state) else state.reachable = false;
             },
             .return_statement => |statement| {
                 if (statement.expression) |expression|
-                    try self.inferOpaqueReleaseExpression(function, expression, effects, state, exits);
+                    try self.inferOpaqueEmptyExpression(function, expression, effects, state, exits);
                 for (statement.cleanup_nodes) |cleanup|
-                    try self.inferOpaqueReleaseNode(function, cleanup, effects, state, exits);
-                try self.recordOpaqueReleaseExit(exits, state.released.items);
+                    try self.inferOpaqueEmptyNode(function, cleanup, effects, state, exits);
+                try self.recordOpaqueEmptyExit(exits, state.emptied.items);
                 state.reachable = false;
             },
             .struct_field_store => |store| {
-                try self.inferOpaqueReleaseExpression(function, store.struct_ptr, effects, state, exits);
-                try self.inferOpaqueReleaseExpression(function, store.value, effects, state, exits);
-                state.released.clearRetainingCapacity();
+                try self.inferOpaqueEmptyExpression(function, store.struct_ptr, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, store.value, effects, state, exits);
+                state.emptied.clearRetainingCapacity();
             },
             .array_store => |store| {
-                try self.inferOpaqueReleaseExpression(function, store.array_ptr, effects, state, exits);
-                try self.inferOpaqueReleaseExpression(function, store.index, effects, state, exits);
-                try self.inferOpaqueReleaseExpression(function, store.value, effects, state, exits);
-                state.released.clearRetainingCapacity();
+                try self.inferOpaqueEmptyExpression(function, store.array_ptr, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, store.index, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, store.value, effects, state, exits);
+                state.emptied.clearRetainingCapacity();
             },
             .pointer_assignment => |assignment| {
-                try self.inferOpaqueReleaseExpression(function, assignment.pointer, effects, state, exits);
-                try self.inferOpaqueReleaseExpression(function, assignment.value, effects, state, exits);
-                state.released.clearRetainingCapacity();
+                try self.inferOpaqueEmptyExpression(function, assignment.pointer, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, assignment.value, effects, state, exits);
+                state.emptied.clearRetainingCapacity();
             },
-            .code_block => |nested| try self.inferOpaqueReleaseBlock(function, nested, effects, state, exits),
+            .code_block => |nested| try self.inferOpaqueEmptyBlock(function, nested, effects, state, exits),
             .break_statement, .continue_statement => state.reachable = false,
             .auto_deinit_binding => |cleanup| try self.applyAutoDeinitOpaqueEffects(function, cleanup, effects, state),
-            else => try self.inferOpaqueReleaseExpression(function, node, effects, state, exits),
+            else => try self.inferOpaqueEmptyExpression(function, node, effects, state, exits),
         }
     }
 
@@ -4300,11 +4300,11 @@ pub const SafetyChecker = struct {
         function: *const sg.FunctionDeclaration,
         cleanup: *const sg.AutoDeinitBinding,
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
-        state: *OpaqueReleaseState,
+        state: *OpaqueEmptyState,
     ) !void {
         const binding_effect = if (self.inference_bindings) |bindings| bindings.get(cleanup.binding) else null;
         if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| if (self.summaries.get(deinit_fn)) |summary|
-            try self.applyOpaqueReleaseSummary(function, summary, input, effects, state, if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null);
+            try self.applyOpaqueEmptySummary(function, summary, input, effects, state, if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null);
         if (binding_effect) |effect| try self.applyAutoDeinitFieldOpaqueEffects(function, cleanup.fields, effects, state, effect);
     }
 
@@ -4313,126 +4313,126 @@ pub const SafetyChecker = struct {
         function: *const sg.FunctionDeclaration,
         fields: []const sg.AutoDeinitField,
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
-        state: *OpaqueReleaseState,
+        state: *OpaqueEmptyState,
         parent_effect: facts.ValueEffect,
     ) !void {
         for (fields) |field| {
             const field_effect = try self.projectValueEffect(parent_effect, .{ .field = field.field_index });
             if (field.deinit_fn) |deinit_fn| if (field.input) |input| if (self.summaries.get(deinit_fn)) |summary|
-                try self.applyOpaqueReleaseSummary(function, summary, input, effects, state, .{ .input_index = field.self_field_index, .effect = field_effect });
+                try self.applyOpaqueEmptySummary(function, summary, input, effects, state, .{ .input_index = field.self_field_index, .effect = field_effect });
             try self.applyAutoDeinitFieldOpaqueEffects(function, field.fields, effects, state, field_effect);
         }
     }
 
     /// Visits expression children in runtime evaluation order, then applies a
     /// call's net opaque state. Conditional children are joined with the path
-    /// that skips them so they cannot manufacture a definite release.
-    fn inferOpaqueReleaseExpression(
+    /// that skips them so they cannot manufacture a definite empty.
+    fn inferOpaqueEmptyExpression(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         node: *const sg.SGNode,
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
-        state: *OpaqueReleaseState,
+        state: *OpaqueEmptyState,
         exits: *?std.array_list.Managed(facts.InputPath),
     ) anyerror!void {
         switch (node.content) {
-            .move_value, .address_of => |value| try self.inferOpaqueReleaseExpression(function, value, effects, state, exits),
-            .dereference => |dereference| try self.inferOpaqueReleaseExpression(function, dereference.pointer, effects, state, exits),
+            .move_value, .address_of => |value| try self.inferOpaqueEmptyExpression(function, value, effects, state, exits),
+            .dereference => |dereference| try self.inferOpaqueEmptyExpression(function, dereference.pointer, effects, state, exits),
             .struct_value_literal => |literal| for (literal.fields) |field|
-                try self.inferOpaqueReleaseExpression(function, field.value, effects, state, exits),
+                try self.inferOpaqueEmptyExpression(function, field.value, effects, state, exits),
             .list_literal => |literal| for (literal.elements) |element|
-                try self.inferOpaqueReleaseExpression(function, element, effects, state, exits),
+                try self.inferOpaqueEmptyExpression(function, element, effects, state, exits),
             .array_literal => |literal| for (literal.elements) |element|
-                try self.inferOpaqueReleaseExpression(function, element, effects, state, exits),
+                try self.inferOpaqueEmptyExpression(function, element, effects, state, exits),
             .choice_literal => |literal| if (literal.payload) |payload|
-                try self.inferOpaqueReleaseExpression(function, payload, effects, state, exits),
-            .struct_field_access => |access| try self.inferOpaqueReleaseExpression(function, access.struct_value, effects, state, exits),
-            .choice_payload_access => |access| try self.inferOpaqueReleaseExpression(function, access.choice_value, effects, state, exits),
+                try self.inferOpaqueEmptyExpression(function, payload, effects, state, exits),
+            .struct_field_access => |access| try self.inferOpaqueEmptyExpression(function, access.struct_value, effects, state, exits),
+            .choice_payload_access => |access| try self.inferOpaqueEmptyExpression(function, access.choice_value, effects, state, exits),
             .array_index => |index| {
-                try self.inferOpaqueReleaseExpression(function, index.array_ptr, effects, state, exits);
-                try self.inferOpaqueReleaseExpression(function, index.index, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, index.array_ptr, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, index.index, effects, state, exits);
             },
-            .explicit_cast => |cast| try self.inferOpaqueReleaseExpression(function, cast.value, effects, state, exits),
+            .explicit_cast => |cast| try self.inferOpaqueEmptyExpression(function, cast.value, effects, state, exits),
             .binary_operation => |operation| {
-                try self.inferOpaqueReleaseExpression(function, operation.left, effects, state, exits);
-                try self.inferOpaqueReleaseExpression(function, operation.right, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, operation.left, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, operation.right, effects, state, exits);
             },
             .comparison => |comparison| {
-                try self.inferOpaqueReleaseExpression(function, comparison.left, effects, state, exits);
-                try self.inferOpaqueReleaseExpression(function, comparison.right, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, comparison.left, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, comparison.right, effects, state, exits);
             },
             .logical_operation => |operation| {
-                try self.inferOpaqueReleaseExpression(function, operation.left, effects, state, exits);
-                try self.inferConditionalOpaqueReleaseExpression(function, operation.right, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, operation.left, effects, state, exits);
+                try self.inferConditionalOpaqueEmptyExpression(function, operation.right, effects, state, exits);
             },
             .nullable_unwrap_or => |unwrap| {
-                try self.inferOpaqueReleaseExpression(function, unwrap.nullable_value, effects, state, exits);
-                try self.inferConditionalOpaqueReleaseExpression(function, unwrap.fallback_value, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, unwrap.nullable_value, effects, state, exits);
+                try self.inferConditionalOpaqueEmptyExpression(function, unwrap.fallback_value, effects, state, exits);
             },
             .testing_expect_error => |expectation| {
-                try self.inferOpaqueReleaseExpression(function, expectation.expected_reason, effects, state, exits);
-                try self.inferOpaqueReleaseExpression(function, expectation.actual_result, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, expectation.expected_reason, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, expectation.actual_result, effects, state, exits);
             },
             .error_propagation => |propagation| {
-                try self.inferOpaqueReleaseExpression(function, propagation.errable_value, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, propagation.errable_value, effects, state, exits);
                 var error_state = try state.clone(self.allocator.*);
                 defer error_state.deinit();
                 for (propagation.cleanup_nodes) |cleanup|
-                    try self.inferOpaqueReleaseNode(function, cleanup, effects, &error_state, exits);
-                if (error_state.reachable) try self.recordOpaqueReleaseExit(exits, error_state.released.items);
+                    try self.inferOpaqueEmptyNode(function, cleanup, effects, &error_state, exits);
+                if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, error_state.emptied.items);
             },
             .error_context => |context| {
-                try self.inferOpaqueReleaseExpression(function, context.errable_value, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, context.errable_value, effects, state, exits);
                 var error_state = try state.clone(self.allocator.*);
                 defer error_state.deinit();
-                try self.inferOpaqueReleaseExpression(function, context.context, effects, &error_state, exits);
+                try self.inferOpaqueEmptyExpression(function, context.context, effects, &error_state, exits);
                 for (context.cleanup_nodes) |cleanup|
-                    try self.inferOpaqueReleaseNode(function, cleanup, effects, &error_state, exits);
-                if (error_state.reachable) try self.recordOpaqueReleaseExit(exits, error_state.released.items);
+                    try self.inferOpaqueEmptyNode(function, cleanup, effects, &error_state, exits);
+                if (error_state.reachable) try self.recordOpaqueEmptyExit(exits, error_state.emptied.items);
             },
             .function_call => |call| {
-                try self.inferOpaqueReleaseExpression(function, call.input, effects, state, exits);
-                try self.applyOpaqueReleaseFunctionCall(function, call, effects, state);
+                try self.inferOpaqueEmptyExpression(function, call.input, effects, state, exits);
+                try self.applyOpaqueEmptyFunctionCall(function, call, effects, state);
             },
             .virtual_call => |call| {
-                try self.inferOpaqueReleaseExpression(function, call.handle, effects, state, exits);
-                try self.inferOpaqueReleaseExpression(function, call.input, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, call.handle, effects, state, exits);
+                try self.inferOpaqueEmptyExpression(function, call.input, effects, state, exits);
                 const summary = try self.virtualSummary(call.safety_methods) orelse return;
-                try self.applyOpaqueReleaseSummary(function, summary, call.input, effects, state, null);
+                try self.applyOpaqueEmptySummary(function, summary, call.input, effects, state, null);
             },
-            .virtualize => |virtualize| try self.inferOpaqueReleaseExpression(function, virtualize.value, effects, state, exits),
-            .type_initializer => |initializer| try self.inferOpaqueReleaseExpression(function, initializer.args, effects, state, exits),
+            .virtualize => |virtualize| try self.inferOpaqueEmptyExpression(function, virtualize.value, effects, state, exits),
+            .type_initializer => |initializer| try self.inferOpaqueEmptyExpression(function, initializer.args, effects, state, exits),
             else => {},
         }
     }
 
-    fn inferConditionalOpaqueReleaseExpression(
+    fn inferConditionalOpaqueEmptyExpression(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         node: *const sg.SGNode,
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
-        state: *OpaqueReleaseState,
+        state: *OpaqueEmptyState,
         exits: *?std.array_list.Managed(facts.InputPath),
     ) !void {
         var executed = try state.clone(self.allocator.*);
         defer executed.deinit();
-        try self.inferOpaqueReleaseExpression(function, node, effects, &executed, exits);
+        try self.inferOpaqueEmptyExpression(function, node, effects, &executed, exits);
         var skipped = try state.clone(self.allocator.*);
         defer skipped.deinit();
-        try self.joinOpaqueReleaseFallthrough(state, &executed, &skipped);
+        try self.joinOpaqueEmptyFallthrough(state, &executed, &skipped);
     }
 
-    fn applyOpaqueReleaseFunctionCall(
+    fn applyOpaqueEmptyFunctionCall(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         call: *const sg.FunctionCall,
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
-        state: *OpaqueReleaseState,
+        state: *OpaqueEmptyState,
     ) !void {
         if (call.input.content != .struct_value_literal) return;
         const arguments = call.input.content.struct_value_literal.fields;
-        if (call.callee.safety_primitive == .trusted_opaque_store) {
-            state.released.clearRetainingCapacity();
+        if (call.callee.safety_primitive == .trusted_opaque_move) {
+            state.emptied.clearRetainingCapacity();
             return;
         }
         if (call.callee.safety_primitive == .trusted_opaque_move_in) {
@@ -4440,7 +4440,7 @@ pub const SafetyChecker = struct {
             const storages = try self.inferInputPaths(function, arguments[0].value);
             const hidden = try self.inferExpression(function, arguments[2].value);
             for (storages) |storage| {
-                self.removeOpaqueStorageRelease(&state.released, storage);
+                self.removeOpaqueStorageRelease(&state.emptied, storage);
                 try self.recordOpaqueStorageEffect(effects, storage, hidden);
             }
             return;
@@ -4448,112 +4448,112 @@ pub const SafetyChecker = struct {
         if (call.callee.safety_primitive == .trusted_opaque_mark_empty) {
             if (arguments.len != 1) return;
             const storages = try self.inferInputPaths(function, arguments[0].value);
-            for (storages) |storage| try self.recordOpaqueStorageRelease(&state.released, storage);
+            for (storages) |storage| try self.recordOpaqueStorageRelease(&state.emptied, storage);
             return;
         }
         const summary = self.summaries.get(call.callee) orelse return;
-        try self.applyOpaqueReleaseSummary(function, summary, call.input, effects, state, null);
+        try self.applyOpaqueEmptySummary(function, summary, call.input, effects, state, null);
     }
 
-    fn applyOpaqueReleaseSummary(
+    fn applyOpaqueEmptySummary(
         self: *SafetyChecker,
         function: *const sg.FunctionDeclaration,
         summary: facts.SafetySummary,
         input: *const sg.SGNode,
         effects: *std.array_list.Managed(facts.OpaqueStorageEffect),
-        state: *OpaqueReleaseState,
+        state: *OpaqueEmptyState,
         symbolic_override: ?SymbolicInputOverride,
     ) !void {
         if (input.content != .struct_value_literal) return;
         const arguments = input.content.struct_value_literal.fields;
         // Projected post-states can become opaque mutations through runtime
         // provenance even when their symbolic target does not name the domain.
-        if (summaryMayRepopulateOpaqueStorage(summary)) state.released.clearRetainingCapacity();
+        if (summaryMayRepopulateOpaqueStorage(summary)) state.emptied.clearRetainingCapacity();
         for (summary.opaque_storage_effects) |effect| {
             if (effect.storage.input_index >= arguments.len) continue;
             const storages = try self.substituteInputPathWithOverride(function, effect.storage, arguments, symbolic_override);
             const hidden = try self.substituteOutputWithOverride(function, effect.hidden_dependencies, arguments, symbolic_override);
             for (storages) |storage| {
-                self.removeOpaqueStorageRelease(&state.released, storage);
+                self.removeOpaqueStorageRelease(&state.emptied, storage);
                 try self.recordOpaqueStorageEffect(effects, storage, hidden);
             }
         }
-        for (summary.opaque_storage_releases) |release| {
-            if (release.input_index >= arguments.len) continue;
-            const storages = try self.substituteInputPathWithOverride(function, release, arguments, symbolic_override);
-            for (storages) |storage| try self.recordOpaqueStorageRelease(&state.released, storage);
+        for (summary.opaque_storage_empties) |empty| {
+            if (empty.input_index >= arguments.len) continue;
+            const storages = try self.substituteInputPathWithOverride(function, empty, arguments, symbolic_override);
+            for (storages) |storage| try self.recordOpaqueStorageRelease(&state.emptied, storage);
         }
     }
 
-    fn joinOpaqueReleaseFallthrough(
+    fn joinOpaqueEmptyFallthrough(
         self: *SafetyChecker,
-        destination: *OpaqueReleaseState,
-        left: *const OpaqueReleaseState,
-        right: *const OpaqueReleaseState,
+        destination: *OpaqueEmptyState,
+        left: *const OpaqueEmptyState,
+        right: *const OpaqueEmptyState,
     ) !void {
         if (!left.reachable and !right.reachable) {
-            destination.released.clearRetainingCapacity();
+            destination.emptied.clearRetainingCapacity();
             destination.reachable = false;
             return;
         }
-        if (!left.reachable) return self.copyOpaqueReleaseState(destination, right);
-        if (!right.reachable) return self.copyOpaqueReleaseState(destination, left);
-        const joined = try self.intersectInputPaths(left.released.items, right.released.items);
-        destination.released.clearRetainingCapacity();
-        try destination.released.appendSlice(joined);
+        if (!left.reachable) return self.copyOpaqueEmptyState(destination, right);
+        if (!right.reachable) return self.copyOpaqueEmptyState(destination, left);
+        const joined = try self.intersectInputPaths(left.emptied.items, right.emptied.items);
+        destination.emptied.clearRetainingCapacity();
+        try destination.emptied.appendSlice(joined);
         destination.reachable = true;
     }
 
-    fn joinOpaqueReleaseBranch(
+    fn joinOpaqueEmptyBranch(
         self: *SafetyChecker,
-        joined: *?OpaqueReleaseState,
-        branch: *const OpaqueReleaseState,
+        joined: *?OpaqueEmptyState,
+        branch: *const OpaqueEmptyState,
     ) !void {
         if (joined.*) |*current| {
-            var combined = OpaqueReleaseState.init(self.allocator.*);
-            try self.joinOpaqueReleaseFallthrough(&combined, current, branch);
+            var combined = OpaqueEmptyState.init(self.allocator.*);
+            try self.joinOpaqueEmptyFallthrough(&combined, current, branch);
             current.deinit();
             current.* = combined;
         } else joined.* = try branch.clone(self.allocator.*);
     }
 
-    fn copyOpaqueReleaseState(
+    fn copyOpaqueEmptyState(
         self: *SafetyChecker,
-        destination: *OpaqueReleaseState,
-        source: *const OpaqueReleaseState,
+        destination: *OpaqueEmptyState,
+        source: *const OpaqueEmptyState,
     ) !void {
         _ = self;
-        destination.released.clearRetainingCapacity();
-        try destination.released.appendSlice(source.released.items);
+        destination.emptied.clearRetainingCapacity();
+        try destination.emptied.appendSlice(source.emptied.items);
         destination.reachable = source.reachable;
     }
 
-    fn recordOpaqueReleaseExit(
+    fn recordOpaqueEmptyExit(
         self: *SafetyChecker,
         exits: *?std.array_list.Managed(facts.InputPath),
-        released: []const facts.InputPath,
+        emptied: []const facts.InputPath,
     ) !void {
         if (exits.*) |*current| {
-            const joined = try self.intersectInputPaths(current.items, released);
+            const joined = try self.intersectInputPaths(current.items, emptied);
             current.clearRetainingCapacity();
             try current.appendSlice(joined);
         } else {
             var first = std.array_list.Managed(facts.InputPath).init(self.allocator.*);
-            try first.appendSlice(released);
+            try first.appendSlice(emptied);
             exits.* = first;
         }
     }
 
     fn removeOpaqueStorageRelease(
         self: *SafetyChecker,
-        releases: *std.array_list.Managed(facts.InputPath),
+        empties: *std.array_list.Managed(facts.InputPath),
         storage: facts.InputPath,
     ) void {
         _ = self;
         var index: usize = 0;
-        while (index < releases.items.len) {
-            if (inputPlaceTargetEqual(releases.items[index], storage)) {
-                _ = releases.orderedRemove(index);
+        while (index < empties.items.len) {
+            if (inputPlaceTargetEqual(empties.items[index], storage)) {
+                _ = empties.orderedRemove(index);
             } else index += 1;
         }
     }
@@ -4575,11 +4575,11 @@ pub const SafetyChecker = struct {
 
     fn recordOpaqueStorageRelease(
         self: *SafetyChecker,
-        releases: *std.array_list.Managed(facts.InputPath),
+        empties: *std.array_list.Managed(facts.InputPath),
         storage: facts.InputPath,
     ) !void {
         _ = self;
-        try appendInputPath(releases, storage);
+        try appendInputPath(empties, storage);
     }
 
     fn removeOpaqueStorageEffects(
@@ -5087,10 +5087,10 @@ pub const SafetyChecker = struct {
         for (effect.fresh_owned_roots, 0..) |source, index|
             owned_roots[index] = std.hash.Wyhash.hash(0, std.mem.asBytes(&Context{ .call_site = call_site, .source = source }));
         result.fresh_owned_roots = owned_roots;
-        const authorities = try self.allocator.alloc(facts.FreshRootSource, effect.fresh_storage_authorities.len);
-        for (effect.fresh_storage_authorities, 0..) |source, index|
-            authorities[index] = std.hash.Wyhash.hash(0, std.mem.asBytes(&Context{ .call_site = call_site, .source = source }));
-        result.fresh_storage_authorities = authorities;
+        const capabilities = try self.allocator.alloc(facts.FreshRootSource, effect.fresh_storage_capabilities.len);
+        for (effect.fresh_storage_capabilities, 0..) |source, index|
+            capabilities[index] = std.hash.Wyhash.hash(0, std.mem.asBytes(&Context{ .call_site = call_site, .source = source }));
+        result.fresh_storage_capabilities = capabilities;
         const fields = try self.allocator.alloc(facts.OutputFieldEffect, effect.fields.len);
         for (effect.fields, 0..) |field, index| {
             const value = try self.allocator.create(facts.ValueEffect);
@@ -5136,7 +5136,7 @@ pub const SafetyChecker = struct {
             .establish_inherited_reference => self.inputValueEffect(1, &.{}),
             .establish_inherited_storage => self.inputValueEffect(1, &.{}),
             .establish_allocation => self.ownedAllocationEffect(source),
-            .raw_allocated_storage => .{ .foreign_storage = true, .fresh_storage_authorities = try self.oneFreshSource(source) },
+            .raw_allocated_storage => .{ .foreign_storage = true, .fresh_storage_capabilities = try self.oneFreshSource(source) },
             .reference_offset,
             .mutable_reference_offset,
             .reinterpret_reference,
@@ -5148,7 +5148,7 @@ pub const SafetyChecker = struct {
                 .opaque_storage_dependencies = try self.oneInputPath(0, &.{}),
                 .fresh_owned_roots = try self.oneFreshSource(source),
             },
-            .trusted_opaque_store,
+            .trusted_opaque_move,
             .trusted_opaque_move_in,
             .trusted_opaque_relocate,
             .trusted_opaque_drop,
@@ -5159,7 +5159,7 @@ pub const SafetyChecker = struct {
 
     /// Restriction retains every fact of the input reference and appends the
     /// storage generation of the lifetime Place. `input_places` preserves the
-    /// input reference's provenance; neither root ownership nor authority is
+    /// input reference's provenance; neither root ownership nor capability is
     /// transferred by either dependency.
     fn restrictReferenceEffect(self: *SafetyChecker) !facts.ValueEffect {
         var result = try self.inputValueEffect(0, &.{});
@@ -5275,7 +5275,7 @@ pub const SafetyChecker = struct {
             .opaque_storage_dependencies = effect.opaque_storage_dependencies,
             .fresh_dependencies = effect.fresh_dependencies,
             .fresh_owned_roots = effect.fresh_owned_roots,
-            .fresh_storage_authorities = effect.fresh_storage_authorities,
+            .fresh_storage_capabilities = effect.fresh_storage_capabilities,
             .integer_address = effect.integer_address,
             .foreign_storage = effect.foreign_storage,
         };
@@ -5300,7 +5300,7 @@ pub const SafetyChecker = struct {
         var result: facts.ValueEffect = .{
             .fresh_dependencies = effect.fresh_dependencies,
             .fresh_owned_roots = effect.fresh_owned_roots,
-            .fresh_storage_authorities = effect.fresh_storage_authorities,
+            .fresh_storage_capabilities = effect.fresh_storage_capabilities,
             .integer_address = effect.integer_address,
             .foreign_storage = effect.foreign_storage,
         };
@@ -5436,7 +5436,7 @@ pub const SafetyChecker = struct {
             .fields = try fields.toOwnedSlice(),
             .fresh_dependencies = try self.mergeFreshSources(left.fresh_dependencies, right.fresh_dependencies),
             .fresh_owned_roots = try self.mergeFreshSources(left.fresh_owned_roots, right.fresh_owned_roots),
-            .fresh_storage_authorities = try self.mergeFreshSources(left.fresh_storage_authorities, right.fresh_storage_authorities),
+            .fresh_storage_capabilities = try self.mergeFreshSources(left.fresh_storage_capabilities, right.fresh_storage_capabilities),
             .integer_address = left.integer_address or right.integer_address,
             .foreign_storage = left.foreign_storage or right.foreign_storage,
             .variants = try variants.toOwnedSlice(),
@@ -5528,8 +5528,8 @@ fn valueContainsOwnedRoot(value: facts.ValueFacts, target: facts.ValidityRootId)
 }
 
 fn valueContainsOpaqueGeneration(value: facts.ValueFacts, storage: place.Place, root: facts.ValidityRootId) bool {
-    for (value.opaque_origins) |origin|
-        if (origin.generation == root and origin.storage.eql(storage)) return true;
+    for (value.opaque_provenance) |provenance|
+        if (provenance.generation == root and provenance.storage.eql(storage)) return true;
     for (value.fields) |field| if (valueContainsOpaqueGeneration(field.value.*, storage, root)) return true;
     for (value.variants) |variant| if (valueContainsOpaqueGeneration(variant.value.*, storage, root)) return true;
     return false;
@@ -5567,9 +5567,9 @@ fn activateConditionalFacts(value: facts.ValueFacts, state: *SafetyChecker.Funct
         const root = &state.tracker.roots.items[@intFromEnum(owned_root)];
         if (root.state == .conditional) root.state = .alive;
     }
-    for (value.storage_authorities) |authority| {
-        const authority_state = &state.storage_authorities.items[@intFromEnum(authority)];
-        if (authority_state.* == .conditional) authority_state.* = .available;
+    for (value.storage_capabilities) |capability| {
+        const capability_state = &state.storage_capabilities.items[@intFromEnum(capability)];
+        if (capability_state.* == .conditional) capability_state.* = .available;
     }
     for (value.fields) |field| activateConditionalFacts(field.value.*, state);
 }
@@ -5586,9 +5586,9 @@ fn rejectConditionalFacts(value: facts.ValueFacts, state: *SafetyChecker.Functio
         const root = &state.tracker.roots.items[@intFromEnum(owned_root)];
         if (root.state == .conditional) root.state = .dead;
     }
-    for (value.storage_authorities) |authority| {
-        const authority_state = &state.storage_authorities.items[@intFromEnum(authority)];
-        if (authority_state.* == .conditional) authority_state.* = .consumed;
+    for (value.storage_capabilities) |capability| {
+        const capability_state = &state.storage_capabilities.items[@intFromEnum(capability)];
+        if (capability_state.* == .conditional) capability_state.* = .consumed;
     }
     for (value.fields) |field| rejectConditionalFacts(field.value.*, state);
     for (value.variants) |variant| rejectConditionalFacts(variant.value.*, state);
@@ -5732,7 +5732,7 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     if (left.integer_address != right.integer_address or
         left.foreign_storage != right.foreign_storage or
         left.known_choice_variant != right.known_choice_variant or
-        !std.mem.eql(facts.StorageCapabilityId, left.storage_authorities, right.storage_authorities) or
+        !std.mem.eql(facts.StorageCapabilityId, left.storage_capabilities, right.storage_capabilities) or
         left.dependencies.len != right.dependencies.len or
         left.owned_roots.len != right.owned_roots.len or
         left.fields.len != right.fields.len or
@@ -5741,8 +5741,8 @@ fn valueFactsEqual(left: facts.ValueFacts, right: facts.ValueFacts) bool {
     for (left.owned_roots, right.owned_roots) |a, b| if (a != b) return false;
     if ((left.referenced_place == null) != (right.referenced_place == null)) return false;
     if (left.referenced_place) |left_place| if (!left_place.eql(right.referenced_place.?)) return false;
-    if (left.opaque_origins.len != right.opaque_origins.len) return false;
-    for (left.opaque_origins, right.opaque_origins) |a, b|
+    if (left.opaque_provenance.len != right.opaque_provenance.len) return false;
+    for (left.opaque_provenance, right.opaque_provenance) |a, b|
         if (!a.storage.eql(b.storage) or a.generation != b.generation) return false;
     for (left.fields, right.fields) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
     for (left.variants, right.variants) |a, b| if (a.index != b.index or !valueFactsEqual(a.value.*, b.value.*)) return false;
@@ -5772,7 +5772,7 @@ fn inputDependencyEqual(left: facts.InputDependency, right: facts.InputDependenc
 
 fn outputEffectHasFreshRole(effect: facts.ValueEffect) bool {
     if (effect.fresh_dependencies.len != 0 or effect.fresh_owned_roots.len != 0 or
-        effect.fresh_storage_authorities.len != 0) return true;
+        effect.fresh_storage_capabilities.len != 0) return true;
     for (effect.fields) |field| if (outputEffectHasFreshRole(field.value.*)) return true;
     for (effect.variants) |variant| if (outputEffectHasFreshRole(variant.value.*)) return true;
     return false;
@@ -5892,10 +5892,10 @@ fn appendPlace(list: *std.array_list.Managed(place.Place), storage: place.Place)
     try list.append(storage);
 }
 
-fn appendOpaqueProvenance(list: *std.array_list.Managed(facts.OpaqueProvenance), origin: facts.OpaqueProvenance) !void {
+fn appendOpaqueProvenance(list: *std.array_list.Managed(facts.OpaqueProvenance), provenance: facts.OpaqueProvenance) !void {
     for (list.items) |existing|
-        if (existing.generation == origin.generation and existing.storage.eql(origin.storage)) return;
-    try list.append(origin);
+        if (existing.generation == provenance.generation and existing.storage.eql(provenance.storage)) return;
+    try list.append(provenance);
 }
 
 fn appendOwnedRoot(list: *std.array_list.Managed(facts.ValidityRootId), owned_root: facts.ValidityRootId) !void {
@@ -5903,9 +5903,9 @@ fn appendOwnedRoot(list: *std.array_list.Managed(facts.ValidityRootId), owned_ro
     try list.append(owned_root);
 }
 
-fn appendStorageCapability(list: *std.array_list.Managed(facts.StorageCapabilityId), authority: facts.StorageCapabilityId) !void {
-    for (list.items) |existing| if (existing == authority) return;
-    try list.append(authority);
+fn appendStorageCapability(list: *std.array_list.Managed(facts.StorageCapabilityId), capability: facts.StorageCapabilityId) !void {
+    for (list.items) |existing| if (existing == capability) return;
+    try list.append(capability);
 }
 
 fn appendInputDependency(list: *std.array_list.Managed(facts.InputDependency), dependency: facts.InputDependency) !void {
@@ -6001,7 +6001,7 @@ fn outputEffectEqual(left: facts.ValueEffect, right: facts.ValueEffect) bool {
         left.foreign_storage != right.foreign_storage or
         !std.mem.eql(facts.FreshRootSource, left.fresh_dependencies, right.fresh_dependencies) or
         !std.mem.eql(facts.FreshRootSource, left.fresh_owned_roots, right.fresh_owned_roots) or
-        !std.mem.eql(facts.FreshRootSource, left.fresh_storage_authorities, right.fresh_storage_authorities)) return false;
+        !std.mem.eql(facts.FreshRootSource, left.fresh_storage_capabilities, right.fresh_storage_capabilities)) return false;
     if (left.input_dependencies.len != right.input_dependencies.len or
         left.input_places.len != right.input_places.len or
         left.input_place_values.len != right.input_place_values.len or
@@ -6250,7 +6250,7 @@ test "virtual summaries widen dependencies but require exact provenance" {
     try std.testing.expectEqual(@as(usize, 2), required_union.?.required_live_inputs.len);
 
     const provenance_mismatch = try checker.mergeVirtualSafetySummary(
-        .{ .outputs = &.{.{ .fresh_storage_authorities = &.{1} }} },
+        .{ .outputs = &.{.{ .fresh_storage_capabilities = &.{1} }} },
         .{ .outputs = &.{.{}} },
     );
     try std.testing.expect(provenance_mismatch == null);
@@ -6263,21 +6263,21 @@ test "virtual summaries discharge opaque domains only when every implementation 
     var checker = SafetyChecker.init(&allocator, undefined);
     defer checker.deinit();
 
-    const released = facts.InputPath{ .input_index = 0, .projections = &.{.{ .field = 1 }} };
+    const emptied = facts.InputPath{ .input_index = 0, .projections = &.{.{ .field = 1 }} };
     const same_release = try checker.mergeVirtualSafetySummary(
-        .{ .opaque_storage_releases = &.{released} },
-        .{ .opaque_storage_releases = &.{released} },
+        .{ .opaque_storage_empties = &.{emptied} },
+        .{ .opaque_storage_empties = &.{emptied} },
     );
     try std.testing.expect(same_release != null);
-    try std.testing.expectEqual(@as(usize, 1), same_release.?.opaque_storage_releases.len);
-    try std.testing.expect(inputPlaceTargetEqual(released, same_release.?.opaque_storage_releases[0]));
+    try std.testing.expectEqual(@as(usize, 1), same_release.?.opaque_storage_empties.len);
+    try std.testing.expect(inputPlaceTargetEqual(emptied, same_release.?.opaque_storage_empties[0]));
 
     const absent_release = try checker.mergeVirtualSafetySummary(
-        .{ .opaque_storage_releases = &.{released} },
+        .{ .opaque_storage_empties = &.{emptied} },
         .{},
     );
     try std.testing.expect(absent_release != null);
-    try std.testing.expectEqual(@as(usize, 0), absent_release.?.opaque_storage_releases.len);
+    try std.testing.expectEqual(@as(usize, 0), absent_release.?.opaque_storage_empties.len);
 
     const release_then_write_implementation = facts.SafetySummary{
         .input_post_states = &.{.{
@@ -6289,29 +6289,29 @@ test "virtual summaries discharge opaque domains only when every implementation 
     const virtual_with_repopulation = try checker.mergeVirtualSafetySummary(
         .{
             .input_post_states = release_then_write_implementation.input_post_states,
-            .opaque_storage_releases = &.{released},
+            .opaque_storage_empties = &.{emptied},
         },
         release_then_write_implementation,
     );
     try std.testing.expect(virtual_with_repopulation != null);
-    try std.testing.expectEqual(@as(usize, 0), virtual_with_repopulation.?.opaque_storage_releases.len);
+    try std.testing.expectEqual(@as(usize, 0), virtual_with_repopulation.?.opaque_storage_empties.len);
 
     const hidden = facts.ValueEffect{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} };
     const inconsistent_release = facts.SafetySummary{
-        .opaque_storage_effects = &.{.{ .storage = released, .hidden_dependencies = hidden }},
-        .opaque_storage_releases = &.{released},
+        .opaque_storage_effects = &.{.{ .storage = emptied, .hidden_dependencies = hidden }},
+        .opaque_storage_empties = &.{emptied},
     };
     const normalized = try checker.mergeVirtualSafetySummary(inconsistent_release, inconsistent_release);
     try std.testing.expect(normalized != null);
-    try std.testing.expectEqual(@as(usize, 0), normalized.?.opaque_storage_releases.len);
+    try std.testing.expectEqual(@as(usize, 0), normalized.?.opaque_storage_empties.len);
     try std.testing.expectEqual(@as(usize, 1), normalized.?.opaque_storage_effects.len);
 
     const different_release = try checker.mergeVirtualSafetySummary(
-        .{ .opaque_storage_releases = &.{released} },
-        .{ .opaque_storage_releases = &.{.{ .input_index = 0, .projections = &.{.{ .field = 0 }} }} },
+        .{ .opaque_storage_empties = &.{emptied} },
+        .{ .opaque_storage_empties = &.{.{ .input_index = 0, .projections = &.{.{ .field = 0 }} }} },
     );
     try std.testing.expect(different_release != null);
-    try std.testing.expectEqual(@as(usize, 0), different_release.?.opaque_storage_releases.len);
+    try std.testing.expectEqual(@as(usize, 0), different_release.?.opaque_storage_empties.len);
 }
 
 test "required live input validation projects the selected aggregate path" {
@@ -6449,7 +6449,7 @@ test "choice values preserve complete payload facts" {
     binding.* = undefined;
     const dependency_root: facts.ValidityRootId = @enumFromInt(1);
     const owned_root: facts.ValidityRootId = @enumFromInt(2);
-    const authority: facts.StorageCapabilityId = @enumFromInt(3);
+    const capability: facts.StorageCapabilityId = @enumFromInt(3);
 
     const nested = try checker.allocator.create(facts.ValueFacts);
     nested.* = .{
@@ -6457,7 +6457,7 @@ test "choice values preserve complete payload facts" {
         .owned_roots = &.{owned_root},
         .integer_address = true,
         .foreign_storage = true,
-        .storage_authorities = &.{authority},
+        .storage_capabilities = &.{capability},
         .referenced_place = .{ .root = binding },
     };
     const payload_fields = try checker.allocator.alloc(facts.FieldFacts, 1);
@@ -6468,7 +6468,7 @@ test "choice values preserve complete payload facts" {
         .fields = payload_fields,
         .integer_address = true,
         .foreign_storage = true,
-        .storage_authorities = &.{authority},
+        .storage_capabilities = &.{capability},
         .referenced_place = .{ .root = binding },
     };
 
@@ -6498,7 +6498,7 @@ test "choice output effects preserve complete payload facts" {
         .fresh_owned_roots = &.{12},
         .integer_address = true,
         .foreign_storage = true,
-        .fresh_storage_authorities = &.{13},
+        .fresh_storage_capabilities = &.{13},
     };
     const payload_fields = try checker.allocator.alloc(facts.OutputFieldEffect, 1);
     payload_fields[0] = .{ .index = 17, .value = nested };
@@ -6510,7 +6510,7 @@ test "choice output effects preserve complete payload facts" {
         .fresh_owned_roots = &.{12},
         .integer_address = true,
         .foreign_storage = true,
-        .fresh_storage_authorities = &.{13},
+        .fresh_storage_capabilities = &.{13},
     };
 
     const wrapped = try checker.choiceValueEffect(5, payload);
@@ -7194,7 +7194,7 @@ test "loop root widening does not hide crossed stale dependencies" {
     try std.testing.expect(!joined.tracker.dependenciesAreAlive(checker.getPlace(&joined, storage).?.value));
 }
 
-test "relocation transfers storage authority into refreshed destination storage" {
+test "relocation transfers storage capability into refreshed destination storage" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -7210,15 +7210,15 @@ test "relocation transfers storage authority into refreshed destination storage"
     const source = place.Place{ .root = source_binding };
     const destination = place.Place{ .root = destination_binding };
     const resource = try state.tracker.establish(.fresh);
-    const authority: facts.StorageCapabilityId = @enumFromInt(0);
-    try state.storage_authorities.append(.available);
+    const capability: facts.StorageCapabilityId = @enumFromInt(0);
+    try state.storage_capabilities.append(.available);
     try state.places.append(.{
         .storage = source,
         .initializedness = .initialized,
         .value = .{
             .owned_roots = &.{resource},
             .foreign_storage = true,
-            .storage_authorities = &.{authority},
+            .storage_capabilities = &.{capability},
         },
     });
     try state.places.append(.{ .storage = destination, .initializedness = .deinitialized });
@@ -7235,7 +7235,7 @@ test "relocation transfers storage authority into refreshed destination storage"
     const destination_facts = checker.getPlace(&state, destination).?;
     try std.testing.expectEqual(value_state.Initializedness.initialized, destination_facts.initializedness);
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{resource}, destination_facts.value.owned_roots);
-    try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{authority}, destination_facts.value.storage_authorities);
+    try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{capability}, destination_facts.value.storage_capabilities);
     try std.testing.expectEqual(value_state.Initializedness.moved, checker.getPlace(&state, source).?.initializedness);
     const new_destination_root = try checker.storageRootForPlace(destination, &state);
     try std.testing.expect(old_destination_root != new_destination_root);
@@ -7303,7 +7303,7 @@ test "stale opaque pointer provenance does not rebind to refreshed storage gener
     const stale_pointer = facts.ValueFacts{
         .dependencies = &.{.{ .root = old_root }},
         .referenced_place = storage,
-        .opaque_origins = &.{.{ .storage = storage, .generation = old_root }},
+        .opaque_provenance = &.{.{ .storage = storage, .generation = old_root }},
     };
     try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{} });
 
@@ -7317,7 +7317,7 @@ test "stale opaque pointer provenance does not rebind to refreshed storage gener
 
     try std.testing.expect(containsRoot(hidden.items, old_root));
     try std.testing.expect(!containsRoot(hidden.items, fresh_root));
-    try std.testing.expectEqual(@as(usize, 1), remarked_stale_pointer.opaque_origins.len);
+    try std.testing.expectEqual(@as(usize, 1), remarked_stale_pointer.opaque_provenance.len);
 }
 
 test "fresh opaque pointer provenance observes refreshed storage generation" {
@@ -7336,11 +7336,11 @@ test "fresh opaque pointer provenance observes refreshed storage generation" {
     const fresh_root = try checker.storageRootForPlace(storage, &state);
     const fresh_pointer = facts.ValueFacts{ .dependencies = &.{.{ .root = fresh_root }} };
 
-    const origins = try checker.currentOpaqueProvenancesForValue(&state, fresh_pointer);
-    try std.testing.expectEqual(@as(usize, 1), origins.len);
-    try std.testing.expect(origins[0].storage.eql(storage));
-    try std.testing.expectEqual(fresh_root, origins[0].generation);
-    try std.testing.expect(old_root != origins[0].generation);
+    const provenance = try checker.currentOpaqueProvenancesForValue(&state, fresh_pointer);
+    try std.testing.expectEqual(@as(usize, 1), provenance.len);
+    try std.testing.expect(provenance[0].storage.eql(storage));
+    try std.testing.expectEqual(fresh_root, provenance[0].generation);
+    try std.testing.expect(old_root != provenance[0].generation);
 }
 
 test "opaque provenance join preserves distinct generations of one domain" {
@@ -7356,13 +7356,13 @@ test "opaque provenance join preserves distinct generations of one domain" {
     const first = try state.tracker.establish(.fresh);
     const second = try state.tracker.establish(.fresh);
     const merged = try checker.mergeValueFacts(
-        .{ .opaque_origins = &.{.{ .storage = storage, .generation = first }} },
-        .{ .opaque_origins = &.{.{ .storage = storage, .generation = second }} },
+        .{ .opaque_provenance = &.{.{ .storage = storage, .generation = first }} },
+        .{ .opaque_provenance = &.{.{ .storage = storage, .generation = second }} },
     );
 
-    try std.testing.expectEqual(@as(usize, 2), merged.opaque_origins.len);
-    try std.testing.expectEqual(first, merged.opaque_origins[0].generation);
-    try std.testing.expectEqual(second, merged.opaque_origins[1].generation);
+    try std.testing.expectEqual(@as(usize, 2), merged.opaque_provenance.len);
+    try std.testing.expectEqual(first, merged.opaque_provenance[0].generation);
+    try std.testing.expectEqual(second, merged.opaque_provenance[1].generation);
 }
 
 test "opaque read envelopes preserve captured generations across refresh and joins" {
@@ -7420,13 +7420,13 @@ test "symbolic opaque read generations instantiate without polluting identity ou
     const arguments = [_]facts.ValueFacts{
         .{
             .dependencies = &.{.{ .root = ordinary }},
-            .opaque_origins = &.{.{
+            .opaque_provenance = &.{.{
                 .storage = .{ .root = &first_storage_binding },
                 .generation = first_generation,
             }},
         },
         .{
-            .opaque_origins = &.{.{
+            .opaque_provenance = &.{.{
                 .storage = .{ .root = &second_storage_binding },
                 .generation = second_generation,
             }},
@@ -7452,8 +7452,8 @@ test "symbolic opaque read generations instantiate without polluting identity ou
     const identity = try checker.instantiateOutput(identity_effect, &arguments, &state);
     try std.testing.expect(valueDependsOnRoot(identity, ordinary));
     try std.testing.expect(!valueDependsOnRoot(identity, first_generation));
-    try std.testing.expectEqual(@as(usize, 1), identity.opaque_origins.len);
-    try std.testing.expectEqual(first_generation, identity.opaque_origins[0].generation);
+    try std.testing.expectEqual(@as(usize, 1), identity.opaque_provenance.len);
+    try std.testing.expectEqual(first_generation, identity.opaque_provenance[0].generation);
 
     const joined_effect = try checker.mergeValueEffects(opaque_read, .{
         .opaque_generation_dependencies = try checker.oneInputPath(1, &.{}),
@@ -7570,7 +7570,7 @@ test "opaque generation dependencies instantiate into hidden opaque dependencies
     defer hidden.deinit();
     try checker.instantiateOpaqueDependencies(
         dependency_only,
-        &.{.{ .opaque_origins = &.{.{
+        &.{.{ .opaque_provenance = &.{.{
             .storage = storage,
             .generation = captured_generation,
         }} }},
@@ -7673,7 +7673,7 @@ test "reference restriction preserves provenance and only adds lifetime dependen
     try std.testing.expect(!effect.input_dependencies[1].transfers_ownership);
     try std.testing.expectEqual(@as(usize, 0), effect.fresh_dependencies.len);
     try std.testing.expectEqual(@as(usize, 0), effect.fresh_owned_roots.len);
-    try std.testing.expectEqual(@as(usize, 0), effect.fresh_storage_authorities.len);
+    try std.testing.expectEqual(@as(usize, 0), effect.fresh_storage_capabilities.len);
     const input = [_]facts.ValueFacts{
         .{ .dependencies = &.{.{ .root = pointee_root }}, .referenced_place = pointee },
         .{ .dependencies = &.{.{ .root = lifetime_root }}, .referenced_place = lifetime },
@@ -7685,7 +7685,7 @@ test "reference restriction preserves provenance and only adds lifetime dependen
     try std.testing.expectEqual(lifetime_root, restricted.dependencies[1].root);
     try std.testing.expect(restricted.referenced_place.?.eql(pointee));
     try std.testing.expectEqual(@as(usize, 0), restricted.owned_roots.len);
-    try std.testing.expectEqual(@as(usize, 0), restricted.storage_authorities.len);
+    try std.testing.expectEqual(@as(usize, 0), restricted.storage_capabilities.len);
 
     state.tracker.end(lifetime_root);
     try std.testing.expect(!state.tracker.dependenciesAreAlive(restricted));
@@ -7733,7 +7733,7 @@ test "refreshing a place drops descendant storage root mappings" {
     try std.testing.expectEqual(sibling_before_field_refresh, try checker.storageRootForPlace(sibling, &state));
 }
 
-test "opaque dependency projection cannot instantiate ownership or authorities" {
+test "opaque dependency projection cannot instantiate ownership or capabilities" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -7744,14 +7744,14 @@ test "opaque dependency projection cannot instantiate ownership or authorities" 
         .input_dependencies = &.{.{ .path = .{ .input_index = 0 }, .transfers_ownership = true }},
         .fresh_dependencies = &.{11},
         .fresh_owned_roots = &.{12},
-        .fresh_storage_authorities = &.{13},
+        .fresh_storage_capabilities = &.{13},
         .integer_address = true,
         .foreign_storage = true,
     });
     try std.testing.expect(!projected.input_dependencies[0].transfers_ownership);
     try std.testing.expectEqualSlices(facts.FreshRootSource, &.{11}, projected.fresh_dependencies);
     try std.testing.expectEqual(@as(usize, 0), projected.fresh_owned_roots.len);
-    try std.testing.expectEqual(@as(usize, 0), projected.fresh_storage_authorities.len);
+    try std.testing.expectEqual(@as(usize, 0), projected.fresh_storage_capabilities.len);
     try std.testing.expect(!projected.integer_address);
     try std.testing.expect(!projected.foreign_storage);
 
@@ -7764,7 +7764,7 @@ test "opaque dependency projection cannot instantiate ownership or authorities" 
     try checker.instantiateOpaqueDependencies(projected, &.{.{}}, &state, &fresh_roots, &hidden);
     try std.testing.expectEqual(@as(usize, 1), state.tracker.roots.items.len);
     try std.testing.expect(!state.tracker.roots.items[0].owned_resource);
-    try std.testing.expectEqual(@as(usize, 0), state.storage_authorities.items.len);
+    try std.testing.expectEqual(@as(usize, 0), state.storage_capabilities.items.len);
 }
 
 test "opaque take recovers external dependencies without backing roots" {

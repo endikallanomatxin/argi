@@ -17,7 +17,7 @@ deinit(.self: $&Tracked) -> () := {
 }
 
 store_wrapper(.slot: $&Tracked, .value: Tracked) -> () := {
-    trusted_opaque_store#(.t: Tracked)(.destination = slot, .source = ~value)
+    trusted_opaque_move#(.t: Tracked)(.destination = slot, .source = ~value)
 }
 
 main(.system: System) -> (.status_code: Int32) := {

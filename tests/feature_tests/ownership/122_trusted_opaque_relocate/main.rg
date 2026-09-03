@@ -53,9 +53,9 @@ main(.system: System) -> (.status_code: Int32) := {
                             match third_result {
                                 ..error _ { status_code = 4 }
                                 ..ok ~ third_payload {
-                                    trusted_opaque_store(.destination = a, .source = ~first_payload)
-                                    trusted_opaque_store(.destination = e, .source = ~second_payload)
-                                    trusted_opaque_store(.destination = g, .source = ~third_payload)
+                                    trusted_opaque_move(.destination = a, .source = ~first_payload)
+                                    trusted_opaque_move(.destination = e, .source = ~second_payload)
+                                    trusted_opaque_move(.destination = g, .source = ~third_payload)
 
                                     trusted_opaque_relocate(.source = a, .destination = b)
                                     trusted_opaque_relocate(.source = b, .destination = c)

@@ -3099,12 +3099,12 @@ test "feature_tests/ownership/71_fallible_allocation_failure_cleanup" {
 test "feature_tests/ownership/72X_duplicate_storage_establishment" {
     try buildExpectFail(
         "tests/feature_tests/ownership/72X_duplicate_storage_establishment",
-        "physical storage authority has already been consumed",
+        "physical storage capability has already been consumed",
     );
 }
 
-test "feature_tests/ownership/73_storage_authority_move" {
-    const test_path = "tests/feature_tests/ownership/73_storage_authority_move";
+test "feature_tests/ownership/73_storage_capability_move" {
+    const test_path = "tests/feature_tests/ownership/73_storage_capability_move";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
@@ -3173,8 +3173,8 @@ test "feature_tests/ownership/85X_semantic_relocation_double" {
     );
 }
 
-test "feature_tests/ownership/86_relocation_storage_authority" {
-    const test_path = "tests/feature_tests/ownership/86_relocation_storage_authority";
+test "feature_tests/ownership/86_relocation_storage_capability" {
+    const test_path = "tests/feature_tests/ownership/86_relocation_storage_capability";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
@@ -3304,8 +3304,8 @@ test "feature_tests/ownership/105X_safe_reference_restriction_stale_after_reinit
     );
 }
 
-test "feature_tests/ownership/106_trusted_opaque_store_user_call" {
-    const test_path = "tests/feature_tests/ownership/106_trusted_opaque_store_user_call";
+test "feature_tests/ownership/106_trusted_opaque_move_user_call" {
+    const test_path = "tests/feature_tests/ownership/106_trusted_opaque_move_user_call";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
@@ -3318,18 +3318,18 @@ test "feature_tests/ownership/108_trusted_opaque_user_core_path" {
     try expectSuccessfulBuild("tests/feature_tests/ownership/108_trusted_opaque_user_core_path/core");
 }
 
-test "feature_tests/ownership/109_trusted_opaque_store_scalar" {
-    const test_path = "tests/feature_tests/ownership/109_trusted_opaque_store_scalar";
+test "feature_tests/ownership/109_trusted_opaque_move_scalar" {
+    const test_path = "tests/feature_tests/ownership/109_trusted_opaque_move_scalar";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 42);
 }
 
-test "feature_tests/ownership/110X_trusted_opaque_store_double_move" {
-    try buildExpectFail("tests/feature_tests/ownership/110X_trusted_opaque_store_double_move", "binding 'value' was moved and cannot be used again");
+test "feature_tests/ownership/110X_trusted_opaque_move_double_move" {
+    try buildExpectFail("tests/feature_tests/ownership/110X_trusted_opaque_move_double_move", "binding 'value' was moved and cannot be used again");
 }
 
-test "feature_tests/ownership/111X_trusted_opaque_store_use_after_move" {
-    try buildExpectFail("tests/feature_tests/ownership/111X_trusted_opaque_store_use_after_move", "binding 'value' was moved and cannot be used again");
+test "feature_tests/ownership/111X_trusted_opaque_move_use_after_move" {
+    try buildExpectFail("tests/feature_tests/ownership/111X_trusted_opaque_move_use_after_move", "binding 'value' was moved and cannot be used again");
 }
 
 test "feature_tests/ownership/112_trusted_opaque_wrapper" {
@@ -3736,8 +3736,8 @@ test "feature_tests/ownership/173X_opaque_drop_all_still_blocks_root_end" {
     );
 }
 
-test "feature_tests/ownership/174_opaque_release_all_allows_root_end" {
-    const test_path = "tests/feature_tests/ownership/174_opaque_release_all_allows_root_end";
+test "feature_tests/ownership/174_opaque_mark_empty_allows_root_end" {
+    const test_path = "tests/feature_tests/ownership/174_opaque_mark_empty_allows_root_end";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
@@ -3755,34 +3755,34 @@ test "feature_tests/ownership/176_opaque_release_each_domain_allows_root_end" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/177_opaque_release_all_wrapper" {
-    const test_path = "tests/feature_tests/ownership/177_opaque_release_all_wrapper";
+test "feature_tests/ownership/177_opaque_mark_empty_wrapper" {
+    const test_path = "tests/feature_tests/ownership/177_opaque_mark_empty_wrapper";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/178_opaque_release_all_double_wrapper" {
-    const test_path = "tests/feature_tests/ownership/178_opaque_release_all_double_wrapper";
+test "feature_tests/ownership/178_opaque_mark_empty_double_wrapper" {
+    const test_path = "tests/feature_tests/ownership/178_opaque_mark_empty_double_wrapper";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/179X_opaque_release_all_projected_domain_is_exact" {
+test "feature_tests/ownership/179X_opaque_mark_empty_projected_domain_is_exact" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/179X_opaque_release_all_projected_domain_is_exact",
+        "tests/feature_tests/ownership/179X_opaque_mark_empty_projected_domain_is_exact",
         "cannot end a root while opaque storage hides a dependency on it",
     );
 }
 
-test "feature_tests/ownership/180_opaque_release_all_keeps_extracted_reference_live" {
-    const test_path = "tests/feature_tests/ownership/180_opaque_release_all_keeps_extracted_reference_live";
+test "feature_tests/ownership/180_opaque_mark_empty_keeps_extracted_reference_live" {
+    const test_path = "tests/feature_tests/ownership/180_opaque_mark_empty_keeps_extracted_reference_live";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/181X_fake_opaque_release_all_name" {
+test "feature_tests/ownership/181X_fake_opaque_mark_empty_name" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/181X_fake_opaque_release_all_name",
+        "tests/feature_tests/ownership/181X_fake_opaque_mark_empty_name",
         "cannot end a root while opaque storage hides a dependency on it",
     );
 }
@@ -4310,8 +4310,8 @@ test "feature_tests/ownership/232X_opaque_effect_instantiates_input_place_value_
     );
 }
 
-test "feature_tests/ownership/233_opaque_effect_input_place_value_release_all" {
-    const test_path = "tests/feature_tests/ownership/233_opaque_effect_input_place_value_release_all";
+test "feature_tests/ownership/233_opaque_effect_input_place_value_mark_empty" {
+    const test_path = "tests/feature_tests/ownership/233_opaque_effect_input_place_value_mark_empty";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }

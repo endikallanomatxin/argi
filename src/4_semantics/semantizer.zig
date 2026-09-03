@@ -37,7 +37,7 @@ fn safetyPrimitiveForBundledDeclaration(name: []const u8, file: []const u8) sg.S
     // The canonical path only identifies the trusted declaration, so another
     // bundled-core helper with the same name cannot become a primitive.
     if (std.mem.endsWith(u8, file, "core/memory/opaque_ownership.rg")) {
-        if (std.mem.eql(u8, name, "trusted_opaque_store")) return .trusted_opaque_store;
+        if (std.mem.eql(u8, name, "trusted_opaque_move")) return .trusted_opaque_move;
         if (std.mem.eql(u8, name, "trusted_opaque_move_in")) return .trusted_opaque_move_in;
         if (std.mem.eql(u8, name, "trusted_opaque_move_out")) return .trusted_opaque_move_out;
         if (std.mem.eql(u8, name, "trusted_opaque_relocate")) return .trusted_opaque_relocate;

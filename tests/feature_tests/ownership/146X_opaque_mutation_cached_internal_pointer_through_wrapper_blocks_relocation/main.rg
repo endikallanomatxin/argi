@@ -20,7 +20,7 @@ main(.system: System) -> (.status_code: Int32) := {
             cached ::= slots.data
             value :: AddressSensitive = (.next = ..none)
 
-            trusted_opaque_store(.destination = source_slot, .source = ~value)
+            trusted_opaque_move(.destination = source_slot, .source = ~value)
             set_next(.slot = source_slot, .target = cached)
             trusted_opaque_relocate(.source = source_slot, .destination = destination_slot)
 
