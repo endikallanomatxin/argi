@@ -221,7 +221,8 @@ pub const Semantizer = struct {
     // work and makes the remaining retries residual rather than fundamental.
     allocator: *const std.mem.Allocator,
     io: std.Io,
-    st_nodes: []const *syn.STNode, // entrada
+    syntax_files: []syn.FileSyntax,
+    st_nodes: []const syn.SyntaxRef,
     root_list: std.array_list.Managed(*sg.SGNode), // buffer mut
     root_nodes: []const *sg.SGNode = &.{}, // slice final
     diags: *diagnostic.Diagnostics,
@@ -265,13 +266,15 @@ pub const Semantizer = struct {
     pub fn init(
         alloc: *const std.mem.Allocator,
         io: std.Io,
-        st: []const *syn.STNode,
+        syntax_files: []syn.FileSyntax,
+        st: []const syn.SyntaxRef,
         diags: *diagnostic.Diagnostics,
         options: SemantizerOptions,
     ) Semantizer {
         return .{
             .allocator = alloc,
             .io = io,
+            .syntax_files = syntax_files,
             .st_nodes = st,
             .root_list = std.array_list.Managed(*sg.SGNode).init(alloc.*),
             .diags = diags,
@@ -284,6 +287,13 @@ pub const Semantizer = struct {
             .generic_specializations = std.array_list.Managed(GenericSpecialization).init(alloc.*),
             .function_reach_stack = std.array_list.Managed(ReachFunctionContext).init(alloc.*),
         };
+    }
+
+    fn syntaxNode(self: *const Semantizer, ref: syn.SyntaxRef) *syn.STNode {
+        for (self.syntax_files) |*file_syntax| {
+            if (file_syntax.file_id == ref.file_id) return file_syntax.store.getMut(ref.node_id);
+        }
+        unreachable;
     }
 
     fn freshFunctionId(self: *Semantizer) u32 {
@@ -424,7 +434,8 @@ pub const Semantizer = struct {
         const initial_start = nowNs(self.io);
         self.defer_unknown_top_level = true;
         const support_top_level_start = nowNs(self.io);
-        for (self.st_nodes) |n| {
+        for (self.st_nodes) |node_ref| {
+            const n = self.syntaxNode(node_ref);
             if (self.topLevelNodeIsCallable(n)) continue;
             if (n.content == .test_declaration and !self.options.include_tests) continue;
             self.current_top_node = n;
@@ -467,7 +478,8 @@ pub const Semantizer = struct {
         // practical without depending on body-semantic inference.
         const function_interface_start = nowNs(self.io);
         self.function_semantize_mode = .interface_only;
-        for (self.st_nodes) |n| {
+        for (self.st_nodes) |node_ref| {
+            const n = self.syntaxNode(node_ref);
             if (!self.topLevelNodeIsCallable(n)) continue;
             self.current_top_node = n;
             _ = self.visitNode(n.*, &global) catch |err| {
@@ -758,7 +770,8 @@ pub const Semantizer = struct {
     }
 
     fn predeclareTopLevelSymbols(self: *Semantizer, global: *Scope) SemErr!void {
-        for (self.st_nodes) |node| {
+        for (self.st_nodes) |node_ref| {
+            const node = self.syntaxNode(node_ref);
             switch (node.content) {
                 .symbol_declaration => |decl| {
                     try self.predeclareTopLevelImportAlias(decl, global, node.location);
@@ -9453,7 +9466,8 @@ pub const Semantizer = struct {
         defer overloads.deinit();
 
         var any_overload = false;
-        for (self.st_nodes) |node| {
+        for (self.st_nodes) |node_ref| {
+            const node = self.syntaxNode(node_ref);
             const decl = switch (node.content) {
                 .function_declaration => |decl| decl,
                 .test_declaration => |td| td.decl,

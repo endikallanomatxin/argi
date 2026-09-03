@@ -1,4 +1,5 @@
 const std = @import("std");
+const source_db = @import("../1_base/source_db.zig");
 const tok = @import("../2_tokens/token.zig");
 const syn = @import("syntax_tree.zig");
 
@@ -16,6 +17,13 @@ pub const STNode = struct {
 /// Stable index into one file's syntax artifact. Index zero is a valid node;
 /// stores are always addressed together with their owning FileId.
 pub const NodeId = u32;
+
+/// Module-level reference to a node. Child references need only `NodeId`
+/// because syntax trees never cross file boundaries.
+pub const SyntaxRef = struct {
+    file_id: source_db.FileId,
+    node_id: NodeId,
+};
 
 /// Dense ownership for syntax nodes. Fixed-size pages keep the legacy adapter's
 /// pointers stable without reserving memory proportional to all tokens. NodeId
@@ -116,6 +124,11 @@ pub const SyntaxStore = struct {
             .node_capacity = node_capacity,
         };
     }
+};
+
+pub const FileSyntax = struct {
+    file_id: source_db.FileId,
+    store: SyntaxStore,
 };
 
 pub const Name = struct {

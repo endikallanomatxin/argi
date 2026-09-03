@@ -25,10 +25,7 @@ pub const FrontendPipeline = struct {
     /// The persisted syntax boundary for one source file. `roots` live inside
     /// the store and are NodeId values; `st_list` below is a transient adapter
     /// for the pointer-based semantizer.
-    pub const FileSyntax = struct {
-        file_id: source_db.FileId,
-        store: st.SyntaxStore,
-    };
+    pub const FileSyntax = st.FileSyntax;
 
     pub const SyntaxStorage = struct {
         logical_bytes: usize = 0,
@@ -55,6 +52,7 @@ pub const FrontendPipeline = struct {
     source_db: *const source_db.SourceDb,
     token_files: std.array_list.Managed(FileTokens),
     syntax_files: std.array_list.Managed(FileSyntax),
+    syntax_roots: std.array_list.Managed(st.SyntaxRef),
     st_list: std.array_list.Managed(*st.STNode),
     sem_ctx: ?semantizer.Semantizer = null,
     safety_ctx: ?safety_checker.SafetyChecker = null,
@@ -80,6 +78,7 @@ pub const FrontendPipeline = struct {
             .source_db = &diagnostics.source_db,
             .token_files = std.array_list.Managed(FileTokens).init(allocator),
             .syntax_files = std.array_list.Managed(FileSyntax).init(allocator),
+            .syntax_roots = std.array_list.Managed(st.SyntaxRef).init(allocator),
             .st_list = std.array_list.Managed(*st.STNode).init(allocator),
         };
     }
@@ -90,6 +89,7 @@ pub const FrontendPipeline = struct {
         self.token_files.deinit();
         for (self.syntax_files.items) |*file_syntax| file_syntax.store.deinit();
         self.syntax_files.deinit();
+        self.syntax_roots.deinit();
         self.st_list.deinit();
     }
 
@@ -115,6 +115,7 @@ pub const FrontendPipeline = struct {
     pub fn syntax(self: *FrontendPipeline) ![]const *st.STNode {
         self.syntax_complete = false;
         self.st_list.clearRetainingCapacity();
+        self.syntax_roots.clearRetainingCapacity();
         for (self.syntax_files.items) |*file_syntax| file_syntax.store.deinit();
         self.syntax_files.clearRetainingCapacity();
         self.st_node_count = 0;
@@ -135,6 +136,7 @@ pub const FrontendPipeline = struct {
             // semantizer. Its order is reconstructed from the authoritative
             // root NodeIds stored per file, never from parser-owned slices.
             for (file_syntax.store.roots.items) |root| {
+                try self.syntax_roots.append(.{ .file_id = file_syntax.file_id, .node_id = root });
                 try self.st_list.append(file_syntax.store.getMut(root));
             }
         }
@@ -206,7 +208,14 @@ pub const FrontendPipeline = struct {
         self.sg_node_count = 0;
         if (self.options.collect_stats) sg.beginNodeCounting(&self.sg_node_count);
         defer if (self.options.collect_stats) sg.endNodeCounting();
-        self.sem_ctx = semantizer.Semantizer.init(&self.allocator, self.io, self.st_nodes, self.diagnostics, self.options.semantizer);
+        self.sem_ctx = semantizer.Semantizer.init(
+            &self.allocator,
+            self.io,
+            self.syntax_files.items,
+            self.syntax_roots.items,
+            self.diagnostics,
+            self.options.semantizer,
+        );
         const result = try self.sem_ctx.?.semantizeWithTimings();
         self.sg_nodes = result.nodes;
         self.safety_ctx = safety_checker.SafetyChecker.init(&self.allocator, self.diagnostics);
