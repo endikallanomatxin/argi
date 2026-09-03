@@ -26,6 +26,7 @@ pub const BuildFlags = struct {
     just_object_path: ?[]const u8 = null,
     sysroot_path: ?[]const u8 = null,
     executable_name: ?[]const u8 = null,
+    optimization_mode: link.OptimizationMode = .development,
 };
 
 const ParsedBuildArgs = struct {
@@ -101,6 +102,8 @@ pub fn parseBuildArgs(args: []const []const u8) !ParsedBuildArgs {
             parsed.flags.show_token_list = true;
         } else if (std.mem.eql(u8, a, "--stats")) {
             parsed.flags.stats = true;
+        } else if (std.mem.eql(u8, a, "--release")) {
+            parsed.flags.optimization_mode = .release;
         } else if (std.mem.eql(u8, a, "--output")) {
             idx += 1;
             if (idx >= args.len) return error.MissingFlagValue;
@@ -205,6 +208,7 @@ fn printCompilerStats(
     file_count: usize,
     type_stats: types_mod.StructuralEqualityStats,
     codegen_stats: codegen.CodeGenerator.Stats,
+    optimization_mode: link.OptimizationMode,
 ) void {
     printPhaseTimings(timings);
     printSemantizingTimings(pipeline.semantize_timings);
@@ -222,6 +226,8 @@ fn printCompilerStats(
     std.debug.print("  maximum depth:              {d}\n", .{type_stats.max_depth});
 
     std.debug.print("Codegen\n", .{});
+    std.debug.print("  optimization mode:             {s}\n", .{@tagName(optimization_mode)});
+    std.debug.print("  LLVM codegen level:            {s}\n", .{optimization_mode.llvmCodeGenLevelName()});
     std.debug.print("  semantic functions:             {d}\n", .{codegen_stats.semantic_functions});
     std.debug.print("  LLVM functions with body:       {d}\n", .{codegen_stats.llvm_functions_with_body});
     std.debug.print("  LLVM function bodies pruned:    {d}\n", .{codegen_stats.pruned_llvm_function_bodies});
@@ -780,9 +786,9 @@ fn compileResolvedPlan(
 
     const link_start = nowNs(io);
     if (emit_object_only)
-        try link.emitObjectFile(module, triple, temp_obj_path)
+        try link.emitObjectFile(module, triple, temp_obj_path, flags.optimization_mode)
     else
-        try link.linkWithLibc(module, triple, temp_stem, &allocator, io, environ_map);
+        try link.linkWithLibc(module, triple, temp_stem, &allocator, io, environ_map, flags.optimization_mode);
     timings.link_ns = elapsedSince(io, link_start);
 
     // 10. Mover a nombres finales ─────────────────────────────────────────
@@ -824,7 +830,7 @@ fn compileResolvedPlan(
         };
     }
 
-    if (flags.stats) printCompilerStats(timings, &pipeline, files.items.len, type_stats, codegen_stats);
+    if (flags.stats) printCompilerStats(timings, &pipeline, files.items.len, type_stats, codegen_stats, flags.optimization_mode);
 
     if (options.success_message) |message| {
         std.debug.print("{s}", .{message});
@@ -841,6 +847,7 @@ test "parse build flags keeps diagnostics toggles and output paths" {
         "--on-build-error-show-cascade",
         "--on-build-error-show-token-list",
         "--stats",
+        "--release",
         "--output",
         "bin/app",
         "--emit-llvm",
@@ -854,6 +861,7 @@ test "parse build flags keeps diagnostics toggles and output paths" {
     try std.testing.expect(flags.show_cascade);
     try std.testing.expect(flags.show_token_list);
     try std.testing.expect(flags.stats);
+    try std.testing.expectEqual(link.OptimizationMode.release, flags.optimization_mode);
     try std.testing.expectEqualStrings("bin/app", flags.output_path.?);
     try std.testing.expectEqualStrings("ir/app.ll", flags.llvm_ir_path.?);
     try std.testing.expectEqualStrings("obj/app.o", flags.object_path.?);
@@ -864,6 +872,11 @@ test "parse build flags keeps diagnostics toggles and output paths" {
 test "parse build flags rejects missing path value" {
     try std.testing.expectError(error.MissingFlagValue, parseFlags(&.{"--output"}));
     try std.testing.expectError(error.MissingFlagValue, parseFlags(&.{"--sysroot"}));
+}
+
+test "build optimization mode defaults to development" {
+    const flags = try parseFlags(&.{});
+    try std.testing.expectEqual(link.OptimizationMode.development, flags.optimization_mode);
 }
 
 test "parse build flags rejects unknown flag" {
