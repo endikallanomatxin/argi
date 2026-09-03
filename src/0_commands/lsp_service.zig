@@ -838,7 +838,7 @@ pub const LanguageService = struct {
                     try stack.append(c.left);
                     try stack.append(c.right);
                 },
-                .return_statement => |r| if (r.expression) |e| try stack.append(e),
+                .return_statement => |r| if (r.expression.unwrap()) |id| try stack.append(pipeline.syntax_files.items[0].store.get(id)),
                 .if_statement => |ifs| {
                     try stack.append(ifs.condition);
                     try stack.append(ifs.then_block);
@@ -1499,7 +1499,7 @@ fn collectSyntaxRefs(
                 try stack.append(cmp.left);
                 try stack.append(cmp.right);
             },
-            .return_statement => |ret| if (ret.expression) |expr| try stack.append(expr),
+            .return_statement => |ret| if (ret.expression.unwrap()) |id| try stack.append(syntaxChild(syntax_files, node.location.file, id)),
             .error_propagation => |prop| try stack.append(prop.value),
             .error_context => |ctx| {
                 try stack.append(ctx.value);

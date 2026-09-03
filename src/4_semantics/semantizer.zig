@@ -3210,7 +3210,7 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
-            .return_statement => |r| self.handleReturn(r, s) catch |err| blk: {
+            .return_statement => |r| self.handleReturn(r, n.location.file, s) catch |err| blk: {
                 try self.diags.add(
                     n.location,
                     .semantic,
@@ -11667,10 +11667,12 @@ pub const Semantizer = struct {
     fn handleReturn(
         self: *Semantizer,
         r: syn.ReturnStatement,
+        file_id: source_db.FileId,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        var e = if (r.expression) |ex| (try self.visitNode(ex.*, s)) else null;
-        if (r.expression) |ex| {
+        const expression = if (r.expression.unwrap()) |id| self.syntaxChild(file_id, id) else null;
+        var e = if (expression) |ex| (try self.visitNode(ex.*, s)) else null;
+        if (expression) |ex| {
             if (e) |te| e = try self.ensureValuePositionAllowed(te, ex.location, s);
         }
 
@@ -11681,7 +11683,7 @@ pub const Semantizer = struct {
             .cleanup_nodes = cleanup_nodes,
         };
 
-        const n = try sg.makeSGNode(.{ .return_statement = rs }, if (r.expression) |ex| ex.location else undefined, self.allocator);
+        const n = try sg.makeSGNode(.{ .return_statement = rs }, if (expression) |ex| ex.location else undefined, self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }

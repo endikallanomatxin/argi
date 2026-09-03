@@ -1949,7 +1949,7 @@ pub const Syntaxer = struct {
         switch (self.current().content) {
             .new_line, .close_brace, .eof => {
                 return try self.makeNode(
-                    .{ .return_statement = .{ .expression = null } },
+                    .{ .return_statement = .{ .expression = .none } },
                     start,
                 );
             },
@@ -1959,7 +1959,7 @@ pub const Syntaxer = struct {
         // ── otherwise parse the expression -----------------------
         const expr = try self.parseExpression();
         return try self.makeNode(
-            .{ .return_statement = .{ .expression = expr } },
+            .{ .return_statement = .{ .expression = @enumFromInt(self.nodeId(expr)) } },
             start,
         );
     }

@@ -519,7 +519,7 @@ pub const MatchPayloadBinding = struct {
 };
 
 pub const ReturnStatement = struct {
-    expression: ?*STNode,
+    expression: OptionalNodeId,
 };
 
 pub const ImportStatement = struct {

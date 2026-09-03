@@ -421,7 +421,7 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
         // ── RETURN ───────────────────────────────────────────────────────
         .return_statement => |ret| {
             std.debug.print("Return\n", .{});
-            if (ret.expression) |e| printNode(e.*, lvl + 1);
+            if (ret.expression.unwrap()) |expression| printChildId(expression, lvl + 1);
         },
         .break_statement => {
             std.debug.print("Break\n", .{});
