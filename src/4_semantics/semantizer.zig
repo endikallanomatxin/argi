@@ -11055,23 +11055,41 @@ pub const Semantizer = struct {
         self.generic_specializations.items.len = 0;
     }
 
-    // Specializations are shared across sibling call-site scopes. Until types
-    // have canonical ids, the small cache is deliberately searched with
-    // structural comparisons of the fully resolved substitution and callable
-    // signature rather than pointer identity or an IR-level equivalence.
+    // Specializations are shared across sibling call-site scopes. Generic
+    // substitutions retain nominal identity because the specialized body may
+    // have resolved different overloads for structurally identical types.
     fn genericSubstitutionsEqual(a: *const GenericSubst, b: *const GenericSubst) bool {
         if (a.types.count() != b.types.count() or a.ints.count() != b.ints.count()) return false;
 
         var type_it = a.types.iterator();
         while (type_it.next()) |entry| {
             const other = b.types.get(entry.key_ptr.*) orelse return false;
-            if (!typ.typesStructurallyEqual(entry.value_ptr.*, other)) return false;
+            if (!typ.typesExactlyEqual(entry.value_ptr.*, other)) return false;
         }
 
         var int_it = a.ints.iterator();
         while (int_it.next()) |entry| {
             const other = b.ints.get(entry.key_ptr.*) orelse return false;
             if (entry.value_ptr.* != other) return false;
+        }
+        return true;
+    }
+
+    fn optionalTypesExactlyEqual(a: ?sg.Type, b: ?sg.Type) bool {
+        if (a == null and b == null) return true;
+        if (a == null or b == null) return false;
+        return typ.typesExactlyEqual(a.?, b.?);
+    }
+
+    // Input and output structs are rebuilt at each instantiation attempt, so
+    // their container pointers are not identities. Their layout and fields are
+    // the specialization signature; nested field types remain nominal.
+    fn genericSignatureStructsEqual(a: *const sg.StructType, b: *const sg.StructType) bool {
+        if (a.layout != b.layout or a.fields.len != b.fields.len) return false;
+        for (a.fields, b.fields) |a_field, b_field| {
+            if (!std.mem.eql(u8, a_field.name, b_field.name)) return false;
+            if (!typ.typesExactlyEqual(a_field.ty, b_field.ty)) return false;
+            if (!optionalTypesExactlyEqual(a_field.storage_type, b_field.storage_type)) return false;
         }
         return true;
     }
@@ -11089,8 +11107,8 @@ pub const Semantizer = struct {
             if (specialization.template_location.offset != tmpl.location.offset or
                 !std.mem.eql(u8, specialization.template_location.file, tmpl.location.file)) continue;
             if (!genericSubstitutionsEqual(&specialization.subst, subst)) continue;
-            if (!typ.typesStructurallyEqual(.{ .struct_type = specialization.input }, .{ .struct_type = input })) continue;
-            if (!typ.typesStructurallyEqual(.{ .struct_type = specialization.output }, .{ .struct_type = output })) continue;
+            if (!genericSignatureStructsEqual(specialization.input, input)) continue;
+            if (!genericSignatureStructsEqual(specialization.output, output)) continue;
             return specialization.function;
         }
         return null;
