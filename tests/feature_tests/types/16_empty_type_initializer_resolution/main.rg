@@ -1,6 +1,9 @@
 Alpha : Type = ()
 Beta : Type = ()
 
+Alpha implements ImplicitlyCopyable
+Beta implements ImplicitlyCopyable
+
 init(.p: $&Alpha) -> () := {
 }
 

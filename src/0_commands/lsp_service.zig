@@ -521,8 +521,10 @@ pub const LanguageService = struct {
             return null;
         };
 
-        const one_primary = [_]sf.SourceFile{.{ .path = doc.path, .code = doc.text }};
-        var diagnostics = diag.Diagnostics.init(analysis_allocator, &one_primary);
+        // The semantizing pipeline also uses compiler-owned SourceFile origin
+        // metadata to bind safety primitives. Keep the complete module here;
+        // consumers can still filter diagnostics to the primary document.
+        var diagnostics = diag.Diagnostics.init(analysis_allocator, files);
         defer diagnostics.deinit();
 
         var pipeline = frontend.FrontendPipeline.init(analysis_allocator.*, self.io, &diagnostics, .{});

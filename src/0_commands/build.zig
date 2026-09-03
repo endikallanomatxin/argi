@@ -621,7 +621,7 @@ fn compileResolvedPlan(
 
     // 5. Semántica ────────────────────────────────────────────────────────
     const semantizing_start = nowNs(io);
-    const sg = pipeline.semantize() catch {
+    const sg = pipeline.semantize() catch |err| {
         timings.semantizing_ns = elapsedSince(io, semantizing_start);
         if (flags.show_token_list) printTokenList(pipeline.tokens.items);
         if (pipeline.syntax_ctx) |*syntax_ctx| {
@@ -631,6 +631,8 @@ fn compileResolvedPlan(
             if (flags.show_semantic_graph) semantizer_ctx.printSG();
         }
         dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
+        if (!diagnostics.hasErrors())
+            std.debug.print("semantizing failed without a diagnostic: {s}\n", .{@errorName(err)});
         return error.CompilationFailed;
     };
     timings.semantizing_ns = elapsedSince(io, semantizing_start);

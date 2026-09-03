@@ -15,13 +15,13 @@ main() -> (.status_code: Int32) := {
     result := propagate()
 
     if is(.value = result, .variant = ..error) {
-        err := result..error
-        if err.trace.entries.length != one {
+        err ::= &result..error
+        if err&.trace.entries.length != one {
             status_code = 1
             return
         }
 
-        entry := err.trace.entries[zero]
+        entry := err&.trace.entries[zero]
         if entry.line != 8 {
             status_code = 2
             return

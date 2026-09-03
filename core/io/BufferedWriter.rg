@@ -9,7 +9,7 @@ BufferedWriter#(.base_type: Type: Writer) : Type = (
     -- internal buffer storage becomes invalid.
     --
     .base     : $&base_type
-    .buffer   : $&UInt8
+    .buffer   : Allocation
     .capacity : UIntNative
     .length   : UIntNative
 )
@@ -19,7 +19,7 @@ init#(.base_type: Type: Writer)(
     .allocator: $&CAllocator = #reach allocator, system.allocator,
     .base: $&base_type,
     .capacity: UIntNative,
-) -> () := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     actual_capacity ::= capacity
     one :: UIntNative = 1
 
@@ -27,12 +27,21 @@ init#(.base_type: Type: Writer)(
         actual_capacity = one
     }
 
-    p& = (
-        .base = base,
-        .buffer = allocate(.self = allocator, .size = actual_capacity),
-        .capacity = actual_capacity,
-        .length = 0,
-    )
+    allocated ::= allocate(.self = allocator, .size = actual_capacity)
+    match allocated {
+        ..ok ~ payload {
+            p& = (
+                .base = base,
+                .buffer = ~payload,
+                .capacity = actual_capacity,
+                .length = 0,
+            )
+            result = ..ok Void()
+        }
+        ..error _ {
+            result = ..error(.reason = ..out_of_memory)
+        }
+    }
 }
 
 deinit#(.base_type: Type: Writer)(
@@ -40,36 +49,24 @@ deinit#(.base_type: Type: Writer)(
     .allocator: $&CAllocator = #reach allocator, system.allocator,
 ) -> () := {
     buffered_writer_flush(.self = self)
-    deallocate(.self = allocator, .data = self&.buffer, .size = self&.capacity)
-    self& = (
-        .base = self&.base,
-        .buffer = self&.buffer,
-        .capacity = 0,
-        .length = 0,
-    )
+    deinit(.self = $&self&.buffer)
 }
 
 buffered_writer_byte_address#(.base_type: Type: Writer)(
     .self: &BufferedWriter#(.base_type: base_type),
     .index: UIntNative,
 ) -> (.address: UIntNative) := {
-    base :: UIntNative = cast#(.to: UIntNative)(.value = self&.buffer)
+    base :: UIntNative = cast#(.to: UIntNative)(.value = self&.buffer.data)
     address = base + index
 }
 
 buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type)) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
     while i < self&.length {
-        addr :: UIntNative = buffered_writer_byte_address(.self = self, .index = i).address
-        ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
+        ptr ::= reference_offset#(.t: UInt8)(.base = self&.buffer.data, .elements = i).reference
         wrote ::= write_byte(.self = self&.base, .byte = ptr&)
         if is(.value = wrote, .variant = ..error) {
-            self& = (
-                .base = self&.base,
-                .buffer = self&.buffer,
-                .capacity = self&.capacity,
-                .length = 0,
-            )
+            self&.length = 0
             result = ..error(.reason = wrote..error.reason)
             return
         }
@@ -78,36 +75,20 @@ buffered_writer_flush#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_
 
     flushed ::= flush(.self = self&.base)
     if is(.value = flushed, .variant = ..error) {
-        self& = (
-            .base = self&.base,
-            .buffer = self&.buffer,
-            .capacity = self&.capacity,
-            .length = 0,
-        )
+        self&.length = 0
         result = ..error(.reason = flushed..error.reason)
         return
     }
 
-    self& = (
-        .base = self&.base,
-        .buffer = self&.buffer,
-        .capacity = self&.capacity,
-        .length = 0,
-    )
+    self&.length = 0
     result = ..ok Void()
 }
 
 write_byte#(.base_type: Type: Writer)(.self: $&BufferedWriter#(.base_type: base_type), .byte: UInt8) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
-    addr :: UIntNative = buffered_writer_byte_address(.self = self, .index = self&.length).address
-    ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
+    ptr ::= mutable_reference_offset#(.t: UInt8)(.base = self&.buffer.data, .elements = self&.length).reference
     ptr& = byte
     next_length ::= self&.length + 1
-    self& = (
-        .base = self&.base,
-        .buffer = self&.buffer,
-        .capacity = self&.capacity,
-        .length = next_length,
-    )
+    self&.length = next_length
 
     if next_length == self&.capacity {
         result = buffered_writer_flush(.self = self)

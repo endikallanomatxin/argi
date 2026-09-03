@@ -3,18 +3,21 @@ CountingAllocator : Type = (
     .dealloc_count: Int32 = 0
 )
 
-allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.data: $&UInt8) := {
-    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = malloc(.size = size))
+allocate(.self: $&CountingAllocator, .size: UIntNative) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory))) := {
+    storage ::= malloc(.size = size)
+    raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = storage)
     self& = (
         .alloc_count = self&.alloc_count + 1,
         .dealloc_count = self&.dealloc_count,
     )
-    data = cast#(.to: $&UInt8)(.value = raw_addr)
+    deallocator :: Virtual#(.abstract: Deallocator) = to_virtual#(.abstract: Deallocator)(.value = self)
+    allocation ::= establish_allocation(.storage = storage, .size = size, .deallocator = deallocator)
+    result = ..ok ~allocation
 }
 
 deallocate(.self: $&CountingAllocator, .data: $&UInt8, .size: UIntNative) -> () := {
     raw_addr :: UIntNative = cast#(.to: UIntNative)(.value = data)
-    free(.pointer = cast#(.to: &Any)(.value = raw_addr))
+    free(.address = raw_addr)
     self& = (
         .alloc_count = self&.alloc_count,
         .dealloc_count = self&.dealloc_count + 1,
@@ -22,6 +25,7 @@ deallocate(.self: $&CountingAllocator, .data: $&UInt8, .size: UIntNative) -> () 
 }
 
 CountingAllocator implements Allocator
+CountingAllocator implements Deallocator
 
 main() -> (.status_code: Int32) := {
     allocator :: CountingAllocator = (
@@ -30,46 +34,56 @@ main() -> (.status_code: Int32) := {
     )
 
     literal ::= from_literal(.data = "abc")
-    base_addr :: UIntNative = cast#(.to: UIntNative)(.value = literal)
+    data ::= reinterpret_reference#(.from: Char, .to: UInt8)(.base = literal).reference
 
     if 1 == 1 {
         borrowed_view : StringView = (
-            .data = base_addr,
+            .data = data,
             .length = 3,
         )
-        borrowed ::= as_c_string(.self = borrowed_view, .allocator = $&allocator)
-        if borrowed.storage.size != 0 {
+        borrowed_result ::= as_c_string(.self = borrowed_view, .allocator = $&allocator)
+        match borrowed_result {
+        ..error _ { status_code = 7 }
+        ..ok ~ borrowed {
+        if borrowed.storage.size != 4 {
             status_code = 1
             return
         }
-        if allocator.alloc_count != 0 {
+        if allocator.alloc_count != 1 {
             status_code = 2
             return
         }
+        }
+        }
     }
 
-    if allocator.dealloc_count != 0 {
+    if allocator.dealloc_count != 1 {
         status_code = 3
         return
     }
 
     if 1 == 1 {
         copied_view : StringView = (
-            .data = base_addr,
+            .data = data,
             .length = 2,
         )
-        copied ::= as_c_string(.self = copied_view, .allocator = $&allocator)
+        copied_result ::= as_c_string(.self = copied_view, .allocator = $&allocator)
+        match copied_result {
+        ..error _ { status_code = 8 }
+        ..ok ~ copied {
         if copied.storage.size != 3 {
             status_code = 4
             return
         }
-        if allocator.alloc_count != 1 {
+        if allocator.alloc_count != 2 {
             status_code = 5
             return
         }
+        }
+        }
     }
 
-    if allocator.dealloc_count != 1 {
+    if allocator.dealloc_count != 2 {
         status_code = 6
         return
     }

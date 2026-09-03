@@ -1,617 +1,273 @@
-# On Memory Management
-
-This document collects the current reflection about memory management in Argi.
-It is not a closed specification yet. The goal is to clarify:
-
-- which problems the language wants to solve,
-- which tradeoffs are acceptable,
-- which ideas should be part of the semantic core,
-- and which mechanisms should remain explicit, optional, or postponed.
-
-
-## The Core Tension
-
-Argi does not want its default behavior to be:
-
-- so permissive that heap-owning values can be shallow-copied by accident,
-- nor so analysis-heavy that everyday programming revolves around
-  borrow-checker constraints.
-
-The goal is to preserve freedom and explicit control, while making the default
-semantics act as guardrails against the most common memory-management mistakes.
-
-The intended direction is:
-
-- strict value semantics,
-- explicit references,
-- automatic destruction,
-- limited but meaningful aliasing checks,
-- and no full borrow checker or user-visible lifetime annotations.
-
-
-## The Main Problems
-
-The language should try to make these problems hard to write by accident:
-
-- shallow copies of owning values,
-- double free,
-- use after free,
-- accidental shared mutation through aliasing,
-- hidden ownership transfer,
-- APIs whose safe use depends on knowing internal representation.
-
-At the same time, it should avoid forcing the user into:
-
-- pervasive lifetime annotations,
-- a global borrow checker mental model,
-- reference-counting overhead everywhere,
-- or a GC-based runtime.
-
-
-## Comparison: Rust, Zig, Argi
-
-### Rust
-
-Rust tries to solve:
-
-- use after free,
-- double free,
-- aliasing with mutation,
-- data races,
-- invalid references.
-
-It does so with:
-
-- ownership by default,
-- move semantics,
-- `&` and `&mut`,
-- compile-time borrow checking,
-- lifetimes,
-- automatic `Drop`.
-
-Strengths:
-
-- very strong guarantees for references and aliasing,
-- excellent prevention of dangling references,
-- good model for complex borrowing once understood.
-
-Costs:
-
-- significant mental overhead,
-- difficult ergonomics in self-referential or graph-like structures,
-- compiler model becomes a central part of everyday programming.
-
-
-### Zig
-
-Zig tries to solve:
-
-- explicit control,
-- predictable cost,
-- simple semantics,
-- allocator-based memory management.
-
-It does so with:
-
-- mostly pass-by-value semantics,
-- explicit pointers,
-- manual or semi-manual destruction patterns,
-- explicit allocators,
-- `defer` / `errdefer`.
-
-Strengths:
-
-- simple operational model,
-- good fit for systems code and compilers,
-- little semantic machinery.
-
-Costs:
-
-- shallow-copy bugs are easy to write,
-- ownership is often a convention rather than a guaranteed property,
-- aliasing and lifetime discipline is largely on the programmer.
-
-
-### Argi
-
-Argi should aim for:
-
-- avoiding shallow-copy surprises,
-- keeping references explicit,
-- keeping destruction automatic at scope exit,
-- enforcing a limited but useful notion of mutable exclusivity,
-- and remaining simpler than Rust.
-
-The working direction is:
-
-- value position means independent value,
-- `copy()` or compile error,
-- `&T` means shared read access,
-- `$&T` means exclusive mutable access,
-- `deinit()` is inserted automatically,
-- no full borrow checker,
-- no user-written lifetimes.
-
-
-## Core Proposed Rules
-
-### 1. Value Position Means Independence
-
-A value is in value position when it is:
-
-- assigned to another variable,
-- passed to a function argument declared as `Type`,
-- stored by value inside another value,
-- returned by value.
-
-The semantic rule should be:
-
-> Using a value in value position means requesting an independent value.
-
-That means:
-
-- if the expression is a temporary value, it can be moved directly,
-- if the expression names an existing value and the type implements `copy()`,
-  the compiler may insert it implicitly,
-- otherwise the operation is a compile error,
-- and the diagnostic should suggest `&`, `$&`, or implementing `copy()`.
-
-For now, a useful working split is:
-
-- temporary values move by default,
-- existing named values copy by default,
-- explicit move from an existing binding uses `~binding`.
-
-
-### Temporary Values vs Existing Values
-
-Not every value position should behave the same internally.
-
-These cases should count as temporary values:
-
-- literals,
-- constructors,
-- results of function calls,
-- intermediate values created while composing calls.
-
-Those values are already independent, so they can flow into value position
-without requiring an extra copy.
-
-By contrast, reusing an existing binding in value position means:
-
-- implicit `copy()` if the type is copyable,
-- or a compile error if it is not.
-
-This is the key rule that keeps value semantics safe without making composed
-expressions unnecessarily expensive.
-
-
-### Explicit Move
-
-Argi should also support an explicit move operation for existing bindings:
-
-- `~x` means transfer the value out of `x`,
-- after that, `x` is consumed and cannot be used again,
-- and `deinit()` should not run for that moved-out state.
-
-This is especially useful when ownership transfer is intended and an implicit
-copy would be either expensive or invalid.
-
-The intended balance is:
-
-- copy remains the default for named values used by value,
-- move remains explicit for named values,
-- but temporary composed values move naturally without extra syntax.
-
-> [!NOTE]
-> It may be tempting to optimize the last implicit copy of a binding into a
-> move when the binding is not used again.
->
-> For now, that should not be part of the model.
-> Once references, views, `keep`, and aliasing are considered, that
-> optimization becomes much more subtle.
-> The language can stay correct and understandable without it, and it can
-> always be reconsidered later as a conservative optimization.
-
-
-### 2. References Are Explicit
-
-The meaning should stay simple:
-
-- `Type`: independent value semantics,
-- `&Type`: shared read access,
-- `$&Type`: exclusive mutable access.
-
-This keeps the user-facing model direct and visible.
-
-
-### 3. Automatic Destruction at Scope Exit
-
-For now, the base rule should be:
-
-- values are automatically deinitialized when they go out of scope.
-
-This is much simpler than trying to move destruction to last use immediately.
-Last-use destruction can remain an optimization for the future.
-
-> [!NOTE]
-> Moving `deinit()` from scope exit to last use may look attractive as an
-> optimization, but it requires substantially more analysis:
-> aliasing, control flow, partial initialization, retained views, early returns,
-> and future mechanisms such as `keep`.
->
-> Because of that, scope-exit destruction may remain the preferred semantic base
-> for a long time, even if some local last-use optimizations become possible.
-
-
-### 4. Mutable Exclusivity Should Be Local and Pragmatic
-
-Argi should not try to reproduce Rust's full borrow checker.
-But it should still reject obvious local misuse.
-
-Minimum useful rule:
-
-- in a single call, if a binding is passed as `$&`, the same binding should not
-  also appear as:
-  - another `$&`,
-  - a `&`,
-  - or a value argument.
-
-This would already eliminate a meaningful class of confusing aliasing bugs
-without introducing global lifetime reasoning.
-
-
-## What Argi Should Not Try to Do
-
-At least in the first stable model, Argi should probably avoid:
-
-- full borrow checking,
-- user-visible lifetime parameters,
-- proving global aliasing properties,
-- making every reference statically lifetime-safe the way Rust does,
-- and making all view-like types automatically reference-counted.
-
-Those would push the language into a much heavier model than the rest of the
-design suggests.
-
-
-## Views: The Real Difficult Problem
-
-The deepest unresolved issue is not mutable aliasing in a single call.
-It is non-owning views.
-
-The problem is:
-
-- an owner exists,
-- a view references its data,
-- the owner dies,
-- the view becomes invalid.
-
-Rust solves this with lifetimes.
-Zig largely leaves this to discipline.
-Argi should likely take a third path.
-
-
-### Proposed Direction for Views
-
-The recommended direction is:
-
-- a normal view is non-owning and lightweight,
-- it does not extend the lifetime of the owner,
-- it should remain cheap and explicit,
-- if the user wants the view to survive independently, that should be an
-  explicit promotion step.
-
-In other words:
-
-- a plain view stays a plain view,
-- retained/shared/kept views should be explicit,
-- and that promotion may use a runtime strategy such as:
-  - reference counting,
-  - arena ownership,
-  - or another explicit manager.
-
-This should not necessarily imply a completely separate family of surface
-types. It may be preferable to express retention through composition,
-promotion, or an explicit wrapper mechanism rather than by proliferating many
-distinct view names.
-
-One candidate mechanism already present in the language design is `keep`.
-
-The intended role of `keep` would be:
-
-- a plain view remains non-owning,
-- if the user wants the viewed data to outlive the original lexical scope,
-  that retention must be requested explicitly,
-- and `keep` becomes the point where lifetime responsibility is transferred to
-  some explicit runtime or manager.
-
-For example, conceptually:
-
-```rg
-my_view := my_array|view(...)
-keep my_array with my_view
+# Memory management
+
+Argi combines ordinary value semantics with explicit references and structural
+temporal checking. The checker has three fundamental kinds of fact: places are
+stable structural storage, Validity Roots are temporal identities, and values
+can depend on or own roots. A Validity Domain is the set of values and storage
+whose validity is governed by one root. Physical allocation remains a separate
+runtime concern; no reference qualifier encodes all of these properties.
+
+## Values, copy, and move
+
+A value contains its fields, references, temporal dependencies, and owned
+roots. A named value copies implicitly only when its type implements
+`ImplicitlyCopyable`. Other duplication is explicit through `copy(&value)`,
+and ownership transfer is explicit through `~value`. Resource types may
+provide fallible `copy` when independence requires work. Its allocators are
+ordinary arguments: explicit arguments have priority and omitted defaults may
+resolve through `#reach`.
+
+Copying a reference or non-owning view copies its dependency, never root
+ownership. An owning copy creates independent resources and roots rather than
+duplicating ownership of an existing root.
+
+`~value` moves the complete value out of its place. The source becomes moved;
+the destination receives its dependencies and owned roots. Roots keep
+their identity. A moved source cannot be used or cleaned a second time.
+
+## References
+
+- `&T` grants read permission.
+- `$&T` grants read and write permission.
+
+Both may have aliases. Multiple `$&T` references and mixed `&T`/`$&T` aliases
+may coexist in sequential code. Mutability does not imply ownership,
+exclusivity, `noalias`, cleanup authority, or authority to end a lifetime.
+Concurrency and noalias features establish additional rules at explicit
+boundaries.
+
+## Places and initializedness
+
+A place identifies stable storage. Struct fields and statically known array
+elements are distinct projections. Initializedness is one of initialized,
+moved, or deinitialized, independently of whether the place remains valid.
+
+Replacement cleans the old value and moves a new value into the same place.
+The place survives. A reference to the place therefore remains valid, while a
+view of an old contained resource requires that resource's root to remain live.
+
+Dynamic containers use conservative spatial rules. Mutation that may move
+inline elements can invalidate references to their slots. A reference value
+copied out of a slot keeps the referenced object's root, not the container's
+backing root.
+
+## Validity Roots, domains, and dependencies
+
+A Validity Root is the temporal identity that anchors a Validity Domain. The
+domain is the conceptual set of values and storage governed by that root; the
+root itself is not that set. Using a reference requires every root it depends
+on to be alive. A dependency does not keep a root alive, so a reference binding
+may stay in scope after root end; its later use is the error.
+
+```text
+             Validity Root R
+                    |
+          +---------+---------+
+          |         |         |
+          v         v         v
+         v1        v2        v3
+          \------ Validity Domain ------/
 ```
 
-Or, in a future more explicit form:
+- `fresh` creates a new root and therefore an independent domain.
+- `inherit R` attaches the value to the domain governed by `R`.
 
-```rg
-keep my_view on rc_heap
-keep my_object on gc_runtime
+Inheritance is common identity, not merely a shorter lifetime. Arena objects
+can share one root without universal object IDs, epochs, or generations.
+
+Dependencies are structural: aggregate fields may depend on different roots.
+The reference graph permits aliases, cycles, and cross-root cycles. Ending one
+root invalidates only uses that depend on it; independent fields and objects in
+other live roots remain usable.
+
+`restrict_reference(.input, .lifetime)` adds the current storage generation of
+`lifetime` to an already safe reference. It preserves the input's pointee,
+mutability, provenance, and all previous dependencies; it creates no root,
+ownership, or storage capability. Thus it can only shorten a usable lifetime,
+never extend one.
+
+`trusted_opaque_move`, its storage-aware form
+`trusted_opaque_move_in`, `trusted_opaque_move_out`, and
+`trusted_opaque_drop` are explicit trusted primitives. Any library may
+invoke them: there is no global unsafe mode and bundled core has no extra
+privilege. The checker still enforces moves, known ownership roots, alias
+barriers, and dependency validity. The caller assumes only the runtime-slot
+invariant that the checker cannot represent: initializedness and exactly-once
+destruction in opaque storage. Moving a value out of a slot ends its opaque occupancy and
+creates a fresh precise ownership identity for the extracted value; it does
+not add per-slot state to the opaque domain.
+In particular, `trusted_opaque_drop` requires its slot to contain exactly
+one live value that has not already been dropped. Calling it twice, or calling
+it after a value has been moved out by some future trusted operation, violates the
+primitive's manual trusted precondition. The checker deliberately does not add
+per-slot occupancy state to diagnose that contract dynamically.
+Canonical primitive identity is based on the bundled declaration; its trusted
+meaning is not granted merely by reusing the name in user code.
+
+The storage-aware move receives a structural `storage` Place in addition to
+the runtime slot. Dependencies present when the value crosses this boundary
+are retained in a conservative storage-level set. They are not tracked per
+slot and are unioned across control-flow joins. While such a dependency remains
+hidden, ending its root is rejected; precise visible references do not impose
+that restriction. The original two-argument move remains available for values
+without external dependencies. It infers the backing owner from the destination
+pointer so that retaining and later mutating that pointer still updates one
+aggregate opaque domain.
+
+These facts grow monotonically until `trusted_opaque_mark_empty` discharges a
+domain after its caller has made every runtime slot in that domain empty.
+Relocating slots within the same logical domain does not prove that domain empty.
+Pointers that access opaque storage carry domain provenance, never slot
+identity or contents. A later pointer, field, or array write unions only the
+written value's temporal dependencies into the same storage-level hidden set
+used by the original move.
+
+Function summaries represent hidden dependencies independently from ownership
+consumption. An opaque storage effect pairs a symbolic input storage path with
+an ordinary output-style dependency effect. Consequently a wrapper may build a
+local aggregate from its inputs and hide that aggregate without requiring the
+local binding itself to be an input Place. Call substitution maps both the
+storage path and the dependency effect into the caller, and control-flow joins
+union these effects conservatively.
+
+Before storing that summary, the checker projects it to dependency-only facts:
+ownership transfer, owned roots, storage capabilities, foreign-storage markers,
+and integer-address markers are discarded recursively. Applying the effect
+instantiates only input dependencies, input-place provenance, and fresh
+temporal dependencies. Fresh temporal identities remain necessary when a
+wrapper creates a new lifetime whose reference is hidden, but they are never
+marked owned and do not create storage capability.
+
+## Relocatability and opaque ownership
+
+Moving with `~` transfers a value's logical ownership between known Places; it
+does not promise that the representation can be copied to a different physical
+address. A safe value can contain a reference to one of its own fields, so it
+can be movable while its representation is address-sensitive. `relocate` is a
+separate structural operation between Places known to the checker. Its source
+and destination storage identities remain distinct, and it does not retarget
+references into the source.
+
+`trusted_opaque_relocate` is instead a runtime representation move
+between opaque slots. It has no precise ownership effect: source contains one
+live opaque-owned value, destination is empty, the slots are distinct; after
+the operation source is empty and destination contains that same live value.
+It performs neither cleanup nor opaque-to-precise extraction.
+
+Passing `trusted_opaque_move` is not a permanent relocatability proof.
+A later write through an opaque access can introduce a reference to that slot,
+another slot, or another root. References into the opaque domain depend on its
+logical storage generation. `trusted_opaque_relocate` rejects a move when
+that generation appears in the domain's hidden dependency set, because moving
+the representation could leave a stale internal reference. External hidden
+dependencies do not by themselves prevent relocation because moving the opaque
+representation does not end those roots.
+
+Opaque pointer provenance pairs the structural domain Place with the concrete
+Validity Root representing its Storage Generation when provenance is established. Copies,
+aggregates, and control-flow joins preserve that pair. Refreshing the structural
+Place creates a new current generation but never rewrites generations already
+carried by values; a new reference observes the new generation, while an old
+reference remains stale. Retrospective domain inference from a preexisting
+alias may use only a temporal root already carried by that alias, never the
+domain's current root merely because its Place matches.
+
+Reads from opaque contents remain deliberately imprecise. The checker does not
+yet reconstruct the exact dependency of a reference extracted from an opaque
+value; defining conservative extraction/read provenance is separate from
+tracking dependencies written into the domain.
+
+## Validity Root ownership
+
+A value that owns a root is the unique logical owner responsible for ending it
+as part of cleanup. A value may own zero, one, or several roots while any number
+of aliases merely depend on those roots. Freshness only creates an independent
+temporal identity: it does not choose an owner. Stack roots may be controlled by
+the compiler, heap roots by an Allocation value, arena roots by an arena value,
+and foreign roots may have no Argi value owner.
+
+Each root has at most one value owner. Move transfers ownership; reference copy
+does not. Validity Root ownership is acyclic and therefore forms a forest, independently
+of the arbitrary dependency graph. Argi does not infer destruction order from
+reference cycles or provide implicit tracing, reference counting, or SCC
+destruction.
+
+## Deinitialization and replacement
+
+`deinit` tears down resources carried by the current value, consumes its owned
+roots, ends them at the appropriate point in cleanup, and leaves its place
+deinitialized. It does not inherently end the Place's Storage Generation. Effects
+come from the body and summaries of called operations, not from the function
+name. A mutable reference never owns a root, but it may reach a place whose
+current value does; cleanup through that reference consumes ownership from the
+value in the place.
+
+An independently backed String owns its buffer root. An arena-backed String
+does not own the arena root, so cleaning
+that String cannot end the arena.
+
+`AutoDeinitBinding` and `AutoDeinitField` enumerate statically located owned
+roots on normal and error exits. They do not claim to enumerate
+arbitrary runtime allocations. Arena-inherited storage can be cleaned in bulk;
+external fresh resources need an enumerable owner or individual cleanup.
+
+## Raw memory and safe views
+
+`RawPointer<T>` is a typed address outside normal temporal guarantees, used at
+allocator, FFI, OS, syscall, assembly, MMIO, runtime, and intrinsic boundaries.
+Foreign pointers enter as raw memory rather than gaining a safe lifetime
+implicitly.
+
+A small privileged boundary establishes `&T` or `$&T`:
+
+- fresh establishment creates a root without implicitly assigning ownership;
+- inherited establishment attaches to an existing root without acquiring
+  ownership.
+
+Rooting is decided before safe aliases escape. Storage is not dynamically
+re-rooted by discovering every alias.
+
+`UIntNative` is only an integer and has no hidden provenance; arithmetic on an
+address-derived integer is ordinary integer arithmetic. No `UIntNative` can be
+cast directly to a safe reference, including `&Any`. StringView, ArrayView, and
+iterators store typed references. Typed offset and reinterpret operations
+explicitly preserve dependencies; returning from an integer address to the
+safe model requires a compiler-recognized establishment primitive.
+
+## Allocation and grouped lifetime
+
+Physical allocation and temporal policy are separate:
+
+```text
+allocator -> raw storage + StorageCapability -> establish fresh / inherit R -> safe reference
 ```
 
-The exact syntax and return types are still open, but the semantic idea is
-important:
-
-- plain views do not keep anything alive,
-- retained views do,
-- and the transition must be explicit.
-
-> [!IDEA]
-> Igual en muchos casos no hace falta `keep`.
-> Si el problema aparece al intentar devolver una view, quizá la mejor solución
-> sea devolver el valor owner, o un struct que contenga el owner y los datos
-> necesarios para reconstruir la view.
->
-> Eso evitaría el problema de lifetime en vez de gestionarlo explícitamente.
-> Además encaja bien con que al hacer `return` del owner no se le hace `deinit`,
-> porque pasa a formar parte del resultado.
-
-The important semantic point is:
-
-> A plain view does not keep anything alive.
-
-
-## Allocation as the Owning Base
-
-The current direction should be:
-
-- `Allocation` lives in `core`,
-- `Allocation` owns raw heap memory,
-- higher-level owning containers compose it,
-- views remain separate non-owning descriptors.
-
-This keeps three concerns separate:
-
-- allocation strategy,
-- ownership/copy/deinit behavior,
-- non-owning observation through views.
-
-In practice, the layering should look roughly like:
-
-- `Allocator`
-- `Allocation`
-- owning containers such as `String`, dynamic lists, maps, buffers
-- non-owning views such as `ListViewRO`, `ListViewRW`, and string views
-
-That should help avoid fragmented ad hoc ownership stories across the standard
-library.
-
-
-### Why Not Put RC in All Views?
-
-Making every view implicitly reference-counted would blur the model:
-
-- views would stop being cheap and predictable,
-- costs would become less visible,
-- and the language would mix two lifetime strategies without a clear boundary.
-
-That seems worse than requiring an explicit promotion when shared retention is
-needed.
-
-
-## Ownership-Centralized Data Structures
-
-For certain structures, trying to model ownership directly in each node tends
-to become awkward in every language.
-
-This includes:
-
-- linked lists,
-- trees with parent references,
-- graphs,
-- ECS-like storages,
-- AST arenas,
-- symbol tables with cross-links,
-- self-referential structures.
-
-In Argi, the recommended pattern should be:
-
-- a central owner holds the memory,
-- inner elements are non-owning,
-- relationships are expressed using:
-  - IDs,
-  - handles,
-  - indices,
-  - or non-owning references/views.
-
-Examples:
-
-- `Graph` owns all nodes and edges,
-- `Arena#(Node)` owns all nodes, while edges store `NodeId`,
-- compiler structures own AST/type/symbol storage centrally.
-
-This avoids distributed ownership, reduces lifetime complexity, and fits well
-with allocator-based design.
-
-
-## Important Optimization Principle
-
-Even if value semantics mean "copy or error", the implementation should still
-be allowed to optimize.
-
-Important example:
-
-- returning by value may semantically mean "independent value",
-- but if the compiler can prove no surviving observable alias or owner needs to
-  coexist, it may elide the actual copy.
-
-So the rule should be:
-
-- semantic model: copy,
-- implementation freedom: copy elision when behavior stays identical.
-
-This is important because otherwise the model could become too expensive in
-practice.
-
-
-## Tricky Example Areas
-
-### 1. Heap-owning value types
-
-Examples:
-
-- `String`,
-- `DynamicArray`,
-- `HashMap`.
-
-Rust:
-
-- good guarantees,
-- explicit `clone()`/move model,
-- but sometimes ownership is heavier than desired.
-
-Zig:
-
-- easy to represent,
-- easy to misuse by copying descriptor structs.
-
-Argi:
-
-- should be especially strong here,
-- because `copy()` or error directly solves the shallow-copy trap.
-
-
-### 2. Mutable + shared aliasing in one call
-
-Conceptual example:
-
-- mutate one argument,
-- read another,
-- both may refer to the same value.
-
-Rust:
-
-- borrow checker rejects invalid combinations.
-
-Zig:
-
-- usually allowed,
-- correctness depends on programmer discipline.
-
-Argi:
-
-- should reject the obvious same-binding cases locally,
-- without trying to prove all indirect aliases.
-
-
-### 3. Returning a view into a local value
-
-Rust:
-
-- lifetimes usually reject it.
-
-Zig:
-
-- easy to write accidentally,
-- often dangerous.
-
-Argi:
-
-- this remains a hard problem,
-- and plain views should probably stay restricted/non-owning,
-- with explicit promotion mechanisms for retained views.
-
-
-### 4. Partial initialization with failure
-
-Example:
-
-- a type allocates multiple resources in `init`,
-- then one step fails.
-
-Rust:
-
-- ownership + `Drop` help,
-- though this is still non-trivial.
-
-Zig:
-
-- `errdefer` handles this pattern very well.
-
-Argi:
-
-- this should become one of its stronger areas,
-- especially if `init` can return something like `Errable#(...)`,
-- but only if `init`, initialization state, and auto-`deinit` are modeled more
-  explicitly than they are today.
-- in particular, the language needs a believable story for:
-  - fully initialized values,
-  - partially initialized values,
-  - and failed initialization paths where cleanup may or may not already have
-    happened.
-
-
-### 5. Graphs and self-referential structures
-
-Rust:
-
-- safe but often awkward,
-- frequently requires `Rc`, `RefCell`, arenas, or `unsafe`.
-
-Zig:
-
-- direct and flexible,
-- but easy to misuse.
-
-Argi:
-
-- should prefer ownership-centralized patterns rather than trying to make
-  distributed ownership feel magical.
-
-
-## Current Design Direction
-
-If Argi wants to keep its identity, the likely stable direction is:
-
-- no shallow-copy surprises,
-- no borrow checker everywhere,
-- explicit references,
-- automatic destruction,
-- explicit retention/promotion for non-owning views when needed,
-- centralized ownership for complex graph-like memory shapes.
-
-That would make Argi:
-
-- stricter and safer than Zig in value semantics,
-- much lighter than Rust in lifetime machinery,
-- and still compatible with allocator-oriented systems programming.
-
-
-## Open Questions
-
-- Which types are trivially copyable by default?
-- Should `deinit()` be optional for trivially droppable types?
-- How exactly should retained/shared views be expressed?
-- Should `keep` be the main promotion mechanism, or only one of several?
-- How much local exclusivity checking should `$&` perform?
-- What minimal static checks should exist for plain views before they become
-  too restrictive?
-- How should `init(...)->Errable#(...)` interact with initialization state and
-  partial cleanup?
-
-
-## Working Recommendation
-
-For now, the best path seems to be:
-
-1. keep the semantic core small and strict,
-2. implement `copy()` or error before trying advanced moves,
-3. keep `deinit` at scope exit first,
-4. introduce only local mutable exclusivity checks,
-5. treat plain views as non-owning and cheap,
-6. make retained/shared views explicit,
-7. recommend centralized ownership for hard graph-like structures.
-
-This gives Argi a real memory-management identity without committing too early
-to either Zig's permissiveness or Rust's full lifetime machinery.
+An allocator determines how bytes are obtained and returned. Validity Root
+establishment determines which root anchors their Validity Domain.
+
+Failure is decided at the raw-storage boundary. `..error ..out_of_memory`
+therefore carries no `Allocation`, safe reference, Validity Root, or cleanup obligation;
+`StorageCapability` is consumed only on successful establishment.
+
+`ArenaAllocator(backing_allocator)` composes a caller-selected physical
+allocator with grouped lifetime. Its safe allocations inherit one arena root;
+reset or deinitialization ends that root and releases backing blocks. Cleaning
+an individual arena-backed child does not end the arena. Logical detach need
+not free storage, so aliases can remain valid until grouped cleanup.
+
+Immediate individual deletion with persistent aliases belongs in an explicit
+runtime abstraction such as a generated handle, not universal reference
+machinery.
+
+## Interprocedural checking
+
+After semantizing, the compiler infers summaries from function bodies. They can
+describe output dependencies, fresh outputs, ownership transfer,
+root-ending operations, deinitialized inputs, replacement, and conservative
+dynamic-slot invalidation. Calls compose these facts; branches and loops use
+conservative joins and fixed points.
+
+Ordinary safe code writes no temporal contracts. Trust is confined to a small
+set of opaque raw, foreign, and intrinsic primitives. The checker prefers
+simple conservative rejection over complex proofs: using a reference requires
+every structurally recorded dependency to name a live root.

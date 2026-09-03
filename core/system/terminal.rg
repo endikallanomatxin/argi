@@ -86,28 +86,32 @@ read_line_into_buffer(
         }
 
         next ::= read_byte(.self = stdin)
-        if is(.value = next, .variant = ..error) {
-            result = ..error(.reason = ..stream_read_failed)
-            return
-        }
-
-        next_value ::= next..ok
-        if is(.value = next_value, .variant = ..end) {
-            break
-        }
-
-        payload ::= next_value..ok
-        if payload == 10 {
-            break
-        }
-
-        pushed ::= push_byte(.self = buffer, .byte = payload, .allocator = allocator)
-        match pushed {
-            ..ok _ {
-            }
+        match next {
             ..error _ {
                 result = ..error(.reason = ..stream_read_failed)
                 return
+            }
+            ..ok next_value {
+                match next_value {
+                    ..end {
+                        break
+                    }
+                    ..ok payload {
+                        if payload == 10 {
+                            break
+                        }
+
+                        pushed ::= push_byte(.self = buffer, .byte = payload, .allocator = allocator)
+                        match pushed {
+                            ..ok _ {
+                            }
+                            ..error _ {
+                                result = ..error(.reason = ..stream_read_failed)
+                                return
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -127,48 +131,59 @@ read_line(
     --
     initial_capacity :: UIntNative = 16
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = initial_capacity)
-    if is(.value = create_result, .variant = ..error) {
-        result = ..error(.reason = ..out_of_memory)
-        return
+    line :: String
+    match create_result {
+        ..ok ~ payload { line = ~payload }
+        ..error _ {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
     }
-    line ::= create_result..ok
 
+    line_complete :: Bool = false
     while 1 == 1 {
         next ::= read_byte(.self = stdin)
-        if is(.value = next, .variant = ..error) {
-            deinit(.self = $&line, .allocator = allocator)
-            result = ..error(.reason = ..stream_read_failed)
-            return
-        }
-
-        next_value ::= next..ok
-        if is(.value = next_value, .variant = ..end) {
-            if line.length == 0 {
-                deinit(.self = $&line, .allocator = allocator)
-                result = ..ok ..end
-                return
-            }
-
-            result = ..ok ..ok line
-            return
-        }
-
-        payload ::= next_value..ok
-        if payload == 10 {
-            result = ..ok ..ok line
-            return
-        }
-
-        grew ::= push_byte(.self = $&line, .byte = payload, .allocator = allocator)
-        match grew {
-            ..ok _ {
-            }
+        match next {
             ..error _ {
                 deinit(.self = $&line, .allocator = allocator)
-                result = ..error(.reason = ..out_of_memory)
+                result = ..error(.reason = ..stream_read_failed)
                 return
             }
+            ..ok next_value {
+                match next_value {
+                    ..end {
+                        if line.length == 0 {
+                            deinit(.self = $&line, .allocator = allocator)
+                            result = ..ok ..end
+                            return
+                        }
+
+                        line_complete = true
+                        break
+                    }
+                    ..ok payload {
+                        if payload == 10 {
+                            line_complete = true
+                            break
+                        }
+
+                        grew ::= push_byte(.self = $&line, .byte = payload, .allocator = allocator)
+                        match grew {
+                            ..ok _ {
+                            }
+                            ..error _ {
+                                deinit(.self = $&line, .allocator = allocator)
+                                result = ..error(.reason = ..out_of_memory)
+                                return
+                            }
+                        }
+                    }
+                }
+            }
         }
+    }
+    if line_complete {
+        result = ..ok ..ok ~line
     }
 }
 

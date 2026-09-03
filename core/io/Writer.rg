@@ -5,11 +5,11 @@ Writer : Abstract = (
 
 write(
     .self: $&Writer,
-    .text: String,
+    .text: &String,
 ) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     i :: UIntNative = 0
-    while i < text.length {
-        wrote ::= write_byte(.self = self, .byte = bytes_get(.string = &text, .index = i).byte)
+    while i < text&.length {
+        wrote ::= write_byte(.self = self, .byte = bytes_get(.string = text, .index = i).byte)
         match wrote {
             ..ok _ {
             }

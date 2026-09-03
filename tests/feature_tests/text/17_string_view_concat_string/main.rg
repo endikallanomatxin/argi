@@ -15,7 +15,10 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     bytes_set(.string = $&right, .index = 5, .value = 100)
 
     left_view ::= as_view(.self = &left)
-    combined :: String = &left_view + &right
+    combined_result ::= &left_view + &right
+    match combined_result {
+    ..error _ { status_code = 2 }
+    ..ok ~ combined {
 
     combined_view ::= as_view(.self = &combined)
 
@@ -23,5 +26,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         status_code = 0
     } else {
         status_code = 1
+    }
+    }
     }
 }

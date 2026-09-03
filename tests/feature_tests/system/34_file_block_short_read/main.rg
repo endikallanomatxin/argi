@@ -16,24 +16,23 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         status_code = 2
         return
     }
-    file ::= create_result..ok
+    file ::= ~create_result..ok
 
-    write_raw ::= malloc(.size = 2)
-    if cast#(.to: UIntNative)(.value = write_raw) == 0 {
-        close(.self = $&file)
+    write_allocation_result ::= allocate(.self = system.allocator, .size = 2)
+    if is(.value = write_allocation_result, .variant = ..error) {
         status_code = 3
         return
     }
+    write_allocation ::= ~write_allocation_result..ok
 
     write_buffer ::= array_view#(.t: UInt8)(
-        .data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = write_raw)),
+        .data = write_allocation.data,
         .length = 2,
     )
     write_buffer[0] = 41
     write_buffer[1] = 42
 
     write_result ::= write(.self = $&file, .buffer = write_buffer)
-    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = write_raw)))
 
     if is(.value = write_result, .variant = ..ok) {
     } else {
@@ -56,17 +55,17 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         status_code = 6
         return
     }
-    file = open_result..ok
+    file = ~open_result..ok
 
-    read_raw ::= malloc(.size = 4)
-    if cast#(.to: UIntNative)(.value = read_raw) == 0 {
-        close(.self = $&file)
+    read_allocation_result ::= allocate(.self = system.allocator, .size = 4)
+    if is(.value = read_allocation_result, .variant = ..error) {
         status_code = 7
         return
     }
+    read_allocation ::= ~read_allocation_result..ok
 
     read_buffer ::= array_view#(.t: UInt8)(
-        .data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = read_raw)),
+        .data = read_allocation.data,
         .length = 4,
     )
 
@@ -75,31 +74,26 @@ main(.system: System = System()) -> (.status_code: Int32) := {
 
     if is(.value = read_result, .variant = ..ok) {
     } else {
-        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = read_raw)))
         status_code = 8
         return
     }
 
     count ::= read_result..ok
     if count != 2 {
-        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = read_raw)))
         status_code = 9
         return
     }
 
     if read_buffer[0] != 41 {
-        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = read_raw)))
         status_code = 10
         return
     }
 
     if read_buffer[1] != 42 {
-        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = read_raw)))
         status_code = 11
         return
     }
 
-    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = read_raw)))
     removed ::= remove(.self = system.file_sys, .path = path)
     if is(.value = removed, .variant = ..ok) {
         status_code = 0

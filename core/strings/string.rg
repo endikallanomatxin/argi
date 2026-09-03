@@ -20,18 +20,15 @@ string_with_length(
     .length: UIntNative,
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     allocation_size ::= length + 1
-    allocate_result ::= allocate_fallible(.self = allocator, .size = allocation_size)
+    allocate_result ::= allocate(.self = allocator, .size = allocation_size)
     match allocate_result {
-        ..ok payload {
+        ..ok ~ payload {
             out :: String = (
-                .allocation = (
-                    .data = cast#(.to: $&UInt8)(.value = payload),
-                    .size = allocation_size,
-                ),
+                .allocation = ~payload,
                 .length = length,
             )
             bytes_set(.string = $&out, .index = length, .value = 0)
-            result = ..ok out
+            result = ..ok ~out
         }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
@@ -51,18 +48,15 @@ string_with_capacity(
     }
 
     allocation_size ::= actual_capacity + 1
-    allocate_result ::= allocate_fallible(.self = allocator, .size = allocation_size)
+    allocate_result ::= allocate(.self = allocator, .size = allocation_size)
     match allocate_result {
-        ..ok payload {
+        ..ok ~ payload {
             out :: String = (
-                .allocation = (
-                    .data = cast#(.to: $&UInt8)(.value = payload),
-                    .size = allocation_size,
-                ),
+                .allocation = ~payload,
                 .length = 0,
             )
             bytes_set(.string = $&out, .index = 0, .value = 0)
-            result = ..ok out
+            result = ..ok ~out
         }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
@@ -74,24 +68,24 @@ init (
     .p: $&String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .length: UIntNative,
-) -> () := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     allocation_size ::= length + 1
-    data ::= allocate(.self = allocator, .size = allocation_size)
-    p& = (
-        .allocation = (
-            .data = data,
-            .size = allocation_size,
-        ),
-        .length = length,
-    )
-    bytes_set(.string = p, .index = length, .value = 0)
+    allocated ::= allocate(.self = allocator, .size = allocation_size)
+    match allocated {
+        ..ok ~ payload {
+            p& = (.allocation = ~payload, .length = length)
+            bytes_set(.string = p, .index = length, .value = 0)
+            result = ..ok Void()
+        }
+        ..error _ { result = ..error(.reason = ..out_of_memory) }
+    }
 }
 
 init (
     .p: $&String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .capacity: UIntNative,
-) -> () := {
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
     actual_capacity ::= capacity
     one :: UIntNative = 1
 
@@ -100,74 +94,66 @@ init (
     }
 
     allocation_size ::= actual_capacity + 1
-    data ::= allocate(.self = allocator, .size = allocation_size)
-    p& = (
-        .allocation = (
-            .data = data,
-            .size = allocation_size,
-        ),
-        .length = 0,
-    )
-    bytes_set(.string = p, .index = 0, .value = 0)
+    allocated ::= allocate(.self = allocator, .size = allocation_size)
+    match allocated {
+        ..ok ~ payload {
+            p& = (.allocation = ~payload, .length = 0)
+            bytes_set(.string = p, .index = 0, .value = 0)
+            result = ..ok Void()
+        }
+        ..error _ { result = ..error(.reason = ..out_of_memory) }
+    }
 }
 
 deinit (
     .allocator: $&Allocator = #reach allocator, system.allocator,
     .self: $&String,
 ) -> () := {
-    zero :: UIntNative = 0
-    deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
-    self& = (
-        .allocation = (
-            .data = self&.allocation.data,
-            .size = self&.allocation.size,
-        ),
-        .length = zero,
-    )
+    deinit(.self = $&self&.allocation)
 }
 
 copy (
+    .self: &String,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-    .self: String,
-) -> (.out: String) := {
-    allocation_size ::= self.length + 1
-    new_data ::= allocate(.self = allocator, .size = allocation_size)
-    out = (
-        .allocation = (
-            .data = new_data,
-            .size = allocation_size,
-        ),
-        .length = self.length,
-    )
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    allocation_size ::= self&.length + 1
+    allocated ::= allocate(.self = allocator, .size = allocation_size)
+    match allocated {
+        ..error _ {
+            result = ..error(.reason = ..out_of_memory)
+            return
+        }
+        ..ok ~ payload {
+            out :: String = (.allocation = ~payload, .length = self&.length)
 
-    if allocation_size > 0 {
-        dst_view ::= array_view#(.t: UInt8)(
-            .data = out.allocation.data,
-            .length = allocation_size,
-        )
-        src_view ::= array_view#(.t: UInt8)(
-            .data = self.allocation.data,
-            .length = allocation_size,
-        )
-        memcpy_bytes(.dst = dst_view, .src = src_view)
+            if allocation_size > 0 {
+            dst_view ::= array_view#(.t: UInt8)(
+                .data = out.allocation.data,
+                .length = allocation_size,
+            )
+            src_view ::= array_view_ro#(.t: UInt8)(
+                .data = read_reference#(.t: UInt8)(.base = self&.allocation.data).reference,
+                .length = allocation_size,
+            )
+            memcpy_bytes(.dst = dst_view, .src = src_view)
+        }
+            result = ..ok ~out
+        }
     }
 }
 
-string_byte_address (
+string_byte_reference (
     .string: &String,
     .index: UIntNative,
-) -> (.address: UIntNative) := {
-    base :: UIntNative = cast#(.to: UIntNative)(.value = string&.allocation.data)
-    address = base + index
+) -> (.reference: &UInt8) := {
+    reference = reference_offset#(.t: UInt8)(.base = string&.allocation.data, .elements = index)
 }
 
 bytes_get (
     .string: &String,
     .index: UIntNative,
 ) -> (.byte: UInt8) := {
-    addr :: UIntNative = string_byte_address(.string = string, .index = index).address
-    ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
-    byte = ptr&
+    byte = string_byte_reference(.string = string, .index = index).reference&
 }
 
 bytes_set (
@@ -175,8 +161,7 @@ bytes_set (
     .index: UIntNative,
     .value: UInt8,
 ) -> () := {
-    addr :: UIntNative = string_byte_address(.string = string, .index = index).address
-    ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = addr)
+    ptr ::= mutable_reference_offset#(.t: UInt8)(.base = string&.allocation.data, .elements = index).reference
     ptr& = value
 }
 
@@ -184,7 +169,7 @@ as_view(
     .self: &String,
 ) -> (.view: StringView) := {
     view = (
-        .data = cast#(.to: UIntNative)(.value = self&.allocation.data),
+        .data = read_reference#(.t: UInt8)(.base = self&.allocation.data).reference,
         .length = self&.length,
     )
 }
@@ -201,10 +186,7 @@ capacity(
 }
 
 clear(.self: $&String) -> () := {
-    self& = (
-        .allocation = self&.allocation,
-        .length = 0,
-    )
+    self&.length = 0
     if self&.allocation.size > 0 {
         bytes_set(.string = self, .index = 0, .value = 0)
     }
@@ -234,32 +216,8 @@ ensure_capacity(
     .self: $&String,
     .capacity: UIntNative,
     .allocator: $&Allocator = #reach allocator, system.allocator,
-) -> () := {
-    current_capacity ::= capacity(.self = self).value
-    if current_capacity >= capacity {
-        return
-    }
-
-    new_allocation_size ::= capacity + 1
-    new_data ::= allocate(.self = allocator, .size = new_allocation_size)
-
-    if self&.length > 0 {
-        dst_view ::= array_view#(.t: UInt8)(.data = new_data, .length = self&.length)
-        src_view ::= array_view#(.t: UInt8)(.data = self&.allocation.data, .length = self&.length)
-        memcpy_bytes(.dst = dst_view, .src = src_view)
-    }
-
-    nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = new_data) + self&.length)
-    nul_ptr& = 0
-
-    deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
-    self& = (
-        .allocation = (
-            .data = new_data,
-            .size = new_allocation_size,
-        ),
-        .length = self&.length,
-    )
+) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
+    result = ensure_capacity_growing(.self = self, .target_capacity = capacity, .allocator = allocator)
 }
 
 ensure_capacity_growing(
@@ -274,26 +232,24 @@ ensure_capacity_growing(
     }
 
     new_allocation_size ::= target_capacity + 1
-    allocate_result ::= allocate_fallible(.self = allocator, .size = new_allocation_size)
+    allocate_result ::= allocate(.self = allocator, .size = new_allocation_size)
     match allocate_result {
-        ..ok payload {
-            new_data : $&UInt8 = cast#(.to: $&UInt8)(.value = payload)
+        ..ok ~ payload {
+            new_allocation ::= ~payload
+            new_data ::= new_allocation.data
 
             if self&.length > 0 {
                 dst_view ::= array_view#(.t: UInt8)(.data = new_data, .length = self&.length)
-                src_view ::= array_view#(.t: UInt8)(.data = self&.allocation.data, .length = self&.length)
+                src_view ::= array_view_ro#(.t: UInt8)(.data = read_reference#(.t: UInt8)(.base = self&.allocation.data).reference, .length = self&.length)
                 memcpy_bytes(.dst = dst_view, .src = src_view)
             }
 
-            nul_ptr : $&UInt8 = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = new_data) + self&.length)
+            nul_ptr ::= mutable_reference_offset#(.t: UInt8)(.base = new_data, .elements = self&.length).reference
             nul_ptr& = 0
 
-            deallocate(.self = allocator, .data = self&.allocation.data, .size = self&.allocation.size)
+            deinit(.self = $&self&.allocation)
             self& = (
-                .allocation = (
-                    .data = new_data,
-                    .size = new_allocation_size,
-                ),
+                .allocation = ~new_allocation,
                 .length = self&.length,
             )
             result = ..ok Void()
@@ -309,27 +265,21 @@ string_append_byte(
     .byte: UInt8,
 ) -> () := {
     bytes_set(.string = self, .index = self&.length, .value = byte)
-    self& = (
-        .allocation = self&.allocation,
-        .length = self&.length + 1,
-    )
+    self&.length = self&.length + 1
     bytes_set(.string = self, .index = self&.length, .value = 0)
 }
 
 string_append_bytes(
     .self: $&String,
-    .source: ArrayView#(.t: UInt8),
+    .source: ArrayViewRO#(.t: UInt8),
 ) -> () := {
     if source.length > 0 {
-        dest_address ::= cast#(.to: UIntNative)(.value = self&.allocation.data) + self&.length
-        dest_view ::= array_view_from_address#(.t: UInt8)(.address = dest_address, .length = source.length)
+        dest_data ::= mutable_reference_offset#(.t: UInt8)(.base = self&.allocation.data, .elements = self&.length).reference
+        dest_view ::= array_view#(.t: UInt8)(.data = dest_data, .length = source.length)
         memcpy_bytes(.dst = dest_view, .src = source)
     }
 
-    self& = (
-        .allocation = self&.allocation,
-        .length = self&.length + source.length,
-    )
+    self&.length = self&.length + source.length
     bytes_set(.string = self, .index = self&.length, .value = 0)
 }
 
@@ -373,8 +323,8 @@ push_c_string(
         }
     }
 
-    source_view ::= array_view_from_address#(.t: UInt8)(
-        .address = cast#(.to: UIntNative)(.value = text),
+    source_view ::= array_view_ro#(.t: UInt8)(
+        .data = reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,
         .length = append_length,
     )
     string_append_bytes(.self = self, .source = source_view)
@@ -397,8 +347,8 @@ push_view(
         }
     }
 
-    source_view ::= array_view_from_address#(.t: UInt8)(
-        .address = view.data,
+    source_view ::= array_view_ro#(.t: UInt8)(
+        .data = view.data,
         .length = view.length,
     )
     string_append_bytes(.self = self, .source = source_view)
@@ -411,8 +361,8 @@ c_string_length(
     length = 0
     c_length :: UIntNative = 0
     while 1 == 1 {
-        addr :: UIntNative = cast#(.to: UIntNative)(.value = text) + c_length
-        ptr : &UInt8 = cast#(.to: &UInt8)(.value = addr)
+        bytes ::= reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference
+        ptr ::= reference_offset#(.t: UInt8)(.base = bytes, .elements = c_length).reference
         if ptr& == 0 {
             break
         }
@@ -426,7 +376,7 @@ c_string_as_view(
     .text: &Char,
 ) -> (.view: StringView) := {
     view = (
-        .data = cast#(.to: UIntNative)(.value = text),
+        .data = reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,
         .length = c_string_length(.text = text).length,
     )
 }
@@ -434,61 +384,69 @@ c_string_as_view(
 concat_views(
     .left: &StringView,
     .right: &StringView,
-) -> (.out: String) := {
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     allocator : $&Allocator = #reach allocator, system.allocator
-    temp :: String = String(.allocator = allocator, .capacity = left&.length + right&.length)
-    left_view ::= array_view_from_address#(.t: UInt8)(.address = left&.data, .length = left&.length)
-    right_view ::= array_view_from_address#(.t: UInt8)(.address = right&.data, .length = right&.length)
-    string_append_bytes(.self = $&temp, .source = left_view)
-    string_append_bytes(.self = $&temp, .source = right_view)
-    out = temp
+    created ::= string_with_capacity(.allocator = allocator, .capacity = left&.length + right&.length)
+    match created {
+        ..error _ { result = ..error(.reason = ..out_of_memory) }
+        ..ok ~ payload {
+            temp ::= ~payload
+            left_view ::= array_view_ro#(.t: UInt8)(.data = left&.data, .length = left&.length)
+            right_view ::= array_view_ro#(.t: UInt8)(.data = right&.data, .length = right&.length)
+            string_append_bytes(.self = $&temp, .source = left_view)
+            string_append_bytes(.self = $&temp, .source = right_view)
+            result = ..ok ~temp
+        }
+    }
 }
 
 operator +(
     .left: &String,
     .right: &Char,
-) -> (.out: String) := {
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     left_view ::= as_view(.self = left)
     right_view ::= c_string_as_view(.text = right)
-    out = concat_views(.left = &left_view, .right = &right_view)
+    result = concat_views(.left = &left_view, .right = &right_view)
 }
 
 operator +(
     .left: &String,
     .right: &StringView,
-) -> (.out: String) := {
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     left_view ::= as_view(.self = left)
-    out = concat_views(.left = &left_view, .right = right)
+    result = concat_views(.left = &left_view, .right = right)
 }
 
 operator +(
     .left: &String,
     .right: &String,
-) -> (.out: String) := {
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     left_view ::= as_view(.self = left)
     right_view ::= as_view(.self = right)
-    out = concat_views(.left = &left_view, .right = &right_view)
+    result = concat_views(.left = &left_view, .right = &right_view)
 }
 
 operator +(
     .left: &StringView,
     .right: &Char,
-) -> (.out: String) := {
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     right_view ::= c_string_as_view(.text = right)
-    out = concat_views(.left = left, .right = &right_view)
+    result = concat_views(.left = left, .right = &right_view)
 }
 
 operator +(
     .left: &StringView,
     .right: &StringView,
-) -> (.out: String) := {
-    out = concat_views(.left = left, .right = right)
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
+    result = concat_views(.left = left, .right = right)
 }
+
+String implements FalliblyCopyable#(.reasons: (..out_of_memory))
 
 operator +(
     .left: &StringView,
     .right: &String,
-) -> (.out: String) := {
+) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     right_view ::= as_view(.self = right)
-    out = concat_views(.left = left, .right = &right_view)
+    result = concat_views(.left = left, .right = &right_view)
 }

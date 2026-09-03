@@ -115,28 +115,38 @@ main(.system: System = System()) -> (.status_code: Int32 = 0) := {
         .index = 0
     )
     line_result ::= read_line()
-    if is(.value = line_result, .variant = ..ok) {
-    } else {
-        status_code = 9
-        return
-    }
+    match line_result {
+        ..error _ {
+            status_code = 9
+            return
+        }
+        ..ok ~ outer {
+            match outer {
+                ..end {
+                    status_code = 9
+                    return
+                }
+                ..ok ~ line_payload {
+                    line ::= ~line_payload
+                    if line.length != 2 {
+                        status_code = 10
+                        return
+                    }
 
-    line ::= line_result..ok..ok
-    if line.length != 2 {
-        status_code = 10
-        return
-    }
+                    if bytes_get(.string = &line, .index = 0).byte != 79 {
+                        status_code = 11
+                        return
+                    }
 
-    if bytes_get(.string = &line, .index = 0).byte != 79 {
-        status_code = 11
-        return
-    }
+                    if bytes_get(.string = &line, .index = 1).byte != 75 {
+                        status_code = 12
+                        return
+                    }
 
-    if bytes_get(.string = &line, .index = 1).byte != 75 {
-        status_code = 12
-        return
+                    deinit(.self = $&line, .allocator = system.allocator)
+                }
+            }
+        }
     }
-
-    deinit(.self = $&line, .allocator = system.allocator)
     deinit(.self = $&text, .allocator = system.allocator)
 }

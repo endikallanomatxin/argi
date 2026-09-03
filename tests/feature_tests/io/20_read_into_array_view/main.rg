@@ -23,14 +23,14 @@ read_byte(
 DummyInput implements Reader
 
 main() -> (.status_code: Int32) := {
-    raw ::= malloc(.size = 4)
-    if cast#(.to: UIntNative)(.value = raw) == 0 {
-        status_code = 10
-        return
-    }
+    allocator :: CAllocator = CAllocator()
+    allocated ::= allocate(.self = $&allocator, .size = 4)
+    match allocated {
+    ..error _ { status_code = 10 }
+    ..ok ~ allocation {
 
     buffer ::= array_view#(.t: UInt8)(
-        .data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = raw)),
+        .data = allocation.data,
         .length = 4,
     )
     stdin :: DummyInput = DummyInput()
@@ -38,30 +38,27 @@ main() -> (.status_code: Int32) := {
 
     if is(.value = read_result, .variant = ..ok) {
     } else {
-        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
         status_code = 11
         return
     }
 
     copied ::= read_result..ok
     if copied != 2 {
-        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
         status_code = 12
         return
     }
 
     if buffer[0] != 65 {
-        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
         status_code = 13
         return
     }
 
     if buffer[1] != 66 {
-        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
         status_code = 14
         return
     }
 
-    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = raw)))
     status_code = 0
+    }
+    }
 }

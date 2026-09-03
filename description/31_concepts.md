@@ -11,9 +11,14 @@ da la oportunidad de gestionarlo adecuadamente.
 La dirección que mejor encaja con el resto del lenguaje es esta:
 
 - `copy()` es la única operación de copia a nivel de lenguaje.
-- Si un tipo implementa `copy()`, usarlo en posición de valor puede invocarla
-  implícitamente.
-- Si no implementa `copy()`, ese uso es error del compilador.
+- Sólo un tipo que implementa explícitamente `ImplicitlyCopyable` se copia
+  implícitamente al usar un named value donde se adquiere otro valor.
+- Implementar `InfalliblyCopyable` permite `copy(&value)`, pero no activa la
+  copia implícita.
+- Implementar `FalliblyCopyable` permite una copia explícita que devuelve
+  `Errable`; nunca activa una copia implícita.
+- Si el tipo no es `ImplicitlyCopyable`, el uso plano es un error: hay que
+  elegir `copy(&value)` o transferencia explícita con `~value`.
 - La promesa semántica de `copy()` es siempre la misma: producir un valor
   independiente según el significado de ese tipo.
 - Para tipos owners, eso significa una copia profunda de sus datos; no
@@ -24,12 +29,12 @@ La dirección que mejor encaja con el resto del lenguaje es esta:
 Esto encaja mejor que exponer varias operaciones como `deep_copy()` o
 `shallow_copy()` en la superficie del lenguaje.
 
-Para mantener consistencia con el modelo mental de stack, la copia implícita en
-posición de valor tiene que significar independencia lógica.
+Toda copia, implícita o explícita, tiene que significar independencia lógica.
+La transferencia de ownership nunca se infiere según el tipo.
 
 ```
 m1 : Map = ()
-m2 = m1  -- Aquí se debe hacer copy()
+m2 = copy(&m1)
 ```
 
 ### Different categories of types

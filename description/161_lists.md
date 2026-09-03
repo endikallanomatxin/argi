@@ -38,10 +38,11 @@ It uses `Allocation` internally, together with metadata such as length,
 capacity, and element type.
 `l ::= DynamicArray#(.t: Int32)(.capacity = 3)`
 
-In the current 0.1 baseline, `DynamicArray` also provides `copy()` so arrays of
-copyable elements can behave like ordinary values. This is the intended
-direction for compiler-style data structures, even though some collection
-ownership ergonomics remain a separate open front.
+`DynamicArray` provides explicit `copy()` for infallibly copyable elements and
+for elements implementing `FalliblyCopyable`. The latter obtains the element's
+associated error reasons from its abstract implementation and combines them
+with `..out_of_memory`. Each element is copied independently; a fallible copy
+rolls back the completed prefix before releasing the new backing allocation.
 
 Indexing follows the language-wide place model:
 
@@ -59,9 +60,10 @@ For `DynamicArray`, the intended operator surface stays split between:
 - `get_rw_pointer[]` for borrowed mutable access
 - `set[]` for assignment
 
-This is deliberate. `arr[i]` should keep meaning “produce a value under the
-normal copy rules”, while borrowed indexing remains explicit through `&place`
-and `$&place`.
+This is deliberate. `arr[i]` is a normal value use and therefore copies a
+named element implicitly only when its type implements `ImplicitlyCopyable`.
+Other duplication uses `copy(&arr[i])`, while borrowed indexing remains
+explicit through `&place` and `$&place`.
 
 Iteration follows the same access-mode split, but at the iterable layer rather
 than the iterator layer:

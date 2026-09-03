@@ -276,8 +276,9 @@ init(out: $&MyType, ...) -> Errable#(.t: Void, .reasons: (..init_failed))
 On scope exit, `deinit` is automatically called for all types that are not in the result struct.
 That way, everything behaves as if it were a stack variable.
 
-Passing by value follows the copy semantics. value position requires an
-independent value, obtained through `copy()` when the type is copyable.
+Passing a named value to an argument declared by value performs an implicit
+copy only when its type implements `ImplicitlyCopyable`. Other types require
+explicit `copy(&value)` or explicit ownership transfer with `~value`.
 
 > [!NOTE]
 > Si hay rutas de error/early-return, garantiza que el valor queda en estado

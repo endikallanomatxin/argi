@@ -23,6 +23,36 @@ despacho dinámico en runtime, hay que usar `Virtual#(AbstractType)`.
   comptime extra, pero tienen que poder mapear explícitamente los parámetros del
   contrato abstracto.
 
+## Associated parameters
+
+The parameters of an abstract are compile-time information associated with the
+implementing type. For each concrete pair `(Self, Abstract)`, resolution must
+produce one unique argument vector:
+
+```text
+(Self, Abstract) -> [GenericArgValue]
+```
+
+They do not select among multiple implementations. Several composition paths
+may prove the same implementation when they produce equal arguments; paths
+that produce different arguments conflict.
+
+Associated parameters are not limited to types. They use the same compile-time
+argument domain as generics, so an abstract may associate both types and values
+such as integer dimensions. For example, `AbstractMatrix#(.t: Type, .rows:
+UIntNative, .cols: UIntNative)` associates all three values with each concrete
+matrix type.
+
+Inference is deliberately directional. The compiler first infers `Self`, then
+resolves its abstract implementation, and finally binds or checks the
+associated parameters. It never searches backwards from an associated
+parameter to discover a possible `Self`. Relations that genuinely need several
+independently selected types belong in multiple dispatch, with `where(...)`
+reserved as a possible future constraint mechanism.
+
+For example, resolving `FalliblyCopyable` for a type determines its unique
+`.reasons` choice, while resolving `Iterator` determines its unique `.t`.
+
 
 ## Declaración
 

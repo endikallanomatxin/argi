@@ -1,24 +1,22 @@
 main() -> (.status_code: Int32) := {
-    src_raw ::= malloc(.size = 4)
-    dst_raw ::= malloc(.size = 4)
-
-    if cast#(.to: UIntNative)(.value = src_raw) == 0 {
-        status_code = 10
-        return
-    }
-
-    if cast#(.to: UIntNative)(.value = dst_raw) == 0 {
-        free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = src_raw)))
-        status_code = 11
-        return
-    }
+    allocator :: CAllocator = CAllocator()
+    src_result ::= allocate(.self = $&allocator, .size = 4)
+    match src_result {
+    ..error _ { status_code = 10 }
+    ..ok ~ src_payload {
+    src_allocation ::= ~src_payload
+    dst_result ::= allocate(.self = $&allocator, .size = 4)
+    match dst_result {
+    ..error _ { status_code = 11 }
+    ..ok ~ dst_payload {
+    dst_allocation ::= ~dst_payload
 
     src ::= array_view#(.t: UInt8)(
-        .data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = src_raw)),
+        .data = src_allocation.data,
         .length = 4,
     )
     dst ::= array_view#(.t: UInt8)(
-        .data = cast#(.to: $&UInt8)(.value = cast#(.to: UIntNative)(.value = dst_raw)),
+        .data = dst_allocation.data,
         .length = 4,
     )
 
@@ -46,7 +44,9 @@ main() -> (.status_code: Int32) := {
             }
         }
     }
+    }
+    }
+    }
+    }
 
-    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = src_raw)))
-    free(.pointer = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = dst_raw)))
 }

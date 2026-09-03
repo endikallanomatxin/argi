@@ -6,19 +6,26 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     path_key ::= as_view(.self = path_literal)
     missing_key ::= as_view(.self = missing_literal)
 
-    if has(.self = system.env_vars, .key = home_key).ok {
+    home_has ::= has(.self = system.env_vars, .key = home_key)
+    if is(.value = home_has, .variant = ..ok) and home_has..ok {
     } else {
         status_code = 1
         return
     }
 
-    if has(.self = system.env_vars, .key = path_key).ok {
+    path_has ::= has(.self = system.env_vars, .key = path_key)
+    if is(.value = path_has, .variant = ..ok) and path_has..ok {
     } else {
         status_code = 2
         return
     }
 
-    home ::= get(.self = system.env_vars, .key = home_key)
+    home_result ::= get(.self = system.env_vars, .key = home_key)
+    if is(.value = home_result, .variant = ..error) {
+        status_code = 6
+        return
+    }
+    home ::= home_result..ok
     if home? {
         if home.length < 1 {
             status_code = 4
@@ -29,7 +36,12 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    missing ::= get(.self = system.env_vars, .key = missing_key)
+    missing_result ::= get(.self = system.env_vars, .key = missing_key)
+    if is(.value = missing_result, .variant = ..error) {
+        status_code = 7
+        return
+    }
+    missing ::= missing_result..ok
     if missing? {
         status_code = 5
         return

@@ -31,7 +31,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         status_code = 4
         return
     }
-    created_file ::= created_file_result..ok
+    created_file ::= ~created_file_result..ok
     close(.self = $&created_file)
 
     if exists(.self = system.file_sys, .path = src_path).ok {

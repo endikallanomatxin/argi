@@ -529,6 +529,10 @@ pub fn pointerMutabilityCompatible(expected: syn.PointerMutability, actual: syn.
     };
 }
 
+pub fn pointerCanWrite(mutability: syn.PointerMutability) bool {
+    return mutability == .read_write;
+}
+
 // Assignment and argument-passing compatibility. Prefer this when checking
 // whether an expression can be used where an expected type is required.
 pub fn typesCompatible(expected: sg.Type, actual: sg.Type) bool {

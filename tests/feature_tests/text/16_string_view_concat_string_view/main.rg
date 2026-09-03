@@ -16,7 +16,10 @@ main(.system: System = System()) -> (.status_code: Int32) := {
 
     left_view ::= as_view(.self = &left)
     right_view ::= as_view(.self = &right)
-    combined :: String = &left_view + &right_view
+    combined_result ::= &left_view + &right_view
+    match combined_result {
+    ..error _ { status_code = 2 }
+    ..ok ~ combined {
 
     combined_view ::= as_view(.self = &combined)
 
@@ -24,5 +27,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         status_code = 0
     } else {
         status_code = 1
+    }
+    }
     }
 }
