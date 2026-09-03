@@ -598,9 +598,6 @@ pub const SafetyChecker = struct {
                 const value = try self.evaluate(function, cast.value, state);
                 const target_is_integer = cast.target_type == .builtin and cast.target_type.builtin == .UIntNative;
                 const target_is_reference = cast.target_type == .pointer_type;
-                const target_is_raw_any = target_is_reference and
-                    cast.target_type.pointer_type.child.* == .builtin and
-                    cast.target_type.pointer_type.child.*.builtin == .Any;
                 const source_is_reference = cast.value.sem_type != null and cast.value.sem_type.? == .pointer_type;
                 const source_is_integer = cast.value.sem_type != null and
                     cast.value.sem_type.? == .builtin and
@@ -614,7 +611,7 @@ pub const SafetyChecker = struct {
                         .foreign_storage = value.foreign_storage or value.dependencies.len == 0,
                         .storage_authorities = value.storage_authorities,
                     };
-                if (target_is_reference and !target_is_raw_any and (source_is_integer or value.integer_address)) {
+                if (target_is_reference and (source_is_integer or value.integer_address)) {
                     if (self.choice_payload_depth == 0)
                         try self.diagnostics.add(function.location, .semantic, "an integer address cannot establish a safe reference; use RawPointer and explicit root establishment", .{});
                     break :blk facts.ValueFacts{

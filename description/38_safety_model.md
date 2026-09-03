@@ -140,9 +140,11 @@ the domain.
 
 ## Raw storage and capabilities
 
-An integer or raw address cannot manufacture a safe reference by itself. A
-Storage Capability is a consumable authorization to incorporate an acquired
-physical storage region into the safe temporal model. These are distinct:
+An integer or raw address cannot manufacture a safe reference by itself. This
+includes erased references such as `&Any`; integer arithmetic cannot launder an
+address back into the safe model. A Storage Capability is a consumable
+authorization to incorporate an acquired physical storage region into the safe
+temporal model. These are distinct:
 
 ```text
 physical address       where bytes happen to be

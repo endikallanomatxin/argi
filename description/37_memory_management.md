@@ -212,10 +212,12 @@ A small privileged boundary establishes `&T` or `$&T`:
 Rooting is decided before safe aliases escape. Storage is not dynamically
 re-rooted by discovering every alias.
 
-`UIntNative` is only an integer and has no hidden provenance. StringView,
-ArrayView, and iterators store typed references. Typed offset and reinterpret
-operations explicitly preserve dependencies; integer arithmetic is not the
-normal safe traversal mechanism.
+`UIntNative` is only an integer and has no hidden provenance; arithmetic on an
+address-derived integer is ordinary integer arithmetic. No `UIntNative` can be
+cast directly to a safe reference, including `&Any`. StringView, ArrayView, and
+iterators store typed references. Typed offset and reinterpret operations
+explicitly preserve dependencies; returning from an integer address to the
+safe model requires a compiler-recognized establishment primitive.
 
 ## Allocation and grouped lifetime
 
