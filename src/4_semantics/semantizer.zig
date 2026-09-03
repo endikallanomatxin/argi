@@ -1935,9 +1935,7 @@ pub const Semantizer = struct {
         if (abs.typeImplementsAbstract("ImplicitlyCopyable", ty, s)) return true;
         return switch (ty) {
             .builtin => |builtin| switch (builtin) {
-                .Int8, .Int16, .Int32, .Int64,
-                .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64,
-                .Float16, .Float32, .Float64, .Char, .Bool, .Void => true,
+                .Int8, .Int16, .Int32, .Int64, .UIntNative, .UInt8, .UInt16, .UInt32, .UInt64, .Float16, .Float32, .Float64, .Char, .Bool, .Void => true,
                 else => false,
             },
             .array_type => |array| self.isImplicitlyCopyableType(array.element_type.*, s),
@@ -3590,6 +3588,60 @@ pub const Semantizer = struct {
         };
     }
 
+    fn resolvedAbstractArgsFromImplementsTarget(
+        self: *Semantizer,
+        abstract_ty: syn.Type,
+        s: *Scope,
+    ) SemErr![]const ?sg.Type {
+        const g = switch (abstract_ty) {
+            .generic_type_instantiation => |value| value,
+            else => return &.{},
+        };
+        const info = s.lookupAbstractInfo(g.base_name.string) orelse return error.UnknownType;
+        const resolved = try self.allocator.alloc(?sg.Type, info.param_names.len);
+        for (resolved) |*arg| arg.* = null;
+        for (g.args.fields) |field| {
+            var index: ?usize = null;
+            for (info.param_names, 0..) |name, i| {
+                if (std.mem.eql(u8, name, field.name.string)) {
+                    index = i;
+                    break;
+                }
+            }
+            const i = index orelse return error.UnknownType;
+            const field_ty = field.type orelse return error.UnknownType;
+            resolved[i] = try self.resolveTypePreservingAbstracts(field_ty, s);
+        }
+        return resolved;
+    }
+
+    fn ensureConcreteAbstractImplCoherent(
+        self: *Semantizer,
+        abstract_name: []const u8,
+        concrete: sg.Type,
+        args: []const ?sg.Type,
+        s: *Scope,
+        location: tok.Location,
+    ) SemErr!void {
+        var cur: ?*Scope = s;
+        while (cur) |scope| : (cur = scope.parent) {
+            const entries = scope.abstract_impls.getPtr(abstract_name) orelse continue;
+            for (entries.items) |entry| {
+                if (!typ.typesExactlyEqual(entry.ty, concrete)) continue;
+                if (associatedArgsEqual(entry.args, args)) continue;
+                const concrete_text = try self.formatTypeText(concrete, s);
+                defer concrete_text.deinit();
+                try self.diags.add(
+                    location,
+                    .semantic,
+                    "conflicting implementations of abstract '{s}' for type '{s}' produce different associated arguments",
+                    .{ abstract_name, concrete_text.bytes },
+                );
+                return error.Reported;
+            }
+        }
+    }
+
     fn concreteTypePatternFromImplements(
         self: *Semantizer,
         rel: syn.AbstractImplements,
@@ -3658,7 +3710,9 @@ pub const Semantizer = struct {
                 else => return err,
             };
             if (concrete_direct) |concrete_ty| {
-                try s.appendAbstractImpl(abstract_name, .{ .ty = concrete_ty, .location = loc });
+                const abstract_args = try self.resolvedAbstractArgsFromImplementsTarget(rel.abstract_ty, s);
+                try self.ensureConcreteAbstractImplCoherent(abstract_name, concrete_ty, abstract_args, s, loc);
+                try s.appendAbstractImpl(abstract_name, .{ .ty = concrete_ty, .args = abstract_args, .location = loc });
                 const n = try self.makeNoopNode(loc);
                 try s.nodes.append(n);
                 return .{ .node = n, .ty = .{ .builtin = .Any } };
@@ -3668,18 +3722,37 @@ pub const Semantizer = struct {
         if (rel.generic_params_struct != null or rel.generic_params.len != 0 or concrete_pattern == .generic_type_instantiation) {
             var params_buf = std.array_list.Managed(gen.GenericParam).init(self.allocator.*);
             defer params_buf.deinit();
+            var constraints_buf = std.array_list.Managed(?gen.AbstractConstraint).init(self.allocator.*);
+            defer constraints_buf.deinit();
 
             if (rel.generic_params_struct != null or rel.generic_params.len != 0) {
                 const params_struct = try self.genericParamsStructOrNames(rel.generic_params_struct, rel.generic_params, loc);
-                const explicit_params = try self.genericParamDefsFromSyntax(params_struct, s);
-                for (explicit_params) |param| try params_buf.append(param);
+                const explicit = try self.genericParamDefsAndConstraintsFromSyntax(params_struct, s);
+                for (explicit.params, 0..) |param, i| {
+                    try params_buf.append(param);
+                    try constraints_buf.append(explicit.abstract_constraints[i]);
+                }
             }
 
             try self.collectHiddenImplementsParamsFromType(concrete_pattern, &params_buf, s);
+            for (constraints_buf.items) |constraint_opt| {
+                const constraint = constraint_opt orelse continue;
+                if (constraint.args) |args| {
+                    try self.collectHiddenImplementsParamsFromType(.{ .struct_type_literal = args }, &params_buf, s);
+                }
+            }
+            try self.collectHiddenImplementsParamsFromType(rel.abstract_ty, &params_buf, s);
+            while (constraints_buf.items.len < params_buf.items.len) try constraints_buf.append(null);
             const params = try params_buf.toOwnedSlice();
+            const constraints = try constraints_buf.toOwnedSlice();
             try s.appendAbstractImplTemplate(abstract_name, .{
                 .params = params,
+                .param_abstract_constraints = constraints,
                 .ty = concrete_pattern,
+                .args = switch (rel.abstract_ty) {
+                    .generic_type_instantiation => |g| g.args,
+                    else => null,
+                },
                 .location = loc,
             });
 
@@ -3692,7 +3765,9 @@ pub const Semantizer = struct {
 
         // Defer conformance checks until call sites or a validation pass.
 
-        try s.appendAbstractImpl(abstract_name, .{ .ty = concrete_ty, .location = loc });
+        const abstract_args = try self.resolvedAbstractArgsFromImplementsTarget(rel.abstract_ty, s);
+        try self.ensureConcreteAbstractImplCoherent(abstract_name, concrete_ty, abstract_args, s, loc);
+        try s.appendAbstractImpl(abstract_name, .{ .ty = concrete_ty, .args = abstract_args, .location = loc });
 
         const n = try self.makeNoopNode(loc);
         try s.nodes.append(n);
@@ -5321,7 +5396,7 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!GenericParamSyntaxInfo {
         var params = try self.allocator.alloc(gen.GenericParam, params_struct.fields.len);
-        var constraints = try self.allocator.alloc(?[]const u8, params_struct.fields.len);
+        var constraints = try self.allocator.alloc(?gen.AbstractConstraint, params_struct.fields.len);
         for (params_struct.fields, 0..) |field, idx| {
             constraints[idx] = null;
             const field_ty = field.type orelse {
@@ -5348,7 +5423,7 @@ pub const Semantizer = struct {
                     .kind = .type,
                     .value_type = null,
                 };
-                constraints[idx] = field_ty.type_name.string;
+                constraints[idx] = .{ .name = field_ty.type_name.string };
                 continue;
             }
 
@@ -5358,7 +5433,10 @@ pub const Semantizer = struct {
                     .kind = .type,
                     .value_type = null,
                 };
-                constraints[idx] = field_ty.generic_type_instantiation.base_name.string;
+                constraints[idx] = .{
+                    .name = field_ty.generic_type_instantiation.base_name.string,
+                    .args = field_ty.generic_type_instantiation.args,
+                };
                 continue;
             }
 
@@ -5444,7 +5522,15 @@ pub const Semantizer = struct {
                     }
                 }
             },
-            .type_name => {},
+            .type_name => |name| {
+                if (hasGenericParamNamed(params.items, name.string)) return;
+                if (typ.builtinFromName(name.string) != null or s.lookupType(name.string) != null) return;
+                try params.append(.{
+                    .name = name.string,
+                    .kind = .type,
+                    .value_type = null,
+                });
+            },
         }
     }
 
@@ -5723,6 +5809,9 @@ pub const Semantizer = struct {
         s: *Scope,
         subst: ?*const GenericSubst,
     ) SemErr!?sg.Type {
+        if (std.mem.eql(u8, g.base_name.string, "choice_union")) {
+            return try self.resolveChoiceUnionFromGenericArgs(g.base_name.location, g.args, s, subst);
+        }
         if (std.mem.eql(u8, g.base_name.string, "Array")) {
             return try self.resolveArrayTypeFromGenericArgs(g.base_name.location, g.args, s, subst);
         }
@@ -5731,6 +5820,76 @@ pub const Semantizer = struct {
         }
 
         return null;
+    }
+
+    fn resolveChoiceUnionFromGenericArgs(
+        self: *Semantizer,
+        location: tok.Location,
+        args: syn.StructTypeLiteral,
+        s: *Scope,
+        subst: ?*const GenericSubst,
+    ) SemErr!sg.Type {
+        if (args.fields.len != 2) {
+            try self.diags.add(location, .semantic, "choice_union expects exactly '.a: <choice>' and '.b: <choice>'", .{});
+            return error.Reported;
+        }
+
+        var left: ?sg.Type = null;
+        var right: ?sg.Type = null;
+        for (args.fields) |field| {
+            const field_ty = field.type orelse {
+                try self.diags.add(field.name.location, .semantic, "choice_union argument '.{s}' must be a type", .{field.name.string});
+                return error.Reported;
+            };
+            const resolved = if (subst) |subst_ptr|
+                try self.resolveTypeWithSubstPreservingAbstracts(field_ty, s, subst_ptr)
+            else
+                try self.resolveTypePreservingAbstracts(field_ty, s);
+            if (std.mem.eql(u8, field.name.string, "a")) {
+                left = resolved;
+            } else if (std.mem.eql(u8, field.name.string, "b")) {
+                right = resolved;
+            } else {
+                try self.diags.add(field.name.location, .semantic, "choice_union only accepts '.a' and '.b'", .{});
+                return error.Reported;
+            }
+        }
+
+        const left_ty = left orelse {
+            try self.diags.add(location, .semantic, "choice_union is missing '.a'", .{});
+            return error.Reported;
+        };
+        const right_ty = right orelse {
+            try self.diags.add(location, .semantic, "choice_union is missing '.b'", .{});
+            return error.Reported;
+        };
+        if (left_ty != .choice_type or right_ty != .choice_type) {
+            try self.diags.add(location, .semantic, "choice_union arguments must both be choice types", .{});
+            return error.Reported;
+        }
+
+        const union_ty = try self.allocator.create(sg.ChoiceType);
+        union_ty.* = .{ .variants = &.{} };
+        for (left_ty.choice_type.variants) |variant| {
+            _ = try typ.appendChoiceVariant(union_ty, variant, self.allocator);
+        }
+        for (right_ty.choice_type.variants) |variant| {
+            _ = try typ.appendChoiceVariant(union_ty, variant, self.allocator);
+        }
+        // A type union is set-like even though ordinary choice declarations
+        // retain source order for layout. Canonicalize only this builtin's
+        // result so union order and nesting do not change type identity.
+        const variants = @constCast(union_ty.variants);
+        var i: usize = 1;
+        while (i < variants.len) : (i += 1) {
+            var j = i;
+            while (j > 0 and std.mem.order(u8, variants[j - 1].name, variants[j].name) == .gt) : (j -= 1) {
+                const previous = variants[j - 1];
+                variants[j - 1] = variants[j];
+                variants[j] = previous;
+            }
+        }
+        return .{ .choice_type = union_ty };
     }
 
     fn resolveVirtualTypeFromGenericArgs(
@@ -5954,7 +6113,7 @@ pub const Semantizer = struct {
         var rewritten_input_fields = try self.allocator.alloc(syn.StructTypeLiteralField, f.input.fields.len);
         var hidden_param_names = std.array_list.Managed([]const u8).init(self.allocator.*);
         defer hidden_param_names.deinit();
-        var hidden_constraints = std.array_list.Managed(?[]const u8).init(self.allocator.*);
+        var hidden_constraints = std.array_list.Managed(?gen.AbstractConstraint).init(self.allocator.*);
         defer hidden_constraints.deinit();
         var has_abstract_input = false;
 
@@ -5967,7 +6126,7 @@ pub const Semantizer = struct {
                             has_abstract_input = true;
                             const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
                             try hidden_param_names.append(hidden_name);
-                            try hidden_constraints.append(tn.string);
+                            try hidden_constraints.append(.{ .name = tn.string });
                             rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, tn.string);
                         }
                     },
@@ -5976,7 +6135,7 @@ pub const Semantizer = struct {
                             has_abstract_input = true;
                             const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
                             try hidden_param_names.append(hidden_name);
-                            try hidden_constraints.append(g.base_name.string);
+                            try hidden_constraints.append(.{ .name = g.base_name.string, .args = g.args });
                             rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, g.base_name.string);
                         }
                     },
@@ -5988,7 +6147,7 @@ pub const Semantizer = struct {
                                     has_abstract_input = true;
                                     const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
                                     try hidden_param_names.append(hidden_name);
-                                    try hidden_constraints.append(child_name);
+                                    try hidden_constraints.append(.{ .name = child_name });
                                     rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, child_name);
                                 }
                             },
@@ -5998,7 +6157,7 @@ pub const Semantizer = struct {
                                     has_abstract_input = true;
                                     const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
                                     try hidden_param_names.append(hidden_name);
-                                    try hidden_constraints.append(child_name);
+                                    try hidden_constraints.append(.{ .name = child_name, .args = g.args });
                                     rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, child_name);
                                 }
                             },
@@ -6012,31 +6171,45 @@ pub const Semantizer = struct {
 
         if (!has_abstract_input) return false;
 
-        for (f.output.fields) |field| {
+        var rewritten_output_fields = try self.allocator.alloc(syn.StructTypeLiteralField, f.output.fields.len);
+        for (f.output.fields, 0..) |field, field_index| {
+            rewritten_output_fields[field_index] = field;
             if (field.type) |field_ty| {
                 if (self.outputUsesAbstractWithoutDefault(field_ty, p)) return error.AbstractNeedsDefault;
+                var rewritten = field_ty;
+                for (hidden_constraints.items, hidden_param_names.items) |constraint_opt, hidden_name| {
+                    const constraint = constraint_opt orelse continue;
+                    rewritten = try self.rewriteAbstractTypeForTemplate(rewritten, hidden_name, constraint.name);
+                }
+                rewritten_output_fields[field_index].type = rewritten;
             }
         }
+
+        var contract_params = std.array_list.Managed(gen.GenericParam).init(self.allocator.*);
+        defer contract_params.deinit();
+        for (hidden_param_names.items) |hidden_name| {
+            try contract_params.append(.{
+                .name = hidden_name,
+                .kind = .type,
+                .value_type = null,
+            });
+        }
+        for (hidden_constraints.items) |constraint_opt| {
+            const constraint = constraint_opt orelse continue;
+            if (constraint.args) |args| {
+                try self.collectHiddenImplementsParamsFromType(.{ .struct_type_literal = args }, &contract_params, p);
+            }
+        }
+        while (hidden_constraints.items.len < contract_params.items.len) try hidden_constraints.append(null);
 
         const template = gen.GenericTemplate{
             .name = f.name.string,
             .location = loc,
-            .params = blk: {
-                const hidden_names = try hidden_param_names.toOwnedSlice();
-                const params = try self.allocator.alloc(gen.GenericParam, hidden_names.len);
-                for (hidden_names, 0..) |hidden_name, idx| {
-                    params[idx] = .{
-                        .name = hidden_name,
-                        .kind = .type,
-                        .value_type = null,
-                    };
-                }
-                break :blk params;
-            },
+            .params = try contract_params.toOwnedSlice(),
             .param_abstract_constraints = try hidden_constraints.toOwnedSlice(),
             .dispatch_kind = .abstract_contract,
             .input = .{ .fields = rewritten_input_fields },
-            .output = f.output,
+            .output = .{ .fields = rewritten_output_fields },
             .body = f.body,
         };
         try p.appendGenericFunctionTemplate(f.name.string, template);
@@ -8869,7 +9042,7 @@ pub const Semantizer = struct {
         for (tmpl.params, 0..) |param, idx| {
             if (!std.mem.eql(u8, param.name, param_name)) continue;
             if (idx < tmpl.param_abstract_constraints.len) {
-                if (tmpl.param_abstract_constraints[idx]) |constraint| return constraint;
+                if (tmpl.param_abstract_constraints[idx]) |constraint| return constraint.name;
             }
             return param.name;
         }
@@ -9233,25 +9406,25 @@ pub const Semantizer = struct {
                             .type => |ty| ty,
                             else => continue,
                         };
-                        if (abs.typeImplementsAbstract(constraint, actual, s)) continue;
+                        if (abs.typeImplementsAbstract(constraint.name, actual, s)) continue;
 
                         const actual_str = try self.formatTypeText(actual, s);
                         defer actual_str.deinit();
                         const field_name = self.findTemplateFieldUsingParam(tmpl, param.name) orelse param.name;
-                        if (try abs.buildConformanceDetails(constraint, actual, s, self.allocator)) |details| {
+                        if (try abs.buildConformanceDetails(constraint.name, actual, s, self.allocator)) |details| {
                             defer details.deinit();
                             try self.diags.add(
                                 loc,
                                 .semantic,
                                 "type '{s}' does not implement abstract '{s}' required by parameter '.{s}' of '{s}':\n{s}",
-                                .{ actual_str.bytes, constraint, field_name, fn_name, details.bytes },
+                                .{ actual_str.bytes, constraint.name, field_name, fn_name, details.bytes },
                             );
                         } else {
                             try self.diags.add(
                                 loc,
                                 .semantic,
                                 "type '{s}' does not implement abstract '{s}' required by parameter '.{s}' of '{s}'",
-                                .{ actual_str.bytes, constraint, field_name, fn_name },
+                                .{ actual_str.bytes, constraint.name, field_name, fn_name },
                             );
                         }
                         return true;
@@ -10019,7 +10192,9 @@ pub const Semantizer = struct {
                             }
                         }
                         if (!found) {
-                            if (self.inferGenericArgFromCall(tmpl, param, dispatch_input.ty, s, &subst)) |inferred| {
+                            if (self.inferGenericArgFromCall(tmpl, param, dispatch_input.ty, s, &subst) orelse
+                                try self.inferGenericArgFromAbstractConstraints(tmpl, param, s, &subst)) |inferred|
+                            {
                                 try self.putGenericArg(&subst, param, inferred);
                                 found = true;
                             }
@@ -10033,7 +10208,7 @@ pub const Semantizer = struct {
                         subst.deinit();
                         continue;
                     }
-                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) {
+                    if (!try self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) {
                         subst.deinit();
                         continue;
                     }
@@ -10121,7 +10296,9 @@ pub const Semantizer = struct {
                     ok = true;
                     for (tmpl.params) |param| {
                         if (std.mem.eql(u8, param.name, bound_param_name)) continue;
-                        if (self.inferGenericArgFromCall(tmpl, param, dispatch_input.ty, s, &subst)) |inferred| {
+                        if (self.inferGenericArgFromCall(tmpl, param, dispatch_input.ty, s, &subst) orelse
+                            try self.inferGenericArgFromAbstractConstraints(tmpl, param, s, &subst)) |inferred|
+                        {
                             try self.putGenericArg(&subst, param, inferred);
                             continue;
                         }
@@ -10132,7 +10309,7 @@ pub const Semantizer = struct {
                         subst.deinit();
                         continue;
                     }
-                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) {
+                    if (!try self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) {
                         subst.deinit();
                         continue;
                     }
@@ -10187,8 +10364,8 @@ pub const Semantizer = struct {
         defer subst.deinit();
 
         for (tmpl.params, 0..) |param, idx| {
-            const constraint_name = tmpl.param_abstract_constraints[idx] orelse continue;
-            const constraint_type_decl = s.lookupType(constraint_name) orelse return error.SymbolNotFound;
+            const constraint = tmpl.param_abstract_constraints[idx] orelse continue;
+            const constraint_type_decl = s.lookupType(constraint.name) orelse return error.SymbolNotFound;
             try subst.types.put(param.name, constraint_type_decl.ty);
         }
 
@@ -10331,7 +10508,7 @@ pub const Semantizer = struct {
                         const resolved = try self.resolveTypeWithSubst(type_args_syn[i], s, &subst);
                         try subst.types.put(tmpl.params[i].name, resolved);
                     }
-                    if (!self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) {
+                    if (!try self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) {
                         subst.deinit();
                         continue;
                     }
@@ -10381,15 +10558,250 @@ pub const Semantizer = struct {
         tmpl: gen.GenericTemplate,
         subst: *GenericSubst,
         s: *Scope,
-    ) bool {
-        _ = self;
+    ) SemErr!bool {
         var i: usize = 0;
         while (i < tmpl.params.len) : (i += 1) {
             const constraint = tmpl.param_abstract_constraints[i] orelse continue;
             const actual = subst.types.get(tmpl.params[i].name) orelse return false;
-            if (!abs.typeImplementsAbstract(constraint, actual, s)) return false;
+            const resolution = try self.resolveAbstract(actual, constraint.name, s);
+            switch (resolution) {
+                .none, .conflicting => return false,
+                .unique => |args| {
+                    defer self.allocator.free(args);
+                    const requested = constraint.args orelse continue;
+                    const info = s.lookupAbstractInfo(constraint.name) orelse return false;
+                    for (requested.fields) |field| {
+                        const requested_ty = field.type orelse return false;
+                        var arg_index: ?usize = null;
+                        for (info.param_names, 0..) |name, index| {
+                            if (std.mem.eql(u8, name, field.name.string)) {
+                                arg_index = index;
+                                break;
+                            }
+                        }
+                        const index = arg_index orelse return false;
+                        const associated = args[index] orelse return false;
+                        const expected = try self.resolveTypeWithSubstPreservingAbstracts(requested_ty, s, subst);
+                        if (!typ.typesExactlyEqual(expected, associated)) return false;
+                    }
+                },
+            }
         }
         return true;
+    }
+
+    fn inferGenericArgFromAbstractConstraints(
+        self: *Semantizer,
+        tmpl: gen.GenericTemplate,
+        requested_param: gen.GenericParam,
+        s: *Scope,
+        subst: *GenericSubst,
+    ) SemErr!?gen.GenericArgValue {
+        return self.inferTypeArgFromAbstractConstraints(
+            tmpl.params,
+            tmpl.param_abstract_constraints,
+            requested_param,
+            s,
+            subst,
+        );
+    }
+
+    fn inferTypeArgFromAbstractConstraints(
+        self: *Semantizer,
+        params: []const gen.GenericParam,
+        constraints: []const ?gen.AbstractConstraint,
+        requested_param: gen.GenericParam,
+        s: *Scope,
+        subst: *GenericSubst,
+    ) SemErr!?gen.GenericArgValue {
+        if (requested_param.kind != .type) return null;
+
+        for (params, 0..) |constrained_param, index| {
+            const constraint = constraints[index] orelse continue;
+            const args = constraint.args orelse continue;
+            const concrete = subst.types.get(constrained_param.name) orelse continue;
+            const info = s.lookupAbstractInfo(constraint.name) orelse continue;
+
+            for (args.fields) |field| {
+                const arg_type = field.type orelse continue;
+                if (arg_type != .type_name or !std.mem.eql(u8, arg_type.type_name.string, requested_param.name)) continue;
+
+                var abstract_param_index: ?usize = null;
+                for (info.param_names, 0..) |name, param_index| {
+                    if (std.mem.eql(u8, name, field.name.string)) {
+                        abstract_param_index = param_index;
+                        break;
+                    }
+                }
+                const param_index = abstract_param_index orelse continue;
+                const resolution = try self.resolveAbstract(concrete, constraint.name, s);
+                const inferred = switch (resolution) {
+                    .none, .conflicting => continue,
+                    .unique => |resolved| resolved,
+                };
+                defer self.allocator.free(inferred);
+                const inferred_type = inferred[param_index] orelse continue;
+                return .{ .type = inferred_type };
+            }
+        }
+        return null;
+    }
+
+    const AbstractResolution = union(enum) {
+        none,
+        unique: []?sg.Type,
+        conflicting,
+    };
+
+    fn associatedArgsEqual(a: []const ?sg.Type, b: []const ?sg.Type) bool {
+        if (a.len != b.len) return false;
+        for (a, b) |left, right| {
+            if (left == null or right == null) {
+                if (left != null or right != null) return false;
+                continue;
+            }
+            if (!typ.typesExactlyEqual(left.?, right.?)) return false;
+        }
+        return true;
+    }
+
+    fn mergeAbstractResolution(
+        self: *Semantizer,
+        chosen: *?[]?sg.Type,
+        candidate: []?sg.Type,
+    ) bool {
+        if (chosen.*) |current| {
+            if (!associatedArgsEqual(current, candidate)) {
+                self.allocator.free(candidate);
+                return false;
+            }
+            self.allocator.free(candidate);
+        } else {
+            chosen.* = candidate;
+        }
+        return true;
+    }
+
+    // Abstract parameters are associated compile-time information: resolution
+    // starts from Self and must produce one unique argument vector. Multiple
+    // proof paths are valid only when they agree on that vector.
+    fn resolveAbstract(
+        self: *Semantizer,
+        concrete: sg.Type,
+        abstract_name: []const u8,
+        s: *Scope,
+    ) SemErr!AbstractResolution {
+        const info = s.lookupAbstractInfo(abstract_name) orelse return .none;
+        var chosen: ?[]?sg.Type = null;
+        errdefer if (chosen) |args| self.allocator.free(args);
+
+        var cur: ?*Scope = s;
+        while (cur) |sc| : (cur = sc.parent) {
+            if (sc.abstract_impls.getPtr(abstract_name)) |entries| {
+                for (entries.items) |entry| {
+                    if (!typ.typesExactlyEqual(entry.ty, concrete)) continue;
+                    if (entry.args.len != info.param_names.len) continue;
+                    const candidate = try self.allocator.dupe(?sg.Type, entry.args);
+                    if (!self.mergeAbstractResolution(&chosen, candidate)) {
+                        if (chosen) |args| self.allocator.free(args);
+                        return .conflicting;
+                    }
+                }
+            }
+
+            if (sc.abstract_impl_templates.getPtr(abstract_name)) |templates| {
+                for (templates.items) |tmpl| {
+                    var bindings = abs.matchAbstractImplTemplate(tmpl, concrete, self.allocator) orelse continue;
+                    defer bindings.deinit();
+
+                    var subst = GenericSubst.init(self.allocator);
+                    defer subst.deinit();
+                    var type_it = bindings.types.iterator();
+                    while (type_it.next()) |entry| try subst.types.put(entry.key_ptr.*, entry.value_ptr.*);
+                    var int_it = bindings.ints.iterator();
+                    while (int_it.next()) |entry| try subst.ints.put(entry.key_ptr.*, entry.value_ptr.*);
+
+                    var made_progress = true;
+                    while (made_progress) {
+                        made_progress = false;
+                        for (tmpl.params) |param| {
+                            if (param.kind != .type or subst.types.contains(param.name)) continue;
+                            const inferred = try self.inferTypeArgFromAbstractConstraints(
+                                tmpl.params,
+                                tmpl.param_abstract_constraints,
+                                param,
+                                s,
+                                &subst,
+                            ) orelse continue;
+                            try self.putGenericArg(&subst, param, inferred);
+                            made_progress = true;
+                        }
+                    }
+
+                    var constraints_hold = true;
+                    for (tmpl.param_abstract_constraints, 0..) |constraint_opt, index| {
+                        const constraint = constraint_opt orelse continue;
+                        const param = tmpl.params[index];
+                        if (param.kind != .type) continue;
+                        const actual = subst.types.get(param.name) orelse {
+                            constraints_hold = false;
+                            break;
+                        };
+                        if (!abs.typeImplementsAbstract(constraint.name, actual, s)) {
+                            constraints_hold = false;
+                            break;
+                        }
+                    }
+                    if (!constraints_hold) continue;
+
+                    const args = tmpl.args orelse {
+                        if (info.param_names.len == 0) {
+                            const candidate = try self.allocator.alloc(?sg.Type, 0);
+                            if (!self.mergeAbstractResolution(&chosen, candidate)) {
+                                if (chosen) |selected| self.allocator.free(selected);
+                                return .conflicting;
+                            }
+                        }
+                        continue;
+                    };
+                    const resolved = try self.allocator.alloc(?sg.Type, info.param_names.len);
+                    errdefer self.allocator.free(resolved);
+                    for (resolved) |*arg| arg.* = null;
+                    for (args.fields) |field| {
+                        var param_index: ?usize = null;
+                        for (info.param_names, 0..) |name, index| {
+                            if (std.mem.eql(u8, name, field.name.string)) {
+                                param_index = index;
+                                break;
+                            }
+                        }
+                        const index = param_index orelse continue;
+                        const field_ty = field.type orelse continue;
+                        resolved[index] = self.resolveTypeWithSubstPreservingAbstracts(field_ty, s, &subst) catch |err| switch (err) {
+                            error.UnknownType, error.SymbolNotFound => null,
+                            else => return err,
+                        };
+                    }
+                    var complete = true;
+                    for (resolved) |arg| {
+                        if (arg == null) {
+                            complete = false;
+                            break;
+                        }
+                    }
+                    if (!complete) {
+                        self.allocator.free(resolved);
+                        continue;
+                    }
+                    if (!self.mergeAbstractResolution(&chosen, resolved)) {
+                        if (chosen) |selected| self.allocator.free(selected);
+                        return .conflicting;
+                    }
+                }
+            }
+        }
+        if (chosen) |args| return .{ .unique = args };
+        return .none;
     }
 
     fn instantiateGenericTemplate(
@@ -10559,7 +10971,7 @@ pub const Semantizer = struct {
                     for (tmpl.params, 0..) |param, index| {
                         const constraint = tmpl.param_abstract_constraints[index] orelse continue;
                         const actual = subst.types.get(param.name) orelse continue;
-                        if (abs.typeImplementsAbstract(constraint, actual, s)) continue;
+                        if (abs.typeImplementsAbstract(constraint.name, actual, s)) continue;
 
                         const actual_text = try self.formatTypeText(actual, s);
                         defer actual_text.deinit();
@@ -10567,7 +10979,7 @@ pub const Semantizer = struct {
                             tmpl.location,
                             .semantic,
                             "type '{s}' does not implement abstract '{s}' required by generic type parameter '.{s}' of '{s}'",
-                            .{ actual_text.bytes, constraint, param.name, tmpl.name },
+                            .{ actual_text.bytes, constraint.name, param.name, tmpl.name },
                         );
                         return error.Reported;
                     }
@@ -12190,7 +12602,7 @@ pub const Semantizer = struct {
 
     const GenericParamSyntaxInfo = struct {
         params: []const gen.GenericParam,
-        abstract_constraints: []const ?[]const u8,
+        abstract_constraints: []const ?gen.AbstractConstraint,
     };
 
     fn buildCallInputWithPositionalPrefix(

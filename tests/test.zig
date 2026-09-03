@@ -2193,6 +2193,12 @@ test "feature_tests/collections/36_dynamic_array_owning_mutations" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/collections/37_dynamic_array_associated_copy_reasons" {
+    const test_path = "tests/feature_tests/collections/37_dynamic_array_associated_copy_reasons";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/control_flow/11_range_default_start_with_step" {
     const test_path = "tests/feature_tests/control_flow/11_range_default_start_with_step";
     try expectSuccessfulBuild(test_path);
@@ -4450,6 +4456,26 @@ test "feature_tests/types/253X_choice_payload_integer_address_rejected_across_ca
     try buildExpectFail(
         "tests/feature_tests/types/253X_choice_payload_integer_address_rejected_across_call",
         "an integer address cannot establish a safe reference",
+    );
+}
+
+test "feature_tests/types/254_choice_union" {
+    const test_path = "tests/feature_tests/types/254_choice_union";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/255X_conflicting_abstract_associated_args" {
+    try buildExpectFail(
+        "tests/feature_tests/types/255X_conflicting_abstract_associated_args",
+        "conflicting implementations of abstract 'Capability' for type 'Thing' produce different associated arguments",
+    );
+}
+
+test "feature_tests/types/256X_abstract_associated_arg_mismatch" {
+    try buildExpectFail(
+        "tests/feature_tests/types/256X_abstract_associated_arg_mismatch",
+        "no function named 'require_uint' exists",
     );
 }
 
