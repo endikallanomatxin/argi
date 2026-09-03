@@ -41,6 +41,7 @@ pub const Syntaxer = struct {
     st: std.array_list.Managed(*syn.STNode),
     diags: *diagnostic.Diagnostics,
     parsing_pipe_rhs: bool,
+    node_count: usize,
 
     pub fn init(alloc: std.mem.Allocator, toks: []const tok.Token, diags: *diagnostic.Diagnostics) Syntaxer {
         return .{
@@ -50,7 +51,12 @@ pub const Syntaxer = struct {
             .st = std.array_list.Managed(*syn.STNode).init(alloc),
             .diags = diags,
             .parsing_pipe_rhs = false,
+            .node_count = 0,
         };
+    }
+
+    pub fn nodeCount(self: *const Syntaxer) usize {
+        return self.node_count;
     }
 
     pub fn parse(self: *Syntaxer) ![]const *syn.STNode {
@@ -147,6 +153,7 @@ pub const Syntaxer = struct {
         const n = try self.allocator.create(syn.STNode);
         n.*.content = c;
         n.*.location = l;
+        self.node_count += 1;
         return n;
     }
 

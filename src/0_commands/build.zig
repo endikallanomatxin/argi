@@ -12,13 +12,14 @@ const tokp = @import("../2_tokens/token_print.zig");
 const frontend = @import("frontend_pipeline.zig");
 const semantizer_mod = @import("../4_semantics/semantizer.zig");
 const sg_mod = @import("../4_semantics/semantic_graph.zig");
+const types_mod = @import("../4_semantics/types.zig");
 
 pub const BuildFlags = struct {
     show_cascade: bool = false,
     show_syntax_tree: bool = false,
     show_semantic_graph: bool = false,
     show_token_list: bool = false,
-    time_phases: bool = false,
+    stats: bool = false,
     output_path: ?[]const u8 = null,
     llvm_ir_path: ?[]const u8 = null,
     object_path: ?[]const u8 = null,
@@ -98,8 +99,8 @@ pub fn parseBuildArgs(args: []const []const u8) !ParsedBuildArgs {
             parsed.flags.show_semantic_graph = true;
         } else if (std.mem.eql(u8, a, "--on-build-error-show-token-list")) {
             parsed.flags.show_token_list = true;
-        } else if (std.mem.eql(u8, a, "--time-phases")) {
-            parsed.flags.time_phases = true;
+        } else if (std.mem.eql(u8, a, "--stats")) {
+            parsed.flags.stats = true;
         } else if (std.mem.eql(u8, a, "--output")) {
             idx += 1;
             if (idx >= args.len) return error.MissingFlagValue;
@@ -159,7 +160,7 @@ fn elapsedSince(io: std.Io, start_ns: i96) u64 {
 }
 
 fn printPhaseTimings(timings: PhaseTimings) void {
-    std.debug.print("phase timings:\n", .{});
+    std.debug.print("Timing\n", .{});
     std.debug.print("  collect files: {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.collect_files_ns)) / 1_000_000.0});
     std.debug.print("  tokenize:      {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.tokenize_ns)) / 1_000_000.0});
     std.debug.print("  syntax:        {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.syntax_ns)) / 1_000_000.0});
@@ -170,7 +171,7 @@ fn printPhaseTimings(timings: PhaseTimings) void {
 }
 
 fn printSemantizingTimings(timings: semantizer_mod.Semantizer.SemantizeTimings) void {
-    std.debug.print("semantizing breakdown:\n", .{});
+    std.debug.print("  semantizing breakdown:\n", .{});
     std.debug.print("  initial pass:          {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.initial_pass_ns)) / 1_000_000.0});
     std.debug.print("    support top-level:   {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.support_top_level_ns)) / 1_000_000.0});
     std.debug.print("    function interface:  {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.function_interface_ns)) / 1_000_000.0});
@@ -192,6 +193,36 @@ fn printSemantizingTimings(timings: semantizer_mod.Semantizer.SemantizeTimings) 
     std.debug.print("  verify once:           {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.once_verify_ns)) / 1_000_000.0});
     std.debug.print("  infer error reasons:   {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.error_reason_inference_ns)) / 1_000_000.0});
     std.debug.print("  semantizing total:     {d:.3} ms\n", .{@as(f64, @floatFromInt(timings.total())) / 1_000_000.0});
+}
+
+fn printCompilerStats(
+    timings: PhaseTimings,
+    pipeline: *const frontend.FrontendPipeline,
+    file_count: usize,
+    type_stats: types_mod.StructuralEqualityStats,
+) void {
+    printPhaseTimings(timings);
+    printSemantizingTimings(pipeline.semantize_timings);
+    std.debug.print("  safety checker:        {d:.3} ms\n", .{@as(f64, @floatFromInt(pipeline.safety_ns)) / 1_000_000.0});
+
+    std.debug.print("Frontend\n", .{});
+    std.debug.print("  source files: {d}\n", .{file_count});
+    std.debug.print("  tokens:       {d}\n", .{pipeline.tokens.items.len});
+    std.debug.print("  ST nodes:     {d}\n", .{pipeline.st_node_count});
+    std.debug.print("  SG nodes:     {d}\n", .{pipeline.sg_node_count});
+
+    std.debug.print("Types\n", .{});
+    std.debug.print("  structural equality calls: {d}\n", .{type_stats.calls});
+    std.debug.print("  comparison steps:           {d}\n", .{type_stats.comparison_steps});
+    std.debug.print("  maximum depth:              {d}\n", .{type_stats.max_depth});
+
+    const safety_stats = pipeline.safety_ctx.?.stats;
+    std.debug.print("Safety\n", .{});
+    std.debug.print("  functions processed:           {d}\n", .{safety_stats.functions});
+    std.debug.print("  inference rounds:              {d}\n", .{safety_stats.inference_rounds});
+    std.debug.print("  reinferences:                  {d}\n", .{safety_stats.reinferences()});
+    std.debug.print("  FunctionState clones:          {d}\n", .{safety_stats.function_state_clones});
+    std.debug.print("  FunctionState elements copied: {d}\n", .{safety_stats.function_state_elements_copied});
 }
 
 fn dumpDiagnosticsOrWarn(
@@ -558,6 +589,9 @@ fn compileResolvedPlan(
 ) !void {
     const module_dir = plan.module_dir;
     var timings: PhaseTimings = .{};
+    var type_stats: types_mod.StructuralEqualityStats = .{};
+    if (flags.stats) types_mod.beginStructuralEqualityStats(&type_stats);
+    defer if (flags.stats) types_mod.endStructuralEqualityStats();
     const cwd_path = try std.process.currentPathAlloc(io, allocator);
     defer allocator.free(cwd_path);
 
@@ -593,7 +627,9 @@ fn compileResolvedPlan(
     // 2. Diagnósticos globales ────────────────────────────────────────────
     var diagnostics = diag.Diagnostics.init(&allocator, files.items);
 
-    var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, options.frontend_options);
+    var frontend_options = options.frontend_options;
+    frontend_options.collect_stats = flags.stats;
+    var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, frontend_options);
     defer pipeline.deinit();
 
     // 3. Tokenizar todos (fusionando EOF) ─────────────────────────────────
@@ -771,10 +807,7 @@ fn compileResolvedPlan(
         };
     }
 
-    if (flags.time_phases) {
-        printPhaseTimings(timings);
-        printSemantizingTimings(pipeline.semantize_timings);
-    }
+    if (flags.stats) printCompilerStats(timings, &pipeline, files.items.len, type_stats);
 
     if (options.success_message) |message| {
         std.debug.print("{s}", .{message});
@@ -790,7 +823,7 @@ test "parse build flags keeps diagnostics toggles and output paths" {
     const flags = try parseFlags(&.{
         "--on-build-error-show-cascade",
         "--on-build-error-show-token-list",
-        "--time-phases",
+        "--stats",
         "--output",
         "bin/app",
         "--emit-llvm",
@@ -803,7 +836,7 @@ test "parse build flags keeps diagnostics toggles and output paths" {
 
     try std.testing.expect(flags.show_cascade);
     try std.testing.expect(flags.show_token_list);
-    try std.testing.expect(flags.time_phases);
+    try std.testing.expect(flags.stats);
     try std.testing.expectEqualStrings("bin/app", flags.output_path.?);
     try std.testing.expectEqualStrings("ir/app.ll", flags.llvm_ir_path.?);
     try std.testing.expectEqualStrings("obj/app.o", flags.object_path.?);
@@ -818,6 +851,7 @@ test "parse build flags rejects missing path value" {
 
 test "parse build flags rejects unknown flag" {
     try std.testing.expectError(error.UnknownFlag, parseFlags(&.{"--unknown"}));
+    try std.testing.expectError(error.UnknownFlag, parseFlags(&.{"--time-phases"}));
     try std.testing.expectError(error.UnknownFlag, parseFlags(&.{
         "--sysroot",
         "/tmp/argi",

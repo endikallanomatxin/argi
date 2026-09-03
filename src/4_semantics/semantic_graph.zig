@@ -21,8 +21,26 @@ pub const SGNode = struct {
     content: Content,
 };
 
+// Build statistics activate this only while a single frontend pipeline is
+// semantizing, keeping node allocation unchanged when statistics are disabled.
+var active_node_count: ?*usize = null;
+
+pub fn beginNodeCounting(count: *usize) void {
+    count.* = 0;
+    active_node_count = count;
+}
+
+pub fn endNodeCounting() void {
+    active_node_count = null;
+}
+
+pub fn recordNodeAllocation() void {
+    if (active_node_count) |count| count.* += 1;
+}
+
 pub inline fn makeSGNode(content: Content, location: tok.Location, allocator: *const std.mem.Allocator) !*SGNode {
     const node = try allocator.create(SGNode);
+    recordNodeAllocation();
     node.* = SGNode{
         .location = location,
         .sem_type = null,

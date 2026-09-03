@@ -8233,6 +8233,7 @@ pub const Semantizer = struct {
         };
 
         const addr_node = self.allocator.create(sg.SGNode) catch return null;
+        sg.recordNodeAllocation();
         addr_node.* = .{
             .location = actual.node.location,
             .sem_type = .{ .pointer_type = ptr_info },
