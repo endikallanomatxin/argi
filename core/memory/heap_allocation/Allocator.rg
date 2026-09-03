@@ -39,7 +39,7 @@ Allocator defaultsto CAllocator
 
 Allocation : Type = (
     --
-    -- Contiguous allocated storage together with the capability required for
+    -- Contiguous allocated storage together with the deallocator required for
     -- its physical cleanup.
     --
     -- The concrete allocate operation determines its temporal facts. A heap

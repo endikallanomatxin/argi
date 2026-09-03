@@ -256,11 +256,11 @@ pop #(.t: Type) (
     one :: UIntNative = 1
     new_length ::= self&.length - one
     ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = new_length).pointer
-    taken ::= trusted_opaque_move_out#(.t: t, .storage_type: Allocation)(
+    moved_out ::= trusted_opaque_move_out#(.t: t, .storage_type: Allocation)(
         .storage = $&self&.allocation,
         .slot = ptr,
     )
-    value = ~taken
+    value = ~moved_out
     self&.length = new_length
 }
 
@@ -322,7 +322,7 @@ remove #(.t: Type) (
     one :: UIntNative = 1
     new_length ::= self&.length - one
     removed_slot ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = i).pointer
-    taken ::= trusted_opaque_move_out#(.t: t, .storage_type: Allocation)(
+    moved_out ::= trusted_opaque_move_out#(.t: t, .storage_type: Allocation)(
         .storage = $&self&.allocation,
         .slot = removed_slot,
     )
@@ -336,7 +336,7 @@ remove #(.t: Type) (
     }
 
     self&.length = new_length
-    value = ~taken
+    value = ~moved_out
 }
 
 operator get[] #(.t: Type: ImplicitlyCopyable) (

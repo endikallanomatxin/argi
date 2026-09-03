@@ -17,7 +17,7 @@ main(.system: System) -> (.status_code: Int32) := {
             value :: AddressSensitive = (.value = 7, .reference = ..none)
 
             -- The value has no reference dependency when it crosses the
-            -- opaque-store boundary.
+            -- opaque move-in boundary.
             trusted_opaque_move(.destination = source_slot, .source = ~value)
 
             -- The retained destination pointer remains an opaque access. This

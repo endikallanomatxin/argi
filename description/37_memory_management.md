@@ -93,12 +93,12 @@ invoke them: there is no global unsafe mode and bundled core has no extra
 privilege. The checker still enforces moves, known ownership roots, alias
 barriers, and dependency validity. The caller assumes only the runtime-slot
 invariant that the checker cannot represent: initializedness and exactly-once
-destruction in opaque storage. Taking a slot ends its opaque occupancy and
+destruction in opaque storage. Moving a value out of a slot ends its opaque occupancy and
 creates a fresh precise ownership identity for the extracted value; it does
 not add per-slot state to the opaque domain.
 In particular, `trusted_opaque_drop` requires its slot to contain exactly
 one live value that has not already been dropped. Calling it twice, or calling
-it after a value has been taken by some future trusted operation, violates the
+it after a value has been moved out by some future trusted operation, violates the
 primitive's manual trusted precondition. The checker deliberately does not add
 per-slot occupancy state to diagnose that contract dynamically.
 Canonical primitive identity is based on the bundled declaration; its trusted
@@ -164,7 +164,7 @@ dependencies do not by themselves prevent relocation because moving the opaque
 representation does not end those roots.
 
 Opaque pointer provenance pairs the structural domain Place with the concrete
-storage-generation ValidityRootId observed when the provenance is established. Copies,
+Validity Root representing its Storage Generation when provenance is established. Copies,
 aggregates, and control-flow joins preserve that pair. Refreshing the structural
 Place creates a new current generation but never rewrites generations already
 carried by values; a new reference observes the new generation, while an old
@@ -177,7 +177,7 @@ yet reconstruct the exact dependency of a reference extracted from an opaque
 value; defining conservative extraction/read provenance is separate from
 tracking dependencies written into the domain.
 
-## ValidityRoot ownership
+## Validity Root ownership
 
 A value that owns a root is the unique logical owner responsible for ending it
 as part of cleanup. A value may own zero, one, or several roots while any number
@@ -187,7 +187,7 @@ the compiler, heap roots by an Allocation value, arena roots by an arena value,
 and foreign roots may have no Argi value owner.
 
 Each root has at most one value owner. Move transfers ownership; reference copy
-does not. ValidityRoot ownership is acyclic and therefore forms a forest, independently
+does not. Validity Root ownership is acyclic and therefore forms a forest, independently
 of the arbitrary dependency graph. Argi does not infer destruction order from
 reference cycles or provide implicit tracing, reference counting, or SCC
 destruction.
@@ -196,7 +196,7 @@ destruction.
 
 `deinit` tears down resources carried by the current value, consumes its owned
 roots, ends them at the appropriate point in cleanup, and leaves its place
-deinitialized. It does not inherently end the place's storage root. Effects
+deinitialized. It does not inherently end the Place's Storage Generation. Effects
 come from the body and summaries of called operations, not from the function
 name. A mutable reference never owns a root, but it may reach a place whose
 current value does; cleanup through that reference consumes ownership from the
@@ -246,7 +246,7 @@ An allocator determines how bytes are obtained and returned. Validity Root
 establishment determines which root anchors their Validity Domain.
 
 Failure is decided at the raw-storage boundary. `..error ..out_of_memory`
-therefore carries no `Allocation`, safe reference, ValidityRoot, or cleanup obligation;
+therefore carries no `Allocation`, safe reference, Validity Root, or cleanup obligation;
 `StorageCapability` is consumed only on successful establishment.
 
 `ArenaAllocator(backing_allocator)` composes a caller-selected physical

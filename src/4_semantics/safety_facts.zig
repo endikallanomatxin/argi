@@ -94,10 +94,10 @@ pub const OutputFieldEffect = struct {
     value: *const ValueEffect,
 };
 
-/// Stable compiler-owned identity for one fresh root produced while evaluating
-/// a summarized expression. Calls instantiate each distinct source as a new
-/// runtime ValidityRootId; fields naming the same source share that root.
-pub const FreshRootSource = usize;
+/// Stable compiler-owned identity for a fresh runtime fact produced while
+/// evaluating a summarized expression. Calls instantiate sources according to
+/// the effect kind; fields naming the same source and kind share that identity.
+pub const FreshEffectSource = usize;
 
 /// Symbolic ValueFacts for a function output. Input dependencies retain their
 /// structural path until a call instantiates them with the caller's facts.
@@ -112,8 +112,8 @@ pub const ValueEffect = struct {
     /// that instantiation must add the concrete generations carried by that
     /// caller value as temporal dependencies of this output.
     opaque_generation_dependencies: []const InputPath = &.{},
-    /// Opaque take operations recover the domain's conservatively hidden
-    /// borrows. The domain remains imprecise and mark_empty is still needed
+    /// Opaque move-out operations recover the domain's conservatively hidden
+    /// validity dependencies. The domain remains imprecise and mark_empty is still needed
     /// when its runtime slots are all empty.
     opaque_storage_dependencies: []const InputPath = &.{},
     fields: []const OutputFieldEffect = &.{},
@@ -122,11 +122,11 @@ pub const ValueEffect = struct {
     variants: []const OutputVariantEffect = &.{},
     /// Concrete tag guaranteed for this output on every summarized exit.
     known_choice_variant: ?u32 = null,
-    fresh_dependencies: []const FreshRootSource = &.{},
-    fresh_owned_roots: []const FreshRootSource = &.{},
+    fresh_dependencies: []const FreshEffectSource = &.{},
+    fresh_owned_roots: []const FreshEffectSource = &.{},
     integer_address: bool = false,
     foreign_storage: bool = false,
-    fresh_storage_capabilities: []const FreshRootSource = &.{},
+    fresh_storage_capabilities: []const FreshEffectSource = &.{},
 };
 
 pub const OutputVariantEffect = struct {
@@ -142,7 +142,7 @@ pub const PlacePostState = struct {
     initializedness: value_state.Initializedness,
     value: ValueEffect = .{},
     ends_previous_roots: bool = false,
-    refreshes_storage_root: bool = false,
+    refreshes_storage_generation: bool = false,
     /// This post-state comes from relocation, which requires the caller to
     /// provide storage that is not currently initialized.
     requires_available_destination: bool = false,
