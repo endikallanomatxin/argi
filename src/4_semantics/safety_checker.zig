@@ -10,8 +10,8 @@ const value_state = @import("value_state.zig");
 pub const SafetyChecker = struct {
     pub const Stats = struct {
         functions: usize = 0,
-        inference_rounds: usize = 0,
         inference_runs: usize = 0,
+        summary_dependencies: usize = 0,
         function_state_clones: u64 = 0,
         function_state_elements_copied: u64 = 0,
 
@@ -20,6 +20,9 @@ pub const SafetyChecker = struct {
         }
     };
 
+    const FunctionList = std.array_list.Managed(*const sg.FunctionDeclaration);
+    const DependentMap = std.AutoHashMap(*const sg.FunctionDeclaration, FunctionList);
+
     allocator: *const std.mem.Allocator,
     diagnostics: *diagnostics.Diagnostics,
     summaries: std.AutoHashMap(*const sg.FunctionDeclaration, facts.SafetySummary),
@@ -27,6 +30,9 @@ pub const SafetyChecker = struct {
     invalid_virtual_summaries: std.AutoHashMap(*const sg.VirtualMethodRegistry, void),
     inference_bindings: ?*std.AutoHashMap(*const sg.BindingDeclaration, facts.ValueEffect),
     inference_place_bindings: ?*std.AutoHashMap(*const sg.BindingDeclaration, []const facts.InputPath),
+    inference_dependents: ?*DependentMap,
+    current_inference_function: ?*const sg.FunctionDeclaration,
+    dependency_error: ?anyerror,
     // Choice construction retains invalid-address provenance in nested
     // default values and diagnoses it when that pointer is actually used.
     choice_payload_depth: usize,
@@ -42,6 +48,9 @@ pub const SafetyChecker = struct {
             .invalid_virtual_summaries = std.AutoHashMap(*const sg.VirtualMethodRegistry, void).init(allocator.*),
             .inference_bindings = null,
             .inference_place_bindings = null,
+            .inference_dependents = null,
+            .current_inference_function = null,
+            .dependency_error = null,
             .choice_payload_depth = 0,
             .collect_stats = false,
             .stats = .{},
@@ -50,6 +59,42 @@ pub const SafetyChecker = struct {
 
     pub fn enableStats(self: *SafetyChecker) void {
         self.collect_stats = true;
+    }
+
+    fn deinitDependentMap(dependents: *DependentMap) void {
+        var iterator = dependents.valueIterator();
+        while (iterator.next()) |function_dependents| function_dependents.deinit();
+        dependents.deinit();
+    }
+
+    fn recordSummaryDependency(self: *SafetyChecker, dependency: *const sg.FunctionDeclaration) void {
+        const dependent = self.current_inference_function orelse return;
+        const dependents = self.inference_dependents orelse return;
+        const entry = dependents.getOrPut(dependency) catch |err| {
+            self.dependency_error = err;
+            return;
+        };
+        if (!entry.found_existing) entry.value_ptr.* = FunctionList.init(self.allocator.*);
+        for (entry.value_ptr.items) |existing| if (existing == dependent) return;
+        entry.value_ptr.append(dependent) catch |err| {
+            self.dependency_error = err;
+            return;
+        };
+        if (self.collect_stats) self.stats.summary_dependencies += 1;
+    }
+
+    fn summaryFor(self: *SafetyChecker, function: *const sg.FunctionDeclaration) ?facts.SafetySummary {
+        self.recordSummaryDependency(function);
+        return self.summaries.get(function);
+    }
+
+    fn inferForWorklist(self: *SafetyChecker, function: *const sg.FunctionDeclaration) !bool {
+        self.dependency_error = null;
+        self.current_inference_function = function;
+        defer self.current_inference_function = null;
+        const changed = try self.infer(function);
+        if (self.dependency_error) |err| return err;
+        return changed;
     }
 
     pub fn deinit(self: *SafetyChecker) void {
@@ -71,17 +116,39 @@ pub const SafetyChecker = struct {
         if (self.collect_stats) self.stats.functions = functions.items.len;
 
         for (functions.items) |function| try self.ensureEmptySummary(function);
-        const limit = @max(functions.items.len + 1, 1);
-        for (0..limit) |_| {
-            if (self.collect_stats) {
-                self.stats.inference_rounds += 1;
-                self.stats.inference_runs += functions.items.len;
-            }
+        // Summary reads record reverse dependencies while each function is
+        // inferred. A changed summary only dirties its callers (and itself
+        // when inference accumulates over its previous summary). Virtual
+        // summaries are rebuilt per run so implementation changes are visible.
+        var dependents = DependentMap.init(self.allocator.*);
+        defer deinitDependentMap(&dependents);
+        self.inference_dependents = &dependents;
+        defer self.inference_dependents = null;
+
+        var worklist = std.array_list.Managed(*const sg.FunctionDeclaration).init(self.allocator.*);
+        defer worklist.deinit();
+        var dirty = std.AutoHashMap(*const sg.FunctionDeclaration, void).init(self.allocator.*);
+        defer dirty.deinit();
+        for (functions.items) |function| {
+            try worklist.append(function);
+            try dirty.put(function, {});
+        }
+
+        var next: usize = 0;
+        while (next < worklist.items.len) : (next += 1) {
+            const function = worklist.items[next];
+            _ = dirty.remove(function);
+            if (self.collect_stats) self.stats.inference_runs += 1;
             self.virtual_summaries.clearRetainingCapacity();
             self.invalid_virtual_summaries.clearRetainingCapacity();
-            var changed = false;
-            for (functions.items) |function| changed = (try self.infer(function)) or changed;
-            if (!changed) break;
+            if (!try self.inferForWorklist(function)) continue;
+            if (dependents.get(function)) |function_dependents| {
+                for (function_dependents.items) |dependent| {
+                    if (dirty.contains(dependent)) continue;
+                    try dirty.put(dependent, {});
+                    try worklist.append(dependent);
+                }
+            }
         }
         self.virtual_summaries.clearRetainingCapacity();
         self.invalid_virtual_summaries.clearRetainingCapacity();
@@ -819,7 +886,7 @@ pub const SafetyChecker = struct {
         if (call.callee.body == null and call.callee.output.fields.len == 1 and
             call.callee.output.fields[0].ty == .pointer_type)
             return .{ .foreign_storage = true };
-        const summary = self.summaries.get(call.callee) orelse return .{};
+        const summary = self.summaryFor(call.callee) orelse return .{};
         if (!try self.validateRequiredLiveInputs(function, summary, argument_values, state)) return .{};
         for (summary.input_post_states) |post_state| {
             const index = post_state.target.input_index;
@@ -892,7 +959,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
     ) !void {
         if (input.content != .struct_value_literal) return;
-        const summary = self.summaries.get(deinit_fn) orelse return;
+        const summary = self.summaryFor(deinit_fn) orelse return;
         const arguments = input.content.struct_value_literal.fields;
 
         var candidate = try state.clone(self.allocator.*);
@@ -3427,17 +3494,18 @@ pub const SafetyChecker = struct {
     }
 
     fn virtualSummary(self: *SafetyChecker, registry: *const sg.VirtualMethodRegistry) !?facts.SafetySummary {
+        for (registry.implementations.items) |implementation| self.recordSummaryDependency(implementation);
         if (self.invalid_virtual_summaries.contains(registry)) return null;
         if (self.virtual_summaries.get(registry)) |summary| return summary;
         if (registry.implementations.items.len == 0) return null;
 
-        var merged = self.summaries.get(registry.implementations.items[0]) orelse return null;
+        var merged = self.summaryFor(registry.implementations.items[0]) orelse return null;
         if (!virtualInputPostStatesRuntimeRepresentable(merged.input_post_states)) {
             try self.invalid_virtual_summaries.put(registry, {});
             return null;
         }
         for (registry.implementations.items[1..]) |implementation| {
-            const next = self.summaries.get(implementation) orelse return null;
+            const next = self.summaryFor(implementation) orelse return null;
             if (!virtualInputPostStatesRuntimeRepresentable(next.input_post_states)) {
                 try self.invalid_virtual_summaries.put(registry, {});
                 return null;
@@ -3665,7 +3733,7 @@ pub const SafetyChecker = struct {
         if (function.safety_primitive != .none)
             return self.replaceSingleOutput(function, try self.primitiveValueEffect(function.safety_primitive, @intFromPtr(function)));
         const body = function.body orelse return false;
-        const previous = self.summaries.get(function).?;
+        const previous = self.summaryFor(function).?;
         const outputs = try self.allocator.dupe(facts.ValueEffect, previous.outputs);
         var bindings = std.AutoHashMap(*const sg.BindingDeclaration, facts.ValueEffect).init(self.allocator.*);
         defer bindings.deinit();
@@ -3951,7 +4019,7 @@ pub const SafetyChecker = struct {
             }
             return;
         }
-        const summary = self.summaries.get(call.callee) orelse return;
+        const summary = self.summaryFor(call.callee) orelse return;
         try self.applyInputPostStatesFromSummary(function, summary, call.input, states, null);
     }
 
@@ -3989,7 +4057,7 @@ pub const SafetyChecker = struct {
         states: *std.array_list.Managed(facts.PlacePostState),
     ) !void {
         const binding_effect = if (self.inference_bindings) |bindings| bindings.get(cleanup.binding) else null;
-        if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| if (self.summaries.get(deinit_fn)) |summary|
+        if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| if (self.summaryFor(deinit_fn)) |summary|
             try self.applyInputPostStatesFromSummary(function, summary, input, states, if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null);
         if (binding_effect) |effect| try self.applyAutoDeinitFieldInputPostStates(function, cleanup.fields, states, effect);
     }
@@ -4003,7 +4071,7 @@ pub const SafetyChecker = struct {
     ) !void {
         for (fields) |field| {
             const field_effect = try self.projectValueEffect(parent_effect, .{ .field = field.field_index });
-            if (field.deinit_fn) |deinit_fn| if (field.input) |input| if (self.summaries.get(deinit_fn)) |summary|
+            if (field.deinit_fn) |deinit_fn| if (field.input) |input| if (self.summaryFor(deinit_fn)) |summary|
                 try self.applyInputPostStatesFromSummary(function, summary, input, states, .{ .input_index = field.self_field_index, .effect = field_effect });
             try self.applyAutoDeinitFieldInputPostStates(function, field.fields, states, field_effect);
         }
@@ -4065,7 +4133,7 @@ pub const SafetyChecker = struct {
                 try self.inferRequiredLiveInputsNode(function, payload, required),
             .function_call => |call| {
                 try self.inferRequiredLiveInputsNode(function, call.input, required);
-                if (self.summaries.get(call.callee)) |summary|
+                if (self.summaryFor(call.callee)) |summary|
                     try self.substituteRequiredLiveInputs(function, summary.required_live_inputs, call.input, required);
             },
             .virtual_call => |call| {
@@ -4147,7 +4215,7 @@ pub const SafetyChecker = struct {
         const binding_effect = if (self.inference_bindings) |bindings| bindings.get(cleanup.binding) else null;
         if (cleanup.input) |input| {
             try self.inferRequiredLiveInputsNode(function, input, required);
-            if (cleanup.deinit_fn) |deinit_fn| if (self.summaries.get(deinit_fn)) |summary|
+            if (cleanup.deinit_fn) |deinit_fn| if (self.summaryFor(deinit_fn)) |summary|
                 try self.substituteRequiredLiveInputsWithOverride(function, summary.required_live_inputs, input, required, if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null);
         }
         if (binding_effect) |effect| try self.inferAutoDeinitFieldRequiredLiveInputs(function, cleanup.fields, required, effect);
@@ -4164,7 +4232,7 @@ pub const SafetyChecker = struct {
             const field_effect = try self.projectValueEffect(parent_effect, .{ .field = field.field_index });
             if (field.input) |input| {
                 try self.inferRequiredLiveInputsNode(function, input, required);
-                if (field.deinit_fn) |deinit_fn| if (self.summaries.get(deinit_fn)) |summary|
+                if (field.deinit_fn) |deinit_fn| if (self.summaryFor(deinit_fn)) |summary|
                     try self.substituteRequiredLiveInputsWithOverride(function, summary.required_live_inputs, input, required, .{ .input_index = field.self_field_index, .effect = field_effect });
             }
             try self.inferAutoDeinitFieldRequiredLiveInputs(function, field.fields, required, field_effect);
@@ -4346,7 +4414,7 @@ pub const SafetyChecker = struct {
         state: *OpaqueEmptyState,
     ) !void {
         const binding_effect = if (self.inference_bindings) |bindings| bindings.get(cleanup.binding) else null;
-        if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| if (self.summaries.get(deinit_fn)) |summary|
+        if (cleanup.deinit_fn) |deinit_fn| if (cleanup.input) |input| if (self.summaryFor(deinit_fn)) |summary|
             try self.applyOpaqueEmptySummary(function, summary, input, effects, state, if (binding_effect) |effect| .{ .input_index = cleanup.self_field_index, .effect = effect } else null);
         if (binding_effect) |effect| try self.applyAutoDeinitFieldOpaqueEffects(function, cleanup.fields, effects, state, effect);
     }
@@ -4361,7 +4429,7 @@ pub const SafetyChecker = struct {
     ) !void {
         for (fields) |field| {
             const field_effect = try self.projectValueEffect(parent_effect, .{ .field = field.field_index });
-            if (field.deinit_fn) |deinit_fn| if (field.input) |input| if (self.summaries.get(deinit_fn)) |summary|
+            if (field.deinit_fn) |deinit_fn| if (field.input) |input| if (self.summaryFor(deinit_fn)) |summary|
                 try self.applyOpaqueEmptySummary(function, summary, input, effects, state, .{ .input_index = field.self_field_index, .effect = field_effect });
             try self.applyAutoDeinitFieldOpaqueEffects(function, field.fields, effects, state, field_effect);
         }
@@ -4494,7 +4562,7 @@ pub const SafetyChecker = struct {
             for (storages) |storage| try self.recordOpaqueStorageRelease(&state.emptied, storage);
             return;
         }
-        const summary = self.summaries.get(call.callee) orelse return;
+        const summary = self.summaryFor(call.callee) orelse return;
         try self.applyOpaqueEmptySummary(function, summary, call.input, effects, state, null);
     }
 
@@ -4862,6 +4930,8 @@ pub const SafetyChecker = struct {
         function: *const sg.FunctionDeclaration,
         effect: facts.ValueEffect,
     ) !bool {
+        // Primitive summaries are rebuilt independently of their previous
+        // value, so reading it here must not create a self-dependency.
         const previous = self.summaries.get(function).?;
         if (previous.outputs.len != 1 or std.meta.eql(previous.outputs[0], effect)) return false;
         const outputs = try self.allocator.alloc(facts.ValueEffect, 1);
@@ -5106,7 +5176,7 @@ pub const SafetyChecker = struct {
             if (call.input.content != .struct_value_literal) return effect;
             return self.substituteOutput(function, effect, call.input.content.struct_value_literal.fields);
         }
-        const callee_summary = self.summaries.get(call.callee) orelse return .{};
+        const callee_summary = self.summaryFor(call.callee) orelse return .{};
         if (callee_summary.outputs.len != 1 or call.input.content != .struct_value_literal) return .{};
         const substituted = try self.substituteOutput(function, callee_summary.outputs[0], call.input.content.struct_value_literal.fields);
         return self.rebaseFreshSources(substituted, @intFromPtr(call));

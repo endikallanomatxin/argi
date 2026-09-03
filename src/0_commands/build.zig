@@ -219,8 +219,9 @@ fn printCompilerStats(
     const safety_stats = pipeline.safety_ctx.?.stats;
     std.debug.print("Safety\n", .{});
     std.debug.print("  functions processed:           {d}\n", .{safety_stats.functions});
-    std.debug.print("  inference rounds:              {d}\n", .{safety_stats.inference_rounds});
+    std.debug.print("  worklist runs:                 {d}\n", .{safety_stats.inference_runs});
     std.debug.print("  reinferences:                  {d}\n", .{safety_stats.reinferences()});
+    std.debug.print("  summary dependencies:          {d}\n", .{safety_stats.summary_dependencies});
     std.debug.print("  FunctionState clones:          {d}\n", .{safety_stats.function_state_clones});
     std.debug.print("  FunctionState elements copied: {d}\n", .{safety_stats.function_state_elements_copied});
 }
