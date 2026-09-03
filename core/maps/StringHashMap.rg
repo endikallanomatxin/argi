@@ -103,7 +103,7 @@ string_hash_map_prepare_buckets(
 
     i :: UIntNative = 0
     while i < capacity {
-        push#(.t: UIntNative)(.allocator = allocator, .self = buckets, .value = 0)
+        push_assume_capacity#(.t: UIntNative)(.self = buckets, .value = 0)
         i = i + 1
     }
 }
