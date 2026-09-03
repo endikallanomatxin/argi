@@ -200,6 +200,7 @@ fn printCompilerStats(
     pipeline: *const frontend.FrontendPipeline,
     file_count: usize,
     type_stats: types_mod.StructuralEqualityStats,
+    codegen_stats: codegen.CodeGenerator.Stats,
 ) void {
     printPhaseTimings(timings);
     printSemantizingTimings(pipeline.semantize_timings);
@@ -215,6 +216,14 @@ fn printCompilerStats(
     std.debug.print("  structural equality calls: {d}\n", .{type_stats.calls});
     std.debug.print("  comparison steps:           {d}\n", .{type_stats.comparison_steps});
     std.debug.print("  maximum depth:              {d}\n", .{type_stats.max_depth});
+
+    std.debug.print("Codegen\n", .{});
+    std.debug.print("  semantic functions:             {d}\n", .{codegen_stats.semantic_functions});
+    std.debug.print("  LLVM functions with body:       {d}\n", .{codegen_stats.llvm_functions_with_body});
+    std.debug.print("  reachable LLVM function bodies: {d}\n", .{codegen_stats.reachable_llvm_functions_with_body});
+    std.debug.print("  basic blocks:                   {d}\n", .{codegen_stats.basic_blocks});
+    std.debug.print("  instructions:                   {d}\n", .{codegen_stats.instructions});
+    std.debug.print("  IR size:                        {d} bytes\n", .{codegen_stats.ir_bytes});
 
     const safety_stats = pipeline.safety_ctx.?.stats;
     std.debug.print("Safety\n", .{});
@@ -591,6 +600,7 @@ fn compileResolvedPlan(
     const module_dir = plan.module_dir;
     var timings: PhaseTimings = .{};
     var type_stats: types_mod.StructuralEqualityStats = .{};
+    var codegen_stats: codegen.CodeGenerator.Stats = .{};
     if (flags.stats) types_mod.beginStructuralEqualityStats(&type_stats);
     defer if (flags.stats) types_mod.endStructuralEqualityStats();
     const cwd_path = try std.process.currentPathAlloc(io, allocator);
@@ -704,6 +714,7 @@ fn compileResolvedPlan(
         return error.CompilationFailed;
     };
     timings.codegen_ns = elapsedSince(io, codegen_start);
+    if (flags.stats) codegen_stats = try gen.collectStats();
 
     if (!emit_object_only and options.codegen_options.selected_test_name == null and !hasExecutableMain(sg)) {
         printMissingMainError(module_dir, plan.module_root != null);
@@ -808,7 +819,7 @@ fn compileResolvedPlan(
         };
     }
 
-    if (flags.stats) printCompilerStats(timings, &pipeline, files.items.len, type_stats);
+    if (flags.stats) printCompilerStats(timings, &pipeline, files.items.len, type_stats, codegen_stats);
 
     if (options.success_message) |message| {
         std.debug.print("{s}", .{message});
