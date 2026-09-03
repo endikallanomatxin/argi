@@ -571,7 +571,7 @@ pub const LanguageService = struct {
         try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses, &semantic_field_accesses);
 
         return .{
-            .tokens = try analysis_allocator.dupe(token.Token, pipeline.tokens.items),
+            .tokens = try analysis_allocator.dupe(token.Token, pipeline.tokensForPath(doc.path) orelse &.{}),
             .st_nodes = st_nodes,
             .sg_nodes = sg_nodes,
             .syntax_functions = try syntax_functions.toOwnedSlice(),
@@ -638,14 +638,14 @@ pub const LanguageService = struct {
         defer pipeline.deinit();
 
         _ = pipeline.parseFiles(&one_file) catch {
-            const toks = pipeline.tokens.items;
+            const toks = pipeline.tokensForPath(doc.path) orelse &.{};
             if (toks.len == 0) return out;
 
             try emitLexical(&out, gpa, text, toks);
             return out;
         };
 
-        const toks = pipeline.tokens.items;
+        const toks = pipeline.tokensForPath(doc.path) orelse &.{};
         if (toks.len == 0) return out;
         const st_nodes = pipeline.st_nodes;
 
