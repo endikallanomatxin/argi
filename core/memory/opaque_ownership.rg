@@ -1,7 +1,7 @@
 -- Explicit trusted ownership boundaries usable by any library. The checker
 -- still enforces every invariant it can prove; callers maintain runtime-slot
 -- initializedness and exactly-once destruction manually. In particular,
--- trusted_opaque_drop requires exactly one live value that has not already been taken
+-- trusted_opaque_drop requires exactly one live value that has not already been moved out
 -- or dropped; opaque slots intentionally have no dynamic occupancy tracking.
 trusted_opaque_move#(.t: Type)(.destination: $&t, .source: t) -> () := {
     destination& = source

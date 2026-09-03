@@ -2610,7 +2610,7 @@ pub const CodeGenerator = struct {
         if (pointer_type != .pointer_type) return CodegenError.InvalidType;
         const value_type = try self.toLLVMType(pointer_type.pointer_type.child.*);
         return .{
-            .value_ref = c.LLVMBuildLoad2(self.builder, value_type, slot.value_ref, "opaque_take.load"),
+            .value_ref = c.LLVMBuildLoad2(self.builder, value_type, slot.value_ref, "opaque_move_out.load"),
             .type_ref = value_type,
             .sem_type = pointer_type.pointer_type.child.*,
         };

@@ -65,7 +65,7 @@ pub const SafetyChecker = struct {
 
     const FunctionState = struct {
         const OwnershipEdge = struct { owner: facts.ValidityRootId, owned: facts.ValidityRootId };
-        const StorageRoot = struct { storage: place.Place, root: facts.ValidityRootId };
+        const StorageGeneration = struct { storage: place.Place, generation: facts.ValidityRootId };
         const OpaqueStorage = struct { storage: place.Place, hidden_dependencies: []const facts.ValidityRootId };
         const ChoiceActive = struct { storage: place.Place, variant_index: u32 };
         const ChoiceRejected = struct { storage: place.Place, variant_index: u32 };
@@ -75,8 +75,8 @@ pub const SafetyChecker = struct {
         storage_capabilities: std.array_list.Managed(StorageCapabilityState),
         places: std.array_list.Managed(facts.PlaceFacts),
         ownership_edges: std.array_list.Managed(OwnershipEdge),
-        storage_roots: std.array_list.Managed(StorageRoot),
-        lexical_storage_roots: std.array_list.Managed(facts.ValidityRootId),
+        storage_generations: std.array_list.Managed(StorageGeneration),
+        lexical_storage_generations: std.array_list.Managed(facts.ValidityRootId),
         opaque_storages: std.array_list.Managed(OpaqueStorage),
         choice_active: std.array_list.Managed(ChoiceActive),
         choice_rejected: std.array_list.Managed(ChoiceRejected),
@@ -90,8 +90,8 @@ pub const SafetyChecker = struct {
                 .storage_capabilities = std.array_list.Managed(StorageCapabilityState).init(allocator),
                 .places = std.array_list.Managed(facts.PlaceFacts).init(allocator),
                 .ownership_edges = std.array_list.Managed(OwnershipEdge).init(allocator),
-                .storage_roots = std.array_list.Managed(StorageRoot).init(allocator),
-                .lexical_storage_roots = std.array_list.Managed(facts.ValidityRootId).init(allocator),
+                .storage_generations = std.array_list.Managed(StorageGeneration).init(allocator),
+                .lexical_storage_generations = std.array_list.Managed(facts.ValidityRootId).init(allocator),
                 .opaque_storages = std.array_list.Managed(OpaqueStorage).init(allocator),
                 .choice_active = std.array_list.Managed(ChoiceActive).init(allocator),
                 .choice_rejected = std.array_list.Managed(ChoiceRejected).init(allocator),
@@ -104,8 +104,8 @@ pub const SafetyChecker = struct {
             self.storage_capabilities.deinit();
             self.places.deinit();
             self.ownership_edges.deinit();
-            self.storage_roots.deinit();
-            self.lexical_storage_roots.deinit();
+            self.storage_generations.deinit();
+            self.lexical_storage_generations.deinit();
             self.opaque_storages.deinit();
             self.choice_active.deinit();
             self.choice_rejected.deinit();
@@ -119,8 +119,8 @@ pub const SafetyChecker = struct {
             try result.storage_capabilities.appendSlice(self.storage_capabilities.items);
             try result.places.appendSlice(self.places.items);
             try result.ownership_edges.appendSlice(self.ownership_edges.items);
-            try result.storage_roots.appendSlice(self.storage_roots.items);
-            try result.lexical_storage_roots.appendSlice(self.lexical_storage_roots.items);
+            try result.storage_generations.appendSlice(self.storage_generations.items);
+            try result.lexical_storage_generations.appendSlice(self.lexical_storage_generations.items);
             try result.opaque_storages.appendSlice(self.opaque_storages.items);
             try result.choice_active.appendSlice(self.choice_active.items);
             try result.choice_rejected.appendSlice(self.choice_rejected.items);
@@ -250,14 +250,14 @@ pub const SafetyChecker = struct {
                     // A declaration inside a repeated block starts a new
                     // lifetime after the previous iteration's cleanup.
                     if (self.initializednessAtPlace(state, storage) == .deinitialized)
-                        try self.refreshStorageRoot(function, state, storage);
+                        try self.refreshStorageGeneration(function, state, storage);
                     try self.setPlace(state, storage, .initialized, value);
                 },
                 .binding_assignment => |assignment| {
                     const value = try self.evaluate(function, assignment.value, state);
                     const storage = place.Place{ .root = assignment.sym_id };
                     if (self.initializednessAtPlace(state, storage) == .deinitialized)
-                        try self.refreshStorageRoot(function, state, storage);
+                        try self.refreshStorageGeneration(function, state, storage);
                     try self.setPlace(state, storage, .initialized, value);
                 },
                 .auto_deinit_binding => |cleanup| {
@@ -323,7 +323,7 @@ pub const SafetyChecker = struct {
                     if (reinitializes_dead_place) {
                         const target = pointer.referenced_place.?;
                         const pointer_storage = try self.resolvePlace(assignment.pointer, state);
-                        pointer = try self.refreshStorageRootThroughPointer(function, state, target, pointer_storage, pointer);
+                        pointer = try self.refreshStorageGenerationThroughPointer(function, state, target, pointer_storage, pointer);
                     }
                     const value = try self.evaluateStoredValue(function, assignment.value, state, pointer);
                     try self.addStoredOwnershipEdges(function, state, pointer, value);
@@ -453,15 +453,15 @@ pub const SafetyChecker = struct {
                 else => continue,
             };
             var storage_index: usize = 0;
-            while (storage_index < state.storage_roots.items.len) {
-                const mapping = state.storage_roots.items[storage_index];
+            while (storage_index < state.storage_generations.items.len) {
+                const mapping = state.storage_generations.items[storage_index];
                 if (mapping.storage.root != binding) {
                     storage_index += 1;
                     continue;
                 }
-                try appendOwnedRoot(&state.lexical_storage_roots, mapping.root);
-                _ = try self.endRoot(function, state, mapping.root);
-                _ = state.storage_roots.orderedRemove(storage_index);
+                try appendOwnedRoot(&state.lexical_storage_generations, mapping.generation);
+                _ = try self.endRoot(function, state, mapping.generation);
+                _ = state.storage_generations.orderedRemove(storage_index);
             }
             var place_index: usize = 0;
             while (place_index < state.places.items.len) {
@@ -516,7 +516,7 @@ pub const SafetyChecker = struct {
                 const opaque_provenance = try self.opaqueProvenanceForAccess(value, state);
                 var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator.*);
                 if (opaque_provenance.len == 0) {
-                    try appendDependency(&dependencies, .{ .root = try self.storageRoot(value, state) });
+                    try appendDependency(&dependencies, .{ .root = try self.storageGeneration(value, state) });
                 } else {
                     for (opaque_provenance) |provenance|
                         try appendDependency(&dependencies, .{ .root = provenance.generation });
@@ -729,7 +729,7 @@ pub const SafetyChecker = struct {
             return .{};
         }
         if (call.callee.safety_primitive == .trusted_opaque_move_out) {
-            const source: facts.FreshRootSource = @intFromPtr(call);
+            const source: facts.FreshEffectSource = @intFromPtr(call);
             return self.instantiateOutput(try self.primitiveValueEffect(.trusted_opaque_move_out, source), argument_values, state);
         }
         // Opaque-slot occupancy and contents deliberately have no precise
@@ -744,7 +744,7 @@ pub const SafetyChecker = struct {
             if (argument_values.len == 1) {
                 const storage = argument_values[0].referenced_place orelse
                     try self.resolvePlace(arguments[0].value, state) orelse return .{};
-                self.releaseOpaqueStorage(state, storage);
+                self.markOpaqueStorageEmpty(state, storage);
             }
             return .{};
         }
@@ -860,7 +860,7 @@ pub const SafetyChecker = struct {
         for (arguments, 0..) |argument, index| {
             argument_values[index] = if (index == self_field_index)
                 .{
-                    .dependencies = try self.oneDependency(try self.storageRootForPlace(storage, &candidate)),
+                    .dependencies = try self.oneDependency(try self.storageGenerationForPlace(storage, &candidate)),
                     .referenced_place = storage,
                 }
             else
@@ -894,7 +894,7 @@ pub const SafetyChecker = struct {
     }
 
     /// Relocation transfers one existing value representation between distinct
-    /// Places. It deliberately leaves structural storage roots alone: aliases
+    /// Places. It deliberately leaves structural Storage Generations alone: aliases
     /// into the source storage keep their old provenance and are not rebound.
     fn relocatePlaces(
         self: *SafetyChecker,
@@ -1028,12 +1028,12 @@ pub const SafetyChecker = struct {
                 domain_already_opaque = true;
                 break;
             };
-            // The first opaque-store boundary establishes provenance for its
+            // The first opaque move-in boundary establishes provenance for its
             // destination pointer now. Once the domain already exists, an
             // unproven old alias must never be rebound to its current root.
             if (!domain_already_opaque) try appendOpaqueProvenance(&provenances, .{
                 .storage = storage,
-                .generation = try self.storageRootForPlace(storage, state),
+                .generation = try self.storageGenerationForPlace(storage, state),
             });
         }
         pointer.opaque_provenance = try provenances.toOwnedSlice();
@@ -1067,16 +1067,16 @@ pub const SafetyChecker = struct {
                 for (pointer.dependencies) |dependency|
                     if (valueContainsOwnedRoot(storage_value, dependency.root)) try appendPlace(result, opaque_storage.storage);
             }
-            for (state.storage_roots.items) |entry| {
+            for (state.storage_generations.items) |entry| {
                 if (!opaque_storage.storage.isPrefixOf(entry.storage)) continue;
                 for (pointer.dependencies) |dependency|
-                    if (dependency.root == entry.root) try appendPlace(result, opaque_storage.storage);
+                    if (dependency.root == entry.generation) try appendPlace(result, opaque_storage.storage);
             }
         }
     }
 
     /// Recover generation-stable value provenance without resolving a domain
-    /// Place against its current storage root. Retrospective inference is only
+    /// Place against its current Storage Generation. Retrospective inference is only
     /// allowed when one of the pointer's existing dependency roots itself
     /// proves the association with the opaque domain.
     fn collectOpaqueProvenancesCarriedBy(
@@ -1094,10 +1094,10 @@ pub const SafetyChecker = struct {
                         .generation = dependency.root,
                     });
             }
-            for (state.storage_roots.items) |entry| {
+            for (state.storage_generations.items) |entry| {
                 if (!opaque_storage.storage.isPrefixOf(entry.storage)) continue;
                 for (pointer.dependencies) |dependency|
-                    if (dependency.root == entry.root) try appendOpaqueProvenance(result, .{
+                    if (dependency.root == entry.generation) try appendOpaqueProvenance(result, .{
                         .storage = opaque_storage.storage,
                         .generation = dependency.root,
                     });
@@ -1228,7 +1228,7 @@ pub const SafetyChecker = struct {
         var provenances = std.array_list.Managed(facts.OpaqueProvenance).init(self.allocator.*);
         for (storages.items) |storage| try appendOpaqueProvenance(&provenances, .{
             .storage = storage,
-            .generation = try self.storageRootForPlace(storage, state),
+            .generation = try self.storageGenerationForPlace(storage, state),
         });
         return provenances.toOwnedSlice();
     }
@@ -1243,10 +1243,10 @@ pub const SafetyChecker = struct {
         defer storages.deinit();
         try self.collectOpaqueDomainsAccessedBy(state, source, &storages);
         for (storages.items) |storage| {
-            const storage_root = try self.storageRootForPlace(storage, state);
+            const storage_generation = try self.storageGenerationForPlace(storage, state);
             for (state.opaque_storages.items) |opaque_storage| {
                 if (!opaque_storage.storage.eql(storage)) continue;
-                var invalidates_dependency = containsRoot(opaque_storage.hidden_dependencies, storage_root);
+                var invalidates_dependency = containsRoot(opaque_storage.hidden_dependencies, storage_generation);
                 if (!invalidates_dependency) {
                     const storage_value = self.valueAtPlace(state, storage) orelse facts.ValueFacts{};
                     for (opaque_storage.hidden_dependencies) |dependency| {
@@ -1276,7 +1276,7 @@ pub const SafetyChecker = struct {
             for (effect.storage.projections) |projection| storage = try self.projectedPlace(storage, projection);
             var hidden = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
             defer hidden.deinit();
-            var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId).init(self.allocator.*);
+            var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator.*);
             defer fresh_roots.deinit();
             try self.instantiateOpaqueDependencies(effect.hidden_dependencies, argument_values, state, &fresh_roots, &hidden);
             var external = std.array_list.Managed(facts.ValidityRootId).init(self.allocator.*);
@@ -1313,7 +1313,7 @@ pub const SafetyChecker = struct {
             var storage = argument_values[path.input_index].referenced_place orelse
                 try self.resolvePlace(arguments[path.input_index].value, state) orelse continue;
             for (path.projections) |projection| storage = try self.projectedPlace(storage, projection);
-            self.releaseOpaqueStorage(state, storage);
+            self.markOpaqueStorageEmpty(state, storage);
         }
     }
 
@@ -1335,7 +1335,7 @@ pub const SafetyChecker = struct {
         effect: facts.ValueEffect,
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
-        fresh_roots: *std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId),
+        fresh_roots: *std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId),
         hidden: *std.array_list.Managed(facts.ValidityRootId),
     ) !void {
         for (effect.fresh_dependencies) |source|
@@ -1344,7 +1344,7 @@ pub const SafetyChecker = struct {
             if (path.input_index >= arguments.len) continue;
             var target = arguments[path.input_index].referenced_place orelse continue;
             for (path.projections) |projection| target = try self.projectedPlace(target, projection);
-            try appendOwnedRoot(hidden, try self.storageRootForPlace(target, state));
+            try appendOwnedRoot(hidden, try self.storageGenerationForPlace(target, state));
         }
         for (effect.input_dependencies) |dependency| {
             if (dependency.path.input_index >= arguments.len) continue;
@@ -1489,9 +1489,9 @@ pub const SafetyChecker = struct {
         argument_values: []const facts.ValueFacts,
         state: *FunctionState,
     ) !void {
-        var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId).init(self.allocator.*);
+        var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator.*);
         defer fresh_roots.deinit();
-        var fresh_capabilities = std.AutoHashMap(facts.FreshRootSource, facts.StorageCapabilityId).init(self.allocator.*);
+        var fresh_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator.*);
         defer fresh_capabilities.deinit();
         // A relocation summary is only valid when its two Places remain
         // distinct at the caller. Check this before applying either side so
@@ -1581,10 +1581,10 @@ pub const SafetyChecker = struct {
                     for (old.owned_roots) |root| _ = try self.endRoot(function, state, root);
                 }
             }
-            if (post_state.initializedness == .deinitialized) try self.endStorageRootsUnder(function, state, target);
-            if (!post_state.requires_available_destination and (reinitializes_dead_place or post_state.refreshes_storage_root)) {
+            if (post_state.initializedness == .deinitialized) try self.endStorageGenerationsUnder(function, state, target);
+            if (!post_state.requires_available_destination and (reinitializes_dead_place or post_state.refreshes_storage_generation)) {
                 const pointer_storage = try self.resolvePlace(arguments[index].value, state);
-                _ = try self.refreshStorageRootThroughPointer(
+                _ = try self.refreshStorageGenerationThroughPointer(
                     function,
                     state,
                     target,
@@ -1676,7 +1676,7 @@ pub const SafetyChecker = struct {
         return target;
     }
 
-    fn refreshStorageRootThroughPointer(
+    fn refreshStorageGenerationThroughPointer(
         self: *SafetyChecker,
         function: ?*const sg.FunctionDeclaration,
         state: *FunctionState,
@@ -1684,9 +1684,9 @@ pub const SafetyChecker = struct {
         pointer_storage: ?place.Place,
         pointer: facts.ValueFacts,
     ) !facts.ValueFacts {
-        const old_root = try self.storageRootForPlace(target, state);
-        try self.refreshStorageRoot(function, state, target);
-        const fresh_root = try self.storageRootForPlace(target, state);
+        const old_root = try self.storageGenerationForPlace(target, state);
+        try self.refreshStorageGeneration(function, state, target);
+        const fresh_root = try self.storageGenerationForPlace(target, state);
         const storage = pointer_storage orelse return pointer;
         if (storage.eql(target)) return pointer;
 
@@ -1725,7 +1725,7 @@ pub const SafetyChecker = struct {
                 try self.diagnostics.add(function.location, .semantic, "relocate destination may be initialized", .{});
                 return false;
             },
-            .deinitialized => try self.refreshStorageRoot(function, state, destination),
+            .deinitialized => try self.refreshStorageGeneration(function, state, destination),
             .moved => {},
         }
         return true;
@@ -1737,9 +1737,9 @@ pub const SafetyChecker = struct {
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
     ) !facts.ValueFacts {
-        var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId).init(self.allocator.*);
+        var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(self.allocator.*);
         defer fresh_roots.deinit();
-        var fresh_capabilities = std.AutoHashMap(facts.FreshRootSource, facts.StorageCapabilityId).init(self.allocator.*);
+        var fresh_capabilities = std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId).init(self.allocator.*);
         defer fresh_capabilities.deinit();
         return self.instantiateOutputWithFresh(effect, arguments, state, &fresh_roots, &fresh_capabilities);
     }
@@ -1749,8 +1749,8 @@ pub const SafetyChecker = struct {
         effect: facts.ValueEffect,
         arguments: []const facts.ValueFacts,
         state: *FunctionState,
-        fresh_roots: *std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId),
-        fresh_capabilities: *std.AutoHashMap(facts.FreshRootSource, facts.StorageCapabilityId),
+        fresh_roots: *std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId),
+        fresh_capabilities: *std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId),
     ) !facts.ValueFacts {
         var result: facts.ValueFacts = .{};
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator.*);
@@ -1797,7 +1797,7 @@ pub const SafetyChecker = struct {
             if (arguments[path.input_index].referenced_place) |argument_place| {
                 var target = argument_place;
                 for (path.projections) |projection| target = try self.projectedPlace(target, projection);
-                try appendDependency(&dependencies, .{ .root = try self.storageRootForPlace(target, state) });
+                try appendDependency(&dependencies, .{ .root = try self.storageGenerationForPlace(target, state) });
                 referenced_place = target;
             }
         }
@@ -2029,7 +2029,7 @@ pub const SafetyChecker = struct {
         return false;
     }
 
-    fn instantiateFreshStorageCapability(self: *SafetyChecker, source: facts.FreshRootSource, state: *FunctionState, fresh: *std.AutoHashMap(facts.FreshRootSource, facts.StorageCapabilityId)) !facts.StorageCapabilityId {
+    fn instantiateFreshStorageCapability(self: *SafetyChecker, source: facts.FreshEffectSource, state: *FunctionState, fresh: *std.AutoHashMap(facts.FreshEffectSource, facts.StorageCapabilityId)) !facts.StorageCapabilityId {
         _ = self;
         if (fresh.get(source)) |capability| return capability;
         const capability: facts.StorageCapabilityId = @enumFromInt(state.storage_capabilities.items.len);
@@ -2040,9 +2040,9 @@ pub const SafetyChecker = struct {
 
     fn instantiateFreshRoot(
         self: *SafetyChecker,
-        source: facts.FreshRootSource,
+        source: facts.FreshEffectSource,
         state: *FunctionState,
-        fresh_roots: *std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId),
+        fresh_roots: *std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId),
     ) !facts.ValidityRootId {
         _ = self;
         if (fresh_roots.get(source)) |root| return root;
@@ -2182,13 +2182,13 @@ pub const SafetyChecker = struct {
             const id: facts.ValidityRootId = @enumFromInt(index);
             const left_state: @TypeOf(left.tracker.roots.items[0].state) = if (index < left.tracker.roots.items.len)
                 left.tracker.roots.items[index].state
-            else if (self.storageRootWasOnlyMaterializedIn(id, right, left))
+            else if (self.storageGenerationWasOnlyMaterializedIn(id, right, left))
                 .alive
             else
                 .dead;
             const right_state: @TypeOf(right.tracker.roots.items[0].state) = if (index < right.tracker.roots.items.len)
                 right.tracker.roots.items[index].state
-            else if (self.storageRootWasOnlyMaterializedIn(id, left, right))
+            else if (self.storageGenerationWasOnlyMaterializedIn(id, left, right))
                 .alive
             else
                 .dead;
@@ -2219,17 +2219,17 @@ pub const SafetyChecker = struct {
         }
         for (left.ownership_edges.items) |edge| try appendOwnershipEdge(&joined.ownership_edges, edge);
         for (right.ownership_edges.items) |edge| try appendOwnershipEdge(&joined.ownership_edges, edge);
-        try joined.storage_roots.appendSlice(left.storage_roots.items);
-        for (right.storage_roots.items) |candidate| {
+        try joined.storage_generations.appendSlice(left.storage_generations.items);
+        for (right.storage_generations.items) |candidate| {
             var found = false;
-            for (joined.storage_roots.items) |existing| if (existing.storage.eql(candidate.storage)) {
+            for (joined.storage_generations.items) |existing| if (existing.storage.eql(candidate.storage)) {
                 found = true;
                 break;
             };
-            if (!found) try joined.storage_roots.append(candidate);
+            if (!found) try joined.storage_generations.append(candidate);
         }
-        for (left.lexical_storage_roots.items) |root| try appendOwnedRoot(&joined.lexical_storage_roots, root);
-        for (right.lexical_storage_roots.items) |root| try appendOwnedRoot(&joined.lexical_storage_roots, root);
+        for (left.lexical_storage_generations.items) |root| try appendOwnedRoot(&joined.lexical_storage_generations, root);
+        for (right.lexical_storage_generations.items) |root| try appendOwnedRoot(&joined.lexical_storage_generations, root);
         for (left.opaque_storages.items) |opaque_storage| try self.mergeOpaqueStorage(&joined, opaque_storage.storage, opaque_storage.hidden_dependencies);
         for (right.opaque_storages.items) |opaque_storage| try self.mergeOpaqueStorage(&joined, opaque_storage.storage, opaque_storage.hidden_dependencies);
         for (left.choice_active.items) |candidate| for (right.choice_active.items) |other| {
@@ -2256,10 +2256,10 @@ pub const SafetyChecker = struct {
         destination.* = joined;
     }
 
-    /// Storage roots are compiler facts created lazily when a Place first has
+    /// Storage Generations are compiler facts created lazily when a Place first has
     /// its address taken. If only one branch needed that fact, the other branch
     /// still preserves the same generation when the Place existed there.
-    fn storageRootWasOnlyMaterializedIn(
+    fn storageGenerationWasOnlyMaterializedIn(
         self: *SafetyChecker,
         root: facts.ValidityRootId,
         materialized: *const FunctionState,
@@ -2267,12 +2267,12 @@ pub const SafetyChecker = struct {
     ) bool {
         _ = self;
         var storage: ?place.Place = null;
-        for (materialized.storage_roots.items) |entry| if (entry.root == root) {
+        for (materialized.storage_generations.items) |entry| if (entry.generation == root) {
             storage = entry.storage;
             break;
         };
         const target = storage orelse return false;
-        for (other.storage_roots.items) |entry| if (entry.storage.eql(target)) return false;
+        for (other.storage_generations.items) |entry| if (entry.storage.eql(target)) return false;
 
         var projection_count = target.projections.len;
         while (true) {
@@ -2296,7 +2296,7 @@ pub const SafetyChecker = struct {
         // inside the body cannot look like a conditionally created lifetime at
         // the CFG join.
         const existing_places = try self.allocator.dupe(facts.PlaceFacts, state.places.items);
-        for (existing_places) |place_facts| _ = try self.storageRootForPlace(place_facts.storage, state);
+        for (existing_places) |place_facts| _ = try self.storageGenerationForPlace(place_facts.storage, state);
         var entry = try state.clone(self.allocator.*);
         defer entry.deinit();
         var current = try state.clone(self.allocator.*);
@@ -2546,9 +2546,9 @@ pub const SafetyChecker = struct {
             const root: facts.ValidityRootId = @enumFromInt(state.tracker.roots.items.len - 1);
             if (rootIsStructurallyReferenced(state, root)) return;
             var lexical_index: usize = 0;
-            while (lexical_index < state.lexical_storage_roots.items.len) {
-                if (state.lexical_storage_roots.items[lexical_index] == root) {
-                    _ = state.lexical_storage_roots.orderedRemove(lexical_index);
+            while (lexical_index < state.lexical_storage_generations.items.len) {
+                if (state.lexical_storage_generations.items[lexical_index] == root) {
+                    _ = state.lexical_storage_generations.orderedRemove(lexical_index);
                 } else lexical_index += 1;
             }
             _ = state.tracker.roots.pop();
@@ -2817,16 +2817,16 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn storageRoot(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) !facts.ValidityRootId {
+    fn storageGeneration(self: *SafetyChecker, node: *const sg.SGNode, state: *FunctionState) !facts.ValidityRootId {
         const storage = try self.resolvePlace(node, state) orelse return state.tracker.establish(.fresh);
-        return self.storageRootForPlace(storage, state);
+        return self.storageGenerationForPlace(storage, state);
     }
 
-    fn storageRootForPlace(self: *SafetyChecker, storage: place.Place, state: *FunctionState) !facts.ValidityRootId {
+    fn storageGenerationForPlace(self: *SafetyChecker, storage: place.Place, state: *FunctionState) !facts.ValidityRootId {
         _ = self;
-        for (state.storage_roots.items) |entry| if (entry.storage.eql(storage)) return entry.root;
+        for (state.storage_generations.items) |entry| if (entry.storage.eql(storage)) return entry.generation;
         const root = try state.tracker.establish(.fresh);
-        try state.storage_roots.append(.{ .storage = storage, .root = root });
+        try state.storage_generations.append(.{ .storage = storage, .generation = root });
         return root;
     }
 
@@ -2854,7 +2854,7 @@ pub const SafetyChecker = struct {
 
     /// The trusted caller proved every opaque runtime value in this exact
     /// structural domain is gone. Generations and extracted provenance remain.
-    fn releaseOpaqueStorage(self: *SafetyChecker, state: *FunctionState, storage: place.Place) void {
+    fn markOpaqueStorageEmpty(self: *SafetyChecker, state: *FunctionState, storage: place.Place) void {
         _ = self;
         for (state.opaque_storages.items) |*opaque_storage| {
             if (!opaque_storage.storage.eql(storage)) continue;
@@ -2877,8 +2877,8 @@ pub const SafetyChecker = struct {
     ) bool {
         if (self.valueAtPlace(state, storage)) |storage_value|
             if (valueContainsOwnedRoot(storage_value, root) or valueDependsOnRoot(storage_value, root)) return true;
-        for (state.storage_roots.items) |entry|
-            if (storage.isPrefixOf(entry.storage) and entry.root == root) return true;
+        for (state.storage_generations.items) |entry|
+            if (storage.isPrefixOf(entry.storage) and entry.generation == root) return true;
         for (state.places.items) |entry|
             if (valueContainsOpaqueGeneration(entry.value, storage, root)) return true;
         return false;
@@ -2899,7 +2899,7 @@ pub const SafetyChecker = struct {
         state: *FunctionState,
         roots: []const facts.ValidityRootId,
     ) !bool {
-        // ValidityRoot termination is a transaction: opaque barriers are checked for
+        // Validity Root termination is a transaction: opaque barriers are checked for
         // the complete batch before any liveness fact changes.
         for (roots) |root| {
             var externally_hidden = false;
@@ -2918,46 +2918,46 @@ pub const SafetyChecker = struct {
         return true;
     }
 
-    fn refreshStorageRoot(self: *SafetyChecker, function: ?*const sg.FunctionDeclaration, state: *FunctionState, storage: place.Place) !void {
-        for (state.storage_roots.items) |entry| {
-            if (storage.isPrefixOf(entry.storage) and rootIsHidden(state, entry.root)) {
-                _ = try self.endRoot(function, state, entry.root);
+    fn refreshStorageGeneration(self: *SafetyChecker, function: ?*const sg.FunctionDeclaration, state: *FunctionState, storage: place.Place) !void {
+        for (state.storage_generations.items) |entry| {
+            if (storage.isPrefixOf(entry.storage) and rootIsHidden(state, entry.generation)) {
+                _ = try self.endRoot(function, state, entry.generation);
                 return;
             }
         }
         var refreshed = false;
         var index: usize = 0;
-        while (index < state.storage_roots.items.len) {
-            const entry = state.storage_roots.items[index];
+        while (index < state.storage_generations.items.len) {
+            const entry = state.storage_generations.items[index];
             if (!storage.isPrefixOf(entry.storage)) {
                 index += 1;
                 continue;
             }
-            _ = try self.endRoot(function, state, entry.root);
+            _ = try self.endRoot(function, state, entry.generation);
             if (entry.storage.eql(storage)) {
-                state.storage_roots.items[index].root = try state.tracker.establish(.fresh);
+                state.storage_generations.items[index].generation = try state.tracker.establish(.fresh);
                 refreshed = true;
                 index += 1;
             } else {
                 // Descendant mappings name storage from the old generation.
                 // Drop them so a later address-of establishes each new root
                 // lazily, without reviving aliases to the old roots.
-                _ = state.storage_roots.orderedRemove(index);
+                _ = state.storage_generations.orderedRemove(index);
             }
         }
         if (!refreshed)
-            try state.storage_roots.append(.{ .storage = storage, .root = try state.tracker.establish(.fresh) });
+            try state.storage_generations.append(.{ .storage = storage, .generation = try state.tracker.establish(.fresh) });
     }
 
-    fn endStorageRootsUnder(self: *SafetyChecker, function: ?*const sg.FunctionDeclaration, state: *FunctionState, storage: place.Place) !void {
-        for (state.storage_roots.items) |entry| {
-            if (storage.isPrefixOf(entry.storage) and rootIsHidden(state, entry.root)) {
-                _ = try self.endRoot(function, state, entry.root);
+    fn endStorageGenerationsUnder(self: *SafetyChecker, function: ?*const sg.FunctionDeclaration, state: *FunctionState, storage: place.Place) !void {
+        for (state.storage_generations.items) |entry| {
+            if (storage.isPrefixOf(entry.storage) and rootIsHidden(state, entry.generation)) {
+                _ = try self.endRoot(function, state, entry.generation);
                 return;
             }
         }
-        for (state.storage_roots.items) |entry| {
-            if (storage.isPrefixOf(entry.storage)) _ = try self.endRoot(function, state, entry.root);
+        for (state.storage_generations.items) |entry| {
+            if (storage.isPrefixOf(entry.storage)) _ = try self.endRoot(function, state, entry.generation);
         }
     }
 
@@ -3211,8 +3211,8 @@ pub const SafetyChecker = struct {
         state: *const FunctionState,
     ) !void {
         for (value.dependencies) |dependency| {
-            if (!isLocalStorageRoot(function, state, dependency.root)) continue;
-            try self.diagnostics.add(function.location, .semantic, "function output cannot depend on a local storage root that ends before return", .{});
+            if (!isLocalStorageGeneration(function, state, dependency.root)) continue;
+            try self.diagnostics.add(function.location, .semantic, "function output cannot depend on a local storage generation that ends before return", .{});
             return;
         }
         // Aggregate outputs, including choice payloads such as
@@ -3347,18 +3347,18 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn oneFreshSource(self: *SafetyChecker, source: facts.FreshRootSource) ![]const facts.FreshRootSource {
-        const result = try self.allocator.alloc(facts.FreshRootSource, 1);
+    fn oneFreshSource(self: *SafetyChecker, source: facts.FreshEffectSource) ![]const facts.FreshEffectSource {
+        const result = try self.allocator.alloc(facts.FreshEffectSource, 1);
         result[0] = source;
         return result;
     }
 
     fn mergeFreshSources(
         self: *SafetyChecker,
-        left: []const facts.FreshRootSource,
-        right: []const facts.FreshRootSource,
-    ) ![]const facts.FreshRootSource {
-        var result = std.array_list.Managed(facts.FreshRootSource).init(self.allocator.*);
+        left: []const facts.FreshEffectSource,
+        right: []const facts.FreshEffectSource,
+    ) ![]const facts.FreshEffectSource {
+        var result = std.array_list.Managed(facts.FreshEffectSource).init(self.allocator.*);
         for (left) |source| try appendFreshSource(&result, source);
         for (right) |source| try appendFreshSource(&result, source);
         return result.toOwnedSlice();
@@ -3422,7 +3422,7 @@ pub const SafetyChecker = struct {
             right.input_post_states,
         )) orelse return null;
 
-        var fresh_map = std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource).init(self.allocator.*);
+        var fresh_map = std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource).init(self.allocator.*);
         defer fresh_map.deinit();
         const outputs = try self.allocator.alloc(facts.ValueEffect, left.outputs.len);
         for (left.outputs, right.outputs, 0..) |left_output, right_output, index| {
@@ -3511,7 +3511,7 @@ pub const SafetyChecker = struct {
             .initializedness = joinInitializedness(left.initializedness, right.initializedness),
             .value = value,
             .ends_previous_roots = left.ends_previous_roots or right.ends_previous_roots,
-            .refreshes_storage_root = left.refreshes_storage_root or right.refreshes_storage_root,
+            .refreshes_storage_generation = left.refreshes_storage_generation or right.refreshes_storage_generation,
             .requires_available_destination = left.requires_available_destination or right.requires_available_destination,
             .may_repopulate_opaque_storage = left.may_repopulate_opaque_storage or right.may_repopulate_opaque_storage,
         };
@@ -3548,7 +3548,7 @@ pub const SafetyChecker = struct {
         self: *SafetyChecker,
         left: facts.ValueEffect,
         right: facts.ValueEffect,
-        fresh_map: *std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource),
+        fresh_map: *std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource),
     ) !?facts.ValueEffect {
         if (left.integer_address != right.integer_address or
             left.foreign_storage != right.foreign_storage or
@@ -3935,7 +3935,7 @@ pub const SafetyChecker = struct {
                 continue;
             }
             const value = try self.substituteOutputWithOverride(function, post_state.value, arguments, symbolic_override);
-            try self.recordInputPostState(states, targets, post_state.initializedness, value, post_state.ends_previous_roots, post_state.refreshes_storage_root, post_state.requires_available_destination, post_state.may_repopulate_opaque_storage);
+            try self.recordInputPostState(states, targets, post_state.initializedness, value, post_state.ends_previous_roots, post_state.refreshes_storage_generation, post_state.requires_available_destination, post_state.may_repopulate_opaque_storage);
         }
     }
 
@@ -4597,7 +4597,7 @@ pub const SafetyChecker = struct {
     }
 
     fn dependencyOnlyEffect(self: *SafetyChecker, effect: facts.ValueEffect) !facts.ValueEffect {
-        var owned_sources = std.array_list.Managed(facts.FreshRootSource).init(self.allocator.*);
+        var owned_sources = std.array_list.Managed(facts.FreshEffectSource).init(self.allocator.*);
         try self.collectFreshOwnedSources(effect, &owned_sources);
         return self.dependencyOnlyEffectExcludingOwned(effect, owned_sources.items);
     }
@@ -4605,7 +4605,7 @@ pub const SafetyChecker = struct {
     fn collectFreshOwnedSources(
         self: *SafetyChecker,
         effect: facts.ValueEffect,
-        sources: *std.array_list.Managed(facts.FreshRootSource),
+        sources: *std.array_list.Managed(facts.FreshEffectSource),
     ) !void {
         for (effect.fresh_owned_roots) |source| try appendFreshSource(sources, source);
         for (effect.fields) |field| try self.collectFreshOwnedSources(field.value.*, sources);
@@ -4615,11 +4615,11 @@ pub const SafetyChecker = struct {
     fn dependencyOnlyEffectExcludingOwned(
         self: *SafetyChecker,
         effect: facts.ValueEffect,
-        owned_sources: []const facts.FreshRootSource,
+        owned_sources: []const facts.FreshEffectSource,
     ) !facts.ValueEffect {
         const input_dependencies = try self.allocator.dupe(facts.InputDependency, effect.input_dependencies);
         for (input_dependencies) |*dependency| dependency.transfers_ownership = false;
-        var fresh_dependencies = std.array_list.Managed(facts.FreshRootSource).init(self.allocator.*);
+        var fresh_dependencies = std.array_list.Managed(facts.FreshEffectSource).init(self.allocator.*);
         for (effect.fresh_dependencies) |source| {
             var owned = false;
             for (owned_sources) |owned_source| if (owned_source == source) {
@@ -4723,7 +4723,7 @@ pub const SafetyChecker = struct {
         } else joined.* = try branch.clone(self.allocator.*);
     }
 
-    fn recordInputPostState(self: *SafetyChecker, states: *std.array_list.Managed(facts.PlacePostState), targets: []const facts.InputPath, initializedness: value_state.Initializedness, value: facts.ValueEffect, ends_roots: bool, refreshes_storage_root: bool, requires_available_destination: bool, may_repopulate_opaque_storage: bool) !void {
+    fn recordInputPostState(self: *SafetyChecker, states: *std.array_list.Managed(facts.PlacePostState), targets: []const facts.InputPath, initializedness: value_state.Initializedness, value: facts.ValueEffect, ends_roots: bool, refreshes_storage_generation: bool, requires_available_destination: bool, may_repopulate_opaque_storage: bool) !void {
         _ = self;
         for (targets) |target| {
             var existing_state: ?*facts.PlacePostState = null;
@@ -4736,7 +4736,7 @@ pub const SafetyChecker = struct {
                 existing.initializedness = initializedness;
                 existing.value = value;
                 existing.ends_previous_roots = existing.ends_previous_roots or ends_roots;
-                existing.refreshes_storage_root = existing.refreshes_storage_root or refreshes_storage_root or (was_deinitialized and initializedness == .initialized);
+                existing.refreshes_storage_generation = existing.refreshes_storage_generation or refreshes_storage_generation or (was_deinitialized and initializedness == .initialized);
                 existing.requires_available_destination = existing.requires_available_destination or requires_available_destination;
                 existing.may_repopulate_opaque_storage = existing.may_repopulate_opaque_storage or may_repopulate_opaque_storage;
             } else try states.append(.{
@@ -4744,7 +4744,7 @@ pub const SafetyChecker = struct {
                 .initializedness = initializedness,
                 .value = value,
                 .ends_previous_roots = ends_roots,
-                .refreshes_storage_root = refreshes_storage_root,
+                .refreshes_storage_generation = refreshes_storage_generation,
                 .requires_available_destination = requires_available_destination,
                 .may_repopulate_opaque_storage = may_repopulate_opaque_storage,
             });
@@ -4783,7 +4783,7 @@ pub const SafetyChecker = struct {
                 merged.initializedness = joinInitializedness(left_state.initializedness, right_state.initializedness);
                 merged.value = try self.mergeValueEffects(left_state.value, right_state.value);
                 merged.ends_previous_roots = left_state.ends_previous_roots or right_state.ends_previous_roots;
-                merged.refreshes_storage_root = left_state.refreshes_storage_root or right_state.refreshes_storage_root;
+                merged.refreshes_storage_generation = left_state.refreshes_storage_generation or right_state.refreshes_storage_generation;
                 merged.requires_available_destination = left_state.requires_available_destination or right_state.requires_available_destination;
                 merged.may_repopulate_opaque_storage = left_state.may_repopulate_opaque_storage or right_state.may_repopulate_opaque_storage;
                 joinOpaqueOwnershipEffect(&merged, left_state, right_state);
@@ -5077,17 +5077,17 @@ pub const SafetyChecker = struct {
     }
 
     fn rebaseFreshSources(self: *SafetyChecker, effect: facts.ValueEffect, call_site: usize) !facts.ValueEffect {
-        const Context = struct { call_site: usize, source: facts.FreshRootSource };
+        const Context = struct { call_site: usize, source: facts.FreshEffectSource };
         var result = effect;
-        const dependencies = try self.allocator.alloc(facts.FreshRootSource, effect.fresh_dependencies.len);
+        const dependencies = try self.allocator.alloc(facts.FreshEffectSource, effect.fresh_dependencies.len);
         for (effect.fresh_dependencies, 0..) |source, index|
             dependencies[index] = std.hash.Wyhash.hash(0, std.mem.asBytes(&Context{ .call_site = call_site, .source = source }));
         result.fresh_dependencies = dependencies;
-        const owned_roots = try self.allocator.alloc(facts.FreshRootSource, effect.fresh_owned_roots.len);
+        const owned_roots = try self.allocator.alloc(facts.FreshEffectSource, effect.fresh_owned_roots.len);
         for (effect.fresh_owned_roots, 0..) |source, index|
             owned_roots[index] = std.hash.Wyhash.hash(0, std.mem.asBytes(&Context{ .call_site = call_site, .source = source }));
         result.fresh_owned_roots = owned_roots;
-        const capabilities = try self.allocator.alloc(facts.FreshRootSource, effect.fresh_storage_capabilities.len);
+        const capabilities = try self.allocator.alloc(facts.FreshEffectSource, effect.fresh_storage_capabilities.len);
         for (effect.fresh_storage_capabilities, 0..) |source, index|
             capabilities[index] = std.hash.Wyhash.hash(0, std.mem.asBytes(&Context{ .call_site = call_site, .source = source }));
         result.fresh_storage_capabilities = capabilities;
@@ -5128,7 +5128,7 @@ pub const SafetyChecker = struct {
         return paths;
     }
 
-    fn primitiveValueEffect(self: *SafetyChecker, primitive: sg.SafetyPrimitive, source: facts.FreshRootSource) !facts.ValueEffect {
+    fn primitiveValueEffect(self: *SafetyChecker, primitive: sg.SafetyPrimitive, source: facts.FreshEffectSource) !facts.ValueEffect {
         return switch (primitive) {
             .none => .{},
             .relocate => .{},
@@ -5168,7 +5168,7 @@ pub const SafetyChecker = struct {
         return result;
     }
 
-    fn ownedAllocationEffect(self: *SafetyChecker, source: facts.FreshRootSource) !facts.ValueEffect {
+    fn ownedAllocationEffect(self: *SafetyChecker, source: facts.FreshEffectSource) !facts.ValueEffect {
         const fields = try self.allocator.alloc(facts.OutputFieldEffect, 3);
         const data = try self.allocator.create(facts.ValueEffect);
         data.* = .{ .fresh_dependencies = try self.oneFreshSource(source) };
@@ -5460,9 +5460,9 @@ fn bindingIndex(bindings: []const *const sg.BindingDeclaration, target: *const s
 }
 
 fn alignFreshSources(
-    canonical: []const facts.FreshRootSource,
-    candidate: []const facts.FreshRootSource,
-    mapping: *std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource),
+    canonical: []const facts.FreshEffectSource,
+    candidate: []const facts.FreshEffectSource,
+    mapping: *std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource),
 ) !bool {
     for (canonical, candidate) |canonical_source, candidate_source| {
         if (mapping.get(candidate_source)) |existing| {
@@ -5605,8 +5605,8 @@ fn appendOwnershipEdge(
 fn rootIsStructurallyReferenced(state: *const SafetyChecker.FunctionState, root: facts.ValidityRootId) bool {
     for (state.places.items) |stored|
         if (valueContainsOwnedRoot(stored.value, root) or valueDependsOnRoot(stored.value, root)) return true;
-    for (state.storage_roots.items) |storage_root|
-        if (storage_root.root == root) return true;
+    for (state.storage_generations.items) |storage_generation|
+        if (storage_generation.generation == root) return true;
     for (state.opaque_storages.items) |opaque_storage|
         if (containsRoot(opaque_storage.hidden_dependencies, root)) return true;
     for (state.ownership_edges.items) |edge|
@@ -5628,14 +5628,14 @@ fn ownershipPathExistsFrom(
     return false;
 }
 
-fn isLocalStorageRoot(
+fn isLocalStorageGeneration(
     function: *const sg.FunctionDeclaration,
     state: *const SafetyChecker.FunctionState,
     root: facts.ValidityRootId,
 ) bool {
-    if (containsRoot(state.lexical_storage_roots.items, root)) return true;
-    for (state.storage_roots.items) |entry| {
-        if (entry.root != root) continue;
+    if (containsRoot(state.lexical_storage_generations.items, root)) return true;
+    for (state.storage_generations.items) |entry| {
+        if (entry.generation != root) continue;
         return bindingIndex(function.input_bindings, entry.storage.root) == null;
     }
     return false;
@@ -5667,7 +5667,7 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
     if (left.reachable != right.reachable or
         left.ownership_conflict_reported != right.ownership_conflict_reported or
         left.tracker.roots.items.len != right.tracker.roots.items.len or
-        left.lexical_storage_roots.items.len != right.lexical_storage_roots.items.len or
+        left.lexical_storage_generations.items.len != right.lexical_storage_generations.items.len or
         left.places.items.len != right.places.items.len or
         left.ownership_edges.items.len != right.ownership_edges.items.len or
         left.opaque_storages.items.len != right.opaque_storages.items.len or
@@ -5676,8 +5676,8 @@ fn statesEqual(left: *const SafetyChecker.FunctionState, right: *const SafetyChe
         left.choice_temporary_active.items.len != right.choice_temporary_active.items.len) return false;
     for (left.tracker.roots.items, right.tracker.roots.items) |a, b|
         if (a.state != b.state or a.owned_resource != b.owned_resource) return false;
-    for (left.lexical_storage_roots.items) |root|
-        if (!containsRoot(right.lexical_storage_roots.items, root)) return false;
+    for (left.lexical_storage_generations.items) |root|
+        if (!containsRoot(right.lexical_storage_generations.items, root)) return false;
     for (left.places.items) |left_place| {
         const right_place = findPlace(right.places.items, left_place.storage) orelse return false;
         if (left_place.initializedness != right_place.initializedness or !valueFactsEqual(left_place.value, right_place.value)) return false;
@@ -5794,7 +5794,7 @@ fn inputPostStatesEqual(left: []const facts.PlacePostState, right: []const facts
     if (left.len != right.len) return false;
     for (left, right) |a, b| {
         if (!inputPlaceTargetEqual(a.target, b.target) or a.initializedness != b.initializedness or
-            a.ends_previous_roots != b.ends_previous_roots or a.refreshes_storage_root != b.refreshes_storage_root or
+            a.ends_previous_roots != b.ends_previous_roots or a.refreshes_storage_generation != b.refreshes_storage_generation or
             a.requires_available_destination != b.requires_available_destination or
             a.may_repopulate_opaque_storage != b.may_repopulate_opaque_storage or
             a.opaque_ownership != b.opaque_ownership or
@@ -5922,7 +5922,7 @@ fn appendInputPath(list: *std.array_list.Managed(facts.InputPath), path: facts.I
     try list.append(path);
 }
 
-fn appendFreshSource(list: *std.array_list.Managed(facts.FreshRootSource), source: facts.FreshRootSource) !void {
+fn appendFreshSource(list: *std.array_list.Managed(facts.FreshEffectSource), source: facts.FreshEffectSource) !void {
     for (list.items) |existing| if (existing == source) return;
     try list.append(source);
 }
@@ -5999,9 +5999,9 @@ fn outputEffectEqual(left: facts.ValueEffect, right: facts.ValueEffect) bool {
     if (left.known_choice_variant != right.known_choice_variant or
         left.integer_address != right.integer_address or
         left.foreign_storage != right.foreign_storage or
-        !std.mem.eql(facts.FreshRootSource, left.fresh_dependencies, right.fresh_dependencies) or
-        !std.mem.eql(facts.FreshRootSource, left.fresh_owned_roots, right.fresh_owned_roots) or
-        !std.mem.eql(facts.FreshRootSource, left.fresh_storage_capabilities, right.fresh_storage_capabilities)) return false;
+        !std.mem.eql(facts.FreshEffectSource, left.fresh_dependencies, right.fresh_dependencies) or
+        !std.mem.eql(facts.FreshEffectSource, left.fresh_owned_roots, right.fresh_owned_roots) or
+        !std.mem.eql(facts.FreshEffectSource, left.fresh_storage_capabilities, right.fresh_storage_capabilities)) return false;
     if (left.input_dependencies.len != right.input_dependencies.len or
         left.input_places.len != right.input_places.len or
         left.input_place_values.len != right.input_place_values.len or
@@ -6064,8 +6064,8 @@ test "virtual summaries require exact ownership and align fresh root roles" {
     var checker = SafetyChecker.init(&allocator, undefined);
     defer checker.deinit();
 
-    const left_source: facts.FreshRootSource = 11;
-    const right_source: facts.FreshRootSource = 29;
+    const left_source: facts.FreshEffectSource = 11;
+    const right_source: facts.FreshEffectSource = 29;
     const compatible = try checker.mergeVirtualSafetySummary(
         .{ .outputs = &.{.{
             .fresh_dependencies = &.{left_source},
@@ -6140,7 +6140,7 @@ test "virtual input post states merge absent targets and caller-visible effects"
         .initializedness = .initialized,
         .value = .{ .input_dependencies = &.{.{ .path = .{ .input_index = 1 } }} },
         .ends_previous_roots = true,
-        .refreshes_storage_root = true,
+        .refreshes_storage_generation = true,
         .requires_available_destination = true,
         .may_repopulate_opaque_storage = true,
     };
@@ -6155,7 +6155,7 @@ test "virtual input post states merge absent targets and caller-visible effects"
     try std.testing.expect(inputPlaceTargetEqual(target, merged.value.input_place_values[0]));
     try std.testing.expect(containsInputDependency(merged.value.input_dependencies, .{ .path = .{ .input_index = 1 } }));
     try std.testing.expect(merged.ends_previous_roots);
-    try std.testing.expect(merged.refreshes_storage_root);
+    try std.testing.expect(merged.refreshes_storage_generation);
     try std.testing.expect(merged.requires_available_destination);
     try std.testing.expect(merged.may_repopulate_opaque_storage);
 
@@ -6663,11 +6663,11 @@ test "trivial input writes retain initialized post states" {
     try checker.recordInputPostState(&states, &.{target}, .initialized, .{}, false, false, false, false);
     try std.testing.expectEqual(@as(usize, 1), states.items.len);
     try std.testing.expectEqual(value_state.Initializedness.initialized, states.items[0].initializedness);
-    try std.testing.expect(!states.items[0].refreshes_storage_root);
+    try std.testing.expect(!states.items[0].refreshes_storage_generation);
 
     try checker.recordInputPostState(&states, &.{target}, .deinitialized, .{}, true, false, false, false);
     try checker.recordInputPostState(&states, &.{target}, .initialized, .{}, false, false, false, false);
-    try std.testing.expect(states.items[0].refreshes_storage_root);
+    try std.testing.expect(states.items[0].refreshes_storage_generation);
 }
 
 test "opaque ownership joins preserve conditional storage and reject ambiguity" {
@@ -7146,11 +7146,11 @@ test "lexical storage cleanup keeps repeated loop activations root-stable" {
 
     for (0..4) |_| {
         try checker.setPlace(&state, .{ .root = &binding }, .initialized, .{});
-        _ = try checker.storageRootForPlace(storage, &state);
+        _ = try checker.storageGenerationForPlace(storage, &state);
         try std.testing.expectEqual(@as(usize, 1), state.tracker.roots.items.len);
         try checker.endBlockLocalStorage(&function, &block, &state);
         try std.testing.expectEqual(@as(usize, 0), state.tracker.roots.items.len);
-        try std.testing.expectEqual(@as(usize, 0), state.storage_roots.items.len);
+        try std.testing.expectEqual(@as(usize, 0), state.storage_generations.items.len);
         try std.testing.expectEqual(@as(usize, 0), state.places.items.len);
     }
 }
@@ -7222,7 +7222,7 @@ test "relocation transfers storage capability into refreshed destination storage
         },
     });
     try state.places.append(.{ .storage = destination, .initializedness = .deinitialized });
-    const old_destination_root = try checker.storageRootForPlace(destination, &state);
+    const old_destination_root = try checker.storageGenerationForPlace(destination, &state);
 
     const arguments = [_]sg.StructValueLiteralField{ undefined, undefined };
     const values = [_]facts.ValueFacts{
@@ -7237,13 +7237,13 @@ test "relocation transfers storage capability into refreshed destination storage
     try std.testing.expectEqualSlices(facts.ValidityRootId, &.{resource}, destination_facts.value.owned_roots);
     try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{capability}, destination_facts.value.storage_capabilities);
     try std.testing.expectEqual(value_state.Initializedness.moved, checker.getPlace(&state, source).?.initializedness);
-    const new_destination_root = try checker.storageRootForPlace(destination, &state);
+    const new_destination_root = try checker.storageGenerationForPlace(destination, &state);
     try std.testing.expect(old_destination_root != new_destination_root);
     try std.testing.expectEqual(@as(@TypeOf(state.tracker.roots.items[@intFromEnum(old_destination_root)].state), .dead), state.tracker.roots.items[@intFromEnum(old_destination_root)].state);
     try std.testing.expectEqual(@as(@TypeOf(state.tracker.roots.items[@intFromEnum(resource)].state), .alive), state.tracker.roots.items[@intFromEnum(resource)].state);
 }
 
-test "refreshing storage roots invalidates earlier aliases" {
+test "refreshing Storage Generations invalidates earlier aliases" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -7253,14 +7253,14 @@ test "refreshing storage roots invalidates earlier aliases" {
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
     const storage = place.Place{ .root = undefined };
-    const old_root = try checker.storageRootForPlace(storage, &state);
+    const old_root = try checker.storageGenerationForPlace(storage, &state);
     const stale_alias = facts.ValueFacts{
         .dependencies = &.{.{ .root = old_root }},
         .referenced_place = storage,
     };
 
-    try checker.refreshStorageRoot(null, &state, storage);
-    const fresh_root = try checker.storageRootForPlace(storage, &state);
+    try checker.refreshStorageGeneration(null, &state, storage);
+    const fresh_root = try checker.storageGenerationForPlace(storage, &state);
     try std.testing.expect(old_root != fresh_root);
     try std.testing.expectEqual(.dead, state.tracker.roots.items[@intFromEnum(old_root)].state);
     try std.testing.expect(!state.tracker.dependenciesAreAlive(stale_alias));
@@ -7277,14 +7277,14 @@ test "releasing an opaque domain preserves its storage generation and extracted 
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
     const storage = place.Place{ .root = undefined };
-    const generation = try checker.storageRootForPlace(storage, &state);
+    const generation = try checker.storageGenerationForPlace(storage, &state);
     const hidden = try state.tracker.establish(.fresh);
     try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{hidden} });
     const extracted = facts.ValueFacts{ .dependencies = &.{.{ .root = generation }} };
 
-    checker.releaseOpaqueStorage(&state, storage);
+    checker.markOpaqueStorageEmpty(&state, storage);
 
-    try std.testing.expectEqual(generation, try checker.storageRootForPlace(storage, &state));
+    try std.testing.expectEqual(generation, try checker.storageGenerationForPlace(storage, &state));
     try std.testing.expect(state.tracker.dependenciesAreAlive(extracted));
     try std.testing.expectEqual(@as(usize, 0), state.opaque_storages.items[0].hidden_dependencies.len);
 }
@@ -7299,7 +7299,7 @@ test "stale opaque pointer provenance does not rebind to refreshed storage gener
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
     const storage = place.Place{ .root = undefined };
-    const old_root = try checker.storageRootForPlace(storage, &state);
+    const old_root = try checker.storageGenerationForPlace(storage, &state);
     const stale_pointer = facts.ValueFacts{
         .dependencies = &.{.{ .root = old_root }},
         .referenced_place = storage,
@@ -7307,8 +7307,8 @@ test "stale opaque pointer provenance does not rebind to refreshed storage gener
     };
     try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{} });
 
-    try checker.refreshStorageRoot(null, &state, storage);
-    const fresh_root = try checker.storageRootForPlace(storage, &state);
+    try checker.refreshStorageGeneration(null, &state, storage);
+    const fresh_root = try checker.storageGenerationForPlace(storage, &state);
     var remarked_stale_pointer = stale_pointer;
     try checker.addOpaqueAccessProvenance(&state, &remarked_stale_pointer, storage);
     var hidden = std.array_list.Managed(facts.ValidityRootId).init(allocator);
@@ -7330,10 +7330,10 @@ test "fresh opaque pointer provenance observes refreshed storage generation" {
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
     const storage = place.Place{ .root = undefined };
-    const old_root = try checker.storageRootForPlace(storage, &state);
+    const old_root = try checker.storageGenerationForPlace(storage, &state);
     try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{} });
-    try checker.refreshStorageRoot(null, &state, storage);
-    const fresh_root = try checker.storageRootForPlace(storage, &state);
+    try checker.refreshStorageGeneration(null, &state, storage);
+    const fresh_root = try checker.storageGenerationForPlace(storage, &state);
     const fresh_pointer = facts.ValueFacts{ .dependencies = &.{.{ .root = fresh_root }} };
 
     const provenance = try checker.currentOpaqueProvenancesForValue(&state, fresh_pointer);
@@ -7376,10 +7376,10 @@ test "opaque read envelopes preserve captured generations across refresh and joi
     defer state.deinit();
     var storage_binding: sg.BindingDeclaration = undefined;
     const storage = place.Place{ .root = &storage_binding };
-    const first = try checker.storageRootForPlace(storage, &state);
+    const first = try checker.storageGenerationForPlace(storage, &state);
     try state.opaque_storages.append(.{ .storage = storage, .hidden_dependencies = &.{} });
-    try checker.refreshStorageRoot(null, &state, storage);
-    const second = try checker.storageRootForPlace(storage, &state);
+    try checker.refreshStorageGeneration(null, &state, storage);
+    const second = try checker.storageGenerationForPlace(storage, &state);
 
     var child_type = sg.Type{ .builtin = .UInt8 };
     var pointer_type = sg.PointerType{ .mutability = undefined, .child = &child_type };
@@ -7462,7 +7462,7 @@ test "symbolic opaque read generations instantiate without polluting identity ou
     try std.testing.expect(valueDependsOnRoot(joined, first_generation));
     try std.testing.expect(valueDependsOnRoot(joined, second_generation));
 
-    var fresh_map = std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource).init(allocator);
+    var fresh_map = std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource).init(allocator);
     defer fresh_map.deinit();
     const virtual_joined = (try checker.mergeVirtualValueEffect(
         opaque_read,
@@ -7471,7 +7471,7 @@ test "symbolic opaque read generations instantiate without polluting identity ou
     )).?;
     try std.testing.expectEqual(@as(usize, 2), virtual_joined.opaque_generation_dependencies.len);
 
-    var virtual_identity_map = std.AutoHashMap(facts.FreshRootSource, facts.FreshRootSource).init(allocator);
+    var virtual_identity_map = std.AutoHashMap(facts.FreshEffectSource, facts.FreshEffectSource).init(allocator);
     defer virtual_identity_map.deinit();
     const virtual_identity = (try checker.mergeVirtualValueEffect(identity_effect, identity_effect, &virtual_identity_map)).?;
     const virtual_read = try checker.withOpaqueReadGenerationDependencies(
@@ -7525,7 +7525,7 @@ test "opaque input Place values hide pointee dependencies rather than pointer fa
         .owned_roots = &.{pointee_owned_root},
     });
 
-    var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId).init(allocator);
+    var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(allocator);
     defer fresh_roots.deinit();
     var hidden = std.array_list.Managed(facts.ValidityRootId).init(allocator);
     defer hidden.deinit();
@@ -7556,15 +7556,15 @@ test "opaque generation dependencies instantiate into hidden opaque dependencies
     defer state.deinit();
     var storage_binding: sg.BindingDeclaration = undefined;
     const storage = place.Place{ .root = &storage_binding };
-    const captured_generation = try checker.storageRootForPlace(storage, &state);
-    try checker.refreshStorageRoot(null, &state, storage);
-    const current_generation = try checker.storageRootForPlace(storage, &state);
+    const captured_generation = try checker.storageGenerationForPlace(storage, &state);
+    try checker.refreshStorageGeneration(null, &state, storage);
+    const current_generation = try checker.storageGenerationForPlace(storage, &state);
     try std.testing.expect(captured_generation != current_generation);
 
     const dependency_only = try checker.dependencyOnlyEffect(.{
         .opaque_generation_dependencies = try checker.oneInputPath(0, &.{}),
     });
-    var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId).init(allocator);
+    var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(allocator);
     defer fresh_roots.deinit();
     var hidden = std.array_list.Managed(facts.ValidityRootId).init(allocator);
     defer hidden.deinit();
@@ -7665,8 +7665,8 @@ test "reference restriction preserves provenance and only adds lifetime dependen
     lifetime_binding.* = undefined;
     const pointee = place.Place{ .root = pointee_binding };
     const lifetime = place.Place{ .root = lifetime_binding };
-    const pointee_root = try checker.storageRootForPlace(pointee, &state);
-    const lifetime_root = try checker.storageRootForPlace(lifetime, &state);
+    const pointee_root = try checker.storageGenerationForPlace(pointee, &state);
+    const lifetime_root = try checker.storageGenerationForPlace(lifetime, &state);
     const effect = try checker.restrictReferenceEffect();
     try std.testing.expectEqual(@as(usize, 2), effect.input_dependencies.len);
     try std.testing.expect(!effect.input_dependencies[0].transfers_ownership);
@@ -7694,7 +7694,7 @@ test "reference restriction preserves provenance and only adds lifetime dependen
     try std.testing.expect(!state.tracker.dependenciesAreAlive(input[0]));
 }
 
-test "refreshing a place drops descendant storage root mappings" {
+test "refreshing a Place drops descendant Storage Generation mappings" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -7708,19 +7708,19 @@ test "refreshing a place drops descendant storage root mappings" {
     const grandchild = place.Place{ .root = parent.root, .projections = &.{ .{ .field = 0 }, .{ .field = 1 } } };
     const sibling = place.Place{ .root = parent.root, .projections = &.{.{ .field = 2 }} };
     const indexed = place.Place{ .root = parent.root, .projections = &.{.{ .static_index = 3 }} };
-    const old_parent = try checker.storageRootForPlace(parent, &state);
-    const old_child = try checker.storageRootForPlace(child, &state);
-    const old_grandchild = try checker.storageRootForPlace(grandchild, &state);
-    const old_sibling = try checker.storageRootForPlace(sibling, &state);
-    const old_indexed = try checker.storageRootForPlace(indexed, &state);
+    const old_parent = try checker.storageGenerationForPlace(parent, &state);
+    const old_child = try checker.storageGenerationForPlace(child, &state);
+    const old_grandchild = try checker.storageGenerationForPlace(grandchild, &state);
+    const old_sibling = try checker.storageGenerationForPlace(sibling, &state);
+    const old_indexed = try checker.storageGenerationForPlace(indexed, &state);
     const stale_child = facts.ValueFacts{ .dependencies = &.{.{ .root = old_child }} };
 
-    try checker.refreshStorageRoot(null, &state, parent);
-    const fresh_parent = try checker.storageRootForPlace(parent, &state);
-    const fresh_child = try checker.storageRootForPlace(child, &state);
-    const fresh_grandchild = try checker.storageRootForPlace(grandchild, &state);
-    const fresh_sibling = try checker.storageRootForPlace(sibling, &state);
-    const fresh_indexed = try checker.storageRootForPlace(indexed, &state);
+    try checker.refreshStorageGeneration(null, &state, parent);
+    const fresh_parent = try checker.storageGenerationForPlace(parent, &state);
+    const fresh_child = try checker.storageGenerationForPlace(child, &state);
+    const fresh_grandchild = try checker.storageGenerationForPlace(grandchild, &state);
+    const fresh_sibling = try checker.storageGenerationForPlace(sibling, &state);
+    const fresh_indexed = try checker.storageGenerationForPlace(indexed, &state);
     try std.testing.expect(old_parent != fresh_parent);
     try std.testing.expect(old_child != fresh_child);
     try std.testing.expect(old_grandchild != fresh_grandchild);
@@ -7729,8 +7729,8 @@ test "refreshing a place drops descendant storage root mappings" {
     try std.testing.expect(!state.tracker.dependenciesAreAlive(stale_child));
 
     const sibling_before_field_refresh = fresh_sibling;
-    try checker.refreshStorageRoot(null, &state, child);
-    try std.testing.expectEqual(sibling_before_field_refresh, try checker.storageRootForPlace(sibling, &state));
+    try checker.refreshStorageGeneration(null, &state, child);
+    try std.testing.expectEqual(sibling_before_field_refresh, try checker.storageGenerationForPlace(sibling, &state));
 }
 
 test "opaque dependency projection cannot instantiate ownership or capabilities" {
@@ -7749,7 +7749,7 @@ test "opaque dependency projection cannot instantiate ownership or capabilities"
         .foreign_storage = true,
     });
     try std.testing.expect(!projected.input_dependencies[0].transfers_ownership);
-    try std.testing.expectEqualSlices(facts.FreshRootSource, &.{11}, projected.fresh_dependencies);
+    try std.testing.expectEqualSlices(facts.FreshEffectSource, &.{11}, projected.fresh_dependencies);
     try std.testing.expectEqual(@as(usize, 0), projected.fresh_owned_roots.len);
     try std.testing.expectEqual(@as(usize, 0), projected.fresh_storage_capabilities.len);
     try std.testing.expect(!projected.integer_address);
@@ -7757,7 +7757,7 @@ test "opaque dependency projection cannot instantiate ownership or capabilities"
 
     var state = SafetyChecker.FunctionState.init(allocator);
     defer state.deinit();
-    var fresh_roots = std.AutoHashMap(facts.FreshRootSource, facts.ValidityRootId).init(allocator);
+    var fresh_roots = std.AutoHashMap(facts.FreshEffectSource, facts.ValidityRootId).init(allocator);
     defer fresh_roots.deinit();
     var hidden = std.array_list.Managed(facts.ValidityRootId).init(allocator);
     defer hidden.deinit();
@@ -7767,7 +7767,7 @@ test "opaque dependency projection cannot instantiate ownership or capabilities"
     try std.testing.expectEqual(@as(usize, 0), state.storage_capabilities.items.len);
 }
 
-test "opaque take recovers external dependencies without backing roots" {
+test "opaque move-out recovers external dependencies without backing roots" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -7780,17 +7780,17 @@ test "opaque take recovers external dependencies without backing roots" {
     const storage = place.Place{ .root = &binding };
     const backing = try state.tracker.establish(.fresh);
     state.tracker.roots.items[@intFromEnum(backing)].owned_resource = true;
-    const storage_generation = try checker.storageRootForPlace(storage, &state);
+    const storage_generation = try checker.storageGenerationForPlace(storage, &state);
     const external = try state.tracker.establish(.fresh);
     try checker.setPlace(&state, storage, .initialized, .{ .owned_roots = &.{backing} });
     try checker.mergeOpaqueStorage(&state, storage, &.{ backing, storage_generation, external });
 
-    const taken = try checker.instantiateOutput(.{
+    const moved_out = try checker.instantiateOutput(.{
         .opaque_storage_dependencies = try checker.oneInputPath(0, &.{}),
         .fresh_owned_roots = &.{91},
     }, &.{.{ .referenced_place = storage }}, &state);
-    try std.testing.expect(valueDependsOnRoot(taken, external));
-    try std.testing.expect(!valueDependsOnRoot(taken, backing));
-    try std.testing.expect(!valueDependsOnRoot(taken, storage_generation));
-    try std.testing.expectEqual(@as(usize, 1), taken.owned_roots.len);
+    try std.testing.expect(valueDependsOnRoot(moved_out, external));
+    try std.testing.expect(!valueDependsOnRoot(moved_out, backing));
+    try std.testing.expect(!valueDependsOnRoot(moved_out, storage_generation));
+    try std.testing.expectEqual(@as(usize, 1), moved_out.owned_roots.len);
 }

@@ -2986,7 +2986,7 @@ test "feature_tests/ownership/56_branch_ownership_cleanup_resolves" {
 
 test "feature_tests/ownership/57X_return_reference_to_local" {
     try buildExpectFailExact("tests/feature_tests/ownership/57X_return_reference_to_local",
-        \\tests/feature_tests/ownership/57X_return_reference_to_local/main.rg:1:1: error: function output cannot depend on a local storage root that ends before return
+        \\tests/feature_tests/ownership/57X_return_reference_to_local/main.rg:1:1: error: function output cannot depend on a local storage generation that ends before return
         \\  bad() -> (.result: &Int32) := {
         \\  ^
         \\
@@ -3060,14 +3060,14 @@ test "feature_tests/ownership/65_allocation_stores_stateful_allocator" {
 test "feature_tests/ownership/66X_allocation_stateful_allocator_escape" {
     try buildExpectFail(
         "tests/feature_tests/ownership/66X_allocation_stateful_allocator_escape",
-        "function output cannot depend on a local storage root that ends before return",
+        "function output cannot depend on a local storage generation that ends before return",
     );
 }
 
 test "feature_tests/ownership/67X_local_binding_summary_dependency" {
     try buildExpectFail(
         "tests/feature_tests/ownership/67X_local_binding_summary_dependency",
-        "function output cannot depend on a local storage root that ends before return",
+        "function output cannot depend on a local storage generation that ends before return",
     );
 }
 
@@ -3141,8 +3141,8 @@ test "feature_tests/ownership/80_arena_repeated_reset" {
     try run(test_path);
 }
 
-test "feature_tests/ownership/81_descendant_storage_roots" {
-    const test_path = "tests/feature_tests/ownership/81_descendant_storage_roots";
+test "feature_tests/ownership/81_descendant_storage_generations" {
+    const test_path = "tests/feature_tests/ownership/81_descendant_storage_generations";
     try expectSuccessfulBuild(test_path);
     try run(test_path);
 }
@@ -3423,15 +3423,15 @@ test "feature_tests/ownership/125X_visible_reference_use_after_invalidation" {
     );
 }
 
-test "feature_tests/ownership/126_opaque_store_external_dependency" {
-    const test_path = "tests/feature_tests/ownership/126_opaque_store_external_dependency";
+test "feature_tests/ownership/126_opaque_move_in_external_dependency" {
+    const test_path = "tests/feature_tests/ownership/126_opaque_move_in_external_dependency";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/127X_opaque_relocate_mutation_after_store" {
+test "feature_tests/ownership/127X_opaque_relocate_mutation_after_move_in" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/127X_opaque_relocate_mutation_after_store",
+        "tests/feature_tests/ownership/127X_opaque_relocate_mutation_after_move_in",
         "relocation would invalidate a hidden opaque dependency",
     );
 }
@@ -3483,8 +3483,8 @@ test "feature_tests/ownership/134X_opaque_local_aggregate_nested_wrapper" {
     );
 }
 
-test "feature_tests/ownership/135_opaque_store_in_exactly_once_codegen" {
-    const test_path = "tests/feature_tests/ownership/135_opaque_store_in_exactly_once_codegen";
+test "feature_tests/ownership/135_opaque_move_in_exactly_once_codegen" {
+    const test_path = "tests/feature_tests/ownership/135_opaque_move_in_exactly_once_codegen";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
@@ -4191,14 +4191,14 @@ test "feature_tests/polymorphism/28_virtual_foundation" {
 test "feature_tests/polymorphism/29X_virtual_dependency_escape" {
     try buildExpectFail(
         "tests/feature_tests/polymorphism/29X_virtual_dependency_escape",
-        "function output cannot depend on a local storage root that ends before return",
+        "function output cannot depend on a local storage generation that ends before return",
     );
 }
 
 test "feature_tests/polymorphism/30X_virtual_dependency_union" {
     try buildExpectFail(
         "tests/feature_tests/polymorphism/30X_virtual_dependency_union",
-        "function output cannot depend on a local storage root that ends before return",
+        "function output cannot depend on a local storage generation that ends before return",
     );
 }
 
@@ -4604,7 +4604,7 @@ test "feature_tests/ownership/269_loop_local_owning_cleanup" {
 test "feature_tests/ownership/270X_return_local_storage" {
     try buildExpectFail(
         "tests/feature_tests/ownership/270X_return_local_storage",
-        "function output cannot depend on a local storage root that ends before return",
+        "function output cannot depend on a local storage generation that ends before return",
     );
 }
 
@@ -4641,9 +4641,9 @@ test "feature_tests/ownership/275_opaque_wrapper_self_contained_owner" {
     try runExpect(test_path, 0);
 }
 
-test "feature_tests/ownership/276X_opaque_take_preserves_external_dependency" {
+test "feature_tests/ownership/276X_opaque_move_out_preserves_external_dependency" {
     try buildExpectFail(
-        "tests/feature_tests/ownership/276X_opaque_take_preserves_external_dependency",
+        "tests/feature_tests/ownership/276X_opaque_move_out_preserves_external_dependency",
         "reference depends on a root that has ended",
     );
 }
