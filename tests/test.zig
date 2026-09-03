@@ -1103,6 +1103,7 @@ test "feature_tests/basics/01_minimal_main" {
 
 test "usecase_tests/01_cat_cli" {
     const test_path = "tests/usecase_tests/01_cat_cli";
+    const expected_help = "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help.\n";
     const input_1 = try pathInTest(test_path, "input.txt");
     defer std.testing.allocator.free(input_1);
     const input_2 = try pathInTest(test_path, "input_2.txt");
@@ -1114,27 +1115,17 @@ test "usecase_tests/01_cat_cli" {
         0,
         "Hello from Argi.\nThis is a tiny cat clone.\nAnd now a second file.\nCat should concatenate both.\n",
     );
-}
-
-test "usecase_tests/01_cat_cli_help_short" {
-    const test_path = "tests/usecase_tests/01_cat_cli";
-    try expectSuccessfulBuild(test_path);
     try runExpectStdoutWithArgs(
         test_path,
         &[_][]const u8{"-h"},
         0,
-        "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help.\n",
+        expected_help,
     );
-}
-
-test "usecase_tests/01_cat_cli_help_long" {
-    const test_path = "tests/usecase_tests/01_cat_cli";
-    try expectSuccessfulBuild(test_path);
     try runExpectStdoutWithArgs(
         test_path,
         &[_][]const u8{"--help"},
         0,
-        "usage: <program> <file> [file...]\nConcatenate files to standard output.\n  -h, --help  Show this help.\n",
+        expected_help,
     );
 }
 
