@@ -126,15 +126,17 @@ pub const FrontendPipeline = struct {
                 self.diagnostics,
             );
             defer syntax_ctx.deinit();
-            const roots = try syntax_ctx.parse();
-            // This is the only pointer-bearing view retained for the legacy
-            // semantizer. The authoritative roots are recorded as NodeIds in
-            // the store above; using the parser's temporary view here keeps
-            // the adapter deliberately separate from store ownership.
-            try self.st_list.appendSlice(roots);
+            _ = try syntax_ctx.parse();
             const store = syntax_ctx.takeStore();
             self.st_node_count += store.count();
             try self.syntax_files.append(.{ .file_id = file_tokens.file_id, .store = store });
+            const file_syntax = &self.syntax_files.items[self.syntax_files.items.len - 1];
+            // This is the only pointer-bearing view retained for the legacy
+            // semantizer. Its order is reconstructed from the authoritative
+            // root NodeIds stored per file, never from parser-owned slices.
+            for (file_syntax.store.roots.items) |root| {
+                try self.st_list.append(file_syntax.store.getMut(root));
+            }
         }
         self.st_nodes = self.st_list.items;
         self.syntax_complete = true;
