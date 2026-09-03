@@ -334,6 +334,18 @@ pub const CodeGenerator = struct {
     pub fn generate(self: *CodeGenerator) !llvm.c.LLVMModuleRef {
         try self.predeclareGlobalBindings();
 
+        // Bodies are now semantized lazily, so their worklist order no longer
+        // follows source order. Declare every external ABI symbol first; an
+        // internal reachable body may otherwise encounter an external call
+        // before its declaration is visited.
+        for (self.ast) |n| {
+            switch (n.content) {
+                .function_declaration => |f| if (f.isExtern()) try self.genFunction(f),
+                .test_declaration => |t| if (t.function.isExtern()) try self.genFunction(@constCast(t.function)),
+                else => {},
+            }
+        }
+
         for (self.ast) |n| {
             _ = self.visitNode(n) catch |err| {
                 if (err == CodegenError.Reported) return CodegenError.CompilationFailed;
@@ -413,6 +425,8 @@ pub const CodeGenerator = struct {
                 return null;
             },
             .function_declaration => |f| {
+                if (f.has_declared_body and f.body == null) return null;
+                if (f.isExtern() and self.global_scope.lookup(try self.functionSymbolKey(f)) != null) return null;
                 self.genFunction(f) catch |e| {
                     if (e == CodegenError.Reported) return e;
                     try self.diags.add(n.location, .codegen, "error generating function {s}: {s}", .{ f.name, @errorName(e) });
@@ -421,6 +435,8 @@ pub const CodeGenerator = struct {
                 return null;
             },
             .test_declaration => |t| {
+                if (t.function.has_declared_body and t.function.body == null) return null;
+                if (t.function.isExtern() and self.global_scope.lookup(try self.functionSymbolKey(t.function)) != null) return null;
                 self.genFunction(@constCast(t.function)) catch |e| {
                     if (e == CodegenError.Reported) return e;
                     try self.diags.add(n.location, .codegen, "error generating test {s}: {s}", .{ t.name, @errorName(e) });
@@ -894,7 +910,7 @@ pub const CodeGenerator = struct {
             self.main_candidate = f;
         }
 
-        const is_extern = (f.body == null);
+        const is_extern = f.isExtern();
 
         var fn_ty: llvm.c.LLVMTypeRef = undefined;
         var return_ty: llvm.c.LLVMTypeRef = undefined;
@@ -2579,7 +2595,7 @@ pub const CodeGenerator = struct {
         if (fc.callee.safety_primitive == .trusted_opaque_relocate) return self.genOpaqueRelocate(fc);
         const key_name = try self.functionSymbolKey(fc.callee);
         const callee_decl = fc.callee;
-        const is_extern = (callee_decl.body == null);
+        const is_extern = callee_decl.isExtern();
         var sym_opt = self.global_scope.lookup(key_name);
 
         // ─────── llamadas INTERNAS (idénticas a antes) ───────────────────

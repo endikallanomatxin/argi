@@ -33,6 +33,7 @@ fn printHelp() void {
     std.debug.print("Usage: argi <command> [arguments] [options]\n", .{});
     std.debug.print("\nCommands:\n", .{});
     std.debug.print("  build [path] [flags]                   Build the current package, package path, or module path\n", .{});
+    std.debug.print("  check [path] [flags]                   Exhaustively validate every function body\n", .{});
     std.debug.print("  run [executable] [build flags]         Build and run the default or selected executable\n", .{});
     std.debug.print("  test <directory> [flags]               Build and run native Argi tests\n", .{});
     std.debug.print("  init <name>                            Create an executable package\n", .{});
@@ -90,6 +91,10 @@ pub fn main(init: std.process.Init) !void {
         const build_args = args[2..];
         build_cmd.compile(io, init.environ_map, build_args) catch |err| {
             exitCommandError("Build error", err);
+        };
+    } else if (std.mem.eql(u8, command, "check")) {
+        build_cmd.check(io, init.environ_map, args[2..]) catch |err| {
+            exitCommandError("Check error", err);
         };
     } else if (std.mem.eql(u8, command, "init")) {
         if (args.len < 3) {
