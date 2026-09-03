@@ -113,6 +113,15 @@ const Scope = struct {
 
 // ────────────────────────────────────────────── CodeGenerator ──
 pub const CodeGenerator = struct {
+    pub const Stats = struct {
+        semantic_functions: usize = 0,
+        llvm_functions_with_body: usize = 0,
+        reachable_llvm_functions_with_body: usize = 0,
+        basic_blocks: usize = 0,
+        instructions: usize = 0,
+        ir_bytes: usize = 0,
+    };
+
     pub const Options = struct {
         selected_test_name: ?[]const u8 = null,
     };
@@ -193,6 +202,91 @@ pub const CodeGenerator = struct {
             self.allocator.destroy(sc);
             s = prev;
         }
+    }
+
+    pub fn collectStats(self: *const CodeGenerator) !Stats {
+        var stats: Stats = .{};
+        for (self.ast) |node| switch (node.content) {
+            .function_declaration, .test_declaration => stats.semantic_functions += 1,
+            else => {},
+        };
+
+        var defined = std.AutoHashMap(llvm.c.LLVMValueRef, void).init(self.allocator.*);
+        defer defined.deinit();
+        var function = c.LLVMGetFirstFunction(self.module);
+        while (function != null) : (function = c.LLVMGetNextFunction(function)) {
+            if (c.LLVMGetFirstBasicBlock(function) == null) continue;
+            stats.llvm_functions_with_body += 1;
+            try defined.put(function, {});
+
+            var block = c.LLVMGetFirstBasicBlock(function);
+            while (block != null) : (block = c.LLVMGetNextBasicBlock(block)) {
+                stats.basic_blocks += 1;
+                var instruction = c.LLVMGetFirstInstruction(block);
+                while (instruction != null) : (instruction = c.LLVMGetNextInstruction(instruction))
+                    stats.instructions += 1;
+            }
+        }
+
+        var reachable = std.AutoHashMap(llvm.c.LLVMValueRef, void).init(self.allocator.*);
+        defer reachable.deinit();
+        var worklist = std.array_list.Managed(llvm.c.LLVMValueRef).init(self.allocator.*);
+        defer worklist.deinit();
+        // Start at the executable wrapper and conservatively retain every
+        // defined function whose address escapes a direct call. The latter
+        // covers indirect dispatch through generated virtual tables.
+        if (c.LLVMGetNamedFunction(self.module, "main")) |main_function| {
+            if (defined.contains(main_function)) {
+                try reachable.put(main_function, {});
+                try worklist.append(main_function);
+            }
+        }
+
+        function = c.LLVMGetFirstFunction(self.module);
+        while (function != null) : (function = c.LLVMGetNextFunction(function)) {
+            if (!defined.contains(function)) continue;
+            var use = c.LLVMGetFirstUse(function);
+            var address_taken = false;
+            while (use != null) : (use = c.LLVMGetNextUse(use)) {
+                const user = c.LLVMGetUser(use);
+                const instruction = c.LLVMIsAInstruction(user);
+                if (instruction == null or
+                    c.LLVMGetInstructionOpcode(instruction) != c.LLVMCall or
+                    c.LLVMGetCalledValue(instruction) != function)
+                {
+                    address_taken = true;
+                    break;
+                }
+            }
+            if (address_taken and !reachable.contains(function)) {
+                try reachable.put(function, {});
+                try worklist.append(function);
+            }
+        }
+
+        var next: usize = 0;
+        while (next < worklist.items.len) : (next += 1) {
+            const caller = worklist.items[next];
+            var block = c.LLVMGetFirstBasicBlock(caller);
+            while (block != null) : (block = c.LLVMGetNextBasicBlock(block)) {
+                var instruction = c.LLVMGetFirstInstruction(block);
+                while (instruction != null) : (instruction = c.LLVMGetNextInstruction(instruction)) {
+                    if (c.LLVMGetInstructionOpcode(instruction) != c.LLVMCall) continue;
+                    const callee = c.LLVMGetCalledValue(instruction);
+                    if (!defined.contains(callee) or reachable.contains(callee)) continue;
+                    try reachable.put(callee, {});
+                    try worklist.append(callee);
+                }
+            }
+        }
+        stats.reachable_llvm_functions_with_body = reachable.count();
+
+        const ir = c.LLVMPrintModuleToString(self.module);
+        if (ir != null) {
+            stats.ir_bytes = std.mem.span(ir).len;
+            c.LLVMDisposeMessage(ir);
+        }
+        return stats;
     }
 
     // ──── Scope helpers ─────────────────────────────────────────
