@@ -62,9 +62,10 @@ For `DynamicArray`, the intended operator surface stays split between:
 - `get_rw_pointer[]` for borrowed mutable access
 - `set[]` for assignment
 
-This is deliberate. `arr[i]` should keep meaning “produce a value under the
-normal copy rules”, while borrowed indexing remains explicit through `&place`
-and `$&place`.
+This is deliberate. `arr[i]` is a normal value use and therefore copies a
+named element implicitly only when its type implements `ImplicitlyCopyable`.
+Other duplication uses `copy(&arr[i])`, while borrowed indexing remains
+explicit through `&place` and `$&place`.
 
 Iteration follows the same access-mode split, but at the iterable layer rather
 than the iterator layer:

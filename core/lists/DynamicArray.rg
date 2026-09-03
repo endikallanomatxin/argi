@@ -67,7 +67,7 @@ copy #(.t: Type: InfalliblyCopyable) (
     .allocator: $&Allocator = #reach allocator, system.allocator,
 ) -> (.result: Errable#(.t: DynamicArray#(.t: t), .reasons: (..out_of_memory))) := {
     -- Copying an owning element still requires an explicit element copy
-    -- operation; reading the slot by value is only valid for copyable `t`.
+    -- operation; a plain slot read is insufficient for owning `t`.
     out :: DynamicArray#(.t: t)
     initialized ::= init#(.t: t)(.p = $&out, .allocator = allocator, .capacity = self&.length)
     if is(.value = initialized, .variant = ..error) {

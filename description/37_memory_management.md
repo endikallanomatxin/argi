@@ -9,10 +9,12 @@ no reference qualifier encodes all of these properties.
 ## Values, copy, and move
 
 A value contains its fields, references, temporal dependencies, and owned
-roots. Named values used by value request a semantically independent
-value. Trivial values copy directly. Resource types provide `copy` when
-independence requires work. Its allocators are ordinary arguments: explicit
-arguments have priority and omitted defaults may resolve through `#reach`.
+roots. A named value copies implicitly only when its type implements
+`ImplicitlyCopyable`. Other duplication is explicit through `copy(&value)`,
+and ownership transfer is explicit through `~value`. Resource types may
+provide fallible `copy` when independence requires work. Its allocators are
+ordinary arguments: explicit arguments have priority and omitted defaults may
+resolve through `#reach`.
 
 Copying a reference or non-owning view copies its dependency, never root
 ownership. An owning copy creates independent resources and roots rather than
