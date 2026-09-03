@@ -8,10 +8,11 @@ When passsing arguments to functions/structs:
 - $&value (MUT  in mojo). Reference and can mutate
 -   value (OWN  in mojo). Owned, can mutate
 
-Passing by value means requesting an independent value. For non-trivial types
-that should translate to an implicit call to `copy()`. If the type does not
-implement `copy()`, using it as a value argument is a compile error and the
-user must switch to `&` or `$&`.
+Passing a named value to a by-value argument performs an implicit copy only
+when its type implements `ImplicitlyCopyable`. Otherwise the caller must use
+`copy(&value)` to duplicate it or `~value` to transfer it. `&value` and
+`$&value` remain explicit at the call site when the signature expects a
+reference.
 
 
 Use:
@@ -43,8 +44,9 @@ write_to_file (.f: $&File, .content: String) -> () := {
 }
 ```
 
-In the first case `String` is copied on entry if needed. In the second case
-`File` is passed by mutable reference because files are not expected to be
+In the first case the caller must pass a temporary owned `String`, use
+`copy(&text)`, or transfer one with `~text`; `String` is not copied implicitly.
+In the second case `File` is passed by mutable reference because files are not
 copyable.
 
 > También tiene sentido usarlo en los access de los structs
@@ -123,10 +125,11 @@ copies of the value.
 
 ## Summary
 
-- `Type` means independent value semantics
+- `Type` means the callee acquires a value; named arguments copy implicitly
+  only when `ImplicitlyCopyable`, otherwise acquisition must be explicit
 - `&Type` means shared read access
-- `$&Type` means exclusive mutable access
-- non-copyable types cannot be passed as `Type`
+- `$&Type` means mutable read/write access, not exclusive or `noalias`
+- `~value` explicitly transfers a named value into a `Type` argument
 
 
 ## Reached Arguments

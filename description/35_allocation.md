@@ -142,9 +142,10 @@ my_map : HashMap#(.key: String, .value: Int32) = HashMap#(.key: String, .value: 
 )
 ```
 
-If `HashMap` provides `copy()`, then passing it by value or assigning it means
-creating an independent map. If it does not provide `copy()`, then it must be
-passed by `&` or `$&`.
+If `HashMap` provides `copy()`, callers can request an independent map with
+`copy(&map)`. It is copied implicitly only if it separately implements
+`ImplicitlyCopyable`, which an allocating map normally should not. Otherwise it
+can be borrowed with `&`/`$&` or transferred with `~map`.
 
 This separation is useful:
 

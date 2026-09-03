@@ -49,8 +49,8 @@ Allocation : Type = (
     -- The nominal type does not imply ownership, element type, shape, or view
     -- semantics.
     --
-    -- Copying an `Allocation` by value should not be allowed unless an
-    -- explicit `copy()` is provided by a higher-level owning type.
+    -- `Allocation` is move-only. A higher-level owner may provide its own
+    -- explicit `copy()` that acquires independent storage.
     --
     .data      : $&UInt8
     .size      : UIntNative
