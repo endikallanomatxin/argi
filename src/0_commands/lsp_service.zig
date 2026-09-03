@@ -171,12 +171,12 @@ pub const InlayHintsResult = struct {
 };
 
 const SyntaxFunctionDeclRef = struct {
-    node: *const st.STNode,
+    node: st.SyntaxRef,
     decl: st.FunctionDeclaration,
 };
 
 const SyntaxFunctionCallRef = struct {
-    node: *const st.STNode,
+    node: st.SyntaxRef,
     call: st.FunctionCall,
 };
 
@@ -226,7 +226,7 @@ const SemanticFieldAccessRef = struct {
 };
 
 const SyntaxTypeDeclRef = struct {
-    node: *const st.STNode,
+    node: st.SyntaxRef,
     name: st.Name,
 };
 
@@ -250,7 +250,7 @@ const SymbolTarget = union(SymbolTargetTag) {
 const ModuleAnalysis = struct {
     source_db: source_db.SourceDb,
     tokens: []const token.Token,
-    st_nodes: []const *st.STNode,
+    st_nodes: []const st.SyntaxRef,
     sg_nodes: []const *sg.SGNode,
     syntax_functions: []const SyntaxFunctionDeclRef,
     syntax_calls: []const SyntaxFunctionCallRef,
@@ -745,11 +745,11 @@ pub const LanguageService = struct {
             .source_db = pipeline.source_db,
         };
 
-        var stack = std.array_list.Managed(*const st.STNode).init(work);
+        var stack = std.array_list.Managed(st.SyntaxRef).init(work);
         defer stack.deinit();
         for (st_nodes) |n| try stack.append(n);
 
-        while (popOrNull(*const st.STNode, &stack)) |n| {
+        while (popOrNull(st.SyntaxRef, &stack)) |n| {
             switch (n.content) {
                 .function_declaration => |fd| {
                     try em.identAt(fd.name.location, TOKEN_INDEX.function, DECL);
@@ -1379,7 +1379,7 @@ pub const LanguageService = struct {
 };
 
 fn collectSyntaxRefs(
-    st_nodes: []const *st.STNode,
+    st_nodes: []const st.SyntaxRef,
     function_refs: *std.array_list.Managed(SyntaxFunctionDeclRef),
     call_refs: *std.array_list.Managed(SyntaxFunctionCallRef),
     operator_refs: *std.array_list.Managed(SyntaxOperatorRef),
@@ -1387,11 +1387,11 @@ fn collectSyntaxRefs(
     type_refs: *std.array_list.Managed(SyntaxTypeRef),
     binding_decl_refs: *std.array_list.Managed(SyntaxBindingDeclRef),
 ) !void {
-    var stack = std.array_list.Managed(*const st.STNode).init(function_refs.allocator);
+    var stack = std.array_list.Managed(st.SyntaxRef).init(function_refs.allocator);
     defer stack.deinit();
     for (st_nodes) |node| try stack.append(node);
 
-    while (popOrNull(*const st.STNode, &stack)) |node| {
+    while (popOrNull(st.SyntaxRef, &stack)) |node| {
         switch (node.content) {
             .function_declaration => |decl| {
                 try function_refs.append(.{ .node = node, .decl = decl });
@@ -1528,7 +1528,7 @@ fn collectSyntaxRefs(
 fn collectTypeRefsFromStructTypeLiteral(
     stl: st.StructTypeLiteral,
     type_refs: *std.array_list.Managed(SyntaxTypeRef),
-    stack: *std.array_list.Managed(*const st.STNode),
+    stack: *std.array_list.Managed(st.SyntaxRef),
 ) !void {
     for (stl.fields) |field| {
         if (field.type) |ty| try collectTypeRefsFromType(ty, type_refs);
