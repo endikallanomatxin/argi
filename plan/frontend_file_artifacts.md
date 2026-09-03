@@ -18,6 +18,12 @@ model while making their outputs suitable cache boundaries.
    forms can be migrated together; they are not serializable yet. Nodes use
    fixed pages while the adapter exists, avoiding a token-proportional reserve
    solely to keep legacy pointers stable; serialization will flatten the pages.
+   The stable target is a compact node header plus fixed-width index data and a
+   shared `extra_data: []u32` table. Optional node references use a sentinel;
+   variable-length child lists use half-open ranges into `extra_data`. Keep
+   small-list inline encodings as a later measured optimization rather than a
+   prerequisite for removing pointers. Roots already use the same range
+   representation intended for blocks and other child lists.
 4. **Persistent cache** — version and serialize the source hash, token stream,
    syntax store, and side tables. No artifact may contain arena pointers or
    borrowed source slices; textual token payloads will be source-relative

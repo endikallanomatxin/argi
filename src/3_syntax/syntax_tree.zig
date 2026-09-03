@@ -18,6 +18,28 @@ pub const STNode = struct {
 /// stores are always addressed together with their owning FileId.
 pub const NodeId = u32;
 
+pub const OptionalNodeId = enum(u32) {
+    none = std.math.maxInt(u32),
+    _,
+
+    pub fn fromOptional(id: ?NodeId) OptionalNodeId {
+        return if (id) |value| @enumFromInt(value) else .none;
+    }
+
+    pub fn unwrap(self: OptionalNodeId) ?NodeId {
+        return if (self == .none) null else @intFromEnum(self);
+    }
+};
+
+pub const ExtraIndex = u32;
+
+/// Half-open range in `SyntaxStore.extra_data`. Entries in a node range are
+/// NodeIds encoded as u32, so the backing bytes can be persisted verbatim.
+pub const NodeRange = struct {
+    start: ExtraIndex = 0,
+    end: ExtraIndex = 0,
+};
+
 /// Module-level reference to a node. Child references need only `NodeId`
 /// because syntax trees never cross file boundaries.
 pub const SyntaxRef = struct {
@@ -35,7 +57,8 @@ pub const SyntaxStore = struct {
     allocator: std.mem.Allocator,
     pages: std.array_list.Managed([]STNode),
     node_count: usize = 0,
-    roots: std.array_list.Managed(NodeId),
+    extra_data: std.array_list.Managed(u32),
+    roots: NodeRange = .{},
 
     pub const Storage = struct {
         logical_bytes: usize,
@@ -47,14 +70,14 @@ pub const SyntaxStore = struct {
         return .{
             .allocator = allocator,
             .pages = std.array_list.Managed([]STNode).init(allocator),
-            .roots = std.array_list.Managed(NodeId).init(allocator),
+            .extra_data = std.array_list.Managed(u32).init(allocator),
         };
     }
 
     pub fn deinit(self: *SyntaxStore) void {
         for (self.pages.items) |page| self.allocator.free(page);
         self.pages.deinit();
-        self.roots.deinit();
+        self.extra_data.deinit();
     }
 
     pub fn count(self: *const SyntaxStore) usize {
@@ -103,12 +126,29 @@ pub const SyntaxStore = struct {
         unreachable;
     }
 
-    pub fn appendRoot(self: *SyntaxStore, id: NodeId) !void {
-        try self.roots.append(id);
+    pub fn appendNodeList(self: *SyntaxStore, ids: []const NodeId) !NodeRange {
+        std.debug.assert(self.extra_data.items.len <= std.math.maxInt(ExtraIndex));
+        const start: ExtraIndex = @intCast(self.extra_data.items.len);
+        try self.extra_data.appendSlice(ids);
+        std.debug.assert(self.extra_data.items.len <= std.math.maxInt(ExtraIndex));
+        return .{ .start = start, .end = @intCast(self.extra_data.items.len) };
+    }
+
+    pub fn nodeList(self: *const SyntaxStore, range: NodeRange) []const NodeId {
+        return @ptrCast(self.extra_data.items[range.start..range.end]);
+    }
+
+    pub fn setRoots(self: *SyntaxStore, ids: []const NodeId) !void {
+        std.debug.assert(self.roots.start == self.roots.end);
+        self.roots = try self.appendNodeList(ids);
+    }
+
+    pub fn rootNodes(self: *const SyntaxStore) []const NodeId {
+        return self.nodeList(self.roots);
     }
 
     pub fn byteSize(self: *const SyntaxStore) usize {
-        return self.node_count * @sizeOf(STNode) + self.roots.items.len * @sizeOf(NodeId);
+        return self.node_count * @sizeOf(STNode) + self.extra_data.items.len * @sizeOf(u32);
     }
 
     /// Includes unused slots in fixed node pages and the capacities of the
@@ -120,7 +160,7 @@ pub const SyntaxStore = struct {
             .logical_bytes = self.byteSize(),
             .allocated_bytes = node_capacity * @sizeOf(STNode) +
                 self.pages.capacity * @sizeOf([]STNode) +
-                self.roots.capacity * @sizeOf(NodeId),
+                self.extra_data.capacity * @sizeOf(u32),
             .node_capacity = node_capacity,
         };
     }

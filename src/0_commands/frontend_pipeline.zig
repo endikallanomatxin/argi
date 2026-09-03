@@ -135,7 +135,7 @@ pub const FrontendPipeline = struct {
             // This is the only pointer-bearing view retained for the legacy
             // semantizer. Its order is reconstructed from the authoritative
             // root NodeIds stored per file, never from parser-owned slices.
-            for (file_syntax.store.roots.items) |root| {
+            for (file_syntax.store.rootNodes()) |root| {
                 try self.syntax_roots.append(.{ .file_id = file_syntax.file_id, .node_id = root });
                 try self.st_list.append(file_syntax.store.getMut(root));
             }

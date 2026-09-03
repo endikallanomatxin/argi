@@ -81,9 +81,11 @@ pub const Syntaxer = struct {
             }
             return err;
         };
-        for (self.st.items) |node| {
-            try self.store.appendRoot(self.store.idFromPtr(node));
-        }
+        var root_ids = std.array_list.Managed(syn.NodeId).init(self.allocator);
+        defer root_ids.deinit();
+        try root_ids.ensureTotalCapacity(self.st.items.len);
+        for (self.st.items) |node| root_ids.appendAssumeCapacity(self.store.idFromPtr(node));
+        try self.store.setRoots(root_ids.items);
         return self.st.items; // slice inmutable a devolver
     }
 
