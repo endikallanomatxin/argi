@@ -220,6 +220,7 @@ fn printCompilerStats(
     std.debug.print("Codegen\n", .{});
     std.debug.print("  semantic functions:             {d}\n", .{codegen_stats.semantic_functions});
     std.debug.print("  LLVM functions with body:       {d}\n", .{codegen_stats.llvm_functions_with_body});
+    std.debug.print("  LLVM function bodies pruned:    {d}\n", .{codegen_stats.pruned_llvm_function_bodies});
     std.debug.print("  reachable LLVM function bodies: {d}\n", .{codegen_stats.reachable_llvm_functions_with_body});
     std.debug.print("  basic blocks:                   {d}\n", .{codegen_stats.basic_blocks});
     std.debug.print("  instructions:                   {d}\n", .{codegen_stats.instructions});
