@@ -11,6 +11,23 @@ fn indent(lvl: usize) void {
     while (i < lvl) : (i += 1) std.debug.print("  ", .{});
 }
 
+threadlocal var active_store: ?*const syn.SyntaxStore = null;
+
+pub fn printNodeFromStore(store: *const syn.SyntaxStore, id: syn.NodeId, lvl: usize) void {
+    const previous = active_store;
+    active_store = store;
+    defer active_store = previous;
+    printNode(store.get(id).*, lvl);
+}
+
+fn printChildId(id: syn.NodeId, lvl: usize) void {
+    const store = active_store orelse {
+        std.debug.print("<unresolved node {d}>\n", .{id});
+        return;
+    };
+    printNode(store.get(id).*, lvl);
+}
+
 // ── impresión de tipos ──────────────────────────────────────────────────────
 fn printType(t: syn.Type, lvl: usize) void {
     switch (t) {
@@ -244,7 +261,7 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
         },
         .expression_statement => |expr| {
             std.debug.print("ExpressionStatement\n", .{});
-            printNode(expr.*, lvl + 1);
+            printChildId(expr, lvl + 1);
         },
 
         // ── IDENTIFIER & LITERAL ─────────────────────────────────────────
@@ -267,7 +284,7 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
         },
         .move_expression => |inner| {
             std.debug.print("MoveExpression\n", .{});
-            printNode(inner.*, lvl + 1);
+            printChildId(inner, lvl + 1);
         },
         .literal => |lit| printLiteral(lit),
         .pipe_expression => |pe| {
@@ -421,7 +438,7 @@ pub fn printNode(node: syn.STNode, lvl: usize) void {
             std.debug.print("Defer\n", .{});
             indent(lvl + 1);
             std.debug.print("expr:\n", .{});
-            printNode(df.*, lvl + 2);
+            printChildId(df, lvl + 2);
         },
         .keep_statement => |name| {
             std.debug.print("Keep {s}\n", .{name.string});

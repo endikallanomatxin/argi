@@ -562,7 +562,7 @@ pub const LanguageService = struct {
         defer syntax_type_refs.deinit();
         var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator.*);
         defer syntax_binding_decls.deinit();
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
+        try collectSyntaxRefs(pipeline.syntax_files.items, st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
 
         var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator.*);
         defer semantic_functions.deinit();
@@ -1381,7 +1381,15 @@ pub const LanguageService = struct {
     }
 };
 
+fn syntaxChild(syntax_files: []st.FileSyntax, file_id: source_db.FileId, id: st.NodeId) *const st.STNode {
+    for (syntax_files) |*file_syntax| {
+        if (file_syntax.file_id == file_id) return file_syntax.store.get(id);
+    }
+    unreachable;
+}
+
 fn collectSyntaxRefs(
+    syntax_files: []st.FileSyntax,
     st_nodes: []const *st.STNode,
     function_refs: *std.array_list.Managed(SyntaxFunctionDeclRef),
     call_refs: *std.array_list.Managed(SyntaxFunctionCallRef),
@@ -1445,7 +1453,7 @@ fn collectSyntaxRefs(
                 try collectTypeRefsFromType(default.ty, type_refs);
             },
             .assignment => |assign| try stack.append(assign.value),
-            .expression_statement => |expr| try stack.append(expr),
+            .expression_statement => |expr| try stack.append(syntaxChild(syntax_files, node.location.file, expr)),
             .pipe_expression => |pipe_expr| {
                 try stack.append(pipe_expr.left);
                 try stack.append(pipe_expr.right);
@@ -1515,7 +1523,8 @@ fn collectSyntaxRefs(
                 for (match_stmt.cases) |case| try stack.append(case.body);
             },
             .list_literal => |list| for (list.elements) |elem| try stack.append(elem),
-            .defer_statement => |expr| try stack.append(expr),
+            .defer_statement => |expr| try stack.append(syntaxChild(syntax_files, node.location.file, expr)),
+            .move_expression => |expr| try stack.append(syntaxChild(syntax_files, node.location.file, expr)),
             .keep_statement => {},
             .address_of => |addr| try stack.append(addr.value),
             .dereference => |expr| try stack.append(expr),

@@ -215,6 +215,10 @@ pub const Syntaxer = struct {
         return entry.ptr;
     }
 
+    fn nodeId(self: *const Syntaxer, node: *const syn.STNode) syn.NodeId {
+        return self.store.idFromPtr(node);
+    }
+
     fn parseSignedNumericLiteral(self: *Syntaxer) !*syn.STNode {
         const minus_loc = self.tokenLocation();
         self.advanceOne();
@@ -1180,7 +1184,7 @@ pub const Syntaxer = struct {
             const move_loc = t.location;
             self.advanceOne();
             const inner = try self.parsePrimary();
-            return try self.makeNode(.{ .move_expression = inner }, move_loc);
+            return try self.makeNode(.{ .move_expression = self.nodeId(inner) }, move_loc);
         }
 
         if (self.tokenIs(.ampersand) or self.tokenIs(.dollar)) {
@@ -1557,7 +1561,7 @@ pub const Syntaxer = struct {
             const ident = try self.parseIdentifier();
             if (std.mem.eql(u8, ident, "defer")) {
                 const expr = try self.parseExpression();
-                return try self.makeNode(.{ .defer_statement = expr }, hash_loc);
+                return try self.makeNode(.{ .defer_statement = self.nodeId(expr) }, hash_loc);
             }
             if (std.mem.eql(u8, ident, "keep")) {
                 const kept_name = try self.parseName();
@@ -1581,7 +1585,7 @@ pub const Syntaxer = struct {
 
         if (self.current().content != .identifier and self.currentCanStartBareExpressionStatement()) {
             const expr = try self.parseExpression();
-            return try self.makeNode(.{ .expression_statement = expr }, expr.location);
+            return try self.makeNode(.{ .expression_statement = self.nodeId(expr) }, expr.location);
         }
 
         const id_loc = self.tokenLocation();
@@ -1670,7 +1674,7 @@ pub const Syntaxer = struct {
                 );
                 const expr = try self.parsePostfix(call_node);
                 if (expr == call_node) return call_node;
-                return try self.makeNode(.{ .expression_statement = expr }, expr.location);
+                return try self.makeNode(.{ .expression_statement = self.nodeId(expr) }, expr.location);
             }
         }
 
@@ -1784,7 +1788,7 @@ pub const Syntaxer = struct {
 
         self.index = start_index;
         const expr = try self.parseExpression();
-        return try self.makeNode(.{ .expression_statement = expr }, expr.location);
+        return try self.makeNode(.{ .expression_statement = self.nodeId(expr) }, expr.location);
     }
 
     // ─────────────────────────────  SENTENCES  ──────────────────────────────
@@ -1963,7 +1967,7 @@ pub const Syntaxer = struct {
     // ─────────────────────────────  DEBUG  ──────────────────────────────────
     pub fn printST(self: *Syntaxer) void {
         std.debug.print("\nSYNTAX TREE\n", .{});
-        for (self.st.items) |n| synp.printNode(n.*, 0);
+        for (self.store.rootNodes()) |root| synp.printNodeFromStore(&self.store, root, 0);
         std.debug.print("\n", .{});
     }
 };

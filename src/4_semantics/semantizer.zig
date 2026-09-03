@@ -296,6 +296,13 @@ pub const Semantizer = struct {
         unreachable;
     }
 
+    fn syntaxChild(self: *const Semantizer, file_id: source_db.FileId, id: syn.NodeId) *syn.STNode {
+        for (self.syntax_files) |*file_syntax| {
+            if (file_syntax.file_id == file_id) return file_syntax.store.getMut(id);
+        }
+        unreachable;
+    }
+
     fn freshFunctionId(self: *Semantizer) u32 {
         const id = self.next_function_id;
         self.next_function_id += 1;
@@ -2926,7 +2933,7 @@ pub const Semantizer = struct {
             },
 
             .expression_statement => |expr| blk: {
-                const te = self.visitNode(expr.*, s) catch |err| {
+                const te = self.visitNode(self.syntaxChild(n.location.file, expr).*, s) catch |err| {
                     if (err == error.Reported) break :blk err;
                     try self.diags.add(
                         n.location,
@@ -2951,7 +2958,7 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
-            .move_expression => |inner| self.handleMove(inner, s, n.location) catch |err| blk: {
+            .move_expression => |inner| self.handleMove(self.syntaxChild(n.location.file, inner), s, n.location) catch |err| blk: {
                 if (err == error.Reported) break :blk err;
                 try self.diags.add(
                     n.location,
@@ -3233,7 +3240,7 @@ pub const Semantizer = struct {
                 break :blk err;
             },
 
-            .defer_statement => |expr| self.handleDefer(expr, s) catch |err| blk: {
+            .defer_statement => |expr| self.handleDefer(self.syntaxChild(n.location.file, expr), s) catch |err| blk: {
                 if (err != error.Reported) {
                     try self.diags.add(
                         n.location,

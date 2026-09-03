@@ -174,7 +174,11 @@ pub const FrontendPipeline = struct {
     /// not own or copy syntax nodes, and therefore cannot hide store bugs.
     pub fn printST(self: *const FrontendPipeline) void {
         std.debug.print("\nSYNTAX TREE\n", .{});
-        for (self.st_nodes) |node| syntax_tree_print.printNode(node.*, 0);
+        for (self.syntax_files.items) |*file_syntax| {
+            for (file_syntax.store.rootNodes()) |root| {
+                syntax_tree_print.printNodeFromStore(&file_syntax.store, root, 0);
+            }
+        }
         std.debug.print("\n", .{});
     }
 
