@@ -30,7 +30,7 @@ pub const FrontendPipeline = struct {
     io: std.Io,
     diagnostics: *diag.Diagnostics,
     options: Options,
-    source_db: source_db.SourceDb = .{},
+    source_db: *const source_db.SourceDb,
     token_files: std.array_list.Managed(FileTokens),
     st_list: std.array_list.Managed(*st.STNode),
     syntax_ctx: ?syntaxer.Syntaxer = null,
@@ -54,6 +54,7 @@ pub const FrontendPipeline = struct {
             .io = io,
             .diagnostics = diagnostics,
             .options = options,
+            .source_db = &diagnostics.source_db,
             .token_files = std.array_list.Managed(FileTokens).init(allocator),
             .st_list = std.array_list.Managed(*st.STNode).init(allocator),
         };
@@ -69,14 +70,13 @@ pub const FrontendPipeline = struct {
     pub fn tokenizeFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !void {
         for (self.token_files.items) |file_tokens| self.allocator.free(file_tokens.tokens);
         self.token_files.clearRetainingCapacity();
-        self.source_db = try source_db.SourceDb.init(self.allocator, files);
 
         for (files, 0..) |source_file, index| {
             var tokenizer_ctx = tokenizer.Tokenizer.init(
                 self.allocator,
                 self.diagnostics,
                 source_file.code,
-                source_file.path,
+                self.source_db.fileId(index),
             );
             _ = try tokenizer_ctx.tokenize();
             try self.token_files.append(.{
@@ -90,7 +90,12 @@ pub const FrontendPipeline = struct {
         self.st_list.clearRetainingCapacity();
         self.st_node_count = 0;
         for (self.token_files.items) |file_tokens| {
-            self.syntax_ctx = syntaxer.Syntaxer.init(self.allocator, file_tokens.tokens, self.diagnostics);
+            self.syntax_ctx = syntaxer.Syntaxer.init(
+                self.allocator,
+                file_tokens.tokens,
+                self.source_db.get(file_tokens.file_id).source,
+                self.diagnostics,
+            );
             const nodes = try self.syntax_ctx.?.parse();
             try self.st_list.appendSlice(nodes);
             self.st_node_count += self.syntax_ctx.?.nodeCount();

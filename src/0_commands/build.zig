@@ -147,13 +147,14 @@ fn parseFlags(args: []const []const u8) !BuildFlags {
     return parsed.flags;
 }
 
-fn printTokenList(files: []const frontend.FrontendPipeline.FileTokens) void {
+fn printTokenList(pipeline: *const frontend.FrontendPipeline) void {
     std.debug.print("\nTOKENS\n", .{});
     var index: usize = 0;
-    for (files) |file_tokens| {
+    for (pipeline.token_files.items) |file_tokens| {
         for (file_tokens.tokens) |t| {
             std.debug.print("{d}: ", .{index});
-            tokp.printTokenWithLocation(t, t.location);
+            const position = pipeline.source_db.lineColumn(t.location.file, t.location.offset);
+            tokp.printTokenWithLocation(t, pipeline.source_db.get(t.location.file).source, pipeline.source_db.path(t.location.file), position.line, position.column);
             index += 1;
         }
     }
@@ -667,7 +668,7 @@ fn compileResolvedPlan(
     const tokenize_start = nowNs(io);
     pipeline.tokenizeFiles(files.items) catch {
         timings.tokenize_ns = elapsedSince(io, tokenize_start);
-        if (flags.show_token_list) printTokenList(pipeline.token_files.items);
+        if (flags.show_token_list) printTokenList(&pipeline);
         dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
         return error.CompilationFailed;
     };
@@ -677,7 +678,7 @@ fn compileResolvedPlan(
     const syntax_start = nowNs(io);
     _ = pipeline.syntax() catch {
         timings.syntax_ns = elapsedSince(io, syntax_start);
-        if (flags.show_token_list) printTokenList(pipeline.token_files.items);
+        if (flags.show_token_list) printTokenList(&pipeline);
         if (pipeline.syntax_ctx) |*syntax_ctx| {
             if (flags.show_syntax_tree) syntax_ctx.printST();
         }
@@ -690,7 +691,7 @@ fn compileResolvedPlan(
     const semantizing_start = nowNs(io);
     const sg = pipeline.semantize() catch |err| {
         timings.semantizing_ns = elapsedSince(io, semantizing_start);
-        if (flags.show_token_list) printTokenList(pipeline.token_files.items);
+        if (flags.show_token_list) printTokenList(&pipeline);
         if (pipeline.syntax_ctx) |*syntax_ctx| {
             if (flags.show_syntax_tree) syntax_ctx.printST();
         }
@@ -706,7 +707,7 @@ fn compileResolvedPlan(
 
     // 6. Si hubo errores semánticos, parar antes de codegen ───────────────
     if (diagnostics.hasErrors()) {
-        if (flags.show_token_list) printTokenList(pipeline.token_files.items);
+        if (flags.show_token_list) printTokenList(&pipeline);
         if (pipeline.syntax_ctx) |*syntax_ctx| {
             if (flags.show_syntax_tree) syntax_ctx.printST();
         }
@@ -732,7 +733,7 @@ fn compileResolvedPlan(
     defer gen.deinit();
     const module = gen.generate() catch {
         timings.codegen_ns = elapsedSince(io, codegen_start);
-        if (flags.show_token_list) printTokenList(pipeline.token_files.items);
+        if (flags.show_token_list) printTokenList(&pipeline);
         if (pipeline.sem_ctx) |*semantizer_ctx| {
             if (flags.show_semantic_graph) semantizer_ctx.printSG();
         }

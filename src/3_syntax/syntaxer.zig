@@ -36,6 +36,7 @@ pub const SyntaxerError = error{
 // ─────────────────────────────────────────────────────────────────────────────
 pub const Syntaxer = struct {
     tokens: []const tok.Token,
+    source: []const u8,
     index: usize,
     allocator: std.mem.Allocator,
     st: std.array_list.Managed(*syn.STNode),
@@ -43,9 +44,10 @@ pub const Syntaxer = struct {
     parsing_pipe_rhs: bool,
     node_count: usize,
 
-    pub fn init(alloc: std.mem.Allocator, toks: []const tok.Token, diags: *diagnostic.Diagnostics) Syntaxer {
+    pub fn init(alloc: std.mem.Allocator, toks: []const tok.Token, source: []const u8, diags: *diagnostic.Diagnostics) Syntaxer {
         return .{
             .tokens = toks,
+            .source = source,
             .index = 0,
             .allocator = alloc,
             .st = std.array_list.Managed(*syn.STNode).init(alloc),
@@ -91,8 +93,51 @@ pub const Syntaxer = struct {
 
     fn currentIdentifierEquals(self: *Syntaxer, expected: []const u8) bool {
         return switch (self.current().content) {
-            .identifier => |name| std.mem.eql(u8, name, expected),
+            .identifier => |range| std.mem.eql(u8, range.slice(self.source), expected),
             else => false,
+        };
+    }
+
+    fn tokenText(self: *const Syntaxer, range: tok.TextRange) []const u8 {
+        return range.slice(self.source);
+    }
+
+    fn decodeStringLiteral(self: *Syntaxer, range: tok.TextRange) ![]const u8 {
+        const raw = self.tokenText(range);
+        if (std.mem.indexOfScalar(u8, raw, '\\') == null) return raw;
+        var decoded = std.array_list.Managed(u8).init(self.allocator);
+        var index: usize = 0;
+        while (index < raw.len) : (index += 1) {
+            if (raw[index] != '\\') {
+                try decoded.append(raw[index]);
+                continue;
+            }
+            index += 1;
+            const escaped = raw[index];
+            try decoded.append(switch (escaped) {
+                'n' => '\n',
+                't' => '\t',
+                'r' => '\r',
+                '\\' => '\\',
+                '"' => '"',
+                '0' => 0,
+                else => unreachable,
+            });
+        }
+        return try decoded.toOwnedSlice();
+    }
+
+    fn materializeLiteral(self: *Syntaxer, literal: tok.TokenLiteral) !tok.Literal {
+        return switch (literal) {
+            .bool_literal => |value| .{ .bool_literal = value },
+            .decimal_int_literal => |range| .{ .decimal_int_literal = self.tokenText(range) },
+            .hexadecimal_int_literal => |range| .{ .hexadecimal_int_literal = self.tokenText(range) },
+            .octal_int_literal => |range| .{ .octal_int_literal = self.tokenText(range) },
+            .binary_int_literal => |range| .{ .binary_int_literal = self.tokenText(range) },
+            .regular_float_literal => |range| .{ .regular_float_literal = self.tokenText(range) },
+            .scientific_float_literal => |range| .{ .scientific_float_literal = self.tokenText(range) },
+            .char_literal => |value| .{ .char_literal = value },
+            .string_literal => |range| .{ .string_literal = try self.decodeStringLiteral(range) },
         };
     }
 
@@ -171,12 +216,12 @@ pub const Syntaxer = struct {
         };
 
         const signed_literal = switch (literal) {
-            .decimal_int_literal => |text| tok.Literal{ .decimal_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
-            .hexadecimal_int_literal => |text| tok.Literal{ .hexadecimal_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
-            .octal_int_literal => |text| tok.Literal{ .octal_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
-            .binary_int_literal => |text| tok.Literal{ .binary_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
-            .regular_float_literal => |text| tok.Literal{ .regular_float_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
-            .scientific_float_literal => |text| tok.Literal{ .scientific_float_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
+            .decimal_int_literal => |range| tok.Literal{ .decimal_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{self.tokenText(range)}) },
+            .hexadecimal_int_literal => |range| tok.Literal{ .hexadecimal_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{self.tokenText(range)}) },
+            .octal_int_literal => |range| tok.Literal{ .octal_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{self.tokenText(range)}) },
+            .binary_int_literal => |range| tok.Literal{ .binary_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{self.tokenText(range)}) },
+            .regular_float_literal => |range| tok.Literal{ .regular_float_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{self.tokenText(range)}) },
+            .scientific_float_literal => |range| tok.Literal{ .scientific_float_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{self.tokenText(range)}) },
             else => {
                 try self.diags.add(minus_loc, .syntax, "expected numeric literal after unary '-'", .{});
                 return SyntaxerError.ExpectedIntLiteral;
@@ -194,7 +239,7 @@ pub const Syntaxer = struct {
             try self.diags.add(self.tokenLocation(), .syntax, "expected identifier, found '{s}'", .{@tagName(self.current().content)});
             return SyntaxerError.ExpectedIdentifier;
         }
-        const name = t.content.identifier;
+        const name = self.tokenText(t.content.identifier);
         self.advanceOne();
         return name;
     }
@@ -343,8 +388,8 @@ pub const Syntaxer = struct {
                     else => unreachable,
                 };
                 switch (lit) {
-                    .decimal_int_literal => |text| {
-                        break :length_blk std.fmt.parseInt(usize, text, 10) catch {
+                    .decimal_int_literal => |range| {
+                        break :length_blk std.fmt.parseInt(usize, self.tokenText(range), 10) catch {
                             try self.diags.add(len_loc, .syntax, "invalid array length literal", .{});
                             return SyntaxerError.ExpectedIntLiteral;
                         };
@@ -1168,7 +1213,7 @@ pub const Syntaxer = struct {
             const lit = self.current();
             const path = switch (lit.content) {
                 .literal => |literal| switch (literal) {
-                    .string_literal => |text| text,
+                    .string_literal => |range| try self.decodeStringLiteral(range),
                     else => return SyntaxerError.ExpectedStringLiteral,
                 },
                 else => return SyntaxerError.ExpectedStringLiteral,
@@ -1231,7 +1276,7 @@ pub const Syntaxer = struct {
             // ─── literal ────────────────────────────────────────────────────
             .literal => |lit| blk: {
                 self.advanceOne();
-                break :blk try self.makeNode(.{ .literal = lit }, t.location);
+                break :blk try self.makeNode(.{ .literal = try self.materializeLiteral(lit) }, t.location);
             },
 
             // ─── struct value literal o list literal ─────────────────────────────────
@@ -1401,7 +1446,8 @@ pub const Syntaxer = struct {
         self.advanceOne();
 
         switch (self.current().content) {
-            .identifier => |ident_name| {
+            .identifier => |ident_range| {
+                const ident_name = self.tokenText(ident_range);
                 if (std.mem.eql(u8, ident_name, "ExternFunction") or std.mem.eql(u8, ident_name, "CFunction")) {
                     self.advanceOne();
                     const ef = syn.FunctionDeclaration{
@@ -1617,7 +1663,8 @@ pub const Syntaxer = struct {
 
         // Abstract relations (implements/defaultsto)
         switch (self.current().content) {
-            .identifier => |kw| {
+            .identifier => |kw_range| {
+                const kw = self.tokenText(kw_range);
                 if (is_once) {
                     try self.diags.add(id_loc, .syntax, "once can only be used on function declarations", .{});
                     return SyntaxerError.ExpectedDeclarationOrAssignment;

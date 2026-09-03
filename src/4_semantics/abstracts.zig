@@ -885,10 +885,10 @@ fn appendRequirementSignature(
     try buf.appendSlice(")");
 }
 
-fn buildOverloadCandidatesText(name: []const u8, in_ty: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) !OwnedText {
+fn buildOverloadCandidatesText(name: []const u8, in_ty: sg.Type, s: *Scope, allocator: *const std.mem.Allocator, diags: *const diagnostic.Diagnostics) !OwnedText {
     return .{
         .allocator = allocator,
-        .bytes = try buildOverloadCandidatesString(name, in_ty, s, allocator),
+        .bytes = try buildOverloadCandidatesString(name, in_ty, s, allocator, diags),
     };
 }
 
@@ -901,7 +901,7 @@ fn reportMissingRequirement(
 ) !void {
     const exp_in = try buildExpectedInputWithConcrete(rq, ctx.concrete, allocator);
     const in_ty: sg.Type = .{ .struct_type = exp_in };
-    const candidates_result = buildOverloadCandidatesText(rq.name, in_ty, s, allocator) catch null;
+    const candidates_result = buildOverloadCandidatesText(rq.name, in_ty, s, allocator, diags) catch null;
     const candidates = if (candidates_result) |owned| owned.bytes else "";
     defer if (candidates_result) |owned| owned.deinit();
 
@@ -932,10 +932,11 @@ fn formatMissingRequirementText(
     concrete: sg.Type,
     s: *Scope,
     allocator: *const std.mem.Allocator,
+    diags: *const diagnostic.Diagnostics,
 ) !OwnedText {
     const exp_in = try buildExpectedInputWithConcrete(rq, concrete, allocator);
     const in_ty: sg.Type = .{ .struct_type = exp_in };
-    const candidates_result = buildOverloadCandidatesText(rq.name, in_ty, s, allocator) catch null;
+    const candidates_result = buildOverloadCandidatesText(rq.name, in_ty, s, allocator, diags) catch null;
     const candidates = if (candidates_result) |owned| owned.bytes else "";
     defer if (candidates_result) |owned| owned.deinit();
 
@@ -965,12 +966,13 @@ pub fn buildConformanceDetails(
     concrete: sg.Type,
     s: *Scope,
     allocator: *const std.mem.Allocator,
+    diags: *const diagnostic.Diagnostics,
 ) !?OwnedText {
     const info = s.lookupAbstractInfo(abs_name) orelse return null;
 
     for (info.requirements) |rq| {
         if (try existsFunctionForRequirement(info, rq, concrete, s, allocator)) continue;
-        return try formatMissingRequirementText(&rq, concrete, s, allocator);
+        return try formatMissingRequirementText(&rq, concrete, s, allocator, diags);
     }
 
     return null;
@@ -1031,7 +1033,7 @@ pub fn verifyAbstracts(s: *Scope, allocator: *const std.mem.Allocator, diags: *d
     if (any_error) return error.SymbolNotFound;
 }
 
-pub fn buildOverloadCandidatesString(name: []const u8, in_ty: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) ![]u8 {
+pub fn buildOverloadCandidatesString(name: []const u8, in_ty: sg.Type, s: *Scope, allocator: *const std.mem.Allocator, diags: *const diagnostic.Diagnostics) ![]u8 {
     var buf = std.array_list.Managed(u8).init(allocator.*);
     var cur: ?*Scope = s;
     var first: bool = true;
@@ -1045,10 +1047,11 @@ pub fn buildOverloadCandidatesString(name: []const u8, in_ty: sg.Type, s: *Scope
                 try buf.appendSlice("  - ");
                 try appendFunctionSignature(&buf, cand, s);
                 try buf.appendSlice("\n      file: ");
-                try buf.appendSlice(cand.location.file);
+                try buf.appendSlice(diags.path(cand.location));
                 try buf.appendSlice(":");
                 var line_col_buf: [32]u8 = undefined;
-                const line_col = std.fmt.bufPrint(&line_col_buf, "{d}:{d}", .{ cand.location.line, cand.location.column }) catch "?";
+                const position = diags.lineColumn(cand.location);
+                const line_col = std.fmt.bufPrint(&line_col_buf, "{d}:{d}", .{ position.line, position.column }) catch "?";
                 try buf.appendSlice(line_col);
             }
         }
