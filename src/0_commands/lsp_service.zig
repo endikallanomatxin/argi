@@ -541,7 +541,7 @@ pub const LanguageService = struct {
         defer pipeline.deinit();
 
         const sg_nodes = pipeline.semantizeFiles(files) catch |err| {
-            if (pipeline.syntax_ctx == null) {
+            if (!pipeline.syntax_complete) {
                 log.err("syntaxing failed for '{s}': {s}", .{ doc.path, @errorName(err) });
             } else {
                 log.err("semantizing failed for '{s}': {s}", .{ doc.path, @errorName(err) });
@@ -580,6 +580,9 @@ pub const LanguageService = struct {
         defer semantic_field_accesses.deinit();
         try collectSemanticRefs(sg_nodes, &semantic_functions, &semantic_calls, &semantic_type_inits, &semantic_types, &semantic_binding_decls, &semantic_binding_uses, &semantic_field_accesses);
 
+        // Syntax reference records below borrow STNodes. Their arena is the
+        // request arena, so keep the per-file stores alive until it ends.
+        pipeline.disownSyntaxForArena();
         return .{
             .source_db = try pipeline.source_db.clone(analysis_allocator.*),
             .tokens = try analysis_allocator.dupe(token.Token, pipeline.tokensForPath(doc.path) orelse &.{}),

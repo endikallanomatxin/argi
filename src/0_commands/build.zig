@@ -6,6 +6,7 @@ const c = llvm.c;
 const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const token = @import("../2_tokens/token.zig");
+const syntax_tree = @import("../3_syntax/syntax_tree.zig");
 const link = @import("../5_codegen/link.zig");
 const codegen = @import("../5_codegen/codegen.zig");
 const tokp = @import("../2_tokens/token_print.zig");
@@ -226,6 +227,7 @@ fn printCompilerStats(
     std.debug.print("  tokens:       {d}\n", .{pipeline.tokenCount()});
     std.debug.print("  token bytes:  {d} ({d} each)\n", .{ pipeline.tokenStorageBytes(), @sizeOf(token.Token) });
     std.debug.print("  ST nodes:     {d}\n", .{pipeline.st_node_count});
+    std.debug.print("  syntax store: {d} bytes ({d} per node)\n", .{ pipeline.syntaxStorageBytes(), @sizeOf(syntax_tree.STNode) });
     std.debug.print("  SG nodes:     {d}\n", .{pipeline.sg_node_count});
 
     std.debug.print("Types\n", .{});
@@ -679,9 +681,7 @@ fn compileResolvedPlan(
     _ = pipeline.syntax() catch {
         timings.syntax_ns = elapsedSince(io, syntax_start);
         if (flags.show_token_list) printTokenList(&pipeline);
-        if (pipeline.syntax_ctx) |*syntax_ctx| {
-            if (flags.show_syntax_tree) syntax_ctx.printST();
-        }
+        if (flags.show_syntax_tree) pipeline.printST();
         dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
         return error.CompilationFailed;
     };
@@ -692,9 +692,7 @@ fn compileResolvedPlan(
     const sg = pipeline.semantize() catch |err| {
         timings.semantizing_ns = elapsedSince(io, semantizing_start);
         if (flags.show_token_list) printTokenList(&pipeline);
-        if (pipeline.syntax_ctx) |*syntax_ctx| {
-            if (flags.show_syntax_tree) syntax_ctx.printST();
-        }
+        if (flags.show_syntax_tree) pipeline.printST();
         if (pipeline.sem_ctx) |*semantizer_ctx| {
             if (flags.show_semantic_graph) semantizer_ctx.printSG();
         }
@@ -708,9 +706,7 @@ fn compileResolvedPlan(
     // 6. Si hubo errores semánticos, parar antes de codegen ───────────────
     if (diagnostics.hasErrors()) {
         if (flags.show_token_list) printTokenList(&pipeline);
-        if (pipeline.syntax_ctx) |*syntax_ctx| {
-            if (flags.show_syntax_tree) syntax_ctx.printST();
-        }
+        if (flags.show_syntax_tree) pipeline.printST();
         if (pipeline.sem_ctx) |*semantizer_ctx| {
             if (flags.show_semantic_graph) semantizer_ctx.printSG();
         }

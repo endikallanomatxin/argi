@@ -13,6 +13,91 @@ pub const STNode = struct {
     content: Content,
 };
 
+/// Stable index into one file's syntax artifact. Index zero is a valid node;
+/// stores are always addressed together with their owning FileId.
+pub const NodeId = u32;
+
+/// Dense ownership for syntax nodes. Fixed-size pages keep the legacy adapter's
+/// pointers stable without reserving memory proportional to all tokens. NodeId
+/// remains a linear index, so serialization can flatten pages without changing
+/// any reference.
+pub const SyntaxStore = struct {
+    pub const page_capacity = 256;
+
+    allocator: std.mem.Allocator,
+    pages: std.array_list.Managed([]STNode),
+    node_count: usize = 0,
+    roots: std.array_list.Managed(NodeId),
+
+    pub fn init(allocator: std.mem.Allocator) SyntaxStore {
+        return .{
+            .allocator = allocator,
+            .pages = std.array_list.Managed([]STNode).init(allocator),
+            .roots = std.array_list.Managed(NodeId).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *SyntaxStore) void {
+        for (self.pages.items) |page| self.allocator.free(page);
+        self.pages.deinit();
+        self.roots.deinit();
+    }
+
+    pub fn count(self: *const SyntaxStore) usize {
+        return self.node_count;
+    }
+
+    pub fn append(self: *SyntaxStore, node: STNode) !struct { id: NodeId, ptr: *STNode } {
+        const index = self.node_count;
+        std.debug.assert(index <= std.math.maxInt(NodeId));
+        const page_index = index / page_capacity;
+        const item_index = index % page_capacity;
+        if (page_index == self.pages.items.len) {
+            const page = try self.allocator.alloc(STNode, page_capacity);
+            errdefer self.allocator.free(page);
+            try self.pages.append(page);
+        }
+        self.pages.items[page_index][item_index] = node;
+        self.node_count += 1;
+        return .{ .id = @intCast(index), .ptr = &self.pages.items[page_index][item_index] };
+    }
+
+    pub fn get(self: *const SyntaxStore, id: NodeId) *const STNode {
+        const index: usize = id;
+        std.debug.assert(index < self.node_count);
+        return &self.pages.items[index / page_capacity][index % page_capacity];
+    }
+
+    pub fn getMut(self: *SyntaxStore, id: NodeId) *STNode {
+        const index: usize = id;
+        std.debug.assert(index < self.node_count);
+        return &self.pages.items[index / page_capacity][index % page_capacity];
+    }
+
+    pub fn idFromPtr(self: *const SyntaxStore, node: *const STNode) NodeId {
+        const current = @intFromPtr(node);
+        for (self.pages.items, 0..) |page, page_index| {
+            const first = @intFromPtr(page.ptr);
+            const end = first + page.len * @sizeOf(STNode);
+            if (current < first or current >= end) continue;
+            const offset = current - first;
+            std.debug.assert(offset % @sizeOf(STNode) == 0);
+            const index = page_index * page_capacity + offset / @sizeOf(STNode);
+            std.debug.assert(index < self.node_count);
+            return @intCast(index);
+        }
+        unreachable;
+    }
+
+    pub fn appendRoot(self: *SyntaxStore, id: NodeId) !void {
+        try self.roots.append(id);
+    }
+
+    pub fn byteSize(self: *const SyntaxStore) usize {
+        return self.node_count * @sizeOf(STNode) + self.roots.items.len * @sizeOf(NodeId);
+    }
+};
+
 pub const Name = struct {
     string: []const u8,
     location: tok.Location,

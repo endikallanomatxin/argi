@@ -39,10 +39,10 @@ pub const Syntaxer = struct {
     source: []const u8,
     index: usize,
     allocator: std.mem.Allocator,
+    store: syn.SyntaxStore,
     st: std.array_list.Managed(*syn.STNode),
     diags: *diagnostic.Diagnostics,
     parsing_pipe_rhs: bool,
-    node_count: usize,
 
     pub fn init(alloc: std.mem.Allocator, toks: []const tok.Token, source: []const u8, diags: *diagnostic.Diagnostics) Syntaxer {
         return .{
@@ -50,15 +50,26 @@ pub const Syntaxer = struct {
             .source = source,
             .index = 0,
             .allocator = alloc,
+            .store = syn.SyntaxStore.init(alloc),
             .st = std.array_list.Managed(*syn.STNode).init(alloc),
             .diags = diags,
             .parsing_pipe_rhs = false,
-            .node_count = 0,
         };
     }
 
     pub fn nodeCount(self: *const Syntaxer) usize {
-        return self.node_count;
+        return self.store.count();
+    }
+
+    pub fn deinit(self: *Syntaxer) void {
+        self.store.deinit();
+        self.st.deinit();
+    }
+
+    pub fn takeStore(self: *Syntaxer) syn.SyntaxStore {
+        const store = self.store;
+        self.store = syn.SyntaxStore.init(self.allocator);
+        return store;
     }
 
     pub fn parse(self: *Syntaxer) ![]const *syn.STNode {
@@ -70,6 +81,9 @@ pub const Syntaxer = struct {
             }
             return err;
         };
+        for (self.st.items) |node| {
+            try self.store.appendRoot(self.store.idFromPtr(node));
+        }
         return self.st.items; // slice inmutable a devolver
     }
 
@@ -195,11 +209,8 @@ pub const Syntaxer = struct {
 
     // ─────────────────────────────── node helpers ────────────────────────────
     fn makeNode(self: *Syntaxer, c: syn.Content, l: tok.Location) !*syn.STNode {
-        const n = try self.allocator.create(syn.STNode);
-        n.*.content = c;
-        n.*.location = l;
-        self.node_count += 1;
-        return n;
+        const entry = try self.store.append(.{ .content = c, .location = l });
+        return entry.ptr;
     }
 
     fn parseSignedNumericLiteral(self: *Syntaxer) !*syn.STNode {
