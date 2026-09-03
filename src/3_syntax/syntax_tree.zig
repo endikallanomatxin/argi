@@ -29,6 +29,12 @@ pub const SyntaxStore = struct {
     node_count: usize = 0,
     roots: std.array_list.Managed(NodeId),
 
+    pub const Storage = struct {
+        logical_bytes: usize,
+        allocated_bytes: usize,
+        node_capacity: usize,
+    };
+
     pub fn init(allocator: std.mem.Allocator) SyntaxStore {
         return .{
             .allocator = allocator,
@@ -95,6 +101,20 @@ pub const SyntaxStore = struct {
 
     pub fn byteSize(self: *const SyntaxStore) usize {
         return self.node_count * @sizeOf(STNode) + self.roots.items.len * @sizeOf(NodeId);
+    }
+
+    /// Includes unused slots in fixed node pages and the capacities of the
+    /// store's own index arrays. It intentionally excludes allocator-private
+    /// bookkeeping and the temporary pointer adapter.
+    pub fn storage(self: *const SyntaxStore) Storage {
+        const node_capacity = self.pages.items.len * page_capacity;
+        return .{
+            .logical_bytes = self.byteSize(),
+            .allocated_bytes = node_capacity * @sizeOf(STNode) +
+                self.pages.capacity * @sizeOf([]STNode) +
+                self.roots.capacity * @sizeOf(NodeId),
+            .node_capacity = node_capacity,
+        };
     }
 };
 

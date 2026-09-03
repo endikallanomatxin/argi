@@ -30,6 +30,19 @@ pub const FrontendPipeline = struct {
         store: st.SyntaxStore,
     };
 
+    pub const SyntaxStorage = struct {
+        logical_bytes: usize = 0,
+        allocated_bytes: usize = 0,
+        nodes: usize = 0,
+        node_capacity: usize = 0,
+
+        pub fn utilizationPercent(self: SyntaxStorage) f64 {
+            if (self.node_capacity == 0) return 100.0;
+            return @as(f64, @floatFromInt(self.nodes)) * 100.0 /
+                @as(f64, @floatFromInt(self.node_capacity));
+        }
+    };
+
     pub const Options = struct {
         semantizer: semantizer.SemantizerOptions = .{},
         collect_stats: bool = false,
@@ -138,12 +151,19 @@ pub const FrontendPipeline = struct {
         return self.tokenCount() * @sizeOf(token.Token);
     }
 
-    /// Syntax nodes and roots are allocated densely in each SyntaxStore. Child
-    /// tables are still legacy pointer slices during the adapter migration.
-    pub fn syntaxStorageBytes(self: *const FrontendPipeline) usize {
-        var bytes: usize = 0;
-        for (self.syntax_files.items) |file_syntax| bytes += file_syntax.store.byteSize();
-        return bytes;
+    /// Child tables are still legacy pointer slices during the adapter
+    /// migration and are therefore deliberately excluded from this store-only
+    /// accounting.
+    pub fn syntaxStorage(self: *const FrontendPipeline) SyntaxStorage {
+        var result = SyntaxStorage{};
+        for (self.syntax_files.items) |file_syntax| {
+            const storage = file_syntax.store.storage();
+            result.logical_bytes += storage.logical_bytes;
+            result.allocated_bytes += storage.allocated_bytes;
+            result.nodes += file_syntax.store.count();
+            result.node_capacity += storage.node_capacity;
+        }
+        return result;
     }
 
     /// Debug rendering intentionally traverses the semantic adapter. It does

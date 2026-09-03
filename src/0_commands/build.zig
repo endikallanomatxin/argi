@@ -227,7 +227,10 @@ fn printCompilerStats(
     std.debug.print("  tokens:       {d}\n", .{pipeline.tokenCount()});
     std.debug.print("  token bytes:  {d} ({d} each)\n", .{ pipeline.tokenStorageBytes(), @sizeOf(token.Token) });
     std.debug.print("  ST nodes:     {d}\n", .{pipeline.st_node_count});
-    std.debug.print("  syntax store: {d} bytes ({d} per node)\n", .{ pipeline.syntaxStorageBytes(), @sizeOf(syntax_tree.STNode) });
+    const syntax_storage = pipeline.syntaxStorage();
+    std.debug.print("  syntax logical bytes:  {d} ({d} per node)\n", .{ syntax_storage.logical_bytes, @sizeOf(syntax_tree.STNode) });
+    std.debug.print("  syntax allocated bytes:{d}\n", .{syntax_storage.allocated_bytes});
+    std.debug.print("  syntax page utilization: {d:.1}% ({d}/{d} nodes)\n", .{ syntax_storage.utilizationPercent(), syntax_storage.nodes, syntax_storage.node_capacity });
     std.debug.print("  SG nodes:     {d}\n", .{pipeline.sg_node_count});
 
     std.debug.print("Types\n", .{});
