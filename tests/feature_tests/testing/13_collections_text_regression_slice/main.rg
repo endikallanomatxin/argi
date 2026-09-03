@@ -10,8 +10,8 @@ test collections_text_array_slice(.system: System = System()) -> !() := {
 test collections_text_format_slice(.system: System = System()) -> !() := {
     text_result ::= format(.value = 7, .allocator = system.allocator)
     match text_result {
-        ..ok payload {
-            text ::= payload
+        ..ok ~ format_payload {
+            text ::= ~format_payload
             #defer deinit(.self = $&text, .allocator = system.allocator)
             view ::= as_view(.self = &text)
             testing.expect(.condition = view == "7")!

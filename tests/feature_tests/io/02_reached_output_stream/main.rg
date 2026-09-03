@@ -9,7 +9,7 @@ flush(.self: $&DummyOutput) -> (.result: Errable#(.t: Void, .reasons: (..stream_
     result = ..ok(.value = Void())
 }
 
-write(.self: $&DummyOutput, .text: String) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
+write(.self: $&DummyOutput, .text: &String) -> (.result: Errable#(.t: Void, .reasons: (..stream_write_failed, ..stream_flush_failed))) := {
     _ ::= text
     result = ..ok(.value = Void())
 }

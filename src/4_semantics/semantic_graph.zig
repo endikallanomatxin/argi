@@ -45,6 +45,8 @@ pub const Content = union(enum) {
     auto_deinit_binding: *AutoDeinitBinding,
 
     function_call: *FunctionCall,
+    virtualize: *const Virtualize,
+    virtual_call: *const VirtualCall,
     code_block: *CodeBlock,
     value_literal: ValueLiteral,
     choice_literal: *const ChoiceLiteral,
@@ -362,6 +364,10 @@ pub const FunctionDeclaration = struct {
     name: []const u8,
     location: tok.Location,
     origin_kind: OriginKind = .declared,
+    safety_primitive: SafetyPrimitive = .none,
+    /// Compiler-resolved destructor identity. The safety checker consumes this
+    /// tag and never infers temporal effects from the callee's spelling.
+    is_deinit: bool = false,
     // Generic instantiations from abstract-contract templates must stay
     // distinct from regular generic instantiations even when they collapse to
     // the same concrete callable shape. Call resolution and reuse of existing
@@ -374,6 +380,7 @@ pub const FunctionDeclaration = struct {
     output: StructType, // Named return params
     body: ?*const CodeBlock,
     uses_inferred_error_reasons: bool = false,
+    input_bindings: []const *const BindingDeclaration = &.{},
     output_bindings: []const *const BindingDeclaration = &.{},
     inferred_error_reasons: ?*const ChoiceType = null,
 
@@ -390,6 +397,28 @@ pub const FunctionDeclaration = struct {
         regular,
         abstract_contract,
     };
+};
+
+pub const SafetyPrimitive = enum {
+    none,
+    establish_fresh_reference,
+    establish_inherited_reference,
+    establish_inherited_storage,
+    establish_allocation,
+    raw_allocated_storage,
+    reference_offset,
+    mutable_reference_offset,
+    reinterpret_reference,
+    mutable_reinterpret_reference,
+    read_reference,
+    restrict_reference,
+    trusted_opaque_move,
+    trusted_opaque_move_in,
+    trusted_opaque_move_out,
+    trusted_opaque_relocate,
+    trusted_opaque_drop,
+    trusted_opaque_mark_empty,
+    relocate,
 };
 
 pub const TestDeclaration = struct {
@@ -424,6 +453,7 @@ pub const AutoDeinitBinding = struct {
     binding: *const BindingDeclaration,
     deinit_fn: ?*const FunctionDeclaration,
     input: ?*const SGNode = null,
+    self_field_index: u32 = 0,
     fields: []const AutoDeinitField = &.{},
 };
 
@@ -441,6 +471,43 @@ pub const AutoDeinitField = struct {
 pub const FunctionCall = struct {
     callee: *const FunctionDeclaration,
     input: *const SGNode, // Arguments
+    /// Set only when the semantizer proves that this call consumes the exact
+    /// binding for which automatic cleanup was scheduled.
+    consumes_auto_deinit: ?*const SGNode = null,
+    /// Set for a relocation destination whose caller-side cleanup becomes
+    /// responsible for the representation transferred by the callee.
+    initializes_auto_deinit: ?*const SGNode = null,
+};
+
+pub const Virtualize = struct {
+    value: *const SGNode,
+    concrete_type: Type,
+    abstract_type: *const AbstractType,
+    virtual_type: *const StructType,
+    methods: []const *const FunctionDeclaration,
+    safety_methods: []const *VirtualMethodRegistry,
+    location: tok.Location,
+};
+
+/// Compiler-owned open-world-within-the-module registry. Abstract conformance
+/// supplies the known concrete declarations; `to_virtual` also records its
+/// selected implementation. Safety runs only after semantizing closes the set.
+pub const VirtualMethodRegistry = struct {
+    implementations: std.array_list.Managed(*const FunctionDeclaration),
+};
+
+pub const VirtualCall = struct {
+    handle: *const SGNode,
+    input: *const SGNode,
+    self_input_index: u32,
+    method_index: u32,
+    method_count: u32,
+    method_name: []const u8,
+    input_type: *const StructType,
+    output_type: *const StructType,
+    self_permission: syn.PointerMutability,
+    safety_methods: *const VirtualMethodRegistry,
+    consumes_auto_deinit: ?*const SGNode = null,
 };
 
 pub const ReachDirective = struct {
@@ -484,8 +551,18 @@ pub const ReturnStatement = struct {
 
 pub const IfStatement = struct {
     condition: *const SGNode,
+    choice_test: ?ChoiceTagTest = null,
     then_block: *const CodeBlock,
     else_block: ?*const CodeBlock,
+};
+
+/// Compiler-resolved tag test used by control-flow-sensitive passes. The
+/// original comparison remains the runtime condition used by codegen.
+pub const ChoiceTagTest = struct {
+    choice_value: *const SGNode,
+    choice_type: *const ChoiceType,
+    variant_index: u32,
+    then_has_variant: bool,
 };
 
 pub const WhileStatement = struct {
@@ -504,10 +581,15 @@ pub const SwitchStatement = struct {
     expression: *const SGNode,
     cases: []const SwitchCase,
     default_case: ?*const CodeBlock,
+    exhaustive: bool = false,
 };
 
 pub const SwitchCase = struct {
     value: *const SGNode,
+    /// The choice alternative known to be active while validating this case.
+    /// `value` remains the codegen switch value; this identity is used by
+    /// control-flow-sensitive semantic passes.
+    variant_index: u32,
     body: *const CodeBlock,
 };
 

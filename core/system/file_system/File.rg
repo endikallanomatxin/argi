@@ -3,6 +3,8 @@ FileOpenMode : Type = (
     ..write
     ..append
 )
+
+FileOpenMode implements ImplicitlyCopyable
 ..file_open_failed
 
 File : Type = (
@@ -42,7 +44,12 @@ file_open_mode_c_string(
 }
 
 file_stream_pointer(.self: &File) -> (.stream: &Any) := {
-    stream = cast#(.to: &Any)(.value = self&.stream_address)
+    raw ::= raw_pointer#(.t: Any)(.address = self&.stream_address)
+    mutable_stream ::= establish_inherited_reference#(.t: Any)(
+        .raw = raw,
+        .root = cast#(.to: &Any)(.value = self),
+    )
+    stream = read_reference#(.t: Any)(.base = mutable_stream)
 }
 
 open(

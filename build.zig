@@ -38,11 +38,19 @@ pub fn build(b: *std.Build) void {
     linkLlvmModule(exe_mod, llvm_lib_path, llvm_libs_raw);
 
     b.installArtifact(exe);
-    b.installDirectory(.{
+    const installed_core_path = b.getInstallPath(.prefix, "lib/argi/core");
+    if (!std.mem.endsWith(u8, installed_core_path, "lib/argi/core")) {
+        @panic("refusing to clean an unexpected core installation path");
+    }
+    const remove_program = b.findProgram(&.{"rm"}, &.{ "/bin", "/usr/bin" }) catch @panic("rm is required to install core");
+    const clean_installed_core = b.addSystemCommand(&.{ remove_program, "-rf", installed_core_path });
+    const install_core = b.addInstallDirectory(.{
         .source_dir = b.path("core"),
         .install_dir = .prefix,
         .install_subdir = "lib/argi/core",
     });
+    install_core.step.dependOn(&clean_installed_core.step);
+    b.getInstallStep().dependOn(&install_core.step);
 
     //
     // INSTALL AND RUN EXECUTABLE ---------------------------------------------

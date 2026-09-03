@@ -45,8 +45,18 @@ argument_at(
     .index: UIntNative,
 ) -> (.text: &Char) := {
     addr ::= argument_pointer_address(.self = self, .index = index).address
-    ptr : &UIntNative = cast#(.to: &UIntNative)(.value = addr)
-    text = cast#(.to: &Char)(.value = ptr&)
+    raw ::= raw_pointer#(.t: UIntNative)(.address = addr)
+    ptr ::= establish_inherited_reference#(.t: UIntNative)(
+        .raw = raw,
+        .root = cast#(.to: &Any)(.value = self),
+    ).reference
+    text_address ::= ptr&
+    text_raw ::= raw_pointer#(.t: Char)(.address = text_address)
+    inherited ::= establish_inherited_reference#(.t: Char)(
+        .raw = text_raw,
+        .root = cast#(.to: &Any)(.value = self),
+    ).reference
+    text = read_reference#(.t: Char)(.base = inherited).reference
 }
 
 argument_view_at(
@@ -55,7 +65,7 @@ argument_view_at(
 ) -> (.view: StringView) := {
     text ::= argument_at(.self = self, .index = index)
     view = (
-        .data = cast#(.to: UIntNative)(.value = text),
+        .data = reinterpret_reference#(.from: Char, .to: UInt8)(.base = text).reference,
         .length = strlen(.string = text).length,
     )
 }

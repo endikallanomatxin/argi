@@ -18,8 +18,8 @@ main(.system: System) -> (.status_code: Int32) := {
     result := top()
 
     if is(.value = result, .variant = ..error) {
-        err := result..error
-        report_error(.message = "project build failed", .err = &err)
+        err ::= &result..error
+        report_error(.message = "project build failed", .err = err)
         status_code = 0
     } else {
         status_code = 1

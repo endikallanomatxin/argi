@@ -4,7 +4,12 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     home_key ::= as_view(.self = home_literal)
     missing_key ::= as_view(.self = missing_literal)
 
-    home ::= system.env_vars[home_key]
+    home_result ::= system.env_vars[home_key]
+    if is(.value = home_result, .variant = ..error) {
+        status_code = 4
+        return
+    }
+    home ::= home_result..ok
     if home? {
         if home.length < 1 {
             status_code = 2
@@ -15,7 +20,12 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         return
     }
 
-    missing ::= system.env_vars[missing_key]
+    missing_result ::= system.env_vars[missing_key]
+    if is(.value = missing_result, .variant = ..error) {
+        status_code = 5
+        return
+    }
+    missing ::= missing_result..ok
     if missing? {
         status_code = 3
         return

@@ -86,8 +86,8 @@ format_unsigned_decimal_into_u64(
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        ..ok ~ payload {
-            reversed ::= payload
+        ..ok ~ reversed_u64_payload {
+            reversed ::= ~reversed_u64_payload
             current :: UInt64 = value
 
             while current > 0 {
@@ -146,8 +146,8 @@ format_unsigned_decimal_into_u32(
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        ..ok ~ payload {
-            reversed ::= payload
+        ..ok ~ reversed_u32_payload {
+            reversed ::= ~reversed_u32_payload
             current :: UInt32 = value
 
             while current > 0 {
@@ -206,8 +206,8 @@ format_signed_decimal_into_i64(
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        ..ok ~ payload {
-            reversed ::= payload
+        ..ok ~ reversed_i64_payload {
+            reversed ::= ~reversed_i64_payload
             current :: Int64 = value
 
             if current < 0 {
@@ -287,8 +287,8 @@ format_signed_decimal_into_i32(
             result = ..error(.reason = ..out_of_memory)
             return
         }
-        ..ok ~ payload {
-            reversed ::= payload
+        ..ok ~ reversed_i32_payload {
+            reversed ::= ~reversed_i32_payload
             current :: Int32 = value
 
             if current < 0 {
@@ -410,18 +410,15 @@ format(
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = value.length)
     match create_result {
-        ..ok ~ payload {
-            out ::= payload
+        ..ok ~ view_output_payload {
+            out ::= ~view_output_payload
             pushed ::= push_view(.self = $&out, .view = value, .allocator = allocator)
-            match pushed {
-                ..ok _ {
-                    result = ..ok out
-                }
-                ..error _ {
-                    deinit(.self = $&out, .allocator = allocator)
-                    result = ..error(.reason = ..out_of_memory)
-                }
+            if is(.value = pushed, .variant = ..error) {
+                deinit(.self = $&out, .allocator = allocator)
+                result = ..error(.reason = ..out_of_memory)
+                return
             }
+            result = ..ok ~out
         }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
@@ -435,18 +432,15 @@ format(
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 5)
     match create_result {
-        ..ok ~ payload {
-            out ::= payload
+        ..ok ~ bool_output_payload {
+            out ::= ~bool_output_payload
             pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
-            match pushed {
-                ..ok _ {
-                    result = ..ok out
-                }
-                ..error _ {
-                    deinit(.self = $&out, .allocator = allocator)
-                    result = ..error(.reason = ..out_of_memory)
-                }
+            if is(.value = pushed, .variant = ..error) {
+                deinit(.self = $&out, .allocator = allocator)
+                result = ..error(.reason = ..out_of_memory)
+                return
             }
+            result = ..ok ~out
         }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
@@ -460,18 +454,15 @@ format(
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 32)
     match create_result {
-        ..ok ~ payload {
-            out ::= payload
+        ..ok ~ u64_output_payload {
+            out ::= ~u64_output_payload
             pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
-            match pushed {
-                ..ok _ {
-                    result = ..ok out
-                }
-                ..error _ {
-                    deinit(.self = $&out, .allocator = allocator)
-                    result = ..error(.reason = ..out_of_memory)
-                }
+            if is(.value = pushed, .variant = ..error) {
+                deinit(.self = $&out, .allocator = allocator)
+                result = ..error(.reason = ..out_of_memory)
+                return
             }
+            result = ..ok ~out
         }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
@@ -485,18 +476,15 @@ format(
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 16)
     match create_result {
-        ..ok ~ payload {
-            out ::= payload
+        ..ok ~ u32_output_payload {
+            out ::= ~u32_output_payload
             pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
-            match pushed {
-                ..ok _ {
-                    result = ..ok out
-                }
-                ..error _ {
-                    deinit(.self = $&out, .allocator = allocator)
-                    result = ..error(.reason = ..out_of_memory)
-                }
+            if is(.value = pushed, .variant = ..error) {
+                deinit(.self = $&out, .allocator = allocator)
+                result = ..error(.reason = ..out_of_memory)
+                return
             }
+            result = ..ok ~out
         }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
@@ -510,18 +498,15 @@ format(
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 32)
     match create_result {
-        ..ok ~ payload {
-            out ::= payload
+        ..ok ~ i64_output_payload {
+            out ::= ~i64_output_payload
             pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
-            match pushed {
-                ..ok _ {
-                    result = ..ok out
-                }
-                ..error _ {
-                    deinit(.self = $&out, .allocator = allocator)
-                    result = ..error(.reason = ..out_of_memory)
-                }
+            if is(.value = pushed, .variant = ..error) {
+                deinit(.self = $&out, .allocator = allocator)
+                result = ..error(.reason = ..out_of_memory)
+                return
             }
+            result = ..ok ~out
         }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)
@@ -535,18 +520,15 @@ format(
 ) -> (.result: Errable#(.t: String, .reasons: (..out_of_memory))) := {
     create_result ::= string_with_capacity(.allocator = allocator, .capacity = 16)
     match create_result {
-        ..ok ~ payload {
-            out ::= payload
+        ..ok ~ i32_output_payload {
+            out ::= ~i32_output_payload
             pushed ::= format_into(.out = $&out, .value = value, .allocator = allocator)
-            match pushed {
-                ..ok _ {
-                    result = ..ok out
-                }
-                ..error _ {
-                    deinit(.self = $&out, .allocator = allocator)
-                    result = ..error(.reason = ..out_of_memory)
-                }
+            if is(.value = pushed, .variant = ..error) {
+                deinit(.self = $&out, .allocator = allocator)
+                result = ..error(.reason = ..out_of_memory)
+                return
             }
+            result = ..ok ~out
         }
         ..error _ {
             result = ..error(.reason = ..out_of_memory)

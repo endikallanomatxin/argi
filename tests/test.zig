@@ -1420,9 +1420,7 @@ test "feature_tests/pointers/05X_pass_readonly_pointer_to_mutable_param" {
 }
 
 test "feature_tests/pointers/06_explicit_pointer_casts" {
-    const test_path = "tests/feature_tests/pointers/06_explicit_pointer_casts";
-    try expectSuccessfulBuild(test_path);
-    try run(test_path);
+    try expectSuccessfulBuild("tests/feature_tests/pointers/06_explicit_pointer_casts");
 }
 
 test "feature_tests/pointers/07X_pointer_arithmetic_requires_cast" {
@@ -1623,7 +1621,7 @@ test "feature_tests/ownership/04_noncopyable_temporary_values" {
 
 test "feature_tests/ownership/05X_noncopyable_assignment" {
     try buildExpectFailExact("tests/feature_tests/ownership/05X_noncopyable_assignment",
-        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:9:15: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/ownership/05X_noncopyable_assignment/main.rg:9:15: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      second := first
         \\                ^
         \\
@@ -1632,7 +1630,7 @@ test "feature_tests/ownership/05X_noncopyable_assignment" {
 
 test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
     try buildExpectFailExact("tests/feature_tests/ownership/06X_noncopyable_argument_by_value",
-        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:13:34: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/ownership/06X_noncopyable_argument_by_value/main.rg:13:34: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      status_code = consume(.res = handle)
         \\                                   ^
         \\
@@ -1641,7 +1639,7 @@ test "feature_tests/ownership/06X_noncopyable_argument_by_value" {
 
 test "feature_tests/ownership/07X_noncopyable_struct_field" {
     try buildExpectFailExact("tests/feature_tests/ownership/07X_noncopyable_struct_field",
-        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:13:33: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/ownership/07X_noncopyable_struct_field/main.rg:13:33: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      wrapped : Wrapper = (.res = handle)
         \\                                  ^
         \\
@@ -1650,38 +1648,23 @@ test "feature_tests/ownership/07X_noncopyable_struct_field" {
 
 test "feature_tests/ownership/08X_noncopyable_output_binding" {
     try buildExpectFailExact("tests/feature_tests/ownership/08X_noncopyable_output_binding",
-        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:8:11: error: type 'Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/ownership/08X_noncopyable_output_binding/main.rg:8:11: error: type 'Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      out = res
         \\            ^
         \\
     );
 }
 
-test "feature_tests/ownership/09X_mutable_and_read_alias_same_call" {
-    try buildExpectFailExact("tests/feature_tests/ownership/09X_mutable_and_read_alias_same_call",
-        \\tests/feature_tests/ownership/09X_mutable_and_read_alias_same_call/main.rg:5:8: error: binding 'value' cannot be passed as '$&' and '&' in the same call to 'mix'
-        \\      mix(.target = $&value, .reader = &value)
-        \\         ^
-        \\
-    );
+test "feature_tests/ownership/09_mutable_and_read_alias_same_call" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/09_mutable_and_read_alias_same_call");
 }
 
-test "feature_tests/ownership/10X_mutable_and_value_alias_same_call" {
-    try buildExpectFailExact("tests/feature_tests/ownership/10X_mutable_and_value_alias_same_call",
-        \\tests/feature_tests/ownership/10X_mutable_and_value_alias_same_call/main.rg:5:8: error: binding 'value' cannot be passed as '$&' and 'value' in the same call to 'mix'
-        \\      mix(.target = $&value, .snapshot = value)
-        \\         ^
-        \\
-    );
+test "feature_tests/ownership/10_mutable_and_value_alias_same_call" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/10_mutable_and_value_alias_same_call");
 }
 
-test "feature_tests/ownership/11X_double_mutable_alias_same_call" {
-    try buildExpectFailExact("tests/feature_tests/ownership/11X_double_mutable_alias_same_call",
-        \\tests/feature_tests/ownership/11X_double_mutable_alias_same_call/main.rg:5:8: error: binding 'value' cannot be passed as '$&' and '$&' in the same call to 'mix'
-        \\      mix(.left = $&value, .right = $&value)
-        \\         ^
-        \\
-    );
+test "feature_tests/ownership/11_double_mutable_alias_same_call" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/11_double_mutable_alias_same_call");
 }
 
 test "feature_tests/ownership/12_copy_function_value_positions" {
@@ -1875,7 +1858,7 @@ test "feature_tests/types/28X_match_omit_payload_pattern" {
 
 test "feature_tests/types/32X_match_value_noncopyable_payload" {
     try buildExpectFailExact("tests/feature_tests/types/32X_match_value_noncopyable_payload",
-        \\tests/feature_tests/types/32X_match_value_noncopyable_payload/main.rg:17:14: error: type '{...}' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/types/32X_match_value_noncopyable_payload/main.rg:17:14: error: type '{...}' cannot be copied implicitly; use '~value' to transfer ownership
         \\          ..ok payload {
         \\               ^
         \\
@@ -1883,16 +1866,7 @@ test "feature_tests/types/32X_match_value_noncopyable_payload" {
 }
 
 test "feature_tests/types/47X_match_value_payload_ambiguous_copy" {
-    try buildExpectFailExact("tests/feature_tests/types/47X_match_value_payload_ambiguous_copy",
-        \\tests/feature_tests/types/47X_match_value_payload_ambiguous_copy/main.rg:26:14: error: ambiguous call to 'copy' for arguments (.__arg0: Payload). Possible overloads:
-        \\  - copy (.payload: Payload, .tag: Int32) -> (.out: Payload)
-        \\  - copy (.payload: Payload, .flag: Bool) -> (.out: Payload)
-        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
-        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
-        \\          ..ok payload {
-        \\               ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/types/47X_match_value_payload_ambiguous_copy", "cannot be copied implicitly");
 }
 
 test "feature_tests/types/48X_match_move_payload_consumes_binding" {
@@ -1905,29 +1879,11 @@ test "feature_tests/types/48X_match_move_payload_consumes_binding" {
 }
 
 test "feature_tests/types/49X_choice_payload_access_ambiguous_copy" {
-    try buildExpectFailExact("tests/feature_tests/types/49X_choice_payload_access_ambiguous_copy",
-        \\tests/feature_tests/types/49X_choice_payload_access_ambiguous_copy/main.rg:24:21: error: ambiguous call to 'copy' for arguments (.__arg0: Payload). Possible overloads:
-        \\  - copy (.payload: Payload, .tag: Int32) -> (.out: Payload)
-        \\  - copy (.payload: Payload, .flag: Bool) -> (.out: Payload)
-        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
-        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
-        \\      payload := value..ok
-        \\                      ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/types/49X_choice_payload_access_ambiguous_copy", "cannot be copied implicitly");
 }
 
 test "feature_tests/types/50X_choice_literal_payload_ambiguous_copy" {
-    try buildExpectFailExact("tests/feature_tests/types/50X_choice_literal_payload_ambiguous_copy",
-        \\tests/feature_tests/types/50X_choice_literal_payload_ambiguous_copy/main.rg:24:28: error: ambiguous call to 'copy' for arguments (.__arg0: Payload). Possible overloads:
-        \\  - copy (.payload: Payload, .tag: Int32) -> (.out: Payload)
-        \\  - copy (.payload: Payload, .flag: Bool) -> (.out: Payload)
-        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
-        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
-        \\      result : Result = ..ok payload
-        \\                             ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/types/50X_choice_literal_payload_ambiguous_copy", "cannot be copied implicitly");
 }
 
 test "feature_tests/collections/01_list_literal_length" {
@@ -2146,6 +2102,99 @@ test "feature_tests/collections/21_index_operator_reached_default" {
 
 test "feature_tests/collections/22_dynamic_array_borrowed_index_string" {
     const test_path = "tests/feature_tests/collections/22_dynamic_array_borrowed_index_string";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/23_dynamic_array_owning_push_fixed" {
+    const test_path = "tests/feature_tests/collections/23_dynamic_array_owning_push_fixed";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/24_dynamic_array_owning_assume_capacity" {
+    const test_path = "tests/feature_tests/collections/24_dynamic_array_owning_assume_capacity";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/25X_dynamic_array_owning_push_moves_source" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/25X_dynamic_array_owning_push_moves_source",
+        "binding 'value' was moved and cannot be used again",
+    );
+}
+
+test "feature_tests/collections/26_dynamic_array_owning_pop" {
+    const test_path = "tests/feature_tests/collections/26_dynamic_array_owning_pop";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/27_dynamic_array_owning_pop_preserves_rest" {
+    const test_path = "tests/feature_tests/collections/27_dynamic_array_owning_pop_preserves_rest";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/28_dynamic_array_owning_growth" {
+    const test_path = "tests/feature_tests/collections/28_dynamic_array_owning_growth";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/29X_dynamic_array_growth_invalidates_old_alias" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/29X_dynamic_array_growth_invalidates_old_alias",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/collections/30_dynamic_array_owning_growth_failure_atomic" {
+    const test_path = "tests/feature_tests/collections/30_dynamic_array_owning_growth_failure_atomic";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/31_dynamic_array_owning_pop_auto_deinit" {
+    const test_path = "tests/feature_tests/collections/31_dynamic_array_owning_pop_auto_deinit";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/32_dynamic_array_borrowing_owner" {
+    const test_path = "tests/feature_tests/collections/32_dynamic_array_borrowing_owner";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/33X_dynamic_array_retains_external_borrow" {
+    try buildExpectFail(
+        "tests/feature_tests/collections/33X_dynamic_array_retains_external_borrow",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/collections/34_dynamic_array_string_copy" {
+    const test_path = "tests/feature_tests/collections/34_dynamic_array_string_copy";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/35_dynamic_array_fallible_copy_cleanup" {
+    const test_path = "tests/feature_tests/collections/35_dynamic_array_fallible_copy_cleanup";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/36_dynamic_array_owning_mutations" {
+    const test_path = "tests/feature_tests/collections/36_dynamic_array_owning_mutations";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/collections/37_dynamic_array_associated_copy_reasons" {
+    const test_path = "tests/feature_tests/collections/37_dynamic_array_associated_copy_reasons";
     try expectSuccessfulBuild(test_path);
     try runExpect(test_path, 0);
 }
@@ -2645,7 +2694,7 @@ test "feature_tests/system/14_file_system_capability" {
 
 test "feature_tests/ownership/18X_system_noncopyable_assignment" {
     try buildExpectFailExact("tests/feature_tests/ownership/18X_system_noncopyable_assignment",
-        \\tests/feature_tests/ownership/18X_system_noncopyable_assignment/main.rg:2:15: error: type 'System' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/ownership/18X_system_noncopyable_assignment/main.rg:2:15: error: type 'System' cannot be copied implicitly; use '~value' to transfer ownership
         \\      copied := system
         \\                ^
         \\
@@ -2654,7 +2703,7 @@ test "feature_tests/ownership/18X_system_noncopyable_assignment" {
 
 test "feature_tests/ownership/19X_system_noncopyable_argument" {
     try buildExpectFailExact("tests/feature_tests/ownership/19X_system_noncopyable_argument",
-        \\tests/feature_tests/ownership/19X_system_noncopyable_argument/main.rg:6:37: error: type 'System' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/ownership/19X_system_noncopyable_argument/main.rg:6:37: error: type 'System' cannot be copied implicitly; use '~value' to transfer ownership
         \\      status_code = consume(.system = system)
         \\                                      ^
         \\
@@ -2851,22 +2900,12 @@ test "feature_tests/ownership/23_named_struct_auto_deinit" {
     try runExpect(test_path, 11);
 }
 
-test "feature_tests/ownership/24X_mutable_and_read_field_alias_same_call" {
-    try buildExpectFailExact("tests/feature_tests/ownership/24X_mutable_and_read_field_alias_same_call",
-        \\tests/feature_tests/ownership/24X_mutable_and_read_field_alias_same_call/main.rg:13:8: error: binding 'pair' cannot be passed as '$&' and '&' in the same call to 'mix'
-        \\      mix(.target = $&pair.left, .reader = &pair.left)
-        \\         ^
-        \\
-    );
+test "feature_tests/ownership/24_mutable_and_read_field_alias_same_call" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/24_mutable_and_read_field_alias_same_call");
 }
 
-test "feature_tests/ownership/25X_mutable_and_value_field_alias_same_call" {
-    try buildExpectFailExact("tests/feature_tests/ownership/25X_mutable_and_value_field_alias_same_call",
-        \\tests/feature_tests/ownership/25X_mutable_and_value_field_alias_same_call/main.rg:13:8: error: binding 'pair' cannot be passed as '$&' and 'value' in the same call to 'mix'
-        \\      mix(.target = $&pair.left, .snapshot = pair.left)
-        \\         ^
-        \\
-    );
+test "feature_tests/ownership/25_mutable_and_value_field_alias_same_call" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/25_mutable_and_value_field_alias_same_call");
 }
 
 test "feature_tests/ownership/26_distinct_fields_do_not_alias_same_call" {
@@ -2876,53 +2915,1197 @@ test "feature_tests/ownership/26_distinct_fields_do_not_alias_same_call" {
 }
 
 test "feature_tests/ownership/27X_ambiguous_copy_in_array_literal" {
-    try buildExpectFailExact("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal",
-        \\tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal/main.rg:17:28: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
-        \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
-        \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
-        \\      values : [2]Resource = (source, source)
-        \\                             ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/ownership/27X_ambiguous_copy_in_array_literal", "type 'Resource' is not copyable");
 }
 
 test "feature_tests/ownership/28X_ambiguous_copy_assignment" {
-    try buildExpectFailExact("tests/feature_tests/ownership/28X_ambiguous_copy_assignment",
-        \\tests/feature_tests/ownership/28X_ambiguous_copy_assignment/main.rg:17:15: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
-        \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
-        \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
-        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
-        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
-        \\      copied := source
-        \\                ^
-        \\
-    );
+    try buildExpectFail("tests/feature_tests/ownership/28X_ambiguous_copy_assignment", "cannot be copied implicitly");
 }
 
 test "feature_tests/ownership/37X_ambiguous_copy_return" {
-    try buildExpectFailExact("tests/feature_tests/ownership/37X_ambiguous_copy_return",
-        \\tests/feature_tests/ownership/37X_ambiguous_copy_return/main.rg:16:12: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
-        \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
-        \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
-        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
-        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
-        \\      return source
-        \\             ^
+    try buildExpectFail("tests/feature_tests/ownership/37X_ambiguous_copy_return", "cannot be copied implicitly");
+}
+
+test "feature_tests/ownership/38X_ambiguous_copy_struct_field" {
+    try buildExpectFail("tests/feature_tests/ownership/38X_ambiguous_copy_struct_field", "cannot be copied implicitly");
+}
+
+test "feature_tests/ownership/39_stable_field_reference_survives_replacement" {
+    const test_path = "tests/feature_tests/ownership/39_stable_field_reference_survives_replacement";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/40_raw_pointer_establish_fresh" {
+    try buildExpectFailExact("tests/feature_tests/ownership/40_raw_pointer_establish_fresh",
+        \\tests/feature_tests/ownership/40_raw_pointer_establish_fresh/main.rg:1:1: error: fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
         \\
     );
 }
 
-test "feature_tests/ownership/38X_ambiguous_copy_struct_field" {
-    try buildExpectFailExact("tests/feature_tests/ownership/38X_ambiguous_copy_struct_field",
-        \\tests/feature_tests/ownership/38X_ambiguous_copy_struct_field/main.rg:21:33: error: ambiguous call to 'copy' for arguments (.__arg0: Resource). Possible overloads:
-        \\  - copy (.res: Resource, .tag: Int32) -> (.out: Resource)
-        \\  - copy (.res: Resource, .flag: Bool) -> (.out: Resource)
-        \\  - copy (.allocator: $&Allocator, .self: String) -> (.out: String)
-        \\  - copy (.self: Path, .allocator: $&Allocator) -> (.out: Path)
-        \\      wrapped : Wrapper = (.res = handle)
-        \\                                  ^
+test "feature_tests/ownership/41_raw_pointer_establish_inherit" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/41_raw_pointer_establish_inherit");
+}
+
+test "feature_tests/ownership/42X_reference_use_after_root_end" {
+    try buildExpectFailExact("tests/feature_tests/ownership/42X_reference_use_after_root_end",
+        \\tests/feature_tests/ownership/42X_reference_use_after_root_end/main.rg:1:1: error: reference depends on a root that has ended
+        \\  main(.system: System) -> (.status_code: Int32) := {
+        \\  ^
         \\
     );
+}
+
+test "feature_tests/ownership/53X_pointer_inputs_may_alias" {
+    try buildExpectFailExact("tests/feature_tests/ownership/53X_pointer_inputs_may_alias",
+        \\tests/feature_tests/ownership/53X_pointer_inputs_may_alias/main.rg:1:1: error: reference depends on a root that has ended
+        \\  invalidate_then_read(
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/54_deinit_through_alias_reinitialize" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/54_deinit_through_alias_reinitialize");
+}
+
+test "feature_tests/ownership/55X_deinit_through_alias_read" {
+    try buildExpectFailExact("tests/feature_tests/ownership/55X_deinit_through_alias_read",
+        \\tests/feature_tests/ownership/55X_deinit_through_alias_read/main.rg:1:1: error: reference depends on a root that has ended
+        \\  main(.system: System) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/56_branch_ownership_cleanup_resolves" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/56_branch_ownership_cleanup_resolves");
+}
+
+test "feature_tests/ownership/57X_return_reference_to_local" {
+    try buildExpectFailExact("tests/feature_tests/ownership/57X_return_reference_to_local",
+        \\tests/feature_tests/ownership/57X_return_reference_to_local/main.rg:1:1: error: function output cannot depend on a local storage generation that ends before return
+        \\  bad() -> (.result: &Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/58X_null_safe_reference" {
+    try buildExpectFailExact("tests/feature_tests/ownership/58X_null_safe_reference",
+        \\tests/feature_tests/ownership/58X_null_safe_reference/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/59X_branch_deinit_then_use" {
+    try buildExpectFailExact("tests/feature_tests/ownership/59X_branch_deinit_then_use",
+        \\tests/feature_tests/ownership/59X_branch_deinit_then_use/main.rg:1:1: error: place rooted at 'allocation' is maybe_initialized and cannot be used
+        \\  main(.system: System, .condition: Bool = false) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/60_partial_field_move_cleanup" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/60_partial_field_move_cleanup");
+}
+
+test "feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root" {
+    try buildExpectFailExact("tests/feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root",
+        \\tests/feature_tests/ownership/61X_borrowed_foreign_pointer_fresh_root/main.rg:1:1: error: fresh raw-to-safe reference establishment is restricted to compiler-owned storage boundaries
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip" {
+    try buildExpectFailExact("tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip",
+        \\tests/feature_tests/ownership/62X_borrowed_foreign_pointer_roundtrip/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/63X_malloc_direct_safe_cast" {
+    try buildExpectFailExact("tests/feature_tests/ownership/63X_malloc_direct_safe_cast",
+        \\tests/feature_tests/ownership/63X_malloc_direct_safe_cast/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/64X_owned_root_cycle" {
+    try buildExpectFailExact("tests/feature_tests/ownership/64X_owned_root_cycle",
+        \\tests/feature_tests/ownership/64X_owned_root_cycle/main.rg:1:1: error: root ownership must be acyclic
+        \\  main(.system: System) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/65_allocation_stores_stateful_allocator" {
+    const test_path = "tests/feature_tests/ownership/65_allocation_stores_stateful_allocator";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/66X_allocation_stateful_allocator_escape" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/66X_allocation_stateful_allocator_escape",
+        "function output cannot depend on a local storage generation that ends before return",
+    );
+}
+
+test "feature_tests/ownership/67X_local_binding_summary_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/67X_local_binding_summary_dependency",
+        "function output cannot depend on a local storage generation that ends before return",
+    );
+}
+
+test "feature_tests/ownership/68_arena_child_deinit_preserves_sibling" {
+    const test_path = "tests/feature_tests/ownership/68_arena_child_deinit_preserves_sibling";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/69X_arena_reset_ends_child_domain" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/69X_arena_reset_ends_child_domain",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/70_zero_size_allocation_cleanup" {
+    const test_path = "tests/feature_tests/ownership/70_zero_size_allocation_cleanup";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/71_fallible_allocation_failure_cleanup" {
+    const test_path = "tests/feature_tests/ownership/71_fallible_allocation_failure_cleanup";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/72X_duplicate_storage_establishment" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/72X_duplicate_storage_establishment",
+        "physical storage capability has already been consumed",
+    );
+}
+
+test "feature_tests/ownership/73_storage_capability_move" {
+    const test_path = "tests/feature_tests/ownership/73_storage_capability_move";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/74X_core_path_not_trusted" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/74X_core_path_not_trusted",
+        "an integer address cannot establish a safe reference",
+    );
+}
+
+test "feature_tests/ownership/75_choice_variant_sensitive_roots" {
+    const test_path = "tests/feature_tests/ownership/75_choice_variant_sensitive_roots";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/76X_choice_payload_double_move" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/76X_choice_payload_double_move",
+        "binding 'payload' was moved and cannot be used again",
+    );
+}
+
+test "feature_tests/ownership/77_arena_zero_size_allocation" {
+    const test_path = "tests/feature_tests/ownership/77_arena_zero_size_allocation";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/80_arena_repeated_reset" {
+    const test_path = "tests/feature_tests/ownership/80_arena_repeated_reset";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/81_descendant_storage_generations" {
+    const test_path = "tests/feature_tests/ownership/81_descendant_storage_generations";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/82X_descendant_storage_stale_alias" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/82X_descendant_storage_stale_alias",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/83_field_reinitialization_preserves_sibling" {
+    const test_path = "tests/feature_tests/ownership/83_field_reinitialization_preserves_sibling";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/84_semantic_relocation" {
+    const test_path = "tests/feature_tests/ownership/84_semantic_relocation";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/85X_semantic_relocation_double" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/85X_semantic_relocation_double",
+        "place rooted at 'source' is moved and cannot be used",
+    );
+}
+
+test "feature_tests/ownership/86_relocation_storage_capability" {
+    const test_path = "tests/feature_tests/ownership/86_relocation_storage_capability";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/87_relocation_interprocedural" {
+    const test_path = "tests/feature_tests/ownership/87_relocation_interprocedural";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/88_semantic_relocation_trivial" {
+    const test_path = "tests/feature_tests/ownership/88_semantic_relocation_trivial";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/89_semantic_relocation_choice" {
+    const test_path = "tests/feature_tests/ownership/89_semantic_relocation_choice";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/90X_relocation_initialized_destination" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/90X_relocation_initialized_destination",
+        "relocate destination is initialized",
+    );
+}
+
+test "feature_tests/ownership/91X_relocation_stale_destination_alias" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/91X_relocation_stale_destination_alias",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/92X_relocation_owning_destination" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/92X_relocation_owning_destination",
+        "relocate destination is initialized",
+    );
+}
+
+test "feature_tests/ownership/93X_relocation_maybe_initialized_destination" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/93X_relocation_maybe_initialized_destination",
+        "relocate destination may be initialized",
+    );
+}
+
+test "feature_tests/ownership/94_choice_if_narrowing" {
+    const test_path = "tests/feature_tests/ownership/94_choice_if_narrowing";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/95X_choice_unproven_payload" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/95X_choice_unproven_payload",
+        "requires its variant to be proven active",
+    );
+}
+
+test "feature_tests/ownership/96_choice_comparison_narrowing" {
+    const test_path = "tests/feature_tests/ownership/96_choice_comparison_narrowing";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/97_choice_nested_narrowing" {
+    const test_path = "tests/feature_tests/ownership/97_choice_nested_narrowing";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/ownership/98X_choice_nested_unproven_payload" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/98X_choice_nested_unproven_payload",
+        "requires its variant to be proven active",
+    );
+}
+
+test "feature_tests/ownership/99X_choice_else_keeps_multiple_variants" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/99X_choice_else_keeps_multiple_variants",
+        "requires its variant to be proven active",
+    );
+}
+
+test "feature_tests/ownership/100_safe_reference_lifetime_restriction" {
+    const test_path = "tests/feature_tests/ownership/100_safe_reference_lifetime_restriction";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/101X_safe_reference_restriction_ended_lifetime" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/101X_safe_reference_restriction_ended_lifetime",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/102X_safe_reference_restriction_ended_source" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/102X_safe_reference_restriction_ended_source",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/103_safe_reference_restriction_after_reinitialize" {
+    const test_path = "tests/feature_tests/ownership/103_safe_reference_restriction_after_reinitialize";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/104X_safe_reference_restriction_relocated" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/104X_safe_reference_restriction_relocated",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/105X_safe_reference_restriction_stale_after_reinitialize" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/105X_safe_reference_restriction_stale_after_reinitialize",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/106_trusted_opaque_move_user_call" {
+    const test_path = "tests/feature_tests/ownership/106_trusted_opaque_move_user_call";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/107_trusted_opaque_drop_user_call" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/107_trusted_opaque_drop_user_call");
+}
+
+test "feature_tests/ownership/108_trusted_opaque_user_core_path" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/108_trusted_opaque_user_core_path/core");
+}
+
+test "feature_tests/ownership/109_trusted_opaque_move_scalar" {
+    const test_path = "tests/feature_tests/ownership/109_trusted_opaque_move_scalar";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
+test "feature_tests/ownership/110X_trusted_opaque_move_double_move" {
+    try buildExpectFail("tests/feature_tests/ownership/110X_trusted_opaque_move_double_move", "binding 'value' was moved and cannot be used again");
+}
+
+test "feature_tests/ownership/111X_trusted_opaque_move_use_after_move" {
+    try buildExpectFail("tests/feature_tests/ownership/111X_trusted_opaque_move_use_after_move", "binding 'value' was moved and cannot be used again");
+}
+
+test "feature_tests/ownership/112_trusted_opaque_wrapper" {
+    const test_path = "tests/feature_tests/ownership/112_trusted_opaque_wrapper";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 42);
+}
+
+test "feature_tests/ownership/113_fake_trusted_opaque_name" {
+    const test_path = "tests/feature_tests/ownership/113_fake_trusted_opaque_name";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/114X_trusted_opaque_wrapper_use_after_move" {
+    try buildExpectFail("tests/feature_tests/ownership/114X_trusted_opaque_wrapper_use_after_move", "binding 'value' was moved and cannot be used again");
+}
+
+test "feature_tests/ownership/115X_trusted_opaque_nested_wrapper_double_move" {
+    try buildExpectFail("tests/feature_tests/ownership/115X_trusted_opaque_nested_wrapper_double_move", "binding 'value' was moved and cannot be used again");
+}
+
+test "feature_tests/ownership/116_trusted_opaque_allocation" {
+    const test_path = "tests/feature_tests/ownership/116_trusted_opaque_allocation";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/117X_trusted_opaque_allocation_alias" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/117X_trusted_opaque_allocation_alias",
+        "opaque ownership storage requires no live external aliases to the consumed root",
+    );
+}
+
+test "feature_tests/ownership/118_trusted_opaque_allocation_nested" {
+    const test_path = "tests/feature_tests/ownership/118_trusted_opaque_allocation_nested";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/119X_trusted_opaque_allocation_nested_alias" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/119X_trusted_opaque_allocation_nested_alias",
+        "opaque ownership storage requires no live external aliases to the consumed root",
+    );
+}
+
+test "feature_tests/ownership/120X_trusted_opaque_router_transaction" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/120X_trusted_opaque_router_transaction",
+        "opaque ownership storage cannot hide dependencies on external roots",
+    );
+}
+
+test "feature_tests/ownership/121_trusted_opaque_drop_cleanup" {
+    const test_path = "tests/feature_tests/ownership/121_trusted_opaque_drop_cleanup";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/122_trusted_opaque_relocate" {
+    const test_path = "tests/feature_tests/ownership/122_trusted_opaque_relocate";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/123_self_referential_movable" {
+    const test_path = "tests/feature_tests/ownership/123_self_referential_movable";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/123X_opaque_relocate_self_reference" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/123X_opaque_relocate_self_reference",
+        "opaque ownership storage cannot hide dependencies on external roots",
+    );
+}
+
+test "feature_tests/ownership/124_visible_reference_invalidation_is_deferred" {
+    const test_path = "tests/feature_tests/ownership/124_visible_reference_invalidation_is_deferred";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/125X_visible_reference_use_after_invalidation" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/125X_visible_reference_use_after_invalidation",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/126_opaque_move_in_external_dependency" {
+    const test_path = "tests/feature_tests/ownership/126_opaque_move_in_external_dependency";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/127X_opaque_relocate_mutation_after_move_in" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/127X_opaque_relocate_mutation_after_move_in",
+        "relocation would invalidate a hidden opaque dependency",
+    );
+}
+
+test "feature_tests/ownership/128X_opaque_hidden_dependency_blocks_root_end" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/128X_opaque_hidden_dependency_blocks_root_end",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/129_opaque_hidden_dependency_does_not_block_unrelated_root" {
+    const test_path = "tests/feature_tests/ownership/129_opaque_hidden_dependency_does_not_block_unrelated_root";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/130X_opaque_hidden_dependency_branch_join" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/130X_opaque_hidden_dependency_branch_join",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/131X_opaque_hidden_dependency_through_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/131X_opaque_hidden_dependency_through_wrapper",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/132X_opaque_local_aggregate_dependency_through_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/132X_opaque_local_aggregate_dependency_through_wrapper",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/133_opaque_local_aggregate_wrapper_allows_unrelated_end" {
+    const test_path = "tests/feature_tests/ownership/133_opaque_local_aggregate_wrapper_allows_unrelated_end";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/134X_opaque_local_aggregate_nested_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/134X_opaque_local_aggregate_nested_wrapper",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/135_opaque_move_in_exactly_once_codegen" {
+    const test_path = "tests/feature_tests/ownership/135_opaque_move_in_exactly_once_codegen";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/136_opaque_dependency_summary_does_not_duplicate_ownership" {
+    const test_path = "tests/feature_tests/ownership/136_opaque_dependency_summary_does_not_duplicate_ownership";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/137X_opaque_hidden_dependency_blocks_owner_consumption" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/137X_opaque_hidden_dependency_blocks_owner_consumption",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/138_opaque_hidden_dependency_allows_unrelated_owner_consumption" {
+    const test_path = "tests/feature_tests/ownership/138_opaque_hidden_dependency_allows_unrelated_owner_consumption";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/139X_opaque_hidden_dependency_blocks_owner_consumption_through_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/139X_opaque_hidden_dependency_blocks_owner_consumption_through_wrapper",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/140X_opaque_mutation_hides_external_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/140X_opaque_mutation_hides_external_dependency",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/141_opaque_mutation_allows_unrelated_root_end" {
+    const test_path = "tests/feature_tests/ownership/141_opaque_mutation_allows_unrelated_root_end";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/142X_opaque_mutation_dependency_through_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/142X_opaque_mutation_dependency_through_wrapper",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/143X_opaque_mutation_existing_internal_pointer_blocks_relocation" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/143X_opaque_mutation_existing_internal_pointer_blocks_relocation",
+        "relocation would invalidate a hidden opaque dependency",
+    );
+}
+
+test "feature_tests/ownership/144X_opaque_mutation_cached_internal_pointer_blocks_relocation" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/144X_opaque_mutation_cached_internal_pointer_blocks_relocation",
+        "relocation would invalidate a hidden opaque dependency",
+    );
+}
+
+test "feature_tests/ownership/145_opaque_mutation_external_pointer_allows_relocation" {
+    const test_path = "tests/feature_tests/ownership/145_opaque_mutation_external_pointer_allows_relocation";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/146X_opaque_mutation_cached_internal_pointer_through_wrapper_blocks_relocation" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/146X_opaque_mutation_cached_internal_pointer_through_wrapper_blocks_relocation",
+        "relocation would invalidate a hidden opaque dependency",
+    );
+}
+
+test "feature_tests/ownership/147X_address_through_stale_pointer_does_not_revive" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/147X_address_through_stale_pointer_does_not_revive",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/148X_address_through_stale_opaque_pointer_does_not_revive" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/148X_address_through_stale_opaque_pointer_does_not_revive",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/149X_field_read_through_stale_pointer_fails" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/149X_field_read_through_stale_pointer_fails",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/150X_array_read_through_stale_pointer_fails" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/150X_array_read_through_stale_pointer_fails",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/152X_array_write_through_stale_pointer_fails" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/152X_array_write_through_stale_pointer_fails",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/153_live_array_pointer_accesses" {
+    const test_path = "tests/feature_tests/ownership/153_live_array_pointer_accesses";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/154_precise_pointer_assignment_reinitializes_dead_place" {
+    const test_path = "tests/feature_tests/ownership/154_precise_pointer_assignment_reinitializes_dead_place";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/155X_extracted_opaque_reference_expires_with_domain" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/155X_extracted_opaque_reference_expires_with_domain",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/156_fresh_opaque_extraction_after_refresh" {
+    const test_path = "tests/feature_tests/ownership/156_fresh_opaque_extraction_after_refresh";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/157X_opaque_aggregate_extraction_preserves_domain_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/157X_opaque_aggregate_extraction_preserves_domain_dependency",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/158_live_opaque_extraction_is_usable" {
+    const test_path = "tests/feature_tests/ownership/158_live_opaque_extraction_is_usable";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/159X_opaque_read_generation_survives_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/159X_opaque_read_generation_survives_wrapper",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/160X_opaque_read_generation_survives_double_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/160X_opaque_read_generation_survives_double_wrapper",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/161_fresh_opaque_wrapper_extraction_after_refresh" {
+    const test_path = "tests/feature_tests/ownership/161_fresh_opaque_wrapper_extraction_after_refresh";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/162X_opaque_read_through_identity_wrapper_keeps_generation" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/162X_opaque_read_through_identity_wrapper_keeps_generation",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/163X_stale_pointer_use_through_wrapper_fails" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/163X_stale_pointer_use_through_wrapper_fails",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/164_stale_pointer_identity_is_allowed" {
+    const test_path = "tests/feature_tests/ownership/164_stale_pointer_identity_is_allowed";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/165X_stale_pointer_use_through_double_wrapper_fails" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/165X_stale_pointer_use_through_double_wrapper_fails",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/166_fresh_pointer_use_through_wrapper" {
+    const test_path = "tests/feature_tests/ownership/166_fresh_pointer_use_through_wrapper";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/167X_stale_array_pointer_use_through_wrapper_fails" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/167X_stale_array_pointer_use_through_wrapper_fails",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/168X_nested_pointer_use_precondition_keeps_projection" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/168X_nested_pointer_use_precondition_keeps_projection",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/169X_struct_field_write_through_stale_pointer_fails" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/169X_struct_field_write_through_stale_pointer_fails",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/170_struct_field_write_through_live_pointer_wrapper" {
+    const test_path = "tests/feature_tests/ownership/170_struct_field_write_through_live_pointer_wrapper";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/171X_struct_field_write_through_stale_pointer_wrapper_fails" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/171X_struct_field_write_through_stale_pointer_wrapper_fails",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/172X_nested_struct_field_write_precondition_keeps_projection" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/172X_nested_struct_field_write_precondition_keeps_projection",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/173X_opaque_drop_all_still_blocks_root_end" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/173X_opaque_drop_all_still_blocks_root_end",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/174_opaque_mark_empty_allows_root_end" {
+    const test_path = "tests/feature_tests/ownership/174_opaque_mark_empty_allows_root_end";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/175X_opaque_release_one_domain_keeps_other_hidden" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/175X_opaque_release_one_domain_keeps_other_hidden",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/176_opaque_release_each_domain_allows_root_end" {
+    const test_path = "tests/feature_tests/ownership/176_opaque_release_each_domain_allows_root_end";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/177_opaque_mark_empty_wrapper" {
+    const test_path = "tests/feature_tests/ownership/177_opaque_mark_empty_wrapper";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/178_opaque_mark_empty_double_wrapper" {
+    const test_path = "tests/feature_tests/ownership/178_opaque_mark_empty_double_wrapper";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/179X_opaque_mark_empty_projected_domain_is_exact" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/179X_opaque_mark_empty_projected_domain_is_exact",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/180_opaque_mark_empty_keeps_extracted_reference_live" {
+    const test_path = "tests/feature_tests/ownership/180_opaque_mark_empty_keeps_extracted_reference_live";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/181X_fake_opaque_mark_empty_name" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/181X_fake_opaque_mark_empty_name",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/182X_opaque_release_after_early_return_is_not_definite" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/182X_opaque_release_after_early_return_is_not_definite",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/183X_opaque_write_after_release_repopulates_domain" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/183X_opaque_write_after_release_repopulates_domain",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/184_opaque_release_in_both_branches_is_definite" {
+    const test_path = "tests/feature_tests/ownership/184_opaque_release_in_both_branches_is_definite";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/185X_opaque_release_in_one_branch_is_not_definite" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/185X_opaque_release_in_one_branch_is_not_definite",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/186_opaque_release_after_write_is_definite" {
+    const test_path = "tests/feature_tests/ownership/186_opaque_release_after_write_is_definite";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/187X_opaque_release_then_write_double_wrapper_repopulates" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/187X_opaque_release_then_write_double_wrapper_repopulates",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/188_opaque_write_then_release_double_wrapper_is_definite" {
+    const test_path = "tests/feature_tests/ownership/188_opaque_write_then_release_double_wrapper_is_definite";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/189X_opaque_pointer_assignment_after_release_repopulates" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/189X_opaque_pointer_assignment_after_release_repopulates",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/190X_opaque_repopulation_inside_initializer_cancels_release" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/190X_opaque_repopulation_inside_initializer_cancels_release",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/191X_opaque_repopulation_inside_return_expression_cancels_release" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/191X_opaque_repopulation_inside_return_expression_cancels_release",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/192X_opaque_repopulation_inside_nested_argument_cancels_release" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/192X_opaque_repopulation_inside_nested_argument_cancels_release",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/193_opaque_release_inside_initializer_is_definite" {
+    const test_path = "tests/feature_tests/ownership/193_opaque_release_inside_initializer_is_definite";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/194X_opaque_release_in_short_circuit_rhs_is_not_definite" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/194X_opaque_release_in_short_circuit_rhs_is_not_definite",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/195X_opaque_repopulation_in_short_circuit_rhs_cancels_release" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/195X_opaque_repopulation_in_short_circuit_rhs_cancels_release",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/196X_opaque_expression_order_release_then_repopulate" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/196X_opaque_expression_order_release_then_repopulate",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/197_opaque_expression_order_repopulate_then_release" {
+    const test_path = "tests/feature_tests/ownership/197_opaque_expression_order_repopulate_then_release";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/198X_nested_call_post_state_repopulates_with_new_root" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/198X_nested_call_post_state_repopulates_with_new_root",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/199X_nested_initializer_propagates_input_post_state" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/199X_nested_initializer_propagates_input_post_state",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/200X_return_expression_propagates_input_post_state" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/200X_return_expression_propagates_input_post_state",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/201X_nested_argument_propagates_input_post_state" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/201X_nested_argument_propagates_input_post_state",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/202X_conditional_expression_joins_input_post_state" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/202X_conditional_expression_joins_input_post_state",
+        "place rooted at 'allocation' is maybe_initialized and cannot be used",
+    );
+}
+
+test "feature_tests/ownership/203_auto_deinit_applies_opaque_release_summary" {
+    const test_path = "tests/feature_tests/ownership/203_auto_deinit_applies_opaque_release_summary";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/204X_auto_deinit_respects_required_live_inputs" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/204X_auto_deinit_respects_required_live_inputs",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/205_structural_auto_deinit_applies_field_summary" {
+    const test_path = "tests/feature_tests/ownership/205_structural_auto_deinit_applies_field_summary";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/206_auto_deinit_release_propagates_through_wrapper" {
+    const test_path = "tests/feature_tests/ownership/206_auto_deinit_release_propagates_through_wrapper";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/207X_auto_deinit_input_post_state_propagates_through_wrapper",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/208_structural_auto_deinit_effects_propagate_through_wrapper" {
+    const test_path = "tests/feature_tests/ownership/208_structural_auto_deinit_effects_propagate_through_wrapper";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/209X_input_post_state_before_early_return_is_preserved" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/209X_input_post_state_before_early_return_is_preserved",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/210_identical_return_post_states_remain_precise" {
+    const test_path = "tests/feature_tests/ownership/210_identical_return_post_states_remain_precise";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/211X_distinct_return_post_states_are_joined" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/211X_distinct_return_post_states_are_joined",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/212X_structural_auto_deinit_respects_required_live_inputs" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/212X_structural_auto_deinit_respects_required_live_inputs",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/213_conditional_opaque_consumption_into_known_storage" {
+    const test_path = "tests/feature_tests/ownership/213_conditional_opaque_consumption_into_known_storage";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/214X_conditional_opaque_consumption_invalidates_source" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/214X_conditional_opaque_consumption_invalidates_source",
+        "place rooted at 'source' is moved and cannot be used",
+    );
+}
+
+test "feature_tests/ownership/215X_conditional_opaque_consumption_hides_dependencies" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/215X_conditional_opaque_consumption_hides_dependencies",
+        "opaque storage hides a dependency",
+    );
+}
+
+test "feature_tests/ownership/216_conditional_opaque_consumption_then_release" {
+    const test_path = "tests/feature_tests/ownership/216_conditional_opaque_consumption_then_release";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/217X_conditional_opaque_reference_source_hides_dependencies" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/217X_conditional_opaque_reference_source_hides_dependencies",
+        "opaque storage hides a dependency",
+    );
+}
+
+test "feature_tests/ownership/218X_conditional_opaque_reference_source_closes_owned_roots" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/218X_conditional_opaque_reference_source_closes_owned_roots",
+        "opaque ownership storage requires no live external aliases to the consumed root",
+    );
+}
+
+test "feature_tests/ownership/43X_inferred_cleanup_ends_internal_root" {
+    try buildExpectFailExact("tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root",
+        \\tests/feature_tests/ownership/43X_inferred_cleanup_ends_internal_root/main.rg:9:1: error: reference depends on a root that has ended
+        \\  main(.system: System) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/44_cross_root_cycle_survivor_remains_usable" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/44_cross_root_cycle_survivor_remains_usable");
+}
+
+test "feature_tests/ownership/45X_cross_root_cycle_stale_edge" {
+    try buildExpectFailExact("tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge",
+        \\tests/feature_tests/ownership/45X_cross_root_cycle_stale_edge/main.rg:3:1: error: reference depends on a root that has ended
+        \\  main(.system: System) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/46_deinitialized_place_can_be_replaced" {
+    try expectSuccessfulBuild("tests/feature_tests/ownership/46_deinitialized_place_can_be_replaced");
+}
+
+test "feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance" {
+    try buildExpectFailExact("tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance",
+        \\tests/feature_tests/ownership/47X_integer_roundtrip_has_no_safe_provenance/main.rg:1:1: error: an integer address cannot establish a safe reference; use RawPointer and explicit root establishment
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/48_structural_field_move" {
+    const test_path = "tests/feature_tests/ownership/48_structural_field_move";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/49X_structural_field_use_after_move" {
+    try buildExpectFailExact("tests/feature_tests/ownership/49X_structural_field_use_after_move",
+        \\tests/feature_tests/ownership/49X_structural_field_use_after_move/main.rg:10:1: error: place rooted at 'pair' is moved and cannot be used
+        \\  main() -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/50X_branch_may_move_value" {
+    try buildExpectFailExact("tests/feature_tests/ownership/50X_branch_may_move_value",
+        \\tests/feature_tests/ownership/50X_branch_may_move_value/main.rg:4:1: error: place rooted at 'pair' is moved and cannot be used
+        \\  main(.condition: Bool = false) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/51X_loop_may_move_value" {
+    try buildExpectFailExact("tests/feature_tests/ownership/51X_loop_may_move_value",
+        \\tests/feature_tests/ownership/51X_loop_may_move_value/main.rg:4:1: error: place rooted at 'pair' is moved and cannot be used
+        \\  main(.condition: Bool = false) -> (.status_code: Int32) := {
+        \\  ^
+        \\
+    );
+}
+
+test "feature_tests/ownership/52_user_primitive_name_has_no_authority" {
+    const test_path = "tests/feature_tests/ownership/52_user_primitive_name_has_no_authority";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
 }
 
 test "feature_tests/ownership/29_string_view_is_copyable" {
@@ -2945,7 +4128,7 @@ test "feature_tests/ownership/31_array_of_pointers_is_copyable" {
 
 test "feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable" {
     try buildExpectFailExact("tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable",
-        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:9:15: error: type '[2]Resource' is not copyable, so it cannot be used by value here; pass it by '&' or '$&', or implement 'copy()'
+        \\tests/feature_tests/ownership/32X_array_of_noncopyable_is_not_copyable/main.rg:9:15: error: type '[2]Resource' cannot be copied implicitly; use '~value' to transfer ownership
         \\      copied := resources
         \\                ^
         \\
@@ -2984,6 +4167,561 @@ test "feature_tests/polymorphism/25X_abstract_overloads_with_defaults_ambiguous"
         \\      status_code = pick(.value = 7).status_code
         \\                    ^
         \\
+    );
+}
+
+test "feature_tests/polymorphism/26_virtual_abstract_dispatch" {
+    const test_path = "tests/feature_tests/polymorphism/26_virtual_abstract_dispatch";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/polymorphism/27_virtual_allocator_dispatch" {
+    const test_path = "tests/feature_tests/polymorphism/27_virtual_allocator_dispatch";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/polymorphism/28_virtual_foundation" {
+    const test_path = "tests/feature_tests/polymorphism/28_virtual_foundation";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/polymorphism/29X_virtual_dependency_escape" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/29X_virtual_dependency_escape",
+        "function output cannot depend on a local storage generation that ends before return",
+    );
+}
+
+test "feature_tests/polymorphism/30X_virtual_dependency_union" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/30X_virtual_dependency_union",
+        "function output cannot depend on a local storage generation that ends before return",
+    );
+}
+
+test "feature_tests/polymorphism/31X_virtual_incompatible_deinit" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/31X_virtual_incompatible_deinit",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+    );
+}
+
+test "feature_tests/ownership/219_virtual_post_state_allows_optional_self_mutation" {
+    const test_path = "tests/feature_tests/ownership/219_virtual_post_state_allows_optional_self_mutation";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/220X_virtual_post_state_dependency_union" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/220X_virtual_post_state_dependency_union",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/221X_virtual_post_state_initializedness_join" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/221X_virtual_post_state_initializedness_join",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+    );
+}
+
+test "feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+    );
+}
+
+test "feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage_invalidates_source" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/222X_virtual_conditional_opaque_ownership_same_storage_invalidates_source",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+    );
+}
+
+test "feature_tests/ownership/223X_virtual_opaque_ownership_different_storages_incompatible" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/223X_virtual_opaque_ownership_different_storages_incompatible",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+    );
+}
+
+test "feature_tests/ownership/224X_virtual_definite_self_destruction_incompatible" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/224X_virtual_definite_self_destruction_incompatible",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+    );
+}
+
+test "feature_tests/ownership/225X_virtual_receiver_uses_self_input_index" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/225X_virtual_receiver_uses_self_input_index",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/226X_virtual_conditional_opaque_ownership_drop_state_incompatible" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/226X_virtual_conditional_opaque_ownership_drop_state_incompatible",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+    );
+}
+
+test "feature_tests/ownership/227X_virtual_definite_opaque_ownership_drop_state_incompatible" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/227X_virtual_definite_opaque_ownership_drop_state_incompatible",
+        "cannot form Virtual value because an Abstract method has incompatible safety effects across implementations",
+    );
+}
+
+test "feature_tests/ownership/228_virtual_mutation_preserves_existing_alias" {
+    const test_path = "tests/feature_tests/ownership/228_virtual_mutation_preserves_existing_alias";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/229_virtual_mutation_preserves_stored_reference" {
+    const test_path = "tests/feature_tests/ownership/229_virtual_mutation_preserves_stored_reference";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/230_virtual_unchanged_alternative_preserves_pointee_facts" {
+    const test_path = "tests/feature_tests/ownership/230_virtual_unchanged_alternative_preserves_pointee_facts";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/231X_control_flow_unchanged_preserves_pointee_dependencies" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/231X_control_flow_unchanged_preserves_pointee_dependencies",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/232X_opaque_effect_instantiates_input_place_value_dependencies" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/232X_opaque_effect_instantiates_input_place_value_dependencies",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/233_opaque_effect_input_place_value_mark_empty" {
+    const test_path = "tests/feature_tests/ownership/233_opaque_effect_input_place_value_mark_empty";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/234_known_choice_literal_payload" {
+    const test_path = "tests/feature_tests/types/234_known_choice_literal_payload";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/235X_wrong_known_choice_literal_payload" {
+    try buildExpectFail(
+        "tests/feature_tests/types/235X_wrong_known_choice_literal_payload",
+        "choice payload '..0' is not active",
+    );
+}
+
+test "feature_tests/types/236_choice_equality_refines_payload" {
+    const test_path = "tests/feature_tests/types/236_choice_equality_refines_payload";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/237_choice_inequality_refines_remaining_payload" {
+    const test_path = "tests/feature_tests/types/237_choice_inequality_refines_remaining_payload";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/237X_choice_inequality_does_not_over_refine" {
+    try buildExpectFail(
+        "tests/feature_tests/types/237X_choice_inequality_does_not_over_refine",
+        "choice payload '..0' is not active",
+    );
+}
+
+test "feature_tests/types/238_choice_join_preserves_same_variant" {
+    const test_path = "tests/feature_tests/types/238_choice_join_preserves_same_variant";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/239X_choice_join_different_variants_is_unknown" {
+    try buildExpectFail(
+        "tests/feature_tests/types/239X_choice_join_different_variants_is_unknown",
+        "choice payload '..0' requires its variant to be proven active",
+    );
+}
+
+test "feature_tests/types/240_match_temporary_refines_payload" {
+    const test_path = "tests/feature_tests/types/240_match_temporary_refines_payload";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/241X_choice_reassignment_invalidates_refinement" {
+    try buildExpectFail(
+        "tests/feature_tests/types/241X_choice_reassignment_invalidates_refinement",
+        "choice payload '..0' is not active",
+    );
+}
+
+test "feature_tests/types/242_choice_move_preserves_known_variant" {
+    const test_path = "tests/feature_tests/types/242_choice_move_preserves_known_variant";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/242X_choice_move_invalidates_source" {
+    try buildExpectFail(
+        "tests/feature_tests/types/242X_choice_move_invalidates_source",
+        "choice payload '..0' requires its variant to be proven active",
+    );
+}
+
+test "feature_tests/types/243_choice_field_preserves_known_variant" {
+    const test_path = "tests/feature_tests/types/243_choice_field_preserves_known_variant";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/244_choice_refinement_survives_breaking_branch" {
+    const test_path = "tests/feature_tests/types/244_choice_refinement_survives_breaking_branch";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/245_function_output_preserves_known_choice_variant" {
+    const test_path = "tests/feature_tests/types/245_function_output_preserves_known_choice_variant";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/246X_choice_literal_payload_preserves_reference_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/types/246X_choice_literal_payload_preserves_reference_dependency",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/types/247X_choice_literal_payload_move_consumes_source" {
+    try buildExpectFail(
+        "tests/feature_tests/types/247X_choice_literal_payload_move_consumes_source",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/types/248_choice_payload_mutation_preserves_parent_tag" {
+    const test_path = "tests/feature_tests/types/248_choice_payload_mutation_preserves_parent_tag";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/249_choice_sibling_mutation_preserves_tag" {
+    const test_path = "tests/feature_tests/types/249_choice_sibling_mutation_preserves_tag";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/250X_choice_field_overwrite_invalidates_tag" {
+    try buildExpectFail(
+        "tests/feature_tests/types/250X_choice_field_overwrite_invalidates_tag",
+        "choice payload '..0' is not active",
+    );
+}
+
+test "feature_tests/types/251X_choice_parent_overwrite_invalidates_tag" {
+    try buildExpectFail(
+        "tests/feature_tests/types/251X_choice_parent_overwrite_invalidates_tag",
+        "choice payload '..0' is not active",
+    );
+}
+
+test "feature_tests/types/252X_choice_payload_integer_address_rejected_on_use" {
+    try buildExpectFail(
+        "tests/feature_tests/types/252X_choice_payload_integer_address_rejected_on_use",
+        "an integer address cannot establish a safe reference",
+    );
+}
+
+test "feature_tests/types/253X_choice_payload_integer_address_rejected_across_call" {
+    try buildExpectFail(
+        "tests/feature_tests/types/253X_choice_payload_integer_address_rejected_across_call",
+        "an integer address cannot establish a safe reference",
+    );
+}
+
+test "feature_tests/types/254_choice_union" {
+    const test_path = "tests/feature_tests/types/254_choice_union";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/255X_conflicting_abstract_associated_args" {
+    try buildExpectFail(
+        "tests/feature_tests/types/255X_conflicting_abstract_associated_args",
+        "conflicting implementations of abstract 'Capability' for type 'Thing' produce different associated arguments",
+    );
+}
+
+test "feature_tests/types/256X_abstract_associated_arg_mismatch" {
+    try buildExpectFail(
+        "tests/feature_tests/types/256X_abstract_associated_arg_mismatch",
+        "no function named 'require_uint' exists",
+    );
+}
+
+test "feature_tests/types/257X_abstract_impl_template_checks_associated_args" {
+    try buildExpectFail(
+        "tests/feature_tests/types/257X_abstract_impl_template_checks_associated_args",
+        "no function named 'require_other' exists",
+    );
+}
+
+test "feature_tests/types/258_abstract_associated_comptime_values" {
+    const test_path = "tests/feature_tests/types/258_abstract_associated_comptime_values";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/types/259X_abstract_associated_comptime_mismatch" {
+    try buildExpectFail(
+        "tests/feature_tests/types/259X_abstract_associated_comptime_mismatch",
+        "no function named 'require_four_rows' exists",
+    );
+}
+
+test "feature_tests/ownership/254X_reinitializing_alias_does_not_refresh_sibling" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/254X_reinitializing_alias_does_not_refresh_sibling",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/255_live_pointer_assignment_preserves_sibling_alias" {
+    const test_path = "tests/feature_tests/ownership/255_live_pointer_assignment_preserves_sibling_alias";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/256_function_reinitializing_alias_refreshes_itself" {
+    const test_path = "tests/feature_tests/ownership/256_function_reinitializing_alias_refreshes_itself";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/257X_function_reinitializing_alias_keeps_sibling_stale" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/257X_function_reinitializing_alias_keeps_sibling_stale",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/258_function_live_write_preserves_sibling_alias" {
+    const test_path = "tests/feature_tests/ownership/258_function_live_write_preserves_sibling_alias";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/259_loop_owned_generation_join" {
+    const test_path = "tests/feature_tests/ownership/259_loop_owned_generation_join";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/260X_loop_owned_generation_keeps_old_alias_stale" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/260X_loop_owned_generation_keeps_old_alias_stale",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/261_loop_owned_generation_allows_fresh_alias" {
+    const test_path = "tests/feature_tests/ownership/261_loop_owned_generation_allows_fresh_alias";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/262_loop_owned_generation_preserves_sibling" {
+    const test_path = "tests/feature_tests/ownership/262_loop_owned_generation_preserves_sibling";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/263_loop_optional_owned_generation" {
+    const test_path = "tests/feature_tests/ownership/263_loop_optional_owned_generation";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/264_loop_local_storage" {
+    const test_path = "tests/feature_tests/ownership/264_loop_local_storage";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/265_loop_local_field_storage" {
+    const test_path = "tests/feature_tests/ownership/265_loop_local_field_storage";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/266X_loop_local_storage_escape" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/266X_loop_local_storage_escape",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/267X_loop_local_storage_escape_break" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/267X_loop_local_storage_escape_break",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/268X_loop_local_storage_escape_continue" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/268X_loop_local_storage_escape_continue",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/269_loop_local_owning_cleanup" {
+    const test_path = "tests/feature_tests/ownership/269_loop_local_owning_cleanup";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/270X_return_local_storage" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/270X_return_local_storage",
+        "function output cannot depend on a local storage generation that ends before return",
+    );
+}
+
+test "feature_tests/ownership/271X_opaque_external_dependency_direct" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/271X_opaque_external_dependency_direct",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/272X_opaque_external_dependency_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/272X_opaque_external_dependency_wrapper",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/273X_opaque_external_dependency_nested_wrapper" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/273X_opaque_external_dependency_nested_wrapper",
+        "cannot end a root while opaque storage hides a dependency on it",
+    );
+}
+
+test "feature_tests/ownership/274_opaque_external_dependency_release" {
+    const test_path = "tests/feature_tests/ownership/274_opaque_external_dependency_release";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/275_opaque_wrapper_self_contained_owner" {
+    const test_path = "tests/feature_tests/ownership/275_opaque_wrapper_self_contained_owner";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/276X_opaque_move_out_preserves_external_dependency" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/276X_opaque_move_out_preserves_external_dependency",
+        "reference depends on a root that has ended",
+    );
+}
+
+test "feature_tests/ownership/277_implicit_scalar_copy" {
+    const test_path = "tests/feature_tests/ownership/277_implicit_scalar_copy";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/278_implicit_struct_copy" {
+    const test_path = "tests/feature_tests/ownership/278_implicit_struct_copy";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/279X_infallible_copy_is_not_implicit" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/279X_infallible_copy_is_not_implicit",
+        "type 'LargeValue' cannot be copied implicitly",
+    );
+}
+
+test "feature_tests/ownership/280_explicit_infallible_copy" {
+    const test_path = "tests/feature_tests/ownership/280_explicit_infallible_copy";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/281X_fallible_copy_is_not_implicit" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/281X_fallible_copy_is_not_implicit",
+        "type 'FallibleValue' cannot be copied implicitly",
+    );
+}
+
+test "feature_tests/ownership/282_explicit_fallible_copy" {
+    const test_path = "tests/feature_tests/ownership/282_explicit_fallible_copy";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/283_scalar_opaque_read_is_independent" {
+    const test_path = "tests/feature_tests/ownership/283_scalar_opaque_read_is_independent";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/ownership/284X_integer_cannot_establish_any_reference" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/284X_integer_cannot_establish_any_reference",
+        "an integer address cannot establish a safe reference; use RawPointer and explicit root establishment",
+    );
+}
+
+test "feature_tests/ownership/285_reference_can_erase_to_any" {
+    const test_path = "tests/feature_tests/ownership/285_reference_can_erase_to_any";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
+test "feature_tests/polymorphism/32_static_abstract_generic_fields" {
+    const test_path = "tests/feature_tests/polymorphism/32_static_abstract_generic_fields";
+    try expectSuccessfulBuild(test_path);
+    try run(test_path);
+}
+
+test "feature_tests/polymorphism/33X_static_abstract_generic_field_requires_implementation" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/33X_static_abstract_generic_field_requires_implementation",
+        "does not implement abstract 'Backend' required by generic type parameter '.backend_type' of 'Wrapper'",
+    );
+}
+
+test "feature_tests/polymorphism/34X_static_abstract_generic_field_identity" {
+    try buildExpectFail(
+        "tests/feature_tests/polymorphism/34X_static_abstract_generic_field_identity",
+        "no overload of 'accept_b' accepts arguments (.value: Wrapper#(.backend_type: BackendA))",
     );
 }
 

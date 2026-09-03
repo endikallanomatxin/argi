@@ -1,0 +1,17 @@
+identity(.p: $&UInt8) -> (.result: $&UInt8) := {
+    result = p
+}
+
+main(.system: System) -> (.status_code: Int32) := {
+    allocated ::= allocate(.self = system.allocator, .size = 1)
+    match allocated {
+        ..error _ { status_code = 1 }
+        ..ok ~ payload {
+            allocation ::= ~payload
+            pointer ::= allocation.data
+            deinit(.self = $&allocation)
+            stale_copy ::= identity(.p = pointer).result
+            status_code = 0
+        }
+    }
+}

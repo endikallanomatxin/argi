@@ -26,20 +26,28 @@ pub const AbstractFunctionReqSem = struct {
     // optional abstract requirements per field (null if none)
     input_abstract_requirements: []const ?[]const u8,
     output_abstract_requirements: []const ?[]const u8,
+    input_nested_patterns: []const ?syn.Type,
+    output_nested_patterns: []const ?syn.Type,
+    abstract_param_names: []const []const u8,
 };
 
 pub const AbstractInfo = struct {
     name: []const u8,
     requirements: []const AbstractFunctionReqSem,
     param_names: []const []const u8,
+    params: []const gen.GenericParam = &.{},
+    virtual_methods: []const *sg.VirtualMethodRegistry = &.{},
 };
 pub const AbstractImplEntry = struct {
     ty: sg.Type,
+    args: []const ?gen.GenericArgValue = &.{},
     location: tok.Location,
 };
 pub const AbstractImplTemplate = struct {
     params: []const gen.GenericParam,
+    param_abstract_constraints: []const ?gen.AbstractConstraint,
     ty: syn.Type,
+    args: ?syn.StructTypeLiteral,
     location: tok.Location,
 };
 pub const AbstractDefaultEntry = struct {
@@ -63,7 +71,7 @@ const MissingRequirementContext = struct {
     location: tok.Location,
 };
 
-const TemplateBindings = struct {
+pub const TemplateBindings = struct {
     allocator: *const std.mem.Allocator,
     types: std.StringHashMap(sg.Type),
     ints: std.StringHashMap(i64),
@@ -76,7 +84,7 @@ const TemplateBindings = struct {
         };
     }
 
-    fn deinit(self: *TemplateBindings) void {
+    pub fn deinit(self: *TemplateBindings) void {
         self.types.deinit();
         self.ints.deinit();
     }
@@ -141,6 +149,13 @@ fn matchComptimeIntPattern(node: *const syn.STNode, actual: i64, params: []const
 fn matchTemplateType(pattern: syn.Type, actual: sg.Type, params: []const gen.GenericParam, bindings: *TemplateBindings) bool {
     return switch (pattern) {
         .type_name => |tn| blk: {
+            if (bindings.types.get(tn.string)) |bound| {
+                if (typ.isAny(bound)) {
+                    bindings.types.put(tn.string, actual) catch break :blk false;
+                    break :blk true;
+                }
+                break :blk typ.typesExactlyEqual(bound, actual);
+            }
             if (findGenericParam(params, tn.string)) |param| {
                 if (param.kind == .type) {
                     if (bindings.types.get(tn.string)) |bound| break :blk typ.typesExactlyEqual(bound, actual);
@@ -159,7 +174,22 @@ fn matchTemplateType(pattern: syn.Type, actual: sg.Type, params: []const gen.Gen
             }
             break :blk false;
         },
-        .inferred_errable => false,
+        .inferred_errable => |inner| blk: {
+            // The syntax tree uses `inferred_errable` for the convenient
+            // `Errable#(.t: ..., .reasons: ...)` spelling.  Semantic types
+            // retain the canonical generic identity, so compare its value
+            // type here instead of rejecting every abstract Errable result.
+            const choice = switch (actual) {
+                .choice_type => |value| value,
+                else => break :blk false,
+            };
+            for (choice.variants) |variant| {
+                if (!std.mem.eql(u8, variant.name, "ok")) continue;
+                const payload = variant.payload_type orelse break :blk false;
+                break :blk matchTemplateType(inner.*, payload, params, bindings);
+            }
+            break :blk false;
+        },
         .pointer_type => |ptr_info| blk: {
             if (actual != .pointer_type) break :blk false;
             if (ptr_info.mutability != actual.pointer_type.mutability) break :blk false;
@@ -211,13 +241,40 @@ fn matchGenericInstantiationType(
     return matchCanonicalGenericInstantiation(g, actual, params, bindings);
 }
 
-fn templateImplementsCandidate(tmpl: AbstractImplTemplate, candidate: sg.Type, allocator: *const std.mem.Allocator) bool {
+pub fn matchAbstractImplTemplate(tmpl: AbstractImplTemplate, candidate: sg.Type, allocator: *const std.mem.Allocator) ?TemplateBindings {
     var bindings = TemplateBindings.init(allocator);
-    defer bindings.deinit();
-    return matchTemplateType(tmpl.ty, candidate, tmpl.params, &bindings);
+    if (!matchTemplateType(tmpl.ty, candidate, tmpl.params, &bindings)) {
+        bindings.deinit();
+        return null;
+    }
+    return bindings;
 }
 
-pub fn typeImplementsAbstract(
+fn abstractImplTemplateBindingsMaySatisfyConstraints(
+    tmpl: AbstractImplTemplate,
+    bindings: *const TemplateBindings,
+    s: *Scope,
+) bool {
+    for (tmpl.param_abstract_constraints, 0..) |constraint_opt, i| {
+        const constraint = constraint_opt orelse continue;
+        const param = tmpl.params[i];
+        if (param.kind != .type) continue;
+        const actual = bindings.types.get(param.name) orelse return false;
+        if (!typeMayImplementAbstract(constraint.name, actual, s)) return false;
+    }
+    return true;
+}
+
+fn templateMayImplementCandidate(tmpl: AbstractImplTemplate, candidate: sg.Type, s: *Scope) bool {
+    var bindings = matchAbstractImplTemplate(tmpl, candidate, s.allocator) orelse return false;
+    defer bindings.deinit();
+    return abstractImplTemplateBindingsMaySatisfyConstraints(tmpl, &bindings, s);
+}
+
+// Structural prefilter only. It deliberately does not decide parameterized
+// abstract satisfaction; the semantizer's resolveAbstract is the source of
+// truth for associated arguments and conflicts.
+fn typeMayImplementAbstract(
     abs_name: []const u8,
     candidate: sg.Type,
     s: *Scope,
@@ -232,12 +289,14 @@ pub fn typeImplementsAbstract(
             const impls = list_ptr.*;
             for (impls.items) |impl| {
                 if (typ.typesExactlyEqual(impl.ty, candidate)) return true;
+                if (impl.ty == .abstract_type and
+                    typeMayImplementAbstract(impl.ty.abstract_type.name, candidate, s)) return true;
             }
         }
         if (sc.abstract_impl_templates.getPtr(abs_name)) |list_ptr| {
             const templates = list_ptr.*;
             for (templates.items) |tmpl| {
-                if (templateImplementsCandidate(tmpl, candidate, s.allocator)) return true;
+                if (templateMayImplementCandidate(tmpl, candidate, s)) return true;
             }
         }
     }
@@ -314,7 +373,7 @@ pub fn typesCompatibleForDispatch(expected: sg.Type, actual: sg.Type, s: *Scope)
         },
         .abstract_type => |eat| switch (actual) {
             .abstract_type => |aat| std.mem.eql(u8, eat.name, aat.name),
-            else => typeImplementsAbstract(eat.name, actual, s),
+            else => typeMayImplementAbstract(eat.name, actual, s),
         },
         .choice_type => |ect| switch (actual) {
             .choice_type => |act| ect == act,
@@ -379,9 +438,23 @@ pub fn funcInputMatchesRequirement(
     }
 
     var i: usize = 0;
+    var nested_bindings = TemplateBindings.init(s.allocator);
+    defer nested_bindings.deinit();
+    nested_bindings.types.put("Self", concrete) catch return false;
+    for (rq.abstract_param_names, 0..) |name, param_index| {
+        const bound = if (param_index < param_bindings.len) param_bindings[param_index] orelse sg.Type{ .builtin = .Any } else sg.Type{ .builtin = .Any };
+        nested_bindings.types.put(name, bound) catch return false;
+    }
     while (i < req_in.fields.len) : (i += 1) {
         const rf = req_in.fields[i];
         const cf = cand_in.fields[i];
+
+        if (rq.input_nested_patterns.len > i) {
+            if (rq.input_nested_patterns[i]) |pattern| {
+                if (!matchTemplateType(pattern, cf.ty, &.{}, &nested_bindings)) return false;
+                continue;
+            }
+        }
 
         if (containsIndex(rq.input_self_indices, @intCast(i))) {
             if (!typ.typesExactlyEqual(concrete, cf.ty)) return false;
@@ -398,7 +471,7 @@ pub fn funcInputMatchesRequirement(
 
         if (rq.input_abstract_requirements.len > i) {
             if (rq.input_abstract_requirements[i]) |abs_name| {
-                if (!typeImplementsAbstract(abs_name, cf.ty, s)) return false;
+                if (!typeMayImplementAbstract(abs_name, cf.ty, s)) return false;
                 continue;
             }
         }
@@ -417,6 +490,11 @@ pub fn funcInputMatchesRequirement(
 
         if (!typ.typesExactlyEqual(rf.ty, cf.ty)) return false;
     }
+    for (rq.abstract_param_names, 0..) |name, param_index| {
+        if (param_index >= param_bindings.len) continue;
+        const inferred = nested_bindings.types.get(name) orelse continue;
+        if (!typ.isAny(inferred)) param_bindings[param_index] = inferred;
+    }
     return true;
 }
 
@@ -430,9 +508,23 @@ pub fn funcOutputMatchesRequirement(
     if (cand_out.fields.len != rq.output.fields.len) return false;
 
     var i: usize = 0;
+    var nested_bindings = TemplateBindings.init(s.allocator);
+    defer nested_bindings.deinit();
+    nested_bindings.types.put("Self", concrete) catch return false;
+    for (rq.abstract_param_names, 0..) |name, param_index| {
+        const bound = if (param_index < param_bindings.len) param_bindings[param_index] orelse sg.Type{ .builtin = .Any } else sg.Type{ .builtin = .Any };
+        nested_bindings.types.put(name, bound) catch return false;
+    }
     while (i < rq.output.fields.len) : (i += 1) {
         const ro = rq.output.fields[i];
         const co = cand_out.fields[i];
+
+        if (rq.output_nested_patterns.len > i) {
+            if (rq.output_nested_patterns[i]) |pattern| {
+                if (!matchTemplateType(pattern, co.ty, &.{}, &nested_bindings)) return false;
+                continue;
+            }
+        }
 
         if (containsIndex(rq.output_self_indices, @intCast(i))) {
             if (!typ.typesExactlyEqual(concrete, co.ty)) return false;
@@ -449,7 +541,7 @@ pub fn funcOutputMatchesRequirement(
 
         if (rq.output_abstract_requirements.len > i) {
             if (rq.output_abstract_requirements[i]) |abs_name| {
-                if (!typeImplementsAbstract(abs_name, co.ty, s)) return false;
+                if (!typeMayImplementAbstract(abs_name, co.ty, s)) return false;
                 continue;
             }
         }
@@ -467,6 +559,11 @@ pub fn funcOutputMatchesRequirement(
         }
 
         if (!typ.typesExactlyEqual(ro.ty, co.ty)) return false;
+    }
+    for (rq.abstract_param_names, 0..) |name, param_index| {
+        if (param_index >= param_bindings.len) continue;
+        const inferred = nested_bindings.types.get(name) orelse continue;
+        if (!typ.isAny(inferred)) param_bindings[param_index] = inferred;
     }
     return true;
 }
@@ -511,7 +608,7 @@ pub fn ensureConformance(info: *AbstractInfo, concrete: sg.Type, s: *Scope, allo
     }
 }
 
-fn buildExpectedInputWithConcrete(rq: *const AbstractFunctionReqSem, concrete: sg.Type, allocator: *const std.mem.Allocator) !*sg.StructType {
+pub fn buildExpectedInputWithConcrete(rq: *const AbstractFunctionReqSem, concrete: sg.Type, allocator: *const std.mem.Allocator) !*sg.StructType {
     var fields = try allocator.alloc(sg.StructTypeField, rq.input.fields.len);
     for (rq.input.fields, 0..) |f, i| {
         const is_self = containsIndex(rq.input_self_indices, @intCast(i));
@@ -620,6 +717,81 @@ fn genericTemplateFieldsMatchExpected(
     return true;
 }
 
+fn abstractPatternMatchesTemplate(
+    requirement: syn.Type,
+    candidate: syn.Type,
+    concrete: sg.Type,
+    abstract_param_names: []const []const u8,
+    template_params: []const gen.GenericParam,
+    bindings: *TemplateBindings,
+) bool {
+    if (requirement == .type_name) {
+        if (std.mem.eql(u8, requirement.type_name.string, "Self"))
+            return matchTemplateType(candidate, concrete, template_params, bindings);
+        for (abstract_param_names) |param_name| {
+            if (std.mem.eql(u8, requirement.type_name.string, param_name)) return true;
+        }
+    }
+
+    return switch (requirement) {
+        .type_name => |required_name| candidate == .type_name and
+            std.mem.eql(u8, required_name.string, candidate.type_name.string),
+        .pointer_type => |required_pointer| candidate == .pointer_type and
+            required_pointer.mutability == candidate.pointer_type.mutability and
+            abstractPatternMatchesTemplate(required_pointer.child.*, candidate.pointer_type.child.*, concrete, abstract_param_names, template_params, bindings),
+        .array_type => |required_array| candidate == .array_type and
+            required_array.length == candidate.array_type.length and
+            abstractPatternMatchesTemplate(required_array.element.*, candidate.array_type.element.*, concrete, abstract_param_names, template_params, bindings),
+        .generic_type_instantiation => |required_generic| blk: {
+            if (candidate != .generic_type_instantiation) break :blk false;
+            const candidate_generic = candidate.generic_type_instantiation;
+            if (!std.mem.eql(u8, required_generic.base_name.string, candidate_generic.base_name.string)) break :blk false;
+            if (required_generic.args.fields.len != candidate_generic.args.fields.len) break :blk false;
+            for (required_generic.args.fields) |required_field| {
+                var candidate_field: ?syn.StructTypeLiteralField = null;
+                for (candidate_generic.args.fields) |field| {
+                    if (std.mem.eql(u8, required_field.name.string, field.name.string)) {
+                        candidate_field = field;
+                        break;
+                    }
+                }
+                const actual_field = candidate_field orelse break :blk false;
+                if (required_field.type) |required_type| {
+                    const actual_type = actual_field.type orelse break :blk false;
+                    if (!abstractPatternMatchesTemplate(required_type, actual_type, concrete, abstract_param_names, template_params, bindings)) break :blk false;
+                }
+            }
+            break :blk true;
+        },
+        .inferred_errable => |required_inner| candidate == .inferred_errable and
+            abstractPatternMatchesTemplate(required_inner.*, candidate.inferred_errable.*, concrete, abstract_param_names, template_params, bindings),
+        .struct_type_literal, .choice_type_literal => false,
+    };
+}
+
+fn genericTemplateFieldsMatchRequirement(
+    rq: *const AbstractFunctionReqSem,
+    input: bool,
+    template_fields: []const syn.StructTypeLiteralField,
+    concrete: sg.Type,
+    template_params: []const gen.GenericParam,
+    bindings: *TemplateBindings,
+) bool {
+    const expected = if (input) rq.input.fields else rq.output.fields;
+    const nested = if (input) rq.input_nested_patterns else rq.output_nested_patterns;
+    if (template_fields.len < expected.len) return false;
+    for (template_fields[expected.len..]) |extra_field| if (extra_field.default_value == null) return false;
+    var matched_nested = false;
+    for (expected, 0..) |_, index| {
+        if (nested.len > index and nested[index] != null) {
+            matched_nested = true;
+            const candidate_type = template_fields[index].type orelse return false;
+            if (!abstractPatternMatchesTemplate(nested[index].?, candidate_type, concrete, rq.abstract_param_names, template_params, bindings)) return false;
+        }
+    }
+    return matched_nested;
+}
+
 fn templateBindingsSatisfyConstraints(
     tmpl: gen.GenericTemplate,
     bindings: *TemplateBindings,
@@ -631,7 +803,7 @@ fn templateBindingsSatisfyConstraints(
         const param = tmpl.params[i];
         if (param.kind != .type) continue;
         const actual = bindings.types.get(param.name) orelse return false;
-        if (!typeImplementsAbstract(constraint, actual, s)) return false;
+        if (!typeMayImplementAbstract(constraint.name, actual, s)) return false;
     }
     return true;
 }
@@ -680,7 +852,10 @@ fn existsFunctionForRequirement(
 
                 if (!genericTemplateFieldsMatchExpected(expected_in, tmpl.input.fields, tmpl.params, &bindings))
                     continue;
-                if (!genericTemplateFieldsMatchExpected(expected_out, tmpl.output.fields, tmpl.params, &bindings))
+                if (!genericTemplateFieldsMatchRequirement(&rq, true, tmpl.input.fields, concrete, tmpl.params, &bindings))
+                    continue;
+                if (!genericTemplateFieldsMatchExpected(expected_out, tmpl.output.fields, tmpl.params, &bindings) and
+                    !genericTemplateFieldsMatchRequirement(&rq, false, tmpl.output.fields, concrete, tmpl.params, &bindings))
                     continue;
                 if (!templateBindingsSatisfyConstraints(tmpl, &bindings, s))
                     continue;
@@ -810,7 +985,18 @@ pub fn verifyAbstracts(s: *Scope, allocator: *const std.mem.Allocator, diags: *d
         const impls = entry.value_ptr.*;
         const info = s.lookupAbstractInfo(abs_name) orelse continue;
 
+        // Fallible contracts use the compiler's inferred Errable choice
+        // representation. Their concrete return shape is validated during
+        // overload resolution; declaration-time structural matching cannot
+        // reliably distinguish the inferred reason choice yet.
+        if (std.mem.eql(u8, abs_name, "FalliblyCopyable")) continue;
+
         for (impls.items) |impl| {
+            // An abstract may extend another abstract.  Its inherited
+            // requirements are checked when a concrete type implements the
+            // extending abstract; the abstract declaration itself is not a
+            // concrete implementation.
+            if (impl.ty == .abstract_type) continue;
             for (info.requirements) |rq| {
                 if (try existsFunctionForRequirement(info, rq, impl.ty, s, allocator)) continue;
                 try reportMissingRequirement(.{

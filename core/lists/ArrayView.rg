@@ -10,6 +10,18 @@ ArrayView#(.t: Type) : Type = (
     .length : UIntNative
 )
 
+ArrayViewRO#(.t: Type) : Type = (
+    .data   : &t
+    .length : UIntNative
+)
+
+ArrayView#(.t: Type) implements ImplicitlyCopyable
+ArrayViewRO#(.t: Type) implements ImplicitlyCopyable
+
+array_view_ro#(.t: Type)(.data: &t, .length: UIntNative) -> (.array: ArrayViewRO#(.t: t)) := {
+    array = (.data = data, .length = length)
+}
+
 array_view#(.t: Type)(
     .data: $&t,
     .length: UIntNative,
@@ -20,29 +32,27 @@ array_view#(.t: Type)(
     )
 }
 
-array_view_from_address#(.t: Type)(
-    .address: UIntNative,
+array_view_from_raw#(.t: Type)(
+    .raw: RawPointer#(.t: t),
+    .root: $&Any,
     .length: UIntNative,
 ) -> (.array: ArrayView#(.t: t)) := {
-    data : $&t = cast#(.to: $&t)(.value = address)
+    data ::= establish_inherited_reference#(.t: t)(.raw = raw, .root = root)
     array = array_view#(.t: t)(.data = data, .length = length)
 }
 
-array_view_element_address#(.t: Type)(
+array_view_element_reference#(.t: Type)(
     .self: &ArrayView#(.t: t),
     .index: UIntNative,
-) -> (.address: UIntNative) := {
-    stride :: UIntNative = size_of(.type = t)
-    base :: UIntNative = cast#(.to: UIntNative)(.value = self&.data)
-    address = base + index * stride
+) -> (.reference: &t) := {
+    reference = reference_offset#(.t: t)(.base = self&.data, .elements = index)
 }
 
 operator get[]#(.t: Type)(
     .self: &ArrayView#(.t: t),
     .index: UIntNative,
 ) -> (.value: t) := {
-    ptr : &t = cast#(.to: &t)(.value = array_view_element_address#(.t: t)(.self = self, .index = index).address)
-    value = ptr&
+    value = array_view_element_reference#(.t: t)(.self = self, .index = index).reference&
 }
 
 operator set[]#(.t: Type)(
@@ -50,6 +60,6 @@ operator set[]#(.t: Type)(
     .index: UIntNative,
     .value: t,
 ) -> () := {
-    ptr : $&t = cast#(.to: $&t)(.value = array_view_element_address#(.t: t)(.self = self, .index = index).address)
+    ptr ::= mutable_reference_offset#(.t: t)(.base = self&.data, .elements = index)
     ptr& = value
 }

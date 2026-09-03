@@ -5,7 +5,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
 
     strings ::= DynamicArray#(.t: String)(.capacity = 1)
     #defer deinit(.self = $&strings, .allocator = system.allocator)
-    push(.self = $&strings, .value = text, .allocator = system.allocator)
+    push(.self = $&strings, .value = ~text, .allocator = system.allocator)
 
     first_ptr : &String = &strings[0]
     if bytes_get(.string = first_ptr, .index = 0).byte != 79 {

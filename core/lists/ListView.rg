@@ -10,6 +10,8 @@ ListViewRO#(.list_type: Type, .list_value_type: Type) : Type = (
     .length : UIntNative
 )
 
+ListViewRO#(.list_type: Type, .list_value_type: Type) implements ImplicitlyCopyable
+
 ListViewRW#(.list_type: Type, .list_value_type: Type) : Type = (
     --
     -- Lightweight non-owning mutable window into a contiguous collection.
@@ -21,6 +23,8 @@ ListViewRW#(.list_type: Type, .list_value_type: Type) : Type = (
     .start  : UIntNative
     .length : UIntNative
 )
+
+ListViewRW#(.list_type: Type, .list_value_type: Type) implements ImplicitlyCopyable
 
 get#(.list_type: Type, .list_value_type: Type) (
     .self: &ListViewRO#(.list_type: list_type, .list_value_type: list_value_type),

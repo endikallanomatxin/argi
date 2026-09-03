@@ -158,7 +158,7 @@ no es:
 - `Bool` para decir si la reserva salió bien
 
 Sino:
-- `allocate_fallible(...) -> Errable#(.t: UIntNative, .reasons: (..out_of_memory))`
+- `allocate(...) -> Errable#(.t: Allocation, .reasons: (..out_of_memory))`
 - helpers como `string_with_capacity(...)`
 - operaciones de crecimiento que devuelven `Errable#(.t: Void, .reasons: (..out_of_memory))`
 

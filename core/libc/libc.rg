@@ -18,10 +18,10 @@ access ( .path : &Char, .mode : Int32 ) -> ( .status : Int32 ) : ExternFunction
 
 -- Memory management
 alloca ( .size : UIntNative ) -> ( .pointer: $&Any ) : ExternFunction
-malloc ( .size : UIntNative ) -> ( .pointer: $&Any ) : ExternFunction
+malloc ( .size : UIntNative ) -> ( .address: UIntNative ) : ExternFunction
 aligned_alloc ( .alignment : UIntNative, .size : UIntNative ) -> ( .pointer: $&Any ) : ExternFunction
 getpagesize ( ) -> ( .size : UIntNative ) : ExternFunction
-free ( .pointer: &Any ) -> () : ExternFunction
+free ( .address: UIntNative ) -> () : ExternFunction
 memcpy ( .dst  : $&Any, .src : &Any, .n : UIntNative ) -> () : ExternFunction
 
 fread_into(
@@ -53,8 +53,19 @@ memcpy_bytes(
     .src: ArrayView#(.t: UInt8),
 ) -> () := {
     memcpy(
-        .dst = cast#(.to: $&Any)(.value = cast#(.to: UIntNative)(.value = dst.data)),
-        .src = cast#(.to: &Any)(.value = cast#(.to: UIntNative)(.value = src.data)),
+        .dst = mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = dst.data).reference,
+        .src = reinterpret_reference#(.from: UInt8, .to: Any)(.base = src.data).reference,
+        .n = dst.length,
+    )
+}
+
+memcpy_bytes(
+    .dst: ArrayView#(.t: UInt8),
+    .src: ArrayViewRO#(.t: UInt8),
+) -> () := {
+    memcpy(
+        .dst = mutable_reinterpret_reference#(.from: UInt8, .to: Any)(.base = dst.data).reference,
+        .src = reinterpret_reference#(.from: UInt8, .to: Any)(.base = src.data).reference,
         .n = dst.length,
     )
 }

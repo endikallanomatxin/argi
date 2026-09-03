@@ -27,34 +27,41 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     )
     result ::= read_line(.allocator = system.allocator, .stdin = $&stdin)
 
-    if is(.value = result, .variant = ..ok) {
-    } else {
-        status_code = 1
-        return
+    match result {
+        ..error _ {
+            status_code = 1
+        }
+        ..ok ~ outer {
+            match outer {
+                ..end {
+                    status_code = 1
+                }
+                ..ok ~ line_payload {
+                    line ::= ~line_payload
+                    if line.length != 20 {
+                        status_code = 2
+                        return
+                    }
+
+                    if capacity(.self = &line).value < 20 {
+                        status_code = 3
+                        return
+                    }
+
+                    if bytes_get(.string = &line, .index = 0).byte != 65 {
+                        status_code = 4
+                        return
+                    }
+
+                    if bytes_get(.string = &line, .index = 19).byte != 65 {
+                        status_code = 5
+                        return
+                    }
+
+                    deinit(.self = $&line, .allocator = system.allocator)
+                    status_code = 0
+                }
+            }
+        }
     }
-
-    line ::= result..ok..ok
-
-    if line.length != 20 {
-        status_code = 2
-        return
-    }
-
-    if capacity(.self = &line).value < 20 {
-        status_code = 3
-        return
-    }
-
-    if bytes_get(.string = &line, .index = 0).byte != 65 {
-        status_code = 4
-        return
-    }
-
-    if bytes_get(.string = &line, .index = 19).byte != 65 {
-        status_code = 5
-        return
-    }
-
-    deinit(.self = $&line, .allocator = system.allocator)
-    status_code = 0
 }

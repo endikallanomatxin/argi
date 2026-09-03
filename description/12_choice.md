@@ -101,12 +101,16 @@ Esto sigue el mismo modelo general de access modes del resto del lenguaje:
 - `_` ignora el payload
 
 Además, `choice_value..variant` proyecta directamente el payload tipado de esa
-variante:
+variante, una vez que el control de flujo haya probado que está activa:
 
 ```rg
-n ::= b..some
-s ::= c..span
-print(.value = c..span.start)
+if is(b, ..some) {
+    n ::= b..some
+}
+
+if c == ..span {
+    print(.value = c..span.start)
+}
 ```
 
 Si la variante no tiene payload, `choice_value..variant` es error.
@@ -156,6 +160,24 @@ if x == ..ok {
 `is` acepta la forma nominal y la forma posicional `(value, variant)`. `==` y
 `!=` pueden usarse directamente contra un literal `..variant` cuando el otro
 lado ya tiene tipo `choice`; esto compara solo el tag e ignora el payload.
+
+Estas pruebas refinan el control de flujo. En la rama verdadera de una prueba
+positiva la variante queda activa y las demás se descartan; en la rama falsa
+solo se descarta la variante probada. Una prueba negativa invierte ambas ramas.
+Si al descartar alternativas queda exactamente una, el compilador puede
+activarla; no elige una alternativa en los demás casos.
+
+La proyección directa de payload requiere esa prueba previa:
+
+```rg
+if is(x, ..ok) {
+    payload ::= x..ok
+}
+```
+
+Fuera de un `match` case o de una rama que haya probado el tag, `x..ok` es un
+error de seguridad. La proyección es acceso estructural al payload activo, no
+un checked unwrap ni una operación que cambie silenciosamente la variante.
 
 `match` sigue siendo la herramienta principal cuando interesa cubrir el conjunto
 cerrado completo.

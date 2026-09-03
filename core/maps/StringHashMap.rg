@@ -4,6 +4,8 @@ StringHashMapEntry#(.value: Type) : Type = (
     .next  : UIntNative
 )
 
+StringHashMapEntry#(.value: Type: ImplicitlyCopyable) implements ImplicitlyCopyable
+
 StringHashMap#(.value: Type) : Type = (
     --
     -- Borrowed string-keyed hash map baseline.
@@ -29,7 +31,7 @@ string_hash_map_key_view(
     .key: &Char,
 ) -> (.view: StringView) := {
     view = (
-        .data = cast#(.to: UIntNative)(.value = key),
+        .data = reinterpret_reference#(.from: Char, .to: UInt8)(.base = key).reference,
         .length = c_string_length(.text = key).length,
     )
 }
@@ -101,7 +103,7 @@ string_hash_map_prepare_buckets(
 
     i :: UIntNative = 0
     while i < capacity {
-        push#(.t: UIntNative)(.allocator = allocator, .self = buckets, .value = 0)
+        push_assume_capacity#(.t: UIntNative)(.self = buckets, .value = 0)
         i = i + 1
     }
 }

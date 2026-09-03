@@ -9,10 +9,18 @@ type automatically copyable.
 
 ```
 Allocator : Abstract = (
-	alloc (_, size: Int) -> Allocation
-	dealloc (_, allocation: Allocation) -> ()
+	allocate(
+		.self: $&Self,
+		.size: UIntNative,
+	) -> (.result: Errable#(.t: Allocation, .reasons: (..out_of_memory)))
 )
 ```
+
+Allocation failure is represented only by `..error ..out_of_memory`. The error
+variant contains no `Allocation`, establishes no safe reference or Validity Root, and
+leaves no allocation cleanup pending. Physical storage is checked before it is
+converted into safe storage. A successful zero-size request is valid and its
+`Allocation` is still passed to the stored deallocator by `deinit()`.
 
 Allocators más típicos en zig:
 - **PageAllocator**
@@ -47,15 +55,15 @@ init (.memory: &System.Memory) -> (.allocator: PageAllocator) := { ... }
 
 ## Allocation
 
-Allocators return an `Allocation` struct, instead of a single pointer. This
-allows us to keep track of the size and a pointer to the allocator used for the
-allocation, which is necessary for deallocateing the memory later.
+Successful allocators return an `Allocation` struct instead of a single
+pointer. This keeps the size and the erased stateful deallocator needed to
+release the storage later.
 
 ```
 Allocation : Type = (
-	.data      : &Byte
-	.size      : Int  -- In bytes
-	.allocator : &Allocator
+	.data        : $&UInt8
+	.size        : UIntNative
+	.deallocator : Virtual#(.abstract: Deallocator)
 )
 ```
 
@@ -134,9 +142,10 @@ my_map : HashMap#(.key: String, .value: Int32) = HashMap#(.key: String, .value: 
 )
 ```
 
-If `HashMap` provides `copy()`, then passing it by value or assigning it means
-creating an independent map. If it does not provide `copy()`, then it must be
-passed by `&` or `$&`.
+If `HashMap` provides `copy()`, callers can request an independent map with
+`copy(&map)`. It is copied implicitly only if it separately implements
+`ImplicitlyCopyable`, which an allocating map normally should not. Otherwise it
+can be borrowed with `&`/`$&` or transferred with `~map`.
 
 This separation is useful:
 

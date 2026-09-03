@@ -27,9 +27,10 @@ if value? {
 
 `value?` se desazucara a `is(.value = value, .variant = ..some)`.
 
-Dentro del branch `then` de ese `if`, si `T` es copyable, `value` se estrecha
-idiomaticamente a `T`. Para payloads no copyables, hay que seguir usando
-`match` o el acceso explicito al payload.
+Dentro del branch `then` de ese `if`, si `T` es `ImplicitlyCopyable`, `value`
+se estrecha idiomáticamente a `T` mediante una copia implícita. Para los demás
+payloads hay que seguir usando `match`, acceso explícito al payload, o una
+copia explícita compatible.
 
 Se puede hacer matching normal:
 

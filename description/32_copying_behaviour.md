@@ -1,213 +1,172 @@
 ## Copying and ownership
 
-The rule of the language should be:
-
-> Using a value in value position means requesting an independent value.
-
-This keeps pass-by-value semantics consistent with the stack mental model and
-avoids accidental aliasing.
-
-
-## Value position
-
-A value is in value position when it is:
-
-- assigned to another variable
-- passed to a function argument declared by value
-- stored by value inside another value
-- returned by value
-
-In all those cases the semantics should be the same.
-
-
-## Places and access modes
-
-Argi also needs a uniform model for reading, borrowing, mutating and consuming
-an addressable place.
-
-The intended rule is:
-
-- `place` requests an independent value
-- `&place` requests a read-only reference
-- `$&place` requests a mutable reference
-- `~place` requests a move / take when that place supports it
-
-This should stay true across the language surface:
+Argi keeps the operation selected at a call site independent of the value's
+type:
 
 ```rg
-arr[i]
-obj.field
-ptr&
+x          -- normal value use
+&x         -- explicit read-only borrow
+$&x        -- explicit mutable borrow
+~x         -- explicit ownership transfer
+copy(&x)   -- explicit duplication
 ```
 
-and also in pattern-style binding positions such as `match`.
+A plain use of a named value never changes from copy to move according to its
+type. When a context must acquire a new owned value, `x` is accepted only if
+its type explicitly implements `ImplicitlyCopyable`; otherwise the programmer
+must choose `copy(&x)` or `~x`.
 
-That means the access mode is expressed by a prefix over the whole place:
+
+## Value-consuming contexts
+
+Examples of contexts that may need to acquire a value are:
+
+- initializing or assigning another binding;
+- passing an argument declared by value;
+- storing a field or choice payload by value;
+- returning a value;
+- reading an indexed Place as a value.
+
+For a named value in one of these contexts:
+
+```text
+if T implements ImplicitlyCopyable:
+    produce an implicit independent copy
+else:
+    reject the plain use
+```
+
+The rejection is not an implicit move. A temporary that already denotes a
+unique owned result may flow into its destination directly, without an
+artificial copy or explicit `~`.
+
+
+## Copy contracts
+
+Copying always creates another value that is logically independent of the
+source. Argi separates the contract for copying from permission to insert that
+copy implicitly:
 
 ```rg
-arr[i]
-&arr[i]
-$&arr[i]
-~arr[i]
+InfalliblyCopyable : Abstract = (
+    copy(.self: &Self) -> (.value: Self)
+)
+
+FalliblyCopyable#(.reasons: Type) : Abstract = (
+    copy(.self: &Self)
+        -> (.result: Errable#(.t: Self, .reasons: reasons))
+)
+
+ImplicitlyCopyable : Abstract = ()
+ImplicitlyCopyable implements InfalliblyCopyable
 ```
 
-not by inventing postfix spellings such as:
+The relationships are:
+
+```text
+ImplicitlyCopyable => InfalliblyCopyable
+InfalliblyCopyable !=> ImplicitlyCopyable
+FalliblyCopyable   => never copied implicitly
+```
+
+An infallible but expensive type can implement `InfalliblyCopyable` while
+requiring explicit `copy(&value)`. A fallible owning type such as `String` can
+implement `FalliblyCopyable#(.reasons: (..out_of_memory))`; its failure remains
+part of `copy`, not a differently named operation.
+
+The language has no general `shallow_copy()`. An owning copy must establish
+independent resources and ownership. Copying a reference or non-owning view may
+copy its validity dependencies, but must not duplicate ownership of the roots
+on which it depends.
+
+
+## Implicit copies
+
+Small scalar types implement `ImplicitlyCopyable`, so this is valid:
 
 ```rg
-arr&[i]
-arr$&[i]
+a :: Int32 = 3
+b := a
 ```
 
-because postfix `&` already means dereferencing a reference or pointer in Argi.
-So `arr&[i]` must continue to parse as `(arr&)[i]`, just like
-`self&.field` already means “dereference `self`, then access `.field`”.
+Conceptually, the compiler may produce the same result as `copy(&a)`, while
+keeping the source usable. Small value structs may opt into the same behaviour
+explicitly.
 
-The same principle should scale to other places:
+Merely providing an infallible `copy()` is not enough to opt in. Providing a
+fallible `copy()` can never opt in because an ordinary value use has no place
+to expose the error.
+
+
+## Explicit copies
+
+Owning types such as `String`, `DynamicArray`, and maps normally require an
+explicit copy, which may fail while allocating independent storage:
 
 ```rg
-obj.field
-&obj.field
-$&obj.field
-~obj.field
+copied_result ::= copy(.self = &original)
+match copied_result {
+    ..error reason { /* handle the copy failure */ }
+    ..ok ~ copied { /* original and copied are independent */ }
+}
 ```
 
-
-## Copy model
-
-If a temporary value is used in value position, it may be moved directly.
-
-If an existing named value is used in value position and the type implements
-`copy()`, the compiler may insert an implicit call to `copy()`.
-
-```
-m1 : HashMap#(.key: String, .value: Int32) = ()
-m2 := m1  -- Implicitly calls copy(m1)
-```
-
-The semantic promise of `copy()` is that the result is logically independent
-from the original value. For owning heap-based types this normally means a deep
-copy of the owned data. The language does not expose a general
-`shallow_copy()` operation, because that would make it too easy to break the
-intended ownership semantics of a type.
-
-If a type does not implement `copy()`, it cannot be used in value position.
-When the user places a non-copyable type in value position, the compiler should
-emit an error with a concrete fix:
-
-- use `&` if the callee only reads
-- use `$&` if the callee mutates
-- implement `copy()` if true value semantics are desired
-- or use `~value` if ownership transfer is intended
-
-```
-file2 := file1
--- Error: File cannot be copied. Pass it by & or $& instead.
-```
+If an element-wise container copy fails part way through, it must destroy the
+already copied prefix exactly once before releasing its new backing storage.
+The original container remains unchanged.
 
 
 ## Explicit move
 
-Existing bindings are not moved implicitly by default.
+Ownership transfer from a named value is always written with `~`:
 
-If the programmer wants to transfer ownership out of a binding, that should be
-spelled explicitly:
-
-```
-consume(.resource = ~file1)
+```rg
+second := ~first
+consume(.resource = ~second)
 ```
 
-After `~file1`, the binding is considered consumed and cannot be used again.
+The destination receives the value's dependencies and owned roots. The source
+binding becomes moved and cannot be read, moved, assigned, or cleaned again.
+A move is semantic ownership transfer; it does not promise a particular
+physical copy and is not the same operation as relocation.
 
-This keeps the surface model simple:
+In particular, this is an error for a non-`ImplicitlyCopyable` type:
 
-- temporary values can flow efficiently through composed expressions
-- named values keep copy semantics by default
-- ownership transfer from a binding is explicit
+```rg
+second := first
+```
 
-That consumption is final for the binding itself:
-
-- reading it again is an error
-- moving it again is an error
-- assigning into the same binding is also an error
-
-If a programmer wants a new owned value later, they must introduce a new
-binding rather than reviving the old one.
+It does not silently become `second := ~first`.
 
 
 ## Non-copyable types
 
-Some types do not have a meaningful or safe copy operation:
-
-- files
-- sockets
-- mutexes
-- hardware devices
-- GPU buffers
-- system capabilities
-
-Those types are not special-cased by syntax. They are simply non-copyable
-because they do not provide `copy()`.
-
-
-## Copyable owning types
-
-Types such as `String`, `DynamicArray` or `HashMap` may choose to implement
-`copy()`.
-
-When they do, assigning them or passing them by value means creating an
-independent value.
-
-```
-arr1 :: DynamicArray#(.t: Int32) = DynamicArray#(.t: Int32)(.capacity = 3)
-arr1 | push($&_, 1)
-arr1 | push($&_, 2)
-arr1 | push($&_, 3)
-arr2 := arr1
-
-arr2 | push($&_, 4)
--- arr1 remains unchanged
-```
-
-
-## Views and references
-
-Views do not own the data they point to, so they should not silently turn into
-owners through normal copy semantics.
-
-If a view type is copyable, its `copy()` must preserve the intended meaning of
-that view. It must not pretend to create ownership of the underlying data.
-
-That means the language-level rule stays simple:
-
-- owning types may implement `copy()` to duplicate ownership
-- view types may implement `copy()` only if that operation is semantically
-  sound for the view itself
-- otherwise they are non-copyable and must be passed by reference
-
-
-## Indexed places
-
-For indexable collections the same place model applies.
-
-The design direction is:
+Some resources have no meaningful duplication operation, including files,
+sockets, mutexes, devices, and `Allocation`. They implement no copy abstract.
+They can be borrowed explicitly or transferred explicitly:
 
 ```rg
-arr[i]      -- value access
-&arr[i]     -- borrowed read-only access
-$&arr[i]    -- borrowed mutable access
-~arr[i]     -- move / take, if supported
+inspect(.file = &file)
+mutate(.file = $&file)
+other := ~file
 ```
 
-`arr[i]` remains the value-form on purpose. It should keep meaning “produce an
-independent value under the normal copy rules of the language”.
+A diagnostic for a rejected plain use should list only valid alternatives. If
+the type is copyable it can suggest `copy(&value)` and `~value`; if it has no
+copy operation it should suggest borrowing or explicit transfer instead.
 
-Borrowed indexed access should stay explicit. If the collection wants to expose
-reference-style indexing, that should be a separate contract from value access,
-not hidden behind allocator-taking `get[]` semantics.
 
-> [!TODO]
-> Think about how to make it clear that when copying a view or a
-> pointer, you are not getting the ownership of the data.
->
-> Maybe some types should have a mandatory postfix indicator in their names.
-> Like `_v` for views, `_p` for pointers, etc. Maybe it is a bit too noisy.
+## Places and indexed access
+
+The access prefix applies to the whole Place:
+
+```rg
+arr[i]       -- normal value use; implicit copy only when the item opts in
+&arr[i]      -- explicit read-only borrow
+$&arr[i]     -- explicit mutable borrow
+~arr[i]      -- explicit take, when the collection supports it
+```
+
+Postfix `&` remains dereference syntax, so `arr&[i]` means `(arr&)[i]` rather
+than a special indexing mode. Borrowed indexing and iteration remain visible
+at the call site; Argi does not infer a borrow from a plain value use.

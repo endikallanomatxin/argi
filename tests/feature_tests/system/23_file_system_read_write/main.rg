@@ -16,7 +16,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
     bytes_set(.string = $&text, .index = 2, .value = 103)
     bytes_set(.string = $&text, .index = 3, .value = 105)
 
-    write_result ::= write_file(.self = system.file_sys, .path = path, .text = text)
+    write_result ::= write_file(.self = system.file_sys, .path = path, .text = &text)
     if is(.value = write_result, .variant = ..ok) {
     } else {
         status_code = 2
@@ -29,7 +29,7 @@ main(.system: System = System()) -> (.status_code: Int32) := {
         status_code = 3
         return
     }
-    read_back ::= read_back_result..ok
+    read_back ::= ~read_back_result..ok
 
     if read_back.length != 4 {
         status_code = 4
