@@ -883,7 +883,7 @@ pub const SafetyChecker = struct {
                 }
             }
         }
-        if (call.callee.body == null and call.callee.output.fields.len == 1 and
+        if (call.callee.isExtern() and call.callee.output.fields.len == 1 and
             call.callee.output.fields[0].ty == .pointer_type)
             return .{ .foreign_storage = true };
         const summary = self.summaryFor(call.callee) orelse return .{};
