@@ -4628,6 +4628,19 @@ test "feature_tests/ownership/283_scalar_opaque_read_is_independent" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/284X_integer_cannot_establish_any_reference" {
+    try buildExpectFail(
+        "tests/feature_tests/ownership/284X_integer_cannot_establish_any_reference",
+        "an integer address cannot establish a safe reference; use RawPointer and explicit root establishment",
+    );
+}
+
+test "feature_tests/ownership/285_reference_can_erase_to_any" {
+    const test_path = "tests/feature_tests/ownership/285_reference_can_erase_to_any";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/polymorphism/32_static_abstract_generic_fields" {
     const test_path = "tests/feature_tests/polymorphism/32_static_abstract_generic_fields";
     try expectSuccessfulBuild(test_path);
