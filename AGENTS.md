@@ -105,8 +105,14 @@ move any still-useful notes into comments in `feature.rg`. If some ideas remain
 unfinished, leave them commented there rather than keeping a parallel `.txt`
 file around.
 
-- Commits: focused, descriptive subject in imperative mood (e.g., "Add binary
-literals to lexer").
+- Keep commits small and conceptually focused. Each commit should be one
+  coherent unit of change, with any corresponding tests and documentation in
+  the same logical commit when appropriate. Do not mix tangential refactors
+  into the main task.
+- Write clear commit messages in English with an imperative subject that
+  describes the change, not the process used to discover it. Avoid vague or
+  temporary subjects such as `fix stuff`, `update`, or `wip`. Use the
+  repository's natural subject style; do not add Conventional Commit prefixes.
 
 - If you think some important information is missing from this guide, please
 add it. If you learn something non-obvious, document it here so future work is
@@ -125,3 +131,39 @@ faster.
   checklist in `plan/0.1.md` in the same change if practical. If you choose not
   to update it immediately, leave an explicit TODO in code or docs explaining
   the mismatch so the plan does not silently drift.
+
+
+## Release workflow
+
+- `main` contains only published, stable releases. Do not use it for normal
+  development or merge incomplete work into it.
+- `develop` contains development for the next release. Normal work and
+  temporary branches start from the appropriate point on `develop` and merge
+  back into `develop`.
+- Prepare a release on `develop`. When the preparation changes release notes,
+  version metadata, plans, or other release artifacts, keep those changes in a
+  focused commit named `Prepare release X.Y.Z`.
+- Publish by checking out `main` and merging `develop` with an explicit
+  no-fast-forward merge whose message is exactly `Release X.Y.Z`:
+
+  ```bash
+  git merge --no-ff develop -m "Release X.Y.Z"
+  ```
+
+- Create the release tag as an annotated tag named `vX.Y.Z` on that merge
+  commit.
+- Immediately fast-forward `develop` to the published merge; do not create a
+  later `main`-to-`develop` merge commit:
+
+  ```bash
+  git switch develop
+  git merge --ff-only main
+  ```
+
+- Immediately after publication, `main`, `develop`, and `vX.Y.Z` must identify
+  the same commit. Subsequent development continues from that common point on
+  `develop`.
+- Keep temporary branches short-lived. Delete them locally and remotely once
+  their work is integrated. Before deleting an old branch, verify that it does
+  not contain unique work; preserve and rebase unique work onto the appropriate
+  current base when necessary.
