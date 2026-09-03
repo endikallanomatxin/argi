@@ -5,9 +5,9 @@ DynamicArray #(.t: Type) : Type = (
     -- It owns heap memory through `Allocation` and should serve as the default
     -- resizable list shape in `core`.
     --
-    -- Append, destruction, extraction, and growth support opaque-owned
-    -- elements. Insert, replacement, value indexing, and value iteration
-    -- remain limited to elements for which their existing copy is valid.
+    -- Storage operations own, move, relocate, and destroy elements without
+    -- requiring any copy capability from `t`. Value reads and whole-array
+    -- copies are separate conditional capabilities.
     --
     .allocation : Allocation
     -- `length` is the runtime opaque-slot invariant: indices below it contain
@@ -276,7 +276,7 @@ insert #(.t: Type) (
     .i: UIntNative,
     .value: t,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    result = insert_growing#(.t: t)(.allocator = allocator, .self = self, .i = i, .value = value)
+    result = insert_growing#(.t: t)(.allocator = allocator, .self = self, .i = i, .value = ~value)
 }
 
 insert_growing #(.t: Type) (
@@ -285,11 +285,8 @@ insert_growing #(.t: Type) (
     .i: UIntNative,
     .value: t,
 ) -> (.result: Errable#(.t: Void, .reasons: (..out_of_memory))) := {
-    -- Shifting live opaque slots needs trusted relocation and is not yet valid
-    -- for arbitrary owning `t`.
     one :: UIntNative = 1
     current_length ::= self&.length
-    element_size :: UIntNative = size_of(.type = t)
 
     if self&.length == self&.capacity {
         growth_result ::= dynamic_array_grow_growing#(.t: t)(.allocator = allocator, .array = self, .min_capacity = self&.length + one)
@@ -297,6 +294,7 @@ insert_growing #(.t: Type) (
             ..ok _ {
             }
             ..error _ {
+                trusted_opaque_drop(.slot = $&value, .allocator = allocator)
                 result = ..error(.reason = ..out_of_memory)
                 return
             }
@@ -304,40 +302,47 @@ insert_growing #(.t: Type) (
         current_length = self&.length
     }
 
-    if current_length > i {
-        count_to_shift :: UIntNative = current_length - i
-        bytes_to_shift :: UIntNative = count_to_shift * element_size
-        temp_result ::= allocate(.self = allocator, .size = bytes_to_shift)
-        match temp_result {
-            ..ok ~ payload {
-                temp_allocation ::= ~payload
-                temp_data ::= temp_allocation.data
-
-                source_byte_offset :: UIntNative = i * element_size
-                dest_byte_offset :: UIntNative = source_byte_offset + element_size
-                source_data ::= mutable_reference_offset#(.t: UInt8)(.base = self&.allocation.data, .elements = source_byte_offset).reference
-                dest_data ::= mutable_reference_offset#(.t: UInt8)(.base = self&.allocation.data, .elements = dest_byte_offset).reference
-
-                temp_view ::= array_view#(.t: UInt8)(.data = temp_data, .length = bytes_to_shift)
-                source_view ::= array_view#(.t: UInt8)(.data = source_data, .length = bytes_to_shift)
-                dest_view ::= array_view#(.t: UInt8)(.data = dest_data, .length = bytes_to_shift)
-
-                memcpy_bytes(.dst = temp_view, .src = source_view)
-                memcpy_bytes(.dst = dest_view, .src = temp_view)
-
-                deinit(.self = $&temp_allocation)
-            }
-            ..error _ {
-                result = ..error(.reason = ..out_of_memory)
-                return
-            }
-        }
+    cursor ::= current_length
+    while cursor > i {
+        source_index ::= cursor - one
+        source_slot ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = source_index).pointer
+        destination_slot ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = cursor).pointer
+        trusted_opaque_relocate(.source = source_slot, .destination = destination_slot)
+        cursor = source_index
     }
 
     ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = i).pointer
-    ptr& = value
+    trusted_opaque_move_in#(.t: t, .storage_type: Allocation)(
+        .storage = $&self&.allocation,
+        .destination = ptr,
+        .source = ~value,
+    )
     self&.length = current_length + one
     result = ..ok Void()
+}
+
+remove #(.t: Type) (
+    .self: $&DynamicArray#(.t: t),
+    .i: UIntNative,
+) -> (.value: t) := {
+    one :: UIntNative = 1
+    new_length ::= self&.length - one
+    removed_slot ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = i).pointer
+    taken ::= trusted_opaque_move_out#(.t: t, .storage_type: Allocation)(
+        .storage = $&self&.allocation,
+        .slot = removed_slot,
+    )
+
+    cursor ::= i
+    while cursor < new_length {
+        source_slot ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = cursor + one).pointer
+        destination_slot ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = cursor).pointer
+        trusted_opaque_relocate(.source = source_slot, .destination = destination_slot)
+        cursor = cursor + one
+    }
+
+    self&.length = new_length
+    value = ~taken
 }
 
 operator get[] #(.t: Type: ImplicitlyCopyable) (
@@ -368,7 +373,11 @@ operator set[] #(.t: Type) (
     .index: UIntNative,
     .value: t,
 ) -> () := {
-    -- Replacing an owning live slot needs an explicit drop/replace contract.
     ptr ::= dynamic_array_element_rw_pointer#(.t: t)(.array = self, .offset = index).pointer
-    ptr& = value
+    trusted_opaque_drop(.slot = ptr)
+    trusted_opaque_move_in#(.t: t, .storage_type: Allocation)(
+        .storage = $&self&.allocation,
+        .destination = ptr,
+        .source = ~value,
+    )
 }
