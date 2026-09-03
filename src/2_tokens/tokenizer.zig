@@ -64,6 +64,12 @@ pub const Tokenizer = struct {
         return self.tokens.items;
     }
 
+    /// Transfers the contiguous token buffer to a file frontend artifact.
+    /// This avoids the former second copy into a module-wide token list.
+    pub fn takeTokens(self: *Tokenizer) ![]tok.Token {
+        return try self.tokens.toOwnedSlice();
+    }
+
     /// Añade un token a la lista de tokens, actualizando la ubicación actual.
     pub fn addToken(self: *Tokenizer, content: tok.Content, location: tok.Location) !void {
         const token = tok.Token{
