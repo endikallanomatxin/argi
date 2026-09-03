@@ -9,9 +9,31 @@ const LinkError = error{
     LinkFailed,
 };
 
+// This selects LLVM's machine-code pipeline only. Argi does not yet run an
+// LLVM IR optimization pipeline; release mode can add that independently.
+pub const OptimizationMode = enum {
+    development,
+    release,
+
+    pub fn llvmCodeGenLevel(self: OptimizationMode) c.LLVMCodeGenOptLevel {
+        return switch (self) {
+            .development => c.LLVMCodeGenLevelNone,
+            .release => c.LLVMCodeGenLevelDefault,
+        };
+    }
+
+    pub fn llvmCodeGenLevelName(self: OptimizationMode) []const u8 {
+        return switch (self) {
+            .development => "none",
+            .release => "default",
+        };
+    }
+};
+
 fn createTargetMachine(
     module: llvm.c.LLVMModuleRef,
     triple: [:0]const u8,
+    optimization_mode: OptimizationMode,
 ) !llvm.c.LLVMTargetMachineRef {
     if (c.LLVMInitializeNativeTarget() != 0 or c.LLVMInitializeNativeAsmPrinter() != 0)
         return error.LLVMTargetInitFailed;
@@ -32,7 +54,7 @@ fn createTargetMachine(
         triple,
         "", // CPU
         "", // features
-        c.LLVMCodeGenLevelDefault,
+        optimization_mode.llvmCodeGenLevel(),
         c.LLVMRelocPIC,
         c.LLVMCodeModelDefault,
     ) orelse return error.TargetMachineFailed;
@@ -45,8 +67,9 @@ pub fn emitObjectFile(
     module: llvm.c.LLVMModuleRef,
     triple: [:0]const u8,
     obj_output_path: []const u8,
+    optimization_mode: OptimizationMode,
 ) !void {
-    const tm = try createTargetMachine(module, triple);
+    const tm = try createTargetMachine(module, triple, optimization_mode);
     defer c.LLVMDisposeTargetMachine(tm);
 
     var err_ptr: [*c]u8 = null;
@@ -137,10 +160,11 @@ pub fn linkWithLibc(
     allocator: *const std.mem.Allocator,
     io: std.Io,
     environ_map: ?*const std.process.Environ.Map,
+    optimization_mode: OptimizationMode,
 ) !void {
     var obj_path_buf: [std.fs.max_path_bytes]u8 = undefined;
     const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}.o", .{output_path});
-    try emitObjectFile(module, triple, obj_path);
+    try emitObjectFile(module, triple, obj_path, optimization_mode);
 
     const cc_env = if (environ_map) |env_map| env_map.get("CC") else null;
     const linker = chooseLinkerCommand(cc_env);
@@ -183,4 +207,11 @@ test "buildLinkArgv keeps linker object output and libc order" {
     try std.testing.expectEqualStrings("-o", argv[2]);
     try std.testing.expectEqualStrings("/tmp/output", argv[3]);
     try std.testing.expectEqualStrings("-lc", argv[4]);
+}
+
+test "optimization modes select machine code optimization levels" {
+    try std.testing.expectEqual(@as(c.LLVMCodeGenOptLevel, c.LLVMCodeGenLevelNone), OptimizationMode.development.llvmCodeGenLevel());
+    try std.testing.expectEqual(@as(c.LLVMCodeGenOptLevel, c.LLVMCodeGenLevelDefault), OptimizationMode.release.llvmCodeGenLevel());
+    try std.testing.expectEqualStrings("none", OptimizationMode.development.llvmCodeGenLevelName());
+    try std.testing.expectEqualStrings("default", OptimizationMode.release.llvmCodeGenLevelName());
 }
