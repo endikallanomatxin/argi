@@ -38,10 +38,13 @@ It uses `Allocation` internally, together with metadata such as length,
 capacity, and element type.
 `l ::= DynamicArray#(.t: Int32)(.capacity = 3)`
 
-In the current 0.1 baseline, `DynamicArray` also provides `copy()` so arrays of
-copyable elements can behave like ordinary values. This is the intended
-direction for compiler-style data structures, even though some collection
-ownership ergonomics remain a separate open front.
+In the current 0.1 baseline, `DynamicArray` provides explicit `copy()` for
+infallibly copyable elements and for `String`. Each element is copied
+independently; a fallible element copy rolls back the completed prefix before
+releasing the new backing allocation. Generalizing this to every compatible
+`FalliblyCopyable` element awaits full checking of parameterized abstract
+constraints. This remains the intended direction for compiler-style data
+structures.
 
 Indexing follows the language-wide place model:
 
