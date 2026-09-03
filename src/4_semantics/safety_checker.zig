@@ -4921,6 +4921,11 @@ pub const SafetyChecker = struct {
         pointer: *const sg.SGNode,
         effect: facts.ValueEffect,
     ) !facts.ValueEffect {
+        const ty = node.sem_type orelse return .{};
+        // Loading a scalar produces a value independent of the Place that
+        // contained it. In particular, an unresolved dynamic projection must
+        // not substitute the owning facts of its container for the slot.
+        if (!typeContainsPointer(ty)) return .{};
         const input_paths = try self.inferInputPaths(function, pointer);
         var pointee = effect;
         if (input_paths.len != 0) {
@@ -4928,8 +4933,6 @@ pub const SafetyChecker = struct {
             pointee.input_places = &.{};
             pointee.input_place_values = input_paths;
         }
-        const ty = node.sem_type orelse return pointee;
-        if (!typeContainsPointer(ty)) return pointee;
         return self.withOpaqueReadGenerationDependencies(try self.symbolicSourcePaths(function, pointer, pointee), pointee);
     }
 

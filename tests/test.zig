@@ -4622,6 +4622,12 @@ test "feature_tests/ownership/282_explicit_fallible_copy" {
     try runExpect(test_path, 0);
 }
 
+test "feature_tests/ownership/283_scalar_opaque_read_is_independent" {
+    const test_path = "tests/feature_tests/ownership/283_scalar_opaque_read_is_independent";
+    try expectSuccessfulBuild(test_path);
+    try runExpect(test_path, 0);
+}
+
 test "feature_tests/polymorphism/32_static_abstract_generic_fields" {
     const test_path = "tests/feature_tests/polymorphism/32_static_abstract_generic_fields";
     try expectSuccessfulBuild(test_path);
