@@ -1469,7 +1469,12 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.hash)) {
             self.advanceOne();
             const gen_struct = try self.parseGenericParamsStruct();
-            generic_params = self.file.structTypeLiteral(gen_struct).?.fields;
+            // Parsing the rest of the declaration can grow extra_data. Keep an
+            // owned copy instead of retaining a slice into that reallocatable
+            // storage.
+            const parsed = try self.allocator.dupe(syn.NodeIndex, self.file.structTypeLiteral(gen_struct).?.fields);
+            owned_generic_params = parsed;
+            generic_params = parsed;
             generic_params_struct = gen_struct;
         } else if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
             const parsed = try self.parseGenericParamNames();
