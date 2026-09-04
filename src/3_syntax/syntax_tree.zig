@@ -252,6 +252,9 @@ pub const CodeBlock = struct { statements: []const NodeIndex };
 pub const ListLiteral = struct { elements: []const NodeIndex };
 pub const StructTypeField = struct { name_token: TokenIndex, type_node: ?NodeIndex, default_value: ?NodeIndex, inferred_result: bool };
 pub const SymbolDeclaration = struct { name_token: TokenIndex, type_node: ?NodeIndex, value: ?NodeIndex, mutability: Mutability };
+pub const ChoiceOptionDeclaration = struct { name_token: TokenIndex };
+pub const Assignment = struct { name_token: TokenIndex, value: NodeIndex };
+pub const ImportStatement = struct { path_token: TokenIndex };
 pub const TypeDeclaration = struct { name_token: TokenIndex, generic_params: []const NodeIndex, generic_params_struct: ?NodeIndex, value: NodeIndex };
 pub const CEnumDeclaration = struct { name_token: TokenIndex, generic_params: []const NodeIndex, generic_params_struct: ?NodeIndex, value: NodeIndex };
 pub const CUnionDeclaration = struct { name_token: TokenIndex, generic_params: []const NodeIndex, generic_params_struct: ?NodeIndex, value: NodeIndex };
@@ -538,6 +541,21 @@ pub const SyntaxFile = struct {
             .value = extra.default_value.unwrap(),
             .mutability = if (node_tag == .symbol_declaration_variable) .variable else .constant,
         };
+    }
+
+    pub fn choiceOptionDeclaration(tree: *const SyntaxFile, node: NodeIndex) ?ChoiceOptionDeclaration {
+        if (tree.tag(node) != .choice_option_declaration) return null;
+        return .{ .name_token = tree.data(node).token };
+    }
+
+    pub fn assignment(tree: *const SyntaxFile, node: NodeIndex) ?Assignment {
+        if (tree.tag(node) != .assignment) return null;
+        return .{ .name_token = tree.mainToken(node), .value = tree.data(node).node };
+    }
+
+    pub fn importStatement(tree: *const SyntaxFile, node: NodeIndex) ?ImportStatement {
+        if (tree.tag(node) != .import_statement) return null;
+        return .{ .path_token = tree.data(node).token };
     }
 
     const GenericValuePayload = struct {
