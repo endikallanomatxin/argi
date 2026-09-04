@@ -279,6 +279,15 @@ pub const Type = union(enum) {
     choice_literal: ChoiceTypeLiteral,
 };
 pub const MatchStatement = struct { value: NodeIndex, cases: []const NodeIndex };
+pub const MatchCase = struct { variant_token: TokenIndex, payload_name: ?TokenIndex, body: NodeIndex };
+pub const ForStatement = struct { name_token: TokenIndex, iterable: NodeIndex, body: NodeIndex, mode: ForMode };
+pub const ForMode = enum { value, borrow, mut_borrow };
+pub const WhileStatement = struct { condition: NodeIndex, body: NodeIndex };
+pub const NamedAccess = struct { value: NodeIndex, name_token: TokenIndex };
+pub const ChoiceLiteral = struct { name_token: TokenIndex, payload: ?NodeIndex };
+pub const ValueField = struct { name_token: ?TokenIndex, value: NodeIndex, position: ?u32 };
+pub const ReachDirective = struct { alternatives: []const NodeIndex };
+pub const ReachAlternative = struct { segments: []const NodeIndex };
 pub const BinaryOperation = struct { lhs: NodeIndex, rhs: NodeIndex };
 
 pub const TokenList = std.MultiArrayList(token.Token);
@@ -639,6 +648,69 @@ pub const SyntaxFile = struct {
         if (tree.tag(node) != .match_statement) return null;
         const node_data = tree.data(node).node_and_extra;
         return .{ .value = node_data.node, .cases = tree.nodeRange(tree.extraData(NodeRange, node_data.extra)) };
+    }
+
+    pub fn matchCase(tree: *const SyntaxFile, node: NodeIndex) ?MatchCase {
+        return switch (tree.tag(node)) {
+            .match_case_value, .match_case_borrow, .match_case_mut_borrow, .match_case_move => blk: {
+                const extra = tree.extraData(MatchCaseExtra, tree.data(node).extra);
+                break :blk .{ .variant_token = tree.mainToken(node), .payload_name = extra.payload_name.unwrap(), .body = extra.body };
+            },
+            else => null,
+        };
+    }
+
+    pub fn forStatement(tree: *const SyntaxFile, node: NodeIndex) ?ForStatement {
+        const mode: ForMode = switch (tree.tag(node)) {
+            .for_value => .value,
+            .for_borrow => .borrow,
+            .for_mut_borrow => .mut_borrow,
+            else => return null,
+        };
+        const extra = tree.extraData(ForExtra, tree.data(node).extra);
+        return .{ .name_token = extra.name_token, .iterable = extra.iterable, .body = extra.body, .mode = mode };
+    }
+
+    pub fn whileStatement(tree: *const SyntaxFile, node: NodeIndex) ?WhileStatement {
+        if (tree.tag(node) != .while_statement) return null;
+        const node_data = tree.data(node).node_and_node;
+        return .{ .condition = node_data.first, .body = node_data.second };
+    }
+
+    pub fn namedAccess(tree: *const SyntaxFile, node: NodeIndex) ?NamedAccess {
+        return switch (tree.tag(node)) {
+            .struct_field_access, .choice_payload_access => .{ .value = tree.data(node).token_and_node.node, .name_token = tree.data(node).token_and_node.token },
+            else => null,
+        };
+    }
+
+    pub fn choiceLiteral(tree: *const SyntaxFile, node: NodeIndex) ?ChoiceLiteral {
+        if (tree.tag(node) != .choice_literal and tree.tag(node) != .choice_some_literal) return null;
+        const node_data = tree.data(node).token_and_optional;
+        return .{ .name_token = node_data.token, .payload = node_data.optional.unwrap() };
+    }
+
+    pub fn valueField(tree: *const SyntaxFile, node: NodeIndex) ?ValueField {
+        return switch (tree.tag(node)) {
+            .struct_value_field => .{ .name_token = tree.mainToken(node), .value = tree.data(node).node, .position = null },
+            .positional_value_field => .{ .name_token = null, .value = tree.data(node).u32_and_node.node, .position = tree.data(node).u32_and_node.value },
+            else => null,
+        };
+    }
+
+    pub fn reachDirective(tree: *const SyntaxFile, node: NodeIndex) ?ReachDirective {
+        if (tree.tag(node) != .reach_directive) return null;
+        return .{ .alternatives = tree.nodeRange(tree.data(node).extra_range) };
+    }
+
+    pub fn reachAlternative(tree: *const SyntaxFile, node: NodeIndex) ?ReachAlternative {
+        if (tree.tag(node) != .reach_alternative) return null;
+        return .{ .segments = tree.nodeRange(tree.data(node).extra_range) };
+    }
+
+    pub fn returnValue(tree: *const SyntaxFile, node: NodeIndex) ?OptionalNodeIndex {
+        if (tree.tag(node) != .return_statement) return null;
+        return tree.data(node).optional_node;
     }
 
     pub fn binaryOperation(tree: *const SyntaxFile, node: NodeIndex) ?BinaryOperation {
