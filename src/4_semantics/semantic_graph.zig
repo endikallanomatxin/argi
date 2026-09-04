@@ -1,6 +1,6 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
-const syn = @import("../3_syntax/syntax_tree.zig");
+const syn = @import("../3_syntax/syntax_tree_legacy.zig");
 
 pub const SemanticGraph = struct {
     allocator: *const std.mem.Allocator,
