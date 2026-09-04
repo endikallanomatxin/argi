@@ -42,6 +42,11 @@ fn expectTags(path: []const u8, expected: []const syntax_tree.Node.Tag) !void {
     }
 }
 
+fn firstNodeWithTag(tree: *const syntax_tree.SyntaxFile, tag: syntax_tree.Node.Tag) syntax_tree.NodeIndex {
+    const index = std.mem.indexOfScalar(syntax_tree.Node.Tag, tree.nodes.items(.tag), tag).?;
+    return @enumFromInt(@as(u32, @intCast(index)));
+}
+
 test "compact syntaxing preserves representative structures" {
     var minimal = try parseTestFile("tests/feature_tests/basics/01_minimal_main/main.rg");
     defer minimal.deinit(std.testing.allocator);
@@ -134,4 +139,34 @@ test "compact syntaxing preserves adversarial grammar distinctions" {
         .address_of_mut,
         .dereference,
     });
+}
+
+test "compact syntax views preserve semantic distinctions" {
+    const MatchExpectation = struct { path: []const u8, tag: syntax_tree.Node.Tag, mode: syntax_tree.MatchCaseMode };
+    const match_expectations = [_]MatchExpectation{
+        .{ .path = "tests/feature_tests/types/07_choice_match_payload_binding/main.rg", .tag = .match_case_value, .mode = .value },
+        .{ .path = "tests/feature_tests/types/29_match_borrowed_payload/main.rg", .tag = .match_case_borrow, .mode = .borrow },
+        .{ .path = "tests/feature_tests/types/30_match_mut_borrowed_payload/main.rg", .tag = .match_case_mut_borrow, .mode = .mut_borrow },
+        .{ .path = "tests/feature_tests/types/31_match_move_payload/main.rg", .tag = .match_case_move, .mode = .move },
+    };
+    for (match_expectations) |expected| {
+        var tree = try parseTestFile(expected.path);
+        defer tree.deinit(std.testing.allocator);
+        const node = firstNodeWithTag(&tree, expected.tag);
+        try std.testing.expectEqual(expected.mode, tree.matchCase(node).?.mode);
+    }
+
+    var accesses = try parseTestFile("tests/feature_tests/types/03_choice_payloads/main.rg");
+    defer accesses.deinit(std.testing.allocator);
+    const payload_access = firstNodeWithTag(&accesses, .choice_payload_access);
+    const field_access = firstNodeWithTag(&accesses, .struct_field_access);
+    try std.testing.expect(accesses.choicePayloadAccess(payload_access) != null);
+    try std.testing.expect(accesses.structFieldAccess(payload_access) == null);
+    try std.testing.expect(accesses.structFieldAccess(field_access) != null);
+    try std.testing.expect(accesses.choicePayloadAccess(field_access) == null);
+
+    var returns = try parseTestFile("tests/feature_tests/control_flow/02_loops/main.rg");
+    defer returns.deinit(std.testing.allocator);
+    const return_node = firstNodeWithTag(&returns, .return_statement);
+    try std.testing.expect(returns.returnStatement(return_node).?.value == null);
 }
