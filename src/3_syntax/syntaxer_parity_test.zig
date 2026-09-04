@@ -65,6 +65,19 @@ test "compact syntaxing preserves representative structures" {
     try std.testing.expect(std.mem.indexOfScalar(syntax_tree.Node.Tag, choices.nodes.items(.tag), .match_statement) != null);
 }
 
+test "compact syntaxing preserves generic parameter indices across extra data growth" {
+    var tree = try parseTestFile("tests/feature_tests/functions/10_pipe_generic_explicit/main.rg");
+    defer tree.deinit(std.testing.allocator);
+
+    const declaration = tree.functionDeclaration(tree.roots[0]).?;
+    const generic_struct = tree.structTypeLiteral(declaration.generic_params_struct.?).?;
+    try std.testing.expectEqual(@as(usize, 1), declaration.generic_params.len);
+    try std.testing.expectEqualSlices(syntax_tree.NodeIndex, generic_struct.fields, declaration.generic_params);
+
+    const parameter = tree.structTypeField(declaration.generic_params[0]).?;
+    try std.testing.expectEqual(syntax_tree.Node.Tag.type_name, tree.tag(parameter.type_node.?));
+}
+
 test "compact syntaxing matches legacy roots for positive feature programs" {
     var root = try std.Io.Dir.cwd().openDir(std.testing.io, ".", .{ .iterate = true });
     defer root.close(std.testing.io);
