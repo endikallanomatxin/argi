@@ -74,6 +74,7 @@ pub const Syntaxer = struct {
             }
             return err;
         };
+        defer roots.deinit();
         self.file.roots = try roots.toOwnedSlice();
         const result = self.file;
         self.file = .{ .file_id = result.file_id };
