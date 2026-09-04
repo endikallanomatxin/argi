@@ -279,15 +279,18 @@ pub const Type = union(enum) {
     choice_literal: ChoiceTypeLiteral,
 };
 pub const MatchStatement = struct { value: NodeIndex, cases: []const NodeIndex };
-pub const MatchCase = struct { variant_token: TokenIndex, payload_name: ?TokenIndex, body: NodeIndex };
+pub const MatchCase = struct { variant_token: TokenIndex, payload_name: ?TokenIndex, body: NodeIndex, mode: MatchCaseMode };
+pub const MatchCaseMode = enum { value, borrow, mut_borrow, move };
 pub const ForStatement = struct { name_token: TokenIndex, iterable: NodeIndex, body: NodeIndex, mode: ForMode };
 pub const ForMode = enum { value, borrow, mut_borrow };
 pub const WhileStatement = struct { condition: NodeIndex, body: NodeIndex };
-pub const NamedAccess = struct { value: NodeIndex, name_token: TokenIndex };
+pub const StructFieldAccess = struct { value: NodeIndex, field_token: TokenIndex };
+pub const ChoicePayloadAccess = struct { value: NodeIndex, variant_token: TokenIndex };
 pub const ChoiceLiteral = struct { name_token: TokenIndex, payload: ?NodeIndex };
 pub const ValueField = struct { name_token: ?TokenIndex, value: NodeIndex, position: ?u32 };
 pub const ReachDirective = struct { alternatives: []const NodeIndex };
 pub const ReachAlternative = struct { segments: []const NodeIndex };
+pub const ReturnStatement = struct { value: ?NodeIndex };
 pub const BinaryOperation = struct { lhs: NodeIndex, rhs: NodeIndex };
 
 pub const TokenList = std.MultiArrayList(token.Token);
@@ -640,7 +643,7 @@ pub const SyntaxFile = struct {
             .generic_type_instantiation => .{ .generic = .{ .base = tree.data(node).node_and_node.first, .arguments = tree.data(node).node_and_node.second } },
             .struct_type_literal => .{ .struct_literal = tree.structTypeLiteral(node).? },
             .choice_type_literal => .{ .choice_literal = tree.choiceTypeLiteral(node).? },
-            else => null,
+            else => return null,
         };
     }
 
@@ -651,13 +654,15 @@ pub const SyntaxFile = struct {
     }
 
     pub fn matchCase(tree: *const SyntaxFile, node: NodeIndex) ?MatchCase {
-        return switch (tree.tag(node)) {
-            .match_case_value, .match_case_borrow, .match_case_mut_borrow, .match_case_move => blk: {
-                const extra = tree.extraData(MatchCaseExtra, tree.data(node).extra);
-                break :blk .{ .variant_token = tree.mainToken(node), .payload_name = extra.payload_name.unwrap(), .body = extra.body };
-            },
-            else => null,
+        const mode: MatchCaseMode = switch (tree.tag(node)) {
+            .match_case_value => .value,
+            .match_case_borrow => .borrow,
+            .match_case_mut_borrow => .mut_borrow,
+            .match_case_move => .move,
+            else => return null,
         };
+        const extra = tree.extraData(MatchCaseExtra, tree.data(node).extra);
+        return .{ .variant_token = tree.mainToken(node), .payload_name = extra.payload_name.unwrap(), .body = extra.body, .mode = mode };
     }
 
     pub fn forStatement(tree: *const SyntaxFile, node: NodeIndex) ?ForStatement {
@@ -677,11 +682,20 @@ pub const SyntaxFile = struct {
         return .{ .condition = node_data.first, .body = node_data.second };
     }
 
-    pub fn namedAccess(tree: *const SyntaxFile, node: NodeIndex) ?NamedAccess {
-        return switch (tree.tag(node)) {
-            .struct_field_access, .choice_payload_access => .{ .value = tree.data(node).token_and_node.node, .name_token = tree.data(node).token_and_node.token },
-            else => null,
-        };
+    fn namedAccessPayload(tree: *const SyntaxFile, node: NodeIndex) Node.Data {
+        return tree.data(node);
+    }
+
+    pub fn structFieldAccess(tree: *const SyntaxFile, node: NodeIndex) ?StructFieldAccess {
+        if (tree.tag(node) != .struct_field_access) return null;
+        const payload = tree.namedAccessPayload(node).token_and_node;
+        return .{ .value = payload.node, .field_token = payload.token };
+    }
+
+    pub fn choicePayloadAccess(tree: *const SyntaxFile, node: NodeIndex) ?ChoicePayloadAccess {
+        if (tree.tag(node) != .choice_payload_access) return null;
+        const payload = tree.namedAccessPayload(node).token_and_node;
+        return .{ .value = payload.node, .variant_token = payload.token };
     }
 
     pub fn choiceLiteral(tree: *const SyntaxFile, node: NodeIndex) ?ChoiceLiteral {
@@ -708,9 +722,9 @@ pub const SyntaxFile = struct {
         return .{ .segments = tree.nodeRange(tree.data(node).extra_range) };
     }
 
-    pub fn returnValue(tree: *const SyntaxFile, node: NodeIndex) ?OptionalNodeIndex {
+    pub fn returnStatement(tree: *const SyntaxFile, node: NodeIndex) ?ReturnStatement {
         if (tree.tag(node) != .return_statement) return null;
-        return tree.data(node).optional_node;
+        return .{ .value = tree.data(node).optional_node.unwrap() };
     }
 
     pub fn binaryOperation(tree: *const SyntaxFile, node: NodeIndex) ?BinaryOperation {
