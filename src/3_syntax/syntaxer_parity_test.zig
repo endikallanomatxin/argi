@@ -23,10 +23,23 @@ fn parseTestFile(path: []const u8) !syntax_tree.SyntaxFile {
     const legacy_roots = try legacy.parse();
 
     var compact = try syntaxer.Syntaxer.init(std.testing.allocator, tokens, source, &diagnostics);
+    defer compact.deinit();
     const tree = try compact.parse();
     try std.testing.expect(!diagnostics.hasErrors());
     try std.testing.expectEqual(legacy_roots.len, tree.roots.len);
     return tree;
+}
+
+fn expectTags(path: []const u8, expected: []const syntax_tree.Node.Tag) !void {
+    var tree = try parseTestFile(path);
+    defer tree.deinit(std.testing.allocator);
+    const tags = tree.nodes.items(.tag);
+    for (expected) |tag| {
+        if (std.mem.indexOfScalar(syntax_tree.Node.Tag, tags, tag) == null) {
+            std.debug.print("compact tree for {s} is missing {s}\n", .{ path, @tagName(tag) });
+            return error.TestExpectedEqual;
+        }
+    }
 }
 
 test "compact syntaxing preserves representative structures" {
@@ -76,4 +89,49 @@ test "compact syntaxing matches legacy roots for positive feature programs" {
             tree.deinit(std.testing.allocator);
         }
     }
+}
+
+test "compact syntaxing preserves adversarial grammar distinctions" {
+    try expectTags("tests/feature_tests/basics/14_get_and_set_index_operators/main.rg", &.{
+        .function_declaration,
+        .index_access,
+        .index_assignment,
+    });
+    try expectTags("tests/feature_tests/functions/10_pipe_generic_explicit/main.rg", &.{
+        .function_call,
+        .pipe_expression,
+    });
+    try expectTags("tests/feature_tests/types/17_generic_type_initializer_from_init/main.rg", &.{.generic_type_instantiation});
+    try expectTags("tests/feature_tests/functions/13_mixed_function_call/main.rg", &.{
+        .struct_value_literal,
+        .positional_value_field,
+        .struct_value_field,
+    });
+    try expectTags("tests/feature_tests/io/02_reached_output_stream/main.rg", &.{
+        .reach_directive,
+        .reach_alternative,
+    });
+    try expectTags("tests/feature_tests/control_flow/04_for_dynamic_array/main.rg", &.{.for_value});
+    try expectTags("tests/feature_tests/control_flow/13_for_borrowed_array/main.rg", &.{.for_borrow});
+    try expectTags("tests/feature_tests/control_flow/14_for_mut_borrowed_dynamic_array/main.rg", &.{.for_mut_borrow});
+    try expectTags("tests/feature_tests/types/07_choice_match_payload_binding/main.rg", &.{
+        .choice_type_literal,
+        .choice_type_variant,
+        .choice_literal,
+        .match_statement,
+        .match_case_value,
+    });
+    try expectTags("tests/feature_tests/types/29_match_borrowed_payload/main.rg", &.{.match_case_borrow});
+    try expectTags("tests/feature_tests/types/30_match_mut_borrowed_payload/main.rg", &.{.match_case_mut_borrow});
+    try expectTags("tests/feature_tests/types/31_match_move_payload/main.rg", &.{.match_case_move});
+    try expectTags("tests/feature_tests/types/38_inferred_errable_from_propagation/main.rg", &.{
+        .inferred_errable_type,
+        .error_propagation,
+    });
+    try expectTags("tests/feature_tests/types/41_nullable_sugar/main.rg", &.{.nullable_type});
+    try expectTags("tests/feature_tests/control_flow/15_logical_and_or/main.rg", &.{
+        .pointer_type_mut,
+        .address_of_mut,
+        .dereference,
+    });
 }
