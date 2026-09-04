@@ -1,5 +1,5 @@
 const std = @import("std");
-const syn = @import("../3_syntax/syntax_tree_legacy.zig");
+const syn = @import("../3_syntax/syntax_tree.zig");
 const tok = @import("../2_tokens/token.zig");
 const sg = @import("semantic_graph.zig");
 const Scope = @import("scope.zig").Scope;
@@ -1073,7 +1073,7 @@ fn floatLiteralAs(
 pub fn coerceLiteralToBuiltin(
     target: sg.BuiltinType,
     expr: TypedExpr,
-    expr_node: *const syn.STNode,
+    expr_node: syn.SyntaxRef,
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
 ) err.SemErr!TypedExpr {
@@ -1152,7 +1152,7 @@ fn coerceStringLiteralToPointer(
 pub fn coerceExprToType(
     expected: sg.Type,
     expr: TypedExpr,
-    expr_node: *const syn.STNode,
+    expr_node: syn.SyntaxRef,
     s: *Scope,
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
@@ -1172,7 +1172,7 @@ pub fn coerceExprToType(
 fn coerceChoiceLiteral(
     expected: *const sg.ChoiceType,
     expr: TypedExpr,
-    expr_node: *const syn.STNode,
+    expr_node: syn.SyntaxRef,
     s: *Scope,
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
@@ -1295,7 +1295,7 @@ fn coerceChoiceLiteral(
 fn coerceChoiceValue(
     expected: *const sg.ChoiceType,
     expr: TypedExpr,
-    expr_node: *const syn.STNode,
+    expr_node: syn.SyntaxRef,
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
 ) err.SemErr!TypedExpr {
@@ -1401,7 +1401,7 @@ pub fn convertListLiteralToArray(
 pub fn coerceStructLiteral(
     expected: *const sg.StructType,
     expr: TypedExpr,
-    expr_node: *const syn.STNode,
+    expr_node: syn.SyntaxRef,
     s: *Scope,
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
@@ -1520,7 +1520,7 @@ pub fn coerceStructLiteral(
 fn coerceUnionLiteral(
     expected: *const sg.StructType,
     expr: TypedExpr,
-    expr_node: *const syn.STNode,
+    expr_node: syn.SyntaxRef,
     s: *Scope,
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
@@ -1670,7 +1670,7 @@ fn synthesizeImplicitFieldValue(
     return trace_node;
 }
 
-pub fn ensureReadOnlyPointer(expr_node: *const syn.STNode, te: TypedExpr, allocator: *const std.mem.Allocator, diags: *diagnostics.Diagnostics) err.SemErr!TypedExpr {
+pub fn ensureReadOnlyPointer(expr_node: syn.SyntaxRef, te: TypedExpr, allocator: *const std.mem.Allocator, diags: *diagnostics.Diagnostics) err.SemErr!TypedExpr {
     if (te.ty == .pointer_type) return te;
 
     try ensureAddressableNode(te.node, .read_only, expr_node.location, diags);
@@ -1718,7 +1718,7 @@ pub fn makeAddressablePointer(
 }
 
 pub fn ensureMutablePointer(
-    expr_node: *const syn.STNode,
+    expr_node: syn.SyntaxRef,
     te: TypedExpr,
     s: *Scope,
     allocator: *const std.mem.Allocator,
@@ -1806,3 +1806,5 @@ fn ensureAddressableNode(
         },
     }
 }
+
+
