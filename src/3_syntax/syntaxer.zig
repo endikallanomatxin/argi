@@ -58,7 +58,14 @@ pub const Syntaxer = struct {
         return self.file.nodes.len;
     }
 
+    pub fn deinit(self: *Syntaxer) void {
+        const file_id = self.file.file_id;
+        self.file.deinit(self.allocator);
+        self.file = .{ .file_id = file_id };
+    }
+
     pub fn parse(self: *Syntaxer) !syn.SyntaxFile {
+        errdefer self.deinit();
         var roots = parseSentences(self) catch |err| {
             if (err == SyntaxerError.OutOfMemory) {
                 try self.diags.add(self.tokenLocation(), .internal, "out of memory while parsing", .{});
@@ -68,7 +75,9 @@ pub const Syntaxer = struct {
             return err;
         };
         self.file.roots = try roots.toOwnedSlice();
-        return self.file;
+        const result = self.file;
+        self.file = .{ .file_id = result.file_id };
+        return result;
     }
 
     // ───────────────────────────────── token helpers ─────────────────────────
@@ -153,35 +162,16 @@ pub const Syntaxer = struct {
     }
 
     // ─────────────────────────────── node helpers ────────────────────────────
-    fn addNode(self: *Syntaxer, tag: syn.Node.Tag, main_token: syn.TokenIndex, data: syn.Node.Data) !syn.NodeIndex {
-        if (self.file.nodes.len >= std.math.maxInt(u32)) return error.OutOfMemory;
-        const index: syn.NodeIndex = @enumFromInt(self.file.nodes.len);
-        try self.file.nodes.append(self.allocator, .{ .tag = tag, .main_token = main_token, .data = data });
-        return index;
+    fn addNode(self: *Syntaxer, tag: syn.Node.Tag, main_token: syn.TokenIndex, data: syn.Node.Data) SyntaxerError!syn.NodeIndex {
+        return self.file.addNode(self.allocator, .{ .tag = tag, .main_token = main_token, .data = data }) catch return error.OutOfMemory;
     }
 
-    fn addExtra(self: *Syntaxer, extra: anytype) !syn.ExtraIndex {
-        const fields = std.meta.fields(@TypeOf(extra));
-        if (self.file.extra_data.items.len + fields.len >= std.math.maxInt(u32)) return error.OutOfMemory;
-        try self.file.extra_data.ensureUnusedCapacity(self.allocator, fields.len);
-        const result: syn.ExtraIndex = @enumFromInt(self.file.extra_data.items.len);
-        inline for (fields) |field| {
-            const value = @field(extra, field.name);
-            const raw: u32 = switch (field.type) {
-                syn.NodeIndex, syn.OptionalNodeIndex, syn.ExtraIndex => @intFromEnum(value),
-                u32 => value,
-                else => if (@typeInfo(field.type) == .@"enum") @intFromEnum(value) else @compileError("unsupported extra_data field " ++ @typeName(field.type)),
-            };
-            self.file.extra_data.appendAssumeCapacity(raw);
-        }
-        return result;
+    fn addExtra(self: *Syntaxer, extra: anytype) SyntaxerError!syn.ExtraIndex {
+        return self.file.addExtra(self.allocator, extra) catch return error.OutOfMemory;
     }
 
-    fn addNodeRange(self: *Syntaxer, nodes: []const syn.NodeIndex) !syn.NodeRange {
-        if (self.file.extra_data.items.len + nodes.len >= std.math.maxInt(u32)) return error.OutOfMemory;
-        const start: syn.ExtraIndex = @enumFromInt(self.file.extra_data.items.len);
-        try self.file.extra_data.appendSlice(self.allocator, @ptrCast(nodes));
-        return .{ .start = start, .end = @enumFromInt(self.file.extra_data.items.len) };
+    fn addNodeRange(self: *Syntaxer, nodes: []const syn.NodeIndex) SyntaxerError!syn.NodeRange {
+        return self.file.addNodeRange(self.allocator, nodes) catch return error.OutOfMemory;
     }
 
     fn parseSignedNumericLiteral(self: *Syntaxer) !syn.NodeIndex {
@@ -1651,6 +1641,7 @@ pub const Syntaxer = struct {
     // ─────────────────────────────  SENTENCES  ──────────────────────────────
     fn parseSentences(self: *Syntaxer) !std.array_list.Managed(syn.NodeIndex) {
         var list = std.array_list.Managed(syn.NodeIndex).init(self.allocator);
+        errdefer list.deinit();
 
         while (!self.tokenIs(.eof) and !self.tokenIs(.close_brace)) {
             switch (self.current().content) {
