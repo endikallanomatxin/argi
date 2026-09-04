@@ -3,7 +3,7 @@ const llvm = @import("llvm.zig");
 const c = llvm.c;
 const sem = @import("../4_semantics/semantic_graph.zig");
 const sem_types = @import("../4_semantics/types.zig");
-const syn = @import("../3_syntax/syntax_tree_legacy.zig");
+const syn = @import("../3_syntax/syntax_tree.zig");
 const tok = @import("../2_tokens/token.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
@@ -1213,7 +1213,7 @@ pub const CodeGenerator = struct {
 
     // Top-level bindings are emitted as LLVM globals. Their initializers must be
     // constants, and global storage is predeclared before codegen starts so
-    // references between module files do not depend on AST order.
+    // References between module files do not depend on syntax tree order.
     fn ensureGlobalBindingInitialized(self: *CodeGenerator, b: *const sem.BindingDeclaration) CodegenError!void {
         const state = self.global_init_state.get(b) orelse .done;
         switch (state) {
