@@ -179,6 +179,7 @@ pub const Mutability = enum(u32) { constant, variable };
 pub const PointerMutability = enum(u32) { read_only, read_write };
 
 pub const FunctionExtra = struct {
+    name_token: TokenIndex,
     generic_params_start: ExtraIndex,
     generic_params_end: ExtraIndex,
     generic_params_struct: OptionalNodeIndex,
@@ -223,6 +224,19 @@ pub const FunctionDeclaration = struct {
     is_once: bool,
 };
 pub const TestDeclaration = struct { function: FunctionDeclaration };
+pub const FunctionName = union(enum) {
+    identifier: TokenIndex,
+    operator: OperatorName,
+};
+pub const OperatorName = enum {
+    add,
+    equal,
+    not_equal,
+    get,
+    set,
+    get_ro_pointer,
+    get_rw_pointer,
+};
 pub const IfStatement = struct { condition: NodeIndex, then_block: NodeIndex, else_block: ?NodeIndex };
 pub const FunctionCall = struct {
     callee_token: TokenIndex,
@@ -233,7 +247,7 @@ pub const FunctionCall = struct {
 };
 pub const StructTypeLiteral = struct { fields: []const NodeIndex };
 pub const ChoiceTypeLiteral = struct { variants: []const NodeIndex };
-pub const StructValueLiteral = struct { fields: []const NodeIndex };
+pub const StructValueLiteral = struct { fields: []const NodeIndex, positional_prefix_count: u32 };
 pub const CodeBlock = struct { statements: []const NodeIndex };
 pub const ListLiteral = struct { elements: []const NodeIndex };
 pub const StructTypeField = struct { name_token: TokenIndex, type_node: ?NodeIndex, default_value: ?NodeIndex, inferred_result: bool };
@@ -272,7 +286,26 @@ pub const SyntaxFile = struct {
     tokens: TokenList = .empty,
     nodes: NodeList = .empty,
     extra_data: std.ArrayList(u32) = .empty,
-    roots: std.ArrayList(NodeIndex) = .empty,
+    roots: []NodeIndex = &.{},
+
+    pub const StorageMetrics = struct {
+        token_bytes: usize,
+        node_base_bytes: usize,
+        extra_data_bytes: usize,
+        root_bytes: usize,
+
+        pub fn total(metrics: StorageMetrics) usize {
+            return metrics.token_bytes + metrics.node_base_bytes + metrics.extra_data_bytes + metrics.root_bytes;
+        }
+    };
+
+    // Representative syntaxing measurements compare the compact base and
+    // extra_data with the legacy tree's 128-byte logical STNode records:
+    // minimal: 10 nodes, 130 + 44 bytes (legacy 6 nodes, 768 bytes);
+    // cat_cli: 143 nodes, 1,859 + 640 bytes (legacy 120, 15,360 bytes);
+    // dynamic array: 222 nodes, 2,886 + 696 bytes (legacy 184, 23,552 bytes).
+    // Compact counts include type syntax, which the legacy parallel Type tree
+    // omitted from its STNode count.
 
     pub fn init(allocator: std.mem.Allocator, file_id: source_db.FileId, tokens: []const token.Token) !SyntaxFile {
         var tree: SyntaxFile = .{ .file_id = file_id };
@@ -286,8 +319,17 @@ pub const SyntaxFile = struct {
         tree.tokens.deinit(allocator);
         tree.nodes.deinit(allocator);
         tree.extra_data.deinit(allocator);
-        tree.roots.deinit(allocator);
+        allocator.free(tree.roots);
         tree.* = undefined;
+    }
+
+    pub fn storageMetrics(tree: *const SyntaxFile) StorageMetrics {
+        return .{
+            .token_bytes = tree.tokens.len * (@sizeOf(token.Content) + @sizeOf(token.Location)),
+            .node_base_bytes = tree.nodes.len * (@sizeOf(Node.Tag) + @sizeOf(TokenIndex) + @sizeOf(Node.Data)),
+            .extra_data_bytes = tree.extra_data.items.len * @sizeOf(u32),
+            .root_bytes = tree.roots.len * @sizeOf(NodeIndex),
+        };
     }
 
     pub fn addNode(tree: *SyntaxFile, allocator: std.mem.Allocator, node: Node) !NodeIndex {
@@ -375,7 +417,7 @@ pub const SyntaxFile = struct {
         if (node_tag != .function_declaration and node_tag != .function_declaration_once) return null;
         const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
         return .{
-            .name_token = tree.mainToken(node),
+            .name_token = extra.name_token,
             .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }),
             .generic_params_struct = extra.generic_params_struct.unwrap(),
             .input = extra.input,
@@ -389,7 +431,7 @@ pub const SyntaxFile = struct {
         if (tree.tag(node) != .test_declaration) return null;
         const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
         return .{ .function = .{
-            .name_token = tree.mainToken(node),
+            .name_token = extra.name_token,
             .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }),
             .generic_params_struct = extra.generic_params_struct.unwrap(),
             .input = extra.input,
@@ -397,6 +439,33 @@ pub const SyntaxFile = struct {
             .body = extra.body.unwrap(),
             .is_once = false,
         } };
+    }
+
+    pub fn functionName(tree: *const SyntaxFile, db: *const source_db.SourceDb, node: NodeIndex) ?FunctionName {
+        const declaration = tree.functionDeclaration(node) orelse (tree.testDeclaration(node) orelse return null).function;
+        if (!std.mem.eql(u8, tree.tokenText(db, declaration.name_token), "operator")) {
+            return .{ .identifier = declaration.name_token };
+        }
+
+        const operator_index = @intFromEnum(declaration.name_token) + 1;
+        if (operator_index >= tree.tokens.len) return null;
+        return switch (tree.tokens.items(.content)[operator_index]) {
+            .binary_operator => |operator| if (operator == .addition) .{ .operator = .add } else null,
+            .comparison_operator => |operator| switch (operator) {
+                .equal => .{ .operator = .equal },
+                .not_equal => .{ .operator = .not_equal },
+                else => null,
+            },
+            .identifier => |range| blk: {
+                const text = range.slice(db.get(tree.file_id).source);
+                if (std.mem.eql(u8, text, "get")) break :blk .{ .operator = .get };
+                if (std.mem.eql(u8, text, "set")) break :blk .{ .operator = .set };
+                if (std.mem.eql(u8, text, "get_ro_pointer")) break :blk .{ .operator = .get_ro_pointer };
+                if (std.mem.eql(u8, text, "get_rw_pointer")) break :blk .{ .operator = .get_rw_pointer };
+                break :blk null;
+            },
+            else => null,
+        };
     }
 
     pub fn ifStatement(tree: *const SyntaxFile, node: NodeIndex) ?IfStatement {
@@ -430,7 +499,11 @@ pub const SyntaxFile = struct {
 
     pub fn structValueLiteral(tree: *const SyntaxFile, node: NodeIndex) ?StructValueLiteral {
         if (tree.tag(node) != .struct_value_literal) return null;
-        return .{ .fields = tree.nodeRange(tree.data(node).extra_range) };
+        const node_data = tree.data(node).u32_and_extra;
+        return .{
+            .fields = tree.nodeRange(tree.extraData(NodeRange, node_data.extra)),
+            .positional_prefix_count = node_data.value,
+        };
     }
 
     pub fn codeBlock(tree: *const SyntaxFile, node: NodeIndex) ?CodeBlock {

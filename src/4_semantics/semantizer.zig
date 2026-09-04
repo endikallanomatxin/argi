@@ -1,6 +1,6 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
-const syn = @import("../3_syntax/syntax_tree.zig");
+const syn = @import("../3_syntax/syntax_tree_legacy.zig");
 const sg = @import("semantic_graph.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
@@ -108,14 +108,14 @@ const SignatureTypeCacheMode = enum {
 };
 
 const SignatureTypeCacheKey = struct {
-    node: syn.SyntaxRef,
+    node: *const syn.Type,
     mode: SignatureTypeCacheMode,
 };
 
 const PendingFunctionBody = struct {
     const State = enum { unseen, queued, done };
 
-    top_node: syn.SyntaxRef,
+    top_node: *const syn.STNode,
     decl: syn.FunctionDeclaration,
     location: tok.Location,
     function: *sg.FunctionDeclaration,
@@ -221,18 +221,17 @@ pub const Semantizer = struct {
     // work and makes the remaining retries residual rather than fundamental.
     allocator: *const std.mem.Allocator,
     io: std.Io,
-    syntax_files: []const syn.SyntaxFile,
-    st_nodes: []const syn.SyntaxRef,
+    st_nodes: []const *syn.STNode, // entrada
     root_list: std.array_list.Managed(*sg.SGNode), // buffer mut
     root_nodes: []const *sg.SGNode = &.{}, // slice final
     diags: *diagnostic.Diagnostics,
     options: SemantizerOptions,
 
     // ── Reintentos top-level
-    pending_now: std.array_list.Managed(syn.SyntaxRef),
-    pending_next: std.array_list.Managed(syn.SyntaxRef),
+    pending_now: std.array_list.Managed(*const syn.STNode),
+    pending_next: std.array_list.Managed(*const syn.STNode),
     defer_unknown_top_level: bool = false,
-    current_top_node: ?syn.SyntaxRef = null,
+    current_top_node: ?*const syn.STNode = null,
     max_retry_rounds: u32 = 8,
     retry_enqueue_attempts: u32 = 0,
     retry_enqueue_unique: u32 = 0,
@@ -266,21 +265,19 @@ pub const Semantizer = struct {
     pub fn init(
         alloc: *const std.mem.Allocator,
         io: std.Io,
-        syntax_files: []const syn.SyntaxFile,
-        st: []const syn.SyntaxRef,
+        st: []const *syn.STNode,
         diags: *diagnostic.Diagnostics,
         options: SemantizerOptions,
     ) Semantizer {
         return .{
             .allocator = alloc,
             .io = io,
-            .syntax_files = syntax_files,
             .st_nodes = st,
             .root_list = std.array_list.Managed(*sg.SGNode).init(alloc.*),
             .diags = diags,
             .options = options,
-            .pending_now = std.array_list.Managed(syn.SyntaxRef).init(alloc.*),
-            .pending_next = std.array_list.Managed(syn.SyntaxRef).init(alloc.*),
+            .pending_now = std.array_list.Managed(*const syn.STNode).init(alloc.*),
+            .pending_next = std.array_list.Managed(*const syn.STNode).init(alloc.*),
             .pending_function_bodies = std.array_list.Managed(PendingFunctionBody).init(alloc.*),
             .function_body_worklist = std.array_list.Managed(usize).init(alloc.*),
             .signature_type_cache = std.AutoHashMap(SignatureTypeCacheKey, sg.Type).init(alloc.*),
@@ -295,27 +292,25 @@ pub const Semantizer = struct {
         return id;
     }
 
-    fn syntaxFile(self: *const Semantizer, node: syn.SyntaxRef) *const syn.SyntaxFile {
-        return syn.fileForRef(self.syntax_files, node);
+    fn topLevelNodeIsTest(self: *Semantizer, n: *const syn.STNode) bool {
+        _ = self;
+        return n.content == .test_declaration;
     }
 
-    fn nodeTag(self: *const Semantizer, node: syn.SyntaxRef) syn.Node.Tag {
-        return self.syntaxFile(node).tag(node.node);
-    }
-
-    fn nodeLocation(self: *const Semantizer, node: syn.SyntaxRef) tok.Location {
-        return self.syntaxFile(node).nodeLocation(node.node);
-    }
-
-    fn topLevelNodeIsTest(self: *Semantizer, n: syn.SyntaxRef) bool {
-        return self.nodeTag(n) == .test_declaration;
-    }
-
-    fn topLevelNodeIsCallable(self: *Semantizer, n: syn.SyntaxRef) bool {
-        return switch (self.nodeTag(n)) {
-            .function_declaration, .function_declaration_once => true,
+    fn topLevelNodeIsCallable(self: *Semantizer, n: *const syn.STNode) bool {
+        return switch (n.content) {
+            .function_declaration => true,
             .test_declaration => self.options.include_tests,
             else => false,
+        };
+    }
+
+    fn functionDeclFromTopLevelNode(self: *Semantizer, n: *const syn.STNode) syn.FunctionDeclaration {
+        _ = self;
+        return switch (n.content) {
+            .function_declaration => |decl| decl,
+            .test_declaration => |decl| decl.decl,
+            else => unreachable,
         };
     }
 
@@ -370,7 +365,7 @@ pub const Semantizer = struct {
         return self.diags.lineColumn(loc);
     }
 
-    fn ignoreOrLogStagedTopLevelError(self: *Semantizer, n: syn.SyntaxRef, err: anyerror) void {
+    fn ignoreOrLogStagedTopLevelError(self: *Semantizer, n: *const syn.STNode, err: anyerror) void {
         switch (err) {
             error.Reported, error.UnknownType, error.SymbolNotFound => return,
             else => {},
@@ -379,10 +374,10 @@ pub const Semantizer = struct {
         log.warn(
             "staged top-level semantizing of '{s}' failed at {s}:{d}:{d} with {s}",
             .{
-                @tagName(self.nodeTag(n)),
-                self.locationPath(self.nodeLocation(n)),
-                self.locationLineColumn(self.nodeLocation(n)).line,
-                self.locationLineColumn(self.nodeLocation(n)).column,
+                @tagName(std.meta.activeTag(n.content)),
+                self.locationPath(n.location),
+                self.locationLineColumn(n.location).line,
+                self.locationLineColumn(n.location).column,
                 @errorName(err),
             },
         );
@@ -431,9 +426,9 @@ pub const Semantizer = struct {
         const support_top_level_start = nowNs(self.io);
         for (self.st_nodes) |n| {
             if (self.topLevelNodeIsCallable(n)) continue;
-            if (self.nodeTag(n) == .test_declaration and !self.options.include_tests) continue;
+            if (n.content == .test_declaration and !self.options.include_tests) continue;
             self.current_top_node = n;
-            _ = self.visitNode(n, &global) catch |err| {
+            _ = self.visitNode(n.*, &global) catch |err| {
                 self.ignoreOrLogStagedTopLevelError(n, err);
             };
         }
@@ -453,7 +448,7 @@ pub const Semantizer = struct {
                 }
 
                 self.current_top_node = pn;
-                if (self.visitNode(pn, &global)) |_| {
+                if (self.visitNode(pn.*, &global)) |_| {
                     progressed = true;
                 } else |_| {}
             }
@@ -475,7 +470,7 @@ pub const Semantizer = struct {
         for (self.st_nodes) |n| {
             if (!self.topLevelNodeIsCallable(n)) continue;
             self.current_top_node = n;
-            _ = self.visitNode(n, &global) catch |err| {
+            _ = self.visitNode(n.*, &global) catch |err| {
                 self.ignoreOrLogStagedTopLevelError(n, err);
             };
         }
@@ -496,7 +491,7 @@ pub const Semantizer = struct {
                 }
 
                 self.current_top_node = pn;
-                if (self.visitNode(pn, &global)) |_| {
+                if (self.visitNode(pn.*, &global)) |_| {
                     progressed = true;
                 } else |_| {}
             }
@@ -532,9 +527,9 @@ pub const Semantizer = struct {
 
             var progressed = false;
             for (self.pending_now.items) |pn| {
-                if (self.nodeTag(pn) == .function_declaration or self.nodeTag(pn) == .function_declaration_once) continue;
+                if (pn.content == .function_declaration) continue;
                 self.current_top_node = pn;
-                if (self.visitNode(pn, &global)) |_| {
+                if (self.visitNode(pn.*, &global)) |_| {
                     progressed = true;
                 } else |_| {
                     // Las causas distintas de UnknownType ya se reportan dentro.
@@ -542,9 +537,9 @@ pub const Semantizer = struct {
                 }
             }
             for (self.pending_now.items) |pn| {
-                if (self.nodeTag(pn) != .function_declaration and self.nodeTag(pn) != .function_declaration_once) continue;
+                if (pn.content != .function_declaration) continue;
                 self.current_top_node = pn;
-                if (self.visitNode(pn, &global)) |_| {
+                if (self.visitNode(pn.*, &global)) |_| {
                     progressed = true;
                 } else |_| {
                     // Las causas distintas de UnknownType ya se reportan dentro.
@@ -565,7 +560,7 @@ pub const Semantizer = struct {
         if (self.pending_next.items.len > 0) {
             for (self.pending_next.items) |pn| {
                 self.current_top_node = pn;
-                _ = self.visitNode(pn, &global) catch |err| {
+                _ = self.visitNode(pn.*, &global) catch |err| {
                     self.ignoreOrLogStagedTopLevelError(pn, err);
                 };
             }
@@ -619,7 +614,7 @@ pub const Semantizer = struct {
 
     fn enqueuePendingFunctionBody(
         self: *Semantizer,
-        top_node: syn.SyntaxRef,
+        top_node: *const syn.STNode,
         decl: syn.FunctionDeclaration,
         loc: tok.Location,
         function: *sg.FunctionDeclaration,
@@ -2456,7 +2451,7 @@ pub const Semantizer = struct {
         return sg.makeSGNode(.{ .code_block = try self.makeEmptyCodeBlock() }, loc, self.allocator);
     }
 
-    fn makeSynNode(self: *Semantizer, content: syn.Content, location: tok.Location) !syn.SyntaxRef {
+    fn makeSynNode(self: *Semantizer, content: syn.Content, location: tok.Location) !*syn.STNode {
         const node = try self.allocator.create(syn.STNode);
         node.* = .{
             .location = location,
@@ -2483,7 +2478,7 @@ pub const Semantizer = struct {
         return self.functionIsVisible(cand, requester_file);
     }
 
-    fn syntaxNodeContainsPipePlaceholder(n: syn.SyntaxRef) bool {
+    fn syntaxNodeContainsPipePlaceholder(n: *const syn.STNode) bool {
         return switch (n.content) {
             .pipe_placeholder => true,
             .struct_field_access => |sfa| syntaxNodeContainsPipePlaceholder(sfa.struct_value),
@@ -2687,7 +2682,7 @@ pub const Semantizer = struct {
 
     fn evalPipeArg(
         self: *Semantizer,
-        arg: syn.SyntaxRef,
+        arg: *const syn.STNode,
         left: typ.TypedExpr,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
@@ -3672,7 +3667,6 @@ pub const Semantizer = struct {
             output_nested.deinit();
 
             try reqs.append(.{
-                .syntax_files = self.syntax_files,
                 .name = rf.name.string,
                 .input = in_struct,
                 .output = out_struct,
@@ -3905,7 +3899,6 @@ pub const Semantizer = struct {
             const params = try params_buf.toOwnedSlice();
             const constraints = try constraints_buf.toOwnedSlice();
             try s.appendAbstractImplTemplate(abstract_name, .{
-                .syntax_files = self.syntax_files,
                 .params = params,
                 .param_abstract_constraints = constraints,
                 .ty = concrete_pattern,
@@ -4452,7 +4445,7 @@ pub const Semantizer = struct {
 
     fn handleMove(
         self: *Semantizer,
-        inner: syn.SyntaxRef,
+        inner: *const syn.STNode,
         s: *Scope,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
@@ -4593,7 +4586,7 @@ pub const Semantizer = struct {
             return error.SymbolAlreadyDefined;
         }
 
-        var init_node: ?syn.SyntaxRef = null;
+        var init_node: ?*syn.STNode = null;
         var init_te_opt: ?typ.TypedExpr = null;
         if (d.value) |v| {
             init_node = v;
@@ -4891,8 +4884,6 @@ pub const Semantizer = struct {
             );
             const generic_info = try self.genericParamDefsAndConstraintsFromSyntax(params_struct, p);
             try p.appendGenericFunctionTemplate(f.name.string, .{
-                .syntax_files = self.syntax_files,
-                .syntax_file_id = loc.file,
                 .name = f.name.string,
                 .location = loc,
                 .params = generic_info.params,
@@ -5133,8 +5124,6 @@ pub const Semantizer = struct {
             );
             const generic_info = try self.genericParamDefsAndConstraintsFromSyntax(params_struct, p);
             try p.appendGenericFunctionTemplate(f.name.string, .{
-                .syntax_files = self.syntax_files,
-                .syntax_file_id = loc.file,
                 .name = f.name.string,
                 .location = loc,
                 .params = generic_info.params,
@@ -5290,8 +5279,6 @@ pub const Semantizer = struct {
         const f = pending.decl;
         const loc = pending.location;
         const fn_ptr = pending.function;
-        const syntax_file = self.syntaxFile(pending.top_node);
-        const syntax_input_fields = syntax_file.structTypeLiteral(f.input).?.fields;
 
         const child = try self.allocator.create(Scope);
         child.* = try Scope.init(self.allocator, p, null);
@@ -5299,21 +5286,19 @@ pub const Semantizer = struct {
 
         const input_struct_ptr = try self.allocator.create(sg.StructType);
         var prepared_input_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
-        if (!functionHasAnyDefaults(syntax_file, syntax_input_fields)) {
+        if (!functionHasAnyDefaults(f.input.fields)) {
             input_struct_ptr.* = .{ .fields = fn_ptr.input.fields };
-            for (syntax_input_fields, 0..) |field_node, idx| {
-                const fld = syntax_file.structTypeField(field_node).?;
-                const field_name = if (fld.is_inferred_result) "result" else syntax_file.tokenText(fld.name_token);
+            for (f.input.fields, 0..) |fld, idx| {
                 const bd = try self.allocator.create(sg.BindingDeclaration);
                 bd.* = .{
-                    .name = field_name,
-                    .location = syntax_file.tokenLocation(fld.name_token),
+                    .name = fld.name.string,
+                    .location = fld.name.location,
                     .origin_file = self.locationPath(loc),
                     .mutability = .constant,
                     .ty = fn_ptr.input.fields[idx].ty,
                     .initialization = null,
                 };
-                try child.bindings.put(field_name, bd);
+                try child.bindings.put(fld.name.string, bd);
                 try prepared_input_bindings.append(bd);
             }
             fn_ptr.input_bindings = try prepared_input_bindings.toOwnedSlice();
@@ -5328,12 +5313,10 @@ pub const Semantizer = struct {
         @memcpy(input_fields, fn_ptr.input.fields);
         input_struct_ptr.* = .{ .fields = input_fields };
 
-        for (syntax_input_fields, 0..) |field_node, idx| {
-            const fld = syntax_file.structTypeField(field_node).?;
-            const field_name = if (fld.is_inferred_result) "result" else syntax_file.tokenText(fld.name_token);
+        for (f.input.fields, 0..) |fld, idx| {
             const ty = input_struct_ptr.fields[idx].ty;
             const dvp = if (fld.default_value) |n|
-                (try self.visitNode(syntax_file.ref(n), child)).node
+                (try self.visitNode(n.*, child)).node
             else
                 null;
 
@@ -5341,14 +5324,14 @@ pub const Semantizer = struct {
 
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{
-                .name = field_name,
-                .location = syntax_file.tokenLocation(fld.name_token),
+                .name = fld.name.string,
+                .location = fld.name.location,
                 .origin_file = self.locationPath(loc),
                 .mutability = .constant,
                 .ty = ty,
                 .initialization = dvp,
             };
-            try child.bindings.put(field_name, bd);
+            try child.bindings.put(fld.name.string, bd);
             try prepared_input_bindings.append(bd);
         }
 
@@ -5367,8 +5350,6 @@ pub const Semantizer = struct {
         _ = p;
         const f = pending.decl;
         const fn_ptr = pending.function;
-        const syntax_file = self.syntaxFile(pending.top_node);
-        const output_fields_syntax = syntax_file.structTypeLiteral(f.output).?.fields;
         const child = pending.prepared_scope orelse {
             try self.diags.add(pending.location, .semantic, "internal error: missing prepared input scope during staged semantizing", .{});
             return error.Reported;
@@ -5378,13 +5359,11 @@ pub const Semantizer = struct {
             return error.Reported;
         };
 
-        if (!functionHasAnyDefaults(syntax_file, output_fields_syntax)) {
-            for (output_fields_syntax, 0..) |field_node, idx| {
-                const fld = syntax_file.structTypeField(field_node).?;
-                const field_name = if (fld.is_inferred_result) "result" else syntax_file.tokenText(fld.name_token);
+        if (!functionHasAnyDefaults(f.output.fields)) {
+            for (f.output.fields, 0..) |fld, idx| {
                 const bd = @constCast(fn_ptr.output_bindings[idx]);
                 bd.initialization = null;
-                try child.bindings.put(field_name, bd);
+                try child.bindings.put(fld.name.string, bd);
             }
             fn_ptr.input = input_struct_ptr.*;
             return;
@@ -5393,11 +5372,9 @@ pub const Semantizer = struct {
         const output_fields = try self.allocator.alloc(sg.StructTypeField, fn_ptr.output.fields.len);
         @memcpy(output_fields, fn_ptr.output.fields);
 
-        for (output_fields_syntax, 0..) |field_node, idx| {
-            const fld = syntax_file.structTypeField(field_node).?;
-            const field_name = if (fld.is_inferred_result) "result" else syntax_file.tokenText(fld.name_token);
+        for (f.output.fields, 0..) |fld, idx| {
             const dvp = if (fld.default_value) |n|
-                (try self.visitNode(syntax_file.ref(n), child)).node
+                (try self.visitNode(n.*, child)).node
             else
                 null;
 
@@ -5405,16 +5382,16 @@ pub const Semantizer = struct {
 
             const bd = @constCast(fn_ptr.output_bindings[idx]);
             bd.initialization = dvp;
-            try child.bindings.put(field_name, bd);
+            try child.bindings.put(fld.name.string, bd);
         }
 
         fn_ptr.output = .{ .fields = output_fields };
         fn_ptr.input = input_struct_ptr.*;
     }
 
-    fn functionHasAnyDefaults(file: *const syn.SyntaxFile, fields: []const syn.NodeIndex) bool {
-        for (fields) |field_node| {
-            if (file.structTypeField(field_node).?.default_value != null) return true;
+    fn functionHasAnyDefaults(fields: []const syn.StructTypeLiteralField) bool {
+        for (fields) |field| {
+            if (field.default_value != null) return true;
         }
         return false;
     }
@@ -5434,19 +5411,17 @@ pub const Semantizer = struct {
         const f = pending.decl;
         const loc = pending.location;
         const fn_ptr = pending.function;
-        const syntax_file = self.syntaxFile(pending.top_node);
-        const function_name = syntax_file.tokenText(f.name_token);
 
         var body_cb: ?*sg.CodeBlock = null;
         if (f.body) |body_node| {
             try self.function_reach_stack.append(.{
-                .function_name = function_name,
+                .function_name = f.name.string,
                 .location = loc,
                 .input_struct = input_struct_ptr,
                 .body_scope = child,
             });
             defer _ = self.function_reach_stack.pop();
-            const body_te = try self.visitNode(syntax_file.ref(body_node), child);
+            const body_te = try self.visitNode(body_node.*, child);
             body_cb = body_te.node.content.code_block;
         }
 
@@ -5642,7 +5617,7 @@ pub const Semantizer = struct {
 
     fn collectHiddenComptimeParamsFromValueExpr(
         self: *Semantizer,
-        node: syn.SyntaxRef,
+        node: *const syn.STNode,
         params: *std.array_list.Managed(gen.GenericParam),
         s: *Scope,
     ) !void {
@@ -5738,7 +5713,7 @@ pub const Semantizer = struct {
 
     fn resolveComptimeIntExpr(
         self: *Semantizer,
-        node: syn.SyntaxRef,
+        node: *const syn.STNode,
         s: *Scope,
         subst: ?*const GenericSubst,
     ) SemErr!i64 {
@@ -5825,7 +5800,7 @@ pub const Semantizer = struct {
 
     fn resolveTypeExpressionWithSubst(
         self: *Semantizer,
-        node: syn.SyntaxRef,
+        node: *const syn.STNode,
         s: *Scope,
         subst: *const GenericSubst,
     ) SemErr!sg.Type {
@@ -6182,7 +6157,7 @@ pub const Semantizer = struct {
         };
     }
 
-    fn valueExprUsesParam(node: syn.SyntaxRef, param: []const u8) bool {
+    fn valueExprUsesParam(node: *const syn.STNode, param: []const u8) bool {
         return switch (node.content) {
             .identifier => |name| std.mem.eql(u8, name, param),
             .binary_operation => |bo| valueExprUsesParam(bo.left, param) or valueExprUsesParam(bo.right, param),
@@ -6384,8 +6359,6 @@ pub const Semantizer = struct {
         while (hidden_constraints.items.len < contract_params.items.len) try hidden_constraints.append(null);
 
         const template = gen.GenericTemplate{
-            .syntax_files = self.syntax_files,
-            .syntax_file_id = loc.file,
             .name = f.name.string,
             .location = loc,
             .params = try contract_params.toOwnedSlice(),
@@ -6820,7 +6793,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         name: []const u8,
         self_expr: typ.TypedExpr,
-        index_node: syn.SyntaxRef,
+        index_node: *syn.STNode,
         call_loc: tok.Location,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
@@ -7550,8 +7523,8 @@ pub const Semantizer = struct {
         if (call.input.*.content != .struct_value_literal) return error.SymbolNotFound;
 
         const input_syn = call.input.*.content.struct_value_literal;
-        var value_node: ?syn.SyntaxRef = null;
-        var default_node: ?syn.SyntaxRef = null;
+        var value_node: ?*const syn.STNode = null;
+        var default_node: ?*const syn.STNode = null;
         for (input_syn.fields) |field| {
             if (std.mem.eql(u8, field.name.string, "value")) {
                 value_node = field.value;
@@ -8458,7 +8431,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         expected: sg.Type,
         actual: typ.TypedExpr,
-        expr_node: syn.SyntaxRef,
+        expr_node: *const syn.STNode,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         if (typ.typesCompatible(expected, actual.ty)) return actual;
@@ -8494,7 +8467,7 @@ pub const Semantizer = struct {
         self: *Semantizer,
         expected: *const sg.StructType,
         input_te: typ.TypedExpr,
-        expr_node: syn.SyntaxRef,
+        expr_node: *const syn.STNode,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         if (input_te.ty != .struct_type or input_te.node.content != .struct_value_literal) {
@@ -12182,7 +12155,7 @@ pub const Semantizer = struct {
 
     fn extractNullableIfRefinement(
         self: *Semantizer,
-        condition: syn.SyntaxRef,
+        condition: *const syn.STNode,
         s: *Scope,
     ) SemErr!?NullableIfRefinement {
         if (condition.content != .function_call) return null;
@@ -12540,7 +12513,7 @@ pub const Semantizer = struct {
             .value = next_call,
         } }, loc);
 
-        const while_body_items = try self.allocator.alloc(syn.SyntaxRef, 2);
+        const while_body_items = try self.allocator.alloc(*syn.STNode, 2);
         while_body_items[0] = item_decl;
         while_body_items[1] = f.body;
         const while_body = try self.makeSynNode(.{ .code_block = .{
@@ -12552,7 +12525,7 @@ pub const Semantizer = struct {
         } }, loc);
 
         const item_count: usize = if (iterable_copyable and f.iterable.*.content != .identifier) 3 else 2;
-        const lowered_items = try self.allocator.alloc(syn.SyntaxRef, item_count);
+        const lowered_items = try self.allocator.alloc(*syn.STNode, item_count);
         var idx: usize = 0;
         if (item_count == 3) {
             lowered_items[0] = try self.makeSynNode(.{ .symbol_declaration = .{
@@ -12826,7 +12799,7 @@ pub const Semantizer = struct {
 
     fn handleDefer(
         self: *Semantizer,
-        expr: syn.SyntaxRef,
+        expr: *syn.STNode,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         const start_len = s.nodes.items.len;
@@ -12915,7 +12888,7 @@ pub const Semantizer = struct {
     //──────────────────────────────────────────────────── DEREFERENCE
     fn handleDereference(
         self: *Semantizer,
-        inner: syn.SyntaxRef,
+        inner: *syn.STNode,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         const te = try self.visitNode(inner.*, s);
@@ -13211,7 +13184,7 @@ pub const Semantizer = struct {
         return self.visitNode(svl.fields[0].value.*, s);
     }
 
-    fn extractValueArgumentNode(self: *Semantizer, call: syn.FunctionCall, arg_name: []const u8) SemErr!syn.SyntaxRef {
+    fn extractValueArgumentNode(self: *Semantizer, call: syn.FunctionCall, arg_name: []const u8) SemErr!*const syn.STNode {
         const arg_node = call.input.*;
         if (arg_node.content != .struct_value_literal) {
             try self.diags.add(
@@ -13272,7 +13245,7 @@ pub const Semantizer = struct {
         return .{ .node = cast_node, .ty = target_ty };
     }
 
-    fn resolveTypeExpression(self: *Semantizer, node: syn.SyntaxRef, s: *Scope) SemErr!sg.Type {
+    fn resolveTypeExpression(self: *Semantizer, node: *const syn.STNode, s: *Scope) SemErr!sg.Type {
         return switch (node.content) {
             .identifier => |name| blk: {
                 const ty_ast = syn.Type{ .type_name = syn.Name{ .string = name, .location = node.location } };
@@ -14046,14 +14019,14 @@ pub const Semantizer = struct {
         if (self.current_top_node) |ptr| {
             self.retry_enqueue_attempts += 1;
             for (self.pending_next.items) |pending| {
-                if (pending.file_id == ptr.file_id and pending.node == ptr.node) return;
+                if (pending == ptr) return;
             }
             try self.pending_next.append(ptr);
             self.retry_enqueue_unique += 1;
-            switch (self.nodeTag(ptr)) {
-                .function_declaration, .function_declaration_once, .test_declaration => self.retry_function_nodes += 1,
-                .type_declaration, .c_enum_declaration, .c_union_declaration => self.retry_type_nodes += 1,
-                .symbol_declaration_constant, .symbol_declaration_variable => self.retry_symbol_nodes += 1,
+            switch (ptr.content) {
+                .function_declaration, .test_declaration => self.retry_function_nodes += 1,
+                .type_declaration => self.retry_type_nodes += 1,
+                .symbol_declaration => self.retry_symbol_nodes += 1,
                 else => self.retry_other_nodes += 1,
             }
         }

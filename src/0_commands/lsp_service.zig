@@ -4,7 +4,7 @@ const sf = @import("../1_base/source_files.zig");
 const source_db = @import("../1_base/source_db.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const token = @import("../2_tokens/token.zig");
-const st = @import("../3_syntax/syntax_tree.zig");
+const st = @import("../3_syntax/syntax_tree_legacy.zig");
 const sg = @import("../4_semantics/semantic_graph.zig");
 const typ = @import("../4_semantics/types.zig");
 const frontend = @import("frontend_pipeline.zig");
@@ -171,12 +171,12 @@ pub const InlayHintsResult = struct {
 };
 
 const SyntaxFunctionDeclRef = struct {
-    node: st.SyntaxRef,
+    node: *const st.STNode,
     decl: st.FunctionDeclaration,
 };
 
 const SyntaxFunctionCallRef = struct {
-    node: st.SyntaxRef,
+    node: *const st.STNode,
     call: st.FunctionCall,
 };
 
@@ -226,7 +226,7 @@ const SemanticFieldAccessRef = struct {
 };
 
 const SyntaxTypeDeclRef = struct {
-    node: st.SyntaxRef,
+    node: *const st.STNode,
     name: st.Name,
 };
 
@@ -250,7 +250,7 @@ const SymbolTarget = union(SymbolTargetTag) {
 const ModuleAnalysis = struct {
     source_db: source_db.SourceDb,
     tokens: []const token.Token,
-    st_nodes: []const st.SyntaxRef,
+    st_nodes: []const *st.STNode,
     sg_nodes: []const *sg.SGNode,
     syntax_functions: []const SyntaxFunctionDeclRef,
     syntax_calls: []const SyntaxFunctionCallRef,
@@ -671,7 +671,7 @@ pub const LanguageService = struct {
 
         try appendLexicalSemanticTokens(&collected, pipeline.source_db, text, toks);
 
-        // Syntax tree overlay
+        // AST overlay
         const DECL: u32 = (1 << MOD_INDEX.declaration);
         const RO: u32 = (1 << MOD_INDEX.readonly);
 
@@ -745,11 +745,11 @@ pub const LanguageService = struct {
             .source_db = pipeline.source_db,
         };
 
-        var stack = std.array_list.Managed(st.SyntaxRef).init(work);
+        var stack = std.array_list.Managed(*const st.STNode).init(work);
         defer stack.deinit();
         for (st_nodes) |n| try stack.append(n);
 
-        while (popOrNull(st.SyntaxRef, &stack)) |n| {
+        while (popOrNull(*const st.STNode, &stack)) |n| {
             switch (n.content) {
                 .function_declaration => |fd| {
                     try em.identAt(fd.name.location, TOKEN_INDEX.function, DECL);
@@ -1379,7 +1379,7 @@ pub const LanguageService = struct {
 };
 
 fn collectSyntaxRefs(
-    st_nodes: []const st.SyntaxRef,
+    st_nodes: []const *st.STNode,
     function_refs: *std.array_list.Managed(SyntaxFunctionDeclRef),
     call_refs: *std.array_list.Managed(SyntaxFunctionCallRef),
     operator_refs: *std.array_list.Managed(SyntaxOperatorRef),
@@ -1387,11 +1387,11 @@ fn collectSyntaxRefs(
     type_refs: *std.array_list.Managed(SyntaxTypeRef),
     binding_decl_refs: *std.array_list.Managed(SyntaxBindingDeclRef),
 ) !void {
-    var stack = std.array_list.Managed(st.SyntaxRef).init(function_refs.allocator);
+    var stack = std.array_list.Managed(*const st.STNode).init(function_refs.allocator);
     defer stack.deinit();
     for (st_nodes) |node| try stack.append(node);
 
-    while (popOrNull(st.SyntaxRef, &stack)) |node| {
+    while (popOrNull(*const st.STNode, &stack)) |node| {
         switch (node.content) {
             .function_declaration => |decl| {
                 try function_refs.append(.{ .node = node, .decl = decl });
@@ -1528,7 +1528,7 @@ fn collectSyntaxRefs(
 fn collectTypeRefsFromStructTypeLiteral(
     stl: st.StructTypeLiteral,
     type_refs: *std.array_list.Managed(SyntaxTypeRef),
-    stack: *std.array_list.Managed(st.SyntaxRef),
+    stack: *std.array_list.Managed(*const st.STNode),
 ) !void {
     for (stl.fields) |field| {
         if (field.type) |ty| try collectTypeRefsFromType(ty, type_refs);
@@ -3821,4 +3821,3 @@ test "prepare rename returns binding range and placeholder" {
     try std.testing.expectEqual(@as(u32, 1), prep.?.range.start.line);
     try std.testing.expectEqual(@as(u32, 4), prep.?.range.start.character);
 }
-
