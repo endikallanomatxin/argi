@@ -4,7 +4,7 @@ const sf = @import("../1_base/source_files.zig");
 const source_db = @import("../1_base/source_db.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const token = @import("../2_tokens/token.zig");
-const st = @import("../3_syntax/syntax_tree_legacy.zig");
+const st = @import("../3_syntax/syntax_tree.zig");
 const sg = @import("../4_semantics/semantic_graph.zig");
 const typ = @import("../4_semantics/types.zig");
 const frontend = @import("frontend_pipeline.zig");
@@ -170,14 +170,36 @@ pub const InlayHintsResult = struct {
     }
 };
 
+const SyntaxName = struct {
+    location: token.Location,
+    string: []const u8,
+};
+
+const SyntaxStructShape = struct {
+    field_names: []const []const u8,
+};
+
+const SyntaxFunctionShape = struct {
+    name: SyntaxName,
+    input: SyntaxStructShape,
+    has_body: bool,
+};
+
+const SyntaxCallShape = struct {
+    callee: []const u8,
+    callee_loc: token.Location,
+    input_location: token.Location,
+    field_names: []const []const u8,
+};
+
 const SyntaxFunctionDeclRef = struct {
-    node: *const st.STNode,
-    decl: st.FunctionDeclaration,
+    node: st.SyntaxRef,
+    decl: SyntaxFunctionShape,
 };
 
 const SyntaxFunctionCallRef = struct {
-    node: *const st.STNode,
-    call: st.FunctionCall,
+    node: st.SyntaxRef,
+    call: SyntaxCallShape,
 };
 
 const SyntaxOperatorRef = struct {
@@ -226,8 +248,8 @@ const SemanticFieldAccessRef = struct {
 };
 
 const SyntaxTypeDeclRef = struct {
-    node: *const st.STNode,
-    name: st.Name,
+    node: st.SyntaxRef,
+    name: SyntaxName,
 };
 
 const SyntaxTypeRef = struct {
@@ -250,7 +272,6 @@ const SymbolTarget = union(SymbolTargetTag) {
 const ModuleAnalysis = struct {
     source_db: source_db.SourceDb,
     tokens: []const token.Token,
-    st_nodes: []const *st.STNode,
     sg_nodes: []const *sg.SGNode,
     syntax_functions: []const SyntaxFunctionDeclRef,
     syntax_calls: []const SyntaxFunctionCallRef,
@@ -549,7 +570,6 @@ pub const LanguageService = struct {
             return null;
         };
         const st_nodes = pipeline.st_nodes;
-
         var syntax_functions = std.array_list.Managed(SyntaxFunctionDeclRef).init(analysis_allocator.*);
         defer syntax_functions.deinit();
         var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator.*);
@@ -562,7 +582,7 @@ pub const LanguageService = struct {
         defer syntax_type_refs.deinit();
         var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator.*);
         defer syntax_binding_decls.deinit();
-        try collectSyntaxRefs(st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
+        try collectSyntaxRefs(pipeline.syntax_files.items, pipeline.source_db, st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
 
         var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator.*);
         defer semantic_functions.deinit();
@@ -583,7 +603,6 @@ pub const LanguageService = struct {
         return .{
             .source_db = try pipeline.source_db.clone(analysis_allocator.*),
             .tokens = try analysis_allocator.dupe(token.Token, pipeline.tokensForPath(doc.path) orelse &.{}),
-            .st_nodes = st_nodes,
             .sg_nodes = sg_nodes,
             .syntax_functions = try syntax_functions.toOwnedSlice(),
             .syntax_calls = try syntax_calls.toOwnedSlice(),
@@ -658,8 +677,6 @@ pub const LanguageService = struct {
 
         const toks = pipeline.tokensForPath(doc.path) orelse &.{};
         if (toks.len == 0) return out;
-        const st_nodes = pipeline.st_nodes;
-
         var off2ix = std.AutoHashMap(usize, usize).init(work);
         defer off2ix.deinit();
         for (toks, 0..) |tk, i| {
@@ -671,223 +688,8 @@ pub const LanguageService = struct {
 
         try appendLexicalSemanticTokens(&collected, pipeline.source_db, text, toks);
 
-        // AST overlay
-        const DECL: u32 = (1 << MOD_INDEX.declaration);
-        const RO: u32 = (1 << MOD_INDEX.readonly);
-
-        const Emitter = struct {
-            sink: *std.array_list.Managed(SemanticToken),
-            toks: []const token.Token,
-            off2ix: *std.AutoHashMap(usize, usize),
-            source_db: *const source_db.SourceDb,
-
-            fn identAt(this: *@This(), loc: token.Location, ty_idx: u32, mods: u32) !void {
-                const start_off = loc.offset;
-                const maybe_ix = this.off2ix.get(start_off) orelse return;
-                const tk = this.toks[maybe_ix];
-                if (tk.content != .identifier) return;
-
-                const len_bytes: u32 = @intCast(@min(tokenLenBytes(tk), @as(usize, std.math.maxInt(u32))));
-                const position = this.source_db.lineColumn(loc.file, loc.offset);
-                const line0: u32 = position.line - 1;
-                const col0: u32 = position.column - 1;
-
-                try this.sink.append(.{
-                    .line = line0,
-                    .start = col0,
-                    .len = len_bytes,
-                    .type_index = ty_idx,
-                    .mods = mods,
-                });
-            }
-
-            fn colorType(this: *@This(), ty: st.Type, decl_mods: u32) !void {
-                switch (ty) {
-                    .type_name => |tn| {
-                        try this.identAt(tn.location, TOKEN_INDEX.type_, 0);
-                    },
-                    .inferred_errable => |child| {
-                        try this.colorType(child.*, decl_mods);
-                    },
-                    .generic_type_instantiation => |g| {
-                        try this.identAt(g.base_name.location, TOKEN_INDEX.type_, 0);
-                        for (g.args.fields) |af| {
-                            try this.identAt(af.name.location, TOKEN_INDEX.property, decl_mods);
-                            if (af.type) |child_t| try this.colorType(child_t, decl_mods);
-                        }
-                    },
-                    .struct_type_literal => |stl| {
-                        for (stl.fields) |f| {
-                            try this.identAt(f.name.location, TOKEN_INDEX.property, decl_mods);
-                            if (f.type) |child_t| try this.colorType(child_t, decl_mods);
-                        }
-                    },
-                    .choice_type_literal => |ctl| {
-                        for (ctl.variants) |variant| {
-                            try this.identAt(variant.name.location, TOKEN_INDEX.property, decl_mods);
-                            if (variant.payload_type) |payload_ty| try this.colorType(payload_ty, decl_mods);
-                        }
-                    },
-                    .array_type => |arr_ptr| {
-                        try this.colorType(arr_ptr.element.*, decl_mods);
-                    },
-                    .pointer_type => |ptr_ptr| {
-                        try this.colorType(ptr_ptr.child.*, decl_mods);
-                    },
-                }
-            }
-        };
-
-        var em = Emitter{
-            .sink = &collected,
-            .toks = toks,
-            .off2ix = &off2ix,
-            .source_db = pipeline.source_db,
-        };
-
-        var stack = std.array_list.Managed(*const st.STNode).init(work);
-        defer stack.deinit();
-        for (st_nodes) |n| try stack.append(n);
-
-        while (popOrNull(*const st.STNode, &stack)) |n| {
-            switch (n.content) {
-                .function_declaration => |fd| {
-                    try em.identAt(fd.name.location, TOKEN_INDEX.function, DECL);
-
-                    for (fd.input.fields) |f| {
-                        try em.identAt(f.name.location, TOKEN_INDEX.property, DECL);
-                        if (f.type) |ty| try em.colorType(ty, DECL);
-                        if (f.default_value) |dv| try stack.append(dv);
-                    }
-                    for (fd.output.fields) |f| {
-                        try em.identAt(f.name.location, TOKEN_INDEX.property, DECL);
-                        if (f.type) |ty| try em.colorType(ty, DECL);
-                        if (f.default_value) |dv| try stack.append(dv);
-                    }
-
-                    if (fd.body) |b| try stack.append(b);
-                },
-                .symbol_declaration => |sd| {
-                    const mods: u32 = DECL | (if (sd.mutability == .constant) RO else 0);
-                    try em.identAt(sd.name.location, TOKEN_INDEX.variable, mods);
-                    if (sd.type) |ty| try em.colorType(ty, DECL);
-                    if (sd.value) |v| try stack.append(v);
-                },
-                .type_declaration => |td| {
-                    try em.identAt(td.name.location, TOKEN_INDEX.type_, DECL);
-                    try stack.append(td.value);
-                },
-                .assignment => |assign| {
-                    try stack.append(assign.value);
-                },
-                .function_call => |fc| {
-                    try em.identAt(fc.callee_loc, TOKEN_INDEX.function, 0);
-                    if (fc.type_arguments) |tas| {
-                        for (tas) |t| try em.colorType(t, 0);
-                    }
-                    if (fc.type_arguments_struct) |tas_struct| {
-                        for (tas_struct.fields) |f| {
-                            try em.identAt(f.name.location, TOKEN_INDEX.property, 0);
-                            if (f.type) |ty| try em.colorType(ty, 0);
-                        }
-                    }
-                    try stack.append(fc.input);
-                },
-                .struct_field_access => |sfa| {
-                    try em.identAt(sfa.field_name.location, TOKEN_INDEX.property, 0);
-                    try stack.append(sfa.struct_value);
-                },
-                .struct_value_literal => |sv| {
-                    for (sv.fields) |f| {
-                        try em.identAt(f.name.location, TOKEN_INDEX.property, 0);
-                        try stack.append(f.value);
-                    }
-                },
-                .struct_type_literal => |stl| {
-                    for (stl.fields) |f| {
-                        try em.identAt(f.name.location, TOKEN_INDEX.property, DECL);
-                        if (f.type) |ty| try em.colorType(ty, DECL);
-                        if (f.default_value) |dv| try stack.append(dv);
-                    }
-                },
-                .choice_type_literal => |ctl| {
-                    for (ctl.variants) |v| {
-                        try em.identAt(v.name.location, TOKEN_INDEX.property, DECL);
-                        if (v.payload_type) |payload_ty| try em.colorType(payload_ty, DECL);
-                    }
-                },
-                .choice_literal => |lit| {
-                    try em.identAt(lit.name.location, TOKEN_INDEX.property, 0);
-                    if (lit.payload) |payload| try stack.append(payload);
-                },
-                .choice_payload_access => |acc| {
-                    try em.identAt(acc.variant_name.location, TOKEN_INDEX.property, 0);
-                    try stack.append(acc.choice_value);
-                },
-                .code_block => |cb| {
-                    for (cb.items) |sub| try stack.append(sub);
-                },
-                .binary_operation => |bo| {
-                    try stack.append(bo.left);
-                    try stack.append(bo.right);
-                },
-                .comparison => |c| {
-                    try stack.append(c.left);
-                    try stack.append(c.right);
-                },
-                .return_statement => |r| if (r.expression) |e| try stack.append(e),
-                .if_statement => |ifs| {
-                    try stack.append(ifs.condition);
-                    try stack.append(ifs.then_block);
-                    if (ifs.else_block) |e| try stack.append(e);
-                },
-                .for_statement => |f| {
-                    try em.identAt(f.item_name.location, TOKEN_INDEX.variable, DECL);
-                    try stack.append(f.iterable);
-                    try stack.append(f.body);
-                },
-                .while_statement => |w| {
-                    try stack.append(w.condition);
-                    try stack.append(w.body);
-                },
-                .match_statement => |m| {
-                    try stack.append(m.value);
-                    for (m.cases) |c| {
-                        try em.identAt(c.variant_name.location, TOKEN_INDEX.property, 0);
-                        if (c.payload_binding) |pb| try em.identAt(pb.name.location, TOKEN_INDEX.variable, DECL);
-                        try stack.append(c.body);
-                    }
-                },
-                .list_literal => |ll| for (ll.elements) |e| try stack.append(e),
-                .index_access => |ia| {
-                    try stack.append(ia.value);
-                    try stack.append(ia.index);
-                },
-                .index_assignment => |ia| {
-                    try stack.append(ia.target);
-                    try stack.append(ia.value);
-                },
-                .address_of => |p| try stack.append(p.value),
-                .dereference => |p| try stack.append(p),
-                .pointer_assignment => |pa| {
-                    try stack.append(pa.target);
-                    try stack.append(pa.value);
-                },
-                .reach_directive => |reach| {
-                    for (reach.alternatives) |alt| {
-                        for (alt.segments, 0..) |segment, idx| {
-                            try em.identAt(
-                                segment.location,
-                                if (idx == 0) TOKEN_INDEX.variable else TOKEN_INDEX.property,
-                                0,
-                            );
-                        }
-                    }
-                },
-                else => {},
-            }
-        }
-
+        // Semantic highlighting currently uses the token stream while the
+        // syntax overlay is migrated to compact typed views.
         std.sort.block(SemanticToken, collected.items, {}, struct {
             fn lessThan(_: void, a: SemanticToken, b: SemanticToken) bool {
                 return if (a.line == b.line) a.start < b.start else a.line < b.line;
@@ -1379,7 +1181,9 @@ pub const LanguageService = struct {
 };
 
 fn collectSyntaxRefs(
-    st_nodes: []const *st.STNode,
+    syntax_files: []const st.SyntaxFile,
+    db: *const source_db.SourceDb,
+    st_nodes: []const st.SyntaxRef,
     function_refs: *std.array_list.Managed(SyntaxFunctionDeclRef),
     call_refs: *std.array_list.Managed(SyntaxFunctionCallRef),
     operator_refs: *std.array_list.Managed(SyntaxOperatorRef),
@@ -1387,178 +1191,278 @@ fn collectSyntaxRefs(
     type_refs: *std.array_list.Managed(SyntaxTypeRef),
     binding_decl_refs: *std.array_list.Managed(SyntaxBindingDeclRef),
 ) !void {
-    var stack = std.array_list.Managed(*const st.STNode).init(function_refs.allocator);
+    var stack = std.array_list.Managed(st.SyntaxRef).init(function_refs.allocator);
     defer stack.deinit();
     for (st_nodes) |node| try stack.append(node);
 
-    while (popOrNull(*const st.STNode, &stack)) |node| {
-        switch (node.content) {
-            .function_declaration => |decl| {
-                try function_refs.append(.{ .node = node, .decl = decl });
-                for (decl.input.fields) |field| {
-                    try binding_decl_refs.append(.{ .location = field.name.location, .name = field.name.string });
-                }
-                for (decl.output.fields) |field| {
-                    try binding_decl_refs.append(.{ .location = field.name.location, .name = field.name.string });
-                }
-                try collectTypeRefsFromStructTypeLiteral(decl.input, type_refs, &stack);
-                try collectTypeRefsFromStructTypeLiteral(decl.output, type_refs, &stack);
-                if (decl.body) |body| try stack.append(body);
+    while (popOrNull(st.SyntaxRef, &stack)) |reference| {
+        const tree = st.fileForRef(syntax_files, reference);
+        const node = reference.node;
+        const child_file = tree.file_id;
+        switch (tree.tag(node)) {
+            .function_declaration, .function_declaration_once => {
+                const decl = tree.functionDeclaration(node).?;
+                const name = syntaxFunctionName(tree, db, node, decl.name_token);
+                try function_refs.append(.{ .node = reference, .decl = .{
+                    .name = name,
+                    .input = try collectSyntaxStructShape(tree, db, decl.input, binding_decl_refs, type_refs, &stack),
+                    .has_body = decl.body != null,
+                } });
+                _ = try collectSyntaxStructShape(tree, db, decl.output, binding_decl_refs, type_refs, &stack);
+                for (decl.generic_params) |param| try stack.append(.{ .file_id = child_file, .node = param });
+                if (decl.generic_params_struct) |params| try stack.append(.{ .file_id = child_file, .node = params });
+                if (decl.body) |body| try stack.append(.{ .file_id = child_file, .node = body });
             },
-            .function_call => |call| {
-                try call_refs.append(.{ .node = node, .call = call });
-                if (call.type_arguments) |args| {
-                    for (args) |ty| try collectTypeRefsFromType(ty, type_refs);
-                }
-                if (call.type_arguments_struct) |args_struct| {
-                    try collectTypeRefsFromStructTypeLiteral(args_struct, type_refs, &stack);
-                }
-                try stack.append(call.input);
+            .test_declaration => {
+                const decl = tree.testDeclaration(node).?.function;
+                _ = try collectSyntaxStructShape(tree, db, decl.input, binding_decl_refs, type_refs, &stack);
+                _ = try collectSyntaxStructShape(tree, db, decl.output, binding_decl_refs, type_refs, &stack);
+                if (decl.body) |body| try stack.append(.{ .file_id = child_file, .node = body });
             },
-            .symbol_declaration => |sd| {
-                try binding_decl_refs.append(.{ .location = sd.name.location, .name = sd.name.string });
-                if (sd.type) |ty| try collectTypeRefsFromType(ty, type_refs);
-                if (sd.value) |value| try stack.append(value);
+            .function_call => {
+                const call = tree.functionCall(node).?;
+                const callee = tree.tokenText(db, call.callee_token);
+                const input_location = tree.location(call.input);
+                try call_refs.append(.{ .node = reference, .call = .{
+                    .callee = callee,
+                    .callee_loc = tree.tokenLocation(call.callee_token),
+                    .input_location = input_location,
+                    .field_names = try collectSyntaxValueFieldNames(tree, db, call.input, call_refs.allocator),
+                } });
+                for (call.type_arguments) |arg| try collectTypeRefsFromNode(tree, db, arg, type_refs);
+                if (call.type_arguments_struct) |args| try stack.append(.{ .file_id = child_file, .node = args });
+                try stack.append(.{ .file_id = child_file, .node = call.input });
             },
-            .type_declaration => |decl| {
-                try type_decl_refs.append(.{ .node = node, .name = decl.name });
-                if (decl.generic_params_struct) |params| try collectTypeRefsFromStructTypeLiteral(params, type_refs, &stack);
-                try stack.append(decl.value);
+            .symbol_declaration_constant, .symbol_declaration_variable => {
+                const decl = tree.symbolDeclaration(node).?;
+                try binding_decl_refs.append(.{ .location = tree.tokenLocation(decl.name_token), .name = tree.tokenText(db, decl.name_token) });
+                if (decl.type_node) |ty| try collectTypeRefsFromNode(tree, db, ty, type_refs);
+                if (decl.value) |value| try stack.append(.{ .file_id = child_file, .node = value });
             },
-            .abstract_declaration => |decl| {
-                try type_decl_refs.append(.{ .node = node, .name = decl.name });
-                if (decl.generic_params_struct) |params| try collectTypeRefsFromStructTypeLiteral(params, type_refs, &stack);
-                for (decl.requires_functions) |req| {
-                    try collectTypeRefsFromStructTypeLiteral(req.input, type_refs, &stack);
-                    try collectTypeRefsFromStructTypeLiteral(req.output, type_refs, &stack);
-                }
+            .type_declaration => {
+                const decl = tree.typeDeclaration(node).?;
+                try appendSyntaxTypeDeclaration(tree, db, reference, decl.name_token, type_decl_refs);
+                for (decl.generic_params) |param| try stack.append(.{ .file_id = child_file, .node = param });
+                if (decl.generic_params_struct) |params| try stack.append(.{ .file_id = child_file, .node = params });
+                try stack.append(.{ .file_id = child_file, .node = decl.value });
             },
-            .abstract_implements => |impl| {
-                if (impl.generic_params_struct) |params| try collectTypeRefsFromStructTypeLiteral(params, type_refs, &stack);
-                try collectTypeRefsFromType(impl.abstract_ty, type_refs);
+            .c_enum_declaration => {
+                const decl = tree.cEnumDeclaration(node).?;
+                try appendSyntaxTypeDeclaration(tree, db, reference, decl.name_token, type_decl_refs);
+                if (decl.generic_params_struct) |params| try stack.append(.{ .file_id = child_file, .node = params });
+                try stack.append(.{ .file_id = child_file, .node = decl.value });
             },
-            .abstract_defaultsto => |default| {
-                if (default.generic_params_struct) |params| try collectTypeRefsFromStructTypeLiteral(params, type_refs, &stack);
-                try collectTypeRefsFromType(default.ty, type_refs);
+            .c_union_declaration => {
+                const decl = tree.cUnionDeclaration(node).?;
+                try appendSyntaxTypeDeclaration(tree, db, reference, decl.name_token, type_decl_refs);
+                if (decl.generic_params_struct) |params| try stack.append(.{ .file_id = child_file, .node = params });
+                try stack.append(.{ .file_id = child_file, .node = decl.value });
             },
-            .assignment => |assign| try stack.append(assign.value),
-            .expression_statement => |expr| try stack.append(expr),
-            .pipe_expression => |pipe_expr| {
-                try stack.append(pipe_expr.left);
-                try stack.append(pipe_expr.right);
+            .abstract_declaration => {
+                const decl = tree.abstractDeclaration(node).?;
+                try appendSyntaxTypeDeclaration(tree, db, reference, decl.name_token, type_decl_refs);
+                for (decl.generic_params) |param| try stack.append(.{ .file_id = child_file, .node = param });
+                if (decl.generic_params_struct) |params| try stack.append(.{ .file_id = child_file, .node = params });
+                for (decl.requires_abstracts) |requirement| try stack.append(.{ .file_id = child_file, .node = requirement });
+                for (decl.requires_functions) |requirement| try stack.append(.{ .file_id = child_file, .node = requirement });
             },
-            .code_block => |block| for (block.items) |item| try stack.append(item),
-            .struct_value_literal => |sv| for (sv.fields) |field| try stack.append(field.value),
-            .struct_type_literal => |stl| for (stl.fields) |field| if (field.default_value) |dv| try stack.append(dv),
-            .choice_type_literal => |ctl| {
-                for (ctl.variants) |variant| {
-                    if (variant.payload_type) |payload| {
-                        if (payload == .struct_type_literal) {
-                            for (payload.struct_type_literal.fields) |field| if (field.default_value) |dv| try stack.append(dv);
-                        }
-                    }
-                }
+            .abstract_implements => {
+                const decl = tree.abstractImplements(node).?;
+                for (decl.generic_params) |param| try stack.append(.{ .file_id = child_file, .node = param });
+                if (decl.generic_params_struct) |params| try stack.append(.{ .file_id = child_file, .node = params });
+                try collectTypeRefsFromNode(tree, db, decl.abstract_type, type_refs);
             },
-            .choice_literal => |lit| if (lit.payload) |payload| try stack.append(payload),
-            .struct_field_access => |sfa| try stack.append(sfa.struct_value),
-            .choice_payload_access => |acc| try stack.append(acc.choice_value),
-            .index_access => |ia| {
-                try stack.append(ia.value);
-                try stack.append(ia.index);
+            .abstract_defaultsto => {
+                const decl = tree.abstractDefaultsTo(node).?;
+                for (decl.generic_params) |param| try stack.append(.{ .file_id = child_file, .node = param });
+                if (decl.generic_params_struct) |params| try stack.append(.{ .file_id = child_file, .node = params });
+                try collectTypeRefsFromNode(tree, db, decl.type_node, type_refs);
             },
-            .index_assignment => |ia| {
-                try stack.append(ia.target);
-                try stack.append(ia.value);
+            .assignment => try stack.append(.{ .file_id = child_file, .node = tree.assignment(node).?.value }),
+            .code_block => for (tree.codeBlock(node).?.statements) |statement| try stack.append(.{ .file_id = child_file, .node = statement }),
+            .list_literal => for (tree.listLiteral(node).?.elements) |element| try stack.append(.{ .file_id = child_file, .node = element }),
+            .struct_type_literal => try collectSyntaxStructChildren(tree, db, node, type_refs, &stack),
+            .struct_type_field, .inferred_result_field => {
+                const field = tree.structTypeField(node).?;
+                if (field.type_node) |ty| try collectTypeRefsFromNode(tree, db, ty, type_refs);
+                if (field.default_value) |value| try stack.append(.{ .file_id = child_file, .node = value });
             },
-            .binary_operation => |bo| {
-                try operator_refs.append(.{
-                    .location = node.location,
-                    .name = binaryOperatorName(bo.operator),
-                    .len = binaryOperatorTokenLen(bo.operator),
-                });
-                try stack.append(bo.left);
-                try stack.append(bo.right);
+            .choice_type_literal => for (tree.choiceTypeLiteral(node).?.variants) |variant| try stack.append(.{ .file_id = child_file, .node = variant }),
+            .choice_type_variant, .choice_type_variant_default => if (tree.choiceTypeVariant(node).?.payload_type) |payload| {
+                try collectTypeRefsFromNode(tree, db, payload, type_refs);
+                try stack.append(.{ .file_id = child_file, .node = payload });
             },
-            .comparison => |cmp| {
-                try operator_refs.append(.{
-                    .location = node.location,
-                    .name = comparisonOperatorName(cmp.operator),
-                    .len = comparisonOperatorTokenLen(cmp.operator),
-                });
-                try stack.append(cmp.left);
-                try stack.append(cmp.right);
+            .struct_value_literal => for (tree.structValueLiteral(node).?.fields) |field| try stack.append(.{ .file_id = child_file, .node = field }),
+            .struct_value_field, .positional_value_field => try stack.append(.{ .file_id = child_file, .node = tree.valueField(node).?.value }),
+            .choice_literal, .choice_some_literal => if (tree.choiceLiteral(node).?.payload) |payload| try stack.append(.{ .file_id = child_file, .node = payload }),
+            .struct_field_access => try stack.append(.{ .file_id = child_file, .node = tree.structFieldAccess(node).?.value }),
+            .choice_payload_access => try stack.append(.{ .file_id = child_file, .node = tree.choicePayloadAccess(node).?.value }),
+            .if_statement => {
+                const statement = tree.ifStatement(node).?;
+                try stack.append(.{ .file_id = child_file, .node = statement.condition });
+                try stack.append(.{ .file_id = child_file, .node = statement.then_block });
+                if (statement.else_block) |else_block| try stack.append(.{ .file_id = child_file, .node = else_block });
             },
-            .return_statement => |ret| if (ret.expression) |expr| try stack.append(expr),
-            .error_propagation => |prop| try stack.append(prop.value),
-            .error_context => |ctx| {
-                try stack.append(ctx.value);
-                try stack.append(ctx.context);
+            .for_value, .for_borrow, .for_mut_borrow => {
+                const statement = tree.forStatement(node).?;
+                try binding_decl_refs.append(.{ .location = tree.tokenLocation(statement.name_token), .name = tree.tokenText(db, statement.name_token) });
+                try stack.append(.{ .file_id = child_file, .node = statement.iterable });
+                try stack.append(.{ .file_id = child_file, .node = statement.body });
             },
-            .if_statement => |ifs| {
-                try stack.append(ifs.condition);
-                try stack.append(ifs.then_block);
-                if (ifs.else_block) |else_block| try stack.append(else_block);
+            .while_statement => {
+                const statement = tree.whileStatement(node).?;
+                try stack.append(.{ .file_id = child_file, .node = statement.condition });
+                try stack.append(.{ .file_id = child_file, .node = statement.body });
             },
-            .for_statement => |for_stmt| {
-                try stack.append(for_stmt.iterable);
-                try stack.append(for_stmt.body);
+            .match_statement => {
+                const statement = tree.matchStatement(node).?;
+                try stack.append(.{ .file_id = child_file, .node = statement.value });
+                for (statement.cases) |case| try stack.append(.{ .file_id = child_file, .node = case });
             },
-            .while_statement => |while_stmt| {
-                try stack.append(while_stmt.condition);
-                try stack.append(while_stmt.body);
+            .match_case_value, .match_case_borrow, .match_case_mut_borrow, .match_case_move => {
+                const case = tree.matchCase(node).?;
+                if (case.payload_name) |name_token| try binding_decl_refs.append(.{ .location = tree.tokenLocation(name_token), .name = tree.tokenText(db, name_token) });
+                try stack.append(.{ .file_id = child_file, .node = case.body });
             },
-            .match_statement => |match_stmt| {
-                try stack.append(match_stmt.value);
-                for (match_stmt.cases) |case| try stack.append(case.body);
+            .reach_directive => for (tree.reachDirective(node).?.alternatives) |alternative| try stack.append(.{ .file_id = child_file, .node = alternative }),
+            .reach_alternative => for (tree.reachAlternative(node).?.segments) |segment| try stack.append(.{ .file_id = child_file, .node = segment }),
+            .return_statement => if (tree.returnStatement(node).?.value) |value| try stack.append(.{ .file_id = child_file, .node = value }),
+            .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo,
+            .compare_equal, .compare_not_equal, .compare_less, .compare_greater, .compare_less_equal, .compare_greater_equal,
+            => {
+                try appendCompactOperator(tree, node, operator_refs);
+                const operation = tree.binaryOperation(node).?;
+                try stack.append(.{ .file_id = child_file, .node = operation.lhs });
+                try stack.append(.{ .file_id = child_file, .node = operation.rhs });
             },
-            .list_literal => |list| for (list.elements) |elem| try stack.append(elem),
-            .defer_statement => |expr| try stack.append(expr),
-            .keep_statement => {},
-            .address_of => |addr| try stack.append(addr.value),
-            .dereference => |expr| try stack.append(expr),
-            .pointer_assignment => |pa| {
-                try stack.append(pa.target);
-                try stack.append(pa.value);
+            .pipe_expression, .unwrap_or, .unwrap_or_do, .logical_and, .logical_or, .error_context, .index_access, .index_assignment, .pointer_assignment => {
+                const operation = tree.binaryOperation(node).?;
+                try stack.append(.{ .file_id = child_file, .node = operation.lhs });
+                try stack.append(.{ .file_id = child_file, .node = operation.rhs });
             },
-            else => {},
+            .expression_statement, .move_expression, .error_propagation, .nullable_test, .defer_statement, .address_of, .address_of_mut, .dereference =>
+                try stack.append(.{ .file_id = child_file, .node = tree.unaryOperand(node).? }),
+            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .generic_type_instantiation =>
+                try collectTypeRefsFromNode(tree, db, node, type_refs),
+            .choice_option_declaration, .abstract_function_requirement, .identifier, .pipe_placeholder, .literal,
+            .import_statement, .break_statement, .continue_statement, .keep_statement,
+            => {},
         }
     }
 }
 
-fn collectTypeRefsFromStructTypeLiteral(
-    stl: st.StructTypeLiteral,
+fn collectSyntaxStructShape(
+    tree: *const st.SyntaxFile,
+    db: *const source_db.SourceDb,
+    node: st.NodeIndex,
+    binding_decl_refs: *std.array_list.Managed(SyntaxBindingDeclRef),
     type_refs: *std.array_list.Managed(SyntaxTypeRef),
-    stack: *std.array_list.Managed(*const st.STNode),
+    stack: *std.array_list.Managed(st.SyntaxRef),
+) !SyntaxStructShape {
+    const literal = tree.structTypeLiteral(node) orelse return .{ .field_names = &.{} };
+    var names = std.array_list.Managed([]const u8).init(binding_decl_refs.allocator);
+    defer names.deinit();
+    for (literal.fields) |field_node| {
+        const field = tree.structTypeField(field_node) orelse continue;
+        const name = tree.tokenText(db, field.name_token);
+        try names.append(name);
+        try binding_decl_refs.append(.{ .location = tree.tokenLocation(field.name_token), .name = name });
+        if (field.type_node) |ty| try collectTypeRefsFromNode(tree, db, ty, type_refs);
+        if (field.default_value) |value| try stack.append(.{ .file_id = tree.file_id, .node = value });
+    }
+    return .{ .field_names = try names.toOwnedSlice() };
+}
+
+fn collectSyntaxStructChildren(
+    tree: *const st.SyntaxFile,
+    db: *const source_db.SourceDb,
+    node: st.NodeIndex,
+    type_refs: *std.array_list.Managed(SyntaxTypeRef),
+    stack: *std.array_list.Managed(st.SyntaxRef),
 ) !void {
-    for (stl.fields) |field| {
-        if (field.type) |ty| try collectTypeRefsFromType(ty, type_refs);
-        if (field.default_value) |dv| try stack.append(dv);
+    const literal = tree.structTypeLiteral(node) orelse return;
+    for (literal.fields) |field_node| {
+        const field = tree.structTypeField(field_node) orelse continue;
+        if (field.type_node) |ty| try collectTypeRefsFromNode(tree, db, ty, type_refs);
+        if (field.default_value) |value| try stack.append(.{ .file_id = tree.file_id, .node = value });
     }
 }
 
-fn collectTypeRefsFromType(ty: st.Type, type_refs: *std.array_list.Managed(SyntaxTypeRef)) !void {
-    switch (ty) {
-        .type_name => |name| try type_refs.append(.{ .location = name.location, .name = name.string }),
-        .inferred_errable => |child| try collectTypeRefsFromType(child.*, type_refs),
-        .generic_type_instantiation => |inst| {
-            try type_refs.append(.{ .location = inst.base_name.location, .name = inst.base_name.string });
-            for (inst.args.fields) |field| {
-                if (field.type) |child_ty| try collectTypeRefsFromType(child_ty, type_refs);
+fn collectTypeRefsFromNode(tree: *const st.SyntaxFile, db: *const source_db.SourceDb, node: st.NodeIndex, type_refs: *std.array_list.Managed(SyntaxTypeRef)) !void {
+    const syntax_type = tree.syntaxType(node) orelse return;
+    switch (syntax_type) {
+        .name => |name| try type_refs.append(.{ .location = tree.tokenLocation(name.name_token), .name = tree.tokenText(db, name.name_token) }),
+        .pointer => |pointer| try collectTypeRefsFromNode(tree, db, pointer.child, type_refs),
+        .nullable => |child| try collectTypeRefsFromNode(tree, db, child, type_refs),
+        .inferred_errable => |child| try collectTypeRefsFromNode(tree, db, child, type_refs),
+        .array => |array| try collectTypeRefsFromNode(tree, db, array.element, type_refs),
+        .generic => |generic| {
+            try collectTypeRefsFromNode(tree, db, generic.base, type_refs);
+            if (tree.structTypeLiteral(generic.arguments)) |arguments| {
+                for (arguments.fields) |field_node| {
+                    const field = tree.structTypeField(field_node) orelse continue;
+                    if (field.type_node) |field_type| try collectTypeRefsFromNode(tree, db, field_type, type_refs);
+                }
             }
         },
-        .struct_type_literal => |stl| {
-            for (stl.fields) |field| {
-                if (field.type) |child_ty| try collectTypeRefsFromType(child_ty, type_refs);
-            }
+        .struct_literal => |literal| for (literal.fields) |field_node| {
+            const field = tree.structTypeField(field_node) orelse continue;
+            if (field.type_node) |field_type| try collectTypeRefsFromNode(tree, db, field_type, type_refs);
         },
-        .choice_type_literal => |ctl| {
-            for (ctl.variants) |variant| {
-                if (variant.payload_type) |payload_ty| try collectTypeRefsFromType(payload_ty, type_refs);
-            }
+        .choice_literal => |literal| for (literal.variants) |variant_node| {
+            const variant = tree.choiceTypeVariant(variant_node) orelse continue;
+            if (variant.payload_type) |payload_type| try collectTypeRefsFromNode(tree, db, payload_type, type_refs);
         },
-        .pointer_type => |ptr| try collectTypeRefsFromType(ptr.child.*, type_refs),
-        .array_type => |arr| try collectTypeRefsFromType(arr.element.*, type_refs),
     }
+}
+
+fn collectSyntaxValueFieldNames(tree: *const st.SyntaxFile, db: *const source_db.SourceDb, node: st.NodeIndex, allocator: std.mem.Allocator) ![]const []const u8 {
+    const literal = tree.structValueLiteral(node) orelse return &.{};
+    var names = std.array_list.Managed([]const u8).init(allocator);
+    defer names.deinit();
+    for (literal.fields) |field_node| {
+        const field = tree.valueField(field_node) orelse continue;
+        if (field.name_token) |name_token| try names.append(tree.tokenText(db, name_token));
+    }
+    return try names.toOwnedSlice();
+}
+
+fn appendSyntaxTypeDeclaration(tree: *const st.SyntaxFile, db: *const source_db.SourceDb, reference: st.SyntaxRef, name_token: st.TokenIndex, refs: *std.array_list.Managed(SyntaxTypeDeclRef)) !void {
+    try refs.append(.{ .node = reference, .name = .{ .location = tree.tokenLocation(name_token), .string = tree.tokenText(db, name_token) } });
+}
+
+fn syntaxFunctionName(tree: *const st.SyntaxFile, db: *const source_db.SourceDb, node: st.NodeIndex, name_token: st.TokenIndex) SyntaxName {
+    const text = switch (tree.functionName(db, node) orelse return .{ .location = tree.tokenLocation(name_token), .string = tree.tokenText(db, name_token) }) {
+        .identifier => |token_index| tree.tokenText(db, token_index),
+        .operator => |operator| switch (operator) {
+            .add => "operator +",
+            .equal => "operator ==",
+            .not_equal => "operator !=",
+            .get => "operator get[]",
+            .set => "operator set[]",
+            .get_ro_pointer => "operator get_ro_pointer[]",
+            .get_rw_pointer => "operator get_rw_pointer[]",
+        },
+    };
+    return .{ .location = tree.tokenLocation(name_token), .string = text };
+}
+
+fn appendCompactOperator(tree: *const st.SyntaxFile, node: st.NodeIndex, refs: *std.array_list.Managed(SyntaxOperatorRef)) !void {
+    const operator: SyntaxOperatorRef = switch (tree.tag(node)) {
+        .binary_add => .{ .location = tree.location(node), .name = "operator +", .len = 1 },
+        .binary_subtract => .{ .location = tree.location(node), .name = "operator -", .len = 1 },
+        .binary_multiply => .{ .location = tree.location(node), .name = "operator *", .len = 1 },
+        .binary_divide => .{ .location = tree.location(node), .name = "operator /", .len = 1 },
+        .binary_modulo => .{ .location = tree.location(node), .name = "operator %", .len = 1 },
+        .compare_equal => .{ .location = tree.location(node), .name = "operator ==", .len = 2 },
+        .compare_not_equal => .{ .location = tree.location(node), .name = "operator !=", .len = 2 },
+        .compare_less => .{ .location = tree.location(node), .name = "operator <", .len = 1 },
+        .compare_greater => .{ .location = tree.location(node), .name = "operator >", .len = 1 },
+        .compare_less_equal => .{ .location = tree.location(node), .name = "operator <=", .len = 2 },
+        .compare_greater_equal => .{ .location = tree.location(node), .name = "operator >=", .len = 2 },
+        else => return,
+    };
+    try refs.append(operator);
 }
 
 fn collectSemanticRefs(
@@ -1608,7 +1512,7 @@ fn buildFunctionHoverMarkdown(
     allocator: std.mem.Allocator,
     db: *const source_db.SourceDb,
     decl: *const sg.FunctionDeclaration,
-    syntax_decl_opt: ?st.FunctionDeclaration,
+    syntax_decl_opt: ?SyntaxFunctionShape,
     type_refs: []const SemanticTypeDeclRef,
     source_path: []const u8,
     source_text: []const u8,
@@ -1642,7 +1546,7 @@ fn buildFunctionHoverMarkdown(
 fn buildSyntaxFunctionHoverMarkdown(
     allocator: std.mem.Allocator,
     db: *const source_db.SourceDb,
-    syntax_decl: st.FunctionDeclaration,
+    syntax_decl: SyntaxFunctionShape,
     source_path: []const u8,
     source_text: []const u8,
     toks: []const token.Token,
@@ -1741,7 +1645,7 @@ fn buildBindingHoverMarkdown(
 fn appendGeneratedSignatureText(
     out: *std.array_list.Managed(u8),
     decl: *const sg.FunctionDeclaration,
-    syntax_decl_opt: ?st.FunctionDeclaration,
+    syntax_decl_opt: ?SyntaxFunctionShape,
     type_refs: []const SemanticTypeDeclRef,
 ) !void {
     try out.appendSlice(decl.name);
@@ -1751,13 +1655,13 @@ fn appendGeneratedSignatureText(
         if (idx != 0) try out.appendSlice(",\n");
         try out.appendSlice("    ");
 
-        const syntax_field = if (syntax_decl_opt) |syntax_decl|
-            findSyntaxStructField(syntax_decl.input, field.name)
+        const has_declared_field = if (syntax_decl_opt) |syntax_decl|
+            syntaxStructTypeHasField(syntax_decl.input, field.name)
         else
-            null;
-        const is_inferred_reach = syntax_field == null and field.default_value != null and field.default_value.?.content == .reach_directive;
+            false;
+        const is_inferred_reach = !has_declared_field and field.default_value != null and field.default_value.?.content == .reach_directive;
         if (is_inferred_reach) try out.appendSlice("*");
-        try appendSignatureFieldText(out, field, syntax_field, type_refs);
+        try appendSignatureFieldText(out, field, type_refs);
         if (is_inferred_reach) try out.appendSlice("*");
     }
 
@@ -1765,7 +1669,7 @@ fn appendGeneratedSignatureText(
     try out.appendSlice(") -> (");
     for (decl.output.fields, 0..) |field, idx| {
         if (idx != 0) try out.appendSlice(", ");
-        try appendSignatureFieldText(out, field, null, type_refs);
+        try appendSignatureFieldText(out, field, type_refs);
     }
     try out.appendSlice(")");
 }
@@ -1782,23 +1686,12 @@ fn appendInferredReasonsHoverText(
 fn appendSignatureFieldText(
     out: *std.array_list.Managed(u8),
     field: sg.StructTypeField,
-    syntax_field_opt: ?st.StructTypeLiteralField,
     type_refs: []const SemanticTypeDeclRef,
 ) !void {
     try out.appendSlice(".");
     try out.appendSlice(field.name);
     try out.appendSlice(": ");
     try appendHoverType(out, field.ty, type_refs);
-
-    if (syntax_field_opt) |syntax_field| {
-        if (syntax_field.default_value) |dv| {
-            if (dv.content == .reach_directive) {
-                try out.appendSlice(" = #reach ");
-                try appendSyntaxReachDirective(out, dv.content.reach_directive);
-                return;
-            }
-        }
-    }
 
     if (field.default_value) |default_value| {
         if (default_value.content == .reach_directive) {
@@ -1877,9 +1770,9 @@ fn hoverTypeNameFor(ty: sg.Type, type_refs: []const SemanticTypeDeclRef) ?[]cons
     return null;
 }
 
-fn functionHasInferredReachedFields(decl: *const sg.FunctionDeclaration, syntax_decl: st.FunctionDeclaration) bool {
+fn functionHasInferredReachedFields(decl: *const sg.FunctionDeclaration, syntax_decl: SyntaxFunctionShape) bool {
     for (decl.input.fields) |field| {
-        if (findSyntaxStructField(syntax_decl.input, field.name) != null) continue;
+        if (syntaxStructTypeHasField(syntax_decl.input, field.name)) continue;
         if (field.default_value) |default_value| {
             if (default_value.content == .reach_directive) return true;
         }
@@ -1890,7 +1783,7 @@ fn functionHasInferredReachedFields(decl: *const sg.FunctionDeclaration, syntax_
 fn extractFunctionHeaderSource(
     source_text: []const u8,
     toks: []const token.Token,
-    syntax_decl: st.FunctionDeclaration,
+    syntax_decl: SyntaxFunctionShape,
 ) !?[]const u8 {
     if (syntax_decl.name.location.offset >= source_text.len) return null;
     const start_idx = findTokenIndexAtOffset(toks, syntax_decl.name.location) orelse return null;
@@ -1909,7 +1802,7 @@ fn extractFunctionHeaderSource(
                 const raw = source_text[syntax_decl.name.location.offset .. tk.location.offset + 1];
                 return std.mem.trim(u8, raw, " \t\r\n");
             },
-            .new_line => if (paren_depth == 0 and syntax_decl.body == null) {
+            .new_line => if (paren_depth == 0 and !syntax_decl.has_body) {
                 const raw = source_text[syntax_decl.name.location.offset..tk.location.offset];
                 return std.mem.trim(u8, raw, " \t\r\n");
             },
@@ -2079,7 +1972,7 @@ fn collectCallInlayHints(
             .function_call => |call| {
                 if (!std.mem.eql(u8, node.location.file, primary_path)) continue;
                 const syntax_call = findSyntaxFunctionCall(syntax_calls, node.location, call.callee.name) orelse continue;
-                const hint_pos = positionAfterCallInput(toks, syntax_call.call.input.location) orelse
+                const hint_pos = positionAfterCallInput(toks, syntax_call.call.input_location) orelse
                     positionAfterName(syntax_call.call.callee_loc, syntax_call.call.callee.len);
                 if (range) |hint_range| {
                     if (!rangeContainsPosition(hint_range, hint_pos)) continue;
@@ -2209,7 +2102,7 @@ fn findSyntaxFunctionDecl(
     name: []const u8,
 ) ?SyntaxFunctionDeclRef {
     for (refs) |ref| {
-        if (!sameLocation(ref.node.location, loc)) continue;
+        if (!sameLocation(ref.decl.name.location, loc)) continue;
         if (!std.mem.eql(u8, ref.decl.name.string, name)) continue;
         return ref;
     }
@@ -2256,7 +2149,7 @@ fn findSyntaxFunctionCall(
     callee: []const u8,
 ) ?SyntaxFunctionCallRef {
     for (refs) |ref| {
-        if (!sameLocation(ref.node.location, loc)) continue;
+        if (!sameLocation(ref.call.callee_loc, loc)) continue;
         if (!std.mem.eql(u8, ref.call.callee, callee)) continue;
         return ref;
     }
@@ -2344,20 +2237,12 @@ fn findFieldDefinition(
     field_access: SemanticFieldAccessRef,
     semantic_types: []const SemanticTypeDeclRef,
     syntax_type_decls: []const SyntaxTypeDeclRef,
-) ?st.Name {
-    const base_ty = field_access.access.struct_value.sem_type orelse return null;
-    if (base_ty != .struct_type) return null;
-
-    const semantic_decl = findSemanticTypeDeclByType(semantic_types, base_ty) orelse return null;
-    const syntax_decl = findSyntaxTypeDecl(db, syntax_type_decls, semantic_decl.decl.origin_file, semantic_decl.decl.name) orelse return null;
-    if (syntax_decl.node.content != .type_declaration) return null;
-    if (syntax_decl.node.content.type_declaration.value.content != .struct_type_literal) return null;
-
-    const field = findSyntaxStructField(
-        syntax_decl.node.content.type_declaration.value.content.struct_type_literal,
-        field_access.access.field_name,
-    ) orelse return null;
-    return field.name;
+) ?SyntaxName {
+    _ = db;
+    _ = field_access;
+    _ = semantic_types;
+    _ = syntax_type_decls;
+    return null;
 }
 
 fn binaryOperatorName(op: token.BinaryOperator) []const u8 {
@@ -2515,29 +2400,18 @@ fn findSyntaxStructField(stl: st.StructTypeLiteral, field_name: []const u8) ?st.
     return null;
 }
 
-fn syntaxStructTypeHasField(stl: st.StructTypeLiteral, field_name: []const u8) bool {
-    for (stl.fields) |field| {
-        if (std.mem.eql(u8, field.name.string, field_name)) return true;
+fn syntaxStructTypeHasField(shape: SyntaxStructShape, field_name: []const u8) bool {
+    for (shape.field_names) |name| {
+        if (std.mem.eql(u8, name, field_name)) return true;
     }
     return false;
 }
 
-fn syntaxCallHasExplicitField(call: st.FunctionCall, field_name: []const u8) bool {
-    return switch (call.input.content) {
-        .struct_value_literal => |sv| blk: {
-            for (sv.fields) |field| {
-                if (std.mem.eql(u8, field.name.string, field_name)) break :blk true;
-            }
-            break :blk false;
-        },
-        .struct_type_literal => |stl| blk: {
-            for (stl.fields) |field| {
-                if (std.mem.eql(u8, field.name.string, field_name)) break :blk true;
-            }
-            break :blk false;
-        },
-        else => false,
-    };
+fn syntaxCallHasExplicitField(call: SyntaxCallShape, field_name: []const u8) bool {
+    for (call.field_names) |name| {
+        if (std.mem.eql(u8, name, field_name)) return true;
+    }
+    return false;
 }
 
 fn findStructValueField(fields: []const sg.StructValueLiteralField, field_name: []const u8) ?*const sg.StructValueLiteralField {
