@@ -46,6 +46,13 @@ pub const SyntaxRef = struct {
     node: NodeIndex,
 };
 
+pub fn fileForRef(files: []const SyntaxFile, reference: SyntaxRef) *const SyntaxFile {
+    const index: usize = @intFromEnum(reference.file_id);
+    std.debug.assert(index < files.len);
+    std.debug.assert(files[index].file_id == reference.file_id);
+    return &files[index];
+}
+
 pub const NodeRange = extern struct {
     start: ExtraIndex,
     end: ExtraIndex,
@@ -157,10 +164,13 @@ pub const Node = struct {
         node_and_optional: extern struct { node: NodeIndex, optional: OptionalNodeIndex },
         node_and_extra: extern struct { node: NodeIndex, extra: ExtraIndex },
         extra_and_node: extern struct { extra: ExtraIndex, node: NodeIndex },
+        u32_and_extra: extern struct { value: u32, extra: ExtraIndex },
+        u32_and_node: extern struct { value: u32, node: NodeIndex },
         token_and_node: extern struct { token: TokenIndex, node: NodeIndex },
         token_and_token: extern struct { first: TokenIndex, second: TokenIndex },
         token_and_optional_token: extern struct { token: TokenIndex, optional: OptionalTokenIndex },
         token_and_optional: extern struct { token: TokenIndex, optional: OptionalNodeIndex },
+        optional_token_and_optional_node: extern struct { token: OptionalTokenIndex, node: OptionalNodeIndex },
         extra_range: NodeRange,
     };
 };
@@ -228,7 +238,11 @@ pub const CodeBlock = struct { statements: []const NodeIndex };
 pub const ListLiteral = struct { elements: []const NodeIndex };
 pub const StructTypeField = struct { name_token: TokenIndex, type_node: ?NodeIndex, default_value: ?NodeIndex, inferred_result: bool };
 pub const SymbolDeclaration = struct { name_token: TokenIndex, type_node: ?NodeIndex, value: ?NodeIndex, mutability: Mutability };
-pub const GenericValue = struct { name_token: TokenIndex, generic_params: []const NodeIndex, generic_params_struct: ?NodeIndex, value: NodeIndex };
+pub const TypeDeclaration = struct { name_token: TokenIndex, generic_params: []const NodeIndex, generic_params_struct: ?NodeIndex, value: NodeIndex };
+pub const CEnumDeclaration = struct { name_token: TokenIndex, generic_params: []const NodeIndex, generic_params_struct: ?NodeIndex, value: NodeIndex };
+pub const CUnionDeclaration = struct { name_token: TokenIndex, generic_params: []const NodeIndex, generic_params_struct: ?NodeIndex, value: NodeIndex };
+pub const AbstractImplements = struct { concrete_name_token: TokenIndex, generic_params: []const NodeIndex, generic_params_struct: ?NodeIndex, abstract_type: NodeIndex };
+pub const AbstractDefaultsTo = struct { name_token: TokenIndex, generic_params: []const NodeIndex, generic_params_struct: ?NodeIndex, type_node: NodeIndex };
 pub const AbstractDeclaration = struct {
     name_token: TokenIndex,
     generic_params: []const NodeIndex,
@@ -236,13 +250,14 @@ pub const AbstractDeclaration = struct {
     requires_abstracts: []const NodeIndex,
     requires_functions: []const NodeIndex,
 };
+pub const GenericType = struct { base: NodeIndex, arguments: NodeIndex };
 pub const Type = union(enum) {
     name: struct { name_token: TokenIndex, qualifier_token: ?TokenIndex },
     pointer: struct { child: NodeIndex, mutability: PointerMutability },
     nullable: NodeIndex,
     inferred_errable: NodeIndex,
     array: struct { length_token: TokenIndex, element: NodeIndex },
-    generic: struct { base: NodeIndex, arguments: NodeIndex },
+    generic: GenericType,
     struct_literal: StructTypeLiteral,
     choice_literal: ChoiceTypeLiteral,
 };
@@ -258,6 +273,14 @@ pub const SyntaxFile = struct {
     nodes: NodeList = .empty,
     extra_data: std.ArrayList(u32) = .empty,
     roots: std.ArrayList(NodeIndex) = .empty,
+
+    pub fn init(allocator: std.mem.Allocator, file_id: source_db.FileId, tokens: []const token.Token) !SyntaxFile {
+        var tree: SyntaxFile = .{ .file_id = file_id };
+        errdefer tree.deinit(allocator);
+        try tree.tokens.ensureTotalCapacity(allocator, tokens.len);
+        for (tokens) |item| tree.tokens.appendAssumeCapacity(item);
+        return tree;
+    }
 
     pub fn deinit(tree: *SyntaxFile, allocator: std.mem.Allocator) void {
         tree.tokens.deinit(allocator);
@@ -341,9 +364,9 @@ pub const SyntaxFile = struct {
                 .string_literal,
                 => |range| range.slice(source),
                 .bool_literal => |value| if (value) "true" else "false",
-                .char_literal => source[tree.tokens.items(.location)[token_index].offset..][0..3],
+                .char_literal => sourceCharLiteral(source, tree.tokens.items(.location)[token_index].offset),
             },
-            else => "",
+            else => fixedTokenText(contents),
         };
     }
 
@@ -444,19 +467,51 @@ pub const SyntaxFile = struct {
         };
     }
 
-    pub fn genericValue(tree: *const SyntaxFile, node: NodeIndex) ?GenericValue {
-        return switch (tree.tag(node)) {
-            .type_declaration, .c_enum_declaration, .c_union_declaration, .abstract_implements, .abstract_defaultsto => blk: {
-                const extra = tree.extraData(GenericValueExtra, tree.data(node).extra);
-                break :blk .{
-                    .name_token = tree.mainToken(node),
-                    .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }),
-                    .generic_params_struct = extra.generic_params_struct.unwrap(),
-                    .value = extra.value,
-                };
-            },
-            else => null,
+    const GenericValuePayload = struct {
+        name_token: TokenIndex,
+        generic_params: []const NodeIndex,
+        generic_params_struct: ?NodeIndex,
+        value: NodeIndex,
+    };
+
+    fn genericValuePayload(tree: *const SyntaxFile, node: NodeIndex) GenericValuePayload {
+        const extra = tree.extraData(GenericValueExtra, tree.data(node).extra);
+        return .{
+            .name_token = tree.mainToken(node),
+            .generic_params = tree.nodeRange(.{ .start = extra.generic_params_start, .end = extra.generic_params_end }),
+            .generic_params_struct = extra.generic_params_struct.unwrap(),
+            .value = extra.value,
         };
+    }
+
+    pub fn typeDeclaration(tree: *const SyntaxFile, node: NodeIndex) ?TypeDeclaration {
+        if (tree.tag(node) != .type_declaration) return null;
+        const payload = tree.genericValuePayload(node);
+        return .{ .name_token = payload.name_token, .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .value = payload.value };
+    }
+
+    pub fn cEnumDeclaration(tree: *const SyntaxFile, node: NodeIndex) ?CEnumDeclaration {
+        if (tree.tag(node) != .c_enum_declaration) return null;
+        const payload = tree.genericValuePayload(node);
+        return .{ .name_token = payload.name_token, .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .value = payload.value };
+    }
+
+    pub fn cUnionDeclaration(tree: *const SyntaxFile, node: NodeIndex) ?CUnionDeclaration {
+        if (tree.tag(node) != .c_union_declaration) return null;
+        const payload = tree.genericValuePayload(node);
+        return .{ .name_token = payload.name_token, .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .value = payload.value };
+    }
+
+    pub fn abstractImplements(tree: *const SyntaxFile, node: NodeIndex) ?AbstractImplements {
+        if (tree.tag(node) != .abstract_implements) return null;
+        const payload = tree.genericValuePayload(node);
+        return .{ .concrete_name_token = payload.name_token, .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .abstract_type = payload.value };
+    }
+
+    pub fn abstractDefaultsTo(tree: *const SyntaxFile, node: NodeIndex) ?AbstractDefaultsTo {
+        if (tree.tag(node) != .abstract_defaultsto) return null;
+        const payload = tree.genericValuePayload(node);
+        return .{ .name_token = payload.name_token, .generic_params = payload.generic_params, .generic_params_struct = payload.generic_params_struct, .type_node = payload.value };
     }
 
     pub fn abstractDeclaration(tree: *const SyntaxFile, node: NodeIndex) ?AbstractDeclaration {
@@ -512,6 +567,78 @@ pub const SyntaxFile = struct {
         };
     }
 };
+
+fn sourceCharLiteral(source: []const u8, start: u32) []const u8 {
+    var index: usize = start + 1;
+    var escaped = false;
+    while (index < source.len) : (index += 1) {
+        const byte = source[index];
+        if (!escaped and byte == '\'') return source[start .. index + 1];
+        if (!escaped and byte == '\\') {
+            escaped = true;
+        } else {
+            escaped = false;
+        }
+    }
+    return source[start..];
+}
+
+fn fixedTokenText(content: token.Content) []const u8 {
+    return switch (content) {
+        .eof => "",
+        .new_line => "\n",
+        .open_parenthesis => "(",
+        .close_parenthesis => ")",
+        .open_bracket => "[",
+        .close_bracket => "]",
+        .open_brace => "{",
+        .close_brace => "}",
+        .hash => "#",
+        .dot => ".",
+        .double_dot => "..",
+        .comma => ",",
+        .keyword_return => "return",
+        .keyword_if => "if",
+        .keyword_else => "else",
+        .keyword_match => "match",
+        .keyword_for => "for",
+        .keyword_in => "in",
+        .keyword_while => "while",
+        .keyword_break => "break",
+        .keyword_continue => "continue",
+        .keyword_once => "once",
+        .keyword_test => "test",
+        .keyword_and => "and",
+        .keyword_or => "or",
+        .colon => ":",
+        .double_colon => "::",
+        .equal => "=",
+        .arrow => "->",
+        .pipe => "|",
+        .tilde => "~",
+        .bang => "!",
+        .double_bang => "!!",
+        .question_mark => "?",
+        .ampersand => "&",
+        .dollar => "$",
+        .binary_operator => |operator| switch (operator) {
+            .addition => "+",
+            .subtraction => "-",
+            .multiplication => "*",
+            .division => "/",
+            .modulo => "%",
+        },
+        .comparison_operator => |operator| switch (operator) {
+            .equal => "==",
+            .not_equal => "!=",
+            .less_than => "<",
+            .greater_than => ">",
+            .less_than_or_equal => "<=",
+            .greater_than_or_equal => ">=",
+        },
+        .identifier, .comment, .literal => unreachable,
+    };
+}
 
 fn encodeExtraField(comptime T: type, value: T) u32 {
     return switch (@typeInfo(T)) {
