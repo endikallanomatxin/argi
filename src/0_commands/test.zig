@@ -4,7 +4,7 @@ const sf = @import("../1_base/source_files.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const frontend = @import("frontend_pipeline.zig");
 const build_cmd = @import("build.zig");
-const syn = @import("../3_syntax/syntax_tree.zig");
+const syn = @import("../3_syntax/syntax_tree_legacy.zig");
 
 const DiscoverTest = struct {
     name: []const u8,

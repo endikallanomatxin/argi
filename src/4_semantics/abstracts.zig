@@ -1,6 +1,6 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
-const syn = @import("../3_syntax/syntax_tree.zig");
+const syn = @import("../3_syntax/syntax_tree_legacy.zig");
 const sg = @import("semantic_graph.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 

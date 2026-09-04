@@ -3,7 +3,7 @@ const llvm = @import("llvm.zig");
 const c = llvm.c;
 const sem = @import("../4_semantics/semantic_graph.zig");
 const sem_types = @import("../4_semantics/types.zig");
-const syn = @import("../3_syntax/syntax_tree.zig");
+const syn = @import("../3_syntax/syntax_tree_legacy.zig");
 const tok = @import("../2_tokens/token.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
