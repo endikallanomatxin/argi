@@ -1,7 +1,7 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
 const tokp = @import("../2_tokens/token_print.zig");
-const syn = @import("syntax_tree.zig");
+const syn = @import("syntax_tree_legacy.zig");
 const synp = @import("syntax_tree_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
 
