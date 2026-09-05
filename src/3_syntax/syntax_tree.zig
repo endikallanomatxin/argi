@@ -306,7 +306,7 @@ pub const IndexAssignment = struct { target: NodeIndex, value: NodeIndex };
 pub const Literal = struct { token: TokenIndex, negative: bool };
 pub const BinaryOperation = struct { lhs: NodeIndex, rhs: NodeIndex };
 
-pub const TokenList = std.MultiArrayList(token.Token);
+pub const TokenList = token.List;
 pub const NodeList = std.MultiArrayList(Node);
 
 pub const SyntaxFile = struct {
@@ -335,12 +335,19 @@ pub const SyntaxFile = struct {
     // Compact counts include type syntax, which the legacy parallel Type tree
     // omitted from its STNode count.
 
-    pub fn init(allocator: std.mem.Allocator, file_id: source_db.FileId, tokens: []const token.Token) !SyntaxFile {
+    pub fn init(allocator: std.mem.Allocator, file_id: source_db.FileId, tokens: token.View) !SyntaxFile {
         var tree: SyntaxFile = .{ .file_id = file_id };
         errdefer tree.deinit(allocator);
         try tree.tokens.ensureTotalCapacity(allocator, tokens.len);
-        for (tokens) |item| tree.tokens.appendAssumeCapacity(item);
+        for (tokens.contents, tokens.locations) |content, token_location| {
+            tree.tokens.appendAssumeCapacity(.{ .content = content, .location = token_location });
+        }
         return tree;
+    }
+
+    /// Takes ownership of token columns built during tokenizing.
+    pub fn initOwnedTokens(file_id: source_db.FileId, tokens: TokenList) SyntaxFile {
+        return .{ .file_id = file_id, .tokens = tokens };
     }
 
     pub fn deinit(tree: *SyntaxFile, allocator: std.mem.Allocator) void {

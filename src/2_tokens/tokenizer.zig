@@ -24,7 +24,7 @@ pub const Tokenizer = struct {
     allocator: std.mem.Allocator,
     diagnostics: *diag.Diagnostics,
     source: []const u8,
-    tokens: std.array_list.Managed(tok.Token),
+    tokens: tok.List,
 
     location: tok.Location,
 
@@ -38,7 +38,7 @@ pub const Tokenizer = struct {
             .allocator = allocator,
             .diagnostics = diagnostics,
             .source = source,
-            .tokens = std.array_list.Managed(tok.Token).init(allocator),
+            .tokens = .empty,
             .location = tok.Location{
                 .file = file_id,
                 .offset = 0,
@@ -47,8 +47,12 @@ pub const Tokenizer = struct {
     }
 
     /// Llama a `lexNextToken` repetidas veces hasta terminar, y devuelve
-    /// el slice de `Token` generado.
-    pub fn tokenize(self: *Tokenizer) ![]tok.Token {
+    /// una vista prestada de los tokens generados.
+    pub fn tokenize(self: *Tokenizer) !tok.View {
+        // Source code typically needs one token for roughly four bytes. This
+        // keeps the direct SoA construction from repeatedly relocating its
+        // columns while remaining only an estimate for comment-heavy files.
+        try self.tokens.ensureTotalCapacity(self.allocator, self.source.len / 4 + 1);
         while (self.location.offset < self.source.len) {
             lexNextToken(self) catch |err| {
                 if (err == error.ReachedEOF) {
@@ -60,13 +64,14 @@ pub const Tokenizer = struct {
         }
         // Añadir el token EOF al final
         try self.addToken(tok.Content{ .eof = .{} }, self.location);
-        return self.tokens.items;
+        return tok.View.init(&self.tokens);
     }
 
-    /// Transfers the contiguous token buffer to a file frontend artifact.
-    /// This avoids the former second copy into a module-wide token list.
-    pub fn takeTokens(self: *Tokenizer) ![]tok.Token {
-        return try self.tokens.toOwnedSlice();
+    /// Transfers the compact token columns to a file frontend artifact.
+    pub fn takeTokens(self: *Tokenizer) tok.List {
+        const tokens = self.tokens;
+        self.tokens = .empty;
+        return tokens;
     }
 
     /// Añade un token a la lista de tokens, actualizando la ubicación actual.
@@ -75,7 +80,7 @@ pub const Tokenizer = struct {
             .content = content,
             .location = location,
         };
-        try self.tokens.append(token);
+        try self.tokens.append(self.allocator, token);
     }
 
     pub fn peek(self: *Tokenizer) ?u8 {
@@ -625,13 +630,15 @@ pub const Tokenizer = struct {
     }
 
     pub fn deinit(self: *Tokenizer) void {
-        self.tokens.deinit();
+        self.tokens.deinit(self.allocator);
     }
 
     pub fn printTokens(self: *Tokenizer) void {
         std.debug.print("\nTOKENS\n", .{});
         var i: usize = 0;
-        for (self.tokens.items) |token| {
+        const tokens = tok.View.init(&self.tokens);
+        for (tokens.contents, tokens.locations) |content, location| {
+            const token = tok.Token{ .content = content, .location = location };
             std.debug.print("{d}: ", .{i});
             const position = self.diagnostics.lineColumn(token.location);
             tok_print.printTokenWithLocation(token, self.source, self.diagnostics.path(token.location), position.line, position.column);
@@ -687,8 +694,8 @@ fn expectNumericLiteralToken(source: []const u8, expected_tag: LiteralTag) !void
     const tokens = try tokenizer_ctx.tokenize();
     try std.testing.expect(!diagnostics.hasErrors());
     try std.testing.expect(tokens.len >= 2);
-    try std.testing.expect(tokens[0].content == .literal);
-    try std.testing.expectEqual(expected_tag, std.meta.activeTag(tokens[0].content.literal));
+    try std.testing.expect(tokens.contents[0] == .literal);
+    try std.testing.expectEqual(expected_tag, std.meta.activeTag(tokens.contents[0].literal));
 }
 
 test "tokenizer crash resistance at EOF" {
