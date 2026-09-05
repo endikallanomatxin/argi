@@ -38,6 +38,7 @@ pub const Syntaxer = struct {
     index: usize,
     allocator: std.mem.Allocator,
     file: syn.SyntaxFile,
+    tokens: tok.View,
     diags: *diagnostic.Diagnostics,
     parsing_pipe_rhs: bool,
     scratch: std.ArrayList(syn.NodeIndex),
@@ -47,7 +48,8 @@ pub const Syntaxer = struct {
     }
 
     pub fn initFile(alloc: std.mem.Allocator, file: syn.SyntaxFile, source: []const u8, diags: *diagnostic.Diagnostics) Syntaxer {
-        return .{ .source = source, .index = 0, .allocator = alloc, .file = file, .diags = diags, .parsing_pipe_rhs = false, .scratch = .empty };
+        const tokens = tok.View.init(&file.tokens);
+        return .{ .source = source, .index = 0, .allocator = alloc, .file = file, .tokens = tokens, .diags = diags, .parsing_pipe_rhs = false, .scratch = .empty };
     }
 
     pub fn nodeCount(self: *const Syntaxer) usize {
@@ -83,25 +85,31 @@ pub const Syntaxer = struct {
     }
 
     // ───────────────────────────────── token helpers ─────────────────────────
-    fn current(self: *Syntaxer) tok.Token {
-        return self.file.tokens.get(self.index);
+    fn contentAt(self: *const Syntaxer, index: usize) tok.Content {
+        return self.tokens.contents[index];
     }
-    fn next(self: *Syntaxer) ?tok.Token {
-        return if (self.index + 1 < self.file.tokens.len) self.file.tokens.get(self.index + 1) else null;
+    fn currentContent(self: *const Syntaxer) tok.Content {
+        return self.contentAt(self.index);
+    }
+    fn locationAt(self: *const Syntaxer, index: usize) tok.Location {
+        return self.tokens.locations[index];
+    }
+    fn currentLocation(self: *const Syntaxer) tok.Location {
+        return self.locationAt(self.index);
     }
     fn advanceOne(self: *Syntaxer) void {
-        if (self.index < self.file.tokens.len) self.index += 1;
+        if (self.index < self.tokens.len) self.index += 1;
     }
     fn tokenLocation(self: *Syntaxer) tok.Location {
-        return self.current().location;
+        return self.currentLocation();
     }
 
     fn tokenIs(self: *Syntaxer, tag: tok.Content) bool {
-        return std.meta.activeTag(self.current().content) == std.meta.activeTag(tag);
+        return std.meta.activeTag(self.currentContent()) == std.meta.activeTag(tag);
     }
 
     fn currentIdentifierEquals(self: *Syntaxer, expected: []const u8) bool {
-        return switch (self.current().content) {
+        return switch (self.currentContent()) {
             .identifier => |range| std.mem.eql(u8, range.slice(self.source), expected),
             else => false,
         };
@@ -112,7 +120,7 @@ pub const Syntaxer = struct {
     }
 
     fn currentCanStartBareExpressionStatement(self: *Syntaxer) bool {
-        return switch (self.current().content) {
+        return switch (self.currentContent()) {
             .literal,
             .open_parenthesis,
             .open_brace,
@@ -131,7 +139,7 @@ pub const Syntaxer = struct {
         var depth: i32 = 0;
         var idx: usize = self.index;
         while (idx < self.file.tokens.len) : (idx += 1) {
-            const tag = std.meta.activeTag(self.file.tokens.get(idx).content);
+            const tag = std.meta.activeTag(self.contentAt(idx));
             switch (tag) {
                 .open_bracket => depth += 1,
                 .close_bracket => {
@@ -139,7 +147,7 @@ pub const Syntaxer = struct {
                     if (depth == 0) {
                         var lookahead = idx + 1;
                         while (lookahead < self.file.tokens.len) : (lookahead += 1) {
-                            const next_tag = std.meta.activeTag(self.file.tokens.get(lookahead).content);
+                            const next_tag = std.meta.activeTag(self.contentAt(lookahead));
                             switch (next_tag) {
                                 .new_line, .comment => continue,
                                 else => return next_tag == .open_parenthesis,
@@ -156,7 +164,7 @@ pub const Syntaxer = struct {
 
     fn skipNewLinesAndComments(self: *Syntaxer) void {
         while (self.index < self.file.tokens.len) {
-            switch (self.current().content) {
+            switch (self.currentContent()) {
                 .new_line, .comment => self.advanceOne(),
                 else => break,
             }
@@ -189,7 +197,7 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        const literal = switch (self.current().content) {
+        const literal = switch (self.currentContent()) {
             .literal => |lit| lit,
             else => {
                 try self.diags.add(minus_loc, .syntax, "expected numeric literal after unary '-'", .{});
@@ -211,12 +219,12 @@ pub const Syntaxer = struct {
 
     // ───────────────────────────────  atoms ──────────────────────────────────
     fn parseIdentifier(self: *Syntaxer) SyntaxerError![]const u8 {
-        const t = self.current();
-        if (t.content != .identifier) {
-            try self.diags.add(self.tokenLocation(), .syntax, "expected identifier, found '{s}'", .{@tagName(self.current().content)});
+        const content = self.currentContent();
+        if (content != .identifier) {
+            try self.diags.add(self.tokenLocation(), .syntax, "expected identifier, found '{s}'", .{@tagName(content)});
             return SyntaxerError.ExpectedIdentifier;
         }
-        const name = self.tokenText(t.content.identifier);
+        const name = self.tokenText(content.identifier);
         self.advanceOne();
         return name;
     }
@@ -229,7 +237,7 @@ pub const Syntaxer = struct {
     }
 
     fn parseOperatorName(self: *Syntaxer, operator_token: syn.TokenIndex) SyntaxerError!ParsedName {
-        switch (self.current().content) {
+        switch (self.currentContent()) {
             .identifier => {
                 const ident = try self.parseIdentifier();
 
@@ -350,7 +358,7 @@ pub const Syntaxer = struct {
             }
 
             return try self.addNode(.nullable_type, question_token, .{ .node = inner_ty_opt.? });
-        } else if (self.tokenIs(.open_parenthesis) and self.next() != null and self.next().?.content == .close_parenthesis) {
+        } else if (self.tokenIs(.open_parenthesis) and self.index + 1 < self.tokens.len and self.contentAt(self.index + 1) == .close_parenthesis) {
             return try self.parseStructTypeLiteral();
         } else if (self.tokenIs(.open_bracket)) {
             const bracket_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
@@ -358,13 +366,13 @@ pub const Syntaxer = struct {
             self.advanceOne();
             self.skipNewLinesAndComments();
 
-            if (std.meta.activeTag(self.current().content) != .literal) {
+            if (std.meta.activeTag(self.currentContent()) != .literal) {
                 try self.diags.add(len_loc, .syntax, "expected array length integer literal", .{});
                 return SyntaxerError.ExpectedIntLiteral;
             }
 
             const length_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            switch (self.current().content.literal) {
+            switch (self.currentContent().literal) {
                 .decimal_int_literal => {},
                 else => {
                     try self.diags.add(len_loc, .syntax, "array length must be a decimal integer literal", .{});
@@ -549,7 +557,7 @@ pub const Syntaxer = struct {
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
-                try self.diags.add(self.tokenLocation(), .syntax, "expected struct field, found '{s}'", .{@tagName(self.current().content)});
+                try self.diags.add(self.tokenLocation(), .syntax, "expected struct field, found '{s}'", .{@tagName(self.currentContent())});
                 return SyntaxerError.ExpectedStructField;
             }
             self.advanceOne();
@@ -617,7 +625,7 @@ pub const Syntaxer = struct {
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
-                try self.diags.add(self.tokenLocation(), .syntax, "expected generic parameter, found '{s}'", .{@tagName(self.current().content)});
+                try self.diags.add(self.tokenLocation(), .syntax, "expected generic parameter, found '{s}'", .{@tagName(self.currentContent())});
                 return SyntaxerError.ExpectedStructField;
             }
             self.advanceOne();
@@ -629,7 +637,7 @@ pub const Syntaxer = struct {
                 ftype = try self.parseType();
 
                 if (self.tokenIs(.colon)) {
-                    if (ftype == null or self.file.tag(ftype.?) != .type_name or !std.mem.eql(u8, self.tokenText(self.file.tokens.get(@intFromEnum(self.file.mainToken(ftype.?))).content.identifier), "Type")) {
+                    if (ftype == null or self.file.tag(ftype.?) != .type_name or !std.mem.eql(u8, self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(ftype.?))).identifier), "Type")) {
                         try self.diags.add(
                             self.tokenLocation(),
                             .syntax,
@@ -685,11 +693,11 @@ pub const Syntaxer = struct {
             }
 
             var module_qualifier: ?ParsedName = null;
-            if (std.meta.activeTag(self.current().content) == .identifier) {
+            if (std.meta.activeTag(self.currentContent()) == .identifier) {
                 const qualifier = try self.parseName();
                 self.skipNewLinesAndComments();
                 if (!self.tokenIs(.double_dot)) {
-                    try self.diags.add(self.file.tokens.get(@intFromEnum(qualifier.token)).location, .syntax, "expected '..' after choice option module qualifier", .{});
+                    try self.diags.add(self.locationAt(@intFromEnum(qualifier.token)), .syntax, "expected '..' after choice option module qualifier", .{});
                     return SyntaxerError.ExpectedIdentifier;
                 }
                 module_qualifier = qualifier;
@@ -725,14 +733,14 @@ pub const Syntaxer = struct {
     }
 
     fn tokenStartsChoicePayloadType(self: *Syntaxer) bool {
-        return switch (self.current().content) {
+        return switch (self.currentContent()) {
             .identifier, .question_mark, .open_parenthesis, .open_bracket, .ampersand, .dollar => true,
             else => false,
         };
     }
 
     fn tokenStartsChoicePayloadExpr(self: *Syntaxer) bool {
-        return switch (self.current().content) {
+        return switch (self.currentContent()) {
             .identifier, .literal, .double_dot, .open_parenthesis, .tilde, .hash, .ampersand, .dollar => true,
             .binary_operator => |op| op == .subtraction,
             else => false,
@@ -744,21 +752,21 @@ pub const Syntaxer = struct {
 
         var idx = self.index + 1;
         while (idx < self.file.tokens.len) : (idx += 1) {
-            const tag = std.meta.activeTag(self.file.tokens.get(idx).content);
+            const tag = std.meta.activeTag(self.contentAt(idx));
             switch (tag) {
                 .new_line, .comment => continue,
                 .double_dot => return true,
                 .equal => {
                     idx += 1;
                     while (idx < self.file.tokens.len) : (idx += 1) {
-                        const inner_tag = std.meta.activeTag(self.file.tokens.get(idx).content);
+                        const inner_tag = std.meta.activeTag(self.contentAt(idx));
                         switch (inner_tag) {
                             .new_line, .comment => continue,
                             .double_dot => return true,
                             .identifier => {
                                 var j = idx + 1;
                                 while (j < self.file.tokens.len) : (j += 1) {
-                                    const next_tag = std.meta.activeTag(self.file.tokens.get(j).content);
+                                    const next_tag = std.meta.activeTag(self.contentAt(j));
                                     switch (next_tag) {
                                         .new_line, .comment => continue,
                                         .double_dot => return true,
@@ -775,7 +783,7 @@ pub const Syntaxer = struct {
                 .identifier => {
                     var j = idx + 1;
                     while (j < self.file.tokens.len) : (j += 1) {
-                        const next_tag = std.meta.activeTag(self.file.tokens.get(j).content);
+                        const next_tag = std.meta.activeTag(self.contentAt(j));
                         switch (next_tag) {
                             .new_line, .comment => continue,
                             .double_dot => return true,
@@ -794,11 +802,11 @@ pub const Syntaxer = struct {
     fn currentSentenceStartsChoiceOptionDeclaration(self: *Syntaxer) bool {
         if (!self.tokenIs(.double_dot)) return false;
         if (self.index + 1 >= self.file.tokens.len) return false;
-        if (std.meta.activeTag(self.file.tokens.get(self.index + 1).content) != .identifier) return false;
+        if (std.meta.activeTag(self.contentAt(self.index + 1)) != .identifier) return false;
 
         var idx = self.index + 2;
         while (idx < self.file.tokens.len) : (idx += 1) {
-            const tag = std.meta.activeTag(self.file.tokens.get(idx).content);
+            const tag = std.meta.activeTag(self.contentAt(idx));
             switch (tag) {
                 .comment => continue,
                 .new_line, .eof, .close_brace => return true,
@@ -814,7 +822,7 @@ pub const Syntaxer = struct {
 
         var idx: usize = self.index + 1;
         while (idx < self.file.tokens.len) : (idx += 1) {
-            switch (self.file.tokens.get(idx).content) {
+            switch (self.contentAt(idx)) {
                 .new_line, .comment => continue,
                 .identifier => return true,
                 else => return false,
@@ -854,12 +862,12 @@ pub const Syntaxer = struct {
 
     fn findMatchingCloseParenIndex(self: *Syntaxer, open_paren_index: usize) ?usize {
         if (open_paren_index >= self.file.tokens.len) return null;
-        if (std.meta.activeTag(self.file.tokens.get(open_paren_index).content) != .open_parenthesis) return null;
+        if (std.meta.activeTag(self.contentAt(open_paren_index)) != .open_parenthesis) return null;
 
         var depth: i32 = 0;
         var idx = open_paren_index;
         while (idx < self.file.tokens.len) : (idx += 1) {
-            const tag = std.meta.activeTag(self.file.tokens.get(idx).content);
+            const tag = std.meta.activeTag(self.contentAt(idx));
             switch (tag) {
                 .open_parenthesis => depth += 1,
                 .close_parenthesis => {
@@ -877,7 +885,7 @@ pub const Syntaxer = struct {
         const close_idx = self.findMatchingCloseParenIndex(open_paren_index) orelse return null;
         var idx = close_idx + 1;
         while (idx < self.file.tokens.len) : (idx += 1) {
-            switch (self.file.tokens.get(idx).content) {
+            switch (self.contentAt(idx)) {
                 .new_line, .comment => continue,
                 else => return idx,
             }
@@ -887,22 +895,22 @@ pub const Syntaxer = struct {
 
     fn looksLikeFunctionDeclarationInput(self: *Syntaxer, open_paren_index: usize) bool {
         const after_close_idx = self.tokenIndexAfterCloseParen(open_paren_index) orelse return false;
-        if (std.meta.activeTag(self.file.tokens.get(after_close_idx).content) != .arrow) return false;
+        if (std.meta.activeTag(self.contentAt(after_close_idx)) != .arrow) return false;
 
         var idx = open_paren_index + 1;
         while (idx < self.file.tokens.len) : (idx += 1) {
-            switch (self.file.tokens.get(idx).content) {
+            switch (self.contentAt(idx)) {
                 .new_line, .comment => continue,
                 .close_parenthesis => return true,
                 .dot => {
                     idx += 1;
                     while (idx < self.file.tokens.len) : (idx += 1) {
-                        switch (self.file.tokens.get(idx).content) {
+                        switch (self.contentAt(idx)) {
                             .new_line, .comment => continue,
                             .identifier => {
                                 idx += 1;
                                 while (idx < self.file.tokens.len) : (idx += 1) {
-                                    switch (self.file.tokens.get(idx).content) {
+                                    switch (self.contentAt(idx)) {
                                         .new_line, .comment => continue,
                                         .colon => return true,
                                         .equal => return false,
@@ -1081,9 +1089,9 @@ pub const Syntaxer = struct {
     // ─────────────────────────────  EXPRESSIONS  ─────────────────────────────
     /// [primary] {'.' fld}  (bin-op rhs)?
     fn parsePrimary(self: *Syntaxer) !syn.NodeIndex {
-        const t = self.current();
+        const content = self.currentContent();
 
-        if (t.content == .binary_operator and t.content.binary_operator == .subtraction) {
+        if (content == .binary_operator and content.binary_operator == .subtraction) {
             return try self.parseSignedNumericLiteral();
         }
 
@@ -1097,7 +1105,7 @@ pub const Syntaxer = struct {
         if (self.tokenIs(.ampersand) or self.tokenIs(.dollar)) {
             var mutable = false;
             const main_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
-            var op_loc = t.location;
+            var op_loc = self.currentLocation();
 
             if (self.tokenIs(.dollar)) {
                 mutable = true;
@@ -1136,8 +1144,7 @@ pub const Syntaxer = struct {
             if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
             self.advanceOne();
             self.skipNewLinesAndComments();
-            const lit = self.current();
-            switch (lit.content) {
+            switch (self.currentContent()) {
                 .literal => |literal| switch (literal) {
                     .string_literal => {},
                     else => return SyntaxerError.ExpectedStringLiteral,
@@ -1153,7 +1160,7 @@ pub const Syntaxer = struct {
             return try self.parsePostfix(node);
         }
 
-        const base: syn.NodeIndex = switch (t.content) {
+        const base: syn.NodeIndex = switch (content) {
             .double_dot => blk: {
                 const dots_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
@@ -1237,12 +1244,12 @@ pub const Syntaxer = struct {
     fn parseBinaryExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parsePipeExpr();
 
-        if (self.current().content == .binary_operator) {
-            const op_tok = self.current();
+        if (self.currentContent() == .binary_operator) {
+            const op = self.currentContent().binary_operator;
             const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
             const rhs = try self.parseBinaryExpr();
-            const tag: syn.Node.Tag = switch (op_tok.content.binary_operator) {
+            const tag: syn.Node.Tag = switch (op) {
                 .addition => .binary_add,
                 .subtraction => .binary_subtract,
                 .multiplication => .binary_multiply,
@@ -1258,11 +1265,11 @@ pub const Syntaxer = struct {
     fn parseComparisonExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parseBinaryExpr();
 
-        while (self.current().content == .comparison_operator) {
-            const op_tok = self.current();
+        while (self.currentContent() == .comparison_operator) {
+            const op_content = self.currentContent();
             const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             var op: tok.ComparisonOperator = undefined;
-            switch (op_tok.content) {
+            switch (op_content) {
                 .comparison_operator => |c| op = c,
                 else => unreachable,
             }
@@ -1344,7 +1351,7 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
         self.advanceOne();
 
-        switch (self.current().content) {
+        switch (self.currentContent()) {
             .identifier => |ident_range| {
                 const ident_name = self.tokenText(ident_range);
                 if (std.mem.eql(u8, ident_name, "ExternFunction") or std.mem.eql(u8, ident_name, "CFunction")) {
@@ -1409,7 +1416,7 @@ pub const Syntaxer = struct {
         const start_index = self.index;
         self.skipNewLinesAndComments();
 
-        switch (self.current().content) {
+        switch (self.currentContent()) {
             .keyword_return => return self.parseReturn(),
             .keyword_if => return self.parseIf(),
             .keyword_for => return self.parseFor(),
@@ -1465,7 +1472,7 @@ pub const Syntaxer = struct {
             return try self.addNode(.choice_option_declaration, decl_token, .{ .token = option_name.token });
         }
 
-        if (self.current().content != .identifier and self.currentCanStartBareExpressionStatement()) {
+        if (self.currentContent() != .identifier and self.currentCanStartBareExpressionStatement()) {
             const expr = try self.parseExpression();
             return try self.addNode(.expression_statement, self.file.mainToken(expr), .{ .node = expr });
         }
@@ -1545,7 +1552,7 @@ pub const Syntaxer = struct {
         }
 
         // Abstract relations (implements/defaultsto)
-        switch (self.current().content) {
+        switch (self.currentContent()) {
             .identifier => |kw_range| {
                 const kw = self.tokenText(kw_range);
                 if (is_once) {
@@ -1585,7 +1592,7 @@ pub const Syntaxer = struct {
             const ty_opt = try self.parseType();
 
             if (ty_opt) |ty| {
-                const type_name = if (self.file.tag(ty) == .type_name) self.tokenText(self.file.tokens.get(@intFromEnum(self.file.mainToken(ty))).content.identifier) else "";
+                const type_name = if (self.file.tag(ty) == .type_name) self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(ty))).identifier) else "";
                 if (std.mem.eql(u8, type_name, "Type") or std.mem.eql(u8, type_name, "CEnum") or std.mem.eql(u8, type_name, "CUnion")) {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                     self.advanceOne();
@@ -1647,7 +1654,7 @@ pub const Syntaxer = struct {
         const scratch_top = self.scratch.items.len;
 
         while (!self.tokenIs(.eof) and !self.tokenIs(.close_brace)) {
-            switch (self.current().content) {
+            switch (self.currentContent()) {
                 .new_line, .comment => self.skipNewLinesAndComments(),
                 else => {
                     const stmt = try self.parseStatement();
@@ -1705,7 +1712,7 @@ pub const Syntaxer = struct {
 
             var payload_name_token: ?syn.TokenIndex = null;
             var case_tag: syn.Node.Tag = .match_case_value;
-            const case_has_payload_binding = switch (self.current().content) {
+            const case_has_payload_binding = switch (self.currentContent()) {
                 .identifier, .tilde, .dollar, .ampersand => true,
                 else => false,
             };
@@ -1787,7 +1794,7 @@ pub const Syntaxer = struct {
 
         // ── ¿hay algo más en la línea?  --------------------------
         // Si lo siguiente es fin de línea, un '}', o EOF, NO hay expresión.
-        switch (self.current().content) {
+        switch (self.currentContent()) {
             .new_line, .close_brace, .eof => {
                 return try self.addNode(.return_statement, start, .{ .optional_node = .none });
             },
