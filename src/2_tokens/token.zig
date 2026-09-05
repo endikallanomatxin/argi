@@ -6,13 +6,16 @@ pub const Token = struct {
     location: Location,
 };
 
+/// Owned compact token columns retained by a syntax file.
+pub const List = std.MultiArrayList(Token);
+
 /// Borrowed access to the owned SoA token columns of a file artifact.
 pub const View = struct {
     contents: []const Content = &.{},
     locations: []const Location = &.{},
     len: usize = 0,
 
-    pub fn init(list: *const std.MultiArrayList(Token)) View {
+    pub fn init(list: *const List) View {
         return .{ .contents = list.items(.content), .locations = list.items(.location), .len = list.len };
     }
 

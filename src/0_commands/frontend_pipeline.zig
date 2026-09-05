@@ -73,10 +73,9 @@ pub const FrontendPipeline = struct {
                 source_file.code,
                 self.source_db.fileId(index),
             );
+            defer tokenizer_ctx.deinit();
             _ = try tokenizer_ctx.tokenize();
-            const tokens = try tokenizer_ctx.takeTokens();
-            defer self.allocator.free(tokens);
-            var file = try st.SyntaxFile.init(self.allocator, self.source_db.fileId(index), tokens);
+            var file = st.SyntaxFile.initOwnedTokens(self.source_db.fileId(index), tokenizer_ctx.takeTokens());
             errdefer file.deinit(self.allocator);
             try self.syntax_files.append(file);
         }

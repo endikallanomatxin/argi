@@ -43,8 +43,8 @@ pub const Syntaxer = struct {
     parsing_pipe_rhs: bool,
     scratch: std.ArrayList(syn.NodeIndex),
 
-    pub fn init(alloc: std.mem.Allocator, toks: []const tok.Token, source: []const u8, diags: *diagnostic.Diagnostics) !Syntaxer {
-        return initFile(alloc, try syn.SyntaxFile.init(alloc, toks[0].location.file, toks), source, diags);
+    pub fn init(alloc: std.mem.Allocator, toks: tok.View, source: []const u8, diags: *diagnostic.Diagnostics) !Syntaxer {
+        return initFile(alloc, try syn.SyntaxFile.init(alloc, toks.locations[0].file, toks), source, diags);
     }
 
     pub fn initFile(alloc: std.mem.Allocator, file: syn.SyntaxFile, source: []const u8, diags: *diagnostic.Diagnostics) Syntaxer {

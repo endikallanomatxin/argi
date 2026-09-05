@@ -17,9 +17,9 @@ fn parseTestFile(path: []const u8) !syntax_tree.SyntaxFile {
 
     var tokenizer_context = tokenizer.Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
     _ = try tokenizer_context.tokenize();
-    const tokens = try tokenizer_context.takeTokens();
+    const tokens = tokenizer_context.takeTokens();
 
-    var compact = try syntaxer.Syntaxer.init(std.testing.allocator, tokens, source, &diagnostics);
+    var compact = try syntaxer.Syntaxer.init(std.testing.allocator, .init(&tokens), source, &diagnostics);
     defer compact.deinit();
     const tree = try compact.parse();
     try std.testing.expect(!diagnostics.hasErrors());
