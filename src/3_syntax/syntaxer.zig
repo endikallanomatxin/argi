@@ -186,7 +186,7 @@ pub const Syntaxer = struct {
 
     fn reserveSyntaxStorage(self: *Syntaxer) SyntaxerError!void {
         const estimate = self.file.tokens.len / 2;
-        self.file.nodes.ensureTotalCapacity(self.allocator, estimate) catch return error.OutOfMemory;
+        self.file.ensureNodeCapacity(self.allocator, estimate) catch return error.OutOfMemory;
         self.file.extra_data.ensureTotalCapacity(self.allocator, estimate) catch return error.OutOfMemory;
         self.scratch.ensureTotalCapacity(self.allocator, estimate / 4) catch return error.OutOfMemory;
     }
