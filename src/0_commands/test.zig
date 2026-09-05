@@ -52,7 +52,7 @@ fn discoverTests(
     var pipeline = frontend.FrontendPipeline.init(allocator, io, &diagnostics, .{});
     defer pipeline.deinit();
 
-    const st_nodes = try pipeline.parseFiles(files.items);
+    const syntax_roots = try pipeline.parseFiles(files.items);
 
     if (diagnostics.hasErrors()) {
         try diagnostics.dumpWithLimit(std.math.maxInt(usize));
@@ -60,14 +60,14 @@ fn discoverTests(
     }
 
     var discovered = std.array_list.Managed(DiscoverTest).init(allocator);
-    for (st_nodes) |node| {
-        switch (node.content) {
-            .test_declaration => |td| try discovered.append(.{
-                .name = try allocator.dupe(u8, td.decl.name.string),
-                .location = node.location,
-            }),
-            else => {},
-        }
+    for (syntax_roots) |node| {
+        const syntax_file = syn.fileForRef(pipeline.syntax_files.items, node);
+        const declaration = syntax_file.testDeclaration(node.node) orelse continue;
+        const name = syntax_file.tokenText(&diagnostics.source_db, declaration.function.name_token);
+        try discovered.append(.{
+            .name = try allocator.dupe(u8, name),
+            .location = syntax_file.location(node.node),
+        });
     }
 
     return try discovered.toOwnedSlice();

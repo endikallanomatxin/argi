@@ -3,6 +3,7 @@ const tok = @import("token.zig");
 const tok_print = @import("token_print.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const sf = @import("../1_base/source_files.zig");
+const source_db = @import("../1_base/source_db.zig");
 
 pub const TokenizerError = error{
     UnknownCharacter,
@@ -17,13 +18,13 @@ const NumericLiteralKind = enum {
     scientific_float,
 };
 
-const LiteralTag = std.meta.Tag(tok.Literal);
+const LiteralTag = std.meta.Tag(tok.TokenLiteral);
 
 pub const Tokenizer = struct {
     allocator: std.mem.Allocator,
     diagnostics: *diag.Diagnostics,
     source: []const u8,
-    tokens: std.array_list.Managed(tok.Token),
+    tokens: tok.List,
 
     location: tok.Location,
 
@@ -31,25 +32,27 @@ pub const Tokenizer = struct {
         allocator: std.mem.Allocator,
         diagnostics: *diag.Diagnostics,
         source: []const u8,
-        file_name: []const u8,
+        file_id: source_db.FileId,
     ) Tokenizer {
         return Tokenizer{
             .allocator = allocator,
             .diagnostics = diagnostics,
             .source = source,
-            .tokens = std.array_list.Managed(tok.Token).init(allocator),
+            .tokens = .empty,
             .location = tok.Location{
-                .file = file_name,
+                .file = file_id,
                 .offset = 0,
-                .line = 1,
-                .column = 1,
             },
         };
     }
 
     /// Llama a `lexNextToken` repetidas veces hasta terminar, y devuelve
-    /// el slice de `Token` generado.
-    pub fn tokenize(self: *Tokenizer) ![]tok.Token {
+    /// una vista prestada de los tokens generados.
+    pub fn tokenize(self: *Tokenizer) !tok.View {
+        // Source code typically needs one token for roughly four bytes. This
+        // keeps the direct SoA construction from repeatedly relocating its
+        // columns while remaining only an estimate for comment-heavy files.
+        try self.tokens.ensureTotalCapacity(self.allocator, self.source.len / 4 + 1);
         while (self.location.offset < self.source.len) {
             lexNextToken(self) catch |err| {
                 if (err == error.ReachedEOF) {
@@ -61,7 +64,14 @@ pub const Tokenizer = struct {
         }
         // Añadir el token EOF al final
         try self.addToken(tok.Content{ .eof = .{} }, self.location);
-        return self.tokens.items;
+        return tok.View.init(&self.tokens);
+    }
+
+    /// Transfers the compact token columns to a file frontend artifact.
+    pub fn takeTokens(self: *Tokenizer) tok.List {
+        const tokens = self.tokens;
+        self.tokens = .empty;
+        return tokens;
     }
 
     /// Añade un token a la lista de tokens, actualizando la ubicación actual.
@@ -70,7 +80,7 @@ pub const Tokenizer = struct {
             .content = content,
             .location = location,
         };
-        try self.tokens.append(token);
+        try self.tokens.append(self.allocator, token);
     }
 
     pub fn peek(self: *Tokenizer) ?u8 {
@@ -86,12 +96,7 @@ pub const Tokenizer = struct {
     pub fn advance(self: *Tokenizer) bool {
         const c = self.peek() orelse return false;
         self.location.offset += 1;
-        if (c == '\n') {
-            self.location.line += 1;
-            self.location.column = 1;
-        } else {
-            self.location.column += 1;
-        }
+        _ = c;
         return true;
     }
 
@@ -152,16 +157,20 @@ pub const Tokenizer = struct {
         start: usize,
         kind: NumericLiteralKind,
     ) !void {
-        const num_str = self.source[start..self.location.offset];
+        const num_range = self.textRange(start, self.location.offset);
         const literal = switch (kind) {
-            .decimal_int => tok.Literal{ .decimal_int_literal = num_str },
-            .hexadecimal_int => tok.Literal{ .hexadecimal_int_literal = num_str },
-            .octal_int => tok.Literal{ .octal_int_literal = num_str },
-            .binary_int => tok.Literal{ .binary_int_literal = num_str },
-            .regular_float => tok.Literal{ .regular_float_literal = num_str },
-            .scientific_float => tok.Literal{ .scientific_float_literal = num_str },
+            .decimal_int => tok.TokenLiteral{ .decimal_int_literal = num_range },
+            .hexadecimal_int => tok.TokenLiteral{ .hexadecimal_int_literal = num_range },
+            .octal_int => tok.TokenLiteral{ .octal_int_literal = num_range },
+            .binary_int => tok.TokenLiteral{ .binary_int_literal = num_range },
+            .regular_float => tok.TokenLiteral{ .regular_float_literal = num_range },
+            .scientific_float => tok.TokenLiteral{ .scientific_float_literal = num_range },
         };
         try self.addToken(tok.Content{ .literal = literal }, loc);
+    }
+
+    fn textRange(_: *const Tokenizer, start: usize, end: usize) tok.TextRange {
+        return .{ .start = @intCast(start), .len = @intCast(end - start) };
     }
 
     fn lexPrefixedInteger(
@@ -338,8 +347,7 @@ pub const Tokenizer = struct {
                 if (c == '\n') break;
                 _ = self.advance();
             }
-            const comment = self.source[start..self.location.offset];
-            try self.addToken(tok.Content{ .comment = comment }, loc);
+            try self.addToken(tok.Content{ .comment = self.textRange(start, self.location.offset) }, loc);
             return;
         }
 
@@ -408,7 +416,7 @@ pub const Tokenizer = struct {
             } else if (std.mem.eql(u8, word, "false")) {
                 try self.addToken(tok.Content{ .literal = .{ .bool_literal = false } }, loc);
             } else {
-                try self.addToken(tok.Content{ .identifier = word }, loc);
+                try self.addToken(tok.Content{ .identifier = self.textRange(start, self.location.offset) }, loc);
             }
             return;
         }
@@ -565,7 +573,7 @@ pub const Tokenizer = struct {
                 _ = self.advance(); // salta la comilla de cierre
 
                 try self.addToken(
-                    tok.Content{ .literal = tok.Literal{ .char_literal = char_val } },
+                    tok.Content{ .literal = tok.TokenLiteral{ .char_literal = char_val } },
                     loc,
                 );
                 return;
@@ -574,9 +582,7 @@ pub const Tokenizer = struct {
             '"' => {
                 // saltamos la comilla inicial
                 _ = self.advance();
-
-                var buf = std.array_list.Managed(u8).init(self.allocator);
-                defer buf.deinit();
+                const text_start = self.location.offset;
 
                 // recopilamos caracteres, gestionando escapes
                 while (self.peek()) |c| {
@@ -587,22 +593,15 @@ pub const Tokenizer = struct {
                             try self.diagnostics.add(loc, .syntax, "unterminated string literal", .{});
                             return TokenizerError.UnknownCharacter;
                         };
-                        const ch: u8 = switch (esc) { // escapes comunes
-                            'n' => '\n',
-                            't' => '\t',
-                            'r' => '\r',
-                            '\\' => '\\',
-                            '"' => '"',
-                            '0' => 0,
+                        switch (esc) { // escapes comunes
+                            'n', 't', 'r', '\\', '"', '0' => {},
                             else => {
                                 try self.diagnostics.add(loc, .syntax, "unsupported escape: \\{c}", .{esc});
                                 return TokenizerError.UnknownCharacter;
                             },
-                        };
-                        try buf.append(ch);
+                        }
                         _ = self.advance();
                     } else {
-                        try buf.append(c);
                         _ = self.advance();
                     }
                 }
@@ -610,15 +609,12 @@ pub const Tokenizer = struct {
                     try self.diagnostics.add(loc, .syntax, "unterminated string literal", .{});
                     return TokenizerError.UnknownCharacter;
                 }
+                const text_end = self.location.offset;
                 // cerramos comilla
                 _ = self.advance();
 
-                // copiamos a memoria propia (slice independiente del source)
-                const data = try self.allocator.alloc(u8, buf.items.len);
-                std.mem.copyForwards(u8, data, buf.items);
-
                 try self.addToken(
-                    tok.Content{ .literal = tok.Literal{ .string_literal = data } },
+                    tok.Content{ .literal = tok.TokenLiteral{ .string_literal = self.textRange(text_start, text_end) } },
                     loc,
                 );
                 return;
@@ -634,15 +630,18 @@ pub const Tokenizer = struct {
     }
 
     pub fn deinit(self: *Tokenizer) void {
-        self.tokens.deinit();
+        self.tokens.deinit(self.allocator);
     }
 
     pub fn printTokens(self: *Tokenizer) void {
         std.debug.print("\nTOKENS\n", .{});
         var i: usize = 0;
-        for (self.tokens.items) |token| {
+        const tokens = tok.View.init(&self.tokens);
+        for (tokens.contents, tokens.locations) |content, location| {
+            const token = tok.Token{ .content = content, .location = location };
             std.debug.print("{d}: ", .{i});
-            tok_print.printTokenWithLocation(token, token.location);
+            const position = self.diagnostics.lineColumn(token.location);
+            tok_print.printTokenWithLocation(token, self.source, self.diagnostics.path(token.location), position.line, position.column);
             i += 1;
         }
     }
@@ -664,7 +663,7 @@ fn expectTokenizerDiagnostics(source: []const u8, should_diagnose: bool) !void {
         allocator,
         &diagnostics,
         source,
-        files[0].path,
+        diagnostics.source_db.fileId(0),
     );
     defer tokenizer_ctx.deinit();
 
@@ -688,15 +687,15 @@ fn expectNumericLiteralToken(source: []const u8, expected_tag: LiteralTag) !void
         allocator,
         &diagnostics,
         source,
-        files[0].path,
+        diagnostics.source_db.fileId(0),
     );
     defer tokenizer_ctx.deinit();
 
     const tokens = try tokenizer_ctx.tokenize();
     try std.testing.expect(!diagnostics.hasErrors());
     try std.testing.expect(tokens.len >= 2);
-    try std.testing.expect(tokens[0].content == .literal);
-    try std.testing.expectEqual(expected_tag, std.meta.activeTag(tokens[0].content.literal));
+    try std.testing.expect(tokens.contents[0] == .literal);
+    try std.testing.expectEqual(expected_tag, std.meta.activeTag(tokens.contents[0].literal));
 }
 
 test "tokenizer crash resistance at EOF" {

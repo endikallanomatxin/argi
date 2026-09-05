@@ -1002,7 +1002,7 @@ pub const CodeGenerator = struct {
             const bd = sem.BindingDeclaration{
                 .name = fld.name,
                 .location = f.location,
-                .origin_file = f.location.file,
+                .origin_file = self.diags.path(f.location),
                 .mutability = syn.Mutability.constant,
                 .ty = fld.ty,
                 .initialization = null,
@@ -1027,7 +1027,7 @@ pub const CodeGenerator = struct {
             const bd = sem.BindingDeclaration{
                 .name = fld.name,
                 .location = f.location,
-                .origin_file = f.location.file,
+                .origin_file = self.diags.path(f.location),
                 .mutability = syn.Mutability.variable,
                 .ty = fld.ty,
                 .initialization = fld.default_value,
@@ -1213,7 +1213,7 @@ pub const CodeGenerator = struct {
 
     // Top-level bindings are emitted as LLVM globals. Their initializers must be
     // constants, and global storage is predeclared before codegen starts so
-    // references between module files do not depend on AST order.
+    // References between module files do not depend on syntax tree order.
     fn ensureGlobalBindingInitialized(self: *CodeGenerator, b: *const sem.BindingDeclaration) CodegenError!void {
         const state = self.global_init_state.get(b) orelse .done;
         switch (state) {

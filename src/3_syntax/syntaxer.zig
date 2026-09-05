@@ -1,6 +1,5 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
-const tokp = @import("../2_tokens/token_print.zig");
 const syn = @import("syntax_tree.zig");
 const synp = @import("syntax_tree_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
@@ -35,32 +34,43 @@ pub const SyntaxerError = error{
 // Syntaxer state
 // ─────────────────────────────────────────────────────────────────────────────
 pub const Syntaxer = struct {
-    tokens: []const tok.Token,
+    source: []const u8,
     index: usize,
     allocator: std.mem.Allocator,
-    st: std.array_list.Managed(*syn.STNode),
+    file: syn.SyntaxFile,
+    tokens: tok.View,
     diags: *diagnostic.Diagnostics,
     parsing_pipe_rhs: bool,
-    node_count: usize,
+    scratch: std.ArrayList(syn.NodeIndex),
 
-    pub fn init(alloc: std.mem.Allocator, toks: []const tok.Token, diags: *diagnostic.Diagnostics) Syntaxer {
-        return .{
-            .tokens = toks,
-            .index = 0,
-            .allocator = alloc,
-            .st = std.array_list.Managed(*syn.STNode).init(alloc),
-            .diags = diags,
-            .parsing_pipe_rhs = false,
-            .node_count = 0,
-        };
+    pub fn init(alloc: std.mem.Allocator, toks: tok.View, source: []const u8, diags: *diagnostic.Diagnostics) !Syntaxer {
+        return initFile(alloc, try syn.SyntaxFile.init(alloc, toks.locations[0].file, toks), source, diags);
+    }
+
+    pub fn initFile(alloc: std.mem.Allocator, file: syn.SyntaxFile, source: []const u8, diags: *diagnostic.Diagnostics) Syntaxer {
+        const tokens = tok.View.init(&file.tokens);
+        return .{ .source = source, .index = 0, .allocator = alloc, .file = file, .tokens = tokens, .diags = diags, .parsing_pipe_rhs = false, .scratch = .empty };
     }
 
     pub fn nodeCount(self: *const Syntaxer) usize {
-        return self.node_count;
+        return self.file.nodes.len;
     }
 
-    pub fn parse(self: *Syntaxer) ![]const *syn.STNode {
-        self.st = parseSentences(self) catch |err| {
+    pub fn deinit(self: *Syntaxer) void {
+        const file_id = self.file.file_id;
+        self.file.deinit(self.allocator);
+        self.file = .{ .file_id = file_id };
+    }
+
+    pub fn parse(self: *Syntaxer) !syn.SyntaxFile {
+        defer self.scratch.deinit(self.allocator);
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
+
+        const roots = blk: {
+            try self.reserveSyntaxStorage();
+            break :blk parseSentences(self);
+        } catch |err| {
             if (err == SyntaxerError.OutOfMemory) {
                 try self.diags.add(self.tokenLocation(), .internal, "out of memory while parsing", .{});
             } else {
@@ -68,36 +78,49 @@ pub const Syntaxer = struct {
             }
             return err;
         };
-        return self.st.items; // slice inmutable a devolver
+        self.file.roots = try self.allocator.dupe(syn.NodeIndex, roots);
+        const result = self.file;
+        self.file = .{ .file_id = result.file_id };
+        return result;
     }
 
     // ───────────────────────────────── token helpers ─────────────────────────
-    fn current(self: *Syntaxer) tok.Token {
-        return self.tokens[self.index];
+    fn contentAt(self: *const Syntaxer, index: usize) tok.Content {
+        return self.tokens.contents[index];
     }
-    fn next(self: *Syntaxer) ?tok.Token {
-        return if (self.index + 1 < self.tokens.len) self.tokens[self.index + 1] else null;
+    fn currentContent(self: *const Syntaxer) tok.Content {
+        return self.contentAt(self.index);
+    }
+    fn locationAt(self: *const Syntaxer, index: usize) tok.Location {
+        return self.tokens.locations[index];
+    }
+    fn currentLocation(self: *const Syntaxer) tok.Location {
+        return self.locationAt(self.index);
     }
     fn advanceOne(self: *Syntaxer) void {
         if (self.index < self.tokens.len) self.index += 1;
     }
     fn tokenLocation(self: *Syntaxer) tok.Location {
-        return self.current().location;
+        return self.currentLocation();
     }
 
     fn tokenIs(self: *Syntaxer, tag: tok.Content) bool {
-        return std.meta.activeTag(self.current().content) == std.meta.activeTag(tag);
+        return std.meta.activeTag(self.currentContent()) == std.meta.activeTag(tag);
     }
 
     fn currentIdentifierEquals(self: *Syntaxer, expected: []const u8) bool {
-        return switch (self.current().content) {
-            .identifier => |name| std.mem.eql(u8, name, expected),
+        return switch (self.currentContent()) {
+            .identifier => |range| std.mem.eql(u8, range.slice(self.source), expected),
             else => false,
         };
     }
 
+    fn tokenText(self: *const Syntaxer, range: tok.TextRange) []const u8 {
+        return range.slice(self.source);
+    }
+
     fn currentCanStartBareExpressionStatement(self: *Syntaxer) bool {
-        return switch (self.current().content) {
+        return switch (self.currentContent()) {
             .literal,
             .open_parenthesis,
             .open_brace,
@@ -115,16 +138,16 @@ pub const Syntaxer = struct {
 
         var depth: i32 = 0;
         var idx: usize = self.index;
-        while (idx < self.tokens.len) : (idx += 1) {
-            const tag = std.meta.activeTag(self.tokens[idx].content);
+        while (idx < self.file.tokens.len) : (idx += 1) {
+            const tag = std.meta.activeTag(self.contentAt(idx));
             switch (tag) {
                 .open_bracket => depth += 1,
                 .close_bracket => {
                     depth -= 1;
                     if (depth == 0) {
                         var lookahead = idx + 1;
-                        while (lookahead < self.tokens.len) : (lookahead += 1) {
-                            const next_tag = std.meta.activeTag(self.tokens[lookahead].content);
+                        while (lookahead < self.file.tokens.len) : (lookahead += 1) {
+                            const next_tag = std.meta.activeTag(self.contentAt(lookahead));
                             switch (next_tag) {
                                 .new_line, .comment => continue,
                                 else => return next_tag == .open_parenthesis,
@@ -140,8 +163,8 @@ pub const Syntaxer = struct {
     }
 
     fn skipNewLinesAndComments(self: *Syntaxer) void {
-        while (self.index < self.tokens.len) {
-            switch (self.current().content) {
+        while (self.index < self.file.tokens.len) {
+            switch (self.currentContent()) {
                 .new_line, .comment => self.advanceOne(),
                 else => break,
             }
@@ -149,20 +172,32 @@ pub const Syntaxer = struct {
     }
 
     // ─────────────────────────────── node helpers ────────────────────────────
-    fn makeNode(self: *Syntaxer, c: syn.Content, l: tok.Location) !*syn.STNode {
-        const n = try self.allocator.create(syn.STNode);
-        n.*.content = c;
-        n.*.location = l;
-        self.node_count += 1;
-        return n;
+    fn addNode(self: *Syntaxer, tag: syn.Node.Tag, main_token: syn.TokenIndex, data: syn.Node.Data) SyntaxerError!syn.NodeIndex {
+        return self.file.addNode(self.allocator, .{ .tag = tag, .main_token = main_token, .data = data }) catch return error.OutOfMemory;
     }
 
-    fn parseSignedNumericLiteral(self: *Syntaxer) !*syn.STNode {
+    fn addExtra(self: *Syntaxer, extra: anytype) SyntaxerError!syn.ExtraIndex {
+        return self.file.addExtra(self.allocator, extra) catch return error.OutOfMemory;
+    }
+
+    fn addNodeRange(self: *Syntaxer, nodes: []const syn.NodeIndex) SyntaxerError!syn.NodeRange {
+        return self.file.addNodeRange(self.allocator, nodes) catch return error.OutOfMemory;
+    }
+
+    fn reserveSyntaxStorage(self: *Syntaxer) SyntaxerError!void {
+        const estimate = self.file.tokens.len / 2;
+        self.file.ensureNodeCapacity(self.allocator, estimate) catch return error.OutOfMemory;
+        self.file.extra_data.ensureTotalCapacity(self.allocator, estimate) catch return error.OutOfMemory;
+        self.scratch.ensureTotalCapacity(self.allocator, estimate / 4) catch return error.OutOfMemory;
+    }
+
+    fn parseSignedNumericLiteral(self: *Syntaxer) !syn.NodeIndex {
+        const minus_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         const minus_loc = self.tokenLocation();
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        const literal = switch (self.current().content) {
+        const literal = switch (self.currentContent()) {
             .literal => |lit| lit,
             else => {
                 try self.diags.add(minus_loc, .syntax, "expected numeric literal after unary '-'", .{});
@@ -170,43 +205,39 @@ pub const Syntaxer = struct {
             },
         };
 
-        const signed_literal = switch (literal) {
-            .decimal_int_literal => |text| tok.Literal{ .decimal_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
-            .hexadecimal_int_literal => |text| tok.Literal{ .hexadecimal_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
-            .octal_int_literal => |text| tok.Literal{ .octal_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
-            .binary_int_literal => |text| tok.Literal{ .binary_int_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
-            .regular_float_literal => |text| tok.Literal{ .regular_float_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
-            .scientific_float_literal => |text| tok.Literal{ .scientific_float_literal = try std.fmt.allocPrint(self.allocator, "-{s}", .{text}) },
+        switch (literal) {
+            .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal, .regular_float_literal, .scientific_float_literal => {},
             else => {
                 try self.diags.add(minus_loc, .syntax, "expected numeric literal after unary '-'", .{});
                 return SyntaxerError.ExpectedIntLiteral;
             },
-        };
+        }
 
         self.advanceOne();
-        return try self.makeNode(.{ .literal = signed_literal }, minus_loc);
+        return try self.addNode(.literal, minus_token, .{ .token = @enumFromInt(@intFromEnum(minus_token) + 1) });
     }
 
     // ───────────────────────────────  atoms ──────────────────────────────────
     fn parseIdentifier(self: *Syntaxer) SyntaxerError![]const u8 {
-        const t = self.current();
-        if (t.content != .identifier) {
-            try self.diags.add(self.tokenLocation(), .syntax, "expected identifier, found '{s}'", .{@tagName(self.current().content)});
+        const content = self.currentContent();
+        if (content != .identifier) {
+            try self.diags.add(self.tokenLocation(), .syntax, "expected identifier, found '{s}'", .{@tagName(content)});
             return SyntaxerError.ExpectedIdentifier;
         }
-        const name = t.content.identifier;
+        const name = self.tokenText(content.identifier);
         self.advanceOne();
         return name;
     }
 
-    fn parseName(self: *Syntaxer) SyntaxerError!syn.Name {
-        const loc = self.tokenLocation();
-        const ident = try self.parseIdentifier();
-        return .{ .string = ident, .location = loc };
+    const ParsedName = struct { token: syn.TokenIndex, text: []const u8 };
+
+    fn parseName(self: *Syntaxer) SyntaxerError!ParsedName {
+        const token_index: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+        return .{ .token = token_index, .text = try self.parseIdentifier() };
     }
 
-    fn parseOperatorName(self: *Syntaxer) SyntaxerError![]const u8 {
-        switch (self.current().content) {
+    fn parseOperatorName(self: *Syntaxer, operator_token: syn.TokenIndex) SyntaxerError!ParsedName {
+        switch (self.currentContent()) {
             .identifier => {
                 const ident = try self.parseIdentifier();
 
@@ -219,7 +250,15 @@ pub const Syntaxer = struct {
                     self.advanceOne();
                     if (!self.tokenIs(.close_bracket)) return SyntaxerError.ExpectedRightBracket;
                     self.advanceOne();
-                    return try std.fmt.allocPrint(self.allocator, "operator {s}[]", .{ident});
+                    const name = if (std.mem.eql(u8, ident, "get"))
+                        "operator get[]"
+                    else if (std.mem.eql(u8, ident, "set"))
+                        "operator set[]"
+                    else if (std.mem.eql(u8, ident, "get_ro_pointer"))
+                        "operator get_ro_pointer[]"
+                    else
+                        "operator get_rw_pointer[]";
+                    return .{ .token = operator_token, .text = name };
                 }
 
                 try self.diags.add(self.tokenLocation(), .syntax, "unsupported operator '{s}'", .{ident});
@@ -236,7 +275,7 @@ pub const Syntaxer = struct {
                 };
                 if (name.len == 0) return SyntaxerError.ExpectedIdentifier;
                 self.advanceOne();
-                return name;
+                return .{ .token = operator_token, .text = name };
             },
             .binary_operator => |op| {
                 const name = switch (op) {
@@ -248,7 +287,7 @@ pub const Syntaxer = struct {
                 };
                 if (name.len == 0) return SyntaxerError.ExpectedIdentifier;
                 self.advanceOne();
-                return name;
+                return .{ .token = operator_token, .text = name };
             },
             else => {
                 try self.diags.add(self.tokenLocation(), .syntax, "expected operator name after 'operator'", .{});
@@ -257,16 +296,18 @@ pub const Syntaxer = struct {
         }
     }
 
-    fn parseGenericParamNames(self: *Syntaxer) SyntaxerError![]const []const u8 {
+    fn parseGenericParamNames(self: *Syntaxer) SyntaxerError!syn.NodeRange {
         // Parses: [T, U, ...]
         if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var names = std.array_list.Managed([]const u8).init(self.allocator);
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
         while (!self.tokenIs(.close_bracket)) {
-            const n = try self.parseIdentifier();
-            try names.append(n);
+            const token_index: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+            _ = try self.parseIdentifier();
+            try self.scratch.append(self.allocator, try self.addNode(.type_name, token_index, .{ .unused = .{ 0, 0 } }));
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
                 self.advanceOne();
@@ -275,18 +316,19 @@ pub const Syntaxer = struct {
         }
         if (!self.tokenIs(.close_bracket)) return SyntaxerError.ExpectedRightBracket;
         self.advanceOne();
-        return names.items;
+        return self.addNodeRange(self.scratch.items[scratch_top..]);
     }
 
-    fn parseTypeList(self: *Syntaxer) SyntaxerError![]const syn.Type {
+    fn parseTypeList(self: *Syntaxer) SyntaxerError!syn.NodeRange {
         // Parses: [Type, &Type, ( .a: Type=..., ... ) , ...]
         if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
         self.advanceOne();
         self.skipNewLinesAndComments();
-        var tys = std.array_list.Managed(syn.Type).init(self.allocator);
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
         while (!self.tokenIs(.close_bracket)) {
             const t = (try self.parseType()).?; // types are mandatory here
-            try tys.append(t);
+            try self.scratch.append(self.allocator, t);
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
                 self.advanceOne();
@@ -295,16 +337,17 @@ pub const Syntaxer = struct {
         }
         if (!self.tokenIs(.close_bracket)) return SyntaxerError.ExpectedRightBracket;
         self.advanceOne();
-        return tys.items;
+        return self.addNodeRange(self.scratch.items[scratch_top..]);
     }
 
     // ────────────────────────────  TYPE ANNOTATIONS ──────────────────────────
-    fn parseType(self: *Syntaxer) SyntaxerError!?syn.Type {
+    fn parseType(self: *Syntaxer) SyntaxerError!?syn.NodeIndex {
         // permitimos omitir la anotación
         if (self.tokenIs(.equal) or self.tokenIs(.comma) or self.tokenIs(.close_parenthesis))
             return null;
 
         if (self.tokenIs(.question_mark)) {
+            const question_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             const question_loc = self.tokenLocation();
             self.advanceOne();
 
@@ -314,47 +357,28 @@ pub const Syntaxer = struct {
                 return SyntaxerError.ExpectedIdentifier;
             }
 
-            const nullable_fields = try self.allocator.alloc(syn.StructTypeLiteralField, 1);
-            nullable_fields[0] = .{
-                .name = .{ .string = "t", .location = question_loc },
-                .type = inner_ty_opt.?,
-                .default_value = null,
-            };
-
-            return syn.Type{ .generic_type_instantiation = .{
-                .base_name = .{ .string = "Nullable", .location = question_loc },
-                .args = .{ .fields = nullable_fields },
-            } };
-        } else if (self.tokenIs(.open_parenthesis) and self.next() != null and self.next().?.content == .close_parenthesis) {
-            return syn.Type{ .struct_type_literal = try self.parseStructTypeLiteral() };
+            return try self.addNode(.nullable_type, question_token, .{ .node = inner_ty_opt.? });
+        } else if (self.tokenIs(.open_parenthesis) and self.index + 1 < self.tokens.len and self.contentAt(self.index + 1) == .close_parenthesis) {
+            return try self.parseStructTypeLiteral();
         } else if (self.tokenIs(.open_bracket)) {
+            const bracket_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             const len_loc = self.tokenLocation();
             self.advanceOne();
             self.skipNewLinesAndComments();
 
-            if (std.meta.activeTag(self.current().content) != .literal) {
+            if (std.meta.activeTag(self.currentContent()) != .literal) {
                 try self.diags.add(len_loc, .syntax, "expected array length integer literal", .{});
                 return SyntaxerError.ExpectedIntLiteral;
             }
 
-            const length = length_blk: {
-                const lit = switch (self.current().content) {
-                    .literal => |value| value,
-                    else => unreachable,
-                };
-                switch (lit) {
-                    .decimal_int_literal => |text| {
-                        break :length_blk std.fmt.parseInt(usize, text, 10) catch {
-                            try self.diags.add(len_loc, .syntax, "invalid array length literal", .{});
-                            return SyntaxerError.ExpectedIntLiteral;
-                        };
-                    },
-                    else => {
-                        try self.diags.add(len_loc, .syntax, "array length must be a decimal integer literal", .{});
-                        return SyntaxerError.ExpectedIntLiteral;
-                    },
-                }
-            };
+            const length_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+            switch (self.currentContent().literal) {
+                .decimal_int_literal => {},
+                else => {
+                    try self.diags.add(len_loc, .syntax, "array length must be a decimal integer literal", .{});
+                    return SyntaxerError.ExpectedIntLiteral;
+                },
+            }
             self.advanceOne();
             self.skipNewLinesAndComments();
 
@@ -369,19 +393,14 @@ pub const Syntaxer = struct {
                 try self.diags.add(len_loc, .syntax, "expected element type after array length", .{});
                 return SyntaxerError.ExpectedIdentifier;
             }
-            const elem_ty = elem_ty_opt.?;
-            const elem_ptr = try self.allocator.create(syn.Type);
-            elem_ptr.* = elem_ty;
-
-            const array_ty = try self.allocator.create(syn.ArrayType);
-            array_ty.* = .{ .length = length, .element = elem_ptr };
-            return syn.Type{ .array_type = array_ty };
+            return try self.addNode(.array_type, bracket_token, .{ .token_and_node = .{ .token = length_token, .node = elem_ty_opt.? } });
         } else if (self.tokenIs(.ampersand) or self.tokenIs(.dollar)) {
-            var mutability: syn.PointerMutability = .read_only;
+            var mutable = false;
+            const main_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             var op_loc = self.tokenLocation();
 
             if (self.tokenIs(.dollar)) {
-                mutability = .read_write;
+                mutable = true;
                 self.advanceOne();
 
                 if (!self.tokenIs(.ampersand)) {
@@ -402,39 +421,34 @@ pub const Syntaxer = struct {
                 try self.diags.add(op_loc, .syntax, "expected type after pointer prefix", .{});
                 return SyntaxerError.ExpectedIdentifier;
             }
-            const base_ty = base_ty_opt.?;
-
-            const ptr_inner = try self.allocator.create(syn.Type);
-            ptr_inner.* = base_ty;
-
-            const ptr_ty = try self.allocator.create(syn.PointerType);
-            ptr_ty.* = .{ .mutability = mutability, .child = ptr_inner };
-
-            return syn.Type{ .pointer_type = ptr_ty };
+            return try self.addNode(if (mutable) .pointer_type_mut else .pointer_type, main_token, .{ .node = base_ty_opt.? });
         } else if (self.tokenIs(.open_parenthesis)) {
             if (self.parenthesizedTypeIsChoiceLiteral()) {
-                const lit = try self.parseChoiceTypeLiteral();
-                return syn.Type{ .choice_type_literal = lit };
+                return try self.parseChoiceTypeLiteral();
             }
-            const lit = try self.parseStructTypeLiteral();
-            return syn.Type{ .struct_type_literal = lit };
+            return try self.parseStructTypeLiteral();
         }
 
-        var tname = try self.parseName();
+        const name = try self.parseName();
+        var qualifier_token: ?syn.TokenIndex = null;
+        var name_token = name.token;
         if (self.tokenIs(.dot)) {
             self.advanceOne();
             const rhs = try self.parseName();
-            tname = .{
-                .string = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ tname.string, rhs.string }),
-                .location = tname.location,
-            };
+            qualifier_token = name.token;
+            name_token = rhs.token;
         }
+        const base = try self.addNode(.type_name, name_token, .{ .token_and_optional_token = .{
+            .token = name_token,
+            .optional = syn.OptionalTokenIndex.init(qualifier_token),
+        } });
         if (self.tokenIs(.hash)) {
+            const hash_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
             const gen_args = try self.parseStructTypeLiteral();
-            return syn.Type{ .generic_type_instantiation = .{ .base_name = tname, .args = gen_args } };
+            return try self.addNode(.generic_type_instantiation, hash_token, .{ .node_and_node = .{ .first = base, .second = gen_args } });
         }
-        return syn.Type{ .type_name = tname };
+        return base;
     }
 
     // Parse an abstract body: a parenthesized, comma-separated list of items.
@@ -443,23 +457,20 @@ pub const Syntaxer = struct {
     //   - a function requirement: name ( StructTypeLiteral ) -> ( StructTypeLiteral )
     // Newlines and comments are ignored.
     fn parseAbstractBody(self: *Syntaxer) SyntaxerError!struct {
-        req_names: []const []const u8,
-        req_funcs: []const syn.AbstractFunctionRequirement,
+        req_names: syn.NodeRange,
+        req_funcs: syn.NodeRange,
     } {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var names = std.array_list.Managed([]const u8).init(self.allocator);
-        var funcs = std.array_list.Managed(syn.AbstractFunctionRequirement).init(self.allocator);
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
         while (!self.tokenIs(.close_parenthesis)) {
             var name = try self.parseName();
-            const name_loc = name.location;
-
-            if (std.mem.eql(u8, name.string, "operator")) {
-                const operator_name = try self.parseOperatorName();
-                name = .{ .string = operator_name, .location = name_loc };
+            if (std.mem.eql(u8, name.text, "operator")) {
+                name = try self.parseOperatorName(name.token);
             }
 
             if (self.tokenIs(.open_parenthesis)) {
@@ -467,13 +478,19 @@ pub const Syntaxer = struct {
                 if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
                 self.advanceOne();
                 const out_st = try self.parseStructTypeLiteral();
-                try funcs.append(.{
-                    .name = name,
+                const empty = try self.addNodeRange(&.{});
+                const extra = try self.addExtra(syn.FunctionExtra{
+                    .name_token = name.token,
+                    .generic_params_start = empty.start,
+                    .generic_params_end = empty.end,
+                    .generic_params_struct = .none,
                     .input = in_st,
                     .output = out_st,
+                    .body = .none,
                 });
+                try self.scratch.append(self.allocator, try self.addNode(.abstract_function_requirement, name.token, .{ .extra = extra }));
             } else {
-                try names.append(name.string); // composed abstracts siguen siendo []const []const u8
+                try self.scratch.append(self.allocator, try self.addNode(.type_name, name.token, .{ .unused = .{ 0, 0 } }));
             }
 
             self.skipNewLinesAndComments();
@@ -484,20 +501,36 @@ pub const Syntaxer = struct {
         }
         if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
         self.advanceOne();
-        return .{ .req_names = names.items, .req_funcs = funcs.items };
+        const items_end = self.scratch.items.len;
+        var index = scratch_top;
+        while (index < items_end) : (index += 1) {
+            const item = self.scratch.items[index];
+            if (self.file.tag(item) == .type_name) try self.scratch.append(self.allocator, item);
+        }
+        const funcs_start = self.scratch.items.len;
+        index = scratch_top;
+        while (index < items_end) : (index += 1) {
+            const item = self.scratch.items[index];
+            if (self.file.tag(item) == .abstract_function_requirement) try self.scratch.append(self.allocator, item);
+        }
+        return .{
+            .req_names = try self.addNodeRange(self.scratch.items[items_end..funcs_start]),
+            .req_funcs = try self.addNodeRange(self.scratch.items[funcs_start..]),
+        };
     }
 
-    fn parseListLiteral(self: *Syntaxer) SyntaxerError!*syn.STNode {
+    fn parseListLiteral(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
-        const start_loc = self.tokenLocation();
+        const start_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var elems = std.array_list.Managed(*syn.STNode).init(self.allocator);
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
         while (!self.tokenIs(.close_parenthesis)) {
             const elem = try self.parseExpression();
-            try elems.append(elem);
+            try self.scratch.append(self.allocator, elem);
 
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
@@ -509,41 +542,44 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
         self.advanceOne();
 
-        return try self.makeNode(
-            .{ .list_literal = .{ .element_type = null, .elements = elems.items } },
-            start_loc,
-        );
+        return try self.addNode(.list_literal, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
     }
 
     // ( .field : Type? (= expr)? , ... )
-    fn parseStructTypeLiteral(self: *Syntaxer) SyntaxerError!syn.StructTypeLiteral {
+    fn parseStructTypeLiteral(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        const start_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var fields = std.array_list.Managed(syn.StructTypeLiteralField).init(self.allocator);
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
-                try self.diags.add(self.tokenLocation(), .syntax, "expected struct field, found '{s}'", .{@tagName(self.current().content)});
+                try self.diags.add(self.tokenLocation(), .syntax, "expected struct field, found '{s}'", .{@tagName(self.currentContent())});
                 return SyntaxerError.ExpectedStructField;
             }
             self.advanceOne();
             const fname = try self.parseName();
 
-            var ftype: ?syn.Type = null;
+            var ftype: ?syn.NodeIndex = null;
             if (self.tokenIs(.colon)) {
                 self.advanceOne();
                 ftype = try self.parseType();
             }
 
-            var def_val: ?*syn.STNode = null;
+            var def_val: ?syn.NodeIndex = null;
             if (self.tokenIs(.equal)) {
                 self.advanceOne();
                 def_val = try self.parseExpression();
             }
 
-            try fields.append(.{ .name = fname, .type = ftype, .default_value = def_val });
+            const extra = try self.addExtra(syn.FieldExtra{
+                .type_node = syn.OptionalNodeIndex.init(ftype),
+                .default_value = syn.OptionalNodeIndex.init(def_val),
+            });
+            try self.scratch.append(self.allocator, try self.addNode(.struct_type_field, fname.token, .{ .extra = extra }));
 
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
@@ -554,11 +590,12 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
         self.advanceOne();
 
-        return .{ .fields = fields.items };
+        return try self.addNode(.struct_type_literal, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
     }
 
-    fn parseFunctionOutputType(self: *Syntaxer) SyntaxerError!syn.StructTypeLiteral {
+    fn parseFunctionOutputType(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         if (self.tokenIs(.bang)) {
+            const bang_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             const bang_loc = self.tokenLocation();
             self.advanceOne();
 
@@ -568,49 +605,44 @@ pub const Syntaxer = struct {
                 return SyntaxerError.ExpectedIdentifier;
             }
 
-            const inner_ptr = try self.allocator.create(syn.Type);
-            inner_ptr.* = inner_ty_opt.?;
-
-            const field = syn.StructTypeLiteralField{
-                .name = .{ .string = "result", .location = bang_loc },
-                .type = syn.Type{ .inferred_errable = inner_ptr },
-                .default_value = null,
-            };
-            const fields = try self.allocator.alloc(syn.StructTypeLiteralField, 1);
-            fields[0] = field;
-            return .{ .fields = fields };
+            const inferred = try self.addNode(.inferred_errable_type, bang_token, .{ .node = inner_ty_opt.? });
+            const field_extra = try self.addExtra(syn.FieldExtra{ .type_node = inferred.optional(), .default_value = .none });
+            const field = try self.addNode(.inferred_result_field, bang_token, .{ .extra = field_extra });
+            return try self.addNode(.struct_type_literal, bang_token, .{ .extra_range = try self.addNodeRange(&.{field}) });
         }
 
         return self.parseStructTypeLiteral();
     }
 
-    fn parseGenericParamsStruct(self: *Syntaxer) SyntaxerError!syn.StructTypeLiteral {
+    fn parseGenericParamsStruct(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        const start_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var fields = std.array_list.Managed(syn.StructTypeLiteralField).init(self.allocator);
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
-                try self.diags.add(self.tokenLocation(), .syntax, "expected generic parameter, found '{s}'", .{@tagName(self.current().content)});
+                try self.diags.add(self.tokenLocation(), .syntax, "expected generic parameter, found '{s}'", .{@tagName(self.currentContent())});
                 return SyntaxerError.ExpectedStructField;
             }
             self.advanceOne();
             const fname = try self.parseName();
 
-            var ftype: ?syn.Type = null;
+            var ftype: ?syn.NodeIndex = null;
             if (self.tokenIs(.colon)) {
                 self.advanceOne();
                 ftype = try self.parseType();
 
                 if (self.tokenIs(.colon)) {
-                    if (ftype == null or ftype.? != .type_name or !std.mem.eql(u8, ftype.?.type_name.string, "Type")) {
+                    if (ftype == null or self.file.tag(ftype.?) != .type_name or !std.mem.eql(u8, self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(ftype.?))).identifier), "Type")) {
                         try self.diags.add(
                             self.tokenLocation(),
                             .syntax,
                             "generic parameter bounds use '.{s}: Type: Constraint'",
-                            .{fname.string},
+                            .{fname.text},
                         );
                         return SyntaxerError.ExpectedStructField;
                     }
@@ -619,13 +651,17 @@ pub const Syntaxer = struct {
                 }
             }
 
-            var def_val: ?*syn.STNode = null;
+            var def_val: ?syn.NodeIndex = null;
             if (self.tokenIs(.equal)) {
                 self.advanceOne();
                 def_val = try self.parseExpression();
             }
 
-            try fields.append(.{ .name = fname, .type = ftype, .default_value = def_val });
+            const extra = try self.addExtra(syn.FieldExtra{
+                .type_node = syn.OptionalNodeIndex.init(ftype),
+                .default_value = syn.OptionalNodeIndex.init(def_val),
+            });
+            try self.scratch.append(self.allocator, try self.addNode(.struct_type_field, fname.token, .{ .extra = extra }));
 
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
@@ -636,15 +672,17 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
         self.advanceOne();
 
-        return .{ .fields = fields.items };
+        return try self.addNode(.struct_type_literal, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
     }
 
-    fn parseChoiceTypeLiteral(self: *Syntaxer) SyntaxerError!syn.ChoiceTypeLiteral {
+    fn parseChoiceTypeLiteral(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
+        const start_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var variants = std.array_list.Managed(syn.ChoiceTypeLiteralVariant).init(self.allocator);
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
         while (!self.tokenIs(.close_parenthesis)) {
             var is_default = false;
@@ -654,12 +692,12 @@ pub const Syntaxer = struct {
                 self.skipNewLinesAndComments();
             }
 
-            var module_qualifier: ?syn.Name = null;
-            if (std.meta.activeTag(self.current().content) == .identifier) {
+            var module_qualifier: ?ParsedName = null;
+            if (std.meta.activeTag(self.currentContent()) == .identifier) {
                 const qualifier = try self.parseName();
                 self.skipNewLinesAndComments();
                 if (!self.tokenIs(.double_dot)) {
-                    try self.diags.add(qualifier.location, .syntax, "expected '..' after choice option module qualifier", .{});
+                    try self.diags.add(self.locationAt(@intFromEnum(qualifier.token)), .syntax, "expected '..' after choice option module qualifier", .{});
                     return SyntaxerError.ExpectedIdentifier;
                 }
                 module_qualifier = qualifier;
@@ -669,16 +707,18 @@ pub const Syntaxer = struct {
             }
             self.advanceOne();
             const vname = try self.parseName();
-            var payload_type: ?syn.Type = null;
+            var payload_type: ?syn.NodeIndex = null;
             if (self.tokenStartsChoicePayloadType()) {
                 payload_type = (try self.parseType()).?;
             }
-            try variants.append(.{
-                .name = vname,
-                .module_qualifier = module_qualifier,
-                .is_default = is_default,
-                .payload_type = payload_type,
-            });
+            try self.scratch.append(self.allocator, try self.addNode(
+                if (is_default) .choice_type_variant_default else .choice_type_variant,
+                vname.token,
+                .{ .optional_token_and_optional_node = .{
+                    .token = syn.OptionalTokenIndex.init(if (module_qualifier) |qualifier| qualifier.token else null),
+                    .node = syn.OptionalNodeIndex.init(payload_type),
+                } },
+            ));
 
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
@@ -689,18 +729,18 @@ pub const Syntaxer = struct {
 
         if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
         self.advanceOne();
-        return .{ .variants = variants.items };
+        return try self.addNode(.choice_type_literal, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
     }
 
     fn tokenStartsChoicePayloadType(self: *Syntaxer) bool {
-        return switch (self.current().content) {
+        return switch (self.currentContent()) {
             .identifier, .question_mark, .open_parenthesis, .open_bracket, .ampersand, .dollar => true,
             else => false,
         };
     }
 
     fn tokenStartsChoicePayloadExpr(self: *Syntaxer) bool {
-        return switch (self.current().content) {
+        return switch (self.currentContent()) {
             .identifier, .literal, .double_dot, .open_parenthesis, .tilde, .hash, .ampersand, .dollar => true,
             .binary_operator => |op| op == .subtraction,
             else => false,
@@ -711,22 +751,22 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.open_parenthesis)) return false;
 
         var idx = self.index + 1;
-        while (idx < self.tokens.len) : (idx += 1) {
-            const tag = std.meta.activeTag(self.tokens[idx].content);
+        while (idx < self.file.tokens.len) : (idx += 1) {
+            const tag = std.meta.activeTag(self.contentAt(idx));
             switch (tag) {
                 .new_line, .comment => continue,
                 .double_dot => return true,
                 .equal => {
                     idx += 1;
-                    while (idx < self.tokens.len) : (idx += 1) {
-                        const inner_tag = std.meta.activeTag(self.tokens[idx].content);
+                    while (idx < self.file.tokens.len) : (idx += 1) {
+                        const inner_tag = std.meta.activeTag(self.contentAt(idx));
                         switch (inner_tag) {
                             .new_line, .comment => continue,
                             .double_dot => return true,
                             .identifier => {
                                 var j = idx + 1;
-                                while (j < self.tokens.len) : (j += 1) {
-                                    const next_tag = std.meta.activeTag(self.tokens[j].content);
+                                while (j < self.file.tokens.len) : (j += 1) {
+                                    const next_tag = std.meta.activeTag(self.contentAt(j));
                                     switch (next_tag) {
                                         .new_line, .comment => continue,
                                         .double_dot => return true,
@@ -742,8 +782,8 @@ pub const Syntaxer = struct {
                 },
                 .identifier => {
                     var j = idx + 1;
-                    while (j < self.tokens.len) : (j += 1) {
-                        const next_tag = std.meta.activeTag(self.tokens[j].content);
+                    while (j < self.file.tokens.len) : (j += 1) {
+                        const next_tag = std.meta.activeTag(self.contentAt(j));
                         switch (next_tag) {
                             .new_line, .comment => continue,
                             .double_dot => return true,
@@ -761,12 +801,12 @@ pub const Syntaxer = struct {
 
     fn currentSentenceStartsChoiceOptionDeclaration(self: *Syntaxer) bool {
         if (!self.tokenIs(.double_dot)) return false;
-        if (self.index + 1 >= self.tokens.len) return false;
-        if (std.meta.activeTag(self.tokens[self.index + 1].content) != .identifier) return false;
+        if (self.index + 1 >= self.file.tokens.len) return false;
+        if (std.meta.activeTag(self.contentAt(self.index + 1)) != .identifier) return false;
 
         var idx = self.index + 2;
-        while (idx < self.tokens.len) : (idx += 1) {
-            const tag = std.meta.activeTag(self.tokens[idx].content);
+        while (idx < self.file.tokens.len) : (idx += 1) {
+            const tag = std.meta.activeTag(self.contentAt(idx));
             switch (tag) {
                 .comment => continue,
                 .new_line, .eof, .close_brace => return true,
@@ -781,8 +821,8 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.comma)) return false;
 
         var idx: usize = self.index + 1;
-        while (idx < self.tokens.len) : (idx += 1) {
-            switch (self.tokens[idx].content) {
+        while (idx < self.file.tokens.len) : (idx += 1) {
+            switch (self.contentAt(idx)) {
                 .new_line, .comment => continue,
                 .identifier => return true,
                 else => return false,
@@ -792,22 +832,24 @@ pub const Syntaxer = struct {
         return false;
     }
 
-    fn parseReachDirective(self: *Syntaxer, hash_loc: tok.Location) SyntaxerError!*syn.STNode {
-        var alternatives = std.array_list.Managed(syn.ReachAlternative).init(self.allocator);
+    fn parseReachDirective(self: *Syntaxer, hash_token: syn.TokenIndex) SyntaxerError!syn.NodeIndex {
+        const alternatives_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(alternatives_top);
 
         while (true) {
-            var segments = std.array_list.Managed(syn.Name).init(self.allocator);
+            const segments_top = self.scratch.items.len;
             const first = try self.parseName();
-            try segments.append(first);
+            try self.scratch.append(self.allocator, try self.addNode(.identifier, first.token, .{ .unused = .{ 0, 0 } }));
 
             while (self.tokenIs(.dot)) {
                 self.advanceOne();
                 const segment = try self.parseName();
-                try segments.append(segment);
+                try self.scratch.append(self.allocator, try self.addNode(.identifier, segment.token, .{ .unused = .{ 0, 0 } }));
             }
 
-            try alternatives.append(.{ .segments = try segments.toOwnedSlice() });
-            segments.deinit();
+            const segments_range = try self.addNodeRange(self.scratch.items[segments_top..]);
+            self.scratch.shrinkRetainingCapacity(segments_top);
+            try self.scratch.append(self.allocator, try self.addNode(.reach_alternative, first.token, .{ .extra_range = segments_range }));
 
             self.skipNewLinesAndComments();
             if (!self.commaStartsReachAlternative()) break;
@@ -815,25 +857,17 @@ pub const Syntaxer = struct {
             self.skipNewLinesAndComments();
         }
 
-        return try self.makeNode(.{ .reach_directive = .{ .alternatives = try alternatives.toOwnedSlice() } }, hash_loc);
-    }
-
-    fn makeSyntheticPositionalName(self: *Syntaxer, idx: usize, loc: tok.Location) !syn.Name {
-        const name = try std.fmt.allocPrint(self.allocator, "__positional_{d}", .{idx});
-        return .{
-            .string = name,
-            .location = loc,
-        };
+        return try self.addNode(.reach_directive, hash_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[alternatives_top..]) });
     }
 
     fn findMatchingCloseParenIndex(self: *Syntaxer, open_paren_index: usize) ?usize {
-        if (open_paren_index >= self.tokens.len) return null;
-        if (std.meta.activeTag(self.tokens[open_paren_index].content) != .open_parenthesis) return null;
+        if (open_paren_index >= self.file.tokens.len) return null;
+        if (std.meta.activeTag(self.contentAt(open_paren_index)) != .open_parenthesis) return null;
 
         var depth: i32 = 0;
         var idx = open_paren_index;
-        while (idx < self.tokens.len) : (idx += 1) {
-            const tag = std.meta.activeTag(self.tokens[idx].content);
+        while (idx < self.file.tokens.len) : (idx += 1) {
+            const tag = std.meta.activeTag(self.contentAt(idx));
             switch (tag) {
                 .open_parenthesis => depth += 1,
                 .close_parenthesis => {
@@ -850,8 +884,8 @@ pub const Syntaxer = struct {
     fn tokenIndexAfterCloseParen(self: *Syntaxer, open_paren_index: usize) ?usize {
         const close_idx = self.findMatchingCloseParenIndex(open_paren_index) orelse return null;
         var idx = close_idx + 1;
-        while (idx < self.tokens.len) : (idx += 1) {
-            switch (self.tokens[idx].content) {
+        while (idx < self.file.tokens.len) : (idx += 1) {
+            switch (self.contentAt(idx)) {
                 .new_line, .comment => continue,
                 else => return idx,
             }
@@ -861,22 +895,22 @@ pub const Syntaxer = struct {
 
     fn looksLikeFunctionDeclarationInput(self: *Syntaxer, open_paren_index: usize) bool {
         const after_close_idx = self.tokenIndexAfterCloseParen(open_paren_index) orelse return false;
-        if (std.meta.activeTag(self.tokens[after_close_idx].content) != .arrow) return false;
+        if (std.meta.activeTag(self.contentAt(after_close_idx)) != .arrow) return false;
 
         var idx = open_paren_index + 1;
-        while (idx < self.tokens.len) : (idx += 1) {
-            switch (self.tokens[idx].content) {
+        while (idx < self.file.tokens.len) : (idx += 1) {
+            switch (self.contentAt(idx)) {
                 .new_line, .comment => continue,
                 .close_parenthesis => return true,
                 .dot => {
                     idx += 1;
-                    while (idx < self.tokens.len) : (idx += 1) {
-                        switch (self.tokens[idx].content) {
+                    while (idx < self.file.tokens.len) : (idx += 1) {
+                        switch (self.contentAt(idx)) {
                             .new_line, .comment => continue,
                             .identifier => {
                                 idx += 1;
-                                while (idx < self.tokens.len) : (idx += 1) {
-                                    switch (self.tokens[idx].content) {
+                                while (idx < self.file.tokens.len) : (idx += 1) {
+                                    switch (self.contentAt(idx)) {
                                         .new_line, .comment => continue,
                                         .colon => return true,
                                         .equal => return false,
@@ -897,14 +931,14 @@ pub const Syntaxer = struct {
         return false;
     }
 
-    fn parseCollectionLiteral(self: *Syntaxer, force_struct: bool) SyntaxerError!*syn.STNode {
+    fn parseCollectionLiteral(self: *Syntaxer, force_struct: bool) SyntaxerError!syn.NodeIndex {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
-        const start_loc = self.tokenLocation();
+        const start_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var fields = std.array_list.Managed(syn.StructValueLiteralField).init(self.allocator);
-        var positional_elements = std.array_list.Managed(*syn.STNode).init(self.allocator);
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
         var positional_prefix_count: u32 = 0;
         var has_named = false;
         var positional_index: usize = 0;
@@ -919,7 +953,7 @@ pub const Syntaxer = struct {
                 self.advanceOne();
 
                 const val = try self.parseExpression();
-                try fields.append(.{ .name = fname, .value = val });
+                try self.scratch.append(self.allocator, try self.addNode(.struct_value_field, fname.token, .{ .node = val }));
             } else {
                 if (has_named) {
                     try self.diags.add(
@@ -932,9 +966,7 @@ pub const Syntaxer = struct {
                 }
 
                 const val = try self.parseExpression();
-                try positional_elements.append(val);
-                const synthetic_name = try self.makeSyntheticPositionalName(positional_index, val.location);
-                try fields.append(.{ .name = synthetic_name, .value = val });
+                try self.scratch.append(self.allocator, try self.addNode(.positional_value_field, self.file.mainToken(val), .{ .u32_and_node = .{ .value = @intCast(positional_index), .node = val } }));
                 positional_index += 1;
                 positional_prefix_count += 1;
             }
@@ -949,151 +981,96 @@ pub const Syntaxer = struct {
         self.advanceOne();
 
         if (!force_struct and !has_named) {
-            const elems = try positional_elements.toOwnedSlice();
-            positional_elements.deinit();
-            fields.deinit();
-            return try self.makeNode(
-                .{ .list_literal = .{ .element_type = null, .elements = elems } },
-                start_loc,
-            );
+            const fields_end = self.scratch.items.len;
+            var index = scratch_top;
+            while (index < fields_end) : (index += 1) {
+                const field = self.file.data(self.scratch.items[index]).u32_and_node;
+                try self.scratch.append(self.allocator, field.node);
+            }
+            return try self.addNode(.list_literal, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[fields_end..]) });
         }
 
-        positional_elements.deinit();
-        return try self.makeNode(
-            .{ .struct_value_literal = .{
-                .fields = fields.items,
-                .positional_prefix_count = positional_prefix_count,
-            } },
-            start_loc,
-        );
+        return try self.addNode(.struct_value_literal, start_token, .{ .u32_and_extra = .{
+            .value = positional_prefix_count,
+            .extra = try self.addExtra(try self.addNodeRange(self.scratch.items[scratch_top..])),
+        } });
     }
 
     // ────────────────────────── postfix “.campo” chain ───────────────────────
-    fn parsePostfix(self: *Syntaxer, mut: *syn.STNode) !*syn.STNode {
+    fn parsePostfix(self: *Syntaxer, mut: syn.NodeIndex) !syn.NodeIndex {
         var node = mut;
         while (true) {
             if (self.tokenIs(.dot)) {
-                const dot_loc = self.tokenLocation();
+                const dot_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
                 const fname = try self.parseName();
-                const floc = self.tokenLocation();
-                node = try self.makeNode(
-                    .{ .struct_field_access = .{ .struct_value = node, .field_name = syn.Name{ .string = fname.string, .location = floc } } },
-                    dot_loc,
-                );
+                node = try self.addNode(.struct_field_access, dot_token, .{ .token_and_node = .{ .token = fname.token, .node = node } });
                 continue;
             }
 
             if (self.tokenIs(.double_dot)) {
-                const dd_loc = self.tokenLocation();
+                const dd_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
                 const vname = try self.parseName();
-                node = try self.makeNode(
-                    .{ .choice_payload_access = .{
-                        .choice_value = node,
-                        .variant_name = vname,
-                    } },
-                    dd_loc,
-                );
+                node = try self.addNode(.choice_payload_access, dd_token, .{ .token_and_node = .{ .token = vname.token, .node = node } });
                 continue;
             }
 
             if (self.tokenIs(.open_parenthesis)) {
-                if (node.content == .struct_field_access and node.content.struct_field_access.struct_value.*.content == .identifier) {
-                    const sfa = node.content.struct_field_access;
-                    const module_name = sfa.struct_value.*.content.identifier;
+                if (self.file.tag(node) == .struct_field_access) {
+                    const sfa = self.file.data(node).token_and_node;
+                    if (self.file.tag(sfa.node) != .identifier) break;
                     const struct_value_literal = try self.parseCollectionLiteral(true);
-                    node = try self.makeNode(
-                        .{ .function_call = .{
-                            .callee = sfa.field_name.string,
-                            .callee_loc = sfa.field_name.location,
-                            .module_qualifier = module_name,
-                            .type_arguments = null,
-                            .type_arguments_struct = null,
-                            .input = struct_value_literal,
-                        } },
-                        sfa.field_name.location,
-                    );
+                    const empty = try self.addNodeRange(&.{});
+                    const extra = try self.addExtra(syn.CallExtra{
+                        .module_qualifier = syn.OptionalTokenIndex.init(self.file.mainToken(sfa.node)),
+                        .type_arguments_start = empty.start,
+                        .type_arguments_end = empty.end,
+                        .type_arguments_struct = .none,
+                        .input = struct_value_literal,
+                    });
+                    node = try self.addNode(.function_call, sfa.token, .{ .extra = extra });
                     continue;
                 }
             }
 
             if (self.tokenIs(.open_bracket)) {
-                const bracket_loc = self.tokenLocation();
+                const bracket_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
                 const idx_expr = try self.parseExpression();
                 if (!self.tokenIs(.close_bracket))
                     return SyntaxerError.ExpectedRightBracket;
                 self.advanceOne();
-                node = try self.makeNode(
-                    .{ .index_access = .{ .value = node, .index = idx_expr } },
-                    bracket_loc,
-                );
+                node = try self.addNode(.index_access, bracket_token, .{ .node_and_node = .{ .first = node, .second = idx_expr } });
                 continue;
             }
 
             if (self.tokenIs(.ampersand)) {
-                const amp_loc = self.tokenLocation();
+                const amp_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
-                node = try self.makeNode(.{ .dereference = node }, amp_loc);
+                node = try self.addNode(.dereference, amp_token, .{ .node = node });
                 continue;
             }
 
             if (self.tokenIs(.bang)) {
-                const bang_loc = self.tokenLocation();
+                const bang_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
-                node = try self.makeNode(
-                    .{ .error_propagation = .{ .value = node } },
-                    bang_loc,
-                );
+                node = try self.addNode(.error_propagation, bang_token, .{ .node = node });
                 continue;
             }
 
             if (self.tokenIs(.double_bang)) {
-                const bang_loc = self.tokenLocation();
+                const bang_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
                 const context = try self.parseExpression();
-                node = try self.makeNode(
-                    .{ .error_context = .{
-                        .value = node,
-                        .context = context,
-                    } },
-                    bang_loc,
-                );
+                node = try self.addNode(.error_context, bang_token, .{ .node_and_node = .{ .first = node, .second = context } });
                 continue;
             }
 
             if (self.tokenIs(.question_mark)) {
-                const question_loc = self.tokenLocation();
+                const question_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
-
-                const variant_node = try self.makeNode(.{ .choice_literal = .{
-                    .name = .{ .string = "some", .location = question_loc },
-                    .payload = null,
-                } }, question_loc);
-
-                const fields = try self.allocator.alloc(syn.StructValueLiteralField, 2);
-                fields[0] = .{
-                    .name = .{ .string = "value", .location = question_loc },
-                    .value = node,
-                };
-                fields[1] = .{
-                    .name = .{ .string = "variant", .location = question_loc },
-                    .value = variant_node,
-                };
-                const input = try self.makeNode(.{ .struct_value_literal = .{
-                    .fields = fields,
-                    .positional_prefix_count = 0,
-                } }, question_loc);
-
-                node = try self.makeNode(.{ .function_call = .{
-                    .callee = "is",
-                    .callee_loc = question_loc,
-                    .module_qualifier = null,
-                    .type_arguments = null,
-                    .type_arguments_struct = null,
-                    .input = input,
-                } }, question_loc);
+                node = try self.addNode(.nullable_test, question_token, .{ .node = node });
                 continue;
             }
 
@@ -1102,7 +1079,7 @@ pub const Syntaxer = struct {
         return node;
     }
 
-    fn parsePipeRhs(self: *Syntaxer) SyntaxerError!*syn.STNode {
+    fn parsePipeRhs(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         const prev_pipe_rhs = self.parsing_pipe_rhs;
         self.parsing_pipe_rhs = true;
         defer self.parsing_pipe_rhs = prev_pipe_rhs;
@@ -1111,26 +1088,27 @@ pub const Syntaxer = struct {
 
     // ─────────────────────────────  EXPRESSIONS  ─────────────────────────────
     /// [primary] {'.' fld}  (bin-op rhs)?
-    fn parsePrimary(self: *Syntaxer) !*syn.STNode {
-        const t = self.current();
+    fn parsePrimary(self: *Syntaxer) !syn.NodeIndex {
+        const content = self.currentContent();
 
-        if (t.content == .binary_operator and t.content.binary_operator == .subtraction) {
+        if (content == .binary_operator and content.binary_operator == .subtraction) {
             return try self.parseSignedNumericLiteral();
         }
 
         if (self.tokenIs(.tilde)) {
-            const move_loc = t.location;
+            const move_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
             const inner = try self.parsePrimary();
-            return try self.makeNode(.{ .move_expression = inner }, move_loc);
+            return try self.addNode(.move_expression, move_token, .{ .node = inner });
         }
 
         if (self.tokenIs(.ampersand) or self.tokenIs(.dollar)) {
-            var mutability: syn.PointerMutability = .read_only;
-            var op_loc = t.location;
+            var mutable = false;
+            const main_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
+            var op_loc = self.currentLocation();
 
             if (self.tokenIs(.dollar)) {
-                mutability = .read_write;
+                mutable = true;
                 self.advanceOne();
 
                 if (!self.tokenIs(.ampersand)) {
@@ -1147,15 +1125,16 @@ pub const Syntaxer = struct {
 
             self.advanceOne();
             const inner = try self.parsePrimary(); // recursivo
-            return try self.makeNode(.{ .address_of = .{ .value = inner, .mutability = mutability } }, op_loc);
+            return try self.addNode(if (mutable) .address_of_mut else .address_of, main_token, .{ .node = inner });
         }
 
         if (self.tokenIs(.hash)) {
+            const hash_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             const hash_loc = self.tokenLocation();
             self.advanceOne();
             const ident = try self.parseIdentifier();
             if (std.mem.eql(u8, ident, "reach")) {
-                const node = try self.parseReachDirective(hash_loc);
+                const node = try self.parseReachDirective(hash_token);
                 return try self.parsePostfix(node);
             }
             if (!std.mem.eql(u8, ident, "import")) {
@@ -1165,44 +1144,46 @@ pub const Syntaxer = struct {
             if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
             self.advanceOne();
             self.skipNewLinesAndComments();
-            const lit = self.current();
-            const path = switch (lit.content) {
+            switch (self.currentContent()) {
                 .literal => |literal| switch (literal) {
-                    .string_literal => |text| text,
+                    .string_literal => {},
                     else => return SyntaxerError.ExpectedStringLiteral,
                 },
                 else => return SyntaxerError.ExpectedStringLiteral,
-            };
+            }
+            const path_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
             self.skipNewLinesAndComments();
             if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
             self.advanceOne();
-            const node = try self.makeNode(.{ .import_statement = .{ .path = path } }, hash_loc);
+            const node = try self.addNode(.import_statement, hash_token, .{ .token = path_token });
             return try self.parsePostfix(node);
         }
 
-        const base: *syn.STNode = switch (t.content) {
+        const base: syn.NodeIndex = switch (content) {
             .double_dot => blk: {
+                const dots_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
                 const variant = try self.parseName();
-                var payload: ?*syn.STNode = null;
+                var payload: ?syn.NodeIndex = null;
                 if (self.tokenStartsChoicePayloadExpr()) {
                     payload = try self.parseExpression();
                 }
-                break :blk try self.makeNode(.{ .choice_literal = .{
-                    .name = variant,
-                    .payload = payload,
-                } }, t.location);
+                break :blk try self.addNode(.choice_literal, dots_token, .{ .token_and_optional = .{
+                    .token = variant.token,
+                    .optional = syn.OptionalNodeIndex.init(payload),
+                } });
             },
 
             // ─── ident  /  call ─────────────────────────────────────────────
             .identifier => blk: {
+                const name_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 const name = try self.parseIdentifier();
                 if (self.parsing_pipe_rhs and std.mem.eql(u8, name, "_")) {
-                    break :blk try self.makeNode(.{ .pipe_placeholder = .{} }, t.location);
+                    break :blk try self.addNode(.pipe_placeholder, name_token, .{ .unused = .{ 0, 0 } });
                 }
-                var type_args: ?[]const syn.Type = null;
-                var type_args_struct: ?syn.StructTypeLiteral = null;
+                var type_args = try self.addNodeRange(&.{});
+                var type_args_struct: ?syn.NodeIndex = null;
                 if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
                     // Explicit type arguments on call site (old syntax)
                     type_args = try self.parseTypeList();
@@ -1213,25 +1194,23 @@ pub const Syntaxer = struct {
                 }
                 if (self.tokenIs(.open_parenthesis)) { // llamada
                     const struct_value_literal = try self.parseCollectionLiteral(true);
-                    break :blk try self.makeNode(
-                        .{ .function_call = .{
-                            .callee = name,
-                            .callee_loc = t.location,
-                            .module_qualifier = null,
-                            .type_arguments = type_args,
-                            .type_arguments_struct = type_args_struct,
-                            .input = struct_value_literal,
-                        } },
-                        t.location,
-                    );
+                    const extra = try self.addExtra(syn.CallExtra{
+                        .module_qualifier = .none,
+                        .type_arguments_start = type_args.start,
+                        .type_arguments_end = type_args.end,
+                        .type_arguments_struct = syn.OptionalNodeIndex.init(type_args_struct),
+                        .input = struct_value_literal,
+                    });
+                    break :blk try self.addNode(.function_call, name_token, .{ .extra = extra });
                 }
-                break :blk try self.makeNode(.{ .identifier = name }, t.location);
+                break :blk try self.addNode(.identifier, name_token, .{ .unused = .{ 0, 0 } });
             },
 
             // ─── literal ────────────────────────────────────────────────────
-            .literal => |lit| blk: {
+            .literal => blk: {
+                const literal_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
-                break :blk try self.makeNode(.{ .literal = lit }, t.location);
+                break :blk try self.addNode(.literal, literal_token, .{ .unused = .{ 0, 0 } });
             },
 
             // ─── struct value literal o list literal ─────────────────────────────────
@@ -1249,103 +1228,97 @@ pub const Syntaxer = struct {
         return try self.parsePostfix(base);
     }
 
-    fn parsePipeExpr(self: *Syntaxer) SyntaxerError!*syn.STNode {
+    fn parsePipeExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parsePrimary();
 
         while (self.tokenIs(.pipe)) {
-            const pipe_loc = self.tokenLocation();
+            const pipe_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
             self.skipNewLinesAndComments();
             const right = try self.parsePipeRhs();
-            lhs = try self.makeNode(
-                .{ .pipe_expression = .{ .left = lhs, .right = right } },
-                pipe_loc,
-            );
+            lhs = try self.addNode(.pipe_expression, pipe_token, .{ .node_and_node = .{ .first = lhs, .second = right } });
         }
         return lhs;
     }
 
-    fn parseBinaryExpr(self: *Syntaxer) SyntaxerError!*syn.STNode {
+    fn parseBinaryExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parsePipeExpr();
 
-        if (self.current().content == .binary_operator) {
-            const op_tok = self.current();
+        if (self.currentContent() == .binary_operator) {
+            const op = self.currentContent().binary_operator;
+            const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
             const rhs = try self.parseBinaryExpr();
-            lhs = try self.makeNode(
-                .{ .binary_operation = .{ .operator = op_tok.content.binary_operator, .left = lhs, .right = rhs } },
-                op_tok.location,
-            );
+            const tag: syn.Node.Tag = switch (op) {
+                .addition => .binary_add,
+                .subtraction => .binary_subtract,
+                .multiplication => .binary_multiply,
+                .division => .binary_divide,
+                .modulo => .binary_modulo,
+            };
+            lhs = try self.addNode(tag, op_token, .{ .node_and_node = .{ .first = lhs, .second = rhs } });
         }
 
         return lhs;
     }
 
-    fn parseComparisonExpr(self: *Syntaxer) SyntaxerError!*syn.STNode {
+    fn parseComparisonExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parseBinaryExpr();
 
-        while (self.current().content == .comparison_operator) {
-            const op_tok = self.current();
+        while (self.currentContent() == .comparison_operator) {
+            const op_content = self.currentContent();
+            const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             var op: tok.ComparisonOperator = undefined;
-            switch (op_tok.content) {
+            switch (op_content) {
                 .comparison_operator => |c| op = c,
                 else => unreachable,
             }
             self.advanceOne();
             const rhs = try self.parseBinaryExpr();
-            lhs = try self.makeNode(
-                .{ .comparison = .{ .operator = op, .left = lhs, .right = rhs } },
-                op_tok.location,
-            );
+            const tag: syn.Node.Tag = switch (op) {
+                .equal => .compare_equal,
+                .not_equal => .compare_not_equal,
+                .less_than => .compare_less,
+                .greater_than => .compare_greater,
+                .less_than_or_equal => .compare_less_equal,
+                .greater_than_or_equal => .compare_greater_equal,
+            };
+            lhs = try self.addNode(tag, op_token, .{ .node_and_node = .{ .first = lhs, .second = rhs } });
         }
         return lhs;
     }
 
-    fn parseAndExpr(self: *Syntaxer) SyntaxerError!*syn.STNode {
+    fn parseAndExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parseComparisonExpr();
 
         while (self.tokenIs(.keyword_and)) {
-            const op_loc = self.tokenLocation();
+            const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
             const rhs = try self.parseComparisonExpr();
-            lhs = try self.makeNode(
-                .{ .logical_operation = .{
-                    .operator = .and_,
-                    .left = lhs,
-                    .right = rhs,
-                } },
-                op_loc,
-            );
+            lhs = try self.addNode(.logical_and, op_token, .{ .node_and_node = .{ .first = lhs, .second = rhs } });
         }
 
         return lhs;
     }
 
-    fn parseOrExpr(self: *Syntaxer) SyntaxerError!*syn.STNode {
+    fn parseOrExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parseAndExpr();
 
         while (self.tokenIs(.keyword_or)) {
-            const op_loc = self.tokenLocation();
+            const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
             const rhs = try self.parseAndExpr();
-            lhs = try self.makeNode(
-                .{ .logical_operation = .{
-                    .operator = .or_,
-                    .left = lhs,
-                    .right = rhs,
-                } },
-                op_loc,
-            );
+            lhs = try self.addNode(.logical_or, op_token, .{ .node_and_node = .{ .first = lhs, .second = rhs } });
         }
 
         return lhs;
     }
 
-    fn parseUnwrapExpr(self: *Syntaxer) SyntaxerError!*syn.STNode {
+    fn parseUnwrapExpr(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         var lhs = try self.parseOrExpr();
 
         while (self.currentIdentifierEquals("unwrap_or") or self.currentIdentifierEquals("unwrap_or_do")) {
-            const op_loc = self.tokenLocation();
+            const op_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             const is_do = self.currentIdentifierEquals("unwrap_or_do");
             self.advanceOne();
             const rhs = if (is_do)
@@ -1353,45 +1326,23 @@ pub const Syntaxer = struct {
             else
                 try self.parseOrExpr();
 
-            const fields = try self.allocator.alloc(syn.StructValueLiteralField, 2);
-            fields[0] = .{
-                .name = .{ .string = "value", .location = op_loc },
-                .value = lhs,
-            };
-            fields[1] = .{
-                .name = .{ .string = "default", .location = op_loc },
-                .value = rhs,
-            };
-            const input = try self.makeNode(.{ .struct_value_literal = .{
-                .fields = fields,
-                .positional_prefix_count = 0,
-            } }, op_loc);
-
-            lhs = try self.makeNode(.{ .function_call = .{
-                .callee = if (is_do) "unwrap_or_do" else "unwrap_or",
-                .callee_loc = op_loc,
-                .module_qualifier = null,
-                .type_arguments = null,
-                .type_arguments_struct = null,
-                .input = input,
-            } }, op_loc);
+            lhs = try self.addNode(if (is_do) .unwrap_or_do else .unwrap_or, op_token, .{ .node_and_node = .{ .first = lhs, .second = rhs } });
         }
 
         return lhs;
     }
 
-    fn parseExpression(self: *Syntaxer) SyntaxerError!*syn.STNode {
+    fn parseExpression(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         return self.parseUnwrapExpr();
     }
 
     fn parseNamedFunctionLikeDeclaration(
         self: *Syntaxer,
-        name: syn.Name,
+        name: ParsedName,
         is_once: bool,
-        generic_params: []const []const u8,
-        generic_params_struct: ?syn.StructTypeLiteral,
-        id_loc: tok.Location,
-    ) SyntaxerError!*syn.STNode {
+        generic_params: syn.NodeRange,
+        generic_params_struct: ?syn.NodeIndex,
+    ) SyntaxerError!syn.NodeIndex {
         const input = try self.parseStructTypeLiteral();
 
         if (!self.tokenIs(.arrow)) return SyntaxerError.ExpectedArrow;
@@ -1400,20 +1351,21 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.colon)) return SyntaxerError.ExpectedColon;
         self.advanceOne();
 
-        switch (self.current().content) {
-            .identifier => |ident_name| {
+        switch (self.currentContent()) {
+            .identifier => |ident_range| {
+                const ident_name = self.tokenText(ident_range);
                 if (std.mem.eql(u8, ident_name, "ExternFunction") or std.mem.eql(u8, ident_name, "CFunction")) {
                     self.advanceOne();
-                    const ef = syn.FunctionDeclaration{
-                        .name = name,
-                        .is_once = is_once,
-                        .generic_params = generic_params,
-                        .generic_params_struct = generic_params_struct,
+                    const extra = try self.addExtra(syn.FunctionExtra{
+                        .name_token = name.token,
+                        .generic_params_start = generic_params.start,
+                        .generic_params_end = generic_params.end,
+                        .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
                         .input = input,
                         .output = output,
-                        .body = null,
-                    };
-                    return try self.makeNode(.{ .function_declaration = ef }, id_loc);
+                        .body = .none,
+                    });
+                    return try self.addNode(if (is_once) .function_declaration_once else .function_declaration, name.token, .{ .extra = extra });
                 }
             },
             else => {},
@@ -1423,19 +1375,20 @@ pub const Syntaxer = struct {
         self.advanceOne();
         const body = try self.parseCodeBlock();
 
-        const fn_decl = syn.FunctionDeclaration{
-            .name = name,
-            .is_once = is_once,
-            .generic_params = generic_params,
-            .generic_params_struct = generic_params_struct,
+        const extra = try self.addExtra(syn.FunctionExtra{
+            .name_token = name.token,
+            .generic_params_start = generic_params.start,
+            .generic_params_end = generic_params.end,
+            .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
             .input = input,
             .output = output,
-            .body = body,
-        };
-        return try self.makeNode(.{ .function_declaration = fn_decl }, id_loc);
+            .body = body.optional(),
+        });
+        return try self.addNode(if (is_once) .function_declaration_once else .function_declaration, name.token, .{ .extra = extra });
     }
 
-    fn parseTestDeclaration(self: *Syntaxer) SyntaxerError!*syn.STNode {
+    fn parseTestDeclaration(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const test_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         const test_loc = self.tokenLocation();
         self.advanceOne();
         self.skipNewLinesAndComments();
@@ -1443,28 +1396,27 @@ pub const Syntaxer = struct {
         const name = try self.parseName();
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
 
-        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, &.{}, null, name.location);
-        const fn_decl = switch (decl_node.content) {
-            .function_declaration => |fd| fd,
-            else => unreachable,
-        };
+        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, try self.addNodeRange(&.{}), null);
+        const function = self.file.functionDeclaration(decl_node).?;
 
-        if (fn_decl.body == null) {
+        if (function.body == null) {
             try self.diags.add(test_loc, .syntax, "tests must define a body", .{});
             return SyntaxerError.ExpectedAssignment;
         }
 
-        return try self.makeNode(.{ .test_declaration = .{ .decl = fn_decl } }, test_loc);
+        self.file.nodes.items(.tag)[@intFromEnum(decl_node)] = .test_declaration;
+        self.file.nodes.items(.main_token)[@intFromEnum(decl_node)] = test_token;
+        return decl_node;
     }
 
     // (old parseStatement removed; unified version with generics is below)
 
     // Override parseStatement to support generics on function declarations
-    fn parseStatement(self: *Syntaxer) SyntaxerError!*syn.STNode {
+    fn parseStatement(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         const start_index = self.index;
         self.skipNewLinesAndComments();
 
-        switch (self.current().content) {
+        switch (self.currentContent()) {
             .keyword_return => return self.parseReturn(),
             .keyword_if => return self.parseIf(),
             .keyword_for => return self.parseFor(),
@@ -1472,14 +1424,14 @@ pub const Syntaxer = struct {
             .keyword_while => return self.parseWhile(),
             .keyword_test => return self.parseTestDeclaration(),
             .keyword_break => {
-                const loc = self.tokenLocation();
+                const token_index: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
-                return try self.makeNode(.{ .break_statement = .{} }, loc);
+                return try self.addNode(.break_statement, token_index, .{ .unused = .{ 0, 0 } });
             },
             .keyword_continue => {
-                const loc = self.tokenLocation();
+                const token_index: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
                 self.advanceOne();
-                return try self.makeNode(.{ .continue_statement = .{} }, loc);
+                return try self.addNode(.continue_statement, token_index, .{ .unused = .{ 0, 0 } });
             },
             else => {},
         }
@@ -1492,17 +1444,17 @@ pub const Syntaxer = struct {
         }
 
         if (self.tokenIs(.hash)) {
+            const hash_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             const hash_loc = self.tokenLocation();
             self.advanceOne();
-            const ident_loc = self.tokenLocation();
             const ident = try self.parseIdentifier();
             if (std.mem.eql(u8, ident, "defer")) {
                 const expr = try self.parseExpression();
-                return try self.makeNode(.{ .defer_statement = expr }, hash_loc);
+                return try self.addNode(.defer_statement, hash_token, .{ .node = expr });
             }
             if (std.mem.eql(u8, ident, "keep")) {
                 const kept_name = try self.parseName();
-                return try self.makeNode(.{ .keep_statement = kept_name }, ident_loc);
+                return try self.addNode(.keep_statement, hash_token, .{ .token = kept_name.token });
             }
             if (std.mem.eql(u8, ident, "import")) {
                 try self.diags.add(hash_loc, .syntax, "#import must be assigned to a name", .{});
@@ -1514,45 +1466,41 @@ pub const Syntaxer = struct {
         }
 
         if (self.currentSentenceStartsChoiceOptionDeclaration()) {
-            const decl_loc = self.tokenLocation();
+            const decl_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             self.advanceOne();
             const option_name = try self.parseName();
-            return try self.makeNode(.{ .choice_option_declaration = .{ .name = option_name } }, decl_loc);
+            return try self.addNode(.choice_option_declaration, decl_token, .{ .token = option_name.token });
         }
 
-        if (self.current().content != .identifier and self.currentCanStartBareExpressionStatement()) {
+        if (self.currentContent() != .identifier and self.currentCanStartBareExpressionStatement()) {
             const expr = try self.parseExpression();
-            return try self.makeNode(.{ .expression_statement = expr }, expr.location);
+            return try self.addNode(.expression_statement, self.file.mainToken(expr), .{ .node = expr });
         }
 
         const id_loc = self.tokenLocation();
         var name = try self.parseName();
 
-        if (std.mem.eql(u8, name.string, "operator")) {
-            const op = try self.parseOperatorName();
-            name = .{ .string = op, .location = id_loc };
+        if (std.mem.eql(u8, name.text, "operator")) {
+            name = try self.parseOperatorName(name.token);
         }
 
         // Optional generic params after name.
         // In statement position this is ambiguous with generic call type arguments,
         // so keep the parsed named-args block around and decide once we know
         // whether this becomes a declaration or a call.
-        var generic_params: []const []const u8 = &.{};
-        var generic_params_struct: ?syn.StructTypeLiteral = null;
+        var generic_params = try self.addNodeRange(&.{});
+        var generic_params_struct: ?syn.NodeIndex = null;
         if (self.tokenIs(.hash)) {
             self.advanceOne();
             const gen_struct = try self.parseGenericParamsStruct();
-            var names = std.array_list.Managed([]const u8).init(self.allocator);
-            for (gen_struct.fields) |fld| try names.append(fld.name.string);
-            generic_params = names.items;
+            generic_params = try self.addNodeRange(self.file.structTypeLiteral(gen_struct).?.fields);
             generic_params_struct = gen_struct;
         } else if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
-            const parsed = try self.parseGenericParamNames();
-            generic_params = parsed;
+            generic_params = try self.parseGenericParamNames();
         }
 
         // Build identifier node to parse postfix (for p.x, p& etc.)
-        const ident_node = try self.makeNode(.{ .identifier = name.string }, id_loc);
+        const ident_node = try self.addNode(.identifier, name.token, .{ .unused = .{ 0, 0 } });
         const lhs_with_postfix = try self.parsePostfix(ident_node);
 
         // Assignment (store/pointer/index/regular)
@@ -1565,20 +1513,11 @@ pub const Syntaxer = struct {
             const rhs_expr = try self.parseExpression();
 
             if (lhs_with_postfix == ident_node) {
-                return try self.makeNode(
-                    .{ .assignment = .{ .name = name, .value = rhs_expr } },
-                    id_loc,
-                );
-            } else if (lhs_with_postfix.*.content == .index_access) {
-                return try self.makeNode(
-                    .{ .index_assignment = .{ .target = lhs_with_postfix, .value = rhs_expr } },
-                    id_loc,
-                );
+                return try self.addNode(.assignment, name.token, .{ .node = rhs_expr });
+            } else if (self.file.tag(lhs_with_postfix) == .index_access) {
+                return try self.addNode(.index_assignment, name.token, .{ .node_and_node = .{ .first = lhs_with_postfix, .second = rhs_expr } });
             } else {
-                return try self.makeNode(
-                    .{ .pointer_assignment = .{ .target = lhs_with_postfix, .value = rhs_expr } },
-                    id_loc,
-                );
+                return try self.addNode(.pointer_assignment, name.token, .{ .node_and_node = .{ .first = lhs_with_postfix, .second = rhs_expr } });
             }
         }
 
@@ -1589,7 +1528,6 @@ pub const Syntaxer = struct {
                     is_once,
                     generic_params,
                     generic_params_struct,
-                    id_loc,
                 );
             } else {
                 if (is_once) {
@@ -1598,26 +1536,25 @@ pub const Syntaxer = struct {
                 }
                 // call: Name(...)
                 const input_node = try self.parseCollectionLiteral(true);
-                const call_node = try self.makeNode(
-                    .{ .function_call = .{
-                        .callee = name.string,
-                        .callee_loc = id_loc,
-                        .module_qualifier = null,
-                        .type_arguments = null,
-                        .type_arguments_struct = generic_params_struct,
-                        .input = input_node,
-                    } },
-                    id_loc,
-                );
+                const empty = try self.addNodeRange(&.{});
+                const extra = try self.addExtra(syn.CallExtra{
+                    .module_qualifier = .none,
+                    .type_arguments_start = empty.start,
+                    .type_arguments_end = empty.end,
+                    .type_arguments_struct = syn.OptionalNodeIndex.init(generic_params_struct),
+                    .input = input_node,
+                });
+                const call_node = try self.addNode(.function_call, name.token, .{ .extra = extra });
                 const expr = try self.parsePostfix(call_node);
                 if (expr == call_node) return call_node;
-                return try self.makeNode(.{ .expression_statement = expr }, expr.location);
+                return try self.addNode(.expression_statement, self.file.mainToken(expr), .{ .node = expr });
             }
         }
 
         // Abstract relations (implements/defaultsto)
-        switch (self.current().content) {
-            .identifier => |kw| {
+        switch (self.currentContent()) {
+            .identifier => |kw_range| {
+                const kw = self.tokenText(kw_range);
                 if (is_once) {
                     try self.diags.add(id_loc, .syntax, "once can only be used on function declarations", .{});
                     return SyntaxerError.ExpectedDeclarationOrAssignment;
@@ -1625,18 +1562,23 @@ pub const Syntaxer = struct {
                 if (std.mem.eql(u8, kw, "implements")) {
                     self.advanceOne();
                     const abstract_ty = (try self.parseType()).?; // required
-                    const rel = syn.AbstractImplements{
-                        .concrete_name = name,
-                        .generic_params = generic_params,
-                        .generic_params_struct = generic_params_struct,
-                        .abstract_ty = abstract_ty,
-                    };
-                    return try self.makeNode(.{ .abstract_implements = rel }, id_loc);
+                    const extra = try self.addExtra(syn.GenericValueExtra{
+                        .generic_params_start = generic_params.start,
+                        .generic_params_end = generic_params.end,
+                        .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
+                        .value = abstract_ty,
+                    });
+                    return try self.addNode(.abstract_implements, name.token, .{ .extra = extra });
                 } else if (std.mem.eql(u8, kw, "defaultsto")) {
                     self.advanceOne();
                     const ty = (try self.parseType()).?; // required
-                    const rel = syn.AbstractDefault{ .name = name, .generic_params = generic_params, .generic_params_struct = generic_params_struct, .ty = ty };
-                    return try self.makeNode(.{ .abstract_defaultsto = rel }, id_loc);
+                    const extra = try self.addExtra(syn.GenericValueExtra{
+                        .generic_params_start = generic_params.start,
+                        .generic_params_end = generic_params.end,
+                        .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
+                        .value = ty,
+                    });
+                    return try self.addNode(.abstract_defaultsto, name.token, .{ .extra = extra });
                 }
             },
             else => {},
@@ -1644,134 +1586,115 @@ pub const Syntaxer = struct {
 
         // Declarations: ":" or "::"
         if (self.tokenIs(.colon) or self.tokenIs(.double_colon)) {
-            var mut: syn.Mutability = .constant;
-            if (self.tokenIs(.double_colon)) mut = .variable;
+            const mutable = self.tokenIs(.double_colon);
             self.advanceOne();
 
             const ty_opt = try self.parseType();
 
             if (ty_opt) |ty| {
-                if (ty == .type_name and (std.mem.eql(u8, ty.type_name.string, "Type") or std.mem.eql(u8, ty.type_name.string, "CEnum") or std.mem.eql(u8, ty.type_name.string, "CUnion"))) {
+                const type_name = if (self.file.tag(ty) == .type_name) self.tokenText(self.contentAt(@intFromEnum(self.file.mainToken(ty))).identifier) else "";
+                if (std.mem.eql(u8, type_name, "Type") or std.mem.eql(u8, type_name, "CEnum") or std.mem.eql(u8, type_name, "CUnion")) {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                     self.advanceOne();
                     if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
-                    const decl_kind: syn.TypeDeclaration.Kind = if (std.mem.eql(u8, ty.type_name.string, "CEnum"))
-                        .c_enum
-                    else if (std.mem.eql(u8, ty.type_name.string, "CUnion"))
-                        .c_union
+                    const tag: syn.Node.Tag = if (std.mem.eql(u8, type_name, "CEnum")) .c_enum_declaration else if (std.mem.eql(u8, type_name, "CUnion")) .c_union_declaration else .type_declaration;
+                    const lit_node = if (tag == .c_enum_declaration or (tag == .type_declaration and self.parenthesizedTypeIsChoiceLiteral()))
+                        try self.parseChoiceTypeLiteral()
                     else
-                        .regular;
-                    const lit_node = switch (decl_kind) {
-                        .c_enum => blk: {
-                            const chlit = try self.parseChoiceTypeLiteral();
-                            break :blk try self.makeNode(.{ .choice_type_literal = chlit }, id_loc);
-                        },
-                        .c_union => blk: {
-                            const stlit = try self.parseStructTypeLiteral();
-                            break :blk try self.makeNode(.{ .struct_type_literal = stlit }, id_loc);
-                        },
-                        .regular => if (self.parenthesizedTypeIsChoiceLiteral()) blk: {
-                            const chlit = try self.parseChoiceTypeLiteral();
-                            break :blk try self.makeNode(.{ .choice_type_literal = chlit }, id_loc);
-                        } else blk: {
-                            const stlit = try self.parseStructTypeLiteral();
-                            break :blk try self.makeNode(.{ .struct_type_literal = stlit }, id_loc);
-                        },
-                    };
-
-                    const tdecl = syn.TypeDeclaration{
-                        .name = name,
-                        .generic_params = generic_params,
-                        .generic_params_struct = generic_params_struct,
-                        .kind = decl_kind,
+                        try self.parseStructTypeLiteral();
+                    const extra = try self.addExtra(syn.GenericValueExtra{
+                        .generic_params_start = generic_params.start,
+                        .generic_params_end = generic_params.end,
+                        .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
                         .value = lit_node,
-                    };
-                    return try self.makeNode(.{ .type_declaration = tdecl }, id_loc);
-                } else if (ty == .type_name and std.mem.eql(u8, ty.type_name.string, "Abstract")) {
-                    var req_names: []const []const u8 = &.{};
-                    var req_funcs: []const syn.AbstractFunctionRequirement = &.{};
+                    });
+                    return try self.addNode(tag, name.token, .{ .extra = extra });
+                } else if (std.mem.eql(u8, type_name, "Abstract")) {
+                    var req_names = try self.addNodeRange(&.{});
+                    var req_funcs = try self.addNodeRange(&.{});
                     if (self.tokenIs(.equal)) {
                         self.advanceOne();
                         const body = try self.parseAbstractBody();
                         req_names = body.req_names;
                         req_funcs = body.req_funcs;
                     }
-                    const adecl = syn.AbstractDeclaration{
-                        .name = name,
-                        .generic_params = generic_params,
-                        .generic_params_struct = generic_params_struct,
-                        .requires_abstracts = req_names,
-                        .requires_functions = req_funcs,
-                    };
-                    return try self.makeNode(.{ .abstract_declaration = adecl }, id_loc);
+                    const extra = try self.addExtra(syn.AbstractExtra{
+                        .generic_params_start = generic_params.start,
+                        .generic_params_end = generic_params.end,
+                        .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
+                        .requires_abstracts_start = req_names.start,
+                        .requires_abstracts_end = req_names.end,
+                        .requires_functions_start = req_funcs.start,
+                        .requires_functions_end = req_funcs.end,
+                    });
+                    return try self.addNode(.abstract_declaration, name.token, .{ .extra = extra });
                 }
             }
 
-            var rhs: ?*syn.STNode = null;
+            var rhs: ?syn.NodeIndex = null;
             if (self.tokenIs(.equal)) {
                 self.advanceOne();
                 rhs = try self.parseExpression();
             }
 
-            const sym = syn.SymbolDeclaration{
-                .name = name,
-                .type = ty_opt,
-                .mutability = mut,
-                .value = rhs,
-            };
-            return try self.makeNode(.{ .symbol_declaration = sym }, id_loc);
+            const extra = try self.addExtra(syn.FieldExtra{
+                .type_node = syn.OptionalNodeIndex.init(ty_opt),
+                .default_value = syn.OptionalNodeIndex.init(rhs),
+            });
+            return try self.addNode(if (mutable) .symbol_declaration_variable else .symbol_declaration_constant, name.token, .{ .extra = extra });
         }
 
         self.index = start_index;
         const expr = try self.parseExpression();
-        return try self.makeNode(.{ .expression_statement = expr }, expr.location);
+        return try self.addNode(.expression_statement, self.file.mainToken(expr), .{ .node = expr });
     }
 
     // ─────────────────────────────  SENTENCES  ──────────────────────────────
-    fn parseSentences(self: *Syntaxer) !std.array_list.Managed(*syn.STNode) {
-        var list = std.array_list.Managed(*syn.STNode).init(self.allocator);
+    fn parseSentences(self: *Syntaxer) ![]const syn.NodeIndex {
+        const scratch_top = self.scratch.items.len;
 
         while (!self.tokenIs(.eof) and !self.tokenIs(.close_brace)) {
-            switch (self.current().content) {
+            switch (self.currentContent()) {
                 .new_line, .comment => self.skipNewLinesAndComments(),
                 else => {
                     const stmt = try self.parseStatement();
-                    try list.append(stmt);
+                    try self.scratch.append(self.allocator, stmt);
                 },
             }
             self.skipNewLinesAndComments();
         }
-        return list;
+        return self.scratch.items[scratch_top..];
     }
 
-    fn parseCodeBlock(self: *Syntaxer) SyntaxerError!*syn.STNode {
+    fn parseCodeBlock(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         if (!self.tokenIs(.open_brace)) return SyntaxerError.ExpectedLeftBrace;
+        const open_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
         const items = try self.parseSentences();
         if (!self.tokenIs(.close_brace)) return SyntaxerError.ExpectedRightBrace;
         self.advanceOne();
-        return try self.makeNode(.{ .code_block = .{ .items = items.items } }, self.tokenLocation());
+        return try self.addNode(.code_block, open_token, .{ .extra_range = try self.addNodeRange(items) });
     }
 
-    fn parseIf(self: *Syntaxer) SyntaxerError!*syn.STNode {
-        const start = self.tokenLocation();
+    fn parseIf(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         if (!self.tokenIs(.keyword_if)) return SyntaxerError.ExpectedKeywordIf;
         self.advanceOne();
         const cond = try self.parseExpression();
         const thenB = try self.parseCodeBlock();
-        var elseB: ?*syn.STNode = null;
+        var elseB: ?syn.NodeIndex = null;
         if (self.tokenIs(.keyword_else)) {
             self.advanceOne();
             elseB = if (self.tokenIs(.keyword_if)) try self.parseIf() else try self.parseCodeBlock();
         }
-        return try self.makeNode(
-            .{ .if_statement = .{ .condition = cond, .then_block = thenB, .else_block = elseB } },
-            start,
-        );
+        const extra = try self.addExtra(syn.IfExtra{ .then_block = thenB, .else_block = syn.OptionalNodeIndex.init(elseB) });
+        return try self.addNode(.if_statement, start, .{ .node_and_extra = .{ .node = cond, .extra = extra } });
     }
 
-    fn parseMatch(self: *Syntaxer) SyntaxerError!*syn.STNode {
-        const start = self.tokenLocation();
+    fn parseMatch(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         if (!self.tokenIs(.keyword_match)) return SyntaxerError.ExpectedDeclarationOrAssignment;
         self.advanceOne();
         const value = try self.parseExpression();
@@ -1780,24 +1703,25 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var cases = std.array_list.Managed(syn.MatchCase).init(self.allocator);
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
         while (!self.tokenIs(.close_brace)) {
             if (!self.tokenIs(.double_dot)) return SyntaxerError.ExpectedIdentifier;
             self.advanceOne();
             const variant_name = try self.parseName();
 
-            var payload_binding: ?syn.MatchPayloadBinding = null;
-            const case_has_payload_binding = switch (self.current().content) {
+            var payload_name_token: ?syn.TokenIndex = null;
+            var case_tag: syn.Node.Tag = .match_case_value;
+            const case_has_payload_binding = switch (self.currentContent()) {
                 .identifier, .tilde, .dollar, .ampersand => true,
                 else => false,
             };
             if (case_has_payload_binding) {
-                var mode: syn.MatchPayloadBindingMode = .by_value;
                 if (self.tokenIs(.tilde)) {
-                    mode = .by_move;
+                    case_tag = .match_case_move;
                     self.advanceOne();
                 } else if (self.tokenIs(.dollar)) {
-                    mode = .by_mut_borrow;
+                    case_tag = .match_case_mut_borrow;
                     self.advanceOne();
                     if (!self.tokenIs(.ampersand)) {
                         try self.diags.add(self.tokenLocation(), .syntax, "expected '&' after '$' in match payload binding", .{});
@@ -1805,47 +1729,39 @@ pub const Syntaxer = struct {
                     }
                     self.advanceOne();
                 } else if (self.tokenIs(.ampersand)) {
-                    mode = .by_borrow;
+                    case_tag = .match_case_borrow;
                     self.advanceOne();
                 }
-                payload_binding = .{
-                    .mode = mode,
-                    .name = try self.parseName(),
-                };
+                payload_name_token = (try self.parseName()).token;
             }
 
             self.skipNewLinesAndComments();
             const body = try self.parseCodeBlock();
-            try cases.append(.{
-                .variant_name = variant_name,
-                .payload_binding = payload_binding,
-                .body = body,
-            });
+            const case_extra = try self.addExtra(syn.MatchCaseExtra{ .payload_name = syn.OptionalTokenIndex.init(payload_name_token), .body = body });
+            try self.scratch.append(self.allocator, try self.addNode(case_tag, variant_name.token, .{ .extra = case_extra }));
             self.skipNewLinesAndComments();
         }
 
         self.advanceOne();
-        return try self.makeNode(.{ .match_statement = .{
-            .value = value,
-            .cases = cases.items,
-        } }, start);
+        const cases_range_index = try self.addExtra(try self.addNodeRange(self.scratch.items[scratch_top..]));
+        return try self.addNode(.match_statement, start, .{ .node_and_extra = .{ .node = value, .extra = cases_range_index } });
     }
 
-    fn parseFor(self: *Syntaxer) SyntaxerError!*syn.STNode {
-        const start = self.tokenLocation();
+    fn parseFor(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         if (!self.tokenIs(.keyword_for)) return SyntaxerError.ExpectedKeywordFor;
         self.advanceOne();
-        var item_mode: syn.ForBindingMode = .by_value;
+        var tag: syn.Node.Tag = .for_value;
         if (self.tokenIs(.dollar)) {
             self.advanceOne();
             if (!self.tokenIs(.ampersand)) {
                 try self.diags.add(self.tokenLocation(), .syntax, "expected '&' after '$' in for binding", .{});
                 return SyntaxerError.ExpectedAmpersand;
             }
-            item_mode = .by_mut_borrow;
+            tag = .for_mut_borrow;
             self.advanceOne();
         } else if (self.tokenIs(.ampersand)) {
-            item_mode = .by_borrow;
+            tag = .for_borrow;
             self.advanceOne();
         }
         const item_name = try self.parseName();
@@ -1853,28 +1769,24 @@ pub const Syntaxer = struct {
         self.advanceOne();
         const iterable = try self.parseExpression();
         const body = try self.parseCodeBlock();
-        return try self.makeNode(.{ .for_statement = .{
-            .item_mode = item_mode,
-            .item_name = item_name,
+        return try self.addNode(tag, start, .{ .extra = try self.addExtra(syn.ForExtra{
+            .name_token = item_name.token,
             .iterable = iterable,
             .body = body,
-        } }, start);
+        }) });
     }
 
-    fn parseWhile(self: *Syntaxer) SyntaxerError!*syn.STNode {
-        const start = self.tokenLocation();
+    fn parseWhile(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         if (!self.tokenIs(.keyword_while)) return SyntaxerError.ExpectedKeywordWhile;
         self.advanceOne();
         const cond = try self.parseExpression();
         const body = try self.parseCodeBlock();
-        return try self.makeNode(.{ .while_statement = .{
-            .condition = cond,
-            .body = body,
-        } }, start);
+        return try self.addNode(.while_statement, start, .{ .node_and_node = .{ .first = cond, .second = body } });
     }
 
-    fn parseReturn(self: *Syntaxer) SyntaxerError!*syn.STNode {
-        const start = self.tokenLocation();
+    fn parseReturn(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
+        const start: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         if (!self.tokenIs(.keyword_return))
             return SyntaxerError.ExpectedKeywordReturn;
 
@@ -1882,28 +1794,22 @@ pub const Syntaxer = struct {
 
         // ── ¿hay algo más en la línea?  --------------------------
         // Si lo siguiente es fin de línea, un '}', o EOF, NO hay expresión.
-        switch (self.current().content) {
+        switch (self.currentContent()) {
             .new_line, .close_brace, .eof => {
-                return try self.makeNode(
-                    .{ .return_statement = .{ .expression = null } },
-                    start,
-                );
+                return try self.addNode(.return_statement, start, .{ .optional_node = .none });
             },
             else => {},
         }
 
         // ── otherwise parse the expression -----------------------
         const expr = try self.parseExpression();
-        return try self.makeNode(
-            .{ .return_statement = .{ .expression = expr } },
-            start,
-        );
+        return try self.addNode(.return_statement, start, .{ .optional_node = expr.optional() });
     }
 
     // ─────────────────────────────  DEBUG  ──────────────────────────────────
     pub fn printST(self: *Syntaxer) void {
         std.debug.print("\nSYNTAX TREE\n", .{});
-        for (self.st.items) |n| synp.printNode(n.*, 0);
+        for (self.file.roots) |node| synp.printNode(&self.file, &self.diags.source_db, node, 0);
         std.debug.print("\n", .{});
     }
 };

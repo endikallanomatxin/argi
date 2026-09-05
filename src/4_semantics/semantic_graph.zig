@@ -555,7 +555,7 @@ pub const Comparison = struct {
     right: *const SGNode,
 };
 
-pub const LogicalOperator = syn.LogicalOperator;
+pub const LogicalOperator = enum { and_, or_ };
 
 pub const LogicalOperation = struct {
     operator: LogicalOperator,
