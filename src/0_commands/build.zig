@@ -150,8 +150,9 @@ fn parseFlags(args: []const []const u8) !BuildFlags {
 fn printTokenList(pipeline: *const frontend.FrontendPipeline) void {
     std.debug.print("\nTOKENS\n", .{});
     var index: usize = 0;
-    for (pipeline.token_files.items) |file_tokens| {
-        for (file_tokens.tokens) |t| {
+    for (pipeline.syntax_files.items) |file| {
+        for (0..file.tokens.len) |token_index| {
+            const t = file.tokens.get(token_index);
             std.debug.print("{d}: ", .{index});
             const position = pipeline.source_db.lineColumn(t.location.file, t.location.offset);
             tokp.printTokenWithLocation(t, pipeline.source_db.get(t.location.file).source, pipeline.source_db.path(t.location.file), position.line, position.column);
@@ -225,7 +226,11 @@ fn printCompilerStats(
     std.debug.print("  source files: {d}\n", .{file_count});
     std.debug.print("  tokens:       {d}\n", .{pipeline.tokenCount()});
     std.debug.print("  token bytes:  {d} ({d} each)\n", .{ pipeline.tokenStorageBytes(), @sizeOf(token.Token) });
-    std.debug.print("  ST nodes:     {d}\n", .{pipeline.st_node_count});
+    std.debug.print("  syntax nodes:     {d}\n", .{pipeline.syntax_node_count});
+    const syntax_storage = pipeline.syntaxStorageMetrics();
+    std.debug.print("  node base bytes: {d}\n", .{syntax_storage.node_base_bytes});
+    std.debug.print("  extra_data bytes: {d}\n", .{syntax_storage.extra_data_bytes});
+    std.debug.print("  SyntaxFile total: {d}\n", .{syntax_storage.total()});
     std.debug.print("  SG nodes:     {d}\n", .{pipeline.sg_node_count});
 
     std.debug.print("Types\n", .{});

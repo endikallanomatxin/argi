@@ -34,7 +34,6 @@ pub const SyntaxerError = error{
 // Syntaxer state
 // ─────────────────────────────────────────────────────────────────────────────
 pub const Syntaxer = struct {
-    tokens: []const tok.Token,
     source: []const u8,
     index: usize,
     allocator: std.mem.Allocator,
@@ -43,15 +42,11 @@ pub const Syntaxer = struct {
     parsing_pipe_rhs: bool,
 
     pub fn init(alloc: std.mem.Allocator, toks: []const tok.Token, source: []const u8, diags: *diagnostic.Diagnostics) !Syntaxer {
-        return .{
-            .tokens = toks,
-            .source = source,
-            .index = 0,
-            .allocator = alloc,
-            .file = try syn.SyntaxFile.init(alloc, toks[0].location.file, toks),
-            .diags = diags,
-            .parsing_pipe_rhs = false,
-        };
+        return initFile(alloc, try syn.SyntaxFile.init(alloc, toks[0].location.file, toks), source, diags);
+    }
+
+    pub fn initFile(alloc: std.mem.Allocator, file: syn.SyntaxFile, source: []const u8, diags: *diagnostic.Diagnostics) Syntaxer {
+        return .{ .source = source, .index = 0, .allocator = alloc, .file = file, .diags = diags, .parsing_pipe_rhs = false };
     }
 
     pub fn nodeCount(self: *const Syntaxer) usize {
@@ -65,7 +60,6 @@ pub const Syntaxer = struct {
     }
 
     pub fn parse(self: *Syntaxer) !syn.SyntaxFile {
-        errdefer self.deinit();
         var roots = parseSentences(self) catch |err| {
             if (err == SyntaxerError.OutOfMemory) {
                 try self.diags.add(self.tokenLocation(), .internal, "out of memory while parsing", .{});
@@ -83,13 +77,13 @@ pub const Syntaxer = struct {
 
     // ───────────────────────────────── token helpers ─────────────────────────
     fn current(self: *Syntaxer) tok.Token {
-        return self.tokens[self.index];
+        return self.file.tokens.get(self.index);
     }
     fn next(self: *Syntaxer) ?tok.Token {
-        return if (self.index + 1 < self.tokens.len) self.tokens[self.index + 1] else null;
+        return if (self.index + 1 < self.file.tokens.len) self.file.tokens.get(self.index + 1) else null;
     }
     fn advanceOne(self: *Syntaxer) void {
-        if (self.index < self.tokens.len) self.index += 1;
+        if (self.index < self.file.tokens.len) self.index += 1;
     }
     fn tokenLocation(self: *Syntaxer) tok.Location {
         return self.current().location;
@@ -129,16 +123,16 @@ pub const Syntaxer = struct {
 
         var depth: i32 = 0;
         var idx: usize = self.index;
-        while (idx < self.tokens.len) : (idx += 1) {
-            const tag = std.meta.activeTag(self.tokens[idx].content);
+        while (idx < self.file.tokens.len) : (idx += 1) {
+            const tag = std.meta.activeTag(self.file.tokens.get(idx).content);
             switch (tag) {
                 .open_bracket => depth += 1,
                 .close_bracket => {
                     depth -= 1;
                     if (depth == 0) {
                         var lookahead = idx + 1;
-                        while (lookahead < self.tokens.len) : (lookahead += 1) {
-                            const next_tag = std.meta.activeTag(self.tokens[lookahead].content);
+                        while (lookahead < self.file.tokens.len) : (lookahead += 1) {
+                            const next_tag = std.meta.activeTag(self.file.tokens.get(lookahead).content);
                             switch (next_tag) {
                                 .new_line, .comment => continue,
                                 else => return next_tag == .open_parenthesis,
@@ -154,7 +148,7 @@ pub const Syntaxer = struct {
     }
 
     fn skipNewLinesAndComments(self: *Syntaxer) void {
-        while (self.index < self.tokens.len) {
+        while (self.index < self.file.tokens.len) {
             switch (self.current().content) {
                 .new_line, .comment => self.advanceOne(),
                 else => break,
@@ -608,7 +602,7 @@ pub const Syntaxer = struct {
                 ftype = try self.parseType();
 
                 if (self.tokenIs(.colon)) {
-                    if (ftype == null or self.file.tag(ftype.?) != .type_name or !std.mem.eql(u8, self.tokenText(self.tokens[@intFromEnum(self.file.mainToken(ftype.?))].content.identifier), "Type")) {
+                    if (ftype == null or self.file.tag(ftype.?) != .type_name or !std.mem.eql(u8, self.tokenText(self.file.tokens.get(@intFromEnum(self.file.mainToken(ftype.?))).content.identifier), "Type")) {
                         try self.diags.add(
                             self.tokenLocation(),
                             .syntax,
@@ -668,7 +662,7 @@ pub const Syntaxer = struct {
                 const qualifier = try self.parseName();
                 self.skipNewLinesAndComments();
                 if (!self.tokenIs(.double_dot)) {
-                    try self.diags.add(self.tokens[@intFromEnum(qualifier.token)].location, .syntax, "expected '..' after choice option module qualifier", .{});
+                    try self.diags.add(self.file.tokens.get(@intFromEnum(qualifier.token)).location, .syntax, "expected '..' after choice option module qualifier", .{});
                     return SyntaxerError.ExpectedIdentifier;
                 }
                 module_qualifier = qualifier;
@@ -722,22 +716,22 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.open_parenthesis)) return false;
 
         var idx = self.index + 1;
-        while (idx < self.tokens.len) : (idx += 1) {
-            const tag = std.meta.activeTag(self.tokens[idx].content);
+        while (idx < self.file.tokens.len) : (idx += 1) {
+            const tag = std.meta.activeTag(self.file.tokens.get(idx).content);
             switch (tag) {
                 .new_line, .comment => continue,
                 .double_dot => return true,
                 .equal => {
                     idx += 1;
-                    while (idx < self.tokens.len) : (idx += 1) {
-                        const inner_tag = std.meta.activeTag(self.tokens[idx].content);
+                    while (idx < self.file.tokens.len) : (idx += 1) {
+                        const inner_tag = std.meta.activeTag(self.file.tokens.get(idx).content);
                         switch (inner_tag) {
                             .new_line, .comment => continue,
                             .double_dot => return true,
                             .identifier => {
                                 var j = idx + 1;
-                                while (j < self.tokens.len) : (j += 1) {
-                                    const next_tag = std.meta.activeTag(self.tokens[j].content);
+                                while (j < self.file.tokens.len) : (j += 1) {
+                                    const next_tag = std.meta.activeTag(self.file.tokens.get(j).content);
                                     switch (next_tag) {
                                         .new_line, .comment => continue,
                                         .double_dot => return true,
@@ -753,8 +747,8 @@ pub const Syntaxer = struct {
                 },
                 .identifier => {
                     var j = idx + 1;
-                    while (j < self.tokens.len) : (j += 1) {
-                        const next_tag = std.meta.activeTag(self.tokens[j].content);
+                    while (j < self.file.tokens.len) : (j += 1) {
+                        const next_tag = std.meta.activeTag(self.file.tokens.get(j).content);
                         switch (next_tag) {
                             .new_line, .comment => continue,
                             .double_dot => return true,
@@ -772,12 +766,12 @@ pub const Syntaxer = struct {
 
     fn currentSentenceStartsChoiceOptionDeclaration(self: *Syntaxer) bool {
         if (!self.tokenIs(.double_dot)) return false;
-        if (self.index + 1 >= self.tokens.len) return false;
-        if (std.meta.activeTag(self.tokens[self.index + 1].content) != .identifier) return false;
+        if (self.index + 1 >= self.file.tokens.len) return false;
+        if (std.meta.activeTag(self.file.tokens.get(self.index + 1).content) != .identifier) return false;
 
         var idx = self.index + 2;
-        while (idx < self.tokens.len) : (idx += 1) {
-            const tag = std.meta.activeTag(self.tokens[idx].content);
+        while (idx < self.file.tokens.len) : (idx += 1) {
+            const tag = std.meta.activeTag(self.file.tokens.get(idx).content);
             switch (tag) {
                 .comment => continue,
                 .new_line, .eof, .close_brace => return true,
@@ -792,8 +786,8 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.comma)) return false;
 
         var idx: usize = self.index + 1;
-        while (idx < self.tokens.len) : (idx += 1) {
-            switch (self.tokens[idx].content) {
+        while (idx < self.file.tokens.len) : (idx += 1) {
+            switch (self.file.tokens.get(idx).content) {
                 .new_line, .comment => continue,
                 .identifier => return true,
                 else => return false,
@@ -831,13 +825,13 @@ pub const Syntaxer = struct {
     }
 
     fn findMatchingCloseParenIndex(self: *Syntaxer, open_paren_index: usize) ?usize {
-        if (open_paren_index >= self.tokens.len) return null;
-        if (std.meta.activeTag(self.tokens[open_paren_index].content) != .open_parenthesis) return null;
+        if (open_paren_index >= self.file.tokens.len) return null;
+        if (std.meta.activeTag(self.file.tokens.get(open_paren_index).content) != .open_parenthesis) return null;
 
         var depth: i32 = 0;
         var idx = open_paren_index;
-        while (idx < self.tokens.len) : (idx += 1) {
-            const tag = std.meta.activeTag(self.tokens[idx].content);
+        while (idx < self.file.tokens.len) : (idx += 1) {
+            const tag = std.meta.activeTag(self.file.tokens.get(idx).content);
             switch (tag) {
                 .open_parenthesis => depth += 1,
                 .close_parenthesis => {
@@ -854,8 +848,8 @@ pub const Syntaxer = struct {
     fn tokenIndexAfterCloseParen(self: *Syntaxer, open_paren_index: usize) ?usize {
         const close_idx = self.findMatchingCloseParenIndex(open_paren_index) orelse return null;
         var idx = close_idx + 1;
-        while (idx < self.tokens.len) : (idx += 1) {
-            switch (self.tokens[idx].content) {
+        while (idx < self.file.tokens.len) : (idx += 1) {
+            switch (self.file.tokens.get(idx).content) {
                 .new_line, .comment => continue,
                 else => return idx,
             }
@@ -865,22 +859,22 @@ pub const Syntaxer = struct {
 
     fn looksLikeFunctionDeclarationInput(self: *Syntaxer, open_paren_index: usize) bool {
         const after_close_idx = self.tokenIndexAfterCloseParen(open_paren_index) orelse return false;
-        if (std.meta.activeTag(self.tokens[after_close_idx].content) != .arrow) return false;
+        if (std.meta.activeTag(self.file.tokens.get(after_close_idx).content) != .arrow) return false;
 
         var idx = open_paren_index + 1;
-        while (idx < self.tokens.len) : (idx += 1) {
-            switch (self.tokens[idx].content) {
+        while (idx < self.file.tokens.len) : (idx += 1) {
+            switch (self.file.tokens.get(idx).content) {
                 .new_line, .comment => continue,
                 .close_parenthesis => return true,
                 .dot => {
                     idx += 1;
-                    while (idx < self.tokens.len) : (idx += 1) {
-                        switch (self.tokens[idx].content) {
+                    while (idx < self.file.tokens.len) : (idx += 1) {
+                        switch (self.file.tokens.get(idx).content) {
                             .new_line, .comment => continue,
                             .identifier => {
                                 idx += 1;
-                                while (idx < self.tokens.len) : (idx += 1) {
-                                    switch (self.tokens[idx].content) {
+                                while (idx < self.file.tokens.len) : (idx += 1) {
+                                    switch (self.file.tokens.get(idx).content) {
                                         .new_line, .comment => continue,
                                         .colon => return true,
                                         .equal => return false,
@@ -1577,7 +1571,7 @@ pub const Syntaxer = struct {
             const ty_opt = try self.parseType();
 
             if (ty_opt) |ty| {
-                const type_name = if (self.file.tag(ty) == .type_name) self.tokenText(self.tokens[@intFromEnum(self.file.mainToken(ty))].content.identifier) else "";
+                const type_name = if (self.file.tag(ty) == .type_name) self.tokenText(self.file.tokens.get(@intFromEnum(self.file.mainToken(ty))).content.identifier) else "";
                 if (std.mem.eql(u8, type_name, "Type") or std.mem.eql(u8, type_name, "CEnum") or std.mem.eql(u8, type_name, "CUnion")) {
                     if (!self.tokenIs(.equal)) return SyntaxerError.ExpectedEqual;
                     self.advanceOne();

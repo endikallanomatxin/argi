@@ -1,6 +1,6 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
-const syn = @import("../3_syntax/syntax_tree_legacy.zig");
+const syn = @import("../3_syntax/syntax_tree.zig");
 
 pub const SemanticGraph = struct {
     allocator: *const std.mem.Allocator,
@@ -555,7 +555,7 @@ pub const Comparison = struct {
     right: *const SGNode,
 };
 
-pub const LogicalOperator = syn.LogicalOperator;
+pub const LogicalOperator = enum { and_, or_ };
 
 pub const LogicalOperation = struct {
     operator: LogicalOperator,

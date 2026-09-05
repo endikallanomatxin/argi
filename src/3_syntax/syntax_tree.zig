@@ -247,6 +247,12 @@ pub const FunctionCall = struct {
 };
 pub const StructTypeLiteral = struct { fields: []const NodeIndex };
 pub const ChoiceTypeLiteral = struct { variants: []const NodeIndex };
+pub const ChoiceTypeVariant = struct {
+    name_token: TokenIndex,
+    module_qualifier: ?TokenIndex,
+    payload_type: ?NodeIndex,
+    is_default: bool,
+};
 pub const StructValueLiteral = struct { fields: []const NodeIndex, positional_prefix_count: u32 };
 pub const CodeBlock = struct { statements: []const NodeIndex };
 pub const ListLiteral = struct { elements: []const NodeIndex };
@@ -267,6 +273,7 @@ pub const AbstractDeclaration = struct {
     requires_abstracts: []const NodeIndex,
     requires_functions: []const NodeIndex,
 };
+pub const AbstractFunctionRequirement = struct { name_token: TokenIndex, input: NodeIndex, output: NodeIndex };
 pub const GenericType = struct { base: NodeIndex, arguments: NodeIndex };
 pub const Type = union(enum) {
     name: struct { name_token: TokenIndex, qualifier_token: ?TokenIndex },
@@ -291,6 +298,12 @@ pub const ValueField = struct { name_token: ?TokenIndex, value: NodeIndex, posit
 pub const ReachDirective = struct { alternatives: []const NodeIndex };
 pub const ReachAlternative = struct { segments: []const NodeIndex };
 pub const ReturnStatement = struct { value: ?NodeIndex };
+pub const KeepStatement = struct { name_token: TokenIndex };
+pub const IndexAccess = struct { value: NodeIndex, index: NodeIndex };
+pub const AddressOf = struct { value: NodeIndex, mutability: PointerMutability };
+pub const PointerAssignment = struct { target: NodeIndex, value: NodeIndex };
+pub const IndexAssignment = struct { target: NodeIndex, value: NodeIndex };
+pub const Literal = struct { token: TokenIndex, negative: bool };
 pub const BinaryOperation = struct { lhs: NodeIndex, rhs: NodeIndex };
 
 pub const TokenList = std.MultiArrayList(token.Token);
@@ -405,13 +418,21 @@ pub const SyntaxFile = struct {
         return tree.tokens.items(.location)[@intFromEnum(tree.mainToken(index))];
     }
 
+    pub fn tokenLocation(tree: *const SyntaxFile, index: TokenIndex) token.Location {
+        return tree.tokens.items(.location)[@intFromEnum(index)];
+    }
+
+    pub fn ref(tree: *const SyntaxFile, node: NodeIndex) SyntaxRef {
+        return .{ .file_id = tree.file_id, .node = node };
+    }
+
     pub fn tokenText(tree: *const SyntaxFile, db: *const source_db.SourceDb, index: TokenIndex) []const u8 {
         const token_index: usize = @intFromEnum(index);
         const contents = tree.tokens.items(.content)[token_index];
         const source = db.get(tree.file_id).source;
         return switch (contents) {
             .identifier, .comment => |range| range.slice(source),
-            .literal => |literal| switch (literal) {
+            .literal => |literal_value| switch (literal_value) {
                 .decimal_int_literal,
                 .hexadecimal_int_literal,
                 .octal_int_literal,
@@ -510,6 +531,18 @@ pub const SyntaxFile = struct {
     pub fn choiceTypeLiteral(tree: *const SyntaxFile, node: NodeIndex) ?ChoiceTypeLiteral {
         if (tree.tag(node) != .choice_type_literal) return null;
         return .{ .variants = tree.nodeRange(tree.data(node).extra_range) };
+    }
+
+    pub fn choiceTypeVariant(tree: *const SyntaxFile, node: NodeIndex) ?ChoiceTypeVariant {
+        const node_tag = tree.tag(node);
+        if (node_tag != .choice_type_variant and node_tag != .choice_type_variant_default) return null;
+        const payload = tree.data(node).optional_token_and_optional_node;
+        return .{
+            .name_token = tree.mainToken(node),
+            .module_qualifier = payload.token.unwrap(),
+            .payload_type = payload.node.unwrap(),
+            .is_default = node_tag == .choice_type_variant_default,
+        };
     }
 
     pub fn structValueLiteral(tree: *const SyntaxFile, node: NodeIndex) ?StructValueLiteral {
@@ -629,6 +662,12 @@ pub const SyntaxFile = struct {
         };
     }
 
+    pub fn abstractFunctionRequirement(tree: *const SyntaxFile, node: NodeIndex) ?AbstractFunctionRequirement {
+        if (tree.tag(node) != .abstract_function_requirement) return null;
+        const extra = tree.extraData(FunctionExtra, tree.data(node).extra);
+        return .{ .name_token = extra.name_token, .input = extra.input, .output = extra.output };
+    }
+
     pub fn syntaxType(tree: *const SyntaxFile, node: NodeIndex) ?Type {
         return switch (tree.tag(node)) {
             .type_name => .{ .name = .{
@@ -727,6 +766,25 @@ pub const SyntaxFile = struct {
         return .{ .value = tree.data(node).optional_node.unwrap() };
     }
 
+    pub fn keepStatement(tree: *const SyntaxFile, node: NodeIndex) ?KeepStatement {
+        if (tree.tag(node) != .keep_statement) return null;
+        return .{ .name_token = tree.data(node).token };
+    }
+
+    pub fn literal(tree: *const SyntaxFile, node: NodeIndex) ?Literal {
+        if (tree.tag(node) != .literal) return null;
+        const main_token = tree.mainToken(node);
+        const negative = switch (tree.tokenContent(main_token)) {
+            .binary_operator => |operator| operator == .subtraction,
+            else => false,
+        };
+        return .{ .token = if (negative) tree.data(node).token else main_token, .negative = negative };
+    }
+
+    pub fn tokenContent(tree: *const SyntaxFile, index: TokenIndex) token.Content {
+        return tree.tokens.items(.content)[@intFromEnum(index)];
+    }
+
     pub fn binaryOperation(tree: *const SyntaxFile, node: NodeIndex) ?BinaryOperation {
         return switch (tree.tag(node)) {
             .pipe_expression, .unwrap_or, .unwrap_or_do, .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo, .compare_equal, .compare_not_equal, .compare_less, .compare_greater, .compare_less_equal, .compare_greater_equal, .logical_and, .logical_or, .error_context, .index_access, .index_assignment, .pointer_assignment => .{
@@ -742,6 +800,33 @@ pub const SyntaxFile = struct {
             .expression_statement, .move_expression, .error_propagation, .nullable_test, .defer_statement, .address_of, .address_of_mut, .dereference => tree.data(node).node,
             else => null,
         };
+    }
+
+    pub fn indexAccess(tree: *const SyntaxFile, node: NodeIndex) ?IndexAccess {
+        if (tree.tag(node) != .index_access) return null;
+        const pair = tree.data(node).node_and_node;
+        return .{ .value = pair.first, .index = pair.second };
+    }
+
+    pub fn addressOf(tree: *const SyntaxFile, node: NodeIndex) ?AddressOf {
+        const mutability: PointerMutability = switch (tree.tag(node)) {
+            .address_of => .read_only,
+            .address_of_mut => .read_write,
+            else => return null,
+        };
+        return .{ .value = tree.data(node).node, .mutability = mutability };
+    }
+
+    pub fn pointerAssignment(tree: *const SyntaxFile, node: NodeIndex) ?PointerAssignment {
+        if (tree.tag(node) != .pointer_assignment) return null;
+        const pair = tree.data(node).node_and_node;
+        return .{ .target = pair.first, .value = pair.second };
+    }
+
+    pub fn indexAssignment(tree: *const SyntaxFile, node: NodeIndex) ?IndexAssignment {
+        if (tree.tag(node) != .index_assignment) return null;
+        const pair = tree.data(node).node_and_node;
+        return .{ .target = pair.first, .value = pair.second };
     }
 };
 

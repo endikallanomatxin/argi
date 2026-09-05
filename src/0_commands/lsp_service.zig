@@ -250,6 +250,7 @@ const SemanticFieldAccessRef = struct {
 const SyntaxTypeDeclRef = struct {
     node: st.SyntaxRef,
     name: SyntaxName,
+    fields: []const SyntaxName,
 };
 
 const SyntaxTypeRef = struct {
@@ -271,7 +272,7 @@ const SymbolTarget = union(SymbolTargetTag) {
 
 const ModuleAnalysis = struct {
     source_db: source_db.SourceDb,
-    tokens: []const token.Token,
+    tokens: token.View,
     sg_nodes: []const *sg.SGNode,
     syntax_functions: []const SyntaxFunctionDeclRef,
     syntax_calls: []const SyntaxFunctionCallRef,
@@ -569,7 +570,7 @@ pub const LanguageService = struct {
             }
             return null;
         };
-        const st_nodes = pipeline.st_nodes;
+        const syntax_roots = pipeline.syntax_roots;
         var syntax_functions = std.array_list.Managed(SyntaxFunctionDeclRef).init(analysis_allocator.*);
         defer syntax_functions.deinit();
         var syntax_calls = std.array_list.Managed(SyntaxFunctionCallRef).init(analysis_allocator.*);
@@ -582,7 +583,7 @@ pub const LanguageService = struct {
         defer syntax_type_refs.deinit();
         var syntax_binding_decls = std.array_list.Managed(SyntaxBindingDeclRef).init(analysis_allocator.*);
         defer syntax_binding_decls.deinit();
-        try collectSyntaxRefs(pipeline.syntax_files.items, pipeline.source_db, st_nodes, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
+        try collectSyntaxRefs(pipeline.syntax_files.items, pipeline.source_db, syntax_roots, &syntax_functions, &syntax_calls, &syntax_operators, &syntax_type_decls, &syntax_type_refs, &syntax_binding_decls);
 
         var semantic_functions = std.array_list.Managed(SemanticFunctionDeclRef).init(analysis_allocator.*);
         defer semantic_functions.deinit();
@@ -602,7 +603,7 @@ pub const LanguageService = struct {
 
         return .{
             .source_db = try pipeline.source_db.clone(analysis_allocator.*),
-            .tokens = try analysis_allocator.dupe(token.Token, pipeline.tokensForPath(doc.path) orelse &.{}),
+            .tokens = try (pipeline.tokensForPath(doc.path) orelse token.View{}).clone(analysis_allocator.*),
             .sg_nodes = sg_nodes,
             .syntax_functions = try syntax_functions.toOwnedSlice(),
             .syntax_calls = try syntax_calls.toOwnedSlice(),
@@ -668,28 +669,23 @@ pub const LanguageService = struct {
         defer pipeline.deinit();
 
         _ = pipeline.parseFiles(&one_file) catch {
-            const toks = pipeline.tokensForPath(doc.path) orelse &.{};
+            const toks = pipeline.tokensForPath(doc.path) orelse token.View{};
             if (toks.len == 0) return out;
 
             try emitLexical(&out, gpa, pipeline.source_db, text, toks);
             return out;
         };
 
-        const toks = pipeline.tokensForPath(doc.path) orelse &.{};
+        const toks = pipeline.tokensForPath(doc.path) orelse token.View{};
         if (toks.len == 0) return out;
-        var off2ix = std.AutoHashMap(usize, usize).init(work);
-        defer off2ix.deinit();
-        for (toks, 0..) |tk, i| {
-            try off2ix.put(tk.location.offset, i);
-        }
-
         var collected = std.array_list.Managed(SemanticToken).init(work);
         defer collected.deinit();
 
         try appendLexicalSemanticTokens(&collected, pipeline.source_db, text, toks);
 
-        // Semantic highlighting currently uses the token stream while the
-        // syntax overlay is migrated to compact typed views.
+        for (pipeline.syntax_files.items) |*tree| {
+            try appendCompactSyntaxSemanticTokens(&collected, pipeline.source_db, tree);
+        }
         std.sort.block(SemanticToken, collected.items, {}, struct {
             fn lessThan(_: void, a: SemanticToken, b: SemanticToken) bool {
                 return if (a.line == b.line) a.start < b.start else a.line < b.line;
@@ -1145,6 +1141,7 @@ pub const LanguageService = struct {
 
         try collectFunctionInlayHints(
             self,
+            &analysis.source_db,
             doc.path,
             range,
             analysis.sg_nodes,
@@ -1153,6 +1150,7 @@ pub const LanguageService = struct {
         );
         try collectCallInlayHints(
             self,
+            &analysis.source_db,
             doc.path,
             range,
             analysis.sg_nodes,
@@ -1183,7 +1181,7 @@ pub const LanguageService = struct {
 fn collectSyntaxRefs(
     syntax_files: []const st.SyntaxFile,
     db: *const source_db.SourceDb,
-    st_nodes: []const st.SyntaxRef,
+    syntax_roots: []const st.SyntaxRef,
     function_refs: *std.array_list.Managed(SyntaxFunctionDeclRef),
     call_refs: *std.array_list.Managed(SyntaxFunctionCallRef),
     operator_refs: *std.array_list.Managed(SyntaxOperatorRef),
@@ -1193,7 +1191,7 @@ fn collectSyntaxRefs(
 ) !void {
     var stack = std.array_list.Managed(st.SyntaxRef).init(function_refs.allocator);
     defer stack.deinit();
-    for (st_nodes) |node| try stack.append(node);
+    for (syntax_roots) |node| try stack.append(node);
 
     while (popOrNull(st.SyntaxRef, &stack)) |reference| {
         const tree = st.fileForRef(syntax_files, reference);
@@ -1327,8 +1325,17 @@ fn collectSyntaxRefs(
             .reach_directive => for (tree.reachDirective(node).?.alternatives) |alternative| try stack.append(.{ .file_id = child_file, .node = alternative }),
             .reach_alternative => for (tree.reachAlternative(node).?.segments) |segment| try stack.append(.{ .file_id = child_file, .node = segment }),
             .return_statement => if (tree.returnStatement(node).?.value) |value| try stack.append(.{ .file_id = child_file, .node = value }),
-            .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo,
-            .compare_equal, .compare_not_equal, .compare_less, .compare_greater, .compare_less_equal, .compare_greater_equal,
+            .binary_add,
+            .binary_subtract,
+            .binary_multiply,
+            .binary_divide,
+            .binary_modulo,
+            .compare_equal,
+            .compare_not_equal,
+            .compare_less,
+            .compare_greater,
+            .compare_less_equal,
+            .compare_greater_equal,
             => {
                 try appendCompactOperator(tree, node, operator_refs);
                 const operation = tree.binaryOperation(node).?;
@@ -1340,12 +1347,17 @@ fn collectSyntaxRefs(
                 try stack.append(.{ .file_id = child_file, .node = operation.lhs });
                 try stack.append(.{ .file_id = child_file, .node = operation.rhs });
             },
-            .expression_statement, .move_expression, .error_propagation, .nullable_test, .defer_statement, .address_of, .address_of_mut, .dereference =>
-                try stack.append(.{ .file_id = child_file, .node = tree.unaryOperand(node).? }),
-            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .generic_type_instantiation =>
-                try collectTypeRefsFromNode(tree, db, node, type_refs),
-            .choice_option_declaration, .abstract_function_requirement, .identifier, .pipe_placeholder, .literal,
-            .import_statement, .break_statement, .continue_statement, .keep_statement,
+            .expression_statement, .move_expression, .error_propagation, .nullable_test, .defer_statement, .address_of, .address_of_mut, .dereference => try stack.append(.{ .file_id = child_file, .node = tree.unaryOperand(node).? }),
+            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .generic_type_instantiation => try collectTypeRefsFromNode(tree, db, node, type_refs),
+            .choice_option_declaration,
+            .abstract_function_requirement,
+            .identifier,
+            .pipe_placeholder,
+            .literal,
+            .import_statement,
+            .break_statement,
+            .continue_statement,
+            .keep_statement,
             => {},
         }
     }
@@ -1428,7 +1440,21 @@ fn collectSyntaxValueFieldNames(tree: *const st.SyntaxFile, db: *const source_db
 }
 
 fn appendSyntaxTypeDeclaration(tree: *const st.SyntaxFile, db: *const source_db.SourceDb, reference: st.SyntaxRef, name_token: st.TokenIndex, refs: *std.array_list.Managed(SyntaxTypeDeclRef)) !void {
-    try refs.append(.{ .node = reference, .name = .{ .location = tree.tokenLocation(name_token), .string = tree.tokenText(db, name_token) } });
+    var fields = std.array_list.Managed(SyntaxName).init(refs.allocator);
+    const value: ?st.NodeIndex = switch (tree.tag(reference.node)) {
+        .type_declaration => tree.typeDeclaration(reference.node).?.value,
+        .c_union_declaration => tree.cUnionDeclaration(reference.node).?.value,
+        else => null,
+    };
+    if (value) |value_node| {
+        if (tree.structTypeLiteral(value_node)) |literal| {
+            for (literal.fields) |field_node| {
+                const field = tree.structTypeField(field_node).?;
+                try fields.append(.{ .location = tree.tokenLocation(field.name_token), .string = tree.tokenText(db, field.name_token) });
+            }
+        }
+    }
+    try refs.append(.{ .node = reference, .name = .{ .location = tree.tokenLocation(name_token), .string = tree.tokenText(db, name_token) }, .fields = try fields.toOwnedSlice() });
 }
 
 fn syntaxFunctionName(tree: *const st.SyntaxFile, db: *const source_db.SourceDb, node: st.NodeIndex, name_token: st.TokenIndex) SyntaxName {
@@ -1516,7 +1542,7 @@ fn buildFunctionHoverMarkdown(
     type_refs: []const SemanticTypeDeclRef,
     source_path: []const u8,
     source_text: []const u8,
-    toks: []const token.Token,
+    toks: token.View,
 ) ![]const u8 {
     var out = std.array_list.Managed(u8).init(allocator);
     errdefer out.deinit();
@@ -1549,7 +1575,7 @@ fn buildSyntaxFunctionHoverMarkdown(
     syntax_decl: SyntaxFunctionShape,
     source_path: []const u8,
     source_text: []const u8,
-    toks: []const token.Token,
+    toks: token.View,
 ) ![]const u8 {
     var out = std.array_list.Managed(u8).init(allocator);
     errdefer out.deinit();
@@ -1782,7 +1808,7 @@ fn functionHasInferredReachedFields(decl: *const sg.FunctionDeclaration, syntax_
 
 fn extractFunctionHeaderSource(
     source_text: []const u8,
-    toks: []const token.Token,
+    toks: token.View,
     syntax_decl: SyntaxFunctionShape,
 ) !?[]const u8 {
     if (syntax_decl.name.location.offset >= source_text.len) return null;
@@ -1790,7 +1816,7 @@ fn extractFunctionHeaderSource(
     var paren_depth: usize = 0;
     var idx = start_idx;
     while (idx < toks.len) : (idx += 1) {
-        const tk = toks[idx];
+        const tk = toks.get(idx);
         if (tk.location.file != syntax_decl.name.location.file) continue;
         if (tk.location.offset > source_text.len) return null;
         switch (tk.content) {
@@ -1812,8 +1838,9 @@ fn extractFunctionHeaderSource(
     return null;
 }
 
-fn findTokenIndexAtOffset(toks: []const token.Token, loc: token.Location) ?usize {
-    for (toks, 0..) |tk, idx| {
+fn findTokenIndexAtOffset(toks: token.View, loc: token.Location) ?usize {
+    for (0..toks.len) |idx| {
+        const tk = toks.get(idx);
         if (tk.location.file != loc.file) continue;
         if (tk.location.offset == loc.offset) return idx;
     }
@@ -1872,6 +1899,7 @@ fn lineIndexForOffset(starts: []const usize, offset: usize) ?usize {
 
 fn collectFunctionInlayHints(
     svc: *LanguageService,
+    db: *const source_db.SourceDb,
     primary_path: []const u8,
     range: ?Range,
     sg_nodes: []const *sg.SGNode,
@@ -1885,7 +1913,7 @@ fn collectFunctionInlayHints(
     while (popOrNull(*const sg.SGNode, &stack)) |node| {
         switch (node.content) {
             .function_declaration => |fd| {
-                if (!std.mem.eql(u8, fd.location.file, primary_path)) {
+                if (!std.mem.eql(u8, db.path(fd.location.file), primary_path)) {
                     if (fd.body) |body| for (body.nodes) |sub| try stack.append(sub);
                     continue;
                 }
@@ -1894,7 +1922,7 @@ fn collectFunctionInlayHints(
                     if (fd.body) |body| for (body.nodes) |sub| try stack.append(sub);
                     continue;
                 };
-                const hint_pos = positionAfterName(syntax_fn.decl.name.location, syntax_fn.decl.name.string.len);
+                const hint_pos = positionAfterName(db, syntax_fn.decl.name.location, syntax_fn.decl.name.string.len);
                 if (range) |hint_range| {
                     if (!rangeContainsPosition(hint_range, hint_pos)) {
                         if (fd.body) |body| for (body.nodes) |sub| try stack.append(sub);
@@ -1956,11 +1984,12 @@ fn collectFunctionInlayHints(
 
 fn collectCallInlayHints(
     svc: *LanguageService,
+    db: *const source_db.SourceDb,
     primary_path: []const u8,
     range: ?Range,
     sg_nodes: []const *sg.SGNode,
     syntax_calls: []const SyntaxFunctionCallRef,
-    toks: []const token.Token,
+    toks: token.View,
     out: *std.array_list.Managed(InlayHint),
 ) !void {
     var stack = std.array_list.Managed(*const sg.SGNode).init(svc.allocator);
@@ -1970,10 +1999,10 @@ fn collectCallInlayHints(
     while (popOrNull(*const sg.SGNode, &stack)) |node| {
         switch (node.content) {
             .function_call => |call| {
-                if (!std.mem.eql(u8, node.location.file, primary_path)) continue;
+                if (!std.mem.eql(u8, db.path(node.location.file), primary_path)) continue;
                 const syntax_call = findSyntaxFunctionCall(syntax_calls, node.location, call.callee.name) orelse continue;
-                const hint_pos = positionAfterCallInput(toks, syntax_call.call.input_location) orelse
-                    positionAfterName(syntax_call.call.callee_loc, syntax_call.call.callee.len);
+                const hint_pos = positionAfterCallInput(db, toks, syntax_call.call.input_location) orelse
+                    positionAfterName(db, syntax_call.call.callee_loc, syntax_call.call.callee.len);
                 if (range) |hint_range| {
                     if (!rangeContainsPosition(hint_range, hint_pos)) continue;
                 }
@@ -2238,10 +2267,13 @@ fn findFieldDefinition(
     semantic_types: []const SemanticTypeDeclRef,
     syntax_type_decls: []const SyntaxTypeDeclRef,
 ) ?SyntaxName {
-    _ = db;
-    _ = field_access;
-    _ = semantic_types;
-    _ = syntax_type_decls;
+    const base_type = field_access.access.struct_value.sem_type orelse return null;
+    if (base_type != .struct_type) return null;
+    const declaration = findSemanticTypeDeclByType(semantic_types, base_type) orelse return null;
+    const syntax_declaration = findSyntaxTypeDecl(db, syntax_type_decls, declaration.decl.origin_file, declaration.decl.name) orelse return null;
+    for (syntax_declaration.fields) |field| {
+        if (std.mem.eql(u8, field.string, field_access.access.field_name)) return field;
+    }
     return null;
 }
 
@@ -2474,9 +2506,10 @@ fn positionAfterName(db: *const source_db.SourceDb, loc: token.Location, byte_le
     };
 }
 
-fn positionAfterCallInput(db: *const source_db.SourceDb, toks: []const token.Token, input_loc: token.Location) ?Position {
+fn positionAfterCallInput(db: *const source_db.SourceDb, toks: token.View, input_loc: token.Location) ?Position {
     var start_idx: ?usize = null;
-    for (toks, 0..) |tk, idx| {
+    for (0..toks.len) |idx| {
+        const tk = toks.get(idx);
         if (tk.location.file != input_loc.file) continue;
         if (tk.location.offset != input_loc.offset) continue;
         if (tk.content != .open_parenthesis) continue;
@@ -2488,7 +2521,7 @@ fn positionAfterCallInput(db: *const source_db.SourceDb, toks: []const token.Tok
     var depth: usize = 0;
     var idx = idx0;
     while (idx < toks.len) : (idx += 1) {
-        const tk = toks[idx];
+        const tk = toks.get(idx);
         if (tk.location.file != input_loc.file) continue;
         switch (tk.content) {
             .open_parenthesis => depth += 1,
@@ -2641,7 +2674,7 @@ fn emitLexical(
     gpa: std.mem.Allocator,
     db: *const source_db.SourceDb,
     text: []const u8,
-    toks: []const token.Token,
+    toks: token.View,
 ) !void {
     _ = gpa;
 
@@ -2658,20 +2691,104 @@ fn emitLexical(
 
 const SemanticToken = struct { line: u32, start: u32, len: u32, type_index: u32, mods: u32 };
 
+fn appendCompactSyntaxSemanticTokens(sink: *std.array_list.Managed(SemanticToken), db: *const source_db.SourceDb, tree: *const st.SyntaxFile) !void {
+    const Role = struct { kind: u32, mods: u32 = 0 };
+    const roles = try sink.allocator.alloc(?Role, tree.tokens.len);
+    defer sink.allocator.free(roles);
+    @memset(roles, null);
+    const declaration: u32 = 1 << MOD_INDEX.declaration;
+    const readonly: u32 = 1 << MOD_INDEX.readonly;
+
+    // Dense nodes let highlighting scan once without a traversal stack. Roles
+    // are indexed by token so shared names never produce overlapping entries.
+    for (0..tree.nodes.len) |index| {
+        const node: st.NodeIndex = @enumFromInt(@as(u32, @intCast(index)));
+        var name: ?st.TokenIndex = null;
+        var role = Role{ .kind = TOKEN_INDEX.property };
+        switch (tree.tag(node)) {
+            .function_declaration, .function_declaration_once => {
+                name = tree.functionDeclaration(node).?.name_token;
+                role = .{ .kind = TOKEN_INDEX.function, .mods = declaration };
+            },
+            .test_declaration => {
+                name = tree.testDeclaration(node).?.function.name_token;
+                role = .{ .kind = TOKEN_INDEX.function, .mods = declaration };
+            },
+            .function_call => {
+                const call = tree.functionCall(node).?;
+                name = call.callee_token;
+                role.kind = TOKEN_INDEX.function;
+                if (call.module_qualifier) |qualifier| roles[@intFromEnum(qualifier)] = .{ .kind = TOKEN_INDEX.namespace };
+            },
+            .symbol_declaration_constant, .symbol_declaration_variable => {
+                const symbol = tree.symbolDeclaration(node).?;
+                name = symbol.name_token;
+                role = .{ .kind = TOKEN_INDEX.variable, .mods = declaration | (if (symbol.mutability == .constant) readonly else 0) };
+            },
+            .type_declaration, .c_enum_declaration, .c_union_declaration, .abstract_declaration => {
+                name = tree.mainToken(node);
+                role = .{ .kind = TOKEN_INDEX.type_, .mods = declaration };
+            },
+            .type_name => {
+                const ty = tree.syntaxType(node).?.name;
+                name = ty.name_token;
+                role.kind = TOKEN_INDEX.type_;
+                if (ty.qualifier_token) |qualifier| roles[@intFromEnum(qualifier)] = .{ .kind = TOKEN_INDEX.namespace };
+            },
+            .struct_type_field, .inferred_result_field => {
+                name = tree.structTypeField(node).?.name_token;
+                role.mods = declaration;
+            },
+            .choice_type_variant, .choice_type_variant_default => {
+                name = tree.choiceTypeVariant(node).?.name_token;
+                role.mods = declaration;
+            },
+            .choice_option_declaration => {
+                name = tree.choiceOptionDeclaration(node).?.name_token;
+                role.mods = declaration;
+            },
+            .struct_value_field => name = tree.valueField(node).?.name_token,
+            .struct_field_access => name = tree.structFieldAccess(node).?.field_token,
+            .choice_literal, .choice_some_literal => name = tree.choiceLiteral(node).?.name_token,
+            .choice_payload_access => name = tree.choicePayloadAccess(node).?.variant_token,
+            .for_value, .for_borrow, .for_mut_borrow => {
+                name = tree.forStatement(node).?.name_token;
+                role = .{ .kind = TOKEN_INDEX.variable, .mods = declaration };
+            },
+            .match_case_value, .match_case_borrow, .match_case_mut_borrow, .match_case_move => {
+                const match_case = tree.matchCase(node).?;
+                name = match_case.variant_token;
+                if (match_case.payload_name) |payload| roles[@intFromEnum(payload)] = .{ .kind = TOKEN_INDEX.variable, .mods = declaration };
+            },
+            else => {},
+        }
+        if (name) |token_index| roles[@intFromEnum(token_index)] = role;
+    }
+    for (roles, 0..) |maybe_role, index| {
+        const role = maybe_role orelse continue;
+        const token_index: st.TokenIndex = @enumFromInt(@as(u32, @intCast(index)));
+        if (tree.tokenContent(token_index) != .identifier) continue;
+        const location = tree.tokenLocation(token_index);
+        const position = db.lineColumn(location.file, location.offset);
+        try sink.append(.{ .line = position.line - 1, .start = position.column - 1, .len = @intCast(tree.tokenText(db, token_index).len), .type_index = role.kind, .mods = role.mods });
+    }
+}
+
 fn appendLexicalSemanticTokens(
     sink: *std.array_list.Managed(SemanticToken),
     db: *const source_db.SourceDb,
     text: []const u8,
-    toks: []const token.Token,
+    toks: token.View,
 ) !void {
     var prev_non_trivia_was_hash = false;
 
-    for (toks, 0..) |tk, idx| {
+    for (0..toks.len) |idx| {
+        const tk = toks.get(idx);
         const ty_maybe = switch (tk.content) {
             .hash => blk: {
                 var j = idx + 1;
                 while (j < toks.len) : (j += 1) {
-                    switch (toks[j].content) {
+                    switch (toks.get(j).content) {
                         .comment, .new_line => continue,
                         .identifier => break :blk TOKEN_INDEX.keyword,
                         else => break :blk classify_lex_only(tk.content),
@@ -3449,6 +3566,71 @@ test "semantic tokens include string literal and function call" {
 
     try std.testing.expect(tokens.items.len > 0);
     try std.testing.expect(tokens.items.len % 5 == 0);
+    var line: u32 = 0;
+    var column: u32 = 0;
+    var saw_declaration = false;
+    var saw_call = false;
+    var saw_string = false;
+    var index: usize = 0;
+    while (index < tokens.items.len) : (index += 5) {
+        const entry = tokens.items[index..][0..5];
+        column = if (entry[0] == 0) column + entry[1] else entry[1];
+        line += entry[0];
+        if (line == 0 and column == 0) {
+            try std.testing.expectEqual(TOKEN_INDEX.function, entry[3]);
+            try std.testing.expectEqual(@as(u32, 1 << MOD_INDEX.declaration), entry[4]);
+            saw_declaration = true;
+        }
+        if (line == 6 and column == 18) {
+            try std.testing.expectEqual(TOKEN_INDEX.function, entry[3]);
+            try std.testing.expectEqual(@as(u32, 0), entry[4]);
+            saw_call = true;
+        }
+        if (line == 5 and entry[3] == TOKEN_INDEX.string) saw_string = true;
+    }
+    try std.testing.expect(saw_declaration and saw_call and saw_string);
+}
+
+test "inlay hints describe compact calls with reached arguments" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const rel_path = "main.rg";
+    const code =
+        \\helper(.value: Int32 = #reach value) -> (.out: Int32) := {
+        \\    out = value
+        \\}
+        \\main() -> (.status_code: Int32) := {
+        \\    value :: Int32 = 42
+        \\    status_code = helper()
+        \\}
+        \\ 
+    ;
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = rel_path, .data = code });
+    const abs_path = try tmpFilePath(&tmp, rel_path);
+    defer std.testing.allocator.free(abs_path);
+    const uri = try std.fmt.allocPrint(std.testing.allocator, "file://{s}", .{abs_path});
+    defer std.testing.allocator.free(uri);
+
+    const root_uri = try tmpRootUriWithCore(&tmp);
+    defer std.testing.allocator.free(root_uri);
+
+    var svc = LanguageService.init(std.testing.allocator, std.testing.io);
+    defer svc.deinit();
+    try svc.initialize(root_uri);
+
+    const diags = try svc.openDocument(uri, abs_path, 1, code);
+    defer diags.deinit();
+
+    var hints = try svc.inlayHints(uri, null);
+    defer hints.deinit();
+    try std.testing.expect(hints.items.len > 0);
+    var found = false;
+    for (hints.items) |hint| {
+        if (hint.position.line == 5 and std.mem.indexOf(u8, hint.label, "value") != null) found = true;
+    }
+    try std.testing.expect(found);
 }
 
 test "semantic tokens fall back to lexical tokens when syntaxing fails" {
