@@ -147,11 +147,17 @@ fn parseFlags(args: []const []const u8) !BuildFlags {
     return parsed.flags;
 }
 
-fn printTokenList(all: []const token.Token) void {
+fn printTokenList(pipeline: *const frontend.FrontendPipeline) void {
     std.debug.print("\nTOKENS\n", .{});
-    for (all, 0..) |t, i| {
-        std.debug.print("{d}: ", .{i});
-        tokp.printTokenWithLocation(t, t.location);
+    var index: usize = 0;
+    for (pipeline.syntax_files.items) |file| {
+        for (0..file.tokens.len) |token_index| {
+            const t = file.tokens.get(token_index);
+            std.debug.print("{d}: ", .{index});
+            const position = pipeline.source_db.lineColumn(t.location.file, t.location.offset);
+            tokp.printTokenWithLocation(t, pipeline.source_db.get(t.location.file).source, pipeline.source_db.path(t.location.file), position.line, position.column);
+            index += 1;
+        }
     }
 }
 
@@ -218,8 +224,13 @@ fn printCompilerStats(
 
     std.debug.print("Frontend\n", .{});
     std.debug.print("  source files: {d}\n", .{file_count});
-    std.debug.print("  tokens:       {d}\n", .{pipeline.tokens.items.len});
-    std.debug.print("  ST nodes:     {d}\n", .{pipeline.st_node_count});
+    std.debug.print("  tokens:       {d}\n", .{pipeline.tokenCount()});
+    std.debug.print("  token bytes:  {d} ({d} each)\n", .{ pipeline.tokenStorageBytes(), @sizeOf(token.Token) });
+    std.debug.print("  syntax nodes:     {d}\n", .{pipeline.syntax_node_count});
+    const syntax_storage = pipeline.syntaxStorageMetrics();
+    std.debug.print("  node base bytes: {d}\n", .{syntax_storage.node_base_bytes});
+    std.debug.print("  extra_data bytes: {d}\n", .{syntax_storage.extra_data_bytes});
+    std.debug.print("  SyntaxFile total: {d}\n", .{syntax_storage.total()});
     std.debug.print("  SG nodes:     {d}\n", .{pipeline.sg_node_count});
 
     std.debug.print("Types\n", .{});
@@ -662,7 +673,7 @@ fn compileResolvedPlan(
     const tokenize_start = nowNs(io);
     pipeline.tokenizeFiles(files.items) catch {
         timings.tokenize_ns = elapsedSince(io, tokenize_start);
-        if (flags.show_token_list) printTokenList(pipeline.tokens.items);
+        if (flags.show_token_list) printTokenList(&pipeline);
         dumpDiagnosticsOrWarn(&diagnostics, if (flags.show_cascade) std.math.maxInt(usize) else 1);
         return error.CompilationFailed;
     };
@@ -672,7 +683,7 @@ fn compileResolvedPlan(
     const syntax_start = nowNs(io);
     _ = pipeline.syntax() catch {
         timings.syntax_ns = elapsedSince(io, syntax_start);
-        if (flags.show_token_list) printTokenList(pipeline.tokens.items);
+        if (flags.show_token_list) printTokenList(&pipeline);
         if (pipeline.syntax_ctx) |*syntax_ctx| {
             if (flags.show_syntax_tree) syntax_ctx.printST();
         }
@@ -685,7 +696,7 @@ fn compileResolvedPlan(
     const semantizing_start = nowNs(io);
     const sg = pipeline.semantize() catch |err| {
         timings.semantizing_ns = elapsedSince(io, semantizing_start);
-        if (flags.show_token_list) printTokenList(pipeline.tokens.items);
+        if (flags.show_token_list) printTokenList(&pipeline);
         if (pipeline.syntax_ctx) |*syntax_ctx| {
             if (flags.show_syntax_tree) syntax_ctx.printST();
         }
@@ -701,7 +712,7 @@ fn compileResolvedPlan(
 
     // 6. Si hubo errores semánticos, parar antes de codegen ───────────────
     if (diagnostics.hasErrors()) {
-        if (flags.show_token_list) printTokenList(pipeline.tokens.items);
+        if (flags.show_token_list) printTokenList(&pipeline);
         if (pipeline.syntax_ctx) |*syntax_ctx| {
             if (flags.show_syntax_tree) syntax_ctx.printST();
         }
@@ -727,7 +738,7 @@ fn compileResolvedPlan(
     defer gen.deinit();
     const module = gen.generate() catch {
         timings.codegen_ns = elapsedSince(io, codegen_start);
-        if (flags.show_token_list) printTokenList(pipeline.tokens.items);
+        if (flags.show_token_list) printTokenList(&pipeline);
         if (pipeline.sem_ctx) |*semantizer_ctx| {
             if (flags.show_semantic_graph) semantizer_ctx.printSG();
         }

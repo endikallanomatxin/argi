@@ -6448,10 +6448,8 @@ test "required live input validation projects the selected aggregate path" {
         .{ .index = 1, .value = &stale_value },
     } };
     const location = @import("../2_tokens/token.zig").Location{
-        .file = "required_live_test.rg",
+        .file = @enumFromInt(0),
         .offset = 0,
-        .line = 1,
-        .column = 1,
     };
     const function = sg.FunctionDeclaration{
         .id = 0,
@@ -6490,10 +6488,8 @@ test "required live input validation rejects integer-derived safe references" {
     defer state.deinit();
 
     const location = @import("../2_tokens/token.zig").Location{
-        .file = "required_live_integer_address_test.rg",
+        .file = @enumFromInt(0),
         .offset = 0,
-        .line = 1,
-        .column = 1,
     };
     const function = sg.FunctionDeclaration{
         .id = 0,
@@ -6880,15 +6876,13 @@ fn expectRejectedMultiEffectCallRestoresState(comptime use_virtual_call: bool) !
     defer checker.deinit();
 
     const location = @import("../2_tokens/token.zig").Location{
-        .file = "transaction_test.rg",
+        .file = @enumFromInt(0),
         .offset = 0,
-        .line = 1,
-        .column = 1,
     };
     var first_binding = sg.BindingDeclaration{
         .name = "first",
         .location = location,
-        .origin_file = location.file,
+        .origin_file = "transaction_test.rg",
         .mutability = undefined,
         .ty = .{ .builtin = .Int32 },
         .initialization = null,
@@ -6896,7 +6890,7 @@ fn expectRejectedMultiEffectCallRestoresState(comptime use_virtual_call: bool) !
     var second_binding = sg.BindingDeclaration{
         .name = "second",
         .location = location,
-        .origin_file = location.file,
+        .origin_file = "transaction_test.rg",
         .mutability = undefined,
         .ty = .{ .builtin = .Int32 },
         .initialization = null,
@@ -7034,15 +7028,13 @@ test "auto deinit keeps every owned root and the binding alive when one root is 
     defer checker.deinit();
 
     const location = @import("../2_tokens/token.zig").Location{
-        .file = "auto_deinit_transaction_test.rg",
+        .file = @enumFromInt(0),
         .offset = 0,
-        .line = 1,
-        .column = 1,
     };
     var binding = sg.BindingDeclaration{
         .name = "owned_pair",
         .location = location,
-        .origin_file = location.file,
+        .origin_file = "auto_deinit_transaction_test.rg",
         .mutability = undefined,
         .ty = .{ .builtin = .Int32 },
         .initialization = null,
@@ -7099,15 +7091,13 @@ test "loop root widening is stable and preserves historical aliases" {
     defer checker.deinit();
 
     const location = @import("../2_tokens/token.zig").Location{
-        .file = "loop_root_phi_test.rg",
+        .file = @enumFromInt(0),
         .offset = 0,
-        .line = 1,
-        .column = 1,
     };
     var owner_binding = sg.BindingDeclaration{
         .name = "owner",
         .location = location,
-        .origin_file = location.file,
+        .origin_file = "loop_root_phi_test.rg",
         .mutability = undefined,
         .ty = .{ .builtin = .Int32 },
         .initialization = null,
@@ -7706,15 +7696,13 @@ test "array pointer operations reject stale pointer values" {
     defer checker.deinit();
 
     const location = @import("../2_tokens/token.zig").Location{
-        .file = "stale_array_pointer_test.rg",
+        .file = @enumFromInt(0),
         .offset = 0,
-        .line = 1,
-        .column = 1,
     };
     var binding = sg.BindingDeclaration{
         .name = "pointer",
         .location = location,
-        .origin_file = location.file,
+        .origin_file = "stale_array_pointer_test.rg",
         .mutability = undefined,
         .ty = undefined,
         .initialization = null,

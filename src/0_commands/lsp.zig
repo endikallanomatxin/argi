@@ -128,6 +128,11 @@ const LanguageServer = struct {
                     log.err("semanticTokens/range failed: {s}", .{@errorName(err)});
                     self.respondInternalErrorOrLog(&writer, id, "semantic tokens failed");
                 };
+            } else if (std.mem.eql(u8, method, "textDocument/inlayHint")) {
+                if (id_value) |id| self.handleInlayHints(&writer, id, params_value) catch |err| {
+                    log.err("inlay hints failed: {s}", .{@errorName(err)});
+                    self.respondInternalErrorOrLog(&writer, id, "inlay hints failed");
+                };
             } else if (std.mem.eql(u8, method, "textDocument/hover")) {
                 if (id_value) |id| self.handleHover(&writer, id, params_value) catch |err| {
                     log.err("hover failed: {s}", .{@errorName(err)});
@@ -364,6 +369,8 @@ const LanguageServer = struct {
         try stream.objectField("range");
         try stream.write(false);
         try stream.endObject();
+        try stream.objectField("inlayHintProvider");
+        try stream.write(true);
         try stream.objectField("hoverProvider");
         try stream.write(true);
         try stream.objectField("definitionProvider");
@@ -568,6 +575,32 @@ const LanguageServer = struct {
             try stream.endObject(); // result
             try stream.endObject(); // root
 
+            try self.sendMessage(writer, payload.writer.buffered());
+        }
+    }
+
+    fn handleInlayHints(self: *LanguageServer, writer: anytype, id_value: json.Value, params_value: ?json.Value) !void {
+        const params = params_value orelse return;
+        if (params != .object) return;
+        const document = getField(&params.object, "textDocument") orelse return;
+        if (document != .object) return;
+        const uri = getField(&document.object, "uri") orelse return;
+        if (uri != .string) return;
+        const range = if (getField(&params.object, "range")) |value| parseRange(value) else null;
+        if (self.service) |*svc| {
+            var hints = try svc.inlayHints(uri.string, range);
+            defer hints.deinit();
+            var payload = std.Io.Writer.Allocating.init(self.allocator);
+            defer payload.deinit();
+            var stream: json.Stringify = .{ .writer = &payload.writer, .options = .{} };
+            try stream.beginObject();
+            try stream.objectField("jsonrpc");
+            try stream.write("2.0");
+            try stream.objectField("id");
+            try stream.write(id_value);
+            try stream.objectField("result");
+            try stream.write(hints.items);
+            try stream.endObject();
             try self.sendMessage(writer, payload.writer.buffered());
         }
     }
@@ -1033,6 +1066,7 @@ test "initialize response is framed and flushed" {
     try std.testing.expect(response.value.object.get("result").? == .object);
     const capabilities = response.value.object.get("result").?.object.get("capabilities").?.object;
     try std.testing.expect(capabilities.get("hoverProvider").?.bool);
+    try std.testing.expect(capabilities.get("inlayHintProvider").?.bool);
     try std.testing.expect(capabilities.get("definitionProvider").?.bool);
 }
 
@@ -1068,6 +1102,7 @@ test "initialize response advertises hover definition references and rename" {
 
     const capabilities = root.get("result").?.object.get("capabilities").?.object;
     try std.testing.expect(capabilities.get("hoverProvider").?.bool);
+    try std.testing.expect(capabilities.get("inlayHintProvider").?.bool);
     try std.testing.expect(capabilities.get("definitionProvider").?.bool);
     try std.testing.expect(capabilities.get("referencesProvider").?.bool);
     try std.testing.expect(capabilities.get("prepareProvider") == null);

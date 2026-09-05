@@ -1073,7 +1073,7 @@ fn floatLiteralAs(
 pub fn coerceLiteralToBuiltin(
     target: sg.BuiltinType,
     expr: TypedExpr,
-    expr_node: *const syn.STNode,
+    expr_location: tok.Location,
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
 ) err.SemErr!TypedExpr {
@@ -1082,11 +1082,11 @@ pub fn coerceLiteralToBuiltin(
     const lit = expr.node.content.value_literal;
     switch (lit) {
         .int_literal => |value| {
-            const maybe = try intLiteralAs(target, value, expr_node.location, allocator, diags);
+            const maybe = try intLiteralAs(target, value, expr_location, allocator, diags);
             if (maybe) |converted| return converted;
         },
         .float_literal => |value| {
-            const maybe = try floatLiteralAs(target, value, expr_node.location, allocator);
+            const maybe = try floatLiteralAs(target, value, expr_location, allocator);
             if (maybe) |converted| return converted;
         },
         else => {},
@@ -1152,7 +1152,7 @@ fn coerceStringLiteralToPointer(
 pub fn coerceExprToType(
     expected: sg.Type,
     expr: TypedExpr,
-    expr_node: *const syn.STNode,
+    expr_location: tok.Location,
     s: *Scope,
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
@@ -1160,10 +1160,10 @@ pub fn coerceExprToType(
     if (typesExactlyEqual(expected, expr.ty)) return expr;
 
     return switch (expected) {
-        .array_type => |arr_info| convertListLiteralToArray(expr, arr_info, expr_node.location, s, allocator, diags),
-        .builtin => |bt| try coerceLiteralToBuiltin(bt, expr, expr_node, allocator, diags),
-        .choice_type => |ct| try coerceChoiceLiteral(ct, expr, expr_node, s, allocator, diags),
-        .struct_type => |st| try coerceStructLiteral(st, expr, expr_node, s, allocator, diags),
+        .array_type => |arr_info| convertListLiteralToArray(expr, arr_info, expr_location, s, allocator, diags),
+        .builtin => |bt| try coerceLiteralToBuiltin(bt, expr, expr_location, allocator, diags),
+        .choice_type => |ct| try coerceChoiceLiteral(ct, expr, expr_location, s, allocator, diags),
+        .struct_type => |st| try coerceStructLiteral(st, expr, expr_location, s, allocator, diags),
         .pointer_type => |pt| coerceStringLiteralToPointer(pt, expr),
         else => expr,
     };
@@ -1172,7 +1172,7 @@ pub fn coerceExprToType(
 fn coerceChoiceLiteral(
     expected: *const sg.ChoiceType,
     expr: TypedExpr,
-    expr_node: *const syn.STNode,
+    expr_location: tok.Location,
     s: *Scope,
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
@@ -1184,14 +1184,14 @@ fn coerceChoiceLiteral(
     }
 
     if (expr.ty == .choice_type and choiceTypeIsSupersetOf(expected, expr.ty.choice_type)) {
-        return coerceChoiceValue(expected, expr, expr_node, allocator, diags);
+        return coerceChoiceValue(expected, expr, expr_location, allocator, diags);
     }
 
     if (expr.node.content != .choice_literal) return expr;
 
     const choice_lit = expr.node.content.choice_literal;
     const variant_name = choice_lit.variant_name;
-    const loc = expr_node.location;
+    const loc = expr_location;
 
     var qualified_option: ?*const sg.ChoiceOptionDeclaration = null;
     if (choice_lit.module_qualifier) |module_name| {
@@ -1204,7 +1204,7 @@ fn coerceChoiceLiteral(
             return error.Reported;
         };
         if (std.mem.startsWith(u8, variant_name, "_")) {
-            const requester_dir = std.fs.path.dirname(loc.file) orelse ".";
+            const requester_dir = std.fs.path.dirname(diags.path(loc)) orelse ".";
             if (!std.mem.eql(u8, requester_dir, module_dir)) {
                 try diags.add(loc, .semantic, "choice option '{s}' is private to its module", .{variant_name});
                 return error.Reported;
@@ -1252,7 +1252,7 @@ fn coerceChoiceLiteral(
                     .node = @constCast(payload_expr),
                     .ty = payload_expr_ty,
                 };
-                const coerced = try coerceExprToType(payload_ty, payload_typed, expr_node, s, allocator, diags);
+                const coerced = try coerceExprToType(payload_ty, payload_typed, expr_location, s, allocator, diags);
                 break :blk coerced.node;
             } else blk: {
                 if (choice_lit.payload != null) {
@@ -1295,7 +1295,7 @@ fn coerceChoiceLiteral(
 fn coerceChoiceValue(
     expected: *const sg.ChoiceType,
     expr: TypedExpr,
-    expr_node: *const syn.STNode,
+    expr_location: tok.Location,
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
 ) err.SemErr!TypedExpr {
@@ -1306,7 +1306,7 @@ fn coerceChoiceValue(
     const lit = expr.node.content.choice_literal;
     const actual_variant = actual_choice.variants[lit.variant_index];
     const expected_index = choiceTypeContainsVariant(expected, actual_variant) orelse {
-        try diags.add(expr_node.location, .semantic, "choice coercion failed: variant is not part of the destination choice", .{});
+        try diags.add(expr_location, .semantic, "choice coercion failed: variant is not part of the destination choice", .{});
         return error.Reported;
     };
 
@@ -1319,7 +1319,7 @@ fn coerceChoiceValue(
         .payload = lit.payload,
     };
 
-    const node = try sg.makeSGNode(.{ .choice_literal = typed }, expr_node.location, allocator);
+    const node = try sg.makeSGNode(.{ .choice_literal = typed }, expr_location, allocator);
     node.sem_type = .{ .choice_type = expected };
     return .{ .node = node, .ty = .{ .choice_type = expected } };
 }
@@ -1401,13 +1401,13 @@ pub fn convertListLiteralToArray(
 pub fn coerceStructLiteral(
     expected: *const sg.StructType,
     expr: TypedExpr,
-    expr_node: *const syn.STNode,
+    expr_location: tok.Location,
     s: *Scope,
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
 ) err.SemErr!TypedExpr {
     if (expected.layout == .c_union) {
-        return coerceUnionLiteral(expected, expr, expr_node, s, allocator, diags);
+        return coerceUnionLiteral(expected, expr, expr_location, s, allocator, diags);
     }
 
     if (expr.node.content != .struct_value_literal) return expr;
@@ -1439,12 +1439,12 @@ pub fn coerceStructLiteral(
             .node = field_node,
             .ty = act_field.ty,
         };
-        field_expr = try coerceExprToType(exp_field.ty, field_expr, expr_node, s, allocator, diags);
+        field_expr = try coerceExprToType(exp_field.ty, field_expr, expr_location, s, allocator, diags);
         if (!typesExactlyEqual(exp_field.ty, field_expr.ty)) {
             const pair = try formatTypePairText(exp_field.ty, field_expr.ty, s, allocator);
             defer pair.deinit();
             try diags.add(
-                expr_node.location,
+                expr_location,
                 .semantic,
                 "cannot initialize positional field {d} with '{s}' (expected '{s}')",
                 .{ i, pair.actual.bytes, pair.expected.bytes },
@@ -1469,12 +1469,12 @@ pub fn coerceStructLiteral(
                 .node = field_node,
                 .ty = act_field.ty,
             };
-            field_expr = try coerceExprToType(exp_field.ty, field_expr, expr_node, s, allocator, diags);
+            field_expr = try coerceExprToType(exp_field.ty, field_expr, expr_location, s, allocator, diags);
             if (!typesExactlyEqual(exp_field.ty, field_expr.ty)) {
                 const pair = try formatTypePairText(exp_field.ty, field_expr.ty, s, allocator);
                 defer pair.deinit();
                 try diags.add(
-                    expr_node.location,
+                    expr_location,
                     .semantic,
                     "cannot initialize field '.{s}' with '{s}' (expected '{s}')",
                     .{ exp_field.name, pair.actual.bytes, pair.expected.bytes },
@@ -1492,7 +1492,7 @@ pub fn coerceStructLiteral(
             continue;
         }
 
-        if (try synthesizeImplicitFieldValue(exp_field, expr_node.location, allocator)) |synthetic_value| {
+        if (try synthesizeImplicitFieldValue(exp_field, expr_location, allocator)) |synthetic_value| {
             coerced_fields[i] = .{ .name = exp_field.name, .value = synthetic_value };
             continue;
         }
@@ -1511,7 +1511,7 @@ pub fn coerceStructLiteral(
     const node = try allocator.create(sg.SGNode);
     sg.recordNodeAllocation();
     node.* = .{
-        .location = expr_node.location,
+        .location = expr_location,
         .content = .{ .struct_value_literal = lit_ptr },
     };
     return .{ .node = node, .ty = .{ .struct_type = expected } };
@@ -1520,7 +1520,7 @@ pub fn coerceStructLiteral(
 fn coerceUnionLiteral(
     expected: *const sg.StructType,
     expr: TypedExpr,
-    expr_node: *const syn.STNode,
+    expr_location: tok.Location,
     s: *Scope,
     allocator: *const std.mem.Allocator,
     diags: *diagnostics.Diagnostics,
@@ -1539,12 +1539,12 @@ fn coerceUnionLiteral(
         .node = field_node,
         .ty = actual_field.ty,
     };
-    field_expr = try coerceExprToType(expected_field.ty, field_expr, expr_node, s, allocator, diags);
+    field_expr = try coerceExprToType(expected_field.ty, field_expr, expr_location, s, allocator, diags);
     if (!typesExactlyEqual(expected_field.ty, field_expr.ty)) {
         const pair = try formatTypePairText(expected_field.ty, field_expr.ty, s, allocator);
         defer pair.deinit();
         try diags.add(
-            expr_node.location,
+            expr_location,
             .semantic,
             "cannot initialize union field '.{s}' with '{s}' (expected '{s}')",
             .{ expected_field.name, pair.actual.bytes, pair.expected.bytes },
@@ -1565,7 +1565,7 @@ fn coerceUnionLiteral(
     const node = try allocator.create(sg.SGNode);
     sg.recordNodeAllocation();
     node.* = .{
-        .location = expr_node.location,
+        .location = expr_location,
         .content = .{ .struct_value_literal = lit_ptr },
     };
     return .{ .node = node, .ty = .{ .struct_type = expected } };
@@ -1670,10 +1670,10 @@ fn synthesizeImplicitFieldValue(
     return trace_node;
 }
 
-pub fn ensureReadOnlyPointer(expr_node: *const syn.STNode, te: TypedExpr, allocator: *const std.mem.Allocator, diags: *diagnostics.Diagnostics) err.SemErr!TypedExpr {
+pub fn ensureReadOnlyPointer(expr_location: tok.Location, te: TypedExpr, allocator: *const std.mem.Allocator, diags: *diagnostics.Diagnostics) err.SemErr!TypedExpr {
     if (te.ty == .pointer_type) return te;
 
-    try ensureAddressableNode(te.node, .read_only, expr_node.location, diags);
+    try ensureAddressableNode(te.node, .read_only, expr_location, diags);
 
     const child_ty = try allocator.create(sg.Type);
     child_ty.* = te.ty;
@@ -1684,7 +1684,7 @@ pub fn ensureReadOnlyPointer(expr_node: *const syn.STNode, te: TypedExpr, alloca
     const addr_node = try allocator.create(sg.SGNode);
     sg.recordNodeAllocation();
     addr_node.* = .{
-        .location = expr_node.location,
+        .location = expr_location,
         .sem_type = .{ .pointer_type = ptr_info },
         .content = .{ .address_of = te.node },
     };
@@ -1718,7 +1718,7 @@ pub fn makeAddressablePointer(
 }
 
 pub fn ensureMutablePointer(
-    expr_node: *const syn.STNode,
+    expr_location: tok.Location,
     te: TypedExpr,
     s: *Scope,
     allocator: *const std.mem.Allocator,
@@ -1730,7 +1730,7 @@ pub fn ensureMutablePointer(
             const ptr_str = try formatTypeText(.{ .pointer_type = te.ty.pointer_type }, s, allocator);
             defer ptr_str.deinit();
             try diags.add(
-                expr_node.location,
+                expr_location,
                 .semantic,
                 "cannot assign through pointer '{s}' because it is read-only; use '$&' when acquiring it",
                 .{ptr_str.bytes},
@@ -1740,7 +1740,7 @@ pub fn ensureMutablePointer(
         return te;
     }
 
-    try ensureAddressableNode(te.node, .read_write, expr_node.location, diags);
+    try ensureAddressableNode(te.node, .read_write, expr_location, diags);
 
     const child_ty = try allocator.create(sg.Type);
     child_ty.* = te.ty;
@@ -1751,7 +1751,7 @@ pub fn ensureMutablePointer(
     const addr_node = try allocator.create(sg.SGNode);
     sg.recordNodeAllocation();
     addr_node.* = .{
-        .location = expr_node.location,
+        .location = expr_location,
         .sem_type = .{ .pointer_type = ptr_info },
         .content = .{ .address_of = te.node },
     };

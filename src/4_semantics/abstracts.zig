@@ -3,6 +3,7 @@ const tok = @import("../2_tokens/token.zig");
 const syn = @import("../3_syntax/syntax_tree.zig");
 const sg = @import("semantic_graph.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
+const source_db = @import("../1_base/source_db.zig");
 
 const gen = @import("generics.zig");
 const typ = @import("types.zig");
@@ -12,6 +13,8 @@ const SemErr = @import("errors.zig").SemErr;
 
 // Abstract typing support
 pub const AbstractFunctionReqSem = struct {
+    syntax_files: []const syn.SyntaxFile,
+    source_db: *const source_db.SourceDb,
     name: []const u8,
     input: sg.StructType,
     output: sg.StructType,
@@ -26,8 +29,8 @@ pub const AbstractFunctionReqSem = struct {
     // optional abstract requirements per field (null if none)
     input_abstract_requirements: []const ?[]const u8,
     output_abstract_requirements: []const ?[]const u8,
-    input_nested_patterns: []const ?syn.Type,
-    output_nested_patterns: []const ?syn.Type,
+    input_nested_patterns: []const ?syn.SyntaxRef,
+    output_nested_patterns: []const ?syn.SyntaxRef,
     abstract_param_names: []const []const u8,
 };
 
@@ -44,10 +47,20 @@ pub const AbstractImplEntry = struct {
     location: tok.Location,
 };
 pub const AbstractImplTemplate = struct {
+    syntax_files: []const syn.SyntaxFile,
+    source_db: *const source_db.SourceDb,
     params: []const gen.GenericParam,
     param_abstract_constraints: []const ?gen.AbstractConstraint,
-    ty: syn.Type,
-    args: ?syn.StructTypeLiteral,
+    // A compact relation either retains an existing type syntax node or names
+    // the generic declaration it ranges over.  `implements` has no standalone
+    // concrete-type node in the syntax tree, so the latter avoids fabricating a
+    // legacy syntax tree solely for template matching.
+    ty: ?syn.SyntaxRef = null,
+    concrete_name: ?[]const u8 = null,
+    // Only declared parameters belong to the concrete generic identity.
+    // Later parameters are inferred from associated abstract arguments.
+    concrete_param_count: usize = 0,
+    args: ?syn.SyntaxRef,
     location: tok.Location,
 };
 pub const AbstractDefaultEntry = struct {
@@ -104,10 +117,11 @@ fn parseIntLiteral(lit: tok.Literal) ?i64 {
     };
 }
 
-fn evalComptimeIntPattern(node: *const syn.STNode, params: []const gen.GenericParam, bindings: *TemplateBindings) ?i64 {
-    return switch (node.content) {
-        .literal => |lit| parseIntLiteral(lit),
-        .identifier => |name| blk: {
+fn evalComptimeIntPattern(db: *const source_db.SourceDb, file: *const syn.SyntaxFile, node: syn.NodeIndex, params: []const gen.GenericParam, bindings: *TemplateBindings) ?i64 {
+    return switch (file.tag(node)) {
+        .literal => parseIntLiteralToken(db, file, node),
+        .identifier => blk: {
+            const name = file.tokenText(db, file.mainToken(node));
             if (findGenericParam(params, name)) |param| {
                 if (param.kind == .comptime_int) {
                     break :blk bindings.ints.get(name);
@@ -115,24 +129,37 @@ fn evalComptimeIntPattern(node: *const syn.STNode, params: []const gen.GenericPa
             }
             break :blk null;
         },
-        .binary_operation => |bo| blk: {
-            const left = evalComptimeIntPattern(bo.left, params, bindings) orelse break :blk null;
-            const right = evalComptimeIntPattern(bo.right, params, bindings) orelse break :blk null;
-            break :blk switch (bo.operator) {
-                .addition => left + right,
-                .subtraction => left - right,
-                .multiplication => left * right,
-                .division => if (right == 0) null else @divTrunc(left, right),
-                .modulo => if (right == 0) null else @mod(left, right),
+        .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo => blk: {
+            const operands = file.binaryOperation(node).?;
+            const left = evalComptimeIntPattern(db, file, operands.lhs, params, bindings) orelse break :blk null;
+            const right = evalComptimeIntPattern(db, file, operands.rhs, params, bindings) orelse break :blk null;
+            break :blk switch (file.tag(node)) {
+                .binary_add => left + right,
+                .binary_subtract => left - right,
+                .binary_multiply => left * right,
+                .binary_divide => if (right == 0) null else @divTrunc(left, right),
+                .binary_modulo => if (right == 0) null else @mod(left, right),
+                else => unreachable,
             };
         },
         else => null,
     };
 }
 
-fn matchComptimeIntPattern(node: *const syn.STNode, actual: i64, params: []const gen.GenericParam, bindings: *TemplateBindings) bool {
-    if (node.content == .identifier) {
-        const name = node.content.identifier;
+fn parseIntLiteralToken(db: *const source_db.SourceDb, file: *const syn.SyntaxFile, node: syn.NodeIndex) ?i64 {
+    return std.fmt.parseInt(i64, file.tokenText(db, file.mainToken(node)), 0) catch null;
+}
+
+fn matchComptimeIntPattern(
+    db: *const source_db.SourceDb,
+    file: *const syn.SyntaxFile,
+    node: syn.NodeIndex,
+    actual: i64,
+    params: []const gen.GenericParam,
+    bindings: *TemplateBindings,
+) bool {
+    if (file.tag(node) == .identifier) {
+        const name = file.tokenText(db, file.mainToken(node));
         if (findGenericParam(params, name)) |param| {
             if (param.kind == .comptime_int) {
                 if (bindings.ints.get(name)) |bound| return bound == actual;
@@ -142,35 +169,37 @@ fn matchComptimeIntPattern(node: *const syn.STNode, actual: i64, params: []const
         }
     }
 
-    const expected = evalComptimeIntPattern(node, params, bindings) orelse return false;
+    const expected = evalComptimeIntPattern(db, file, node, params, bindings) orelse return false;
     return expected == actual;
 }
 
-fn matchTemplateType(pattern: syn.Type, actual: sg.Type, params: []const gen.GenericParam, bindings: *TemplateBindings) bool {
-    return switch (pattern) {
-        .type_name => |tn| blk: {
-            if (bindings.types.get(tn.string)) |bound| {
+fn matchTemplateType(db: *const source_db.SourceDb, files: []const syn.SyntaxFile, pattern: syn.SyntaxRef, actual: sg.Type, params: []const gen.GenericParam, bindings: *TemplateBindings) bool {
+    const file = syn.fileForRef(files, pattern);
+    return switch (file.syntaxType(pattern.node) orelse return false) {
+        .name => |type_name| blk: {
+            const name = file.tokenText(db, type_name.name_token);
+            if (bindings.types.get(name)) |bound| {
                 if (typ.isAny(bound)) {
-                    bindings.types.put(tn.string, actual) catch break :blk false;
+                    bindings.types.put(name, actual) catch break :blk false;
                     break :blk true;
                 }
                 break :blk typ.typesExactlyEqual(bound, actual);
             }
-            if (findGenericParam(params, tn.string)) |param| {
+            if (findGenericParam(params, name)) |param| {
                 if (param.kind == .type) {
-                    if (bindings.types.get(tn.string)) |bound| break :blk typ.typesExactlyEqual(bound, actual);
-                    bindings.types.put(tn.string, actual) catch return false;
+                    if (bindings.types.get(name)) |bound| break :blk typ.typesExactlyEqual(bound, actual);
+                    bindings.types.put(name, actual) catch return false;
                     break :blk true;
                 }
             }
-            if (typ.builtinFromName(tn.string)) |builtin_ty| {
+            if (typ.builtinFromName(name)) |builtin_ty| {
                 break :blk actual == .builtin and actual.builtin == builtin_ty;
             }
             if (typ.genericIdentityOf(actual)) |identity| {
-                break :blk std.mem.eql(u8, identity.base_name, tn.string) and identity.arg_names.len == 0;
+                break :blk std.mem.eql(u8, identity.base_name, name) and identity.arg_names.len == 0;
             }
             if (actual == .abstract_type) {
-                break :blk std.mem.eql(u8, actual.abstract_type.name, tn.string);
+                break :blk std.mem.eql(u8, actual.abstract_type.name, name);
             }
             break :blk false;
         },
@@ -186,45 +215,56 @@ fn matchTemplateType(pattern: syn.Type, actual: sg.Type, params: []const gen.Gen
             for (choice.variants) |variant| {
                 if (!std.mem.eql(u8, variant.name, "ok")) continue;
                 const payload = variant.payload_type orelse break :blk false;
-                break :blk matchTemplateType(inner.*, payload, params, bindings);
+                break :blk matchTemplateType(db, files, file.ref(inner), payload, params, bindings);
             }
             break :blk false;
         },
-        .pointer_type => |ptr_info| blk: {
+        .pointer => |ptr_info| blk: {
             if (actual != .pointer_type) break :blk false;
             if (ptr_info.mutability != actual.pointer_type.mutability) break :blk false;
-            break :blk matchTemplateType(ptr_info.child.*, actual.pointer_type.child.*, params, bindings);
+            break :blk matchTemplateType(db, files, file.ref(ptr_info.child), actual.pointer_type.child.*, params, bindings);
         },
-        .array_type => |arr_info| blk: {
+        .array => |arr_info| blk: {
             if (actual != .array_type) break :blk false;
-            if (arr_info.length != actual.array_type.length) break :blk false;
-            break :blk matchTemplateType(arr_info.element.*, actual.array_type.element_type.*, params, bindings);
+            const length = std.fmt.parseInt(usize, file.tokenText(db, arr_info.length_token), 10) catch break :blk false;
+            if (length != actual.array_type.length) break :blk false;
+            break :blk matchTemplateType(db, files, file.ref(arr_info.element), actual.array_type.element_type.*, params, bindings);
         },
-        .struct_type_literal => false,
-        .choice_type_literal => false,
-        .generic_type_instantiation => |g| matchGenericInstantiationType(g, actual, params, bindings),
+        .struct_literal, .choice_literal, .nullable => false,
+        .generic => |g| matchGenericInstantiationType(db, files, file, g, actual, params, bindings),
     };
 }
 
 fn matchCanonicalGenericInstantiation(
-    g: @FieldType(syn.Type, "generic_type_instantiation"),
+    db: *const source_db.SourceDb,
+    files: []const syn.SyntaxFile,
+    file: *const syn.SyntaxFile,
+    g: syn.GenericType,
     actual: sg.Type,
     params: []const gen.GenericParam,
     bindings: *TemplateBindings,
 ) bool {
     const identity = typ.genericIdentityOf(actual) orelse return false;
-    if (!std.mem.eql(u8, identity.base_name, g.base_name.string)) return false;
+    const base = file.syntaxType(g.base) orelse return false;
+    const base_name = switch (base) {
+        .name => |name| file.tokenText(db, name.name_token),
+        else => return false,
+    };
+    if (!std.mem.eql(u8, identity.base_name, base_name)) return false;
 
-    for (g.args.fields) |field| {
-        const arg_value = typ.genericIdentityArgByName(identity, field.name.string) orelse return false;
+    const fields = file.structTypeLiteral(g.arguments) orelse return false;
+    for (fields.fields) |field_node| {
+        const field = file.structTypeField(field_node) orelse return false;
+        const field_name = file.tokenText(db, field.name_token);
+        const arg_value = typ.genericIdentityArgByName(identity, field_name) orelse return false;
         switch (arg_value) {
             .type => |arg_ty| {
-                const field_ty = field.type orelse return false;
-                if (!matchTemplateType(field_ty, arg_ty, params, bindings)) return false;
+                const field_ty = field.type_node orelse return false;
+                if (!matchTemplateType(db, files, file.ref(field_ty), arg_ty, params, bindings)) return false;
             },
             .comptime_int => |arg_int| {
                 const value_node = field.default_value orelse return false;
-                if (!matchComptimeIntPattern(value_node, arg_int, params, bindings)) return false;
+                if (!matchComptimeIntPattern(db, file, value_node, arg_int, params, bindings)) return false;
             },
         }
     }
@@ -233,21 +273,63 @@ fn matchCanonicalGenericInstantiation(
 }
 
 fn matchGenericInstantiationType(
-    g: @FieldType(syn.Type, "generic_type_instantiation"),
+    db: *const source_db.SourceDb,
+    files: []const syn.SyntaxFile,
+    file: *const syn.SyntaxFile,
+    g: syn.GenericType,
     actual: sg.Type,
     params: []const gen.GenericParam,
     bindings: *TemplateBindings,
 ) bool {
-    return matchCanonicalGenericInstantiation(g, actual, params, bindings);
+    return matchCanonicalGenericInstantiation(db, files, file, g, actual, params, bindings);
 }
 
 pub fn matchAbstractImplTemplate(tmpl: AbstractImplTemplate, candidate: sg.Type, allocator: *const std.mem.Allocator) ?TemplateBindings {
     var bindings = TemplateBindings.init(allocator);
-    if (!matchTemplateType(tmpl.ty, candidate, tmpl.params, &bindings)) {
+    const matches = if (tmpl.ty) |pattern|
+        matchTemplateType(tmpl.source_db, tmpl.syntax_files, pattern, candidate, tmpl.params, &bindings)
+    else if (tmpl.concrete_name) |name|
+        matchNamedGenericImplTemplate(name, candidate, tmpl.params[0..tmpl.concrete_param_count], &bindings)
+    else
+        false;
+    if (!matches) {
         bindings.deinit();
         return null;
     }
     return bindings;
+}
+
+fn matchNamedGenericImplTemplate(
+    concrete_name: []const u8,
+    candidate: sg.Type,
+    params: []const gen.GenericParam,
+    bindings: *TemplateBindings,
+) bool {
+    const identity = typ.genericIdentityOf(candidate) orelse return false;
+    if (!std.mem.eql(u8, identity.base_name, concrete_name)) return false;
+
+    for (params) |param| {
+        const value = typ.genericIdentityArgByName(identity, param.name) orelse return false;
+        switch (value) {
+            .type => |actual| {
+                if (param.kind != .type) return false;
+                if (bindings.types.get(param.name)) |bound| {
+                    if (!typ.typesExactlyEqual(bound, actual)) return false;
+                } else {
+                    bindings.types.put(param.name, actual) catch return false;
+                }
+            },
+            .comptime_int => |actual| {
+                if (param.kind != .comptime_int) return false;
+                if (bindings.ints.get(param.name)) |bound| {
+                    if (bound != actual) return false;
+                } else {
+                    bindings.ints.put(param.name, actual) catch return false;
+                }
+            },
+        }
+    }
+    return true;
 }
 
 fn abstractImplTemplateBindingsMaySatisfyConstraints(
@@ -451,7 +533,7 @@ pub fn funcInputMatchesRequirement(
 
         if (rq.input_nested_patterns.len > i) {
             if (rq.input_nested_patterns[i]) |pattern| {
-                if (!matchTemplateType(pattern, cf.ty, &.{}, &nested_bindings)) return false;
+                if (!matchTemplateType(rq.source_db, rq.syntax_files, pattern, cf.ty, &.{}, &nested_bindings)) return false;
                 continue;
             }
         }
@@ -521,7 +603,7 @@ pub fn funcOutputMatchesRequirement(
 
         if (rq.output_nested_patterns.len > i) {
             if (rq.output_nested_patterns[i]) |pattern| {
-                if (!matchTemplateType(pattern, co.ty, &.{}, &nested_bindings)) return false;
+                if (!matchTemplateType(rq.source_db, rq.syntax_files, pattern, co.ty, &.{}, &nested_bindings)) return false;
                 continue;
             }
         }
@@ -697,82 +779,118 @@ fn buildExpectedOutputWithConcrete(rq: *const AbstractFunctionReqSem, concrete: 
 }
 
 fn genericTemplateFieldsMatchExpected(
+    db: *const source_db.SourceDb,
+    files: []const syn.SyntaxFile,
+    file: *const syn.SyntaxFile,
     expected: *const sg.StructType,
-    template_fields: []const syn.StructTypeLiteralField,
+    template_fields: []const syn.NodeIndex,
     params: []const gen.GenericParam,
     bindings: *TemplateBindings,
 ) bool {
     if (template_fields.len < expected.fields.len) return false;
-    for (template_fields[expected.fields.len..]) |extra_field| {
-        if (extra_field.default_value == null) return false;
+    for (template_fields[expected.fields.len..]) |field_node| {
+        if (file.structTypeField(field_node).?.default_value == null) return false;
     }
 
     var i: usize = 0;
     while (i < expected.fields.len) : (i += 1) {
-        const template_field = template_fields[i];
-        const template_ty = template_field.type orelse return false;
-        if (!matchTemplateType(template_ty, expected.fields[i].ty, params, bindings)) return false;
+        const template_field = file.structTypeField(template_fields[i]) orelse return false;
+        const template_ty = template_field.type_node orelse return false;
+        if (!matchTemplateType(db, files, file.ref(template_ty), expected.fields[i].ty, params, bindings)) return false;
     }
 
     return true;
 }
 
 fn abstractPatternMatchesTemplate(
-    requirement: syn.Type,
-    candidate: syn.Type,
+    db: *const source_db.SourceDb,
+    files: []const syn.SyntaxFile,
+    requirement: syn.SyntaxRef,
+    candidate: syn.SyntaxRef,
     concrete: sg.Type,
     abstract_param_names: []const []const u8,
     template_params: []const gen.GenericParam,
     bindings: *TemplateBindings,
 ) bool {
-    if (requirement == .type_name) {
-        if (std.mem.eql(u8, requirement.type_name.string, "Self"))
-            return matchTemplateType(candidate, concrete, template_params, bindings);
+    const requirement_file = syn.fileForRef(files, requirement);
+    const candidate_file = syn.fileForRef(files, candidate);
+    const requirement_type = requirement_file.syntaxType(requirement.node) orelse return false;
+    const candidate_type = candidate_file.syntaxType(candidate.node) orelse return false;
+
+    if (requirement_type == .name) {
+        const requirement_name = requirement_file.tokenText(db, requirement_type.name.name_token);
+        if (std.mem.eql(u8, requirement_name, "Self"))
+            return matchTemplateType(db, files, candidate, concrete, template_params, bindings);
         for (abstract_param_names) |param_name| {
-            if (std.mem.eql(u8, requirement.type_name.string, param_name)) return true;
+            if (std.mem.eql(u8, requirement_name, param_name)) return true;
         }
     }
 
-    return switch (requirement) {
-        .type_name => |required_name| candidate == .type_name and
-            std.mem.eql(u8, required_name.string, candidate.type_name.string),
-        .pointer_type => |required_pointer| candidate == .pointer_type and
-            required_pointer.mutability == candidate.pointer_type.mutability and
-            abstractPatternMatchesTemplate(required_pointer.child.*, candidate.pointer_type.child.*, concrete, abstract_param_names, template_params, bindings),
-        .array_type => |required_array| candidate == .array_type and
-            required_array.length == candidate.array_type.length and
-            abstractPatternMatchesTemplate(required_array.element.*, candidate.array_type.element.*, concrete, abstract_param_names, template_params, bindings),
-        .generic_type_instantiation => |required_generic| blk: {
-            if (candidate != .generic_type_instantiation) break :blk false;
-            const candidate_generic = candidate.generic_type_instantiation;
-            if (!std.mem.eql(u8, required_generic.base_name.string, candidate_generic.base_name.string)) break :blk false;
-            if (required_generic.args.fields.len != candidate_generic.args.fields.len) break :blk false;
-            for (required_generic.args.fields) |required_field| {
-                var candidate_field: ?syn.StructTypeLiteralField = null;
-                for (candidate_generic.args.fields) |field| {
-                    if (std.mem.eql(u8, required_field.name.string, field.name.string)) {
+    return switch (requirement_type) {
+        .name => |required_name| candidate_type == .name and
+            std.mem.eql(
+                u8,
+                requirement_file.tokenText(db, required_name.name_token),
+                candidate_file.tokenText(db, candidate_type.name.name_token),
+            ),
+        .pointer => |required_pointer| candidate_type == .pointer and
+            required_pointer.mutability == candidate_type.pointer.mutability and
+            abstractPatternMatchesTemplate(db, files, requirement_file.ref(required_pointer.child), candidate_file.ref(candidate_type.pointer.child), concrete, abstract_param_names, template_params, bindings),
+        .array => |required_array| blk: {
+            if (candidate_type != .array) break :blk false;
+            const required_length = std.fmt.parseInt(u64, requirement_file.tokenText(db, required_array.length_token), 10) catch break :blk false;
+            const candidate_length = std.fmt.parseInt(u64, candidate_file.tokenText(db, candidate_type.array.length_token), 10) catch break :blk false;
+            break :blk required_length == candidate_length and abstractPatternMatchesTemplate(
+                db,
+                files,
+                requirement_file.ref(required_array.element),
+                candidate_file.ref(candidate_type.array.element),
+                concrete,
+                abstract_param_names,
+                template_params,
+                bindings,
+            );
+        },
+        .generic => |required_generic| blk: {
+            if (candidate_type != .generic) break :blk false;
+            const candidate_generic = candidate_type.generic;
+            const required_base = requirement_file.syntaxType(required_generic.base) orelse break :blk false;
+            const candidate_base = candidate_file.syntaxType(candidate_generic.base) orelse break :blk false;
+            if (required_base != .name or candidate_base != .name) break :blk false;
+            if (!std.mem.eql(u8, requirement_file.tokenText(db, required_base.name.name_token), candidate_file.tokenText(db, candidate_base.name.name_token))) break :blk false;
+            const required_fields = requirement_file.structTypeLiteral(required_generic.arguments).?.fields;
+            const candidate_fields = candidate_file.structTypeLiteral(candidate_generic.arguments).?.fields;
+            if (required_fields.len != candidate_fields.len) break :blk false;
+            for (required_fields) |required_field_node| {
+                const required_field = requirement_file.structTypeField(required_field_node).?;
+                const required_name = requirement_file.tokenText(db, required_field.name_token);
+                var candidate_field: ?syn.StructTypeField = null;
+                for (candidate_fields) |field_node| {
+                    const field = candidate_file.structTypeField(field_node).?;
+                    if (std.mem.eql(u8, required_name, candidate_file.tokenText(db, field.name_token))) {
                         candidate_field = field;
                         break;
                     }
                 }
                 const actual_field = candidate_field orelse break :blk false;
-                if (required_field.type) |required_type| {
-                    const actual_type = actual_field.type orelse break :blk false;
-                    if (!abstractPatternMatchesTemplate(required_type, actual_type, concrete, abstract_param_names, template_params, bindings)) break :blk false;
+                if (required_field.type_node) |required_type| {
+                    const actual_type = actual_field.type_node orelse break :blk false;
+                    if (!abstractPatternMatchesTemplate(db, files, requirement_file.ref(required_type), candidate_file.ref(actual_type), concrete, abstract_param_names, template_params, bindings)) break :blk false;
                 }
             }
             break :blk true;
         },
-        .inferred_errable => |required_inner| candidate == .inferred_errable and
-            abstractPatternMatchesTemplate(required_inner.*, candidate.inferred_errable.*, concrete, abstract_param_names, template_params, bindings),
-        .struct_type_literal, .choice_type_literal => false,
+        .inferred_errable => |required_inner| candidate_type == .inferred_errable and
+            abstractPatternMatchesTemplate(db, files, requirement_file.ref(required_inner), candidate_file.ref(candidate_type.inferred_errable), concrete, abstract_param_names, template_params, bindings),
+        .struct_literal, .choice_literal, .nullable => false,
     };
 }
 
 fn genericTemplateFieldsMatchRequirement(
+    file: *const syn.SyntaxFile,
     rq: *const AbstractFunctionReqSem,
     input: bool,
-    template_fields: []const syn.StructTypeLiteralField,
+    template_fields: []const syn.NodeIndex,
     concrete: sg.Type,
     template_params: []const gen.GenericParam,
     bindings: *TemplateBindings,
@@ -780,13 +898,13 @@ fn genericTemplateFieldsMatchRequirement(
     const expected = if (input) rq.input.fields else rq.output.fields;
     const nested = if (input) rq.input_nested_patterns else rq.output_nested_patterns;
     if (template_fields.len < expected.len) return false;
-    for (template_fields[expected.len..]) |extra_field| if (extra_field.default_value == null) return false;
+    for (template_fields[expected.len..]) |field_node| if (file.structTypeField(field_node).?.default_value == null) return false;
     var matched_nested = false;
     for (expected, 0..) |_, index| {
         if (nested.len > index and nested[index] != null) {
             matched_nested = true;
-            const candidate_type = template_fields[index].type orelse return false;
-            if (!abstractPatternMatchesTemplate(nested[index].?, candidate_type, concrete, rq.abstract_param_names, template_params, bindings)) return false;
+            const candidate_type = file.structTypeField(template_fields[index]).?.type_node orelse return false;
+            if (!abstractPatternMatchesTemplate(rq.source_db, rq.syntax_files, nested[index].?, file.ref(candidate_type), concrete, rq.abstract_param_names, template_params, bindings)) return false;
         }
     }
     return matched_nested;
@@ -850,12 +968,16 @@ fn existsFunctionForRequirement(
                 var bindings = TemplateBindings.init(allocator);
                 defer bindings.deinit();
 
-                if (!genericTemplateFieldsMatchExpected(expected_in, tmpl.input.fields, tmpl.params, &bindings))
+                const syntax_file = syn.fileForRef(tmpl.syntax_files, .{ .file_id = tmpl.syntax_file_id, .node = tmpl.input });
+                const input_fields = syntax_file.structTypeLiteral(tmpl.input).?.fields;
+                const output_fields = syntax_file.structTypeLiteral(tmpl.output).?.fields;
+
+                if (!genericTemplateFieldsMatchExpected(tmpl.source_db, tmpl.syntax_files, syntax_file, expected_in, input_fields, tmpl.params, &bindings))
                     continue;
-                if (!genericTemplateFieldsMatchRequirement(&rq, true, tmpl.input.fields, concrete, tmpl.params, &bindings))
+                if (!genericTemplateFieldsMatchRequirement(syntax_file, &rq, true, input_fields, concrete, tmpl.params, &bindings))
                     continue;
-                if (!genericTemplateFieldsMatchExpected(expected_out, tmpl.output.fields, tmpl.params, &bindings) and
-                    !genericTemplateFieldsMatchRequirement(&rq, false, tmpl.output.fields, concrete, tmpl.params, &bindings))
+                if (!genericTemplateFieldsMatchExpected(tmpl.source_db, tmpl.syntax_files, syntax_file, expected_out, output_fields, tmpl.params, &bindings) and
+                    !genericTemplateFieldsMatchRequirement(syntax_file, &rq, false, output_fields, concrete, tmpl.params, &bindings))
                     continue;
                 if (!templateBindingsSatisfyConstraints(tmpl, &bindings, s))
                     continue;
@@ -885,10 +1007,10 @@ fn appendRequirementSignature(
     try buf.appendSlice(")");
 }
 
-fn buildOverloadCandidatesText(name: []const u8, in_ty: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) !OwnedText {
+fn buildOverloadCandidatesText(name: []const u8, in_ty: sg.Type, s: *Scope, allocator: *const std.mem.Allocator, diags: *const diagnostic.Diagnostics) !OwnedText {
     return .{
         .allocator = allocator,
-        .bytes = try buildOverloadCandidatesString(name, in_ty, s, allocator),
+        .bytes = try buildOverloadCandidatesString(name, in_ty, s, allocator, diags),
     };
 }
 
@@ -901,7 +1023,7 @@ fn reportMissingRequirement(
 ) !void {
     const exp_in = try buildExpectedInputWithConcrete(rq, ctx.concrete, allocator);
     const in_ty: sg.Type = .{ .struct_type = exp_in };
-    const candidates_result = buildOverloadCandidatesText(rq.name, in_ty, s, allocator) catch null;
+    const candidates_result = buildOverloadCandidatesText(rq.name, in_ty, s, allocator, diags) catch null;
     const candidates = if (candidates_result) |owned| owned.bytes else "";
     defer if (candidates_result) |owned| owned.deinit();
 
@@ -932,10 +1054,11 @@ fn formatMissingRequirementText(
     concrete: sg.Type,
     s: *Scope,
     allocator: *const std.mem.Allocator,
+    diags: *const diagnostic.Diagnostics,
 ) !OwnedText {
     const exp_in = try buildExpectedInputWithConcrete(rq, concrete, allocator);
     const in_ty: sg.Type = .{ .struct_type = exp_in };
-    const candidates_result = buildOverloadCandidatesText(rq.name, in_ty, s, allocator) catch null;
+    const candidates_result = buildOverloadCandidatesText(rq.name, in_ty, s, allocator, diags) catch null;
     const candidates = if (candidates_result) |owned| owned.bytes else "";
     defer if (candidates_result) |owned| owned.deinit();
 
@@ -965,12 +1088,13 @@ pub fn buildConformanceDetails(
     concrete: sg.Type,
     s: *Scope,
     allocator: *const std.mem.Allocator,
+    diags: *const diagnostic.Diagnostics,
 ) !?OwnedText {
     const info = s.lookupAbstractInfo(abs_name) orelse return null;
 
     for (info.requirements) |rq| {
         if (try existsFunctionForRequirement(info, rq, concrete, s, allocator)) continue;
-        return try formatMissingRequirementText(&rq, concrete, s, allocator);
+        return try formatMissingRequirementText(&rq, concrete, s, allocator, diags);
     }
 
     return null;
@@ -1031,7 +1155,7 @@ pub fn verifyAbstracts(s: *Scope, allocator: *const std.mem.Allocator, diags: *d
     if (any_error) return error.SymbolNotFound;
 }
 
-pub fn buildOverloadCandidatesString(name: []const u8, in_ty: sg.Type, s: *Scope, allocator: *const std.mem.Allocator) ![]u8 {
+pub fn buildOverloadCandidatesString(name: []const u8, in_ty: sg.Type, s: *Scope, allocator: *const std.mem.Allocator, diags: *const diagnostic.Diagnostics) ![]u8 {
     var buf = std.array_list.Managed(u8).init(allocator.*);
     var cur: ?*Scope = s;
     var first: bool = true;
@@ -1045,10 +1169,11 @@ pub fn buildOverloadCandidatesString(name: []const u8, in_ty: sg.Type, s: *Scope
                 try buf.appendSlice("  - ");
                 try appendFunctionSignature(&buf, cand, s);
                 try buf.appendSlice("\n      file: ");
-                try buf.appendSlice(cand.location.file);
+                try buf.appendSlice(diags.path(cand.location));
                 try buf.appendSlice(":");
                 var line_col_buf: [32]u8 = undefined;
-                const line_col = std.fmt.bufPrint(&line_col_buf, "{d}:{d}", .{ cand.location.line, cand.location.column }) catch "?";
+                const position = diags.lineColumn(cand.location);
+                const line_col = std.fmt.bufPrint(&line_col_buf, "{d}:{d}", .{ position.line, position.column }) catch "?";
                 try buf.appendSlice(line_col);
             }
         }
