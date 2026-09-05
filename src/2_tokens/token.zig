@@ -15,7 +15,8 @@ pub const View = struct {
     locations: []const Location = &.{},
     len: usize = 0,
 
-    pub fn init(list: *const List) View {
+    /// Accepts a token List during construction or its retained Slice.
+    pub fn init(list: anytype) View {
         return .{ .contents = list.items(.content), .locations = list.items(.location), .len = list.len };
     }
 

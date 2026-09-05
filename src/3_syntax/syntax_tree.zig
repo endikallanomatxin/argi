@@ -311,8 +311,12 @@ pub const NodeList = std.MultiArrayList(Node);
 
 pub const SyntaxFile = struct {
     file_id: source_db.FileId,
-    tokens: TokenList = .empty,
-    nodes: NodeList = .empty,
+    // Retain column pointers, not just the allocation base: MultiArrayList.items
+    // reconstructs every column on each access in unoptimized builds. Syntaxing
+    // and semantizing repeatedly read these columns through small typed views.
+    // Slice owns the same compact allocation; only file metadata grows.
+    tokens: TokenList.Slice = .empty,
+    nodes: NodeList.Slice = .empty,
     extra_data: std.ArrayList(u32) = .empty,
     roots: []NodeIndex = &.{},
 
@@ -336,18 +340,18 @@ pub const SyntaxFile = struct {
     // omitted from its STNode count.
 
     pub fn init(allocator: std.mem.Allocator, file_id: source_db.FileId, tokens: token.View) !SyntaxFile {
-        var tree: SyntaxFile = .{ .file_id = file_id };
-        errdefer tree.deinit(allocator);
-        try tree.tokens.ensureTotalCapacity(allocator, tokens.len);
+        var owned: TokenList = .empty;
+        errdefer owned.deinit(allocator);
+        try owned.ensureTotalCapacity(allocator, tokens.len);
         for (tokens.contents, tokens.locations) |content, token_location| {
-            tree.tokens.appendAssumeCapacity(.{ .content = content, .location = token_location });
+            owned.appendAssumeCapacity(.{ .content = content, .location = token_location });
         }
-        return tree;
+        return initOwnedTokens(file_id, owned);
     }
 
     /// Takes ownership of token columns built during tokenizing.
     pub fn initOwnedTokens(file_id: source_db.FileId, tokens: TokenList) SyntaxFile {
-        return .{ .file_id = file_id, .tokens = tokens };
+        return .{ .file_id = file_id, .tokens = tokens.slice() };
     }
 
     pub fn deinit(tree: *SyntaxFile, allocator: std.mem.Allocator) void {
@@ -370,8 +374,18 @@ pub const SyntaxFile = struct {
     pub fn addNode(tree: *SyntaxFile, allocator: std.mem.Allocator, node: Node) !NodeIndex {
         if (tree.nodes.len >= std.math.maxInt(u32)) return error.SyntaxTreeTooLarge;
         const index: NodeIndex = @enumFromInt(@as(u32, @intCast(tree.nodes.len)));
-        try tree.nodes.append(allocator, node);
+        if (tree.nodes.len == tree.nodes.capacity) try tree.ensureNodeCapacity(allocator, tree.nodes.len + 1);
+        tree.nodes.len += 1;
+        tree.nodes.set(@intFromEnum(index), node);
         return index;
+    }
+
+    pub fn ensureNodeCapacity(tree: *SyntaxFile, allocator: std.mem.Allocator, capacity: usize) !void {
+        // Growth can relocate every column. Publish the replacement pointers
+        // together, and preserve the existing owner if allocation fails.
+        var nodes = tree.nodes.toMultiArrayList();
+        try nodes.ensureTotalCapacity(allocator, capacity);
+        tree.nodes = nodes.slice();
     }
 
     pub fn addExtra(tree: *SyntaxFile, allocator: std.mem.Allocator, value: anytype) !ExtraIndex {
@@ -951,4 +965,27 @@ test "compact syntax stores typed extras and node ranges" {
 
     const range = try tree.addNodeRange(std.testing.allocator, &.{ first, second });
     try std.testing.expectEqualSlices(NodeIndex, &.{ first, second }, tree.nodeRange(range));
+}
+
+test "syntax column ownership survives growth and allocation failure" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, testColumnGrowth, .{});
+}
+
+fn testColumnGrowth(allocator: std.mem.Allocator) !void {
+    var tree: SyntaxFile = .{ .file_id = @enumFromInt(0) };
+    defer tree.deinit(allocator);
+    for (0..100) |i| {
+        const index = try tree.addNode(allocator, .{
+            .tag = .identifier,
+            .main_token = @enumFromInt(i),
+            .data = .{ .node = @enumFromInt(i) },
+        });
+        try std.testing.expectEqual(i, @intFromEnum(index));
+        for (0..i + 1) |j| {
+            const retained: NodeIndex = @enumFromInt(j);
+            try std.testing.expectEqual(Node.Tag.identifier, tree.tag(retained));
+            try std.testing.expectEqual(j, @intFromEnum(tree.mainToken(retained)));
+            try std.testing.expectEqual(j, @intFromEnum(tree.data(retained).node));
+        }
+    }
 }
