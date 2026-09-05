@@ -40,13 +40,14 @@ pub const Syntaxer = struct {
     file: syn.SyntaxFile,
     diags: *diagnostic.Diagnostics,
     parsing_pipe_rhs: bool,
+    scratch: std.ArrayList(syn.NodeIndex),
 
     pub fn init(alloc: std.mem.Allocator, toks: []const tok.Token, source: []const u8, diags: *diagnostic.Diagnostics) !Syntaxer {
         return initFile(alloc, try syn.SyntaxFile.init(alloc, toks[0].location.file, toks), source, diags);
     }
 
     pub fn initFile(alloc: std.mem.Allocator, file: syn.SyntaxFile, source: []const u8, diags: *diagnostic.Diagnostics) Syntaxer {
-        return .{ .source = source, .index = 0, .allocator = alloc, .file = file, .diags = diags, .parsing_pipe_rhs = false };
+        return .{ .source = source, .index = 0, .allocator = alloc, .file = file, .diags = diags, .parsing_pipe_rhs = false, .scratch = .empty };
     }
 
     pub fn nodeCount(self: *const Syntaxer) usize {
@@ -60,7 +61,14 @@ pub const Syntaxer = struct {
     }
 
     pub fn parse(self: *Syntaxer) !syn.SyntaxFile {
-        var roots = parseSentences(self) catch |err| {
+        defer self.scratch.deinit(self.allocator);
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
+
+        const roots = blk: {
+            try self.reserveSyntaxStorage();
+            break :blk parseSentences(self);
+        } catch |err| {
             if (err == SyntaxerError.OutOfMemory) {
                 try self.diags.add(self.tokenLocation(), .internal, "out of memory while parsing", .{});
             } else {
@@ -68,8 +76,7 @@ pub const Syntaxer = struct {
             }
             return err;
         };
-        defer roots.deinit();
-        self.file.roots = try roots.toOwnedSlice();
+        self.file.roots = try self.allocator.dupe(syn.NodeIndex, roots);
         const result = self.file;
         self.file = .{ .file_id = result.file_id };
         return result;
@@ -167,6 +174,13 @@ pub const Syntaxer = struct {
 
     fn addNodeRange(self: *Syntaxer, nodes: []const syn.NodeIndex) SyntaxerError!syn.NodeRange {
         return self.file.addNodeRange(self.allocator, nodes) catch return error.OutOfMemory;
+    }
+
+    fn reserveSyntaxStorage(self: *Syntaxer) SyntaxerError!void {
+        const estimate = self.file.tokens.len / 2;
+        self.file.nodes.ensureTotalCapacity(self.allocator, estimate) catch return error.OutOfMemory;
+        self.file.extra_data.ensureTotalCapacity(self.allocator, estimate) catch return error.OutOfMemory;
+        self.scratch.ensureTotalCapacity(self.allocator, estimate / 4) catch return error.OutOfMemory;
     }
 
     fn parseSignedNumericLiteral(self: *Syntaxer) !syn.NodeIndex {
@@ -274,18 +288,18 @@ pub const Syntaxer = struct {
         }
     }
 
-    fn parseGenericParamNames(self: *Syntaxer) SyntaxerError![]const syn.NodeIndex {
+    fn parseGenericParamNames(self: *Syntaxer) SyntaxerError!syn.NodeRange {
         // Parses: [T, U, ...]
         if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var names = std.array_list.Managed(syn.NodeIndex).init(self.allocator);
-        errdefer names.deinit();
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
         while (!self.tokenIs(.close_bracket)) {
             const token_index: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
             _ = try self.parseIdentifier();
-            try names.append(try self.addNode(.type_name, token_index, .{ .unused = .{ 0, 0 } }));
+            try self.scratch.append(self.allocator, try self.addNode(.type_name, token_index, .{ .unused = .{ 0, 0 } }));
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
                 self.advanceOne();
@@ -294,19 +308,19 @@ pub const Syntaxer = struct {
         }
         if (!self.tokenIs(.close_bracket)) return SyntaxerError.ExpectedRightBracket;
         self.advanceOne();
-        return try names.toOwnedSlice();
+        return self.addNodeRange(self.scratch.items[scratch_top..]);
     }
 
-    fn parseTypeList(self: *Syntaxer) SyntaxerError![]const syn.NodeIndex {
+    fn parseTypeList(self: *Syntaxer) SyntaxerError!syn.NodeRange {
         // Parses: [Type, &Type, ( .a: Type=..., ... ) , ...]
         if (!self.tokenIs(.open_bracket)) return SyntaxerError.ExpectedLeftBracket;
         self.advanceOne();
         self.skipNewLinesAndComments();
-        var tys = std.array_list.Managed(syn.NodeIndex).init(self.allocator);
-        errdefer tys.deinit();
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
         while (!self.tokenIs(.close_bracket)) {
             const t = (try self.parseType()).?; // types are mandatory here
-            try tys.append(t);
+            try self.scratch.append(self.allocator, t);
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
                 self.advanceOne();
@@ -315,7 +329,7 @@ pub const Syntaxer = struct {
         }
         if (!self.tokenIs(.close_bracket)) return SyntaxerError.ExpectedRightBracket;
         self.advanceOne();
-        return try tys.toOwnedSlice();
+        return self.addNodeRange(self.scratch.items[scratch_top..]);
     }
 
     // ────────────────────────────  TYPE ANNOTATIONS ──────────────────────────
@@ -435,17 +449,15 @@ pub const Syntaxer = struct {
     //   - a function requirement: name ( StructTypeLiteral ) -> ( StructTypeLiteral )
     // Newlines and comments are ignored.
     fn parseAbstractBody(self: *Syntaxer) SyntaxerError!struct {
-        req_names: []const syn.NodeIndex,
-        req_funcs: []const syn.NodeIndex,
+        req_names: syn.NodeRange,
+        req_funcs: syn.NodeRange,
     } {
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var names = std.array_list.Managed(syn.NodeIndex).init(self.allocator);
-        var funcs = std.array_list.Managed(syn.NodeIndex).init(self.allocator);
-        errdefer names.deinit();
-        errdefer funcs.deinit();
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
         while (!self.tokenIs(.close_parenthesis)) {
             var name = try self.parseName();
@@ -468,9 +480,9 @@ pub const Syntaxer = struct {
                     .output = out_st,
                     .body = .none,
                 });
-                try funcs.append(try self.addNode(.abstract_function_requirement, name.token, .{ .extra = extra }));
+                try self.scratch.append(self.allocator, try self.addNode(.abstract_function_requirement, name.token, .{ .extra = extra }));
             } else {
-                try names.append(try self.addNode(.type_name, name.token, .{ .unused = .{ 0, 0 } }));
+                try self.scratch.append(self.allocator, try self.addNode(.type_name, name.token, .{ .unused = .{ 0, 0 } }));
             }
 
             self.skipNewLinesAndComments();
@@ -481,7 +493,22 @@ pub const Syntaxer = struct {
         }
         if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
         self.advanceOne();
-        return .{ .req_names = try names.toOwnedSlice(), .req_funcs = try funcs.toOwnedSlice() };
+        const items_end = self.scratch.items.len;
+        var index = scratch_top;
+        while (index < items_end) : (index += 1) {
+            const item = self.scratch.items[index];
+            if (self.file.tag(item) == .type_name) try self.scratch.append(self.allocator, item);
+        }
+        const funcs_start = self.scratch.items.len;
+        index = scratch_top;
+        while (index < items_end) : (index += 1) {
+            const item = self.scratch.items[index];
+            if (self.file.tag(item) == .abstract_function_requirement) try self.scratch.append(self.allocator, item);
+        }
+        return .{
+            .req_names = try self.addNodeRange(self.scratch.items[items_end..funcs_start]),
+            .req_funcs = try self.addNodeRange(self.scratch.items[funcs_start..]),
+        };
     }
 
     fn parseListLiteral(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
@@ -490,12 +517,12 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var elems = std.array_list.Managed(syn.NodeIndex).init(self.allocator);
-        defer elems.deinit();
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
         while (!self.tokenIs(.close_parenthesis)) {
             const elem = try self.parseExpression();
-            try elems.append(elem);
+            try self.scratch.append(self.allocator, elem);
 
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
@@ -507,7 +534,7 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
         self.advanceOne();
 
-        return try self.addNode(.list_literal, start_token, .{ .extra_range = try self.addNodeRange(elems.items) });
+        return try self.addNode(.list_literal, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
     }
 
     // ( .field : Type? (= expr)? , ... )
@@ -517,8 +544,8 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var fields = std.array_list.Managed(syn.NodeIndex).init(self.allocator);
-        defer fields.deinit();
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
@@ -544,7 +571,7 @@ pub const Syntaxer = struct {
                 .type_node = syn.OptionalNodeIndex.init(ftype),
                 .default_value = syn.OptionalNodeIndex.init(def_val),
             });
-            try fields.append(try self.addNode(.struct_type_field, fname.token, .{ .extra = extra }));
+            try self.scratch.append(self.allocator, try self.addNode(.struct_type_field, fname.token, .{ .extra = extra }));
 
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
@@ -555,7 +582,7 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
         self.advanceOne();
 
-        return try self.addNode(.struct_type_literal, start_token, .{ .extra_range = try self.addNodeRange(fields.items) });
+        return try self.addNode(.struct_type_literal, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
     }
 
     fn parseFunctionOutputType(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
@@ -585,8 +612,8 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var fields = std.array_list.Managed(syn.NodeIndex).init(self.allocator);
-        defer fields.deinit();
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
         while (!self.tokenIs(.close_parenthesis)) {
             if (!self.tokenIs(.dot)) {
@@ -626,7 +653,7 @@ pub const Syntaxer = struct {
                 .type_node = syn.OptionalNodeIndex.init(ftype),
                 .default_value = syn.OptionalNodeIndex.init(def_val),
             });
-            try fields.append(try self.addNode(.struct_type_field, fname.token, .{ .extra = extra }));
+            try self.scratch.append(self.allocator, try self.addNode(.struct_type_field, fname.token, .{ .extra = extra }));
 
             self.skipNewLinesAndComments();
             if (self.tokenIs(.comma)) {
@@ -637,7 +664,7 @@ pub const Syntaxer = struct {
         if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
         self.advanceOne();
 
-        return try self.addNode(.struct_type_literal, start_token, .{ .extra_range = try self.addNodeRange(fields.items) });
+        return try self.addNode(.struct_type_literal, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
     }
 
     fn parseChoiceTypeLiteral(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
@@ -646,8 +673,8 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var variants = std.array_list.Managed(syn.NodeIndex).init(self.allocator);
-        defer variants.deinit();
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
 
         while (!self.tokenIs(.close_parenthesis)) {
             var is_default = false;
@@ -676,7 +703,7 @@ pub const Syntaxer = struct {
             if (self.tokenStartsChoicePayloadType()) {
                 payload_type = (try self.parseType()).?;
             }
-            try variants.append(try self.addNode(
+            try self.scratch.append(self.allocator, try self.addNode(
                 if (is_default) .choice_type_variant_default else .choice_type_variant,
                 vname.token,
                 .{ .optional_token_and_optional_node = .{
@@ -694,7 +721,7 @@ pub const Syntaxer = struct {
 
         if (!self.tokenIs(.close_parenthesis)) return SyntaxerError.ExpectedRightParen;
         self.advanceOne();
-        return try self.addNode(.choice_type_literal, start_token, .{ .extra_range = try self.addNodeRange(variants.items) });
+        return try self.addNode(.choice_type_literal, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[scratch_top..]) });
     }
 
     fn tokenStartsChoicePayloadType(self: *Syntaxer) bool {
@@ -798,22 +825,23 @@ pub const Syntaxer = struct {
     }
 
     fn parseReachDirective(self: *Syntaxer, hash_token: syn.TokenIndex) SyntaxerError!syn.NodeIndex {
-        var alternatives = std.array_list.Managed(syn.NodeIndex).init(self.allocator);
-        defer alternatives.deinit();
+        const alternatives_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(alternatives_top);
 
         while (true) {
-            var segments = std.array_list.Managed(syn.NodeIndex).init(self.allocator);
+            const segments_top = self.scratch.items.len;
             const first = try self.parseName();
-            try segments.append(try self.addNode(.identifier, first.token, .{ .unused = .{ 0, 0 } }));
+            try self.scratch.append(self.allocator, try self.addNode(.identifier, first.token, .{ .unused = .{ 0, 0 } }));
 
             while (self.tokenIs(.dot)) {
                 self.advanceOne();
                 const segment = try self.parseName();
-                try segments.append(try self.addNode(.identifier, segment.token, .{ .unused = .{ 0, 0 } }));
+                try self.scratch.append(self.allocator, try self.addNode(.identifier, segment.token, .{ .unused = .{ 0, 0 } }));
             }
 
-            try alternatives.append(try self.addNode(.reach_alternative, first.token, .{ .extra_range = try self.addNodeRange(segments.items) }));
-            segments.deinit();
+            const segments_range = try self.addNodeRange(self.scratch.items[segments_top..]);
+            self.scratch.shrinkRetainingCapacity(segments_top);
+            try self.scratch.append(self.allocator, try self.addNode(.reach_alternative, first.token, .{ .extra_range = segments_range }));
 
             self.skipNewLinesAndComments();
             if (!self.commaStartsReachAlternative()) break;
@@ -821,7 +849,7 @@ pub const Syntaxer = struct {
             self.skipNewLinesAndComments();
         }
 
-        return try self.addNode(.reach_directive, hash_token, .{ .extra_range = try self.addNodeRange(alternatives.items) });
+        return try self.addNode(.reach_directive, hash_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[alternatives_top..]) });
     }
 
     fn findMatchingCloseParenIndex(self: *Syntaxer, open_paren_index: usize) ?usize {
@@ -901,10 +929,8 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var fields = std.array_list.Managed(syn.NodeIndex).init(self.allocator);
-        var positional_elements = std.array_list.Managed(syn.NodeIndex).init(self.allocator);
-        defer fields.deinit();
-        defer positional_elements.deinit();
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
         var positional_prefix_count: u32 = 0;
         var has_named = false;
         var positional_index: usize = 0;
@@ -919,7 +945,7 @@ pub const Syntaxer = struct {
                 self.advanceOne();
 
                 const val = try self.parseExpression();
-                try fields.append(try self.addNode(.struct_value_field, fname.token, .{ .node = val }));
+                try self.scratch.append(self.allocator, try self.addNode(.struct_value_field, fname.token, .{ .node = val }));
             } else {
                 if (has_named) {
                     try self.diags.add(
@@ -932,8 +958,7 @@ pub const Syntaxer = struct {
                 }
 
                 const val = try self.parseExpression();
-                try positional_elements.append(val);
-                try fields.append(try self.addNode(.positional_value_field, self.file.mainToken(val), .{ .u32_and_node = .{ .value = @intCast(positional_index), .node = val } }));
+                try self.scratch.append(self.allocator, try self.addNode(.positional_value_field, self.file.mainToken(val), .{ .u32_and_node = .{ .value = @intCast(positional_index), .node = val } }));
                 positional_index += 1;
                 positional_prefix_count += 1;
             }
@@ -948,12 +973,18 @@ pub const Syntaxer = struct {
         self.advanceOne();
 
         if (!force_struct and !has_named) {
-            return try self.addNode(.list_literal, start_token, .{ .extra_range = try self.addNodeRange(positional_elements.items) });
+            const fields_end = self.scratch.items.len;
+            var index = scratch_top;
+            while (index < fields_end) : (index += 1) {
+                const field = self.file.data(self.scratch.items[index]).u32_and_node;
+                try self.scratch.append(self.allocator, field.node);
+            }
+            return try self.addNode(.list_literal, start_token, .{ .extra_range = try self.addNodeRange(self.scratch.items[fields_end..]) });
         }
 
         return try self.addNode(.struct_value_literal, start_token, .{ .u32_and_extra = .{
             .value = positional_prefix_count,
-            .extra = try self.addExtra(try self.addNodeRange(fields.items)),
+            .extra = try self.addExtra(try self.addNodeRange(self.scratch.items[scratch_top..])),
         } });
     }
 
@@ -1144,14 +1175,11 @@ pub const Syntaxer = struct {
                 if (self.parsing_pipe_rhs and std.mem.eql(u8, name, "_")) {
                     break :blk try self.addNode(.pipe_placeholder, name_token, .{ .unused = .{ 0, 0 } });
                 }
-                var type_args: []const syn.NodeIndex = &.{};
-                var owned_type_args: ?[]const syn.NodeIndex = null;
-                defer if (owned_type_args) |values| self.allocator.free(values);
+                var type_args = try self.addNodeRange(&.{});
                 var type_args_struct: ?syn.NodeIndex = null;
                 if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
                     // Explicit type arguments on call site (old syntax)
                     type_args = try self.parseTypeList();
-                    owned_type_args = type_args;
                 } else if (self.tokenIs(.hash)) {
                     // New syntax: #(.T: Int32)
                     self.advanceOne();
@@ -1159,11 +1187,10 @@ pub const Syntaxer = struct {
                 }
                 if (self.tokenIs(.open_parenthesis)) { // llamada
                     const struct_value_literal = try self.parseCollectionLiteral(true);
-                    const range = try self.addNodeRange(type_args);
                     const extra = try self.addExtra(syn.CallExtra{
                         .module_qualifier = .none,
-                        .type_arguments_start = range.start,
-                        .type_arguments_end = range.end,
+                        .type_arguments_start = type_args.start,
+                        .type_arguments_end = type_args.end,
                         .type_arguments_struct = syn.OptionalNodeIndex.init(type_args_struct),
                         .input = struct_value_literal,
                     });
@@ -1306,7 +1333,7 @@ pub const Syntaxer = struct {
         self: *Syntaxer,
         name: ParsedName,
         is_once: bool,
-        generic_params: []const syn.NodeIndex,
+        generic_params: syn.NodeRange,
         generic_params_struct: ?syn.NodeIndex,
     ) SyntaxerError!syn.NodeIndex {
         const input = try self.parseStructTypeLiteral();
@@ -1322,11 +1349,10 @@ pub const Syntaxer = struct {
                 const ident_name = self.tokenText(ident_range);
                 if (std.mem.eql(u8, ident_name, "ExternFunction") or std.mem.eql(u8, ident_name, "CFunction")) {
                     self.advanceOne();
-                    const range = try self.addNodeRange(generic_params);
                     const extra = try self.addExtra(syn.FunctionExtra{
                         .name_token = name.token,
-                        .generic_params_start = range.start,
-                        .generic_params_end = range.end,
+                        .generic_params_start = generic_params.start,
+                        .generic_params_end = generic_params.end,
                         .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
                         .input = input,
                         .output = output,
@@ -1342,11 +1368,10 @@ pub const Syntaxer = struct {
         self.advanceOne();
         const body = try self.parseCodeBlock();
 
-        const range = try self.addNodeRange(generic_params);
         const extra = try self.addExtra(syn.FunctionExtra{
             .name_token = name.token,
-            .generic_params_start = range.start,
-            .generic_params_end = range.end,
+            .generic_params_start = generic_params.start,
+            .generic_params_end = generic_params.end,
             .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
             .input = input,
             .output = output,
@@ -1364,7 +1389,7 @@ pub const Syntaxer = struct {
         const name = try self.parseName();
         if (!self.tokenIs(.open_parenthesis)) return SyntaxerError.ExpectedLeftParen;
 
-        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, &.{}, null);
+        const decl_node = try self.parseNamedFunctionLikeDeclaration(name, false, try self.addNodeRange(&.{}), null);
         const function = self.file.functionDeclaration(decl_node).?;
 
         if (function.body == null) {
@@ -1456,24 +1481,15 @@ pub const Syntaxer = struct {
         // In statement position this is ambiguous with generic call type arguments,
         // so keep the parsed named-args block around and decide once we know
         // whether this becomes a declaration or a call.
-        var generic_params: []const syn.NodeIndex = &.{};
-        var owned_generic_params: ?[]const syn.NodeIndex = null;
-        defer if (owned_generic_params) |values| self.allocator.free(values);
+        var generic_params = try self.addNodeRange(&.{});
         var generic_params_struct: ?syn.NodeIndex = null;
         if (self.tokenIs(.hash)) {
             self.advanceOne();
             const gen_struct = try self.parseGenericParamsStruct();
-            // Parsing the rest of the declaration can grow extra_data. Keep an
-            // owned copy instead of retaining a slice into that reallocatable
-            // storage.
-            const parsed = try self.allocator.dupe(syn.NodeIndex, self.file.structTypeLiteral(gen_struct).?.fields);
-            owned_generic_params = parsed;
-            generic_params = parsed;
+            generic_params = try self.addNodeRange(self.file.structTypeLiteral(gen_struct).?.fields);
             generic_params_struct = gen_struct;
         } else if (self.tokenIs(.open_bracket) and self.lookaheadIsTypeArgument()) {
-            const parsed = try self.parseGenericParamNames();
-            owned_generic_params = parsed;
-            generic_params = parsed;
+            generic_params = try self.parseGenericParamNames();
         }
 
         // Build identifier node to parse postfix (for p.x, p& etc.)
@@ -1539,10 +1555,9 @@ pub const Syntaxer = struct {
                 if (std.mem.eql(u8, kw, "implements")) {
                     self.advanceOne();
                     const abstract_ty = (try self.parseType()).?; // required
-                    const range = try self.addNodeRange(generic_params);
                     const extra = try self.addExtra(syn.GenericValueExtra{
-                        .generic_params_start = range.start,
-                        .generic_params_end = range.end,
+                        .generic_params_start = generic_params.start,
+                        .generic_params_end = generic_params.end,
                         .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
                         .value = abstract_ty,
                     });
@@ -1550,10 +1565,9 @@ pub const Syntaxer = struct {
                 } else if (std.mem.eql(u8, kw, "defaultsto")) {
                     self.advanceOne();
                     const ty = (try self.parseType()).?; // required
-                    const range = try self.addNodeRange(generic_params);
                     const extra = try self.addExtra(syn.GenericValueExtra{
-                        .generic_params_start = range.start,
-                        .generic_params_end = range.end,
+                        .generic_params_start = generic_params.start,
+                        .generic_params_end = generic_params.end,
                         .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
                         .value = ty,
                     });
@@ -1581,40 +1595,30 @@ pub const Syntaxer = struct {
                         try self.parseChoiceTypeLiteral()
                     else
                         try self.parseStructTypeLiteral();
-                    const range = try self.addNodeRange(generic_params);
                     const extra = try self.addExtra(syn.GenericValueExtra{
-                        .generic_params_start = range.start,
-                        .generic_params_end = range.end,
+                        .generic_params_start = generic_params.start,
+                        .generic_params_end = generic_params.end,
                         .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
                         .value = lit_node,
                     });
                     return try self.addNode(tag, name.token, .{ .extra = extra });
                 } else if (std.mem.eql(u8, type_name, "Abstract")) {
-                    var req_names: []const syn.NodeIndex = &.{};
-                    var req_funcs: []const syn.NodeIndex = &.{};
-                    var owned_req_names: ?[]const syn.NodeIndex = null;
-                    defer if (owned_req_names) |values| self.allocator.free(values);
-                    var owned_req_funcs: ?[]const syn.NodeIndex = null;
-                    defer if (owned_req_funcs) |values| self.allocator.free(values);
+                    var req_names = try self.addNodeRange(&.{});
+                    var req_funcs = try self.addNodeRange(&.{});
                     if (self.tokenIs(.equal)) {
                         self.advanceOne();
                         const body = try self.parseAbstractBody();
-                        owned_req_names = body.req_names;
-                        owned_req_funcs = body.req_funcs;
                         req_names = body.req_names;
                         req_funcs = body.req_funcs;
                     }
-                    const generic_range = try self.addNodeRange(generic_params);
-                    const names_range = try self.addNodeRange(req_names);
-                    const funcs_range = try self.addNodeRange(req_funcs);
                     const extra = try self.addExtra(syn.AbstractExtra{
-                        .generic_params_start = generic_range.start,
-                        .generic_params_end = generic_range.end,
+                        .generic_params_start = generic_params.start,
+                        .generic_params_end = generic_params.end,
                         .generic_params_struct = syn.OptionalNodeIndex.init(generic_params_struct),
-                        .requires_abstracts_start = names_range.start,
-                        .requires_abstracts_end = names_range.end,
-                        .requires_functions_start = funcs_range.start,
-                        .requires_functions_end = funcs_range.end,
+                        .requires_abstracts_start = req_names.start,
+                        .requires_abstracts_end = req_names.end,
+                        .requires_functions_start = req_funcs.start,
+                        .requires_functions_end = req_funcs.end,
                     });
                     return try self.addNode(.abstract_declaration, name.token, .{ .extra = extra });
                 }
@@ -1639,32 +1643,32 @@ pub const Syntaxer = struct {
     }
 
     // ─────────────────────────────  SENTENCES  ──────────────────────────────
-    fn parseSentences(self: *Syntaxer) !std.array_list.Managed(syn.NodeIndex) {
-        var list = std.array_list.Managed(syn.NodeIndex).init(self.allocator);
-        errdefer list.deinit();
+    fn parseSentences(self: *Syntaxer) ![]const syn.NodeIndex {
+        const scratch_top = self.scratch.items.len;
 
         while (!self.tokenIs(.eof) and !self.tokenIs(.close_brace)) {
             switch (self.current().content) {
                 .new_line, .comment => self.skipNewLinesAndComments(),
                 else => {
                     const stmt = try self.parseStatement();
-                    try list.append(stmt);
+                    try self.scratch.append(self.allocator, stmt);
                 },
             }
             self.skipNewLinesAndComments();
         }
-        return list;
+        return self.scratch.items[scratch_top..];
     }
 
     fn parseCodeBlock(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
         if (!self.tokenIs(.open_brace)) return SyntaxerError.ExpectedLeftBrace;
         const open_token: syn.TokenIndex = @enumFromInt(@as(u32, @intCast(self.index)));
         self.advanceOne();
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
         const items = try self.parseSentences();
-        defer items.deinit();
         if (!self.tokenIs(.close_brace)) return SyntaxerError.ExpectedRightBrace;
         self.advanceOne();
-        return try self.addNode(.code_block, open_token, .{ .extra_range = try self.addNodeRange(items.items) });
+        return try self.addNode(.code_block, open_token, .{ .extra_range = try self.addNodeRange(items) });
     }
 
     fn parseIf(self: *Syntaxer) SyntaxerError!syn.NodeIndex {
@@ -1692,8 +1696,8 @@ pub const Syntaxer = struct {
         self.advanceOne();
         self.skipNewLinesAndComments();
 
-        var cases = std.array_list.Managed(syn.NodeIndex).init(self.allocator);
-        defer cases.deinit();
+        const scratch_top = self.scratch.items.len;
+        defer self.scratch.shrinkRetainingCapacity(scratch_top);
         while (!self.tokenIs(.close_brace)) {
             if (!self.tokenIs(.double_dot)) return SyntaxerError.ExpectedIdentifier;
             self.advanceOne();
@@ -1727,12 +1731,12 @@ pub const Syntaxer = struct {
             self.skipNewLinesAndComments();
             const body = try self.parseCodeBlock();
             const case_extra = try self.addExtra(syn.MatchCaseExtra{ .payload_name = syn.OptionalTokenIndex.init(payload_name_token), .body = body });
-            try cases.append(try self.addNode(case_tag, variant_name.token, .{ .extra = case_extra }));
+            try self.scratch.append(self.allocator, try self.addNode(case_tag, variant_name.token, .{ .extra = case_extra }));
             self.skipNewLinesAndComments();
         }
 
         self.advanceOne();
-        const cases_range_index = try self.addExtra(try self.addNodeRange(cases.items));
+        const cases_range_index = try self.addExtra(try self.addNodeRange(self.scratch.items[scratch_top..]));
         return try self.addNode(.match_statement, start, .{ .node_and_extra = .{ .node = value, .extra = cases_range_index } });
     }
 
