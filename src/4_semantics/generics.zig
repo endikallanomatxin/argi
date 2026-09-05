@@ -1,5 +1,5 @@
 const tok = @import("../2_tokens/token.zig");
-const syn = @import("../3_syntax/syntax_tree_legacy.zig");
+const syn = @import("../3_syntax/syntax_tree.zig");
 const sg = @import("semantic_graph.zig");
 
 pub const GenericDispatchKind = enum {
@@ -30,19 +30,22 @@ pub const GenericValueBinding = struct {
 
 pub const AbstractConstraint = struct {
     name: []const u8,
-    args: ?syn.StructTypeLiteral = null,
+    args: ?syn.SyntaxRef = null,
 };
 
 // Generic function template used for monomorphization
 pub const GenericTemplate = struct {
+    syntax_files: []const syn.SyntaxFile,
+    source_db: *const @import("../1_base/source_db.zig").SourceDb,
+    syntax_file_id: @import("../1_base/source_db.zig").FileId,
     name: []const u8,
     location: tok.Location,
     params: []const GenericParam,
     param_abstract_constraints: []const ?AbstractConstraint,
     dispatch_kind: GenericDispatchKind = .regular,
-    input: syn.StructTypeLiteral,
-    output: syn.StructTypeLiteral,
-    body: ?*syn.STNode,
+    input: syn.NodeIndex,
+    output: syn.NodeIndex,
+    body: ?syn.SyntaxRef,
 };
 
 // Generic type template for monomorphization of named struct types
@@ -51,5 +54,5 @@ pub const GenericTypeTemplate = struct {
     location: tok.Location,
     params: []const GenericParam,
     param_abstract_constraints: []const ?AbstractConstraint,
-    body: *syn.STNode,
+    body: syn.SyntaxRef,
 };

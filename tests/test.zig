@@ -5048,9 +5048,9 @@ test "feature_tests/modules/18_private_struct_field_same_module" {
 
 test "feature_tests/modules/19X_private_struct_field_imported" {
     try buildExpectFailExact("tests/feature_tests/modules/19X_private_struct_field_imported",
-        \\tests/feature_tests/modules/19X_private_struct_field_imported/main.rg:4:32: error: field '_hidden' is private to its module
+        \\tests/feature_tests/modules/19X_private_struct_field_imported/main.rg:4:25: error: field '_hidden' is private to its module
         \\      status_code = point._hidden
-        \\                                 ^
+        \\                          ^
         \\
     );
 }

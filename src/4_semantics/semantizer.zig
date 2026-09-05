@@ -1,6 +1,6 @@
 const std = @import("std");
 const tok = @import("../2_tokens/token.zig");
-const syn = @import("../3_syntax/syntax_tree_legacy.zig");
+const syn = @import("../3_syntax/syntax_tree.zig");
 const sg = @import("semantic_graph.zig");
 const sgp = @import("semantic_graph_print.zig");
 const diagnostic = @import("../1_base/diagnostic.zig");
@@ -83,18 +83,6 @@ const SignatureText = struct {
     }
 };
 
-const CallAccessMode = enum {
-    value,
-    read,
-    write,
-};
-
-const CallBindingAccess = struct {
-    root_name: []const u8,
-    mode: CallAccessMode,
-    access_node: *const sg.SGNode,
-};
-
 const ReachFunctionContext = struct {
     function_name: []const u8,
     location: tok.Location,
@@ -102,20 +90,10 @@ const ReachFunctionContext = struct {
     body_scope: *Scope,
 };
 
-const SignatureTypeCacheMode = enum {
-    preserving_abstracts,
-    signature_predeclaration,
-};
-
-const SignatureTypeCacheKey = struct {
-    node: *const syn.Type,
-    mode: SignatureTypeCacheMode,
-};
-
 const PendingFunctionBody = struct {
     const State = enum { unseen, queued, done };
 
-    top_node: *const syn.STNode,
+    top_node: syn.SyntaxRef,
     decl: syn.FunctionDeclaration,
     location: tok.Location,
     function: *sg.FunctionDeclaration,
@@ -221,17 +199,18 @@ pub const Semantizer = struct {
     // work and makes the remaining retries residual rather than fundamental.
     allocator: *const std.mem.Allocator,
     io: std.Io,
-    st_nodes: []const *syn.STNode, // entrada
+    syntax_files: []const syn.SyntaxFile,
+    syntax_roots: []const syn.SyntaxRef,
     root_list: std.array_list.Managed(*sg.SGNode), // buffer mut
     root_nodes: []const *sg.SGNode = &.{}, // slice final
     diags: *diagnostic.Diagnostics,
     options: SemantizerOptions,
 
     // ── Reintentos top-level
-    pending_now: std.array_list.Managed(*const syn.STNode),
-    pending_next: std.array_list.Managed(*const syn.STNode),
+    pending_now: std.array_list.Managed(syn.SyntaxRef),
+    pending_next: std.array_list.Managed(syn.SyntaxRef),
     defer_unknown_top_level: bool = false,
-    current_top_node: ?*const syn.STNode = null,
+    current_top_node: ?syn.SyntaxRef = null,
     max_retry_rounds: u32 = 8,
     retry_enqueue_attempts: u32 = 0,
     retry_enqueue_unique: u32 = 0,
@@ -243,7 +222,6 @@ pub const Semantizer = struct {
     pending_function_bodies: std.array_list.Managed(PendingFunctionBody),
     function_body_worklist: std.array_list.Managed(usize),
     discover_function_references: bool = false,
-    signature_type_cache: std.AutoHashMap(SignatureTypeCacheKey, sg.Type),
     generic_specializations: std.array_list.Managed(GenericSpecialization),
     generic_specializations_created: u32 = 0,
     generic_specialization_cache_hits: u32 = 0,
@@ -265,22 +243,23 @@ pub const Semantizer = struct {
     pub fn init(
         alloc: *const std.mem.Allocator,
         io: std.Io,
-        st: []const *syn.STNode,
+        syntax_files: []const syn.SyntaxFile,
+        st: []const syn.SyntaxRef,
         diags: *diagnostic.Diagnostics,
         options: SemantizerOptions,
     ) Semantizer {
         return .{
             .allocator = alloc,
             .io = io,
-            .st_nodes = st,
+            .syntax_files = syntax_files,
+            .syntax_roots = st,
             .root_list = std.array_list.Managed(*sg.SGNode).init(alloc.*),
             .diags = diags,
             .options = options,
-            .pending_now = std.array_list.Managed(*const syn.STNode).init(alloc.*),
-            .pending_next = std.array_list.Managed(*const syn.STNode).init(alloc.*),
+            .pending_now = std.array_list.Managed(syn.SyntaxRef).init(alloc.*),
+            .pending_next = std.array_list.Managed(syn.SyntaxRef).init(alloc.*),
             .pending_function_bodies = std.array_list.Managed(PendingFunctionBody).init(alloc.*),
             .function_body_worklist = std.array_list.Managed(usize).init(alloc.*),
-            .signature_type_cache = std.AutoHashMap(SignatureTypeCacheKey, sg.Type).init(alloc.*),
             .generic_specializations = std.array_list.Managed(GenericSpecialization).init(alloc.*),
             .function_reach_stack = std.array_list.Managed(ReachFunctionContext).init(alloc.*),
         };
@@ -292,25 +271,36 @@ pub const Semantizer = struct {
         return id;
     }
 
-    fn topLevelNodeIsTest(self: *Semantizer, n: *const syn.STNode) bool {
-        _ = self;
-        return n.content == .test_declaration;
+    fn syntaxFile(self: *const Semantizer, node: syn.SyntaxRef) *const syn.SyntaxFile {
+        return syn.fileForRef(self.syntax_files, node);
     }
 
-    fn topLevelNodeIsCallable(self: *Semantizer, n: *const syn.STNode) bool {
-        return switch (n.content) {
-            .function_declaration => true,
+    fn nodeTag(self: *const Semantizer, node: syn.SyntaxRef) syn.Node.Tag {
+        return self.syntaxFile(node).tag(node.node);
+    }
+
+    fn nodeLocation(self: *const Semantizer, node: syn.SyntaxRef) tok.Location {
+        return self.syntaxFile(node).location(node.node);
+    }
+
+    fn childRef(self: *const Semantizer, parent: syn.SyntaxRef, child: syn.NodeIndex) syn.SyntaxRef {
+        _ = self;
+        return .{ .file_id = parent.file_id, .node = child };
+    }
+
+    fn tokenText(self: *const Semantizer, owner: syn.SyntaxRef, token_index: syn.TokenIndex) []const u8 {
+        return self.syntaxFile(owner).tokenText(&self.diags.source_db, token_index);
+    }
+
+    fn tokenLocation(self: *const Semantizer, owner: syn.SyntaxRef, token_index: syn.TokenIndex) tok.Location {
+        return self.syntaxFile(owner).tokenLocation(token_index);
+    }
+
+    fn topLevelNodeIsCallable(self: *Semantizer, n: syn.SyntaxRef) bool {
+        return switch (self.nodeTag(n)) {
+            .function_declaration, .function_declaration_once => true,
             .test_declaration => self.options.include_tests,
             else => false,
-        };
-    }
-
-    fn functionDeclFromTopLevelNode(self: *Semantizer, n: *const syn.STNode) syn.FunctionDeclaration {
-        _ = self;
-        return switch (n.content) {
-            .function_declaration => |decl| decl,
-            .test_declaration => |decl| decl.decl,
-            else => unreachable,
         };
     }
 
@@ -365,7 +355,7 @@ pub const Semantizer = struct {
         return self.diags.lineColumn(loc);
     }
 
-    fn ignoreOrLogStagedTopLevelError(self: *Semantizer, n: *const syn.STNode, err: anyerror) void {
+    fn ignoreOrLogStagedTopLevelError(self: *Semantizer, n: syn.SyntaxRef, err: anyerror) void {
         switch (err) {
             error.Reported, error.UnknownType, error.SymbolNotFound => return,
             else => {},
@@ -374,10 +364,10 @@ pub const Semantizer = struct {
         log.warn(
             "staged top-level semantizing of '{s}' failed at {s}:{d}:{d} with {s}",
             .{
-                @tagName(std.meta.activeTag(n.content)),
-                self.locationPath(n.location),
-                self.locationLineColumn(n.location).line,
-                self.locationLineColumn(n.location).column,
+                @tagName(self.nodeTag(n)),
+                self.locationPath(self.nodeLocation(n)),
+                self.locationLineColumn(self.nodeLocation(n)).line,
+                self.locationLineColumn(self.nodeLocation(n)).column,
                 @errorName(err),
             },
         );
@@ -396,7 +386,6 @@ pub const Semantizer = struct {
     };
 
     pub fn semantizeWithTimings(self: *Semantizer) SemErr!SemantizeResult {
-        self.signature_type_cache.clearRetainingCapacity();
         self.clearGenericSpecializationCache();
         defer self.clearGenericSpecializationCache();
         var global = try Scope.init(self.allocator, null, null);
@@ -424,11 +413,11 @@ pub const Semantizer = struct {
         const initial_start = nowNs(self.io);
         self.defer_unknown_top_level = true;
         const support_top_level_start = nowNs(self.io);
-        for (self.st_nodes) |n| {
+        for (self.syntax_roots) |n| {
             if (self.topLevelNodeIsCallable(n)) continue;
-            if (n.content == .test_declaration and !self.options.include_tests) continue;
+            if (self.nodeTag(n) == .test_declaration and !self.options.include_tests) continue;
             self.current_top_node = n;
-            _ = self.visitNode(n.*, &global) catch |err| {
+            _ = self.visitNode(n, &global) catch |err| {
                 self.ignoreOrLogStagedTopLevelError(n, err);
             };
         }
@@ -448,7 +437,7 @@ pub const Semantizer = struct {
                 }
 
                 self.current_top_node = pn;
-                if (self.visitNode(pn.*, &global)) |_| {
+                if (self.visitNode(pn, &global)) |_| {
                     progressed = true;
                 } else |_| {}
             }
@@ -467,10 +456,10 @@ pub const Semantizer = struct {
         // practical without depending on body-semantic inference.
         const function_interface_start = nowNs(self.io);
         self.function_semantize_mode = .interface_only;
-        for (self.st_nodes) |n| {
+        for (self.syntax_roots) |n| {
             if (!self.topLevelNodeIsCallable(n)) continue;
             self.current_top_node = n;
-            _ = self.visitNode(n.*, &global) catch |err| {
+            _ = self.visitNode(n, &global) catch |err| {
                 self.ignoreOrLogStagedTopLevelError(n, err);
             };
         }
@@ -491,7 +480,7 @@ pub const Semantizer = struct {
                 }
 
                 self.current_top_node = pn;
-                if (self.visitNode(pn.*, &global)) |_| {
+                if (self.visitNode(pn, &global)) |_| {
                     progressed = true;
                 } else |_| {}
             }
@@ -527,9 +516,9 @@ pub const Semantizer = struct {
 
             var progressed = false;
             for (self.pending_now.items) |pn| {
-                if (pn.content == .function_declaration) continue;
+                if (self.nodeTag(pn) == .function_declaration or self.nodeTag(pn) == .function_declaration_once) continue;
                 self.current_top_node = pn;
-                if (self.visitNode(pn.*, &global)) |_| {
+                if (self.visitNode(pn, &global)) |_| {
                     progressed = true;
                 } else |_| {
                     // Las causas distintas de UnknownType ya se reportan dentro.
@@ -537,9 +526,9 @@ pub const Semantizer = struct {
                 }
             }
             for (self.pending_now.items) |pn| {
-                if (pn.content != .function_declaration) continue;
+                if (self.nodeTag(pn) != .function_declaration and self.nodeTag(pn) != .function_declaration_once) continue;
                 self.current_top_node = pn;
-                if (self.visitNode(pn.*, &global)) |_| {
+                if (self.visitNode(pn, &global)) |_| {
                     progressed = true;
                 } else |_| {
                     // Las causas distintas de UnknownType ya se reportan dentro.
@@ -560,7 +549,7 @@ pub const Semantizer = struct {
         if (self.pending_next.items.len > 0) {
             for (self.pending_next.items) |pn| {
                 self.current_top_node = pn;
-                _ = self.visitNode(pn.*, &global) catch |err| {
+                _ = self.visitNode(pn, &global) catch |err| {
                     self.ignoreOrLogStagedTopLevelError(pn, err);
                 };
             }
@@ -614,7 +603,7 @@ pub const Semantizer = struct {
 
     fn enqueuePendingFunctionBody(
         self: *Semantizer,
-        top_node: *const syn.STNode,
+        top_node: syn.SyntaxRef,
         decl: syn.FunctionDeclaration,
         loc: tok.Location,
         function: *sg.FunctionDeclaration,
@@ -758,334 +747,233 @@ pub const Semantizer = struct {
     }
 
     fn predeclareTopLevelSymbols(self: *Semantizer, global: *Scope) SemErr!void {
-        for (self.st_nodes) |node| {
-            switch (node.content) {
-                .symbol_declaration => |decl| {
-                    try self.predeclareTopLevelImportAlias(decl, global, node.location);
-                    try self.predeclareTopLevelBinding(decl, global, node.location);
+        for (self.syntax_roots) |node| {
+            switch (self.nodeTag(node)) {
+                .symbol_declaration_constant, .symbol_declaration_variable => {
+                    try self.predeclareTopLevelImportAliasRef(node, global);
+                    try self.predeclareTopLevelBindingRef(node, global);
                 },
-                .abstract_declaration => |decl| try self.predeclareTopLevelAbstract(decl, global),
-                .type_declaration => |decl| try self.predeclareTopLevelType(decl, global),
-                .choice_option_declaration => |decl| try self.predeclareTopLevelChoiceOption(decl, global, node.location),
-                .function_declaration => |decl| try self.predeclareTopLevelFunction(decl, global, node.location, false),
-                .test_declaration => |decl| if (self.options.include_tests) try self.predeclareTopLevelFunction(decl.decl, global, node.location, true),
+                .abstract_declaration => try self.predeclareTopLevelAbstractRef(node, global),
+                .type_declaration, .c_enum_declaration, .c_union_declaration => try self.predeclareTopLevelTypeRef(node, global),
+                .choice_option_declaration => try self.predeclareTopLevelChoiceOptionRef(node, global),
+                .function_declaration, .function_declaration_once => try self.predeclareTopLevelFunctionRef(node, global, false),
+                .test_declaration => if (self.options.include_tests) try self.predeclareTopLevelFunctionRef(node, global, true),
                 else => {},
             }
         }
     }
 
-    fn predeclareTopLevelAbstract(
-        self: *Semantizer,
-        decl: syn.AbstractDeclaration,
-        global: *Scope,
-    ) SemErr!void {
-        if (global.abstracts.contains(decl.name.string)) return;
-        if (global.types.contains(decl.name.string)) return;
-
-        const info = try self.allocator.create(abs.AbstractInfo);
-        info.* = .{
-            .name = decl.name.string,
-            .requirements = &.{},
-            .param_names = decl.generic_params,
-            .params = try self.predeclaredAbstractParams(decl),
-        };
-
-        const abs_ty = try self.allocator.create(sg.AbstractType);
-        abs_ty.* = .{ .name = decl.name.string };
-
-        const td = try self.allocator.create(sg.TypeDeclaration);
-        td.* = .{
-            .name = decl.name.string,
-            .origin_file = self.locationPath(decl.name.location),
-            .ty = .{ .abstract_type = abs_ty },
-        };
-
-        try global.abstracts.put(decl.name.string, info);
-        try global.types.put(decl.name.string, td);
+    fn predeclareTopLevelChoiceOptionRef(self: *Semantizer, node: syn.SyntaxRef, global: *Scope) SemErr!void {
+        const decl = self.syntaxFile(node).choiceOptionDeclaration(node.node).?;
+        const name = self.tokenText(node, decl.name_token);
+        if (global.choice_options.contains(name)) return;
+        const option_decl = try self.allocator.create(sg.ChoiceOptionDeclaration);
+        option_decl.* = .{ .name = name, .origin_file = self.locationPath(self.nodeLocation(node)), .id = self.next_choice_option_id };
+        self.next_choice_option_id += 1;
+        try global.choice_options.put(name, option_decl);
     }
 
-    fn predeclaredAbstractParams(self: *Semantizer, decl: syn.AbstractDeclaration) SemErr![]const gen.GenericParam {
-        const params_struct = decl.generic_params_struct orelse {
-            const params = try self.allocator.alloc(gen.GenericParam, decl.generic_params.len);
-            for (decl.generic_params, 0..) |name, index| {
-                params[index] = .{ .name = name, .kind = .type };
-            }
-            return params;
-        };
-        const params = try self.allocator.alloc(gen.GenericParam, params_struct.fields.len);
-        for (params_struct.fields, 0..) |field, index| {
-            const field_ty = field.type orelse {
-                params[index] = .{ .name = field.name.string, .kind = .type };
-                continue;
-            };
-            const is_type = field_ty == .type_name and std.mem.eql(u8, field_ty.type_name.string, "Type");
-            params[index] = .{
-                .name = field.name.string,
-                .kind = if (is_type) .type else .comptime_int,
-            };
-        }
-        return params;
-    }
-
-    fn predeclareTopLevelImportAlias(
-        self: *Semantizer,
-        decl: syn.SymbolDeclaration,
-        global: *Scope,
-        loc: tok.Location,
-    ) SemErr!void {
+    fn predeclareTopLevelImportAliasRef(self: *Semantizer, node: syn.SyntaxRef, global: *Scope) SemErr!void {
+        const file = self.syntaxFile(node);
+        const decl = file.symbolDeclaration(node.node).?;
         const value = decl.value orelse return;
-        if (value.*.content != .import_statement) return;
-        if (global.module_aliases.contains(decl.name.string)) return;
-
-        const resolved = source_files.resolveImportDir(self.allocator, self.io, self.locationPath(loc), value.*.content.import_statement.path) catch return;
-        try global.module_aliases.put(decl.name.string, resolved);
+        const import = file.importStatement(value) orelse return;
+        const name = self.tokenText(node, decl.name_token);
+        if (global.module_aliases.contains(name)) return;
+        const resolved = source_files.resolveImportDir(
+            self.allocator,
+            self.io,
+            self.locationPath(self.nodeLocation(node)),
+            self.tokenText(node, import.path_token),
+        ) catch return;
+        try global.module_aliases.put(name, resolved);
     }
 
-    fn predeclareTopLevelBinding(
-        self: *Semantizer,
-        decl: syn.SymbolDeclaration,
-        global: *Scope,
-        loc: tok.Location,
-    ) SemErr!void {
-        // Typed top-level bindings need a stub before full semantizing so other
-        // files in the same folder module can refer to them without depending on
-        // per-file declaration order.
-        if (decl.value) |value| {
-            if (value.*.content == .import_statement) return;
-        }
-        const binding_ty_node = decl.type orelse return;
-        if (global.bindings.contains(decl.name.string)) return;
-        if (global.module_aliases.contains(decl.name.string)) return;
-
-        const ty = self.resolveType(binding_ty_node, global) catch |err| switch (err) {
+    fn predeclareTopLevelBindingRef(self: *Semantizer, node: syn.SyntaxRef, global: *Scope) SemErr!void {
+        const file = self.syntaxFile(node);
+        const decl = file.symbolDeclaration(node.node).?;
+        if (decl.value) |value| if (file.tag(value) == .import_statement) return;
+        const type_node = decl.type_node orelse return;
+        const name = self.tokenText(node, decl.name_token);
+        if (global.bindings.contains(name) or global.module_aliases.contains(name)) return;
+        const ty = self.resolveTypeExpression(self.childRef(node, type_node), global) catch |err| switch (err) {
             error.UnknownType, error.SymbolNotFound => return,
             else => return err,
         };
         if (ty == .abstract_type) return;
-
-        const bd = try self.allocator.create(sg.BindingDeclaration);
-        bd.* = .{
-            .name = decl.name.string,
-            .location = loc,
-            .origin_file = self.locationPath(loc),
-            .mutability = decl.mutability,
+        const binding = try self.allocator.create(sg.BindingDeclaration);
+        binding.* = .{
+            .name = name,
+            .location = self.nodeLocation(node),
+            .origin_file = self.locationPath(self.nodeLocation(node)),
+            .mutability = @enumFromInt(@intFromEnum(decl.mutability)),
             .ty = ty,
             .initialization = null,
         };
-        try global.bindings.put(decl.name.string, bd);
+        try global.bindings.put(name, binding);
     }
 
-    fn predeclareTopLevelType(
-        self: *Semantizer,
-        decl: syn.TypeDeclaration,
-        global: *Scope,
-    ) SemErr!void {
-        if (decl.generic_params.len > 0 or decl.generic_params_struct != null) return;
-        if (global.types.contains(decl.name.string)) return;
-
-        switch (decl.value.*.content) {
-            .struct_type_literal => {
-                const stub = try self.allocator.create(sg.StructType);
-                stub.* = .{ .fields = &.{} };
-
-                const td = try self.allocator.create(sg.TypeDeclaration);
-                td.* = .{
-                    .name = decl.name.string,
-                    .origin_file = self.locationPath(decl.value.location),
-                    .ty = .{ .struct_type = stub },
-                };
-                try global.types.put(decl.name.string, td);
-            },
-            .choice_type_literal => {
-                const stub = try self.allocator.create(sg.ChoiceType);
-                stub.* = .{ .variants = &.{} };
-
-                const td = try self.allocator.create(sg.TypeDeclaration);
-                td.* = .{
-                    .name = decl.name.string,
-                    .origin_file = self.locationPath(decl.value.location),
-                    .ty = .{ .choice_type = stub },
-                };
-                try global.types.put(decl.name.string, td);
-            },
-            else => {},
-        }
-    }
-
-    fn predeclareTopLevelChoiceOption(
-        self: *Semantizer,
-        decl: syn.ChoiceOptionDeclaration,
-        global: *Scope,
-        loc: tok.Location,
-    ) SemErr!void {
-        if (global.choice_options.contains(decl.name.string)) return;
-
-        const option_decl = try self.allocator.create(sg.ChoiceOptionDeclaration);
-        option_decl.* = .{
-            .name = decl.name.string,
-            .origin_file = self.locationPath(loc),
-            .id = self.next_choice_option_id,
-        };
-        self.next_choice_option_id += 1;
-        try global.choice_options.put(decl.name.string, option_decl);
-    }
-
-    fn predeclareTopLevelFunction(
-        self: *Semantizer,
-        decl: syn.FunctionDeclaration,
-        global: *Scope,
-        loc: tok.Location,
-        is_test: bool,
-    ) SemErr!void {
-        if (decl.generic_params.len > 0 or decl.generic_params_struct != null) return;
-        try self.requireExplicitFunctionFieldTypes(decl, loc);
-
-        if (try self.abstractContractNameForFunctionDecl(decl, global) != null) return;
-
-        if (global.functions.getPtr(decl.name.string)) |list_ptr| {
-            for (list_ptr.items) |cand| {
-                if (cand.location.file == loc.file and cand.location.offset == loc.offset) return;
-            }
-        }
-
-        var child = try Scope.init(self.allocator, global, null);
-
-        var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
-        defer in_fields.deinit();
-        for (decl.input.fields) |*fld| {
-            const field_ty = &fld.type.?;
-            const ty = self.resolveCachedSignatureType(field_ty, .signature_predeclaration, &child) catch |err| switch (err) {
-                error.UnknownType, error.SymbolNotFound => return,
-                else => return err,
-            };
-
-            try in_fields.append(.{
-                .name = fld.name.string,
-                .ty = ty,
-                .default_value = if (fld.default_value != null) try self.makeNoopNode(fld.name.location) else null,
-            });
-
-            const bd = try self.allocator.create(sg.BindingDeclaration);
-            bd.* = .{
-                .name = fld.name.string,
-                .location = fld.name.location,
-                .origin_file = self.locationPath(loc),
-                .mutability = .constant,
-                .ty = ty,
-                .initialization = null,
-            };
-            try child.bindings.put(fld.name.string, bd);
-        }
-
-        var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
-        defer out_fields.deinit();
-        var uses_inferred_error_reasons = false;
-        for (decl.output.fields) |*fld| {
-            const field_ty = &fld.type.?;
-            const ty = if (self.inferableErrableInnerTypeFromOutput(field_ty.*)) |inner| blk: {
-                uses_inferred_error_reasons = true;
-                break :blk self.makeInferredErrableTypeForSignaturePredeclaration(inner, &child, fld.name.location) catch |err| switch (err) {
-                    error.UnknownType, error.SymbolNotFound => return,
-                    else => return err,
-                };
-            } else self.resolveCachedSignatureType(field_ty, .signature_predeclaration, &child) catch |err| switch (err) {
-                error.UnknownType, error.SymbolNotFound => return,
-                else => return err,
-            };
-
-            try out_fields.append(.{
-                .name = fld.name.string,
-                .ty = ty,
-                .default_value = if (fld.default_value != null) try self.makeNoopNode(fld.name.location) else null,
-            });
-        }
-
-        const in_struct_ptr = try self.allocator.create(sg.StructType);
-        in_struct_ptr.* = .{ .fields = try in_fields.toOwnedSlice() };
-
-        const fn_ptr = try self.allocator.create(sg.FunctionDeclaration);
-        fn_ptr.* = .{
-            .id = self.freshFunctionId(),
-            .name = decl.name.string,
-            .location = loc,
-            .safety_primitive = self.safetyPrimitiveForDeclaration(decl.name.string, self.locationPath(loc)),
-            .is_deinit = std.mem.eql(u8, decl.name.string, "deinit"),
-            .is_once = decl.is_once,
-            .is_test = is_test,
-            .input = in_struct_ptr.*,
-            .output = .{ .fields = try out_fields.toOwnedSlice() },
-            .body = null,
-            .has_declared_body = decl.body != null,
-            .uses_inferred_error_reasons = uses_inferred_error_reasons,
-            .output_bindings = &.{},
-        };
-
-        if (global.functions.getPtr(decl.name.string)) |list_ptr| {
-            for (list_ptr.items) |cand| {
-                if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = &fn_ptr.input })) {
-                    return;
+    fn predeclareTopLevelAbstractRef(self: *Semantizer, node: syn.SyntaxRef, global: *Scope) SemErr!void {
+        const abstract_file = self.syntaxFile(node);
+        const decl = abstract_file.abstractDeclaration(node.node).?;
+        const name = self.tokenText(node, decl.name_token);
+        if (global.abstracts.contains(name) or global.types.contains(name)) return;
+        const param_names = try self.compactAbstractParamNames(node, decl.generic_params, decl.generic_params_struct);
+        const params = try self.allocator.alloc(gen.GenericParam, param_names.len);
+        for (param_names, 0..) |param_name, index| params[index] = .{ .name = param_name, .kind = .type };
+        if (decl.generic_params_struct) |params_node| {
+            for (abstract_file.structTypeLiteral(params_node).?.fields, 0..) |field_node, index| {
+                const field = abstract_file.structTypeField(field_node).?;
+                if (field.type_node) |type_node| {
+                    const field_type = abstract_file.syntaxType(type_node);
+                    const is_type = if (field_type) |ty| ty == .name and ty.name.qualifier_token == null and
+                        std.mem.eql(u8, abstract_file.tokenText(&self.diags.source_db, ty.name.name_token), "Type") else false;
+                    params[index].kind = if (is_type) .type else .comptime_int;
                 }
             }
         }
-
-        try global.appendFunction(decl.name.string, fn_ptr);
+        const info = try self.allocator.create(abs.AbstractInfo);
+        info.* = .{ .name = name, .requirements = &.{}, .param_names = param_names, .params = params };
+        const abstract_type = try self.allocator.create(sg.AbstractType);
+        abstract_type.* = .{ .name = name };
+        const type_decl = try self.allocator.create(sg.TypeDeclaration);
+        type_decl.* = .{ .name = name, .origin_file = self.locationPath(self.nodeLocation(node)), .ty = .{ .abstract_type = abstract_type } };
+        try global.abstracts.put(name, info);
+        try global.types.put(name, type_decl);
     }
 
-    fn abstractContractNameForFunctionDecl(
-        self: *Semantizer,
-        f: syn.FunctionDeclaration,
-        p: *Scope,
-    ) SemErr!?[]const u8 {
-        _ = self;
-        for (f.input.fields) |field| {
-            const field_ty = field.type.?;
-            switch (field_ty) {
-                .type_name => |tn| {
-                    if (p.lookupAbstractInfo(tn.string) != null) return tn.string;
-                },
-                .generic_type_instantiation => |g| {
-                    if (p.lookupAbstractInfo(g.base_name.string) != null) return g.base_name.string;
-                },
-                .pointer_type => |ptr_info| switch (ptr_info.child.*) {
-                    .type_name => |tn| {
-                        if (p.lookupAbstractInfo(tn.string) != null) return tn.string;
-                    },
-                    .generic_type_instantiation => |g| {
-                        if (p.lookupAbstractInfo(g.base_name.string) != null) return g.base_name.string;
-                    },
-                    else => {},
-                },
-                else => {},
+    fn predeclareTopLevelTypeRef(self: *Semantizer, node: syn.SyntaxRef, global: *Scope) SemErr!void {
+        const file = self.syntaxFile(node);
+        const name_token, const generic_params, const generic_params_struct, const value = switch (self.nodeTag(node)) {
+            .type_declaration => blk: {
+                const decl = file.typeDeclaration(node.node).?;
+                break :blk .{ decl.name_token, decl.generic_params, decl.generic_params_struct, decl.value };
+            },
+            .c_enum_declaration => blk: {
+                const decl = file.cEnumDeclaration(node.node).?;
+                break :blk .{ decl.name_token, decl.generic_params, decl.generic_params_struct, decl.value };
+            },
+            .c_union_declaration => blk: {
+                const decl = file.cUnionDeclaration(node.node).?;
+                break :blk .{ decl.name_token, decl.generic_params, decl.generic_params_struct, decl.value };
+            },
+            else => unreachable,
+        };
+        const name = self.tokenText(node, name_token);
+        if (generic_params.len > 0 or generic_params_struct != null) {
+            const generic_info = self.compactGenericParamDefs(node, generic_params, generic_params_struct, global) catch return;
+            try global.appendGenericTypeTemplate(name, .{
+                .name = name,
+                .location = file.location(value),
+                .params = generic_info.params,
+                .param_abstract_constraints = generic_info.abstract_constraints,
+                .body = file.ref(value),
+            });
+            return;
+        }
+        if (global.types.contains(name)) return;
+        const ty: sg.Type = switch (file.tag(value)) {
+            .struct_type_literal => blk: {
+                const struct_type = try self.allocator.create(sg.StructType);
+                struct_type.* = .{ .fields = &.{} };
+                break :blk .{ .struct_type = struct_type };
+            },
+            .choice_type_literal => blk: {
+                const choice_type = try self.allocator.create(sg.ChoiceType);
+                choice_type.* = .{ .variants = &.{} };
+                break :blk .{ .choice_type = choice_type };
+            },
+            else => self.resolveTypeExpression(file.ref(value), global) catch return,
+        };
+        const type_decl = try self.allocator.create(sg.TypeDeclaration);
+        type_decl.* = .{ .name = name, .origin_file = self.locationPath(file.location(value)), .ty = ty };
+        try global.types.put(name, type_decl);
+    }
+
+    fn predeclareTopLevelFunctionRef(self: *Semantizer, node: syn.SyntaxRef, global: *Scope, is_test: bool) SemErr!void {
+        const file = self.syntaxFile(node);
+        const declaration = if (is_test)
+            (file.testDeclaration(node.node) orelse return).function
+        else
+            file.functionDeclaration(node.node) orelse return;
+        if (declaration.generic_params.len != 0 or declaration.generic_params_struct != null) return;
+        for (file.structTypeLiteral(declaration.input).?.fields) |field_node| {
+            const field = file.structTypeField(field_node).?;
+            if (field.type_node) |type_node| {
+                if (self.compactAbstractConstraintForType(node, type_node, global) != null) return;
             }
         }
-        return null;
+        const name = self.functionNameText(node) orelse return;
+        const location = self.nodeLocation(node);
+        var function_scope = try Scope.init(self.allocator, global, null);
+        const input = self.structTypeSignatureFromNode(file.ref(declaration.input), &function_scope, false) catch |err| switch (err) {
+            error.UnknownType, error.SymbolNotFound, error.InvalidType => return,
+            else => return err,
+        };
+        const output = self.structTypeSignatureFromNode(file.ref(declaration.output), &function_scope, true) catch |err| switch (err) {
+            error.UnknownType, error.SymbolNotFound, error.InvalidType => return,
+            else => return err,
+        };
+        if (global.functions.getPtr(name)) |functions| {
+            for (functions.items) |candidate| {
+                if (candidate.location.file == location.file and candidate.location.offset == location.offset) {
+                    // Interfaces are refreshed after support declarations settle.
+                    // Bodies and their bindings keep the same function identity.
+                    if (candidate.input_bindings.len == 0 and candidate.output_bindings.len == 0) {
+                        candidate.input = input.*;
+                        candidate.output = output.*;
+                    }
+                    return;
+                }
+                if (typ.typesExactlyEqual(.{ .struct_type = &candidate.input }, .{ .struct_type = input })) return;
+            }
+        }
+        const function = try self.allocator.create(sg.FunctionDeclaration);
+        function.* = .{
+            .id = self.freshFunctionId(),
+            .name = name,
+            .location = location,
+            .safety_primitive = self.safetyPrimitiveForDeclaration(name, self.locationPath(location)),
+            .is_deinit = std.mem.eql(u8, name, "deinit"),
+            .is_once = declaration.is_once,
+            .is_test = is_test,
+            .input = input.*,
+            .output = output.*,
+            .body = null,
+            .has_declared_body = declaration.body != null,
+            .uses_inferred_error_reasons = self.compactSignatureUsesInferredErrable(file.ref(declaration.output)),
+            .input_bindings = &.{},
+            .output_bindings = &.{},
+        };
+        try global.appendFunction(name, function);
     }
 
-    fn requireExplicitFunctionFieldTypes(
-        self: *Semantizer,
-        f: syn.FunctionDeclaration,
-        loc: tok.Location,
-    ) SemErr!void {
-        _ = loc;
-        for (f.input.fields) |field| {
-            if (field.type != null) continue;
-            try self.diags.add(
-                field.name.location,
-                .semantic,
-                "function input field '.{s}' requires an explicit type",
-                .{field.name.string},
-            );
-            return error.Reported;
-        }
-        for (f.output.fields) |field| {
-            if (field.type != null) continue;
-            try self.diags.add(
-                field.name.location,
-                .semantic,
-                "function output field '.{s}' requires an explicit type",
-                .{field.name.string},
-            );
-            return error.Reported;
+    fn functionNameText(self: *Semantizer, node: syn.SyntaxRef) ?[]const u8 {
+        const file = self.syntaxFile(node);
+        return switch (file.functionName(&self.diags.source_db, node.node) orelse return null) {
+            .identifier => |name_token| file.tokenText(&self.diags.source_db, name_token),
+            .operator => |operator| switch (operator) {
+                .add => "operator +",
+                .equal => "operator ==",
+                .not_equal => "operator !=",
+                .get => "operator get[]",
+                .set => "operator set[]",
+                .get_ro_pointer => "operator get_ro_pointer[]",
+                .get_rw_pointer => "operator get_rw_pointer[]",
+            },
+        };
+    }
+
+    fn requireExplicitFunctionFieldTypes(self: *Semantizer, node_ref: syn.SyntaxRef, declaration: syn.FunctionDeclaration) SemErr!void {
+        const file = self.syntaxFile(node_ref);
+        for ([_]syn.NodeIndex{ declaration.input, declaration.output }, [_][]const u8{ "input", "output" }) |signature, direction| {
+            const literal = file.structTypeLiteral(signature) orelse return error.InvalidType;
+            for (literal.fields) |field_node| {
+                const field = file.structTypeField(field_node) orelse return error.InvalidType;
+                if (field.type_node != null) continue;
+                try self.diags.add(file.tokenLocation(field.name_token), .semantic, "function {s} field '.{s}' requires an explicit type", .{ direction, file.tokenText(&self.diags.source_db, field.name_token) });
+                return error.Reported;
+            }
         }
     }
 
@@ -1093,9 +981,11 @@ pub const Semantizer = struct {
         self: *Semantizer,
         f: syn.FunctionDeclaration,
         loc: tok.Location,
-        p: *Scope,
+        node_ref: syn.SyntaxRef,
     ) SemErr!void {
-        _ = p;
+        const file = self.syntaxFile(node_ref);
+        const input = file.structTypeLiteral(f.input) orelse return error.InvalidType;
+        const output = file.structTypeLiteral(f.output) orelse return error.InvalidType;
         if (f.is_once) {
             try self.diags.add(loc, .semantic, "tests cannot be marked once", .{});
             return error.Reported;
@@ -1108,82 +998,62 @@ pub const Semantizer = struct {
             try self.diags.add(loc, .semantic, "tests must define a body", .{});
             return error.Reported;
         }
-        if (f.input.fields.len != 1) {
+        if (input.fields.len != 1) {
             try self.diags.add(loc, .semantic, "tests must declare exactly one input: '.system: System = System()'", .{});
             return error.Reported;
         }
-        const system_field = f.input.fields[0];
-        if (!std.mem.eql(u8, system_field.name.string, "system")) {
-            try self.diags.add(system_field.name.location, .semantic, "tests must declare '.system: System = System()' as their only input", .{});
+        const system_field = file.structTypeField(input.fields[0]).?;
+        if (!std.mem.eql(u8, file.tokenText(&self.diags.source_db, system_field.name_token), "system")) {
+            try self.diags.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System = System()' as their only input", .{});
             return error.Reported;
         }
-        const system_type = system_field.type orelse {
-            try self.diags.add(system_field.name.location, .semantic, "tests must declare '.system: System = System()' as their only input", .{});
+        const system_type = system_field.type_node orelse {
+            try self.diags.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System = System()' as their only input", .{});
             return error.Reported;
         };
-        if (system_type != .type_name or !std.mem.eql(u8, system_type.type_name.string, "System")) {
-            try self.diags.add(system_field.name.location, .semantic, "tests must declare '.system: System = System()' as their only input", .{});
+        if (file.syntaxType(system_type) == null or file.syntaxType(system_type).? != .name or !std.mem.eql(u8, file.tokenText(&self.diags.source_db, file.syntaxType(system_type).?.name.name_token), "System")) {
+            try self.diags.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System = System()' as their only input", .{});
             return error.Reported;
         }
         const system_default = system_field.default_value orelse {
-            try self.diags.add(system_field.name.location, .semantic, "tests must declare '.system: System = System()' as their only input", .{});
+            try self.diags.add(file.tokenLocation(system_field.name_token), .semantic, "tests must declare '.system: System = System()' as their only input", .{});
             return error.Reported;
         };
-        if (system_default.content != .function_call or !std.mem.eql(u8, system_default.content.function_call.callee, "System")) {
-            try self.diags.add(system_default.location, .semantic, "tests must declare '.system: System = System()' as their only input", .{});
+        if (file.functionCall(system_default) == null or !std.mem.eql(u8, file.tokenText(&self.diags.source_db, file.functionCall(system_default).?.callee_token), "System")) {
+            try self.diags.add(file.location(system_default), .semantic, "tests must declare '.system: System = System()' as their only input", .{});
             return error.Reported;
         }
-        if (f.output.fields.len != 1) {
+        if (output.fields.len != 1) {
             try self.diags.add(loc, .semantic, "tests must return exactly '-> !()' in v1", .{});
             return error.Reported;
         }
-        const result_field = f.output.fields[0];
-        if (!std.mem.eql(u8, result_field.name.string, "result")) {
-            try self.diags.add(result_field.name.location, .semantic, "tests must return exactly '-> !()' in v1", .{});
+        const result_field = file.structTypeField(output.fields[0]).?;
+        if (!result_field.inferred_result and !std.mem.eql(u8, file.tokenText(&self.diags.source_db, result_field.name_token), "result")) {
+            try self.diags.add(file.tokenLocation(result_field.name_token), .semantic, "tests must return exactly '-> !()' in v1", .{});
             return error.Reported;
         }
-        const result_type = result_field.type orelse {
-            try self.diags.add(result_field.name.location, .semantic, "tests must return exactly '-> !()' in v1", .{});
+        const result_type = result_field.type_node orelse {
+            try self.diags.add(file.tokenLocation(result_field.name_token), .semantic, "tests must return exactly '-> !()' in v1", .{});
             return error.Reported;
         };
-        switch (result_type) {
-            .inferred_errable => |inner| switch (inner.*) {
-                .struct_type_literal => |st| {
+        switch (file.syntaxType(result_type) orelse return error.InvalidType) {
+            .inferred_errable => |inner| switch (file.syntaxType(inner) orelse return error.InvalidType) {
+                .struct_literal => |st| {
                     if (st.fields.len != 0) {
-                        try self.diags.add(result_field.name.location, .semantic, "tests must return exactly '-> !()' in v1", .{});
+                        try self.diags.add(file.tokenLocation(result_field.name_token), .semantic, "tests must return exactly '-> !()' in v1", .{});
                         return error.Reported;
                     }
                 },
                 else => {
-                    try self.diags.add(result_field.name.location, .semantic, "tests must return exactly '-> !()' in v1", .{});
+                    try self.diags.add(file.tokenLocation(result_field.name_token), .semantic, "tests must return exactly '-> !()' in v1", .{});
                     return error.Reported;
                 },
             },
             else => {
-                try self.diags.add(result_field.name.location, .semantic, "tests must return exactly '-> !()' in v1", .{});
+                try self.diags.add(file.tokenLocation(result_field.name_token), .semantic, "tests must return exactly '-> !()' in v1", .{});
                 return error.Reported;
             },
         }
-    }
-
-    fn resolveCachedSignatureType(
-        self: *Semantizer,
-        type_node: *const syn.Type,
-        mode: SignatureTypeCacheMode,
-        s: *Scope,
-    ) SemErr!sg.Type {
-        const key: SignatureTypeCacheKey = .{
-            .node = type_node,
-            .mode = mode,
-        };
-        if (self.signature_type_cache.get(key)) |cached| return cached;
-
-        const resolved = switch (mode) {
-            .preserving_abstracts => try self.resolveTypePreservingAbstracts(type_node.*, s),
-            .signature_predeclaration => try self.resolveTypeForSignaturePredeclaration(type_node.*, s),
-        };
-        try self.signature_type_cache.put(key, resolved);
-        return resolved;
     }
 
     pub fn printSG(self: *Semantizer) void {
@@ -1225,96 +1095,6 @@ pub const Semantizer = struct {
         };
         self.next_inferred_choice_identity_id += 1;
         return identity;
-    }
-
-    fn makeInferredErrableType(self: *Semantizer, inner: syn.Type, s: *Scope, loc: tok.Location) SemErr!sg.Type {
-        const empty_choice = syn.ChoiceTypeLiteral{ .variants = &.{} };
-        const reason_fields = try self.allocator.alloc(syn.StructTypeLiteralField, 2);
-        reason_fields[0] = .{
-            .name = .{ .string = "t", .location = loc },
-            .type = inner,
-            .default_value = null,
-        };
-        reason_fields[1] = .{
-            .name = .{ .string = "reasons", .location = loc },
-            .type = syn.Type{ .choice_type_literal = empty_choice },
-            .default_value = null,
-        };
-
-        const errable_ast = syn.Type{ .generic_type_instantiation = .{
-            .base_name = .{ .string = "Errable", .location = loc },
-            .args = .{ .fields = reason_fields },
-        } };
-
-        const resolved = try self.resolveTypePreservingAbstracts(errable_ast, s);
-        const errable_choice = switch (resolved) {
-            .choice_type => |choice_ty| choice_ty,
-            else => return error.InvalidType,
-        };
-
-        const reason_choice = typ.errableReasonChoiceFromType(resolved) orelse return error.InvalidType;
-        @constCast(errable_choice).identity = .{ .inferred_choice = try self.nextInferredChoiceIdentity(.errable) };
-        @constCast(reason_choice).identity = .{ .inferred_choice = try self.nextInferredChoiceIdentity(.reasons) };
-        return resolved;
-    }
-
-    fn makeInferredErrableTypeForSignaturePredeclaration(
-        self: *Semantizer,
-        inner: syn.Type,
-        s: *Scope,
-        loc: tok.Location,
-    ) SemErr!sg.Type {
-        const empty_choice = syn.ChoiceTypeLiteral{ .variants = &.{} };
-        const reason_fields = try self.allocator.alloc(syn.StructTypeLiteralField, 2);
-        reason_fields[0] = .{
-            .name = .{ .string = "t", .location = loc },
-            .type = inner,
-            .default_value = null,
-        };
-        reason_fields[1] = .{
-            .name = .{ .string = "reasons", .location = loc },
-            .type = syn.Type{ .choice_type_literal = empty_choice },
-            .default_value = null,
-        };
-
-        const errable_ast = syn.Type{ .generic_type_instantiation = .{
-            .base_name = .{ .string = "Errable", .location = loc },
-            .args = .{ .fields = reason_fields },
-        } };
-
-        const resolved = try self.resolveTypeForSignaturePredeclaration(errable_ast, s);
-        const errable_choice = switch (resolved) {
-            .choice_type => |choice_ty| choice_ty,
-            else => return error.InvalidType,
-        };
-
-        const reason_choice = typ.errableReasonChoiceFromType(resolved) orelse return error.InvalidType;
-        @constCast(errable_choice).identity = .{ .inferred_choice = try self.nextInferredChoiceIdentity(.errable) };
-        @constCast(reason_choice).identity = .{ .inferred_choice = try self.nextInferredChoiceIdentity(.reasons) };
-        return resolved;
-    }
-
-    fn inferableErrableInnerTypeFromOutput(self: *Semantizer, ty: syn.Type) ?syn.Type {
-        _ = self;
-        return switch (ty) {
-            .inferred_errable => |inner| inner.*,
-            .generic_type_instantiation => |g| blk: {
-                if (!std.mem.eql(u8, g.base_name.string, "Errable")) break :blk null;
-
-                var inner_ty: ?syn.Type = null;
-                var has_reasons = false;
-                for (g.args.fields) |field| {
-                    if (std.mem.eql(u8, field.name.string, "t")) {
-                        if (field.type) |field_ty| inner_ty = field_ty;
-                    } else if (std.mem.eql(u8, field.name.string, "reasons")) {
-                        has_reasons = true;
-                    }
-                }
-                if (has_reasons) break :blk null;
-                break :blk inner_ty;
-            },
-            else => null,
-        };
     }
 
     fn inferFunctionErrorReasons(self: *Semantizer, global: *Scope) SemErr!void {
@@ -1752,25 +1532,6 @@ pub const Semantizer = struct {
         return true;
     }
 
-    fn collectActiveDeferredNodes(self: *Semantizer, s: *Scope) ![]const *sg.SGNode {
-        var collected = std.array_list.Managed(*sg.SGNode).init(self.allocator.*);
-        errdefer collected.deinit();
-
-        var cur: ?*Scope = s;
-        const current_fn = s.current_fn;
-        while (cur) |scope_ptr| : (cur = scope_ptr.parent) {
-            if (scope_ptr.current_fn != current_fn) break;
-
-            var d_idx: usize = scope_ptr.deferred.items.len;
-            while (d_idx > 0) : (d_idx -= 1) {
-                const group = scope_ptr.deferred.items[d_idx - 1];
-                try collected.appendSlice(group.nodes);
-            }
-        }
-
-        return try collected.toOwnedSlice();
-    }
-
     fn collectActiveEarlyCleanupNodes(self: *Semantizer, s: *Scope) ![]const *sg.SGNode {
         var collected = std.array_list.Managed(*sg.SGNode).init(self.allocator.*);
         errdefer collected.deinit();
@@ -1800,20 +1561,8 @@ pub const Semantizer = struct {
         loc: tok.Location,
         s: *Scope,
     ) ?AutoDeinitResolution {
-        const synthetic_call = syn.FunctionCall{
-            .callee = "deinit",
-            .callee_loc = loc,
-            .module_qualifier = null,
-            .type_arguments = null,
-            .type_arguments_struct = null,
-            .input = undefined,
-        };
-
-        const chosen = self.tryResolveRegularCallCallee(synthetic_call, input_te, s, loc) catch return null;
-        const coerced_input = self.coerceCallInputToExpected(&chosen.input, input_te, &syn.STNode{
-            .location = loc,
-            .content = .{ .identifier = binding.name },
-        }, s) catch return null;
+        const chosen = self.tryResolveImplicitCall("deinit", input_te, s, loc) catch return null;
+        const coerced_input = self.coerceCallInputToExpected(&chosen.input, input_te, loc, s) catch return null;
 
         if (coerced_input.node.content != .struct_value_literal) return null;
         const input_value = coerced_input.node.content.struct_value_literal;
@@ -1895,11 +1644,14 @@ pub const Semantizer = struct {
             }
             if (sc.generic_functions.getPtr("deinit")) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
-                    for (tmpl.input.fields) |field| {
-                        const field_ty = field.type.?;
-                        if (field_ty != .pointer_type) continue;
-                        if (field_ty.pointer_type.mutability != .read_write) continue;
-                        try candidate_names.put(field.name.string, {});
+                    const template_file = &tmpl.syntax_files[@intFromEnum(tmpl.syntax_file_id)];
+                    const input = template_file.structTypeLiteral(tmpl.input) orelse continue;
+                    for (input.fields) |field_node| {
+                        const field = template_file.structTypeField(field_node) orelse continue;
+                        const type_node = field.type_node orelse continue;
+                        const field_type = template_file.syntaxType(type_node) orelse continue;
+                        if (field_type != .pointer or field_type.pointer.mutability != .read_write) continue;
+                        try candidate_names.put(template_file.tokenText(tmpl.source_db, field.name_token), {});
                     }
                 }
             }
@@ -1959,23 +1711,11 @@ pub const Semantizer = struct {
         loc: tok.Location,
         s: *Scope,
     ) SemErr!?typ.TypedExpr {
-        const synthetic_call = syn.FunctionCall{
-            .callee = "copy",
-            .callee_loc = loc,
-            .module_qualifier = null,
-            .type_arguments = null,
-            .type_arguments_struct = null,
-            .input = undefined,
-        };
-
-        const chosen = self.tryResolveRegularCallCallee(synthetic_call, input_te, s, loc) catch |err| switch (err) {
+        const chosen = self.tryResolveImplicitCall("copy", input_te, s, loc) catch |err| switch (err) {
             error.SymbolNotFound => return null,
             else => return err,
         };
-        const coerced_input = self.coerceCallInputToExpected(&chosen.input, input_te, &syn.STNode{
-            .location = loc,
-            .content = .{ .identifier = "copy" },
-        }, s) catch |err| switch (err) {
+        const coerced_input = self.coerceCallInputToExpected(&chosen.input, input_te, loc, s) catch |err| switch (err) {
             error.SymbolNotFound => return null,
             else => return err,
         };
@@ -2451,15 +2191,6 @@ pub const Semantizer = struct {
         return sg.makeSGNode(.{ .code_block = try self.makeEmptyCodeBlock() }, loc, self.allocator);
     }
 
-    fn makeSynNode(self: *Semantizer, content: syn.Content, location: tok.Location) !*syn.STNode {
-        const node = try self.allocator.create(syn.STNode);
-        node.* = .{
-            .location = location,
-            .content = content,
-        };
-        return node;
-    }
-
     fn makeSyntheticName(self: *Semantizer, prefix: []const u8) ![]u8 {
         const name = try std.fmt.allocPrint(self.allocator.*, "__for_{s}_{d}", .{ prefix, self.synthetic_name_counter });
         self.synthetic_name_counter += 1;
@@ -2478,881 +2209,1860 @@ pub const Semantizer = struct {
         return self.functionIsVisible(cand, requester_file);
     }
 
-    fn syntaxNodeContainsPipePlaceholder(n: *const syn.STNode) bool {
-        return switch (n.content) {
+    //────────────────────────────────────────────────────────────────── visitors
+    pub fn visitNode(self: *Semantizer, node: syn.SyntaxRef, s: *Scope) SemErr!typ.TypedExpr {
+        return self.visitNodeInner(node, s) catch |err| {
+            if (err == error.AbstractNeedsDefault) {
+                const file = self.syntaxFile(node);
+                if (file.symbolDeclaration(node.node)) |declaration| {
+                    if (declaration.type_node) |type_node| {
+                        if (file.syntaxType(type_node)) |ty| {
+                            if (ty == .name) {
+                                const name = file.tokenText(&self.diags.source_db, ty.name.name_token);
+                                try self.diags.add(file.location(node.node), .semantic, "cannot use abstract '{s}' as a type for a symbol. Use a concrete type or add a default concrete type to the abstract type ('{s} defaultsto <Type>')", .{ name, name });
+                                return error.Reported;
+                            }
+                        }
+                    }
+                    try self.diags.add(file.location(node.node), .semantic, "cannot use abstract type without a default (add 'defaultsto' or use a concrete type)", .{});
+                    return error.Reported;
+                }
+            }
+            if (err == error.UnknownType or err == error.SymbolNotFound) try self.pushTopLevelForRetry();
+            return err;
+        };
+    }
+
+    fn visitNodeInner(self: *Semantizer, node: syn.SyntaxRef, s: *Scope) SemErr!typ.TypedExpr {
+        const location = self.nodeLocation(node);
+        // Runtime/expression syntax includes declarations allowed in local
+        // scopes. Type-only, child-only and context-only tags are listed
+        // explicitly below so a new tag cannot silently fall through.
+        return switch (self.nodeTag(node)) {
+            .function_declaration, .function_declaration_once => self.handleCompactFunctionDeclaration(node, s, false),
+            // Top-level-only syntax has an explicit context check.
+            .test_declaration => blk: {
+                if (s.parent != null) {
+                    try self.diags.add(location, .semantic, "tests are only supported at top level", .{});
+                    break :blk error.Reported;
+                }
+                break :blk self.handleCompactFunctionDeclaration(node, s, true);
+            },
+            .assignment => self.handleCompactAssignment(node, s),
+            .symbol_declaration_constant, .symbol_declaration_variable => self.handleCompactSymbolDeclaration(node, s),
+            .struct_value_literal => self.handleCompactStructValueLiteral(node, s),
+            .function_call => self.handleCompactFunctionCall(node, s),
+            .struct_field_access => self.handleCompactStructFieldAccess(node, s),
+            .choice_payload_access => self.handleChoicePayloadAccess(node, s),
+            .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo => self.handleCompactBinaryOperation(node, s),
+            .compare_equal, .compare_not_equal, .compare_less, .compare_greater, .compare_less_equal, .compare_greater_equal => self.handleCompactComparison(node, s),
+            .logical_and, .logical_or => self.handleCompactLogicalOperation(node, s),
+            .if_statement => self.handleCompactIf(node, s),
+            .match_statement => self.handleCompactMatch(node, s),
+            .for_value, .for_borrow, .for_mut_borrow => self.handleCompactFor(node, s),
+            .pipe_expression => self.handleCompactPipe(node, s),
+            .unwrap_or, .unwrap_or_do => self.handleCompactNullableUnwrap(node, s),
+            .error_propagation => self.handleCompactErrorPropagation(node, s),
+            .error_context => self.handleCompactErrorContext(node, s),
+            .nullable_test => self.handleCompactNullableTest(node, s),
+            .type_declaration, .c_enum_declaration, .c_union_declaration => self.handleCompactTypeDeclaration(node, s),
+            .choice_option_declaration => self.handleCompactChoiceOptionDeclaration(node, s),
+            .abstract_declaration => self.handleCompactAbstractDeclaration(node, s),
+            .abstract_implements => self.handleCompactAbstractImplements(node, s),
+            .abstract_defaultsto => self.handleCompactAbstractDefault(node, s),
+            .identifier => self.handleIdentifier(self.tokenText(node, self.syntaxFile(node).mainToken(node.node)), s, location),
+            .literal => self.handleCompactLiteral(node, s),
+            .code_block => self.handleCompactCodeBlock(node, s),
+            .expression_statement => blk: {
+                const value = try self.visitNode(self.childRef(node, self.syntaxFile(node).unaryOperand(node.node).?), s);
+                try s.nodes.append(value.node);
+                break :blk value;
+            },
+            .return_statement => self.handleCompactReturn(node, s),
+            .while_statement => self.handleWhile(node, s),
+            .dereference => self.handleDereference(self.childRef(node, self.syntaxFile(node).unaryOperand(node.node).?), s),
+            .defer_statement => self.handleDefer(self.childRef(node, self.syntaxFile(node).unaryOperand(node.node).?), s),
+            .move_expression => self.handleMove(self.childRef(node, self.syntaxFile(node).unaryOperand(node.node).?), s, location),
+            .list_literal => self.handleListLiteral(node, s),
+            .keep_statement => self.handleKeep(node, s),
+            .choice_literal, .choice_some_literal => self.handleChoiceLiteral(node, s),
+            .index_access => self.handleIndexAccess(node, s),
+            .address_of, .address_of_mut => self.handleAddressOf(node, s),
+            .pointer_assignment => self.handlePointerAssignment(node, s),
+            .index_assignment => self.handleIndexAssignment(node, s),
+            .import_statement => self.handleImportStatement(location),
+            // Context-only: defaults and symbol declarations resolve #reach.
+            .reach_directive => self.handleReachDirective(node, location),
+            .break_statement => self.handleBreak(location, s),
+            .continue_statement => self.handleContinue(location, s),
+            // Type syntax is resolved through syntaxType(), except a struct
+            // with defaults, which can also materialize a runtime value.
+            .struct_type_literal => self.handleCompactStructTypeValue(node, s),
+            .choice_type_literal => blk: {
+                try self.diags.add(location, .semantic, "choice type literals are only valid inside type declarations or type annotations", .{});
+                break :blk error.Reported;
+            },
+            .type_name, .pointer_type, .pointer_type_mut, .nullable_type, .inferred_errable_type, .array_type, .generic_type_instantiation => error.InvalidType,
+            // Child-only nodes are consumed by their owner's typed view.
+            .abstract_function_requirement, .reach_alternative, .struct_type_field, .inferred_result_field, .choice_type_variant, .choice_type_variant_default, .struct_value_field, .positional_value_field, .match_case_value, .match_case_borrow, .match_case_mut_borrow, .match_case_move => error.InvalidType,
+            // Context-only syntax: evalCompactPipeArg supplies the piped value.
+            .pipe_placeholder => error.InvalidType,
+        };
+    }
+
+    fn handleCompactStructTypeValue(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const literal = file.structTypeLiteral(node.node).?;
+        var arguments = std.array_list.Managed(CallArg).init(self.allocator.*);
+        defer arguments.deinit();
+        for (literal.fields) |field_node| {
+            const field = file.structTypeField(field_node).?;
+            const value = field.default_value orelse {
+                try self.diags.add(file.location(node.node), .semantic, "error in struct type literal: NotYetImplemented", .{});
+                return error.Reported;
+            };
+            try arguments.append(.{ .name = file.tokenText(&self.diags.source_db, field.name_token), .expr = try self.visitNode(file.ref(value), scope) });
+        }
+        return self.buildCallInput(arguments.items);
+    }
+
+    fn handleCompactNullableTest(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const operand = file.unaryOperand(node.node).?;
+        const value = try self.visitNode(file.ref(operand), scope);
+        const location = file.location(node.node);
+        if (value.ty != .choice_type) {
+            const desc = try self.formatTypeText(value.ty, scope);
+            defer desc.deinit();
+            try self.diags.add(file.location(operand), .semantic, "is expects '.value' to be a choice, found '{s}'", .{desc.bytes});
+            return error.Reported;
+        }
+        for (value.ty.choice_type.variants, 0..) |variant, index| {
+            if (!std.mem.eql(u8, variant.name, "some")) continue;
+            const literal = try self.allocator.create(sg.ChoiceLiteral);
+            literal.* = .{ .variant_name = "some", .choice_type = value.ty.choice_type, .variant_index = @intCast(index), .payload = null };
+            const variant_node = try sg.makeSGNode(.{ .choice_literal = literal }, location, self.allocator);
+            variant_node.sem_type = value.ty;
+            const result = try sg.makeSGNode(.{ .comparison = .{ .operator = .equal, .left = value.node, .right = variant_node } }, location, self.allocator);
+            try scope.nodes.append(result);
+            return .{ .node = result, .ty = .{ .builtin = .Bool } };
+        }
+        const desc = try self.formatTypeText(value.ty, scope);
+        defer desc.deinit();
+        try self.diags.add(location, .semantic, "choice type '{s}' has no variant '..some'", .{desc.bytes});
+        return error.Reported;
+    }
+
+    fn handleCompactFunctionDeclaration(
+        self: *Semantizer,
+        node: syn.SyntaxRef,
+        scope: *Scope,
+        is_test: bool,
+    ) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const declaration = if (is_test)
+            (file.testDeclaration(node.node) orelse return error.InvalidType).function
+        else
+            file.functionDeclaration(node.node) orelse return error.InvalidType;
+        try self.requireExplicitFunctionFieldTypes(node, declaration);
+        const name = self.functionNameText(node) orelse return error.InvalidType;
+        const location = self.nodeLocation(node);
+        if (is_test) try self.validateTestSignature(declaration, location, node);
+        if (declaration.is_once and declaration.body == null) {
+            try self.diags.add(location, .semantic, "once is not supported on extern functions", .{});
+            return error.Reported;
+        }
+        if (declaration.generic_params.len != 0 or declaration.generic_params_struct != null) {
+            if (declaration.is_once) {
+                try self.diags.add(location, .semantic, "once is not supported on generic functions yet", .{});
+                return error.Reported;
+            }
+            const info = try self.compactGenericParamDefs(node, declaration.generic_params, declaration.generic_params_struct, scope);
+            try scope.appendGenericFunctionTemplate(name, .{
+                .syntax_files = self.syntax_files,
+                .source_db = &self.diags.source_db,
+                .syntax_file_id = node.file_id,
+                .name = name,
+                .location = location,
+                .params = info.params,
+                .param_abstract_constraints = info.abstract_constraints,
+                .input = declaration.input,
+                .output = declaration.output,
+                .body = if (declaration.body) |body| file.ref(body) else null,
+            });
+            const noop = try self.makeNoopNode(location);
+            return .{ .node = noop, .ty = .{ .builtin = .Any } };
+        }
+        if (!is_test and try self.registerAbstractContractTemplateIfNeeded(node, scope, location)) {
+            const noop = try self.makeNoopNode(location);
+            return .{ .node = noop, .ty = .{ .builtin = .Any } };
+        }
+        try self.predeclareTopLevelFunctionRef(node, scope, is_test);
+        var function: ?*sg.FunctionDeclaration = null;
+        if (scope.functions.getPtr(name)) |functions| {
+            for (functions.items) |candidate| {
+                if (candidate.location.file == location.file and candidate.location.offset == location.offset) {
+                    function = candidate;
+                    break;
+                }
+            }
+        }
+        const resolved = function orelse return error.UnknownType;
+        if (resolved.output_bindings.len == 0 and resolved.output.fields.len != 0) {
+            const output_nodes = file.structTypeLiteral(declaration.output) orelse return error.InvalidType;
+            const bindings = try self.allocator.alloc(*const sg.BindingDeclaration, resolved.output.fields.len);
+            for (output_nodes.fields, 0..) |field_node, index| {
+                const field = file.structTypeField(field_node) orelse return error.InvalidType;
+                const binding = try self.allocator.create(sg.BindingDeclaration);
+                binding.* = .{
+                    .name = if (field.inferred_result) "result" else file.tokenText(&self.diags.source_db, field.name_token),
+                    .location = file.tokenLocation(field.name_token),
+                    .origin_file = self.locationPath(location),
+                    .mutability = .variable,
+                    .ty = resolved.output.fields[index].ty,
+                    .initialization = null,
+                };
+                bindings[index] = binding;
+            }
+            resolved.output_bindings = bindings;
+        }
+        if (is_test)
+            _ = try self.appendTestDeclarationNodeIfMissing(scope, resolved, location)
+        else
+            _ = try self.appendFunctionDeclarationNodeIfMissing(scope, resolved, location);
+        try self.enqueuePendingFunctionBody(node, declaration, location, resolved, is_test);
+        const noop = try self.makeNoopNode(location);
+        return .{ .node = noop, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleCompactLiteral(self: *Semantizer, node: syn.SyntaxRef, s: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const literal = file.literal(node.node).?;
+        const content = file.tokenContent(literal.token).literal;
+        var value: sg.ValueLiteral = undefined;
+        var ty: sg.Type = .{ .builtin = .Int32 };
+        switch (content) {
+            .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => {
+                var parsed = std.fmt.parseInt(i64, file.tokenText(&self.diags.source_db, literal.token), 0) catch 0;
+                if (literal.negative) parsed = -parsed;
+                value = .{ .int_literal = parsed };
+            },
+            .regular_float_literal, .scientific_float_literal => {
+                var parsed = std.fmt.parseFloat(f64, file.tokenText(&self.diags.source_db, literal.token)) catch 0.0;
+                if (literal.negative) parsed = -parsed;
+                ty = .{ .builtin = .Float32 };
+                value = .{ .float_literal = parsed };
+            },
+            .char_literal => |character| {
+                ty = .{ .builtin = .Char };
+                value = .{ .char_literal = character };
+            },
+            .string_literal => {
+                const declaration = s.lookupType("StringView") orelse return error.UnknownType;
+                if (!typeDeclIsReady(declaration)) return error.UnknownType;
+                ty = declaration.ty;
+                value = .{ .string_literal = try tok.decodeStringLiteral(self.allocator.*, file.tokenText(&self.diags.source_db, literal.token)) };
+            },
+            .bool_literal => |boolean| {
+                ty = .{ .builtin = .Bool };
+                value = .{ .bool_literal = boolean };
+            },
+        }
+        const result = try sg.makeSGNode(.{ .value_literal = value }, self.nodeLocation(node), self.allocator);
+        result.sem_type = ty;
+        return .{ .node = result, .ty = ty };
+    }
+
+    fn handleCompactAssignment(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const assignment = file.assignment(node.node) orelse return error.InvalidType;
+        const name = file.tokenText(&self.diags.source_db, assignment.name_token);
+        const location = file.tokenLocation(assignment.name_token);
+        const binding = scope.lookupBinding(name) orelse return error.SymbolNotFound;
+        if (!(try self.bindingIsVisible(binding, self.locationPath(location)))) {
+            try self.addPrivateMemberDiag(location, "value", name);
+            return error.Reported;
+        }
+        if (scope.bindingMoveLocation(name)) |move_location| {
+            try self.diags.add(location, .semantic, "binding '{s}' was moved and cannot be reassigned (moved at {s}:{d}:{d})", .{
+                name,
+                self.locationPath(move_location),
+                self.locationLineColumn(move_location).line,
+                self.locationLineColumn(move_location).column,
+            });
+            return error.Reported;
+        }
+        if (binding.mutability == .constant and binding.initialization != null) {
+            try self.diags.add(location, .semantic, "binding '{s}' is constant and cannot be reassigned after initialization", .{name});
+            return error.Reported;
+        }
+        const value_ref = file.ref(assignment.value);
+        var value = try self.visitNode(value_ref, scope);
+        value = try typ.coerceExprToType(binding.ty, value, file.location(assignment.value), scope, self.allocator, self.diags);
+        value = try self.ensureValuePositionAllowed(value, file.location(assignment.value), scope);
+        if (!typ.typesExactlyEqual(binding.ty, value.ty)) return error.InvalidType;
+        const semantic_assignment = try self.allocator.create(sg.Assignment);
+        semantic_assignment.* = .{ .sym_id = binding, .value = value.node };
+        const result = try sg.makeSGNode(.{ .binding_assignment = semantic_assignment }, location, self.allocator);
+        try scope.nodes.append(result);
+        return .{ .node = result, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleCompactSymbolDeclaration(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const declaration = file.symbolDeclaration(node.node) orelse return error.InvalidType;
+        const name = file.tokenText(&self.diags.source_db, declaration.name_token);
+        const location = file.tokenLocation(declaration.name_token);
+        if (declaration.value) |value_node| if (file.importStatement(value_node)) |import| {
+            const resolved = source_files.resolveImportDir(
+                self.allocator,
+                self.io,
+                self.locationPath(location),
+                file.tokenText(&self.diags.source_db, import.path_token),
+            ) catch return error.Reported;
+            if (!scope.module_aliases.contains(name)) try scope.module_aliases.put(name, resolved);
+            return typ.makeTypeLiteral(self.allocator, location, .{ .builtin = .Any });
+        };
+        const predeclared = if (scope.parent == null) scope.bindings.get(name) else null;
+        const reuses_predeclared = if (predeclared) |binding|
+            binding.location.file == location.file and binding.location.offset == location.offset
+        else
+            false;
+        if (scope.bindings.contains(name) and !reuses_predeclared) return error.SymbolAlreadyDefined;
+        var value: ?typ.TypedExpr = if (declaration.value) |value_node| blk: {
+            if (file.tag(value_node) != .reach_directive) break :blk try self.visitNode(file.ref(value_node), scope);
+            const reach_ref = file.ref(value_node);
+            const reach = try self.semanticReachDirectiveFromSyntax(reach_ref);
+            const expected = if (declaration.type_node) |type_node|
+                try self.resolveTypeExpression(file.ref(type_node), scope)
+            else inferred: {
+                const inferred = try self.resolveReachedArgumentForInference(name, reach, scope, file.location(value_node)) orelse {
+                    const reach_text = try self.formatReachDirective(reach);
+                    defer self.allocator.free(reach_text);
+                    try self.diags.add(file.location(value_node), .semantic, "cannot infer type for '.{s}' from #reach [{s}]", .{ name, reach_text });
+                    return error.Reported;
+                };
+                break :inferred inferred.ty;
+            };
+            break :blk try self.resolveReachedArgument(name, expected, reach, scope, file.location(value_node));
+        } else null;
+        var value_type: sg.Type = if (value) |typed| typed.ty else .{ .builtin = .Int32 };
+        if (declaration.type_node) |type_node| {
+            value_type = try self.resolveTypeExpression(file.ref(type_node), scope);
+            if (value) |typed| value = try typ.coerceExprToType(value_type, typed, file.location(declaration.value.?), scope, self.allocator, self.diags);
+        } else if (value) |typed| if (typed.node.content == .list_literal) {
+            const array = try self.inferArrayTypeFromList(typed.node.content.list_literal, file.location(declaration.value.?), scope);
+            value_type = .{ .array_type = array };
+            value = try typ.convertListLiteralToArray(typed, array, file.location(declaration.value.?), scope, self.allocator, self.diags);
+        };
+        if (value) |typed| value = try self.ensureValuePositionAllowed(typed, file.location(declaration.value.?), scope);
+        const binding = if (reuses_predeclared) predeclared.? else blk: {
+            const created = try self.allocator.create(sg.BindingDeclaration);
+            try scope.bindings.put(name, created);
+            break :blk created;
+        };
+        binding.* = .{
+            .name = name,
+            .location = location,
+            .origin_file = self.locationPath(location),
+            .mutability = @enumFromInt(@intFromEnum(declaration.mutability)),
+            .ty = value_type,
+            .initialization = if (value) |typed| typed.node else null,
+        };
+        scope.clearBindingMoved(name);
+        const result = try self.appendBindingDeclarationNodeIfMissing(scope, binding, location);
+        try self.maybeScheduleAutoDeinit(binding, location, scope);
+        return .{ .node = result, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleCompactStructValueLiteral(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const literal = file.structValueLiteral(node.node) orelse return error.InvalidType;
+        const values = try self.allocator.alloc(sg.StructValueLiteralField, literal.fields.len);
+        const fields = try self.allocator.alloc(sg.StructTypeField, literal.fields.len);
+        for (literal.fields, 0..) |field_node, index| {
+            const field = file.valueField(field_node) orelse return error.InvalidType;
+            const value_ref = file.ref(field.value);
+            var typed = try self.visitNode(value_ref, scope);
+            typed = try self.ensureValuePositionAllowed(typed, file.location(field.value), scope);
+            const name = if (field.name_token) |name_token|
+                file.tokenText(&self.diags.source_db, name_token)
+            else
+                try std.fmt.allocPrint(self.allocator.*, "__positional_{d}", .{field.position.?});
+            values[index] = .{ .name = name, .value = typed.node };
+            fields[index] = .{ .name = name, .ty = typed.ty, .default_value = null };
+        }
+        const struct_type = try self.allocator.create(sg.StructType);
+        struct_type.* = .{ .fields = fields };
+        const semantic_literal = try self.allocator.create(sg.StructValueLiteral);
+        semantic_literal.* = .{
+            .fields = values,
+            .ty = .{ .struct_type = struct_type },
+            .dispatch_prefix_positional_count = literal.positional_prefix_count,
+        };
+        const result = try sg.makeSGNode(.{ .struct_value_literal = semantic_literal }, self.nodeLocation(node), self.allocator);
+        return .{ .node = result, .ty = .{ .struct_type = struct_type } };
+    }
+
+    fn handleCompactFunctionCall(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const call = file.functionCall(node.node) orelse return error.InvalidType;
+        const callee = file.tokenText(&self.diags.source_db, call.callee_token);
+        const location = file.tokenLocation(call.callee_token);
+        if (std.mem.eql(u8, callee, "size_of")) return self.handleBuiltinTypeInfo(.size, node, scope);
+        if (std.mem.eql(u8, callee, "alignment_of")) return self.handleBuiltinTypeInfo(.alignment, node, scope);
+        if (std.mem.eql(u8, callee, "to_virtual")) return self.handleToVirtual(node, scope);
+        if (std.mem.eql(u8, callee, "type_of")) return self.handleTypeOf(node, scope);
+        if (std.mem.eql(u8, callee, "cast")) return self.handleCastBuiltin(node, scope);
+        if (std.mem.eql(u8, callee, "is")) return self.handleIsBuiltin(node, scope);
+        if (std.mem.eql(u8, callee, "length")) length: {
+            return self.handleLengthBuiltin(node, scope) catch |err| switch (err) {
+                error.SymbolNotFound => break :length,
+                else => return err,
+            };
+        }
+        var input = try self.visitNode(file.ref(call.input), scope);
+        if (call.module_qualifier) |qualifier| {
+            if (std.mem.eql(u8, file.tokenText(&self.diags.source_db, qualifier), "testing") and std.mem.eql(u8, callee, "expect_error")) return self.handleTestingExpectErrorBuiltin(node, input, scope);
+        }
+
+        if (input.ty != .struct_type) return error.InvalidType;
+
+        if (typ.builtinFromName(callee)) |builtin| if (builtin == .Void) {
+            if (input.ty.struct_type.fields.len != 0) return error.InvalidType;
+            const literal = try self.allocator.create(sg.StructValueLiteral);
+            literal.* = .{ .fields = &.{}, .ty = .{ .builtin = .Void }, .dispatch_prefix_positional_count = 0 };
+            const result = try sg.makeSGNode(.{ .struct_value_literal = literal }, location, self.allocator);
+            result.sem_type = .{ .builtin = .Void };
+            return .{ .node = result, .ty = .{ .builtin = .Void } };
+        };
+
+        if (scope.lookupType(callee)) |type_declaration| {
+            if (!(try self.typeIsVisible(type_declaration, self.locationPath(location)))) {
+                try self.addPrivateMemberDiag(location, "type", callee);
+                return error.Reported;
+            }
+            return self.handleTypeInitializer(node, input, type_declaration, scope);
+        }
+
+        if (call.type_arguments_struct) |arguments| {
+            const instantiated = self.resolveCompactGenericTypeWithMode(callee, location, file.ref(arguments), scope, false, null) catch |err| switch (err) {
+                error.UnknownType, error.AbstractNeedsDefault => null,
+                else => return err,
+            };
+            if (instantiated) |ty| {
+                const declaration = try self.allocator.create(sg.TypeDeclaration);
+                declaration.* = .{ .name = callee, .origin_file = self.locationPath(location), .ty = ty };
+                return self.handleTypeInitializer(node, input, declaration, scope);
+            }
+        }
+        const inferred_type = self.instantiateGenericTypeFromInitializer(callee, input.ty, scope) catch |err| switch (err) {
+            error.SymbolNotFound => null,
+            error.AmbiguousOverload => {
+                try self.diags.add(file.location(call.input), .semantic, "generic type initializer for '{s}' is ambiguous", .{callee});
+                return error.Reported;
+            },
+            else => return err,
+        };
+        if (inferred_type) |ty| {
+            const declaration = try self.allocator.create(sg.TypeDeclaration);
+            declaration.* = .{ .name = callee, .origin_file = self.locationPath(location), .ty = ty };
+            return self.handleTypeInitializer(node, input, declaration, scope);
+        }
+        if (try self.tryHandleVirtualCall(node, input, scope)) |virtual_call| return virtual_call;
+
+        const trusted_drop_without_destructor = scope.current_fn != null and
+            scope.current_fn.?.safety_primitive == .trusted_opaque_drop and std.mem.eql(u8, callee, "deinit");
+        const chosen = (if (trusted_drop_without_destructor)
+            self.tryResolveRegularCallCallee(node, input, scope, file.location(call.input), null)
+        else
+            self.resolveRegularCallCallee(node, input, scope, file.location(call.input))) catch |err| switch (err) {
+            error.SymbolNotFound => if (trusted_drop_without_destructor) {
+                // Trusted drops of trivially destructible values have no runtime work.
+                const literal = try self.allocator.create(sg.StructValueLiteral);
+                literal.* = .{ .fields = &.{}, .ty = .{ .builtin = .Void } };
+                const result = try sg.makeSGNode(.{ .struct_value_literal = literal }, location, self.allocator);
+                result.sem_type = .{ .builtin = .Void };
+                return .{ .node = result, .ty = .{ .builtin = .Void } };
+            } else return err,
+            error.AmbiguousOverload => {
+                if (call.module_qualifier) |qualifier| {
+                    const module_name = file.tokenText(&self.diags.source_db, qualifier);
+                    const module_dir = scope.lookupModuleAlias(module_name) orelse return error.SymbolNotFound;
+                    try self.addAmbiguousModuleFunctionDiagnostic(module_name, module_dir, callee, input.ty, scope, file.location(call.input));
+                } else try self.addAmbiguousFunctionDiagnostic(callee, input.ty, scope, location);
+                return error.Reported;
+            },
+            else => return err,
+        };
+
+        input = try self.coerceCallInputToExpected(&chosen.input, input, file.location(call.input), scope);
+        try self.discoverFunctionReference(chosen);
+        const semantic_call = try self.allocator.create(sg.FunctionCall);
+        semantic_call.* = .{
+            .callee = chosen,
+            .input = input.node,
+            .consumes_auto_deinit = self.explicitDeinitAutoCleanupTarget(chosen, input, scope),
+        };
+        const result = try sg.makeSGNode(.{ .function_call = semantic_call }, location, self.allocator);
+        return .{ .node = result, .ty = typ.functionReturnType(chosen) };
+    }
+
+    fn handleCompactStructFieldAccess(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const access = file.structFieldAccess(node.node) orelse return error.InvalidType;
+        const field_name = file.tokenText(&self.diags.source_db, access.field_token);
+        const field_location = file.tokenLocation(access.field_token);
+        if (file.tag(access.value) == .identifier) {
+            const module_name = file.tokenText(&self.diags.source_db, file.mainToken(access.value));
+            if (scope.lookupModuleAlias(module_name)) |module_dir| {
+                return self.handleModuleFieldAccess(module_dir, field_name, scope, file.location(access.value));
+            }
+        }
+        const base = try self.visitNode(file.ref(access.value), scope);
+        if (base.ty != .struct_type) {
+            if (base.node.content == .function_call) {
+                const call = base.node.content.function_call;
+                if (call.callee.output.fields.len == 1 and std.mem.eql(u8, call.callee.output.fields[0].name, field_name)) return base;
+            }
+            return error.InvalidType;
+        }
+        return self.buildStructFieldAccessFromTypedExpr(base, field_name, field_location, scope);
+    }
+
+    fn handleCompactBinaryOperation(self: *Semantizer, node_ref: syn.SyntaxRef, s: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node_ref);
+        const operation = file.binaryOperation(node_ref.node) orelse return error.InvalidType;
+        const loc = file.location(node_ref.node);
+        const operator: tok.BinaryOperator = switch (file.tag(node_ref.node)) {
+            .binary_add => .addition,
+            .binary_subtract => .subtraction,
+            .binary_multiply => .multiplication,
+            .binary_divide => .division,
+            .binary_modulo => .modulo,
+            else => unreachable,
+        };
+        var lhs = try self.visitNode(file.ref(operation.lhs), s);
+        var rhs = try self.visitNode(file.ref(operation.rhs), s);
+
+        const operator_name = switch (operator) {
+            .addition => "operator +",
+            else => null,
+        };
+
+        if (operator_name) |name| {
+            var input_te = try self.buildCallInput(&[_]CallArg{
+                .{ .name = "left", .expr = lhs },
+                .{ .name = "right", .expr = rhs },
+            });
+            const empty_args: ?syn.SyntaxRef = null;
+
+            var chosen: ?*sg.FunctionDeclaration = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
+                error.SymbolNotFound => null,
+                else => return err,
+            };
+
+            if (chosen == null) {
+                chosen = self.resolveVisibleOverload(name, input_te, s, file.location(operation.lhs)) catch |err| switch (err) {
+                    error.SymbolNotFound => null,
+                    error.AmbiguousOverload => {
+                        try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, file.location(operation.lhs));
+                        return error.Reported;
+                    },
+                    else => return err,
+                };
+            }
+
+            if (chosen == null) {
+                chosen = self.instantiateGenericNamed(name, empty_args, input_te, s, .abstract_contract) catch |err| switch (err) {
+                    error.SymbolNotFound => null,
+                    else => return err,
+                };
+            }
+
+            if (chosen) |chosen_fn| {
+                try self.discoverFunctionReference(chosen_fn);
+                input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, file.location(operation.lhs), s);
+
+                const result_ty = typ.functionReturnType(chosen_fn);
+                const fc_ptr = try self.allocator.create(sg.FunctionCall);
+                fc_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
+
+                const node = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
+                try s.nodes.append(node);
+                return .{ .node = node, .ty = result_ty };
+            }
+        }
+
+        const lhs_is_ptr = lhs.ty == .pointer_type;
+        const rhs_is_ptr = rhs.ty == .pointer_type;
+        if ((operator == .addition or operator == .subtraction) and lhs_is_ptr != rhs_is_ptr) {
+            try self.diags.add(
+                file.location(operation.lhs),
+                .semantic,
+                "pointer arithmetic is not allowed; cast explicitly to an integer, perform the arithmetic, and cast back",
+                .{},
+            );
+            return error.Reported;
+        }
+
+        rhs = try typ.coerceExprToType(lhs.ty, rhs, file.location(operation.rhs), s, self.allocator, self.diags);
+        lhs = try typ.coerceExprToType(rhs.ty, lhs, file.location(operation.lhs), s, self.allocator, self.diags);
+
+        if (!typ.typesExactlyEqual(lhs.ty, rhs.ty)) {
+            const pair = try self.formatTypePairText(lhs.ty, rhs.ty, s);
+            defer pair.deinit();
+            const verb = binaryOpVerb(operator);
+            try self.diags.add(
+                file.location(operation.lhs),
+                .semantic,
+                "cannot {s} '{s}' and '{s}'",
+                .{ verb, pair.expected.bytes, pair.actual.bytes },
+            );
+            return error.Reported;
+        }
+
+        const bin = try self.allocator.create(sg.BinaryOperation);
+        bin.* = .{ .operator = operator, .left = lhs.node, .right = rhs.node };
+
+        const n = try sg.makeSGNode(.{ .binary_operation = bin.* }, loc, self.allocator);
+        try s.nodes.append(n);
+        return .{ .node = n, .ty = lhs.ty };
+    }
+
+    //──────────────────────────────────────────────────── COMPARISON
+    fn handleCompactComparison(self: *Semantizer, node_ref: syn.SyntaxRef, s: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node_ref);
+        const operation = file.binaryOperation(node_ref.node) orelse return error.InvalidType;
+        const loc = file.location(node_ref.node);
+        const operator: tok.ComparisonOperator = switch (file.tag(node_ref.node)) {
+            .compare_equal => .equal,
+            .compare_not_equal => .not_equal,
+            .compare_less => .less_than,
+            .compare_greater => .greater_than,
+            .compare_less_equal => .less_than_or_equal,
+            .compare_greater_equal => .greater_than_or_equal,
+            else => unreachable,
+        };
+        var lhs = try self.visitNode(file.ref(operation.lhs), s);
+        var rhs = try self.visitNode(file.ref(operation.rhs), s);
+
+        const operator_name = switch (operator) {
+            .equal => "operator ==",
+            .not_equal => "operator !=",
+            else => null,
+        };
+
+        if (operator_name) |name| {
+            var input_te = try self.buildCallInput(&[_]CallArg{
+                .{ .name = "left", .expr = lhs },
+                .{ .name = "right", .expr = rhs },
+            });
+            const empty_args: ?syn.SyntaxRef = null;
+
+            var chosen: ?*sg.FunctionDeclaration = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
+                error.SymbolNotFound => null,
+                else => return err,
+            };
+
+            if (chosen == null) {
+                chosen = self.resolveVisibleOverload(name, input_te, s, file.location(operation.lhs)) catch |err| switch (err) {
+                    error.SymbolNotFound => null,
+                    error.AmbiguousOverload => {
+                        try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, file.location(operation.lhs));
+                        return error.Reported;
+                    },
+                    else => return err,
+                };
+            }
+
+            if (chosen) |chosen_fn| {
+                try self.discoverFunctionReference(chosen_fn);
+                input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, file.location(operation.lhs), s);
+
+                const result_ty = typ.functionReturnType(chosen_fn);
+                if (!typ.typesExactlyEqual(result_ty, .{ .builtin = .Bool })) {
+                    const actual = try self.formatTypeText(result_ty, s);
+                    defer actual.deinit();
+                    try self.diags.add(
+                        file.location(operation.lhs),
+                        .semantic,
+                        "comparison operator '{s}' must return 'Bool', got '{s}'",
+                        .{ name, actual.bytes },
+                    );
+                    return error.Reported;
+                }
+
+                const fc_ptr = try self.allocator.create(sg.FunctionCall);
+                fc_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
+
+                const node = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
+                try s.nodes.append(node);
+                return .{ .node = node, .ty = result_ty };
+            }
+        }
+
+        if (operator == .equal or operator == .not_equal) {
+            if (try self.coercePayloadlessChoiceComparisonSide(lhs.ty, rhs, file.location(operation.rhs), s)) |coerced_rhs| {
+                rhs = coerced_rhs;
+            }
+            if (try self.coercePayloadlessChoiceComparisonSide(rhs.ty, lhs, file.location(operation.lhs), s)) |coerced_lhs| {
+                lhs = coerced_lhs;
+            }
+        }
+
+        rhs = try typ.coerceExprToType(lhs.ty, rhs, file.location(operation.rhs), s, self.allocator, self.diags);
+        lhs = try typ.coerceExprToType(rhs.ty, lhs, file.location(operation.lhs), s, self.allocator, self.diags);
+
+        if (!typ.typesExactlyEqual(lhs.ty, rhs.ty)) {
+            const pair = try self.formatTypePairText(lhs.ty, rhs.ty, s);
+            defer pair.deinit();
+            try self.diags.add(
+                file.location(operation.lhs),
+                .semantic,
+                "cannot compare '{s}' and '{s}'",
+                .{ pair.expected.bytes, pair.actual.bytes },
+            );
+            return error.Reported;
+        }
+
+        const cmp_ptr = try self.allocator.create(sg.Comparison);
+        cmp_ptr.* = .{
+            .operator = operator,
+            .left = lhs.node,
+            .right = rhs.node,
+        };
+
+        const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, loc, self.allocator);
+        try s.nodes.append(node);
+        return .{ .node = node, .ty = .{ .builtin = .Bool } };
+    }
+
+    fn handleCompactLogicalOperation(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const operation = file.binaryOperation(node.node) orelse return error.InvalidType;
+        const bool_type: sg.Type = .{ .builtin = .Bool };
+        var left = try self.visitNode(file.ref(operation.lhs), scope);
+        var right = try self.visitNode(file.ref(operation.rhs), scope);
+        left = try typ.coerceExprToType(bool_type, left, file.location(operation.lhs), scope, self.allocator, self.diags);
+        right = try typ.coerceExprToType(bool_type, right, file.location(operation.rhs), scope, self.allocator, self.diags);
+        if (!typ.typesExactlyEqual(left.ty, bool_type) or !typ.typesExactlyEqual(right.ty, bool_type)) return error.InvalidType;
+        const operator: sg.LogicalOperator = if (file.tag(node.node) == .logical_and) .and_ else .or_;
+        const result = try sg.makeSGNode(.{ .logical_operation = .{ .operator = operator, .left = left.node, .right = right.node } }, self.nodeLocation(node), self.allocator);
+        try scope.nodes.append(result);
+        return .{ .node = result, .ty = bool_type };
+    }
+
+    fn handleCompactIf(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const statement = file.ifStatement(node.node) orelse return error.InvalidType;
+        const start_len = scope.nodes.items.len;
+        const condition = try self.visitNode(file.ref(statement.condition), scope);
+        const refinement = try self.extractCompactNullableIfRefinement(file.ref(statement.condition), scope);
+        const then_value = if (file.codeBlock(statement.then_block)) |block|
+            try self.handleCompactCodeBlockWithNullableRefinement(file.ref(statement.then_block), block, scope, refinement, file.location(statement.condition))
+        else
+            try self.visitNode(file.ref(statement.then_block), scope);
+        const else_block = if (statement.else_block) |else_node| blk: {
+            const else_value = try self.visitNode(file.ref(else_node), scope);
+            break :blk else_value.node.content.code_block;
+        } else null;
+        scope.nodes.items.len = start_len;
+        const semantic_if = try self.allocator.create(sg.IfStatement);
+        semantic_if.* = .{
+            .condition = condition.node,
+            .choice_test = self.choiceTagTestForCondition(condition.node),
+            .then_block = then_value.node.content.code_block,
+            .else_block = else_block,
+        };
+        const result = try sg.makeSGNode(.{ .if_statement = semantic_if }, self.nodeLocation(node), self.allocator);
+        try scope.nodes.append(result);
+        return .{ .node = result, .ty = .{ .builtin = .Any } };
+    }
+
+    fn extractCompactNullableIfRefinement(
+        self: *Semantizer,
+        condition: syn.SyntaxRef,
+        scope: *Scope,
+    ) SemErr!?NullableIfRefinement {
+        const file = self.syntaxFile(condition);
+        if (file.tag(condition.node) == .nullable_test) {
+            const value = file.unaryOperand(condition.node).?;
+            if (file.tag(value) != .identifier) return null;
+            const name = file.tokenText(&self.diags.source_db, file.mainToken(value));
+            const binding = scope.lookupBinding(name) orelse return null;
+            const nullable = self.tryNullableInfoOfType(binding.ty) orelse return null;
+            return .{
+                .source_binding = binding,
+                .some_variant_index = nullable.some_variant_index,
+                .some_payload_type = nullable.some_payload_type,
+                .some_value_type = nullable.some_value_type,
+            };
+        }
+        const call = file.functionCall(condition.node) orelse return null;
+        if (!std.mem.eql(u8, file.tokenText(&self.diags.source_db, call.callee_token), "is") or
+            call.module_qualifier != null or call.type_arguments.len != 0 or call.type_arguments_struct != null) return null;
+        const input = file.structValueLiteral(call.input) orelse return null;
+        var value_node: ?syn.NodeIndex = null;
+        var variant_node: ?syn.NodeIndex = null;
+        for (input.fields) |field_node| {
+            const field = file.valueField(field_node) orelse return error.InvalidType;
+            const name_token = field.name_token orelse continue;
+            const name = file.tokenText(&self.diags.source_db, name_token);
+            if (std.mem.eql(u8, name, "value")) value_node = field.value else if (std.mem.eql(u8, name, "variant")) variant_node = field.value;
+        }
+        const value = value_node orelse return null;
+        const variant = variant_node orelse return null;
+        if (file.tag(value) != .identifier) return null;
+        const literal = file.choiceLiteral(variant) orelse return null;
+        if (literal.payload != null) return null;
+        const binding_name = file.tokenText(&self.diags.source_db, file.mainToken(value));
+        const binding = scope.lookupBinding(binding_name) orelse return null;
+        const nullable = self.tryNullableInfoOfType(binding.ty) orelse return null;
+        const variant_name = file.tokenText(&self.diags.source_db, literal.name_token);
+        if (!std.mem.eql(u8, variant_name, "some") or
+            !std.mem.eql(u8, binding.ty.choice_type.variants[nullable.some_variant_index].name, variant_name)) return null;
+        return .{
+            .source_binding = binding,
+            .some_variant_index = nullable.some_variant_index,
+            .some_payload_type = nullable.some_payload_type,
+            .some_value_type = nullable.some_value_type,
+        };
+    }
+
+    fn handleCompactCodeBlockWithNullableRefinement(
+        self: *Semantizer,
+        node: syn.SyntaxRef,
+        block: syn.CodeBlock,
+        parent: *Scope,
+        refinement: ?NullableIfRefinement,
+        refinement_loc: tok.Location,
+    ) SemErr!typ.TypedExpr {
+        var child = try Scope.init(self.allocator, parent, parent.current_fn);
+        if (refinement) |value| try self.applyNullableThenRefinement(value, &child, refinement_loc);
+        var return_value: ?*sg.SGNode = null;
+        var return_type: sg.Type = .{ .builtin = .Any };
+        const file = self.syntaxFile(node);
+        for (block.statements, 0..) |statement, index| {
+            const typed = try self.visitNode(self.childRef(node, statement), &child);
+            if (index + 1 == block.statements.len and file.tag(statement) == .expression_statement) {
+                return_value = typed.node;
+                return_type = typed.ty;
+            } else if (file.tag(statement) == .function_call) try child.nodes.append(typed.node);
+        }
+        var deferred_index = child.deferred.items.len;
+        while (deferred_index > 0) : (deferred_index -= 1) {
+            for (child.deferred.items[deferred_index - 1].nodes) |deferred_node| try child.nodes.append(deferred_node);
+        }
+        const nodes = try child.nodes.toOwnedSlice();
+        child.nodes.deinit();
+        self.clearDeferred(&child);
+        const block_value = try self.allocator.create(sg.CodeBlock);
+        block_value.* = .{ .nodes = nodes, .ret_val = return_value };
+        const result = try sg.makeSGNode(.{ .code_block = block_value }, self.nodeLocation(node), self.allocator);
+        try parent.nodes.append(result);
+        return .{ .node = result, .ty = return_type };
+    }
+
+    fn handleCompactMatch(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const statement = file.matchStatement(node.node) orelse return error.InvalidType;
+        const requires_move = for (statement.cases) |case_node| {
+            const match_case = file.matchCase(case_node) orelse return error.InvalidType;
+            if (match_case.payload_name) |payload_name| {
+                const name = file.tokenText(&self.diags.source_db, payload_name);
+                if (!std.mem.eql(u8, name, "_") and match_case.mode == .move) break true;
+            }
+        } else false;
+        const value_ref = self.childRef(node, statement.value);
+        const value = if (requires_move) blk: {
+            if (file.tag(statement.value) == .identifier) break :blk try self.handleMove(value_ref, scope, file.location(statement.value));
+            const typed = try self.visitNode(value_ref, scope);
+            if (typ.expressionNeedsCopyForValuePosition(typed.node)) {
+                try self.diags.add(file.location(statement.value), .semantic, "match payload move bindings currently only support named bindings or temporary expressions", .{});
+                return error.Reported;
+            }
+            break :blk typed;
+        } else try self.visitNode(value_ref, scope);
+        const choice = switch (value.ty) {
+            .choice_type => |choice_type| choice_type,
+            else => {
+                const desc = try self.formatTypeText(value.ty, scope);
+                defer desc.deinit();
+                try self.diags.add(file.location(statement.value), .semantic, "match expects a choice value, found '{s}'", .{desc.bytes});
+                return error.Reported;
+            },
+        };
+        const start_len = scope.nodes.items.len;
+        var cases = std.array_list.Managed(sg.SwitchCase).init(self.allocator.*);
+        for (statement.cases) |case_node| {
+            const match_case = file.matchCase(case_node) orelse return error.InvalidType;
+            const variant_name = file.tokenText(&self.diags.source_db, match_case.variant_token);
+            const variant_loc = file.tokenLocation(match_case.variant_token);
+            var variant_index: ?u32 = null;
+            var payload_type: ?sg.Type = null;
+            for (choice.variants, 0..) |variant, index| if (std.mem.eql(u8, variant.name, variant_name)) {
+                variant_index = @intCast(index);
+                payload_type = variant.payload_type;
+                break;
+            };
+            const index = variant_index orelse {
+                const desc = try self.formatTypeText(value.ty, scope);
+                defer desc.deinit();
+                try self.diags.add(variant_loc, .semantic, "choice type '{s}' has no variant '..{s}'", .{ desc.bytes, variant_name });
+                return error.Reported;
+            };
+            const body = try self.handleCompactMatchCaseBody(value, index, payload_type, match_case, node, scope);
+            const literal = try self.allocator.create(sg.ChoiceLiteral);
+            literal.* = .{ .variant_name = variant_name, .choice_type = choice, .variant_index = index, .payload = null };
+            const literal_node = try sg.makeSGNode(.{ .choice_literal = literal }, variant_loc, self.allocator);
+            literal_node.sem_type = value.ty;
+            try cases.append(.{ .value = literal_node, .variant_index = index, .body = body });
+        }
+        scope.nodes.items.len = start_len;
+        var exhaustive = cases.items.len == choice.variants.len;
+        if (exhaustive) for (choice.variants, 0..) |_, variant_index| {
+            const found = for (cases.items) |case| {
+                if (case.variant_index == variant_index) break true;
+            } else false;
+            if (!found) {
+                exhaustive = false;
+                break;
+            }
+        };
+        const semantic = try self.allocator.create(sg.SwitchStatement);
+        semantic.* = .{ .expression = value.node, .cases = try cases.toOwnedSlice(), .default_case = null, .exhaustive = exhaustive };
+        const result = try sg.makeSGNode(.{ .switch_statement = semantic }, file.location(statement.value), self.allocator);
+        try scope.nodes.append(result);
+        return .{ .node = result, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleCompactMatchCaseBody(
+        self: *Semantizer,
+        choice_value: typ.TypedExpr,
+        variant_index: u32,
+        payload_type: ?sg.Type,
+        match_case: syn.MatchCase,
+        parent_node: syn.SyntaxRef,
+        parent: *Scope,
+    ) SemErr!*const sg.CodeBlock {
+        const file = self.syntaxFile(parent_node);
+        var child = try Scope.init(self.allocator, parent, parent.current_fn);
+        const variant_name = file.tokenText(&self.diags.source_db, match_case.variant_token);
+        if (match_case.payload_name) |payload_name_token| {
+            const binding_name = file.tokenText(&self.diags.source_db, payload_name_token);
+            const binding_loc = file.tokenLocation(payload_name_token);
+            const resolved_payload = payload_type orelse {
+                try self.diags.add(binding_loc, .semantic, "choice variant '..{s}' has no payload to bind", .{variant_name});
+                return error.Reported;
+            };
+            if (!std.mem.eql(u8, binding_name, "_")) {
+                const access = try self.allocator.create(sg.ChoicePayloadAccess);
+                access.* = .{ .choice_value = choice_value.node, .variant_index = variant_index, .payload_type = resolved_payload };
+                const access_node = try sg.makeSGNode(.{ .choice_payload_access = access }, binding_loc, self.allocator);
+                access_node.sem_type = resolved_payload;
+                const initialization: typ.TypedExpr = switch (match_case.mode) {
+                    .value => try self.ensureValuePositionAllowed(.{ .node = access_node, .ty = resolved_payload }, binding_loc, parent),
+                    .move => .{ .node = access_node, .ty = resolved_payload },
+                    .borrow => try typ.makeAddressablePointer(access_node, resolved_payload, .read_only, binding_loc, self.allocator, self.diags),
+                    .mut_borrow => try typ.makeAddressablePointer(access_node, resolved_payload, .read_write, binding_loc, self.allocator, self.diags),
+                };
+                const binding = try self.allocator.create(sg.BindingDeclaration);
+                binding.* = .{ .name = binding_name, .location = binding_loc, .origin_file = self.locationPath(binding_loc), .mutability = .constant, .ty = initialization.ty, .initialization = initialization.node };
+                try child.bindings.put(binding_name, binding);
+                try child.nodes.append(try sg.makeSGNode(.{ .binding_declaration = binding }, binding_loc, self.allocator));
+                try self.maybeScheduleAutoDeinit(binding, binding_loc, &child);
+            }
+        } else if (payload_type != null) {
+            const loc = file.tokenLocation(match_case.variant_token);
+            try self.diags.add(loc, .semantic, "choice variant '..{s}' carries a payload and match must bind it explicitly; use '..{s} _' to ignore it", .{ variant_name, variant_name });
+            return error.Reported;
+        }
+        const body = file.codeBlock(match_case.body) orelse return error.InvalidType;
+        for (body.statements) |statement| {
+            const typed = try self.visitNode(self.childRef(parent_node, statement), &child);
+            if (file.tag(statement) == .function_call) try child.nodes.append(typed.node);
+        }
+        var deferred_index = child.deferred.items.len;
+        while (deferred_index > 0) : (deferred_index -= 1) for (child.deferred.items[deferred_index - 1].nodes) |deferred_node| try child.nodes.append(deferred_node);
+        const nodes = try child.nodes.toOwnedSlice();
+        child.nodes.deinit();
+        self.clearDeferred(&child);
+        const result = try self.allocator.create(sg.CodeBlock);
+        result.* = .{ .nodes = nodes, .ret_val = null };
+        return result;
+    }
+
+    fn handleCompactErrorPropagation(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const value = file.unaryOperand(node.node) orelse return error.InvalidType;
+        return self.lowerErrorPropagation(try self.visitNode(self.childRef(node, value), scope), null, scope, self.nodeLocation(node));
+    }
+
+    fn handleCompactErrorContext(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const operation = file.binaryOperation(node.node) orelse return error.InvalidType;
+        const value = try self.visitNode(self.childRef(node, operation.lhs), scope);
+        var context = try self.visitNode(self.childRef(node, operation.rhs), scope);
+        context = try self.ensureValuePositionAllowed(context, file.location(operation.rhs), scope);
+        return self.lowerErrorPropagation(value, context, scope, self.nodeLocation(node));
+    }
+
+    fn handleCompactNullableUnwrap(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const operation = file.binaryOperation(node.node) orelse return error.InvalidType;
+        const value_ref = self.childRef(node, operation.lhs);
+        const fallback_ref = self.childRef(node, operation.rhs);
+        const value = try self.visitNode(value_ref, scope);
+        const nullable = try self.nullableInfoOf(value.ty, file.location(operation.lhs), "unwrap_or left operand", scope);
+        var fallback = try self.visitNode(fallback_ref, scope);
+        fallback = try typ.coerceExprToType(nullable.some_value_type, fallback, file.location(operation.rhs), scope, self.allocator, self.diags);
+        const semantic = try self.allocator.create(sg.NullableUnwrapOr);
+        semantic.* = .{
+            .nullable_value = value.node,
+            .fallback_value = fallback.node,
+            .some_variant_index = nullable.some_variant_index,
+            .some_value_field_index = nullable.some_value_field_index,
+            .result_type = nullable.some_value_type,
+        };
+        const result = try sg.makeSGNode(.{ .nullable_unwrap_or = semantic }, self.nodeLocation(node), self.allocator);
+        result.sem_type = nullable.some_value_type;
+        return .{ .node = result, .ty = nullable.some_value_type };
+    }
+
+    fn makeCompactBindingUse(self: *Semantizer, binding: *sg.BindingDeclaration, loc: tok.Location) !typ.TypedExpr {
+        const node = try sg.makeSGNode(.{ .binding_use = binding }, loc, self.allocator);
+        node.sem_type = binding.ty;
+        return .{ .node = node, .ty = binding.ty };
+    }
+
+    fn makeCompactImplicitCall(
+        self: *Semantizer,
+        name: []const u8,
+        args: []const CallArg,
+        positional_prefix_count: u32,
+        loc: tok.Location,
+        scope: *Scope,
+    ) SemErr!typ.TypedExpr {
+        var input = try self.buildCallInputWithPositionalPrefix(args, positional_prefix_count);
+        const callee = try self.tryResolveImplicitCall(name, input, scope, loc);
+        input = try self.coerceCallInputToExpected(&callee.input, input, loc, scope);
+        try self.discoverFunctionReference(callee);
+        const semantic = try self.allocator.create(sg.FunctionCall);
+        semantic.* = .{ .callee = callee, .input = input.node };
+        const result = try sg.makeSGNode(.{ .function_call = semantic }, loc, self.allocator);
+        result.sem_type = typ.functionReturnType(callee);
+        return .{ .node = result, .ty = typ.functionReturnType(callee) };
+    }
+
+    fn handleCompactFor(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const statement = file.forStatement(node.node) orelse return error.InvalidType;
+        const loc = self.nodeLocation(node);
+        const iterable_ref = self.childRef(node, statement.iterable);
+        const iterable = try self.visitNode(iterable_ref, scope);
+        const abstract_name = switch (statement.mode) {
+            .value => "Iterable",
+            .borrow => "ROPointerIterable",
+            .mut_borrow => "RWPointerIterable",
+        };
+        const constructor_name = switch (statement.mode) {
+            .value => "to_iterator",
+            .borrow => "to_ro_pointer_iterator",
+            .mut_borrow => "to_rw_pointer_iterator",
+        };
+        const needs_mutability = statement.mode == .mut_borrow;
+        const direct_pointer = iterable.ty == .pointer_type and
+            (!needs_mutability or iterable.ty.pointer_type.mutability == .read_write) and
+            try self.typeImplementsAbstract(iterable.ty.pointer_type.child.*, abstract_name, scope);
+        if (!try self.typeImplementsAbstract(iterable.ty, abstract_name, scope) and !direct_pointer) {
+            const desc = try self.formatTypeText(iterable.ty, scope);
+            defer desc.deinit();
+            try self.diags.add(loc, .semantic, "for expects a type implementing abstract '{s}', got '{s}'", .{ abstract_name, desc.bytes });
+            return error.Reported;
+        }
+        const copyable = typ.isTypeCopyable(iterable.ty, scope);
+        if (!copyable and file.tag(statement.iterable) != .identifier) {
+            try self.diags.add(file.location(statement.iterable), .semantic, "for cannot iterate a non-copyable expression directly; bind it to a name first", .{});
+            return error.Reported;
+        }
+        var lowered_scope = try Scope.init(self.allocator, scope, scope.current_fn);
+        var iterable_value = iterable;
+        if (copyable and file.tag(statement.iterable) != .identifier) {
+            const name = try self.makeSyntheticName("iterable");
+            const binding = try self.allocator.create(sg.BindingDeclaration);
+            binding.* = .{ .name = name, .location = loc, .origin_file = self.locationPath(loc), .mutability = if (needs_mutability) .variable else .constant, .ty = iterable.ty, .initialization = iterable.node };
+            try lowered_scope.bindings.put(name, binding);
+            try lowered_scope.nodes.append(try sg.makeSGNode(.{ .binding_declaration = binding }, loc, self.allocator));
+            iterable_value = try self.makeCompactBindingUse(binding, loc);
+        }
+        const constructor_value = if (direct_pointer) iterable_value else switch (needs_mutability) {
+            false => try typ.ensureReadOnlyPointer(loc, iterable_value, self.allocator, self.diags),
+            true => try typ.ensureMutablePointer(loc, iterable_value, &lowered_scope, self.allocator, self.diags),
+        };
+        const iterator_value = try self.makeCompactImplicitCall(constructor_name, &.{.{ .name = "value", .expr = constructor_value }}, 0, loc, &lowered_scope);
+        if (!try self.typeImplementsAbstract(iterator_value.ty, "Iterator", &lowered_scope)) {
+            const desc = try self.formatTypeText(iterator_value.ty, &lowered_scope);
+            defer desc.deinit();
+            try self.diags.add(loc, .semantic, "for expects '{s}(.value = ...)' to return a type implementing abstract 'Iterator', got '{s}'", .{ constructor_name, desc.bytes });
+            return error.Reported;
+        }
+        const iterator_name = try self.makeSyntheticName("iterator");
+        const iterator_binding = try self.allocator.create(sg.BindingDeclaration);
+        iterator_binding.* = .{ .name = iterator_name, .location = loc, .origin_file = self.locationPath(loc), .mutability = .variable, .ty = iterator_value.ty, .initialization = iterator_value.node };
+        try lowered_scope.bindings.put(iterator_name, iterator_binding);
+        try lowered_scope.nodes.append(try sg.makeSGNode(.{ .binding_declaration = iterator_binding }, loc, self.allocator));
+        try self.maybeScheduleAutoDeinit(iterator_binding, loc, &lowered_scope);
+        const iterator_use = try self.makeCompactBindingUse(iterator_binding, loc);
+        const has_next_self = try typ.ensureReadOnlyPointer(loc, iterator_use, self.allocator, self.diags);
+        const has_next = try self.makeCompactImplicitCall("has_next", &.{.{ .name = "self", .expr = has_next_self }}, 0, loc, &lowered_scope);
+        const next_self = try typ.ensureMutablePointer(loc, iterator_use, &lowered_scope, self.allocator, self.diags);
+        const next = try self.makeCompactImplicitCall("next", &.{.{ .name = "self", .expr = next_self }}, 0, loc, &lowered_scope);
+        const item_name = file.tokenText(&self.diags.source_db, statement.name_token);
+        const item_loc = file.tokenLocation(statement.name_token);
+        const body = try self.handleCompactForBody(node, statement.body, item_name, item_loc, next, &lowered_scope);
+        const semantic = try self.allocator.create(sg.WhileStatement);
+        semantic.* = .{ .condition = has_next.node, .body = body };
+        const result = try sg.makeSGNode(.{ .while_statement = semantic }, loc, self.allocator);
+        try lowered_scope.nodes.append(result);
+        var deferred_index = lowered_scope.deferred.items.len;
+        while (deferred_index > 0) : (deferred_index -= 1) for (lowered_scope.deferred.items[deferred_index - 1].nodes) |deferred_node| try lowered_scope.nodes.append(deferred_node);
+        const lowered_nodes = try lowered_scope.nodes.toOwnedSlice();
+        lowered_scope.nodes.deinit();
+        self.clearDeferred(&lowered_scope);
+        const block = try self.allocator.create(sg.CodeBlock);
+        block.* = .{ .nodes = lowered_nodes, .ret_val = null };
+        const block_node = try sg.makeSGNode(.{ .code_block = block }, loc, self.allocator);
+        try scope.nodes.append(block_node);
+        return .{ .node = block_node, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleCompactForBody(self: *Semantizer, parent_node: syn.SyntaxRef, body_node: syn.NodeIndex, item_name: []const u8, item_loc: tok.Location, next: typ.TypedExpr, parent: *Scope) SemErr!*const sg.CodeBlock {
+        const file = self.syntaxFile(parent_node);
+        const body = file.codeBlock(body_node) orelse return error.InvalidType;
+        var child = try Scope.init(self.allocator, parent, parent.current_fn);
+        const binding = try self.allocator.create(sg.BindingDeclaration);
+        binding.* = .{ .name = item_name, .location = item_loc, .origin_file = self.locationPath(item_loc), .mutability = .constant, .ty = next.ty, .initialization = next.node };
+        try child.bindings.put(item_name, binding);
+        try child.nodes.append(try sg.makeSGNode(.{ .binding_declaration = binding }, item_loc, self.allocator));
+        try self.maybeScheduleAutoDeinit(binding, item_loc, &child);
+        for (body.statements) |statement| {
+            const typed = try self.visitNode(self.childRef(parent_node, statement), &child);
+            if (file.tag(statement) == .function_call) try child.nodes.append(typed.node);
+        }
+        var deferred_index = child.deferred.items.len;
+        while (deferred_index > 0) : (deferred_index -= 1) for (child.deferred.items[deferred_index - 1].nodes) |deferred_node| try child.nodes.append(deferred_node);
+        const nodes = try child.nodes.toOwnedSlice();
+        child.nodes.deinit();
+        self.clearDeferred(&child);
+        const result = try self.allocator.create(sg.CodeBlock);
+        result.* = .{ .nodes = nodes, .ret_val = null };
+        return result;
+    }
+
+    fn compactPipeContainsPlaceholder(self: *Semantizer, node: syn.SyntaxRef) bool {
+        const file = self.syntaxFile(node);
+        return switch (file.tag(node.node)) {
             .pipe_placeholder => true,
-            .struct_field_access => |sfa| syntaxNodeContainsPipePlaceholder(sfa.struct_value),
-            .choice_payload_access => |acc| syntaxNodeContainsPipePlaceholder(acc.choice_value),
-            .error_propagation => |prop| syntaxNodeContainsPipePlaceholder(prop.value),
-            .error_context => |ctx| syntaxNodeContainsPipePlaceholder(ctx.value) or syntaxNodeContainsPipePlaceholder(ctx.context),
-            .address_of => |addr| syntaxNodeContainsPipePlaceholder(addr.value),
-            .binary_operation => |bo| syntaxNodeContainsPipePlaceholder(bo.left) or syntaxNodeContainsPipePlaceholder(bo.right),
-            .comparison => |cmp| syntaxNodeContainsPipePlaceholder(cmp.left) or syntaxNodeContainsPipePlaceholder(cmp.right),
-            .logical_operation => |lo| syntaxNodeContainsPipePlaceholder(lo.left) or syntaxNodeContainsPipePlaceholder(lo.right),
-            .index_access => |ia| syntaxNodeContainsPipePlaceholder(ia.value) or syntaxNodeContainsPipePlaceholder(ia.index),
-            .function_call => |fc| syntaxNodeContainsPipePlaceholder(fc.input),
-            .struct_value_literal => |sv| blk: {
-                for (sv.fields) |field| {
-                    if (syntaxNodeContainsPipePlaceholder(field.value)) break :blk true;
+            .struct_field_access => blk: {
+                const access = file.structFieldAccess(node.node).?;
+                break :blk self.compactPipeContainsPlaceholder(self.childRef(node, access.value));
+            },
+            .choice_payload_access => blk: {
+                const access = file.choicePayloadAccess(node.node).?;
+                break :blk self.compactPipeContainsPlaceholder(self.childRef(node, access.value));
+            },
+            .address_of, .address_of_mut, .error_propagation => self.compactPipeContainsPlaceholder(self.childRef(node, file.unaryOperand(node.node).?)),
+            .error_context, .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo, .compare_equal, .compare_not_equal, .compare_less, .compare_greater, .compare_less_equal, .compare_greater_equal, .logical_and, .logical_or, .index_access => blk: {
+                const operation = file.binaryOperation(node.node).?;
+                break :blk self.compactPipeContainsPlaceholder(self.childRef(node, operation.lhs)) or self.compactPipeContainsPlaceholder(self.childRef(node, operation.rhs));
+            },
+            .function_call => self.compactPipeContainsPlaceholder(self.childRef(node, file.functionCall(node.node).?.input)),
+            .struct_value_literal => blk: {
+                for (file.structValueLiteral(node.node).?.fields) |field_node| {
+                    const field = file.valueField(field_node).?;
+                    if (self.compactPipeContainsPlaceholder(self.childRef(node, field.value))) break :blk true;
                 }
                 break :blk false;
             },
-            .list_literal => |ll| blk: {
-                for (ll.elements) |elem| {
-                    if (syntaxNodeContainsPipePlaceholder(elem)) break :blk true;
-                }
+            .list_literal => blk: {
+                for (file.listLiteral(node.node).?.elements) |element| if (self.compactPipeContainsPlaceholder(self.childRef(node, element))) break :blk true;
                 break :blk false;
             },
-            .choice_literal => |cl| if (cl.payload) |payload| syntaxNodeContainsPipePlaceholder(payload) else false,
+            .choice_literal, .choice_some_literal => if (file.choiceLiteral(node.node).?.payload) |payload| self.compactPipeContainsPlaceholder(self.childRef(node, payload)) else false,
             else => false,
         };
     }
 
-    fn handlePipeFieldAccess(
-        self: *Semantizer,
-        base: typ.TypedExpr,
-        field_name: syn.Name,
-        loc: tok.Location,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        if (base.ty == .array_type) {
-            const desc = try self.formatTypeText(base.ty, s);
-            defer desc.deinit();
-            try self.diags.add(
-                loc,
-                .semantic,
-                "type '{s}' has no field '.{s}'",
-                .{ desc.bytes, field_name.string },
-            );
-            return error.Reported;
-        }
-
-        if (base.ty != .struct_type) {
-            if (base.node.content == .function_call) {
-                const fc = base.node.content.function_call;
-                if (fc.callee.output.fields.len == 1) {
-                    const only_field = fc.callee.output.fields[0];
-                    if (std.mem.eql(u8, only_field.name, field_name.string)) {
-                        return base;
-                    }
-                }
-            }
-
-            const desc = try self.formatTypeText(base.ty, s);
-            defer desc.deinit();
-            try self.diags.add(
-                loc,
-                .semantic,
-                "cannot access field '.{s}' on value of type '{s}'",
-                .{ field_name.string, desc.bytes },
-            );
-            return error.Reported;
-        }
-
-        const st = base.ty.struct_type;
-        var idx: ?u32 = null;
-        var fty: sg.Type = undefined;
-        for (st.fields, 0..) |f, i| {
-            if (std.mem.eql(u8, f.name, field_name.string)) {
-                idx = @intCast(i);
-                fty = typ.effectiveStructFieldType(f);
-                break;
-            }
-        }
-        if (idx == null) return error.FieldsNotFound;
-
-        const fa = try self.allocator.create(sg.StructFieldAccess);
-        fa.* = .{
-            .struct_value = base.node,
-            .field_name = field_name.string,
-            .field_index = idx.?,
+    fn handleCompactPipeChoicePayloadAccess(self: *Semantizer, base: typ.TypedExpr, variant_name: []const u8, loc: tok.Location, scope: *Scope) SemErr!typ.TypedExpr {
+        const choice = switch (base.ty) {
+            .choice_type => |value| value,
+            else => {
+                const desc = try self.formatTypeText(base.ty, scope);
+                defer desc.deinit();
+                try self.diags.add(loc, .semantic, "cannot access choice payload '..{s}' on value of type '{s}'", .{ variant_name, desc.bytes });
+                return error.Reported;
+            },
         };
-
-        const node = try sg.makeSGNode(.{ .struct_field_access = fa }, loc, self.allocator);
-        return .{ .node = node, .ty = fty };
-    }
-
-    fn handlePipeChoicePayloadAccess(
-        self: *Semantizer,
-        base: typ.TypedExpr,
-        variant_name: syn.Name,
-        loc: tok.Location,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        if (base.ty != .choice_type) {
-            const desc = try self.formatTypeText(base.ty, s);
-            defer desc.deinit();
-            try self.diags.add(
-                loc,
-                .semantic,
-                "cannot access choice payload '..{s}' on value of type '{s}'",
-                .{ variant_name.string, desc.bytes },
-            );
-            return error.Reported;
-        }
-
-        const choice_ty = base.ty.choice_type;
-        for (choice_ty.variants, 0..) |variant, idx| {
-            if (!std.mem.eql(u8, variant.name, variant_name.string)) continue;
-            const payload_ty = variant.payload_type orelse {
-                try self.diags.add(
-                    loc,
-                    .semantic,
-                    "choice variant '..{s}' has no payload",
-                    .{variant_name.string},
-                );
+        for (choice.variants, 0..) |variant, index| if (std.mem.eql(u8, variant.name, variant_name)) {
+            const payload = variant.payload_type orelse {
+                try self.diags.add(loc, .semantic, "choice variant '..{s}' has no payload", .{variant_name});
                 return error.Reported;
             };
-
             const access = try self.allocator.create(sg.ChoicePayloadAccess);
-            access.* = .{
-                .choice_value = base.node,
-                .variant_index = @intCast(idx),
-                .payload_type = payload_ty,
-            };
-            const node = try sg.makeSGNode(.{ .choice_payload_access = access }, loc, self.allocator);
-            return .{ .node = node, .ty = payload_ty };
-        }
-
-        const choice_text = try self.formatTypeText(.{ .choice_type = choice_ty }, s);
-        defer choice_text.deinit();
-        try self.diags.add(
-            loc,
-            .semantic,
-            "choice type '{s}' has no variant '..{s}'",
-            .{ choice_text.bytes, variant_name.string },
-        );
+            access.* = .{ .choice_value = base.node, .variant_index = @intCast(index), .payload_type = payload };
+            const result = try sg.makeSGNode(.{ .choice_payload_access = access }, loc, self.allocator);
+            result.sem_type = payload;
+            return .{ .node = result, .ty = payload };
+        };
+        const desc = try self.formatTypeText(base.ty, scope);
+        defer desc.deinit();
+        try self.diags.add(loc, .semantic, "choice type '{s}' has no variant '..{s}'", .{ desc.bytes, variant_name });
         return error.Reported;
     }
 
-    fn handlePipeAddressOf(
-        self: *Semantizer,
-        inner: typ.TypedExpr,
-        mutability: syn.PointerMutability,
-        loc: tok.Location,
-    ) SemErr!typ.TypedExpr {
-        if (inner.ty == .pointer_type and mutability == .read_only) {
-            return inner;
-        }
-
-        switch (inner.node.content) {
-            .binding_use => |binding| {
-                if (mutability == .read_write and binding.mutability != .variable) {
-                    try self.diags.add(
-                        loc,
-                        .semantic,
-                        "binding '{s}' is immutable; declare it with '::' or take '&{s}' instead of '$&{s}'",
-                        .{ binding.name, binding.name, binding.name },
-                    );
-                    return error.Reported;
+    fn evalCompactPipeArg(self: *Semantizer, node: syn.SyntaxRef, left: typ.TypedExpr, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        if (!self.compactPipeContainsPlaceholder(node)) return self.visitNode(node, scope);
+        return switch (file.tag(node.node)) {
+            .pipe_placeholder => left,
+            .struct_field_access => blk: {
+                const access = file.structFieldAccess(node.node).?;
+                const base = try self.evalCompactPipeArg(self.childRef(node, access.value), left, scope);
+                const field_name = file.tokenText(&self.diags.source_db, access.field_token);
+                if (base.ty != .struct_type and base.node.content == .function_call) {
+                    const output = base.node.content.function_call.callee.output.fields;
+                    if (output.len == 1 and std.mem.eql(u8, output[0].name, field_name)) break :blk base;
                 }
+                break :blk self.buildStructFieldAccessFromTypedExpr(base, field_name, file.tokenLocation(access.field_token), scope);
             },
-            .struct_field_access => {},
-            .dereference => |deref| {
-                if (mutability == .read_write and deref.pointer_type.mutability != .read_write) {
-                    try self.diags.add(
-                        loc,
-                        .semantic,
-                        "cannot assign through this pointer because it is read-only; use '$&' when acquiring it",
-                        .{},
-                    );
-                    return error.Reported;
-                }
+            .choice_payload_access => blk: {
+                const access = file.choicePayloadAccess(node.node).?;
+                break :blk self.handleCompactPipeChoicePayloadAccess(try self.evalCompactPipeArg(self.childRef(node, access.value), left, scope), file.tokenText(&self.diags.source_db, access.variant_token), file.tokenLocation(access.variant_token), scope);
+            },
+            .address_of, .address_of_mut => blk: {
+                const address = file.addressOf(node.node).?;
+                const inner = try self.evalCompactPipeArg(self.childRef(node, address.value), left, scope);
+                break :blk switch (address.mutability) {
+                    .read_only => typ.ensureReadOnlyPointer(self.nodeLocation(node), inner, self.allocator, self.diags),
+                    .read_write => typ.ensureMutablePointer(self.nodeLocation(node), inner, scope, self.allocator, self.diags),
+                };
             },
             else => {
-                try self.diags.add(
-                    loc,
-                    .semantic,
-                    "cannot take the address of this expression; only addressable values support '&'",
-                    .{},
-                );
+                try self.diags.add(self.nodeLocation(node), .semantic, "pipe placeholders are only supported as '_', '&_', '$&_', '_.field', or '..variant' payload access for now", .{});
                 return error.Reported;
             },
-        }
-
-        const child = try self.allocator.create(sg.Type);
-        child.* = inner.ty;
-
-        const ptr_ty = try self.allocator.create(sg.PointerType);
-        ptr_ty.* = .{ .mutability = mutability, .child = child };
-
-        const addr_node = try sg.makeSGNode(.{ .address_of = inner.node }, loc, self.allocator);
-        return .{ .node = addr_node, .ty = .{ .pointer_type = ptr_ty } };
-    }
-
-    fn evalPipeArg(
-        self: *Semantizer,
-        arg: *const syn.STNode,
-        left: typ.TypedExpr,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        if (!syntaxNodeContainsPipePlaceholder(arg)) {
-            return self.visitNode(arg.*, s);
-        }
-
-        return switch (arg.content) {
-            .pipe_placeholder => left,
-            .struct_field_access => |sfa| self.handlePipeFieldAccess(
-                try self.evalPipeArg(sfa.struct_value, left, s),
-                sfa.field_name,
-                arg.location,
-                s,
-            ),
-            .choice_payload_access => |acc| self.handlePipeChoicePayloadAccess(
-                try self.evalPipeArg(acc.choice_value, left, s),
-                acc.variant_name,
-                arg.location,
-                s,
-            ),
-            .address_of => |addr| self.handlePipeAddressOf(
-                try self.evalPipeArg(addr.value, left, s),
-                addr.mutability,
-                arg.location,
-            ),
-            else => blk: {
-                try self.diags.add(
-                    arg.location,
-                    .semantic,
-                    "pipe placeholders are only supported as '_', '&_', '$&_', '_.field', or '..variant' payload access for now",
-                    .{},
-                );
-                break :blk error.Reported;
-            },
         };
     }
 
-    //────────────────────────────────────────────────────────────────── visitors
-    pub fn visitNode(self: *Semantizer, n: syn.STNode, s: *Scope) SemErr!typ.TypedExpr {
-        return switch (n.content) {
-            .choice_option_declaration => |decl| self.handleChoiceOptionDecl(decl, s, n.location) catch |err| blk: {
-                if (err == error.Reported) break :blk err;
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in choice option declaration '..{s}': {s}",
-                    .{ decl.name.string, @errorName(err) },
-                );
-                break :blk err;
+    fn handleCompactPipe(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const operation = file.binaryOperation(node.node) orelse return error.InvalidType;
+        const left = try self.visitNode(self.childRef(node, operation.lhs), scope);
+        const right = self.childRef(node, operation.rhs);
+        if (file.functionCall(operation.rhs)) |call| {
+            const input = file.structValueLiteral(call.input) orelse {
+                try self.diags.add(self.nodeLocation(node), .semantic, "pipe right-hand side must be a call with explicit arguments", .{});
+                return error.Reported;
+            };
+            var args = std.array_list.Managed(CallArg).init(self.allocator.*);
+            defer args.deinit();
+            var found_placeholder = false;
+            for (input.fields) |field_node| {
+                const field = file.valueField(field_node) orelse return error.InvalidType;
+                found_placeholder = found_placeholder or self.compactPipeContainsPlaceholder(self.childRef(right, field.value));
+                const name = if (field.name_token) |token_index| file.tokenText(&self.diags.source_db, token_index) else try std.fmt.allocPrint(self.allocator.*, "__positional_{d}", .{field.position.?});
+                try args.append(.{ .name = name, .expr = try self.evalCompactPipeArg(self.childRef(right, field.value), left, scope) });
+            }
+            if (!found_placeholder) {
+                try self.diags.add(self.nodeLocation(node), .semantic, "pipe right-hand side must use at least one argument placeholder", .{});
+                return error.Reported;
+            }
+            var typed_input = try self.buildCallInputWithPositionalPrefix(args.items, input.positional_prefix_count);
+            const name = file.tokenText(&self.diags.source_db, call.callee_token);
+            if (std.mem.eql(u8, name, "is") and call.module_qualifier == null) return self.handleIsBuiltinFromInput(typed_input, self.nodeLocation(node), scope);
+            const callee = try self.resolveRegularCallCallee(right, typed_input, scope, self.nodeLocation(node));
+            typed_input = try self.coerceCallInputToExpected(&callee.input, typed_input, self.nodeLocation(node), scope);
+            try self.discoverFunctionReference(callee);
+            const semantic = try self.allocator.create(sg.FunctionCall);
+            semantic.* = .{ .callee = callee, .input = typed_input.node };
+            const result = try sg.makeSGNode(.{ .function_call = semantic }, self.nodeLocation(node), self.allocator);
+            result.sem_type = typ.functionReturnType(callee);
+            return .{ .node = result, .ty = typ.functionReturnType(callee) };
+        }
+        if (!self.compactPipeContainsPlaceholder(right)) {
+            try self.diags.add(self.nodeLocation(node), .semantic, "pipe right-hand side must use at least one argument placeholder", .{});
+            return error.Reported;
+        }
+        return self.evalCompactPipeArg(right, left, scope);
+    }
+
+    fn handleCompactChoiceOptionDeclaration(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const declaration = file.choiceOptionDeclaration(node.node) orelse return error.InvalidType;
+        const name = file.tokenText(&self.diags.source_db, declaration.name_token);
+        const option = scope.lookupChoiceOption(name) orelse return error.SymbolNotFound;
+        const result = try sg.makeSGNode(.{ .choice_option_declaration = option }, self.nodeLocation(node), self.allocator);
+        try scope.nodes.append(result);
+        if (scope.parent == null) try self.root_list.append(result);
+        return .{ .node = result, .ty = .{ .builtin = .Any } };
+    }
+
+    fn compactAbstractTargetName(self: *Semantizer, target: syn.SyntaxRef) ?[]const u8 {
+        const file = self.syntaxFile(target);
+        return switch (file.syntaxType(target.node) orelse return null) {
+            .name => |name| if (name.qualifier_token == null) file.tokenText(&self.diags.source_db, name.name_token) else null,
+            .generic => |generic| blk: {
+                const base = file.syntaxType(generic.base) orelse break :blk null;
+                break :blk if (base == .name and base.name.qualifier_token == null)
+                    file.tokenText(&self.diags.source_db, base.name.name_token)
+                else
+                    null;
             },
-            .symbol_declaration => |d| self.handleSymbolDecl(d, s, n.location) catch |err| blk: {
-                switch (err) {
-                    error.Reported => break :blk err,
-                    error.SymbolNotFound => {
-                        if (self.defer_unknown_top_level and self.current_top_node != null) {
-                            try self.pushTopLevelForRetry();
-                            break :blk error.Reported;
-                        }
-                        try self.diags.add(
-                            n.location,
-                            .semantic,
-                            "unknown symbol in declaration of '{s}'",
-                            .{d.name.string},
-                        );
-                    },
-                    error.UnknownType => {
-                        if (self.defer_unknown_top_level and self.current_top_node != null) {
-                            try self.pushTopLevelForRetry();
-                            break :blk error.Reported; // sin diagnóstico por ahora
-                        }
-                        // Diagnóstico normal (no diferido)
-                        if (d.type) |tp| if (tp == .type_name) {
-                            try self.diags.add(
-                                n.location,
-                                .semantic,
-                                "unknown type '{s}' in declaration of '{s}'",
-                                .{ tp.type_name.string, d.name.string },
-                            );
-                            break :blk err;
-                        };
-                        try self.diags.add(
-                            n.location,
-                            .semantic,
-                            "unknown type in declaration of '{s}'",
-                            .{d.name.string},
-                        );
-                    },
-                    error.AbstractNeedsDefault => {
-                        if (d.type) |tp2| {
-                            if (tp2 == .type_name) {
-                                try self.diags.add(
-                                    n.location,
-                                    .semantic,
-                                    "cannot use abstract '{s}' as a type for a symbol. Use a concrete type or add a default concrete type to the abstract type ('{s} defaultsto <Type>')",
-                                    .{ tp2.type_name.string, tp2.type_name.string },
-                                );
-                                break :blk error.Reported;
+            else => null,
+        };
+    }
+
+    fn compactResolvedAbstractArgs(self: *Semantizer, target: syn.SyntaxRef, scope: *Scope) SemErr![]const ?gen.GenericArgValue {
+        const file = self.syntaxFile(target);
+        const generic = switch (file.syntaxType(target.node) orelse return error.UnknownType) {
+            .generic => |value| value,
+            else => return &.{},
+        };
+        const name = self.compactAbstractTargetName(target) orelse return error.UnknownType;
+        const info = scope.lookupAbstractInfo(name) orelse return error.UnknownType;
+        const result = try self.allocator.alloc(?gen.GenericArgValue, info.params.len);
+        for (result) |*argument| argument.* = null;
+        const arguments = file.structTypeLiteral(generic.arguments) orelse return error.InvalidType;
+        for (arguments.fields) |field_node| {
+            const field = file.structTypeField(field_node) orelse return error.InvalidType;
+            const field_name = file.tokenText(&self.diags.source_db, field.name_token);
+            var parameter_index: ?usize = null;
+            for (info.params, 0..) |parameter, index| if (std.mem.eql(u8, parameter.name, field_name)) {
+                parameter_index = index;
+                break;
+            };
+            const index = parameter_index orelse return error.UnknownType;
+            result[index] = switch (info.params[index].kind) {
+                .type => .{ .type = try self.resolveSyntaxTypeWithMode(file.ref(field.type_node orelse return error.UnknownType), scope, true, null) },
+                .comptime_int => .{ .comptime_int = try self.resolveComptimeIntExpr(file.ref(field.default_value orelse return error.UnknownType), scope, null) },
+            };
+        }
+        return result;
+    }
+
+    const CompactAbstractRequirementFields = struct {
+        fields: sg.StructType,
+        generic_param_indices: []const ?u32,
+        abstract_requirements: []const ?[]const u8,
+        nested_patterns: []const ?syn.SyntaxRef,
+        self_indices: []const u32,
+        pointer_self_indices: []const u32,
+    };
+
+    fn compactAbstractRequirementTypeContainsParam(
+        self: *Semantizer,
+        node: syn.SyntaxRef,
+        generic_params: []const []const u8,
+    ) bool {
+        const file = self.syntaxFile(node);
+        return switch (file.syntaxType(node.node) orelse return false) {
+            .name => |name| blk: {
+                const text = file.tokenText(&self.diags.source_db, name.name_token);
+                if (std.mem.eql(u8, text, "Self")) break :blk true;
+                for (generic_params) |param| if (std.mem.eql(u8, text, param)) break :blk true;
+                break :blk false;
+            },
+            .pointer => |pointer| self.compactAbstractRequirementTypeContainsParam(file.ref(pointer.child), generic_params),
+            .array => |array| self.compactAbstractRequirementTypeContainsParam(file.ref(array.element), generic_params),
+            .inferred_errable => |inner| self.compactAbstractRequirementTypeContainsParam(file.ref(inner), generic_params),
+            .generic => |generic| blk: {
+                const arguments = file.structTypeLiteral(generic.arguments) orelse break :blk false;
+                for (arguments.fields) |field_node| {
+                    const field = file.structTypeField(field_node) orelse break :blk false;
+                    if (field.type_node) |field_type| {
+                        if (self.compactAbstractRequirementTypeContainsParam(file.ref(field_type), generic_params)) break :blk true;
+                    }
+                }
+                break :blk false;
+            },
+            .struct_literal => |literal| blk: {
+                for (literal.fields) |field_node| {
+                    const field = file.structTypeField(field_node) orelse break :blk false;
+                    if (field.type_node) |field_type| {
+                        if (self.compactAbstractRequirementTypeContainsParam(file.ref(field_type), generic_params)) break :blk true;
+                    }
+                }
+                break :blk false;
+            },
+            .choice_literal => |literal| blk: {
+                for (literal.variants) |variant_node| {
+                    const variant = file.choiceTypeVariant(variant_node) orelse break :blk false;
+                    if (variant.payload_type) |payload| {
+                        if (self.compactAbstractRequirementTypeContainsParam(file.ref(payload), generic_params)) break :blk true;
+                    }
+                }
+                break :blk false;
+            },
+            .nullable => |inner| self.compactAbstractRequirementTypeContainsParam(file.ref(inner), generic_params),
+        };
+    }
+
+    fn compactAbstractRequirementFields(
+        self: *Semantizer,
+        owner: syn.SyntaxRef,
+        literal_node: syn.NodeIndex,
+        generic_params: []const []const u8,
+        scope: *Scope,
+    ) SemErr!CompactAbstractRequirementFields {
+        const file = self.syntaxFile(owner);
+        const literal = file.structTypeLiteral(literal_node) orelse return error.InvalidType;
+        var fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
+        var generic_indices = std.array_list.Managed(?u32).init(self.allocator.*);
+        var abstract_requirements = std.array_list.Managed(?[]const u8).init(self.allocator.*);
+        var nested_patterns = std.array_list.Managed(?syn.SyntaxRef).init(self.allocator.*);
+        var self_indices = std.array_list.Managed(u32).init(self.allocator.*);
+        var pointer_self_indices = std.array_list.Managed(u32).init(self.allocator.*);
+
+        for (literal.fields, 0..) |field_node, index| {
+            const field = file.structTypeField(field_node) orelse return error.InvalidType;
+            var ty: sg.Type = .{ .builtin = .Any };
+            var generic_index: ?u32 = null;
+            var abstract_requirement: ?[]const u8 = null;
+            var nested_pattern: ?syn.SyntaxRef = null;
+
+            if (field.type_node) |type_node| {
+                const type_ref = file.ref(type_node);
+                switch (file.syntaxType(type_node) orelse return error.InvalidType) {
+                    .name => |name| {
+                        const text = file.tokenText(&self.diags.source_db, name.name_token);
+                        if (std.mem.eql(u8, text, "Self")) {
+                            try self_indices.append(@intCast(index));
+                        } else {
+                            for (generic_params, 0..) |param, param_index| {
+                                if (std.mem.eql(u8, text, param)) {
+                                    generic_index = @intCast(param_index);
+                                    break;
+                                }
+                            }
+                            if (generic_index == null) {
+                                if (scope.lookupAbstractInfo(text) != null)
+                                    abstract_requirement = text
+                                else
+                                    ty = try self.resolveSyntaxType(type_ref, scope);
                             }
                         }
-                        try self.diags.add(
-                            n.location,
-                            .semantic,
-                            "cannot use abstract type without a default (add 'defaultsto' or use a concrete type)",
-                            .{},
-                        );
-                        break :blk error.Reported;
                     },
-                    else => {
-                        try self.diags.add(
-                            n.location,
-                            .semantic,
-                            "error in symbol declaration '{s}': {s}",
-                            .{ d.name.string, @errorName(err) },
-                        );
+                    .generic => |generic| {
+                        const base = file.syntaxType(generic.base) orelse return error.InvalidType;
+                        const base_name = if (base == .name and base.name.qualifier_token == null)
+                            file.tokenText(&self.diags.source_db, base.name.name_token)
+                        else
+                            null;
+                        if (base_name) |text| {
+                            if (scope.lookupAbstractInfo(text) != null) {
+                                abstract_requirement = text;
+                            } else if (self.compactAbstractRequirementTypeContainsParam(type_ref, generic_params)) {
+                                nested_pattern = type_ref;
+                            } else {
+                                ty = try self.resolveSyntaxType(type_ref, scope);
+                            }
+                        } else {
+                            ty = try self.resolveSyntaxType(type_ref, scope);
+                        }
                     },
+                    .pointer => |pointer| {
+                        const child = file.syntaxType(pointer.child) orelse return error.InvalidType;
+                        const child_name: ?[]const u8 = switch (child) {
+                            .name => |name| if (name.qualifier_token == null) file.tokenText(&self.diags.source_db, name.name_token) else null,
+                            .generic => |generic| blk: {
+                                const base = file.syntaxType(generic.base) orelse break :blk null;
+                                break :blk if (base == .name and base.name.qualifier_token == null)
+                                    file.tokenText(&self.diags.source_db, base.name.name_token)
+                                else
+                                    null;
+                            },
+                            else => null,
+                        };
+                        if (child_name) |text| {
+                            if (std.mem.eql(u8, text, "Self")) {
+                                ty = try typ.pointerToAny(@enumFromInt(@intFromEnum(pointer.mutability)), self.allocator);
+                                try pointer_self_indices.append(@intCast(index));
+                            } else if (scope.lookupAbstractInfo(text) != null) {
+                                ty = try typ.pointerToAny(@enumFromInt(@intFromEnum(pointer.mutability)), self.allocator);
+                                abstract_requirement = text;
+                            } else {
+                                ty = try self.resolveSyntaxType(type_ref, scope);
+                            }
+                        } else {
+                            ty = try self.resolveSyntaxType(type_ref, scope);
+                        }
+                    },
+                    else => ty = try self.resolveSyntaxType(type_ref, scope),
                 }
-                break :blk err;
-            },
+            }
 
-            .abstract_declaration => |ad| self.handleAbstractDecl(ad, s) catch |err| blk: {
-                if (err == error.UnknownType and s.parent == null and self.defer_unknown_top_level) {
-                    try self.pushTopLevelForRetry();
-                    break :blk error.Reported;
-                }
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in abstract declaration '{s}': {s}",
-                    .{ ad.name.string, @errorName(err) },
-                );
-                break :blk err;
-            },
+            try fields.append(.{
+                .name = file.tokenText(&self.diags.source_db, field.name_token),
+                .ty = ty,
+                .default_value = null,
+            });
+            try generic_indices.append(generic_index);
+            try abstract_requirements.append(abstract_requirement);
+            try nested_patterns.append(nested_pattern);
+        }
 
-            .abstract_implements => |rel| self.handleAbstractImplements(rel, s, n.location) catch |err| blk: {
-                if ((err == error.UnknownType or err == error.SymbolNotFound) and s.parent == null and self.defer_unknown_top_level) {
-                    try self.pushTopLevelForRetry();
-                    break :blk error.Reported;
-                }
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in abstract implements for '{s}': {s}",
-                    .{ rel.concrete_name.string, @errorName(err) },
-                );
-                break :blk err;
-            },
-
-            .abstract_defaultsto => |rel| self.handleAbstractDefault(rel, s, n.location) catch |err| blk: {
-                if ((err == error.UnknownType or err == error.SymbolNotFound) and s.parent == null and self.defer_unknown_top_level) {
-                    try self.pushTopLevelForRetry();
-                    break :blk error.Reported;
-                }
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in abstract defaultsto for '{s}': {s}",
-                    .{ rel.name.string, @errorName(err) },
-                );
-                break :blk err;
-            },
-
-            .type_declaration => |d| self.handleTypeDecl(d, s) catch |err| blk: {
-                if (err == error.Reported) break :blk err;
-                if (err == error.UnknownType and s.parent == null and self.defer_unknown_top_level) {
-                    try self.pushTopLevelForRetry();
-                    break :blk error.Reported; // sin diagnóstico todavía
-                }
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in type declaration '{s}': {s}",
-                    .{ d.name.string, @errorName(err) },
-                );
-                break :blk err;
-            },
-
-            .function_declaration => |d| self.handleFuncDecl(d, s, n.location, false) catch |err| blk: {
-                if (err == error.Reported) break :blk err;
-                if (err == error.AbstractNeedsDefault) {
-                    try self.diags.add(
-                        n.location,
-                        .semantic,
-                        "abstract types without a default are not supported in function outputs yet",
-                        .{},
-                    );
-                    break :blk error.Reported;
-                }
-                if ((err == error.UnknownType or err == error.SymbolNotFound) and s.parent == null and self.defer_unknown_top_level) {
-                    try self.pushTopLevelForRetry();
-                    break :blk error.Reported;
-                }
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in function declaration '{s}': {s}",
-                    .{ d.name.string, @errorName(err) },
-                );
-                break :blk err;
-            },
-            .test_declaration => |d| self.handleTestDecl(d, s, n.location) catch |err| blk: {
-                if (err == error.Reported) break :blk err;
-                if ((err == error.UnknownType or err == error.SymbolNotFound) and s.parent == null and self.defer_unknown_top_level) {
-                    try self.pushTopLevelForRetry();
-                    break :blk error.Reported;
-                }
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in test declaration '{s}': {s}",
-                    .{ d.decl.name.string, @errorName(err) },
-                );
-                break :blk err;
-            },
-
-            .assignment => |a| self.handleAssignment(a, s) catch |err| blk: {
-                if (err == error.Reported) break :blk err;
-                if (err == error.SymbolNotFound and self.defer_unknown_top_level and self.current_top_node != null) {
-                    break :blk err;
-                }
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in assignment '{s}': {s}",
-                    .{ a.name.string, @errorName(err) },
-                );
-                break :blk err;
-            },
-
-            .expression_statement => |expr| blk: {
-                const te = self.visitNode(expr.*, s) catch |err| {
-                    if (err == error.Reported) break :blk err;
-                    try self.diags.add(
-                        n.location,
-                        .semantic,
-                        "error in expression statement: {s}",
-                        .{@errorName(err)},
-                    );
-                    break :blk err;
-                };
-                try s.nodes.append(te.node);
-                break :blk .{ .node = te.node, .ty = te.ty };
-            },
-
-            .identifier => |id| self.handleIdentifier(id, s, n.location) catch |err| blk: {
-                if (err == error.Reported) break :blk err;
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in identifier '{s}': {s}",
-                    .{ id, @errorName(err) },
-                );
-                break :blk err;
-            },
-
-            .move_expression => |inner| self.handleMove(inner, s, n.location) catch |err| blk: {
-                if (err == error.Reported) break :blk err;
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in move expression: {s}",
-                    .{@errorName(err)},
-                );
-                break :blk err;
-            },
-
-            .pipe_placeholder => blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "the '_' pipe placeholder is only valid on the right-hand side of a pipe expression",
-                    .{},
-                );
-                break :blk error.Reported;
-            },
-
-            .literal => |l| self.handleLiteral(l, s) catch |err| blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in literal '{any}': {s}",
-                    .{ l, @errorName(err) },
-                );
-                break :blk err;
-            },
-
-            .choice_literal => |name| self.handleChoiceLiteral(name, s) catch |err| blk: {
-                if (err == error.Reported) break :blk err;
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in choice literal '..{s}': {s}",
-                    .{ name.name.string, @errorName(err) },
-                );
-                break :blk err;
-            },
-
-            .struct_value_literal => |sl| self.handleStructValLit(sl, s) catch |err| blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in struct value literal: {s}",
-                    .{@errorName(err)},
-                );
-                break :blk err;
-            },
-
-            .struct_type_literal => |st| self.handleStructTypeLit(st, s) catch |err| blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in struct type literal: {s}",
-                    .{@errorName(err)},
-                );
-                break :blk err;
-            },
-
-            .choice_type_literal => blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "choice type literals are only valid inside type declarations or type annotations",
-                    .{},
-                );
-                break :blk error.Reported;
-            },
-
-            .reach_directive => |reach| self.handleReachDirective(reach, n.location) catch |err| blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in #reach directive: {s}",
-                    .{@errorName(err)},
-                );
-                break :blk err;
-            },
-
-            .struct_field_access => |sfa| self.handleStructFieldAccess(sfa, s) catch |err| blk: {
-                if (err == error.Reported) break :blk err;
-                if (err == error.SymbolNotFound and self.defer_unknown_top_level and self.current_top_node != null) {
-                    break :blk err;
-                }
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in struct field access '{s}': {s}",
-                    .{ sfa.field_name.string, @errorName(err) },
-                );
-                break :blk err;
-            },
-
-            .choice_payload_access => |acc| self.handleChoicePayloadAccess(acc, s) catch |err| blk: {
-                if (err == error.Reported) break :blk err;
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in choice payload access '..{s}': {s}",
-                    .{ acc.variant_name.string, @errorName(err) },
-                );
-                break :blk err;
-            },
-
-            .error_propagation => |prop| self.handleErrorPropagation(prop, s, n.location) catch |err| blk: {
-                if (err == error.Reported) break :blk err;
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in error propagation operator '!': {s}",
-                    .{@errorName(err)},
-                );
-                break :blk err;
-            },
-
-            .error_context => |ctx| self.handleErrorContext(ctx, s, n.location) catch |err| blk: {
-                if (err == error.Reported) break :blk err;
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in contextual error propagation operator '!!': {s}",
-                    .{@errorName(err)},
-                );
-                break :blk err;
-            },
-
-            .list_literal => |ll| self.handleListLiteral(ll, s) catch |err| blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in list literal: {s}",
-                    .{@errorName(err)},
-                );
-                break :blk err;
-            },
-
-            .index_access => |ia| self.handleIndexAccess(ia, s) catch |err| blk: {
-                if (err != error.Reported) {
-                    try self.diags.add(
-                        n.location,
-                        .semantic,
-                        "error in index access: {s}",
-                        .{@errorName(err)},
-                    );
-                }
-                break :blk err;
-            },
-
-            .index_assignment => |ia| self.handleIndexAssignment(ia, s) catch |err| blk: {
-                if (err != error.Reported) {
-                    try self.diags.add(
-                        n.location,
-                        .semantic,
-                        "error in index assignment: {s}",
-                        .{@errorName(err)},
-                    );
-                }
-                break :blk err;
-            },
-
-            .function_call => |fc| self.handleCall(fc, s) catch |err| blk: {
-                if (err == error.Reported) break :blk err;
-                if (err == error.SymbolNotFound and self.defer_unknown_top_level and self.current_top_node != null) {
-                    break :blk err;
-                }
-                if (err == error.AmbiguousOverload) {
-                    const tv_in = self.visitNode(fc.input.*, s) catch null;
-                    try self.addAmbiguousFunctionDiagnostic(
-                        fc.callee,
-                        if (tv_in) |te| te.ty else null,
-                        s,
-                        n.location,
-                    );
-                    break :blk error.Reported;
-                } else {
-                    try self.diags.add(
-                        n.location,
-                        .semantic,
-                        "error in function call '{s}': {s}",
-                        .{ fc.callee, @errorName(err) },
-                    );
-                }
-                break :blk err;
-            },
-
-            .pipe_expression => |pe| self.handlePipe(pe, s, n.location) catch |err| blk: {
-                if (err == error.Reported) break :blk err;
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in pipe expression: {s}",
-                    .{@errorName(err)},
-                );
-                break :blk err;
-            },
-
-            .code_block => |blk| self.handleCodeBlock(blk, s) catch |err| blk_ret: {
-                if (err == error.Reported) break :blk_ret err;
-                if (err == error.SymbolNotFound and self.defer_unknown_top_level and self.current_top_node != null) {
-                    break :blk_ret err;
-                }
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in code block: {s}",
-                    .{@errorName(err)},
-                );
-                break :blk_ret err;
-            },
-
-            .binary_operation => |bo| self.handleBinOp(bo, n.location, s) catch |err| blk: {
-                if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
-                    break :blk err;
-                }
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in binary operation '{any}': {s}",
-                    .{ bo.operator, @errorName(err) },
-                );
-                break :blk err;
-            },
-
-            .comparison => |c| self.handleComparison(c, n.location, s) catch |err| blk: {
-                if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
-                    break :blk err;
-                }
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in comparison '{any}': {s}",
-                    .{ c.operator, @errorName(err) },
-                );
-                break :blk err;
-            },
-
-            .logical_operation => |lo| self.handleLogicalOperation(lo, s) catch |err| blk: {
-                if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
-                    break :blk err;
-                }
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in logical operation: {s}",
-                    .{@errorName(err)},
-                );
-                break :blk err;
-            },
-
-            .return_statement => |r| self.handleReturn(r, s) catch |err| blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in return statement: {s}",
-                    .{@errorName(err)},
-                );
-                break :blk err;
-            },
-
-            .break_statement => self.handleBreak(n.location, s) catch |err| blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in break statement: {s}",
-                    .{@errorName(err)},
-                );
-                break :blk err;
-            },
-
-            .continue_statement => self.handleContinue(n.location, s) catch |err| blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in continue statement: {s}",
-                    .{@errorName(err)},
-                );
-                break :blk err;
-            },
-
-            .defer_statement => |expr| self.handleDefer(expr, s) catch |err| blk: {
-                if (err != error.Reported) {
-                    try self.diags.add(
-                        n.location,
-                        .semantic,
-                        "error in defer statement: {s}",
-                        .{@errorName(err)},
-                    );
-                }
-                break :blk err;
-            },
-
-            .keep_statement => |name| self.handleKeep(name, s) catch |err| blk: {
-                if (err == error.SymbolNotFound and self.defer_unknown_top_level and self.current_top_node != null) {
-                    break :blk err;
-                }
-                if (err != error.Reported) {
-                    try self.diags.add(
-                        n.location,
-                        .semantic,
-                        "error in keep statement: {s}",
-                        .{@errorName(err)},
-                    );
-                }
-                break :blk err;
-            },
-
-            .if_statement => |ifs| self.handleIf(ifs, s) catch |err| blk: {
-                if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
-                    break :blk err;
-                }
-                if (err != error.Reported) {
-                    try self.diags.add(
-                        n.location,
-                        .semantic,
-                        "error in if statement: {s}",
-                        .{@errorName(err)},
-                    );
-                }
-                break :blk err;
-            },
-
-            .for_statement => |f| self.handleFor(f, s, n.location) catch |err| blk: {
-                if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
-                    break :blk err;
-                }
-                if (err != error.Reported) {
-                    try self.diags.add(
-                        n.location,
-                        .semantic,
-                        "error in for statement: {s}",
-                        .{@errorName(err)},
-                    );
-                }
-                break :blk err;
-            },
-
-            .while_statement => |w| self.handleWhile(w, s) catch |err| blk: {
-                if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
-                    break :blk err;
-                }
-                if (err != error.Reported) {
-                    try self.diags.add(
-                        n.location,
-                        .semantic,
-                        "error in while statement: {s}",
-                        .{@errorName(err)},
-                    );
-                }
-                break :blk err;
-            },
-
-            .match_statement => |m| self.handleMatch(m, s) catch |err| blk: {
-                if ((err == error.SymbolNotFound or err == error.UnknownType) and self.defer_unknown_top_level and self.current_top_node != null) {
-                    break :blk err;
-                }
-                if (err != error.Reported) {
-                    try self.diags.add(
-                        n.location,
-                        .semantic,
-                        "error in match statement: {s}",
-                        .{@errorName(err)},
-                    );
-                }
-                break :blk err;
-            },
-
-            .import_statement => self.handleImportStatement(n.location) catch |err| blk: {
-                try self.diags.add(
-                    n.location,
-                    .semantic,
-                    "error in import statement: {s}",
-                    .{@errorName(err)},
-                );
-                break :blk err;
-            },
-
-            .address_of => |p| self.handleAddressOf(p, s) catch |err| blk: {
-                if (err != error.Reported) {
-                    try self.diags.add(
-                        n.location,
-                        .semantic,
-                        "error in address-of operation: {s}",
-                        .{@errorName(err)},
-                    );
-                }
-                break :blk err;
-            },
-
-            .dereference => |p| self.handleDereference(p, s) catch |err| blk: {
-                if (err != error.Reported) {
-                    try self.diags.add(
-                        n.location,
-                        .semantic,
-                        "error in dereference operation: {s}",
-                        .{@errorName(err)},
-                    );
-                }
-                break :blk err;
-            },
-
-            .pointer_assignment => |pa| self.handlePointerAssignment(pa, s) catch |err| blk: {
-                if (err != error.Reported) {
-                    try self.diags.add(
-                        n.location,
-                        .semantic,
-                        "error in pointer assignment: {s}",
-                        .{@errorName(err)},
-                    );
-                }
-                break :blk err;
-            },
+        return .{
+            .fields = .{ .fields = try fields.toOwnedSlice() },
+            .generic_param_indices = try generic_indices.toOwnedSlice(),
+            .abstract_requirements = try abstract_requirements.toOwnedSlice(),
+            .nested_patterns = try nested_patterns.toOwnedSlice(),
+            .self_indices = try self_indices.toOwnedSlice(),
+            .pointer_self_indices = try pointer_self_indices.toOwnedSlice(),
         };
+    }
+
+    fn compactAbstractParamNames(
+        self: *Semantizer,
+        owner: syn.SyntaxRef,
+        parameter_nodes: []const syn.NodeIndex,
+        parameter_struct: ?syn.NodeIndex,
+    ) SemErr![]const []const u8 {
+        const file = self.syntaxFile(owner);
+        const nodes = if (parameter_struct) |struct_node|
+            (file.structTypeLiteral(struct_node) orelse return error.InvalidType).fields
+        else
+            parameter_nodes;
+        const names = try self.allocator.alloc([]const u8, nodes.len);
+        for (nodes, 0..) |parameter_node, index| {
+            names[index] = if (parameter_struct != null) blk: {
+                const field = file.structTypeField(parameter_node) orelse return error.InvalidType;
+                break :blk file.tokenText(&self.diags.source_db, field.name_token);
+            } else file.tokenText(&self.diags.source_db, file.mainToken(parameter_node));
+        }
+        return names;
+    }
+
+    fn compactCollectHiddenComptimeImplementsParams(
+        self: *Semantizer,
+        node: syn.SyntaxRef,
+        params: *std.array_list.Managed(gen.GenericParam),
+        scope: *Scope,
+    ) SemErr!void {
+        const file = self.syntaxFile(node);
+        switch (file.tag(node.node)) {
+            .identifier => {
+                const name = file.tokenText(&self.diags.source_db, file.mainToken(node.node));
+                if (hasGenericParamNamed(params.items, name) or typ.builtinFromName(name) != null) return;
+                if (scope.lookupType(name) != null or scope.lookupBinding(name) != null) return;
+                try params.append(.{ .name = name, .kind = .comptime_int, .value_type = .{ .builtin = .UIntNative } });
+            },
+            .binary_add,
+            .binary_subtract,
+            .binary_multiply,
+            .binary_divide,
+            .binary_modulo,
+            => {
+                const operation = file.binaryOperation(node.node) orelse return;
+                try self.compactCollectHiddenComptimeImplementsParams(file.ref(operation.lhs), params, scope);
+                try self.compactCollectHiddenComptimeImplementsParams(file.ref(operation.rhs), params, scope);
+            },
+            else => {},
+        }
+    }
+
+    fn compactCollectHiddenImplementsParams(
+        self: *Semantizer,
+        node: syn.SyntaxRef,
+        params: *std.array_list.Managed(gen.GenericParam),
+        scope: *Scope,
+    ) SemErr!void {
+        const file = self.syntaxFile(node);
+        switch (file.syntaxType(node.node) orelse return) {
+            .name => |name| {
+                if (name.qualifier_token != null) return;
+                const text = file.tokenText(&self.diags.source_db, name.name_token);
+                if (hasGenericParamNamed(params.items, text) or typ.builtinFromName(text) != null or scope.lookupType(text) != null) return;
+                try params.append(.{ .name = text, .kind = .type, .value_type = null });
+            },
+            .pointer => |pointer| try self.compactCollectHiddenImplementsParams(file.ref(pointer.child), params, scope),
+            .array => |array| try self.compactCollectHiddenImplementsParams(file.ref(array.element), params, scope),
+            .inferred_errable => |inner| try self.compactCollectHiddenImplementsParams(file.ref(inner), params, scope),
+            .nullable => |inner| try self.compactCollectHiddenImplementsParams(file.ref(inner), params, scope),
+            .struct_literal => |literal| try self.compactCollectHiddenImplementsParamsFromFields(file, literal.fields, params, scope),
+            .generic => |generic| {
+                const arguments = file.structTypeLiteral(generic.arguments) orelse return error.InvalidType;
+                try self.compactCollectHiddenImplementsParamsFromFields(file, arguments.fields, params, scope);
+            },
+            .choice_literal => |literal| {
+                for (literal.variants) |variant_node| {
+                    const variant = file.choiceTypeVariant(variant_node) orelse return error.InvalidType;
+                    if (variant.payload_type) |payload| try self.compactCollectHiddenImplementsParams(file.ref(payload), params, scope);
+                }
+            },
+        }
+    }
+
+    fn compactCollectHiddenImplementsParamsFromFields(
+        self: *Semantizer,
+        file: *const syn.SyntaxFile,
+        fields: []const syn.NodeIndex,
+        params: *std.array_list.Managed(gen.GenericParam),
+        scope: *Scope,
+    ) SemErr!void {
+        for (fields) |field_node| {
+            const field = file.structTypeField(field_node) orelse return error.InvalidType;
+            if (field.type_node) |field_type| try self.compactCollectHiddenImplementsParams(file.ref(field_type), params, scope);
+            if (field.default_value) |value| try self.compactCollectHiddenComptimeImplementsParams(file.ref(value), params, scope);
+        }
+    }
+
+    fn handleCompactAbstractDeclaration(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const declaration = file.abstractDeclaration(node.node) orelse return error.InvalidType;
+        const name = file.tokenText(&self.diags.source_db, declaration.name_token);
+        const generic_info = try self.compactGenericParamDefs(node, declaration.generic_params, declaration.generic_params_struct, scope);
+        const param_names = try self.compactAbstractParamNames(node, declaration.generic_params, declaration.generic_params_struct);
+        var requirements = std.array_list.Managed(abs.AbstractFunctionReqSem).init(self.allocator.*);
+        defer requirements.deinit();
+        for (declaration.requires_functions) |requirement_node| {
+            const requirement = file.abstractFunctionRequirement(requirement_node) orelse return error.InvalidType;
+            const input = try self.compactAbstractRequirementFields(node, requirement.input, param_names, scope);
+            const output = try self.compactAbstractRequirementFields(node, requirement.output, param_names, scope);
+            try requirements.append(.{
+                .syntax_files = self.syntax_files,
+                .source_db = &self.diags.source_db,
+                .name = file.tokenText(&self.diags.source_db, requirement.name_token),
+                .input = input.fields,
+                .output = output.fields,
+                .input_self_indices = input.self_indices,
+                .output_self_indices = output.self_indices,
+                .input_pointer_self_indices = input.pointer_self_indices,
+                .output_pointer_self_indices = output.pointer_self_indices,
+                .input_generic_param_indices = input.generic_param_indices,
+                .output_generic_param_indices = output.generic_param_indices,
+                .input_abstract_requirements = input.abstract_requirements,
+                .output_abstract_requirements = output.abstract_requirements,
+                .input_nested_patterns = input.nested_patterns,
+                .output_nested_patterns = output.nested_patterns,
+                .abstract_param_names = param_names,
+            });
+        }
+        const info = scope.lookupAbstractInfo(name) orelse return error.SymbolNotFound;
+        info.requirements = try requirements.toOwnedSlice();
+        info.param_names = param_names;
+        info.params = generic_info.params;
+        const virtual_methods = try self.allocator.alloc(*sg.VirtualMethodRegistry, info.requirements.len);
+        for (virtual_methods) |*registry| {
+            registry.* = try self.allocator.create(sg.VirtualMethodRegistry);
+            registry.*.* = .{ .implementations = std.array_list.Managed(*const sg.FunctionDeclaration).init(self.allocator.*) };
+        }
+        info.virtual_methods = virtual_methods;
+        // Function contracts are populated as their compact views are semantized.
+        // Keeping the predeclared entry makes mutually-referential abstracts resolvable.
+        const type_declaration = scope.lookupType(name) orelse return error.SymbolNotFound;
+        const result = try self.appendTypeDeclarationNodeIfMissing(scope, type_declaration, self.nodeLocation(node));
+        return .{ .node = result, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleCompactAbstractImplements(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const relation = file.abstractImplements(node.node) orelse return error.InvalidType;
+        const abstract_ref = file.ref(relation.abstract_type);
+        const abstract_name = self.compactAbstractTargetName(abstract_ref) orelse return error.UnknownType;
+        const concrete_name = file.tokenText(&self.diags.source_db, relation.concrete_name_token);
+        if (relation.generic_params.len != 0 or relation.generic_params_struct != null) {
+            const generic_info = try self.compactGenericParamDefs(node, relation.generic_params, relation.generic_params_struct, scope);
+            var params = std.array_list.Managed(gen.GenericParam).init(self.allocator.*);
+            defer params.deinit();
+            var constraints = std.array_list.Managed(?gen.AbstractConstraint).init(self.allocator.*);
+            defer constraints.deinit();
+            for (generic_info.params, 0..) |param, index| {
+                try params.append(param);
+                try constraints.append(generic_info.abstract_constraints[index]);
+            }
+            for (constraints.items) |constraint| {
+                if (constraint) |value| if (value.args) |arguments|
+                    try self.compactCollectHiddenImplementsParams(arguments, &params, scope);
+            }
+            const target_type = file.syntaxType(relation.abstract_type) orelse return error.InvalidType;
+            if (target_type == .generic) {
+                try self.compactCollectHiddenImplementsParams(file.ref(target_type.generic.arguments), &params, scope);
+            }
+            while (constraints.items.len < params.items.len) try constraints.append(null);
+            try scope.appendAbstractImplTemplate(abstract_name, .{
+                .syntax_files = self.syntax_files,
+                .source_db = &self.diags.source_db,
+                .params = try params.toOwnedSlice(),
+                .param_abstract_constraints = try constraints.toOwnedSlice(),
+                .concrete_name = concrete_name,
+                .concrete_param_count = generic_info.params.len,
+                .args = switch (target_type) {
+                    .generic => |generic| file.ref(generic.arguments),
+                    else => null,
+                },
+                .location = self.nodeLocation(node),
+            });
+        } else {
+            const concrete = try self.resolveSyntaxTypeName(node, relation.concrete_name_token, null, scope, true);
+            const args = try self.compactResolvedAbstractArgs(abstract_ref, scope);
+            try self.ensureConcreteAbstractImplCoherent(abstract_name, concrete, args, scope, self.nodeLocation(node));
+            try scope.appendAbstractImpl(abstract_name, .{ .ty = concrete, .args = args, .location = self.nodeLocation(node) });
+        }
+        const result = try self.makeNoopNode(self.nodeLocation(node));
+        try scope.nodes.append(result);
+        return .{ .node = result, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleCompactAbstractDefault(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const relation = file.abstractDefaultsTo(node.node) orelse return error.InvalidType;
+        const name = file.tokenText(&self.diags.source_db, relation.name_token);
+        const concrete = try self.resolveTypeExpression(file.ref(relation.type_node), scope);
+        try scope.abstract_defaults.put(name, .{ .ty = concrete, .location = self.nodeLocation(node) });
+        const result = try self.makeNoopNode(self.nodeLocation(node));
+        try scope.nodes.append(result);
+        return .{ .node = result, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleCompactTypeDeclaration(self: *Semantizer, node: syn.SyntaxRef, scope: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const name_token, const generic_params, const generic_params_struct, const value = switch (file.tag(node.node)) {
+            .type_declaration => blk: {
+                const declaration = file.typeDeclaration(node.node).?;
+                break :blk .{ declaration.name_token, declaration.generic_params, declaration.generic_params_struct, declaration.value };
+            },
+            .c_enum_declaration => blk: {
+                const declaration = file.cEnumDeclaration(node.node).?;
+                break :blk .{ declaration.name_token, declaration.generic_params, declaration.generic_params_struct, declaration.value };
+            },
+            .c_union_declaration => blk: {
+                const declaration = file.cUnionDeclaration(node.node).?;
+                break :blk .{ declaration.name_token, declaration.generic_params, declaration.generic_params_struct, declaration.value };
+            },
+            else => unreachable,
+        };
+        const name = file.tokenText(&self.diags.source_db, name_token);
+        if (generic_params.len != 0 or generic_params_struct != null) {
+            if (scope.generic_types.getPtr(name)) |templates| {
+                for (templates.items) |template| {
+                    if (template.location.file != file.location(value).file or template.location.offset != file.location(value).offset) continue;
+                    const noop = try self.makeNoopNode(file.location(value));
+                    try scope.nodes.append(noop);
+                    return .{ .node = noop, .ty = .{ .builtin = .Any } };
+                }
+            }
+            const generic_info = try self.compactGenericParamDefs(
+                node,
+                generic_params,
+                generic_params_struct,
+                scope,
+            );
+            try scope.appendGenericTypeTemplate(name, .{
+                .name = name,
+                .location = file.location(value),
+                .params = generic_info.params,
+                .param_abstract_constraints = generic_info.abstract_constraints,
+                .body = file.ref(value),
+            });
+            const noop = try self.makeNoopNode(file.location(value));
+            try scope.nodes.append(noop);
+            return .{ .node = noop, .ty = .{ .builtin = .Any } };
+        }
+        const declaration = scope.lookupType(name) orelse blk: {
+            const alias_type = try self.resolveTypeExpression(file.ref(value), scope);
+            const created = try self.allocator.create(sg.TypeDeclaration);
+            created.* = .{ .name = name, .origin_file = self.locationPath(file.location(value)), .ty = alias_type };
+            try scope.types.put(name, created);
+            break :blk created;
+        };
+        switch (file.tag(value)) {
+            .struct_type_literal => {
+                var subst = GenericSubst.init(self.allocator);
+                defer subst.deinit();
+                const resolved = try self.structTypeFromNodeWithSubst(file.ref(value), scope, &subst);
+                const target = @constCast(declaration.ty.struct_type);
+                target.fields = resolved.fields;
+                target.layout = if (file.tag(node.node) == .c_union_declaration) .c_union else .regular;
+                if (target.identity == null) {
+                    const identity = try self.allocator.create(sg.GenericTypeIdentity);
+                    identity.* = .{ .base_name = name, .arg_names = &.{}, .arg_values = &.{} };
+                    target.identity = .{ .generic = identity };
+                }
+            },
+            .choice_type_literal => {
+                const literal = file.choiceTypeLiteral(value) orelse return error.InvalidType;
+                if (file.tag(node.node) == .c_enum_declaration) {
+                    for (literal.variants) |variant_node| {
+                        const variant = file.choiceTypeVariant(variant_node).?;
+                        if (variant.payload_type != null) {
+                            try self.diags.add(file.tokenLocation(variant.name_token), .semantic, "CEnum variant '..{s}' cannot carry a payload", .{file.tokenText(&self.diags.source_db, variant.name_token)});
+                            return error.Reported;
+                        }
+                    }
+                }
+                const resolved = try self.choiceTypeFromNode(file.ref(value), scope);
+                const target = @constCast(declaration.ty.choice_type);
+                target.variants = resolved.variants;
+                target.layout = if (file.tag(node.node) == .c_enum_declaration) .c_enum else .regular;
+                if (target.identity == null) {
+                    const identity = try self.allocator.create(sg.GenericTypeIdentity);
+                    identity.* = .{ .base_name = name, .arg_names = &.{}, .arg_values = &.{} };
+                    target.identity = .{ .generic = identity };
+                }
+            },
+            else => declaration.ty = try self.resolveTypeExpression(file.ref(value), scope),
+        }
+        const result = try self.appendTypeDeclarationNodeIfMissing(scope, declaration, file.location(value));
+        return .{ .node = result, .ty = .{ .builtin = .Any } };
+    }
+
+    fn handleCompactCodeBlock(self: *Semantizer, node: syn.SyntaxRef, parent: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const block = file.codeBlock(node.node).?;
+        var child = try Scope.init(self.allocator, parent, parent.current_fn);
+        var return_value: ?*sg.SGNode = null;
+        var return_type: sg.Type = .{ .builtin = .Any };
+        for (block.statements, 0..) |statement, index| {
+            const statement_ref = self.childRef(node, statement);
+            const typed = try self.visitNode(statement_ref, &child);
+            if (index + 1 == block.statements.len and file.tag(statement) == .expression_statement) {
+                return_value = typed.node;
+                return_type = typed.ty;
+            } else if (file.tag(statement) == .function_call) {
+                try child.nodes.append(typed.node);
+            }
+        }
+        var deferred_index = child.deferred.items.len;
+        while (deferred_index > 0) : (deferred_index -= 1) {
+            for (child.deferred.items[deferred_index - 1].nodes) |deferred_node| try child.nodes.append(deferred_node);
+        }
+        const nodes = try child.nodes.toOwnedSlice();
+        child.nodes.deinit();
+        self.clearDeferred(&child);
+        const block_value = try self.allocator.create(sg.CodeBlock);
+        block_value.* = .{ .nodes = nodes, .ret_val = return_value };
+        const result = try sg.makeSGNode(.{ .code_block = block_value }, self.nodeLocation(node), self.allocator);
+        try parent.nodes.append(result);
+        return .{ .node = result, .ty = return_type };
+    }
+
+    fn handleCompactReturn(self: *Semantizer, node: syn.SyntaxRef, s: *Scope) SemErr!typ.TypedExpr {
+        const statement = self.syntaxFile(node).returnStatement(node.node).?;
+        var expression: ?typ.TypedExpr = null;
+        if (statement.value) |value| {
+            const value_ref = self.childRef(node, value);
+            expression = try self.visitNode(value_ref, s);
+            expression = try self.ensureValuePositionAllowed(expression.?, self.nodeLocation(value_ref), s);
+        }
+        const semantic = try self.allocator.create(sg.ReturnStatement);
+        semantic.* = .{
+            .expression = if (expression) |value| value.node else null,
+            .cleanup_nodes = try self.collectActiveEarlyCleanupNodes(s),
+        };
+        const result = try sg.makeSGNode(.{ .return_statement = semantic }, self.nodeLocation(node), self.allocator);
+        try s.nodes.append(result);
+        return .{ .node = result, .ty = .{ .builtin = .Any } };
     }
 
     fn handleImportStatement(self: *Semantizer, loc: tok.Location) SemErr!typ.TypedExpr {
@@ -3424,349 +4134,8 @@ pub const Semantizer = struct {
     }
 
     //──────────────────────────────────────────────────── ABSTRACT DECLARATION
-    fn abstractRequirementTypeContainsParam(ty: syn.Type, generic_params: []const []const u8) bool {
-        return switch (ty) {
-            .type_name => |name| blk: {
-                if (std.mem.eql(u8, name.string, "Self")) break :blk true;
-                for (generic_params) |param| {
-                    if (std.mem.eql(u8, name.string, param)) break :blk true;
-                }
-                break :blk false;
-            },
-            .pointer_type => |pointer| abstractRequirementTypeContainsParam(pointer.child.*, generic_params),
-            .array_type => |array| abstractRequirementTypeContainsParam(array.element.*, generic_params),
-            .inferred_errable => |inner| abstractRequirementTypeContainsParam(inner.*, generic_params),
-            .generic_type_instantiation => |generic| blk: {
-                for (generic.args.fields) |field| {
-                    if (field.type) |field_type| {
-                        if (abstractRequirementTypeContainsParam(field_type, generic_params)) break :blk true;
-                    }
-                }
-                break :blk false;
-            },
-            .struct_type_literal => |struct_type| blk: {
-                for (struct_type.fields) |field| {
-                    if (field.type) |field_type| {
-                        if (abstractRequirementTypeContainsParam(field_type, generic_params)) break :blk true;
-                    }
-                }
-                break :blk false;
-            },
-            .choice_type_literal => |choice| blk: {
-                for (choice.variants) |variant| {
-                    if (variant.payload_type) |payload| {
-                        if (abstractRequirementTypeContainsParam(payload, generic_params)) break :blk true;
-                    }
-                }
-                break :blk false;
-            },
-        };
-    }
-
-    fn handleAbstractDecl(
-        self: *Semantizer,
-        ad: syn.AbstractDeclaration,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        // Store abstract info (resolved requirements) in scope
-        var reqs = std.array_list.Managed(abs.AbstractFunctionReqSem).init(self.allocator.*);
-        const generic_params = ad.generic_params;
-        const params_struct = try self.genericParamsStructOrNames(ad.generic_params_struct, ad.generic_params, ad.name.location);
-        const abstract_param_info = try self.genericParamDefsAndConstraintsFromSyntax(params_struct, s);
-        for (ad.requires_functions) |rf| {
-            // Build input struct resolving types; track Self/generic/abstract usages
-            var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
-            var input_generic = std.array_list.Managed(?u32).init(self.allocator.*);
-            var input_abstract = std.array_list.Managed(?[]const u8).init(self.allocator.*);
-            var input_nested = std.array_list.Managed(?syn.Type).init(self.allocator.*);
-            var self_idxs = std.array_list.Managed(u32).init(self.allocator.*);
-            var input_pointer_self_idxs = std.array_list.Managed(u32).init(self.allocator.*);
-
-            for (rf.input.fields, 0..) |fld, i| {
-                var ty: sg.Type = .{ .builtin = .Any };
-                var generic_idx_opt: ?u32 = null;
-                var abstract_req: ?[]const u8 = null;
-                var nested_pattern: ?syn.Type = null;
-
-                if (fld.type) |t| {
-                    switch (t) {
-                        .type_name => |tn| {
-                            const name = tn.string;
-                            if (std.mem.eql(u8, name, "Self")) {
-                                try self_idxs.append(@intCast(i));
-                            } else {
-                                var found: bool = false;
-                                for (generic_params, 0..) |gp, gi| {
-                                    if (std.mem.eql(u8, gp, name)) {
-                                        generic_idx_opt = @intCast(gi);
-                                        found = true;
-                                        break;
-                                    }
-                                }
-                                if (!found) {
-                                    if (s.lookupAbstractInfo(name) != null) {
-                                        abstract_req = name;
-                                    } else {
-                                        ty = try self.resolveType(t, s);
-                                    }
-                                }
-                            }
-                        },
-                        .generic_type_instantiation => |g| {
-                            if (s.lookupAbstractInfo(g.base_name.string) != null) {
-                                abstract_req = g.base_name.string;
-                            } else if (abstractRequirementTypeContainsParam(t, generic_params)) {
-                                nested_pattern = t;
-                            } else {
-                                ty = try self.resolveType(t, s);
-                            }
-                        },
-                        else => {
-                            if (t == .pointer_type) {
-                                const ptr_info = t.pointer_type;
-                                const child_node = ptr_info.child.*;
-                                switch (child_node) {
-                                    .type_name => |tn| {
-                                        if (std.mem.eql(u8, tn.string, "Self")) {
-                                            ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
-                                            try input_pointer_self_idxs.append(@intCast(i));
-                                        } else if (s.lookupAbstractInfo(tn.string) != null) {
-                                            ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
-                                            abstract_req = tn.string;
-                                        } else {
-                                            ty = try self.resolveType(t, s);
-                                        }
-                                    },
-                                    .generic_type_instantiation => |g| {
-                                        if (s.lookupAbstractInfo(g.base_name.string) != null) {
-                                            ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
-                                            abstract_req = g.base_name.string;
-                                        } else {
-                                            ty = try self.resolveType(t, s);
-                                        }
-                                    },
-                                    else => {
-                                        ty = try self.resolveType(t, s);
-                                    },
-                                }
-                            }
-                        },
-                    }
-                }
-
-                try in_fields.append(.{ .name = fld.name.string, .ty = ty, .default_value = null });
-                try input_generic.append(generic_idx_opt);
-                try input_abstract.append(abstract_req);
-                try input_nested.append(nested_pattern);
-            }
-
-            const in_struct = sg.StructType{ .fields = try in_fields.toOwnedSlice() };
-            const input_generic_slice = try input_generic.toOwnedSlice();
-            const input_abstract_slice = try input_abstract.toOwnedSlice();
-            const input_nested_slice = try input_nested.toOwnedSlice();
-
-            in_fields.deinit();
-            input_generic.deinit();
-            input_abstract.deinit();
-            input_nested.deinit();
-
-            // Build output struct, tracking generics/abstracts similarly
-            var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
-            var output_generic = std.array_list.Managed(?u32).init(self.allocator.*);
-            var output_abstract = std.array_list.Managed(?[]const u8).init(self.allocator.*);
-            var output_nested = std.array_list.Managed(?syn.Type).init(self.allocator.*);
-            var output_self_idxs = std.array_list.Managed(u32).init(self.allocator.*);
-            var output_pointer_self_idxs = std.array_list.Managed(u32).init(self.allocator.*);
-
-            for (rf.output.fields, 0..) |fld, i| {
-                var ty: sg.Type = .{ .builtin = .Any };
-                var generic_idx_opt: ?u32 = null;
-                var abstract_req: ?[]const u8 = null;
-                var nested_pattern: ?syn.Type = null;
-
-                if (fld.type) |t| {
-                    switch (t) {
-                        .type_name => |tn| {
-                            const name = tn.string;
-                            if (std.mem.eql(u8, name, "Self")) {
-                                try output_self_idxs.append(@intCast(i));
-                            } else {
-                                var found: bool = false;
-                                for (generic_params, 0..) |gp, gi| {
-                                    if (std.mem.eql(u8, gp, name)) {
-                                        generic_idx_opt = @intCast(gi);
-                                        found = true;
-                                        break;
-                                    }
-                                }
-                                if (!found) {
-                                    if (s.lookupAbstractInfo(name) != null) {
-                                        abstract_req = name;
-                                    } else {
-                                        ty = try self.resolveType(t, s);
-                                    }
-                                }
-                            }
-                        },
-                        .generic_type_instantiation => |g| {
-                            if (s.lookupAbstractInfo(g.base_name.string) != null) {
-                                abstract_req = g.base_name.string;
-                            } else if (abstractRequirementTypeContainsParam(t, generic_params)) {
-                                nested_pattern = t;
-                            } else {
-                                ty = try self.resolveType(t, s);
-                            }
-                        },
-                        else => {
-                            if (t == .pointer_type) {
-                                const ptr_info = t.pointer_type;
-                                const child_node = ptr_info.child.*;
-                                switch (child_node) {
-                                    .type_name => |tn| {
-                                        if (std.mem.eql(u8, tn.string, "Self")) {
-                                            ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
-                                            try output_pointer_self_idxs.append(@intCast(i));
-                                        } else if (s.lookupAbstractInfo(tn.string) != null) {
-                                            ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
-                                            abstract_req = tn.string;
-                                        } else {
-                                            ty = try self.resolveType(t, s);
-                                        }
-                                    },
-                                    .generic_type_instantiation => |g| {
-                                        if (s.lookupAbstractInfo(g.base_name.string) != null) {
-                                            ty = try typ.pointerToAny(ptr_info.mutability, self.allocator);
-                                            abstract_req = g.base_name.string;
-                                        } else {
-                                            ty = try self.resolveType(t, s);
-                                        }
-                                    },
-                                    else => {
-                                        ty = try self.resolveType(t, s);
-                                    },
-                                }
-                            }
-                        },
-                    }
-                }
-
-                try out_fields.append(.{ .name = fld.name.string, .ty = ty, .default_value = null });
-                try output_generic.append(generic_idx_opt);
-                try output_abstract.append(abstract_req);
-                try output_nested.append(nested_pattern);
-            }
-
-            const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
-            const output_generic_slice = try output_generic.toOwnedSlice();
-            const output_abstract_slice = try output_abstract.toOwnedSlice();
-            const output_nested_slice = try output_nested.toOwnedSlice();
-
-            out_fields.deinit();
-            output_generic.deinit();
-            output_abstract.deinit();
-            output_nested.deinit();
-
-            try reqs.append(.{
-                .name = rf.name.string,
-                .input = in_struct,
-                .output = out_struct,
-                .input_self_indices = try self_idxs.toOwnedSlice(),
-                .output_self_indices = try output_self_idxs.toOwnedSlice(),
-                .input_pointer_self_indices = try input_pointer_self_idxs.toOwnedSlice(),
-                .output_pointer_self_indices = try output_pointer_self_idxs.toOwnedSlice(),
-                .input_generic_param_indices = input_generic_slice,
-                .output_generic_param_indices = output_generic_slice,
-                .input_abstract_requirements = input_abstract_slice,
-                .output_abstract_requirements = output_abstract_slice,
-                .input_nested_patterns = input_nested_slice,
-                .output_nested_patterns = output_nested_slice,
-                .abstract_param_names = generic_params,
-            });
-            self_idxs.deinit();
-            output_self_idxs.deinit();
-            input_pointer_self_idxs.deinit();
-            output_pointer_self_idxs.deinit();
-        }
-
-        const requirements = try reqs.toOwnedSlice();
-        reqs.deinit();
-
-        const info = if (s.abstracts.get(ad.name.string)) |existing|
-            existing
-        else blk: {
-            const created = try self.allocator.create(abs.AbstractInfo);
-            created.* = .{
-                .name = ad.name.string,
-                .requirements = &.{},
-                .param_names = generic_params,
-                .params = abstract_param_info.params,
-            };
-            try s.abstracts.put(ad.name.string, created);
-            break :blk created;
-        };
-        info.requirements = requirements;
-        info.param_names = generic_params;
-        info.params = abstract_param_info.params;
-        const virtual_methods = try self.allocator.alloc(*sg.VirtualMethodRegistry, requirements.len);
-        for (virtual_methods) |*registry| {
-            registry.* = try self.allocator.create(sg.VirtualMethodRegistry);
-            registry.*.* = .{ .implementations = std.array_list.Managed(*const sg.FunctionDeclaration).init(self.allocator.*) };
-        }
-        info.virtual_methods = virtual_methods;
-
-        const td = if (s.types.get(ad.name.string)) |existing| blk: {
-            if (existing.ty != .abstract_type) return error.SymbolAlreadyDefined;
-            break :blk existing;
-        } else blk: {
-            const abs_ty = try self.allocator.create(sg.AbstractType);
-            abs_ty.* = .{ .name = ad.name.string };
-            const created = try self.allocator.create(sg.TypeDeclaration);
-            created.* = .{ .name = ad.name.string, .origin_file = self.locationPath(ad.name.location), .ty = .{ .abstract_type = abs_ty } };
-            try s.types.put(ad.name.string, created);
-            break :blk created;
-        };
-
-        const n = try self.appendTypeDeclarationNodeIfMissing(s, td, ad.name.location);
-        return .{ .node = n, .ty = .{ .builtin = .Any } };
-    }
 
     // For now, relations are recorded as no-ops to accept syntax without enforcing.
-    fn abstractNameFromImplementsTarget(abstract_ty: syn.Type) ?[]const u8 {
-        return switch (abstract_ty) {
-            .type_name => |name| name.string,
-            .generic_type_instantiation => |g| g.base_name.string,
-            else => null,
-        };
-    }
-
-    fn resolvedAbstractArgsFromImplementsTarget(
-        self: *Semantizer,
-        abstract_ty: syn.Type,
-        s: *Scope,
-    ) SemErr![]const ?gen.GenericArgValue {
-        const g = switch (abstract_ty) {
-            .generic_type_instantiation => |value| value,
-            else => return &.{},
-        };
-        const info = s.lookupAbstractInfo(g.base_name.string) orelse return error.UnknownType;
-        const resolved = try self.allocator.alloc(?gen.GenericArgValue, info.params.len);
-        for (resolved) |*arg| arg.* = null;
-        for (g.args.fields) |field| {
-            var index: ?usize = null;
-            for (info.params, 0..) |param, i| {
-                if (std.mem.eql(u8, param.name, field.name.string)) {
-                    index = i;
-                    break;
-                }
-            }
-            const i = index orelse return error.UnknownType;
-            resolved[i] = switch (info.params[i].kind) {
-                .type => .{ .type = try self.resolveTypePreservingAbstracts(field.type orelse return error.UnknownType, s) },
-                .comptime_int => .{ .comptime_int = try self.resolveComptimeIntExpr(field.default_value orelse return error.UnknownType, s, null) },
-            };
-        }
-        return resolved;
-    }
 
     fn ensureConcreteAbstractImplCoherent(
         self: *Semantizer,
@@ -3795,208 +4164,28 @@ pub const Semantizer = struct {
         }
     }
 
-    fn concreteTypePatternFromImplements(
-        self: *Semantizer,
-        rel: syn.AbstractImplements,
-        s: *Scope,
-        loc: tok.Location,
-    ) !syn.Type {
-        if (rel.generic_params_struct != null or rel.generic_params.len != 0) {
-            const params_struct = try self.genericParamsStructOrNames(rel.generic_params_struct, rel.generic_params, loc);
-            const pattern_fields = try self.allocator.alloc(syn.StructTypeLiteralField, params_struct.fields.len);
-
-            for (params_struct.fields, 0..) |field, idx| {
-                const field_ty = field.type orelse {
-                    pattern_fields[idx] = .{
-                        .name = field.name,
-                        .type = .{ .type_name = field.name },
-                        .default_value = null,
-                    };
-                    continue;
-                };
-
-                const is_type_param =
-                    (field_ty == .type_name and std.mem.eql(u8, field_ty.type_name.string, "Type")) or
-                    (field_ty == .type_name and s.lookupAbstractInfo(field_ty.type_name.string) != null) or
-                    (field_ty == .generic_type_instantiation and s.lookupAbstractInfo(field_ty.generic_type_instantiation.base_name.string) != null);
-
-                if (is_type_param) {
-                    pattern_fields[idx] = .{
-                        .name = field.name,
-                        .type = .{ .type_name = field.name },
-                        .default_value = null,
-                    };
-                    continue;
-                }
-
-                const value_node = try self.makeSynNode(.{ .identifier = field.name.string }, loc);
-                pattern_fields[idx] = .{
-                    .name = field.name,
-                    .type = null,
-                    .default_value = value_node,
-                };
-            }
-
-            return .{
-                .generic_type_instantiation = .{
-                    .base_name = rel.concrete_name,
-                    .args = .{ .fields = pattern_fields },
-                },
-            };
-        }
-
-        return .{ .type_name = rel.concrete_name };
-    }
-
-    fn handleAbstractImplements(
-        self: *Semantizer,
-        rel: syn.AbstractImplements,
-        s: *Scope,
-        loc: tok.Location,
-    ) SemErr!typ.TypedExpr {
-        const abstract_name = abstractNameFromImplementsTarget(rel.abstract_ty) orelse return error.UnknownType;
-        const concrete_pattern = try self.concreteTypePatternFromImplements(rel, s, loc);
-
-        if (rel.generic_params_struct == null and rel.generic_params.len == 0) {
-            const concrete_direct = self.resolveTypePreservingAbstracts(concrete_pattern, s) catch |err| switch (err) {
-                error.UnknownType, error.AbstractNeedsDefault => null,
-                else => return err,
-            };
-            if (concrete_direct) |concrete_ty| {
-                const abstract_args = try self.resolvedAbstractArgsFromImplementsTarget(rel.abstract_ty, s);
-                try self.ensureConcreteAbstractImplCoherent(abstract_name, concrete_ty, abstract_args, s, loc);
-                try s.appendAbstractImpl(abstract_name, .{ .ty = concrete_ty, .args = abstract_args, .location = loc });
-                const n = try self.makeNoopNode(loc);
-                try s.nodes.append(n);
-                return .{ .node = n, .ty = .{ .builtin = .Any } };
-            }
-        }
-
-        if (rel.generic_params_struct != null or rel.generic_params.len != 0 or concrete_pattern == .generic_type_instantiation) {
-            var params_buf = std.array_list.Managed(gen.GenericParam).init(self.allocator.*);
-            defer params_buf.deinit();
-            var constraints_buf = std.array_list.Managed(?gen.AbstractConstraint).init(self.allocator.*);
-            defer constraints_buf.deinit();
-
-            if (rel.generic_params_struct != null or rel.generic_params.len != 0) {
-                const params_struct = try self.genericParamsStructOrNames(rel.generic_params_struct, rel.generic_params, loc);
-                const explicit = try self.genericParamDefsAndConstraintsFromSyntax(params_struct, s);
-                for (explicit.params, 0..) |param, i| {
-                    try params_buf.append(param);
-                    try constraints_buf.append(explicit.abstract_constraints[i]);
-                }
-            }
-
-            try self.collectHiddenImplementsParamsFromType(concrete_pattern, &params_buf, s);
-            for (constraints_buf.items) |constraint_opt| {
-                const constraint = constraint_opt orelse continue;
-                if (constraint.args) |args| {
-                    try self.collectHiddenImplementsParamsFromType(.{ .struct_type_literal = args }, &params_buf, s);
-                }
-            }
-            try self.collectHiddenImplementsParamsFromType(rel.abstract_ty, &params_buf, s);
-            while (constraints_buf.items.len < params_buf.items.len) try constraints_buf.append(null);
-            const params = try params_buf.toOwnedSlice();
-            const constraints = try constraints_buf.toOwnedSlice();
-            try s.appendAbstractImplTemplate(abstract_name, .{
-                .params = params,
-                .param_abstract_constraints = constraints,
-                .ty = concrete_pattern,
-                .args = switch (rel.abstract_ty) {
-                    .generic_type_instantiation => |g| g.args,
-                    else => null,
-                },
-                .location = loc,
-            });
-
-            const n = try self.makeNoopNode(loc);
-            try s.nodes.append(n);
-            return .{ .node = n, .ty = .{ .builtin = .Any } };
-        }
-
-        const concrete_ty = try self.resolveType(concrete_pattern, s);
-
-        // Defer conformance checks until call sites or a validation pass.
-
-        const abstract_args = try self.resolvedAbstractArgsFromImplementsTarget(rel.abstract_ty, s);
-        try self.ensureConcreteAbstractImplCoherent(abstract_name, concrete_ty, abstract_args, s, loc);
-        try s.appendAbstractImpl(abstract_name, .{ .ty = concrete_ty, .args = abstract_args, .location = loc });
-
-        const n = try self.makeNoopNode(loc);
-        try s.nodes.append(n);
-        return .{ .node = n, .ty = .{ .builtin = .Any } };
-    }
-
-    fn handleAbstractDefault(
-        self: *Semantizer,
-        rel: syn.AbstractDefault,
-        s: *Scope,
-        loc: tok.Location,
-    ) SemErr!typ.TypedExpr {
-        const concrete_ty = try self.resolveType(rel.ty, s);
-        try s.abstract_defaults.put(rel.name.string, .{ .ty = concrete_ty, .location = loc });
-        const n = try self.makeNoopNode(loc);
-        try s.nodes.append(n);
-        return .{ .node = n, .ty = .{ .builtin = .Any } };
-    }
-
     //─────────────────────────────────────────────────────────  LITERALS
-    fn handleLiteral(self: *Semantizer, lit: tok.Literal, s: *Scope) SemErr!typ.TypedExpr {
-        var value_literal: sg.ValueLiteral = undefined;
-        var ty: sg.Type = .{ .builtin = .Int32 };
 
-        switch (lit) {
-            .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => |txt| {
-                value_literal = .{ .int_literal = std.fmt.parseInt(i64, txt, 0) catch 0 };
-            },
-            .regular_float_literal, .scientific_float_literal => |txt| {
-                ty = .{ .builtin = .Float32 };
-                value_literal = .{ .float_literal = std.fmt.parseFloat(f64, txt) catch 0.0 };
-            },
-            .char_literal => |c| {
-                ty = .{ .builtin = .Char };
-                value_literal = .{ .char_literal = c };
-            },
-            .string_literal => |text| {
-                // Language-level string literals semantize as borrowed read-only
-                // text views. Raw `&Char` is kept as an explicit interop boundary
-                // through helpers in core/strings/c_strings.rg.
-                const string_view_decl = s.lookupType("StringView") orelse return error.UnknownType;
-                if (!typeDeclIsReady(string_view_decl)) return error.UnknownType;
-                ty = string_view_decl.ty;
-                value_literal = .{ .string_literal = text };
-            },
-            .bool_literal => |b| {
-                ty = .{ .builtin = .Bool };
-                value_literal = .{ .bool_literal = b };
-            },
-        }
-
-        const ptr = try self.allocator.create(sg.ValueLiteral);
-        ptr.* = value_literal;
-        const n = try sg.makeSGNode(.{ .value_literal = ptr.* }, undefined, self.allocator);
-        n.sem_type = ty;
-        return .{ .node = n, .ty = ty };
-    }
-
-    fn handleChoiceLiteral(self: *Semantizer, lit: syn.ChoiceLiteral, s: *Scope) SemErr!typ.TypedExpr {
+    fn handleChoiceLiteral(self: *Semantizer, syntax_ref: syn.SyntaxRef, s: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(syntax_ref);
+        const lit = file.choiceLiteral(syntax_ref.node) orelse return error.InvalidType;
         var payload: ?*const sg.SGNode = null;
         if (lit.payload) |payload_node| {
-            var payload_te = try self.visitNode(payload_node.*, s);
-            payload_te = try self.ensureValuePositionAllowed(payload_te, payload_node.location, s);
+            var payload_te = try self.visitNode(file.ref(payload_node), s);
+            payload_te = try self.ensureValuePositionAllowed(payload_te, file.location(payload_node), s);
             payload_te.node.sem_type = payload_te.ty;
             payload = payload_te.node;
         }
 
         const node = try self.allocator.create(sg.ChoiceLiteral);
         node.* = .{
-            .variant_name = lit.name.string,
-            .module_qualifier = if (lit.module_qualifier) |qualifier| qualifier.string else null,
+            .variant_name = file.tokenText(&self.diags.source_db, lit.name_token),
+            .module_qualifier = null,
             .choice_type = undefined,
             .variant_index = 0,
             .payload = payload,
         };
-        const n = try sg.makeSGNode(.{ .choice_literal = node }, lit.name.location, self.allocator);
+        const n = try sg.makeSGNode(.{ .choice_literal = node }, file.tokenLocation(lit.name_token), self.allocator);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
@@ -4022,34 +4211,6 @@ pub const Semantizer = struct {
             return error.SymbolNotFound;
         }
         return s.lookupChoiceOption(name) orelse error.SymbolNotFound;
-    }
-
-    fn handleChoiceOptionDecl(
-        self: *Semantizer,
-        decl: syn.ChoiceOptionDeclaration,
-        s: *Scope,
-        loc: tok.Location,
-    ) SemErr!typ.TypedExpr {
-        if (s.parent != null) {
-            try self.diags.add(loc, .semantic, "choice options can only be declared at module scope", .{});
-            return error.Reported;
-        }
-        const option_decl = if (s.choice_options.get(decl.name.string)) |existing|
-            existing
-        else blk: {
-            const created = try self.allocator.create(sg.ChoiceOptionDeclaration);
-            created.* = .{
-                .name = decl.name.string,
-                .origin_file = self.locationPath(loc),
-                .id = self.next_choice_option_id,
-            };
-            self.next_choice_option_id += 1;
-            try s.choice_options.put(decl.name.string, created);
-            break :blk created;
-        };
-
-        const node = try self.appendChoiceOptionDeclarationNodeIfMissing(s, option_decl, loc);
-        return .{ .node = node, .ty = .{ .builtin = .Any } };
     }
 
     //─────────────────────────────────────────────────────────  IDENTIFIER
@@ -4107,7 +4268,7 @@ pub const Semantizer = struct {
 
     fn handleReachDirective(
         self: *Semantizer,
-        reach: syn.ReachDirective,
+        reach: syn.SyntaxRef,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
         const reach_ptr = try self.semanticReachDirectiveFromSyntax(reach);
@@ -4118,13 +4279,16 @@ pub const Semantizer = struct {
 
     fn semanticReachDirectiveFromSyntax(
         self: *Semantizer,
-        reach: syn.ReachDirective,
+        syntax_ref: syn.SyntaxRef,
     ) !*sg.ReachDirective {
+        const file = self.syntaxFile(syntax_ref);
+        const reach = file.reachDirective(syntax_ref.node) orelse return error.InvalidType;
         var alternatives = try self.allocator.alloc(sg.ReachAlternative, reach.alternatives.len);
-        for (reach.alternatives, 0..) |alt, idx| {
+        for (reach.alternatives, 0..) |alt_node, idx| {
+            const alt = file.reachAlternative(alt_node).?;
             var segments = try self.allocator.alloc([]const u8, alt.segments.len);
             for (alt.segments, 0..) |segment, seg_idx| {
-                segments[seg_idx] = segment.string;
+                segments[seg_idx] = file.tokenText(&self.diags.source_db, file.mainToken(segment));
             }
             alternatives[idx] = .{ .segments = segments };
         }
@@ -4334,18 +4498,6 @@ pub const Semantizer = struct {
         return buf.toOwnedSlice();
     }
 
-    fn formatReachDirectiveForSyntax(self: *Semantizer, reach: syn.ReachDirective) ![]u8 {
-        var buf = std.array_list.Managed(u8).init(self.allocator.*);
-        for (reach.alternatives, 0..) |alt, alt_idx| {
-            if (alt_idx != 0) try buf.appendSlice(", ");
-            for (alt.segments, 0..) |segment, seg_idx| {
-                if (seg_idx != 0) try buf.append('.');
-                try buf.appendSlice(segment.string);
-            }
-        }
-        return buf.toOwnedSlice();
-    }
-
     fn resolveReachedArgument(
         self: *Semantizer,
         field_name: []const u8,
@@ -4377,29 +4529,6 @@ pub const Semantizer = struct {
             .{ field_name, reach_text, expected_text.bytes },
         );
         return error.Reported;
-    }
-
-    fn tryResolveReachedArgument(
-        self: *Semantizer,
-        field_name: []const u8,
-        expected_ty: sg.Type,
-        reach: *const sg.ReachDirective,
-        s: *Scope,
-        loc: tok.Location,
-    ) SemErr!?typ.TypedExpr {
-        for (reach.alternatives) |alt| {
-            if (try self.resolveReachAlternativeInScope(alt, expected_ty, field_name, s, loc)) |resolved| {
-                return resolved;
-            }
-        }
-
-        if (self.currentReachFunctionContext()) |ctx| {
-            if (!std.mem.eql(u8, ctx.function_name, "main")) {
-                return try self.ensurePropagatedReachedField(field_name, expected_ty, reach, loc, ctx);
-            }
-        }
-
-        return null;
     }
 
     fn tryResolveReachedArgumentInLocalScope(
@@ -4445,12 +4574,12 @@ pub const Semantizer = struct {
 
     fn handleMove(
         self: *Semantizer,
-        inner: *const syn.STNode,
+        inner: syn.SyntaxRef,
         s: *Scope,
         loc: tok.Location,
     ) SemErr!typ.TypedExpr {
-        if (inner.content != .identifier) {
-            const value = try self.visitNode(inner.*, s);
+        if (self.nodeTag(inner) != .identifier) {
+            const value = try self.visitNode(inner, s);
             if (value.node.content != .struct_field_access and value.node.content != .choice_payload_access and
                 value.node.content != .array_index and value.node.content != .dereference)
             {
@@ -4462,7 +4591,7 @@ pub const Semantizer = struct {
             return .{ .node = node, .ty = value.ty };
         }
 
-        const name = inner.content.identifier;
+        const name = self.tokenText(inner, self.syntaxFile(inner).mainToken(inner.node));
         const binding = s.lookupBinding(name) orelse return error.SymbolNotFound;
         if (!(try self.bindingIsVisible(binding, self.locationPath(loc)))) {
             try self.addPrivateMemberDiag(loc, "value", name);
@@ -4480,7 +4609,7 @@ pub const Semantizer = struct {
         if (s.bindingMoveLocation(binding.name)) |move_loc| {
             if (!(move_loc.file == loc.file and move_loc.offset == loc.offset)) {
                 try self.diags.add(
-                    inner.location,
+                    self.nodeLocation(inner),
                     .semantic,
                     "binding '{s}' was moved and cannot be used again (moved at {s}:{d}:{d})",
                     .{ binding.name, self.locationPath(move_loc), self.locationLineColumn(move_loc).line, self.locationLineColumn(move_loc).column },
@@ -4490,7 +4619,7 @@ pub const Semantizer = struct {
         }
         try s.markBindingMoved(binding.name, loc);
 
-        const binding_use = try sg.makeSGNode(.{ .binding_use = binding }, inner.location, self.allocator);
+        const binding_use = try sg.makeSGNode(.{ .binding_use = binding }, self.nodeLocation(inner), self.allocator);
         const node = try sg.makeSGNode(.{ .move_value = binding_use }, loc, self.allocator);
         node.sem_type = binding.ty;
         return .{ .node = node, .ty = binding.ty };
@@ -4503,773 +4632,12 @@ pub const Semantizer = struct {
     }
 
     //─────────────────────────────────────────────────────────  CODE BLOCK
-    fn handleCodeBlock(
-        self: *Semantizer,
-        blk: syn.CodeBlock,
-        parent: *Scope,
-    ) SemErr!typ.TypedExpr {
-        var child = try Scope.init(self.allocator, parent, parent.current_fn);
-        var ret_val: ?*sg.SGNode = null;
-        var ret_ty: sg.Type = .{ .builtin = .Any };
-
-        for (blk.items, 0..) |st, idx| {
-            const te = try self.visitNode(st.*, &child);
-            const is_last = idx + 1 == blk.items.len;
-            if (is_last and st.*.content == .expression_statement) {
-                ret_val = te.node;
-                ret_ty = te.ty;
-                continue;
-            }
-            if (st.*.content == .function_call) {
-                try child.nodes.append(te.node);
-            }
-        }
-
-        var d_idx: usize = child.deferred.items.len;
-        while (d_idx > 0) : (d_idx -= 1) {
-            const group = child.deferred.items[d_idx - 1];
-            for (group.nodes) |node| try child.nodes.append(node);
-        }
-
-        const slice = try child.nodes.toOwnedSlice();
-        child.nodes.deinit();
-        self.clearDeferred(&child);
-
-        const cb = try self.allocator.create(sg.CodeBlock);
-        cb.* = .{ .nodes = slice, .ret_val = ret_val };
-
-        const n = try sg.makeSGNode(.{ .code_block = cb }, undefined, self.allocator);
-        try parent.nodes.append(n);
-        return .{ .node = n, .ty = ret_ty };
-    }
 
     //──────────────────────────────────────────────────── SYMBOL DECLARATION
-    fn handleSymbolDecl(
-        self: *Semantizer,
-        d: syn.SymbolDeclaration,
-        s: *Scope,
-        loc: tok.Location,
-    ) SemErr!typ.TypedExpr {
-        if (d.value) |v| {
-            if (v.*.content == .import_statement) {
-                const resolved = source_files.resolveImportDir(self.allocator, self.io, self.locationPath(loc), v.*.content.import_statement.path) catch {
-                    try self.diags.add(
-                        v.*.location,
-                        .semantic,
-                        "failed to resolve import '{s}'",
-                        .{v.*.content.import_statement.path},
-                    );
-                    return error.Reported;
-                };
-
-                if (s.lookupModuleAlias(d.name.string)) |existing| {
-                    if (!std.mem.eql(u8, existing, resolved)) return error.SymbolAlreadyDefined;
-                    return try typ.makeTypeLiteral(self.allocator, loc, .{ .builtin = .Any });
-                }
-
-                if (s.bindings.contains(d.name.string)) return error.SymbolAlreadyDefined;
-                try s.module_aliases.put(d.name.string, resolved);
-                return try typ.makeTypeLiteral(self.allocator, loc, .{ .builtin = .Any });
-            }
-        }
-
-        const predeclared_binding = if (s.parent == null) s.bindings.get(d.name.string) else null;
-        const reuses_predeclared_binding = if (predeclared_binding) |bd|
-            bd.location.file == loc.file and bd.location.offset == loc.offset
-        else
-            false;
-
-        if (s.bindings.contains(d.name.string) and !reuses_predeclared_binding) {
-            return error.SymbolAlreadyDefined;
-        }
-        if (s.lookupModuleAlias(d.name.string) != null) {
-            return error.SymbolAlreadyDefined;
-        }
-
-        var init_node: ?*syn.STNode = null;
-        var init_te_opt: ?typ.TypedExpr = null;
-        if (d.value) |v| {
-            init_node = v;
-            if (v.*.content == .reach_directive) {
-                const reach_syntax = v.*.content.reach_directive;
-                const reach = try self.semanticReachDirectiveFromSyntax(reach_syntax);
-                if (d.type) |t| {
-                    const expected_ty = try self.resolveType(t, s);
-                    if (expected_ty == .abstract_type) return error.AbstractNeedsDefault;
-                    const resolved = try self.resolveReachedArgument(
-                        d.name.string,
-                        expected_ty,
-                        reach,
-                        s,
-                        v.*.location,
-                    );
-                    init_te_opt = resolved;
-                } else {
-                    const inferred = try self.resolveReachedArgumentForInference(
-                        d.name.string,
-                        reach,
-                        s,
-                        v.*.location,
-                    ) orelse {
-                        const reach_text = try self.formatReachDirectiveForSyntax(reach_syntax);
-                        defer self.allocator.free(reach_text);
-                        try self.diags.add(
-                            v.*.location,
-                            .semantic,
-                            "cannot infer type for '.{s}' from #reach [{s}]",
-                            .{ d.name.string, reach_text },
-                        );
-                        return error.Reported;
-                    };
-
-                    const resolved = try self.resolveReachedArgument(
-                        d.name.string,
-                        inferred.ty,
-                        reach,
-                        s,
-                        v.*.location,
-                    );
-                    init_te_opt = resolved;
-                }
-            } else {
-                init_te_opt = try self.visitNode(v.*, s);
-            }
-        }
-        var ty: sg.Type = .{ .builtin = .Int32 };
-        if (d.type) |t| {
-            ty = try self.resolveType(t, s);
-            if (ty == .abstract_type) return error.AbstractNeedsDefault;
-        } else if (init_te_opt) |te| {
-            ty = te.ty;
-        }
-
-        if (init_te_opt) |te_initial| {
-            if (d.type) |_| {
-                init_te_opt = try typ.coerceExprToType(ty, te_initial, init_node.?, s, self.allocator, self.diags);
-            } else if (te_initial.node.content == .list_literal) {
-                const arr_info = try self.inferArrayTypeFromList(te_initial.node.content.list_literal, init_node.?.location, s);
-                ty = .{ .array_type = arr_info };
-                init_te_opt = try typ.convertListLiteralToArray(te_initial, arr_info, init_node.?.location, s, self.allocator, self.diags);
-            }
-        }
-
-        if (init_te_opt) |init_te| {
-            init_te_opt = try self.ensureValuePositionAllowed(init_te, init_node.?.location, s);
-        }
-
-        const bd = if (reuses_predeclared_binding)
-            predeclared_binding.?
-        else blk: {
-            const created = try self.allocator.create(sg.BindingDeclaration);
-            created.* = .{
-                .name = d.name.string,
-                .location = loc,
-                .origin_file = self.locationPath(loc),
-                .mutability = d.mutability,
-                .ty = ty,
-                .initialization = null,
-            };
-            try s.bindings.put(d.name.string, created);
-            break :blk created;
-        };
-        bd.mutability = d.mutability;
-        bd.ty = ty;
-        bd.initialization = null;
-
-        s.clearBindingMoved(d.name.string);
-        const n = try self.appendBindingDeclarationNodeIfMissing(s, bd, loc);
-
-        if (init_te_opt) |init_te| bd.initialization = init_te.node;
-
-        try self.maybeScheduleAutoDeinit(bd, loc, s);
-
-        return .{ .node = n, .ty = .{ .builtin = .Any } };
-    }
 
     //──────────────────────────────────────────────────── TYPE DECLARATION
-    fn handleTypeDecl(
-        self: *Semantizer,
-        d: syn.TypeDeclaration,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        if (d.generic_params.len > 0) {
-            const params_struct = try self.genericParamsStructOrNames(
-                d.generic_params_struct,
-                d.generic_params,
-                d.name.location,
-            );
-            const generic_info = try self.genericParamDefsAndConstraintsFromSyntax(params_struct, s);
-            // Register as generic type template
-            try s.appendGenericTypeTemplate(d.name.string, .{
-                .name = d.name.string,
-                .location = d.value.location,
-                .params = generic_info.params,
-                .param_abstract_constraints = generic_info.abstract_constraints,
-                .body = d.value,
-            });
-            // No concrete type emitted now
-            const noop = try self.makeNoopNode(d.value.location);
-            try s.nodes.append(noop);
-            return .{ .node = noop, .ty = .{ .builtin = .Any } };
-        } else {
-            return switch (d.value.*.content) {
-                .struct_type_literal => |st_lit| blk_struct: {
-                    if (d.kind == .c_enum) return error.NotYetImplemented;
-                    var td: *sg.TypeDeclaration = undefined;
-                    if (s.types.get(d.name.string)) |existing| {
-                        td = existing;
-                    } else {
-                        const stub = try self.allocator.create(sg.StructType);
-                        stub.* = .{ .fields = &.{}, .layout = if (d.kind == .c_union) .c_union else .regular };
-                        td = try self.allocator.create(sg.TypeDeclaration);
-                        td.* = .{ .name = d.name.string, .origin_file = self.locationPath(d.value.location), .ty = .{ .struct_type = stub } };
-                        try s.types.put(d.name.string, td);
-                        _ = try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
-                    }
-
-                    const st_ptr = try self.structTypeFromLiteral(st_lit, s);
-                    const dst_const = td.ty.struct_type;
-                    const dst: *sg.StructType = @constCast(dst_const);
-                    dst.fields = st_ptr.fields;
-                    dst.layout = if (d.kind == .c_union) .c_union else .regular;
-                    if (dst.identity == null) {
-                        const identity = try self.allocator.create(sg.GenericTypeIdentity);
-                        identity.* = .{
-                            .base_name = d.name.string,
-                            .arg_names = &.{},
-                            .arg_values = &.{},
-                        };
-                        dst.identity = .{ .generic = identity };
-                    }
-                    _ = try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
-                    const noop = try self.makeNoopNode(d.value.location);
-                    break :blk_struct .{ .node = noop, .ty = .{ .builtin = .Any } };
-                },
-                .choice_type_literal => |ct_lit| blk_choice: {
-                    if (d.kind == .c_union) return error.NotYetImplemented;
-                    var td: *sg.TypeDeclaration = undefined;
-                    if (s.types.get(d.name.string)) |existing| {
-                        if (existing.ty != .choice_type) return error.SymbolAlreadyDefined;
-                        td = existing;
-                    } else {
-                        const stub = try self.allocator.create(sg.ChoiceType);
-                        stub.* = .{ .variants = &.{}, .layout = if (d.kind == .c_enum) .c_enum else .regular };
-
-                        td = try self.allocator.create(sg.TypeDeclaration);
-                        td.* = .{
-                            .name = d.name.string,
-                            .origin_file = self.locationPath(d.value.location),
-                            .ty = .{ .choice_type = stub },
-                        };
-                        try s.types.put(d.name.string, td);
-
-                        _ = try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
-                    }
-
-                    var variants = std.array_list.Managed(sg.ChoiceVariant).init(self.allocator.*);
-                    for (ct_lit.variants, 0..) |variant, idx| {
-                        if (d.kind == .c_enum and variant.payload_type != null) {
-                            try self.diags.add(
-                                variant.name.location,
-                                .semantic,
-                                "CEnum variant '..{s}' cannot carry a payload",
-                                .{variant.name.string},
-                            );
-                            return error.Reported;
-                        }
-                        const payload_type = if (variant.payload_type) |pt| try self.resolveTypePreservingAbstracts(pt, s) else null;
-                        const option_decl = if (payload_type == null) blk_option: {
-                            if (variant.module_qualifier) |qualifier| {
-                                break :blk_option try self.resolveChoiceOptionReference(
-                                    qualifier.string,
-                                    variant.name.string,
-                                    variant.name.location,
-                                    s,
-                                );
-                            }
-                            break :blk_option self.resolveChoiceOptionReference(
-                                null,
-                                variant.name.string,
-                                variant.name.location,
-                                s,
-                            ) catch |err| switch (err) {
-                                error.SymbolNotFound => null,
-                                else => return err,
-                            };
-                        } else null;
-                        try variants.append(.{
-                            .name = variant.name.string,
-                            .value = if (option_decl) |decl| @intCast(decl.id) else @intCast(idx),
-                            .payload_type = payload_type,
-                            .option_decl = option_decl,
-                        });
-                    }
-
-                    const choice_ptr_const = td.ty.choice_type;
-                    const choice_ptr: *sg.ChoiceType = @constCast(choice_ptr_const);
-                    choice_ptr.variants = try variants.toOwnedSlice();
-                    choice_ptr.layout = if (d.kind == .c_enum) .c_enum else .regular;
-                    if (choice_ptr.identity == null) {
-                        const identity = try self.allocator.create(sg.GenericTypeIdentity);
-                        identity.* = .{
-                            .base_name = d.name.string,
-                            .arg_names = &.{},
-                            .arg_values = &.{},
-                        };
-                        choice_ptr.identity = .{ .generic = identity };
-                    }
-                    variants.deinit();
-
-                    _ = try self.appendTypeDeclarationNodeIfMissing(s, td, d.value.location);
-                    const noop = try self.makeNoopNode(d.value.location);
-                    break :blk_choice .{ .node = noop, .ty = .{ .builtin = .Any } };
-                },
-                else => error.NotYetImplemented,
-            };
-        }
-    }
 
     //──────────────────────────────────────────────────── FUNCTION DECLARATION
-    fn handleFuncDecl(
-        self: *Semantizer,
-        f: syn.FunctionDeclaration,
-        p: *Scope,
-        loc: tok.Location,
-        is_test: bool,
-    ) SemErr!typ.TypedExpr {
-        return switch (self.function_semantize_mode) {
-            .full => self.handleFuncDeclFull(f, p, loc, is_test),
-            .interface_only => self.handleFuncDeclInterface(f, p, loc, is_test),
-            .body_only => self.handleFuncDeclBody(f, p, loc, is_test),
-        };
-    }
-
-    fn handleTestDecl(
-        self: *Semantizer,
-        td: syn.TestDeclaration,
-        p: *Scope,
-        loc: tok.Location,
-    ) SemErr!typ.TypedExpr {
-        if (p.parent != null) {
-            try self.diags.add(loc, .semantic, "tests are only supported at top level", .{});
-            return error.Reported;
-        }
-        try self.validateTestSignature(td.decl, loc, p);
-        return self.handleFuncDecl(td.decl, p, loc, true);
-    }
-
-    fn handleFuncDeclFull(
-        self: *Semantizer,
-        f: syn.FunctionDeclaration,
-        p: *Scope,
-        loc: tok.Location,
-        is_test: bool,
-    ) SemErr!typ.TypedExpr {
-        try self.requireExplicitFunctionFieldTypes(f, loc);
-        // Register generic template and skip direct emission
-        if (f.generic_params.len > 0 or f.generic_params_struct != null) {
-            if (f.is_once) {
-                try self.diags.add(
-                    loc,
-                    .semantic,
-                    "once is not supported on generic functions yet",
-                    .{},
-                );
-                return error.Reported;
-            }
-            const params_struct = try self.genericParamsStructOrNames(
-                f.generic_params_struct,
-                f.generic_params,
-                f.name.location,
-            );
-            const generic_info = try self.genericParamDefsAndConstraintsFromSyntax(params_struct, p);
-            try p.appendGenericFunctionTemplate(f.name.string, .{
-                .name = f.name.string,
-                .location = loc,
-                .params = generic_info.params,
-                .param_abstract_constraints = generic_info.abstract_constraints,
-                .dispatch_kind = .regular,
-                .input = f.input,
-                .output = f.output,
-                .body = f.body,
-            });
-            // Return a no-op node for generic template
-            const noop = try self.makeNoopNode(loc);
-            try p.nodes.append(noop);
-            return .{ .node = noop, .ty = .{ .builtin = .Any } };
-        }
-
-        if (try self.registerAbstractContractTemplateIfNeeded(f, p, loc)) {
-            const noop = try self.makeNoopNode(loc);
-            try p.nodes.append(noop);
-            return .{ .node = noop, .ty = .{ .builtin = .Any } };
-        }
-
-        if (f.is_once and f.body == null) {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "once is not supported on extern functions",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        var child = try Scope.init(self.allocator, p, null);
-        // ── entrada
-        var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
-        var input_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
-        defer input_bindings.deinit();
-        for (f.input.fields) |fld| {
-            const ty = self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| return err;
-            const dvp = if (fld.default_value) |n|
-                ((self.visitNode(n.*, &child) catch |err| return err)).node
-            else
-                null;
-
-            try in_fields.append(.{
-                .name = fld.name.string,
-                .ty = ty,
-                .default_value = dvp,
-            });
-
-            const bd = try self.allocator.create(sg.BindingDeclaration);
-            bd.* = .{
-                .name = fld.name.string,
-                .location = fld.name.location,
-                .origin_file = self.locationPath(loc),
-                .mutability = .constant,
-                .ty = ty,
-                .initialization = dvp,
-            };
-            try child.bindings.put(fld.name.string, bd);
-            try input_bindings.append(bd);
-        }
-        const in_struct_ptr = try self.allocator.create(sg.StructType);
-        in_struct_ptr.* = .{ .fields = try in_fields.toOwnedSlice() };
-        in_fields.deinit();
-        const input_binding_slice = try input_bindings.toOwnedSlice();
-        input_bindings.deinit();
-
-        // ── salida
-        var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
-        var output_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
-        defer output_bindings.deinit();
-        var uses_inferred_error_reasons = false;
-        for (f.output.fields) |fld| {
-            const ty = if (self.inferableErrableInnerTypeFromOutput(fld.type.?)) |inner| blk: {
-                uses_inferred_error_reasons = true;
-                break :blk self.makeInferredErrableType(inner, &child, fld.name.location) catch |err| return err;
-            } else self.resolveTypePreservingAbstracts(fld.type.?, &child) catch |err| return err;
-            const dvp = if (fld.default_value) |n|
-                ((self.visitNode(n.*, &child) catch |err| return err)).node
-            else
-                null;
-
-            try out_fields.append(.{
-                .name = fld.name.string,
-                .ty = ty,
-                .default_value = dvp,
-            });
-
-            const bd = try self.allocator.create(sg.BindingDeclaration);
-            bd.* = .{
-                .name = fld.name.string,
-                .location = fld.name.location,
-                .origin_file = self.locationPath(loc),
-                .mutability = .variable,
-                .ty = ty,
-                .initialization = dvp,
-            };
-            try child.bindings.put(fld.name.string, bd);
-            try output_bindings.append(bd);
-        }
-        const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
-        const output_binding_slice = try output_bindings.toOwnedSlice();
-        out_fields.deinit();
-        output_bindings.deinit();
-
-        var existing_fn: ?*sg.FunctionDeclaration = null;
-        if (p.functions.getPtr(f.name.string)) |list_ptr| {
-            for (list_ptr.items) |cand| {
-                if (cand.location.file == loc.file and cand.location.offset == loc.offset) {
-                    existing_fn = cand;
-                    break;
-                }
-            }
-        }
-
-        const fn_ptr = blk: {
-            if (existing_fn) |cand| {
-                cand.input = in_struct_ptr.*;
-                cand.output = out_struct;
-                cand.is_test = is_test;
-                cand.uses_inferred_error_reasons = uses_inferred_error_reasons;
-                cand.input_bindings = input_binding_slice;
-                cand.output_bindings = output_binding_slice;
-                break :blk cand;
-            }
-
-            const created = try self.allocator.create(sg.FunctionDeclaration);
-            created.* = .{
-                .id = self.freshFunctionId(),
-                .name = f.name.string,
-                .location = loc,
-                .safety_primitive = self.safetyPrimitiveForDeclaration(f.name.string, self.locationPath(loc)),
-                .is_deinit = std.mem.eql(u8, f.name.string, "deinit"),
-                .is_once = f.is_once,
-                .is_test = is_test,
-                .input = in_struct_ptr.*,
-                .output = out_struct,
-                .body = null,
-                .has_declared_body = f.body != null,
-                .uses_inferred_error_reasons = uses_inferred_error_reasons,
-                .input_bindings = input_binding_slice,
-                .output_bindings = output_binding_slice,
-            };
-
-            if (p.functions.getPtr(f.name.string)) |list_ptr| {
-                for (list_ptr.items) |cand| {
-                    if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = &created.input })) {
-                        return error.SymbolAlreadyDefined;
-                    }
-                }
-            }
-            try p.appendFunction(f.name.string, created);
-            break :blk created;
-        };
-
-        if (is_test)
-            try self.appendTestDeclarationNodeIfMissing(p, fn_ptr, loc)
-        else
-            try self.appendFunctionDeclarationNodeIfMissing(p, fn_ptr, loc);
-        child.current_fn = fn_ptr;
-
-        // ── cuerpo
-        var body_cb: ?*sg.CodeBlock = null;
-        if (f.body) |body_node| {
-            try self.function_reach_stack.append(.{
-                .function_name = f.name.string,
-                .location = loc,
-                .input_struct = in_struct_ptr,
-                .body_scope = &child,
-            });
-            defer _ = self.function_reach_stack.pop();
-            const body_te = try self.visitNode(body_node.*, &child);
-            body_cb = body_te.node.content.code_block;
-        }
-
-        fn_ptr.input = in_struct_ptr.*;
-        fn_ptr.body = body_cb;
-        self.clearDeferred(&child);
-        const noop = try self.makeNoopNode(loc);
-        return .{ .node = noop, .ty = .{ .builtin = .Any } };
-    }
-
-    fn handleFuncDeclInterface(
-        self: *Semantizer,
-        f: syn.FunctionDeclaration,
-        p: *Scope,
-        loc: tok.Location,
-        is_test: bool,
-    ) SemErr!typ.TypedExpr {
-        const fn_ptr = try self.registerFunctionInterface(f, p, loc, is_test);
-        if (fn_ptr) |resolved_fn| {
-            const top_node = self.current_top_node orelse {
-                try self.diags.add(loc, .semantic, "internal error: missing top-level function node during staged semantizing", .{});
-                return error.Reported;
-            };
-            try self.enqueuePendingFunctionBody(top_node, f, loc, resolved_fn, is_test);
-        }
-        const noop = try self.makeNoopNode(loc);
-        return .{ .node = noop, .ty = .{ .builtin = .Any } };
-    }
-
-    fn handleFuncDeclBody(
-        self: *Semantizer,
-        f: syn.FunctionDeclaration,
-        p: *Scope,
-        loc: tok.Location,
-        is_test: bool,
-    ) SemErr!typ.TypedExpr {
-        _ = f;
-        _ = p;
-        _ = is_test;
-        const noop = try self.makeNoopNode(loc);
-        return .{ .node = noop, .ty = .{ .builtin = .Any } };
-    }
-
-    fn registerFunctionInterface(
-        self: *Semantizer,
-        f: syn.FunctionDeclaration,
-        p: *Scope,
-        loc: tok.Location,
-        is_test: bool,
-    ) SemErr!?*sg.FunctionDeclaration {
-        try self.requireExplicitFunctionFieldTypes(f, loc);
-        if (f.generic_params.len > 0 or f.generic_params_struct != null) {
-            if (f.is_once) {
-                try self.diags.add(
-                    loc,
-                    .semantic,
-                    "once is not supported on generic functions yet",
-                    .{},
-                );
-                return error.Reported;
-            }
-            const params_struct = try self.genericParamsStructOrNames(
-                f.generic_params_struct,
-                f.generic_params,
-                f.name.location,
-            );
-            const generic_info = try self.genericParamDefsAndConstraintsFromSyntax(params_struct, p);
-            try p.appendGenericFunctionTemplate(f.name.string, .{
-                .name = f.name.string,
-                .location = loc,
-                .params = generic_info.params,
-                .param_abstract_constraints = generic_info.abstract_constraints,
-                .dispatch_kind = .regular,
-                .input = f.input,
-                .output = f.output,
-                .body = f.body,
-            });
-            return null;
-        }
-
-        if (try self.registerAbstractContractTemplateIfNeeded(f, p, loc)) return null;
-
-        if (f.is_once and f.body == null) {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "once is not supported on extern functions",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        var child = try Scope.init(self.allocator, p, null);
-        var in_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
-        defer in_fields.deinit();
-        var input_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
-        defer input_bindings.deinit();
-        for (f.input.fields) |*fld| {
-            const field_ty = &fld.type.?;
-            const ty = try self.resolveCachedSignatureType(field_ty, .preserving_abstracts, &child);
-
-            try in_fields.append(.{
-                .name = fld.name.string,
-                .ty = ty,
-                .default_value = null,
-            });
-
-            const bd = try self.allocator.create(sg.BindingDeclaration);
-            bd.* = .{
-                .name = fld.name.string,
-                .location = fld.name.location,
-                .origin_file = self.locationPath(loc),
-                .mutability = .constant,
-                .ty = ty,
-                .initialization = null,
-            };
-            try child.bindings.put(fld.name.string, bd);
-            try input_bindings.append(bd);
-        }
-        const in_struct_ptr = try self.allocator.create(sg.StructType);
-        in_struct_ptr.* = .{ .fields = try in_fields.toOwnedSlice() };
-
-        var out_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
-        defer out_fields.deinit();
-        var output_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
-        defer output_bindings.deinit();
-        var uses_inferred_error_reasons = false;
-        for (f.output.fields) |*fld| {
-            const field_ty = &fld.type.?;
-            const ty = if (self.inferableErrableInnerTypeFromOutput(field_ty.*)) |inner| blk: {
-                uses_inferred_error_reasons = true;
-                break :blk try self.makeInferredErrableType(inner, &child, fld.name.location);
-            } else try self.resolveCachedSignatureType(field_ty, .preserving_abstracts, &child);
-
-            try out_fields.append(.{
-                .name = fld.name.string,
-                .ty = ty,
-                .default_value = null,
-            });
-
-            const bd = try self.allocator.create(sg.BindingDeclaration);
-            bd.* = .{
-                .name = fld.name.string,
-                .location = fld.name.location,
-                .origin_file = self.locationPath(loc),
-                .mutability = .variable,
-                .ty = ty,
-                .initialization = null,
-            };
-            try output_bindings.append(bd);
-        }
-
-        var existing_fn: ?*sg.FunctionDeclaration = null;
-        if (p.functions.getPtr(f.name.string)) |list_ptr| {
-            for (list_ptr.items) |cand| {
-                if (cand.location.file == loc.file and cand.location.offset == loc.offset) {
-                    existing_fn = cand;
-                    break;
-                }
-            }
-        }
-
-        const output_binding_slice = try output_bindings.toOwnedSlice();
-        const input_binding_slice = try input_bindings.toOwnedSlice();
-        const out_struct = sg.StructType{ .fields = try out_fields.toOwnedSlice() };
-
-        const fn_ptr = blk: {
-            if (existing_fn) |cand| {
-                cand.input = in_struct_ptr.*;
-                cand.output = out_struct;
-                cand.is_test = is_test;
-                cand.has_declared_body = f.body != null;
-                cand.uses_inferred_error_reasons = uses_inferred_error_reasons;
-                cand.input_bindings = input_binding_slice;
-                cand.output_bindings = output_binding_slice;
-                break :blk cand;
-            }
-
-            const created = try self.allocator.create(sg.FunctionDeclaration);
-            created.* = .{
-                .id = self.freshFunctionId(),
-                .name = f.name.string,
-                .location = loc,
-                .safety_primitive = self.safetyPrimitiveForDeclaration(f.name.string, self.locationPath(loc)),
-                .is_deinit = std.mem.eql(u8, f.name.string, "deinit"),
-                .is_once = f.is_once,
-                .is_test = is_test,
-                .input = in_struct_ptr.*,
-                .output = out_struct,
-                .body = null,
-                .has_declared_body = f.body != null,
-                .uses_inferred_error_reasons = uses_inferred_error_reasons,
-                .input_bindings = input_binding_slice,
-                .output_bindings = output_binding_slice,
-            };
-
-            if (p.functions.getPtr(f.name.string)) |list_ptr| {
-                for (list_ptr.items) |cand| {
-                    if (typ.typesExactlyEqual(.{ .struct_type = &cand.input }, .{ .struct_type = &created.input })) {
-                        return null;
-                    }
-                }
-            }
-            try p.appendFunction(f.name.string, created);
-            break :blk created;
-        };
-
-        if (is_test)
-            try self.appendTestDeclarationNodeIfMissing(p, fn_ptr, loc)
-        else
-            try self.appendFunctionDeclarationNodeIfMissing(p, fn_ptr, loc);
-        self.clearDeferred(&child);
-        return fn_ptr;
-    }
 
     fn prepareFunctionInputDefaults(
         self: *Semantizer,
@@ -5279,6 +4647,8 @@ pub const Semantizer = struct {
         const f = pending.decl;
         const loc = pending.location;
         const fn_ptr = pending.function;
+        const syntax_file = self.syntaxFile(pending.top_node);
+        const syntax_input_fields = syntax_file.structTypeLiteral(f.input).?.fields;
 
         const child = try self.allocator.create(Scope);
         child.* = try Scope.init(self.allocator, p, null);
@@ -5286,19 +4656,21 @@ pub const Semantizer = struct {
 
         const input_struct_ptr = try self.allocator.create(sg.StructType);
         var prepared_input_bindings = std.array_list.Managed(*const sg.BindingDeclaration).init(self.allocator.*);
-        if (!functionHasAnyDefaults(f.input.fields)) {
+        if (!functionHasAnyDefaults(syntax_file, syntax_input_fields)) {
             input_struct_ptr.* = .{ .fields = fn_ptr.input.fields };
-            for (f.input.fields, 0..) |fld, idx| {
+            for (syntax_input_fields, 0..) |field_node, idx| {
+                const fld = syntax_file.structTypeField(field_node).?;
+                const field_name = if (fld.inferred_result) "result" else syntax_file.tokenText(&self.diags.source_db, fld.name_token);
                 const bd = try self.allocator.create(sg.BindingDeclaration);
                 bd.* = .{
-                    .name = fld.name.string,
-                    .location = fld.name.location,
+                    .name = field_name,
+                    .location = syntax_file.tokenLocation(fld.name_token),
                     .origin_file = self.locationPath(loc),
                     .mutability = .constant,
                     .ty = fn_ptr.input.fields[idx].ty,
                     .initialization = null,
                 };
-                try child.bindings.put(fld.name.string, bd);
+                try child.bindings.put(field_name, bd);
                 try prepared_input_bindings.append(bd);
             }
             fn_ptr.input_bindings = try prepared_input_bindings.toOwnedSlice();
@@ -5313,10 +4685,12 @@ pub const Semantizer = struct {
         @memcpy(input_fields, fn_ptr.input.fields);
         input_struct_ptr.* = .{ .fields = input_fields };
 
-        for (f.input.fields, 0..) |fld, idx| {
+        for (syntax_input_fields, 0..) |field_node, idx| {
+            const fld = syntax_file.structTypeField(field_node).?;
+            const field_name = if (fld.inferred_result) "result" else syntax_file.tokenText(&self.diags.source_db, fld.name_token);
             const ty = input_struct_ptr.fields[idx].ty;
             const dvp = if (fld.default_value) |n|
-                (try self.visitNode(n.*, child)).node
+                (try self.visitNode(syntax_file.ref(n), child)).node
             else
                 null;
 
@@ -5324,14 +4698,14 @@ pub const Semantizer = struct {
 
             const bd = try self.allocator.create(sg.BindingDeclaration);
             bd.* = .{
-                .name = fld.name.string,
-                .location = fld.name.location,
+                .name = field_name,
+                .location = syntax_file.tokenLocation(fld.name_token),
                 .origin_file = self.locationPath(loc),
                 .mutability = .constant,
                 .ty = ty,
                 .initialization = dvp,
             };
-            try child.bindings.put(fld.name.string, bd);
+            try child.bindings.put(field_name, bd);
             try prepared_input_bindings.append(bd);
         }
 
@@ -5350,6 +4724,8 @@ pub const Semantizer = struct {
         _ = p;
         const f = pending.decl;
         const fn_ptr = pending.function;
+        const syntax_file = self.syntaxFile(pending.top_node);
+        const output_fields_syntax = syntax_file.structTypeLiteral(f.output).?.fields;
         const child = pending.prepared_scope orelse {
             try self.diags.add(pending.location, .semantic, "internal error: missing prepared input scope during staged semantizing", .{});
             return error.Reported;
@@ -5359,11 +4735,13 @@ pub const Semantizer = struct {
             return error.Reported;
         };
 
-        if (!functionHasAnyDefaults(f.output.fields)) {
-            for (f.output.fields, 0..) |fld, idx| {
+        if (!functionHasAnyDefaults(syntax_file, output_fields_syntax)) {
+            for (output_fields_syntax, 0..) |field_node, idx| {
+                const fld = syntax_file.structTypeField(field_node).?;
+                const field_name = if (fld.inferred_result) "result" else syntax_file.tokenText(&self.diags.source_db, fld.name_token);
                 const bd = @constCast(fn_ptr.output_bindings[idx]);
                 bd.initialization = null;
-                try child.bindings.put(fld.name.string, bd);
+                try child.bindings.put(field_name, bd);
             }
             fn_ptr.input = input_struct_ptr.*;
             return;
@@ -5372,9 +4750,11 @@ pub const Semantizer = struct {
         const output_fields = try self.allocator.alloc(sg.StructTypeField, fn_ptr.output.fields.len);
         @memcpy(output_fields, fn_ptr.output.fields);
 
-        for (f.output.fields, 0..) |fld, idx| {
+        for (output_fields_syntax, 0..) |field_node, idx| {
+            const fld = syntax_file.structTypeField(field_node).?;
+            const field_name = if (fld.inferred_result) "result" else syntax_file.tokenText(&self.diags.source_db, fld.name_token);
             const dvp = if (fld.default_value) |n|
-                (try self.visitNode(n.*, child)).node
+                (try self.visitNode(syntax_file.ref(n), child)).node
             else
                 null;
 
@@ -5382,16 +4762,16 @@ pub const Semantizer = struct {
 
             const bd = @constCast(fn_ptr.output_bindings[idx]);
             bd.initialization = dvp;
-            try child.bindings.put(fld.name.string, bd);
+            try child.bindings.put(field_name, bd);
         }
 
         fn_ptr.output = .{ .fields = output_fields };
         fn_ptr.input = input_struct_ptr.*;
     }
 
-    fn functionHasAnyDefaults(fields: []const syn.StructTypeLiteralField) bool {
-        for (fields) |field| {
-            if (field.default_value != null) return true;
+    fn functionHasAnyDefaults(file: *const syn.SyntaxFile, fields: []const syn.NodeIndex) bool {
+        for (fields) |field_node| {
+            if (file.structTypeField(field_node).?.default_value != null) return true;
         }
         return false;
     }
@@ -5411,17 +4791,19 @@ pub const Semantizer = struct {
         const f = pending.decl;
         const loc = pending.location;
         const fn_ptr = pending.function;
+        const syntax_file = self.syntaxFile(pending.top_node);
+        const function_name = syntax_file.tokenText(&self.diags.source_db, f.name_token);
 
         var body_cb: ?*sg.CodeBlock = null;
         if (f.body) |body_node| {
             try self.function_reach_stack.append(.{
-                .function_name = f.name.string,
+                .function_name = function_name,
                 .location = loc,
                 .input_struct = input_struct_ptr,
                 .body_scope = child,
             });
             defer _ = self.function_reach_stack.pop();
-            const body_te = try self.visitNode(body_node.*, child);
+            const body_te = try self.visitNode(syntax_file.ref(body_node), child);
             body_cb = body_te.node.content.code_block;
         }
 
@@ -5502,110 +4884,66 @@ pub const Semantizer = struct {
         if (s.parent == null) try self.root_list.append(node);
     }
 
-    fn appendChoiceOptionDeclarationNodeIfMissing(
+    fn compactGenericParamDefs(
         self: *Semantizer,
-        s: *Scope,
-        option_decl: *sg.ChoiceOptionDeclaration,
-        loc: tok.Location,
-    ) !*sg.SGNode {
-        for (s.nodes.items) |node| {
-            if (node.content != .choice_option_declaration) continue;
-            if (node.content.choice_option_declaration == option_decl) return node;
-        }
-
-        const node = try sg.makeSGNode(.{ .choice_option_declaration = option_decl }, loc, self.allocator);
-        try s.nodes.append(node);
-        if (s.parent == null) try self.root_list.append(node);
-        return node;
-    }
-
-    fn genericParamsStructOrNames(
-        self: *Semantizer,
-        params_struct: ?syn.StructTypeLiteral,
-        names: []const []const u8,
-        loc: tok.Location,
-    ) !syn.StructTypeLiteral {
-        if (params_struct) |st| return st;
-
-        var fields = try self.allocator.alloc(syn.StructTypeLiteralField, names.len);
-        for (names, 0..) |name, idx| {
-            fields[idx] = .{
-                .name = .{ .string = name, .location = loc },
-                .type = .{ .type_name = .{ .string = "Type", .location = loc } },
-                .default_value = null,
-            };
-        }
-        return .{ .fields = fields };
-    }
-
-    fn genericParamDefsFromSyntax(
-        self: *Semantizer,
-        params_struct: syn.StructTypeLiteral,
-        s: *Scope,
-    ) SemErr![]const gen.GenericParam {
-        return (try self.genericParamDefsAndConstraintsFromSyntax(params_struct, s)).params;
-    }
-
-    fn genericParamDefsAndConstraintsFromSyntax(
-        self: *Semantizer,
-        params_struct: syn.StructTypeLiteral,
-        s: *Scope,
+        owner: syn.SyntaxRef,
+        parameter_nodes: []const syn.NodeIndex,
+        parameter_struct: ?syn.NodeIndex,
+        scope: *Scope,
     ) SemErr!GenericParamSyntaxInfo {
-        var params = try self.allocator.alloc(gen.GenericParam, params_struct.fields.len);
-        var constraints = try self.allocator.alloc(?gen.AbstractConstraint, params_struct.fields.len);
-        for (params_struct.fields, 0..) |field, idx| {
-            constraints[idx] = null;
-            const field_ty = field.type orelse {
-                params[idx] = .{
-                    .name = field.name.string,
+        const file = self.syntaxFile(owner);
+        const nodes = if (parameter_struct) |struct_node|
+            (file.structTypeLiteral(struct_node) orelse return error.InvalidType).fields
+        else
+            parameter_nodes;
+        const params = try self.allocator.alloc(gen.GenericParam, nodes.len);
+        const constraints = try self.allocator.alloc(?gen.AbstractConstraint, nodes.len);
+        for (nodes, 0..) |parameter_node, index| {
+            constraints[index] = null;
+            if (parameter_struct == null) {
+                params[index] = .{
+                    .name = file.tokenText(&self.diags.source_db, file.mainToken(parameter_node)),
                     .kind = .type,
-                    .value_type = null,
                 };
+                continue;
+            }
+            const field = file.structTypeField(parameter_node) orelse return error.InvalidType;
+            const name = file.tokenText(&self.diags.source_db, field.name_token);
+            const type_node = field.type_node orelse {
+                params[index] = .{ .name = name, .kind = .type };
                 continue;
             };
-
-            if (field_ty == .type_name and std.mem.eql(u8, field_ty.type_name.string, "Type")) {
-                params[idx] = .{
-                    .name = field.name.string,
-                    .kind = .type,
-                    .value_type = null,
-                };
-                continue;
+            const syntax_type = file.syntaxType(type_node) orelse return error.InvalidType;
+            if (syntax_type == .name) {
+                const type_name = file.tokenText(&self.diags.source_db, syntax_type.name.name_token);
+                if (std.mem.eql(u8, type_name, "Type")) {
+                    params[index] = .{ .name = name, .kind = .type };
+                    continue;
+                }
+                if (scope.lookupAbstractInfo(type_name) != null) {
+                    params[index] = .{ .name = name, .kind = .type };
+                    constraints[index] = .{ .name = type_name };
+                    continue;
+                }
             }
-
-            if (field_ty == .type_name and s.lookupAbstractInfo(field_ty.type_name.string) != null) {
-                params[idx] = .{
-                    .name = field.name.string,
-                    .kind = .type,
-                    .value_type = null,
-                };
-                constraints[idx] = .{ .name = field_ty.type_name.string };
-                continue;
+            if (syntax_type == .generic) {
+                const base = file.syntaxType(syntax_type.generic.base) orelse return error.InvalidType;
+                if (base == .name) {
+                    const base_name = file.tokenText(&self.diags.source_db, base.name.name_token);
+                    if (scope.lookupAbstractInfo(base_name) != null) {
+                        params[index] = .{ .name = name, .kind = .type };
+                        constraints[index] = .{ .name = base_name, .args = file.ref(syntax_type.generic.arguments) };
+                        continue;
+                    }
+                }
             }
-
-            if (field_ty == .generic_type_instantiation and s.lookupAbstractInfo(field_ty.generic_type_instantiation.base_name.string) != null) {
-                params[idx] = .{
-                    .name = field.name.string,
-                    .kind = .type,
-                    .value_type = null,
-                };
-                constraints[idx] = .{
-                    .name = field_ty.generic_type_instantiation.base_name.string,
-                    .args = field_ty.generic_type_instantiation.args,
-                };
-                continue;
-            }
-
-            params[idx] = .{
-                .name = field.name.string,
+            params[index] = .{
+                .name = name,
                 .kind = .comptime_int,
-                .value_type = try self.resolveType(field_ty, s),
+                .value_type = try self.resolveTypeExpression(file.ref(type_node), scope),
             };
         }
-        return .{
-            .params = params,
-            .abstract_constraints = constraints,
-        };
+        return .{ .params = params, .abstract_constraints = constraints };
     }
 
     fn hasGenericParamNamed(params: []const gen.GenericParam, name: []const u8) bool {
@@ -5613,81 +4951,6 @@ pub const Semantizer = struct {
             if (std.mem.eql(u8, param.name, name)) return true;
         }
         return false;
-    }
-
-    fn collectHiddenComptimeParamsFromValueExpr(
-        self: *Semantizer,
-        node: *const syn.STNode,
-        params: *std.array_list.Managed(gen.GenericParam),
-        s: *Scope,
-    ) !void {
-        switch (node.content) {
-            .identifier => |name| {
-                if (hasGenericParamNamed(params.items, name)) return;
-                if (typ.builtinFromName(name) != null) return;
-                if (s.lookupType(name) != null) return;
-                if (s.lookupBinding(name) != null) return;
-                try params.append(.{
-                    .name = name,
-                    .kind = .comptime_int,
-                    .value_type = .{ .builtin = .UIntNative },
-                });
-            },
-            .binary_operation => |bo| {
-                try self.collectHiddenComptimeParamsFromValueExpr(bo.left, params, s);
-                try self.collectHiddenComptimeParamsFromValueExpr(bo.right, params, s);
-            },
-            else => {},
-        }
-    }
-
-    fn collectHiddenImplementsParamsFromType(
-        self: *Semantizer,
-        ty: syn.Type,
-        params: *std.array_list.Managed(gen.GenericParam),
-        s: *Scope,
-    ) !void {
-        switch (ty) {
-            .inferred_errable => |inner| try self.collectHiddenImplementsParamsFromType(inner.*, params, s),
-            .pointer_type => |ptr_info| try self.collectHiddenImplementsParamsFromType(ptr_info.child.*, params, s),
-            .array_type => |arr_info| try self.collectHiddenImplementsParamsFromType(arr_info.element.*, params, s),
-            .struct_type_literal => |st| {
-                for (st.fields) |field| {
-                    if (field.type) |field_ty| {
-                        try self.collectHiddenImplementsParamsFromType(field_ty, params, s);
-                    }
-                    if (field.default_value) |value_expr| {
-                        try self.collectHiddenComptimeParamsFromValueExpr(value_expr, params, s);
-                    }
-                }
-            },
-            .choice_type_literal => |ct| {
-                for (ct.variants) |variant| {
-                    if (variant.payload_type) |payload_ty| {
-                        try self.collectHiddenImplementsParamsFromType(payload_ty, params, s);
-                    }
-                }
-            },
-            .generic_type_instantiation => |g| {
-                for (g.args.fields) |field| {
-                    if (field.type) |field_ty| {
-                        try self.collectHiddenImplementsParamsFromType(field_ty, params, s);
-                    }
-                    if (field.default_value) |value_expr| {
-                        try self.collectHiddenComptimeParamsFromValueExpr(value_expr, params, s);
-                    }
-                }
-            },
-            .type_name => |name| {
-                if (hasGenericParamNamed(params.items, name.string)) return;
-                if (typ.builtinFromName(name.string) != null or s.lookupType(name.string) != null) return;
-                try params.append(.{
-                    .name = name.string,
-                    .kind = .type,
-                    .value_type = null,
-                });
-            },
-        }
     }
 
     fn intValueFitsType(self: *Semantizer, value: i64, ty: sg.Type) bool {
@@ -5702,32 +4965,26 @@ pub const Semantizer = struct {
         };
     }
 
-    fn parseComptimeIntLiteral(self: *Semantizer, lit: tok.Literal, loc: tok.Location) ?i64 {
-        _ = self;
-        _ = loc;
-        return switch (lit) {
-            .decimal_int_literal, .hexadecimal_int_literal, .octal_int_literal, .binary_int_literal => |txt| std.fmt.parseInt(i64, txt, 0) catch null,
-            else => null,
-        };
-    }
-
     fn resolveComptimeIntExpr(
         self: *Semantizer,
-        node: *const syn.STNode,
+        node: syn.SyntaxRef,
         s: *Scope,
         subst: ?*const GenericSubst,
     ) SemErr!i64 {
-        return switch (node.content) {
-            .literal => |lit| self.parseComptimeIntLiteral(lit, node.location) orelse {
-                try self.diags.add(
-                    node.location,
-                    .semantic,
-                    "expected comptime integer literal",
-                    .{},
-                );
-                return error.Reported;
+        const file = self.syntaxFile(node);
+        const location = self.nodeLocation(node);
+        return switch (file.tag(node.node)) {
+            .literal => blk: {
+                const literal = file.literal(node.node) orelse return error.InvalidType;
+                const text = file.tokenText(&self.diags.source_db, literal.token);
+                const magnitude = std.fmt.parseInt(i64, text, 0) catch {
+                    try self.diags.add(location, .semantic, "expected comptime integer literal", .{});
+                    return error.Reported;
+                };
+                break :blk if (literal.negative) -magnitude else magnitude;
             },
-            .identifier => |name| blk: {
+            .identifier => blk: {
+                const name = file.tokenText(&self.diags.source_db, file.mainToken(node.node));
                 if (subst) |subst_ptr| {
                     if (subst_ptr.ints.get(name)) |value| break :blk value;
                 }
@@ -5735,60 +4992,46 @@ pub const Semantizer = struct {
                     break :blk switch (binding.value) {
                         .comptime_int => |value| value,
                         else => {
-                            try self.diags.add(
-                                node.location,
-                                .semantic,
-                                "generic value '{s}' is not a comptime integer",
-                                .{name},
-                            );
+                            try self.diags.add(location, .semantic, "generic value '{s}' is not a comptime integer", .{name});
                             return error.Reported;
                         },
                     };
                 }
                 try self.diags.add(
-                    node.location,
+                    location,
                     .semantic,
                     "unknown comptime integer '{s}'",
                     .{name},
                 );
                 return error.Reported;
             },
-            .binary_operation => |bo| blk: {
-                const left = try self.resolveComptimeIntExpr(bo.left, s, subst);
-                const right = try self.resolveComptimeIntExpr(bo.right, s, subst);
-                break :blk switch (bo.operator) {
-                    .addition => left + right,
-                    .subtraction => left - right,
-                    .multiplication => left * right,
-                    .division => blk_div: {
-                        if (right == 0) {
-                            try self.diags.add(
-                                node.location,
-                                .semantic,
-                                "division by zero in comptime integer expression",
-                                .{},
-                            );
-                            return error.Reported;
-                        }
-                        break :blk_div @divTrunc(left, right);
-                    },
-                    .modulo => blk_mod: {
-                        if (right == 0) {
-                            try self.diags.add(
-                                node.location,
-                                .semantic,
-                                "modulo by zero in comptime integer expression",
-                                .{},
-                            );
-                            return error.Reported;
-                        }
-                        break :blk_mod @mod(left, right);
-                    },
-                };
+            .binary_add, .binary_subtract, .binary_multiply, .binary_divide, .binary_modulo => blk: {
+                const operation = file.binaryOperation(node.node) orelse return error.InvalidType;
+                const left = try self.resolveComptimeIntExpr(file.ref(operation.lhs), s, subst);
+                const right = try self.resolveComptimeIntExpr(file.ref(operation.rhs), s, subst);
+                const operator = file.tokenText(&self.diags.source_db, file.mainToken(node.node));
+                if (std.mem.eql(u8, operator, "+")) break :blk left + right;
+                if (std.mem.eql(u8, operator, "-")) break :blk left - right;
+                if (std.mem.eql(u8, operator, "*")) break :blk left * right;
+                if (std.mem.eql(u8, operator, "/")) {
+                    if (right == 0) {
+                        try self.diags.add(location, .semantic, "division by zero in comptime integer expression", .{});
+                        return error.Reported;
+                    }
+                    break :blk @divTrunc(left, right);
+                }
+                if (std.mem.eql(u8, operator, "%")) {
+                    if (right == 0) {
+                        try self.diags.add(location, .semantic, "modulo by zero in comptime integer expression", .{});
+                        return error.Reported;
+                    }
+                    break :blk @mod(left, right);
+                }
+                return error.InvalidType;
             },
             else => {
                 try self.diags.add(
-                    node.location,
+                    location,
                     .semantic,
                     "expected comptime integer expression",
                     .{},
@@ -5800,17 +5043,19 @@ pub const Semantizer = struct {
 
     fn resolveTypeExpressionWithSubst(
         self: *Semantizer,
-        node: *const syn.STNode,
+        node: syn.SyntaxRef,
         s: *Scope,
         subst: *const GenericSubst,
     ) SemErr!sg.Type {
-        return switch (node.content) {
-            .identifier => |name| blk: {
+        const file = self.syntaxFile(node);
+        if (file.syntaxType(node.node) != null) return self.resolveSyntaxTypeWithSubstPreservingAbstracts(node, s, subst);
+        return switch (file.tag(node.node)) {
+            .identifier => blk: {
+                const name = file.tokenText(&self.diags.source_db, file.mainToken(node.node));
                 if (subst.types.get(name)) |mapped| break :blk mapped;
-                const ty_ast = syn.Type{ .type_name = syn.Name{ .string = name, .location = node.location } };
-                break :blk self.resolveType(ty_ast, s) catch {
+                break :blk self.resolveSyntaxTypeName(node, file.mainToken(node.node), null, s, false) catch {
                     try self.diags.add(
-                        node.location,
+                        self.nodeLocation(node),
                         .semantic,
                         "unknown type '{s}'",
                         .{name},
@@ -5818,16 +5063,9 @@ pub const Semantizer = struct {
                     return error.Reported;
                 };
             },
-            .struct_type_literal => |lit| blk: {
-                const struct_ty = try self.structTypeFromLiteralWithSubst(lit, s, subst);
-                break :blk .{ .struct_type = struct_ty };
-            },
-            .function_call => |fc| blk: {
-                if (std.mem.eql(u8, fc.callee, "type_of")) {
-                    break :blk try self.typeOfCallResultType(fc, s);
-                }
+            .function_call => {
                 try self.diags.add(
-                    node.location,
+                    self.nodeLocation(node),
                     .semantic,
                     "unsupported expression in type generic argument",
                     .{},
@@ -5836,7 +5074,7 @@ pub const Semantizer = struct {
             },
             else => {
                 try self.diags.add(
-                    node.location,
+                    self.nodeLocation(node),
                     .semantic,
                     "expected type expression",
                     .{},
@@ -5844,91 +5082,6 @@ pub const Semantizer = struct {
                 return error.Reported;
             },
         };
-    }
-
-    fn resolveArrayTypeFromGenericArgs(
-        self: *Semantizer,
-        loc: tok.Location,
-        gen_args: syn.StructTypeLiteral,
-        s: *Scope,
-        subst: ?*const GenericSubst,
-    ) SemErr!sg.Type {
-        var length_opt: ?i64 = null;
-        var element_ty_opt: ?sg.Type = null;
-
-        for (gen_args.fields) |field| {
-            if (std.mem.eql(u8, field.name.string, "n")) {
-                const value_node = field.default_value orelse {
-                    try self.diags.add(
-                        loc,
-                        .semantic,
-                        "Array expects '.n = <comptime integer expression>'",
-                        .{},
-                    );
-                    return error.Reported;
-                };
-                length_opt = try self.resolveComptimeIntExpr(value_node, s, subst);
-            } else if (std.mem.eql(u8, field.name.string, "t")) {
-                if (field.type) |field_ty| {
-                    element_ty_opt = if (subst) |subst_ptr|
-                        try self.resolveTypeWithSubst(field_ty, s, subst_ptr)
-                    else
-                        try self.resolveType(field_ty, s);
-                } else if (field.default_value) |type_expr| {
-                    element_ty_opt = if (subst) |subst_ptr|
-                        try self.resolveTypeExpressionWithSubst(type_expr, s, subst_ptr)
-                    else
-                        try self.resolveTypeExpression(type_expr, s);
-                } else {
-                    try self.diags.add(
-                        loc,
-                        .semantic,
-                        "Array expects '.t: <type>'",
-                        .{},
-                    );
-                    return error.Reported;
-                }
-            } else {
-                try self.diags.add(
-                    loc,
-                    .semantic,
-                    "Array only accepts '.n' and '.t' parameters",
-                    .{},
-                );
-                return error.Reported;
-            }
-        }
-
-        const length = length_opt orelse {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "Array is missing '.n = <comptime integer expression>'",
-                .{},
-            );
-            return error.Reported;
-        };
-        if (length < 0) {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "Array length cannot be negative",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        const element_ty = element_ty_opt orelse {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "Array is missing '.t: <type>'",
-                .{},
-            );
-            return error.Reported;
-        };
-
-        return try self.makeArrayType(@intCast(length), element_ty);
     }
 
     fn makeArrayType(self: *Semantizer, length: usize, element_ty: sg.Type) !sg.Type {
@@ -5959,155 +5112,26 @@ pub const Semantizer = struct {
         return .{ .array_type = sem_arr };
     }
 
-    fn resolveSpecialGenericType(
-        self: *Semantizer,
-        g: @FieldType(syn.Type, "generic_type_instantiation"),
-        s: *Scope,
-        subst: ?*const GenericSubst,
-    ) SemErr!?sg.Type {
-        if (std.mem.eql(u8, g.base_name.string, "choice_union")) {
-            return try self.resolveChoiceUnionFromGenericArgs(g.base_name.location, g.args, s, subst);
-        }
-        if (std.mem.eql(u8, g.base_name.string, "Array")) {
-            return try self.resolveArrayTypeFromGenericArgs(g.base_name.location, g.args, s, subst);
-        }
-        if (std.mem.eql(u8, g.base_name.string, "Virtual")) {
-            return try self.resolveVirtualTypeFromGenericArgs(g.base_name.location, g.args, s);
-        }
-
-        return null;
-    }
-
-    fn resolveChoiceUnionFromGenericArgs(
-        self: *Semantizer,
-        location: tok.Location,
-        args: syn.StructTypeLiteral,
-        s: *Scope,
-        subst: ?*const GenericSubst,
-    ) SemErr!sg.Type {
-        if (args.fields.len != 2) {
-            try self.diags.add(location, .semantic, "choice_union expects exactly '.a: <choice>' and '.b: <choice>'", .{});
-            return error.Reported;
-        }
-
-        var left: ?sg.Type = null;
-        var right: ?sg.Type = null;
-        for (args.fields) |field| {
-            const field_ty = field.type orelse {
-                try self.diags.add(field.name.location, .semantic, "choice_union argument '.{s}' must be a type", .{field.name.string});
-                return error.Reported;
-            };
-            const resolved = if (subst) |subst_ptr|
-                try self.resolveTypeWithSubstPreservingAbstracts(field_ty, s, subst_ptr)
-            else
-                try self.resolveTypePreservingAbstracts(field_ty, s);
-            if (std.mem.eql(u8, field.name.string, "a")) {
-                left = resolved;
-            } else if (std.mem.eql(u8, field.name.string, "b")) {
-                right = resolved;
-            } else {
-                try self.diags.add(field.name.location, .semantic, "choice_union only accepts '.a' and '.b'", .{});
-                return error.Reported;
-            }
-        }
-
-        const left_ty = left orelse {
-            try self.diags.add(location, .semantic, "choice_union is missing '.a'", .{});
-            return error.Reported;
-        };
-        const right_ty = right orelse {
-            try self.diags.add(location, .semantic, "choice_union is missing '.b'", .{});
-            return error.Reported;
-        };
-        if (left_ty != .choice_type or right_ty != .choice_type) {
-            try self.diags.add(location, .semantic, "choice_union arguments must both be choice types", .{});
-            return error.Reported;
-        }
-
-        const union_ty = try self.allocator.create(sg.ChoiceType);
-        union_ty.* = .{ .variants = &.{} };
-        for (left_ty.choice_type.variants) |variant| {
-            _ = try typ.appendChoiceVariant(union_ty, variant, self.allocator);
-        }
-        for (right_ty.choice_type.variants) |variant| {
-            _ = try typ.appendChoiceVariant(union_ty, variant, self.allocator);
-        }
-        // A type union is set-like even though ordinary choice declarations
-        // retain source order for layout. Canonicalize only this builtin's
-        // result so union order and nesting do not change type identity.
-        const variants = @constCast(union_ty.variants);
-        var i: usize = 1;
-        while (i < variants.len) : (i += 1) {
-            var j = i;
-            while (j > 0 and std.mem.order(u8, variants[j - 1].name, variants[j].name) == .gt) : (j -= 1) {
-                const previous = variants[j - 1];
-                variants[j - 1] = variants[j];
-                variants[j] = previous;
-            }
-        }
-        return .{ .choice_type = union_ty };
-    }
-
-    fn resolveVirtualTypeFromGenericArgs(
-        self: *Semantizer,
-        location: tok.Location,
-        args: syn.StructTypeLiteral,
-        s: *Scope,
-    ) SemErr!sg.Type {
-        if (args.fields.len != 1 or !std.mem.eql(u8, args.fields[0].name.string, "abstract")) {
-            try self.diags.add(location, .semantic, "Virtual expects exactly '.abstract: <Abstract>'", .{});
-            return error.Reported;
-        }
-        const abstract_syntax = args.fields[0].type orelse return error.InvalidType;
-        const abstract_name = switch (abstract_syntax) {
-            .type_name => |name| name.string,
-            else => return error.InvalidType,
-        };
-        if (s.lookupAbstractInfo(abstract_name) == null) {
-            try self.diags.add(args.fields[0].name.location, .semantic, "'{s}' is not an Abstract type", .{abstract_name});
-            return error.Reported;
-        }
-        const abstract_decl = s.lookupType(abstract_name) orelse return error.UnknownType;
-        if (abstract_decl.ty != .abstract_type) return error.InvalidType;
-
-        const any_type = try self.allocator.create(sg.Type);
-        any_type.* = .{ .builtin = .Any };
-        const data_pointer = try self.allocator.create(sg.PointerType);
-        data_pointer.* = .{ .mutability = .read_write, .child = any_type };
-        const vtable_pointer = try self.allocator.create(sg.PointerType);
-        vtable_pointer.* = .{ .mutability = .read_only, .child = any_type };
-        const fields = try self.allocator.alloc(sg.StructTypeField, 2);
-        fields[0] = .{ .name = "data", .ty = .{ .pointer_type = data_pointer } };
-        fields[1] = .{ .name = "vtable", .ty = .{ .pointer_type = vtable_pointer } };
-
-        const arg_names = try self.allocator.alloc([]const u8, 1);
-        arg_names[0] = "abstract";
-        const arg_values = try self.allocator.alloc(sg.GenericIdentityArg, 1);
-        arg_values[0] = .{ .type = abstract_decl.ty };
-        const identity = try self.allocator.create(sg.GenericTypeIdentity);
-        identity.* = .{ .base_name = "Virtual", .arg_names = arg_names, .arg_values = arg_values };
-        const virtual_type = try self.allocator.create(sg.StructType);
-        virtual_type.* = .{ .fields = fields, .identity = .{ .generic = identity } };
-        return .{ .struct_type = virtual_type };
-    }
-
     fn resolveExplicitGenericArg(
         self: *Semantizer,
-        field: syn.StructTypeLiteralField,
+        field_node: syn.SyntaxRef,
         param: gen.GenericParam,
         s: *Scope,
         subst: *const GenericSubst,
     ) SemErr!gen.GenericArgValue {
+        const file = self.syntaxFile(field_node);
+        const field = file.structTypeField(field_node.node) orelse return error.InvalidType;
+        const field_location = file.tokenLocation(field.name_token);
         return switch (param.kind) {
             .type => blk: {
-                if (field.type) |ty_node| {
-                    break :blk .{ .type = try self.resolveTypeWithSubst(ty_node, s, subst) };
+                if (field.type_node) |type_node| {
+                    break :blk .{ .type = try self.resolveSyntaxTypeWithSubstPreservingAbstracts(file.ref(type_node), s, subst) };
                 }
                 if (field.default_value) |type_expr| {
-                    break :blk .{ .type = try self.resolveTypeExpressionWithSubst(type_expr, s, subst) };
+                    break :blk .{ .type = try self.resolveTypeExpressionWithSubst(file.ref(type_expr), s, subst) };
                 }
                 try self.diags.add(
-                    field.name.location,
+                    field_location,
                     .semantic,
                     "generic parameter '.{s}' expects a type argument",
                     .{param.name},
@@ -6117,18 +5141,18 @@ pub const Semantizer = struct {
             .comptime_int => blk: {
                 const value_node = field.default_value orelse {
                     try self.diags.add(
-                        field.name.location,
+                        field_location,
                         .semantic,
                         "generic parameter '.{s}' expects a comptime integer expression",
                         .{param.name},
                     );
                     return error.Reported;
                 };
-                const value = try self.resolveComptimeIntExpr(value_node, s, subst);
+                const value = try self.resolveComptimeIntExpr(file.ref(value_node), s, subst);
                 if (param.value_type) |value_ty| {
                     if (!self.intValueFitsType(value, value_ty)) {
                         try self.diags.add(
-                            value_node.location,
+                            file.location(value_node),
                             .semantic,
                             "generic integer argument '.{s}' does not fit expected type",
                             .{param.name},
@@ -6149,437 +5173,198 @@ pub const Semantizer = struct {
         }
     }
 
-    fn makeGenericIdentityArg(self: *Semantizer, value: gen.GenericArgValue) sg.GenericIdentityArg {
-        _ = self;
-        return switch (value) {
-            .type => |ty| .{ .type = ty },
-            .comptime_int => |int_value| .{ .comptime_int = int_value },
-        };
-    }
-
-    fn valueExprUsesParam(node: *const syn.STNode, param: []const u8) bool {
-        return switch (node.content) {
-            .identifier => |name| std.mem.eql(u8, name, param),
-            .binary_operation => |bo| valueExprUsesParam(bo.left, param) or valueExprUsesParam(bo.right, param),
-            else => false,
-        };
-    }
-
-    fn rewriteAbstractTypeForTemplate(
+    fn compactAbstractConstraintForType(
         self: *Semantizer,
-        ty: syn.Type,
-        hidden_name: []const u8,
-        abstract_name: []const u8,
-    ) !syn.Type {
-        return switch (ty) {
-            .type_name => |tn| {
-                if (std.mem.eql(u8, tn.string, abstract_name)) {
-                    return .{ .type_name = .{ .string = hidden_name, .location = tn.location } };
-                }
-                return ty;
+        owner: syn.SyntaxRef,
+        type_node: syn.NodeIndex,
+        scope: *Scope,
+    ) ?gen.AbstractConstraint {
+        const file = self.syntaxFile(owner);
+        const syntax_type = file.syntaxType(type_node) orelse return null;
+        const abstract_type_node = switch (syntax_type) {
+            .pointer => |pointer| pointer.child,
+            else => type_node,
+        };
+        return switch (file.syntaxType(abstract_type_node) orelse return null) {
+            .name => |name| blk: {
+                if (name.qualifier_token != null) break :blk null;
+                const text = file.tokenText(&self.diags.source_db, name.name_token);
+                if (scope.lookupAbstractInfo(text) == null) break :blk null;
+                break :blk .{ .name = text };
             },
-            .inferred_errable => |inner| blk: {
-                const rewritten = try self.rewriteAbstractTypeForTemplate(inner.*, hidden_name, abstract_name);
-                const child = try self.allocator.create(syn.Type);
-                child.* = rewritten;
-                break :blk .{ .inferred_errable = child };
+            .generic => |generic| blk: {
+                const base = file.syntaxType(generic.base) orelse break :blk null;
+                if (base != .name or base.name.qualifier_token != null) break :blk null;
+                const text = file.tokenText(&self.diags.source_db, base.name.name_token);
+                if (scope.lookupAbstractInfo(text) == null) break :blk null;
+                break :blk .{ .name = text, .args = file.ref(generic.arguments) };
             },
-            .generic_type_instantiation => |g| {
-                if (std.mem.eql(u8, g.base_name.string, abstract_name)) {
-                    return .{ .type_name = .{ .string = hidden_name, .location = g.base_name.location } };
-                }
-                return ty;
-            },
-            .pointer_type => |ptr_info| blk: {
-                const child = try self.allocator.create(syn.Type);
-                child.* = try self.rewriteAbstractTypeForTemplate(ptr_info.child.*, hidden_name, abstract_name);
-
-                const ptr = try self.allocator.create(syn.PointerType);
-                ptr.* = .{
-                    .mutability = ptr_info.mutability,
-                    .child = child,
-                };
-                break :blk .{ .pointer_type = ptr };
-            },
-            .array_type => |arr_info| blk: {
-                const element = try self.allocator.create(syn.Type);
-                element.* = try self.rewriteAbstractTypeForTemplate(arr_info.element.*, hidden_name, abstract_name);
-
-                const arr = try self.allocator.create(syn.ArrayType);
-                arr.* = .{
-                    .length = arr_info.length,
-                    .element = element,
-                };
-                break :blk .{ .array_type = arr };
-            },
-            .struct_type_literal => |st| blk: {
-                var fields = try self.allocator.alloc(syn.StructTypeLiteralField, st.fields.len);
-                for (st.fields, 0..) |field, i| {
-                    fields[i] = field;
-                    if (field.type) |field_ty| {
-                        fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, abstract_name);
-                    }
-                }
-                break :blk .{ .struct_type_literal = .{ .fields = fields } };
-            },
-            .choice_type_literal => ty,
+            else => null,
         };
     }
 
-    fn outputUsesAbstractWithoutDefault(self: *Semantizer, ty: syn.Type, s: *Scope) bool {
-        return switch (ty) {
-            .type_name => |tn| {
-                if (s.lookupAbstractInfo(tn.string) != null and s.lookupAbstractDefault(tn.string) == null) return true;
-                return false;
+    fn compactOutputUsesUnboundAbstract(
+        self: *Semantizer,
+        owner: syn.SyntaxRef,
+        type_node: syn.NodeIndex,
+        bound_abstracts: []const gen.GenericParam,
+        scope: *Scope,
+    ) bool {
+        const file = self.syntaxFile(owner);
+        return switch (file.syntaxType(type_node) orelse return false) {
+            .name => |name| blk: {
+                const text = file.tokenText(&self.diags.source_db, name.name_token);
+                if (scope.lookupAbstractInfo(text) == null or scope.lookupAbstractDefault(text) != null) break :blk false;
+                for (bound_abstracts) |bound| if (std.mem.eql(u8, bound.name, text)) break :blk false;
+                break :blk true;
             },
-            .inferred_errable => |inner| self.outputUsesAbstractWithoutDefault(inner.*, s),
-            .generic_type_instantiation => |g| {
-                if (s.lookupAbstractInfo(g.base_name.string) != null and s.lookupAbstractDefault(g.base_name.string) == null) return true;
-                return false;
-            },
-            .pointer_type => |ptr_info| self.outputUsesAbstractWithoutDefault(ptr_info.child.*, s),
-            .array_type => |arr_info| self.outputUsesAbstractWithoutDefault(arr_info.element.*, s),
-            .struct_type_literal => |st| blk: {
-                for (st.fields) |field| {
-                    if (field.type) |field_ty| {
-                        if (self.outputUsesAbstractWithoutDefault(field_ty, s)) break :blk true;
+            .generic => |generic| blk: {
+                const base = file.syntaxType(generic.base) orelse break :blk false;
+                if (base == .name) {
+                    const text = file.tokenText(&self.diags.source_db, base.name.name_token);
+                    if (scope.lookupAbstractInfo(text) != null and scope.lookupAbstractDefault(text) == null) {
+                        for (bound_abstracts) |bound| if (std.mem.eql(u8, bound.name, text)) break :blk false;
+                        break :blk true;
+                    }
+                }
+                const arguments = file.structTypeLiteral(generic.arguments) orelse break :blk false;
+                for (arguments.fields) |field_node| {
+                    const field = file.structTypeField(field_node) orelse break :blk false;
+                    if (field.type_node) |field_type| {
+                        if (self.compactOutputUsesUnboundAbstract(owner, field_type, bound_abstracts, scope)) break :blk true;
                     }
                 }
                 break :blk false;
             },
-            .choice_type_literal => |ct| blk: {
-                for (ct.variants) |variant| {
-                    if (variant.payload_type) |payload_ty| {
-                        if (self.outputUsesAbstractWithoutDefault(payload_ty, s)) break :blk true;
+            .pointer => |pointer| self.compactOutputUsesUnboundAbstract(owner, pointer.child, bound_abstracts, scope),
+            .array => |array| self.compactOutputUsesUnboundAbstract(owner, array.element, bound_abstracts, scope),
+            .inferred_errable => |inner| self.compactOutputUsesUnboundAbstract(owner, inner, bound_abstracts, scope),
+            .struct_literal => |literal| blk: {
+                for (literal.fields) |field_node| {
+                    const field = file.structTypeField(field_node) orelse break :blk false;
+                    if (field.type_node) |field_type| {
+                        if (self.compactOutputUsesUnboundAbstract(owner, field_type, bound_abstracts, scope)) break :blk true;
                     }
                 }
                 break :blk false;
             },
+            .choice_literal => |literal| blk: {
+                for (literal.variants) |variant_node| {
+                    const variant = file.choiceTypeVariant(variant_node) orelse break :blk false;
+                    if (variant.payload_type) |payload| {
+                        if (self.compactOutputUsesUnboundAbstract(owner, payload, bound_abstracts, scope)) break :blk true;
+                    }
+                }
+                break :blk false;
+            },
+            .nullable => |inner| self.compactOutputUsesUnboundAbstract(owner, inner, bound_abstracts, scope),
         };
     }
 
     fn registerAbstractContractTemplateIfNeeded(
         self: *Semantizer,
-        f: syn.FunctionDeclaration,
-        p: *Scope,
+        node: syn.SyntaxRef,
+        scope: *Scope,
         loc: tok.Location,
     ) SemErr!bool {
-        if (f.generic_params.len != 0) return false;
+        const file = self.syntaxFile(node);
+        const function = file.functionDeclaration(node.node) orelse return error.InvalidType;
+        if (function.generic_params.len != 0 or function.generic_params_struct != null) return false;
 
-        var rewritten_input_fields = try self.allocator.alloc(syn.StructTypeLiteralField, f.input.fields.len);
-        var hidden_param_names = std.array_list.Managed([]const u8).init(self.allocator.*);
-        defer hidden_param_names.deinit();
-        var hidden_constraints = std.array_list.Managed(?gen.AbstractConstraint).init(self.allocator.*);
-        defer hidden_constraints.deinit();
-        var has_abstract_input = false;
+        const input = file.structTypeLiteral(function.input) orelse return error.InvalidType;
+        var params = std.array_list.Managed(gen.GenericParam).init(self.allocator.*);
+        defer params.deinit();
+        var constraints = std.array_list.Managed(?gen.AbstractConstraint).init(self.allocator.*);
+        defer constraints.deinit();
 
-        for (f.input.fields, 0..) |field, i| {
-            rewritten_input_fields[i] = field;
-            if (field.type) |field_ty| {
-                switch (field_ty) {
-                    .type_name => |tn| {
-                        if (p.lookupAbstractInfo(tn.string) != null) {
-                            has_abstract_input = true;
-                            const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
-                            try hidden_param_names.append(hidden_name);
-                            try hidden_constraints.append(.{ .name = tn.string });
-                            rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, tn.string);
-                        }
-                    },
-                    .generic_type_instantiation => |g| {
-                        if (p.lookupAbstractInfo(g.base_name.string) != null) {
-                            has_abstract_input = true;
-                            const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
-                            try hidden_param_names.append(hidden_name);
-                            try hidden_constraints.append(.{ .name = g.base_name.string, .args = g.args });
-                            rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, g.base_name.string);
-                        }
-                    },
-                    .pointer_type => |ptr_info| {
-                        switch (ptr_info.child.*) {
-                            .type_name => {
-                                const child_name = ptr_info.child.*.type_name.string;
-                                if (p.lookupAbstractInfo(child_name) != null) {
-                                    has_abstract_input = true;
-                                    const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
-                                    try hidden_param_names.append(hidden_name);
-                                    try hidden_constraints.append(.{ .name = child_name });
-                                    rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, child_name);
-                                }
-                            },
-                            .generic_type_instantiation => |g| {
-                                const child_name = g.base_name.string;
-                                if (p.lookupAbstractInfo(child_name) != null) {
-                                    has_abstract_input = true;
-                                    const hidden_name = try std.fmt.allocPrint(self.allocator.*, "__abstract_param_{d}", .{hidden_param_names.items.len});
-                                    try hidden_param_names.append(hidden_name);
-                                    try hidden_constraints.append(.{ .name = child_name, .args = g.args });
-                                    rewritten_input_fields[i].type = try self.rewriteAbstractTypeForTemplate(field_ty, hidden_name, child_name);
-                                }
-                            },
-                            else => {},
-                        }
-                    },
-                    else => {},
-                }
-            }
+        for (input.fields) |field_node| {
+            const field = file.structTypeField(field_node) orelse return error.InvalidType;
+            const type_node = field.type_node orelse continue;
+            const constraint = self.compactAbstractConstraintForType(node, type_node, scope) orelse continue;
+            // Keeping the abstract spelling as the parameter name lets the
+            // compact type resolver substitute it without materializing a
+            // rewritten AST. Repeated occurrences intentionally share the
+            // same contract parameter, just as repeated generic names do.
+            if (hasGenericParamNamed(params.items, constraint.name)) continue;
+            try params.append(.{ .name = constraint.name, .kind = .type, .value_type = null });
+            try constraints.append(constraint);
+        }
+        if (params.items.len == 0) return false;
+
+        const output = file.structTypeLiteral(function.output) orelse return error.InvalidType;
+        for (output.fields) |field_node| {
+            const field = file.structTypeField(field_node) orelse return error.InvalidType;
+            const type_node = field.type_node orelse continue;
+            if (self.compactOutputUsesUnboundAbstract(node, type_node, params.items, scope)) return error.AbstractNeedsDefault;
         }
 
-        if (!has_abstract_input) return false;
-
-        var rewritten_output_fields = try self.allocator.alloc(syn.StructTypeLiteralField, f.output.fields.len);
-        for (f.output.fields, 0..) |field, field_index| {
-            rewritten_output_fields[field_index] = field;
-            if (field.type) |field_ty| {
-                if (self.outputUsesAbstractWithoutDefault(field_ty, p)) return error.AbstractNeedsDefault;
-                var rewritten = field_ty;
-                for (hidden_constraints.items, hidden_param_names.items) |constraint_opt, hidden_name| {
-                    const constraint = constraint_opt orelse continue;
-                    rewritten = try self.rewriteAbstractTypeForTemplate(rewritten, hidden_name, constraint.name);
-                }
-                rewritten_output_fields[field_index].type = rewritten;
-            }
-        }
-
-        var contract_params = std.array_list.Managed(gen.GenericParam).init(self.allocator.*);
-        defer contract_params.deinit();
-        for (hidden_param_names.items) |hidden_name| {
-            try contract_params.append(.{
-                .name = hidden_name,
-                .kind = .type,
-                .value_type = null,
-            });
-        }
-        for (hidden_constraints.items) |constraint_opt| {
-            const constraint = constraint_opt orelse continue;
-            if (constraint.args) |args| {
-                try self.collectHiddenImplementsParamsFromType(.{ .struct_type_literal = args }, &contract_params, p);
-            }
-        }
-        while (hidden_constraints.items.len < contract_params.items.len) try hidden_constraints.append(null);
-
-        const template = gen.GenericTemplate{
-            .name = f.name.string,
+        try scope.appendGenericFunctionTemplate(file.tokenText(&self.diags.source_db, function.name_token), .{
+            .syntax_files = self.syntax_files,
+            .source_db = &self.diags.source_db,
+            .syntax_file_id = node.file_id,
+            .name = file.tokenText(&self.diags.source_db, function.name_token),
             .location = loc,
-            .params = try contract_params.toOwnedSlice(),
-            .param_abstract_constraints = try hidden_constraints.toOwnedSlice(),
+            .params = try params.toOwnedSlice(),
+            .param_abstract_constraints = try constraints.toOwnedSlice(),
             .dispatch_kind = .abstract_contract,
-            .input = .{ .fields = rewritten_input_fields },
-            .output = .{ .fields = rewritten_output_fields },
-            .body = f.body,
-        };
-        try p.appendGenericFunctionTemplate(f.name.string, template);
-
+            .input = function.input,
+            .output = function.output,
+            .body = if (function.body) |body| file.ref(body) else null,
+        });
         return true;
     }
 
     //──────────────────────────────────────────────────── ASSIGNMENT
-    fn handleAssignment(
-        self: *Semantizer,
-        a: syn.Assignment,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        const b = s.lookupBinding(a.name.string) orelse return error.SymbolNotFound;
-        if (!(try self.bindingIsVisible(b, self.locationPath(a.name.location)))) {
-            try self.addPrivateMemberDiag(a.name.location, "value", a.name.string);
-            return error.Reported;
-        }
-        if (s.bindingMoveLocation(b.name)) |move_loc| {
-            try self.diags.add(
-                a.name.location,
-                .semantic,
-                "binding '{s}' was moved and cannot be reassigned (moved at {s}:{d}:{d})",
-                .{ b.name, self.locationPath(move_loc), self.locationLineColumn(move_loc).line, self.locationLineColumn(move_loc).column },
-            );
-            return error.Reported;
-        }
-        if (b.mutability == .constant and b.initialization != null) {
-            try self.diags.add(
-                a.name.location,
-                .semantic,
-                "binding '{s}' is constant and cannot be reassigned after initialization",
-                .{b.name},
-            );
-            return error.Reported;
-        }
-
-        var rhs = try self.visitNode(a.value.*, s);
-        rhs = try typ.coerceExprToType(b.ty, rhs, a.value, s, self.allocator, self.diags);
-        rhs = try self.ensureValuePositionAllowed(rhs, a.value.location, s);
-        if (!typ.typesExactlyEqual(b.ty, rhs.ty)) {
-            const pair = try self.formatTypePairText(b.ty, rhs.ty, s);
-            defer pair.deinit();
-            try self.diags.add(
-                a.value.*.location,
-                .semantic,
-                "cannot assign '{s}' to '{s}' (explicit casts not supported yet)",
-                .{ pair.actual.bytes, pair.expected.bytes },
-            );
-            return error.Reported;
-        }
-
-        const asg = try self.allocator.create(sg.Assignment);
-        asg.* = .{ .sym_id = b, .value = rhs.node };
-
-        const n = try sg.makeSGNode(.{ .binding_assignment = asg }, undefined, self.allocator);
-        try s.nodes.append(n);
-        return .{ .node = n, .ty = .{ .builtin = .Any } };
-    }
 
     //──────────────────────────────────────────────────── STRUCT VALUE LITERAL
-    fn handleStructValLit(
-        self: *Semantizer,
-        sl: syn.StructValueLiteral,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        var fields_buf = std.array_list.Managed(sg.StructValueLiteralField).init(self.allocator.*);
-
-        for (sl.fields) |f| {
-            var tv = try self.visitNode(f.value.*, s);
-            tv = try self.ensureValuePositionAllowed(tv, f.value.location, s);
-            try fields_buf.append(.{ .name = f.name.string, .value = tv.node });
-        }
-
-        const fields = try fields_buf.toOwnedSlice();
-        fields_buf.deinit();
-
-        const st_ptr = try self.structTypeFromVal(sl, s);
-
-        const lit = try self.allocator.create(sg.StructValueLiteral);
-        lit.* = .{
-            .fields = fields,
-            .ty = .{ .struct_type = st_ptr },
-            .dispatch_prefix_positional_count = sl.positional_prefix_count,
-        };
-
-        const n = try sg.makeSGNode(.{ .struct_value_literal = lit }, undefined, self.allocator);
-        return .{ .node = n, .ty = .{ .struct_type = st_ptr } };
-    }
-
-    fn handleStructTypeLit(
-        self: *Semantizer,
-        st: syn.StructTypeLiteral,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        var val_fields = std.array_list.Managed(sg.StructValueLiteralField).init(self.allocator.*);
-        var ty_fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
-
-        for (st.fields) |fld| {
-            if (fld.default_value == null)
-                return error.NotYetImplemented;
-
-            const tv = try self.visitNode(fld.default_value.?.*, s);
-
-            try val_fields.append(.{ .name = fld.name.string, .value = tv.node });
-            try ty_fields.append(.{ .name = fld.name.string, .ty = tv.ty, .default_value = null });
-        }
-
-        const vals = try val_fields.toOwnedSlice();
-        const tys = try ty_fields.toOwnedSlice();
-        val_fields.deinit();
-        ty_fields.deinit();
-
-        const st_ptr = try self.allocator.create(sg.StructType);
-        st_ptr.* = .{ .fields = tys };
-
-        const lit_ptr = try self.allocator.create(sg.StructValueLiteral);
-        lit_ptr.* = .{
-            .fields = vals,
-            .ty = .{ .struct_type = st_ptr },
-            .dispatch_prefix_positional_count = 0,
-        };
-
-        const node_ptr = try sg.makeSGNode(.{ .struct_value_literal = lit_ptr }, undefined, self.allocator);
-        return .{ .node = node_ptr, .ty = .{ .struct_type = st_ptr } };
-    }
 
     //──────────────────────────────────────────────────── STRUCT FIELD ACCESS
-    fn handleStructFieldAccess(
-        self: *Semantizer,
-        ma: syn.StructFieldAccess,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        if (ma.struct_value.*.content == .identifier) {
-            const base_name = ma.struct_value.*.content.identifier;
-            if (s.lookupModuleAlias(base_name)) |module_dir| {
-                return self.handleModuleFieldAccess(module_dir, ma.field_name.string, s, ma.struct_value.*.location);
-            }
-        }
 
-        const base = try self.visitNode(ma.struct_value.*, s);
-
-        if (base.ty != .struct_type) {
-            if (base.node.content == .function_call) {
-                const fc = base.node.content.function_call;
-                if (fc.callee.output.fields.len == 1) {
-                    const only_field = fc.callee.output.fields[0];
-                    if (std.mem.eql(u8, only_field.name, ma.field_name.string)) {
-                        return base;
-                    }
-                }
-            }
-
-            const desc = try self.formatTypeText(base.ty, s);
-            defer desc.deinit();
-            try self.diags.add(
-                ma.struct_value.*.location,
-                .semantic,
-                "cannot access field '.{s}' on value of type '{s}'",
-                .{ ma.field_name.string, desc.bytes },
-            );
-            return error.Reported;
-        }
-
-        return self.buildStructFieldAccessFromTypedExpr(base, ma.field_name.string, ma.field_name.location, s);
-    }
-
-    fn handleChoicePayloadAccess(
-        self: *Semantizer,
-        acc: syn.ChoicePayloadAccess,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        if (acc.choice_value.*.content == .identifier) {
-            const base_name = acc.choice_value.*.content.identifier;
+    fn handleChoicePayloadAccess(self: *Semantizer, node_ref: syn.SyntaxRef, s: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node_ref);
+        const access_view = file.choicePayloadAccess(node_ref.node) orelse return error.InvalidType;
+        const value_ref = file.ref(access_view.value);
+        const variant_name = file.tokenText(&self.diags.source_db, access_view.variant_token);
+        const variant_location = file.tokenLocation(access_view.variant_token);
+        if (file.tag(access_view.value) == .identifier) {
+            const base_name = file.tokenText(&self.diags.source_db, file.mainToken(access_view.value));
             if (s.lookupModuleAlias(base_name) != null) {
-                const lit = syn.ChoiceLiteral{
-                    .name = acc.variant_name,
-                    .module_qualifier = .{ .string = base_name, .location = acc.choice_value.*.location },
-                    .payload = null,
-                };
-                return self.handleChoiceLiteral(lit, s);
+                const literal = try self.allocator.create(sg.ChoiceLiteral);
+                literal.* = .{ .variant_name = variant_name, .module_qualifier = base_name, .choice_type = undefined, .variant_index = 0, .payload = null };
+                const result = try sg.makeSGNode(.{ .choice_literal = literal }, variant_location, self.allocator);
+                return .{ .node = result, .ty = .{ .builtin = .Any } };
             }
         }
-
-        const base = if (acc.choice_value.*.content == .identifier) blk: {
-            const binding_name = acc.choice_value.*.content.identifier;
+        const base = if (file.tag(access_view.value) == .identifier) blk: {
+            const binding_name = file.tokenText(&self.diags.source_db, file.mainToken(access_view.value));
             if (s.lookupBinding(binding_name)) |binding| {
-                const node = try sg.makeSGNode(.{ .binding_use = binding }, acc.choice_value.*.location, self.allocator);
+                const node = try sg.makeSGNode(.{ .binding_use = binding }, file.location(access_view.value), self.allocator);
                 node.sem_type = binding.ty;
                 break :blk typ.TypedExpr{ .node = node, .ty = binding.ty };
             }
-            break :blk try self.visitNode(acc.choice_value.*, s);
-        } else try self.visitNode(acc.choice_value.*, s);
+            break :blk try self.visitNode(value_ref, s);
+        } else try self.visitNode(value_ref, s);
         if (base.ty != .choice_type) {
             const desc = try self.formatTypeText(base.ty, s);
             defer desc.deinit();
             try self.diags.add(
-                acc.choice_value.*.location,
+                file.location(access_view.value),
                 .semantic,
                 "cannot access choice payload '..{s}' on value of type '{s}'",
-                .{ acc.variant_name.string, desc.bytes },
+                .{ variant_name, desc.bytes },
             );
             return error.Reported;
         }
 
         const choice_ty = base.ty.choice_type;
         for (choice_ty.variants, 0..) |variant, idx| {
-            if (!std.mem.eql(u8, variant.name, acc.variant_name.string)) continue;
+            if (!std.mem.eql(u8, variant.name, variant_name)) continue;
             const payload_ty = variant.payload_type orelse {
                 try self.diags.add(
-                    acc.variant_name.location,
+                    variant_location,
                     .semantic,
                     "choice variant '..{s}' has no payload",
-                    .{acc.variant_name.string},
+                    .{variant_name},
                 );
                 return error.Reported;
             };
@@ -6590,17 +5375,17 @@ pub const Semantizer = struct {
                 .variant_index = @intCast(idx),
                 .payload_type = payload_ty,
             };
-            const node = try sg.makeSGNode(.{ .choice_payload_access = access }, acc.variant_name.location, self.allocator);
+            const node = try sg.makeSGNode(.{ .choice_payload_access = access }, variant_location, self.allocator);
             return .{ .node = node, .ty = payload_ty };
         }
 
         const choice_text = try self.formatTypeText(.{ .choice_type = choice_ty }, s);
         defer choice_text.deinit();
         try self.diags.add(
-            acc.variant_name.location,
+            variant_location,
             .semantic,
             "choice type '{s}' has no variant '..{s}'",
-            .{ choice_text.bytes, acc.variant_name.string },
+            .{ choice_text.bytes, variant_name },
         );
         return error.Reported;
     }
@@ -6637,13 +5422,11 @@ pub const Semantizer = struct {
     //──────────────────────────────────────────────────── LIST LITERAL
     fn handleListLiteral(
         self: *Semantizer,
-        ll: syn.ListLiteral,
+        syntax_ref: syn.SyntaxRef,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        var expected_elem_ty_opt: ?sg.Type = null;
-        if (ll.element_type) |elt_ty_syn| {
-            expected_elem_ty_opt = try self.resolveType(elt_ty_syn, s);
-        }
+        const file = self.syntaxFile(syntax_ref);
+        const ll = file.listLiteral(syntax_ref.node) orelse return error.InvalidType;
 
         var elems = std.array_list.Managed(*sg.SGNode).init(self.allocator.*);
         var elem_types = std.array_list.Managed(sg.Type).init(self.allocator.*);
@@ -6652,22 +5435,8 @@ pub const Semantizer = struct {
             elem_types.deinit();
         }
 
-        for (ll.elements, 0..) |elem_node, idx| {
-            const elem_te = try self.visitNode(elem_node.*, s);
-
-            if (expected_elem_ty_opt) |exp_ty| {
-                if (!typ.typesStructurallyEqual(exp_ty, elem_te.ty)) {
-                    const pair = try self.formatTypePairText(exp_ty, elem_te.ty, s);
-                    defer pair.deinit();
-                    try self.diags.add(
-                        elem_node.*.location,
-                        .semantic,
-                        "list element {d} has type '{s}', expected '{s}'",
-                        .{ idx, pair.actual.bytes, pair.expected.bytes },
-                    );
-                    return error.Reported;
-                }
-            }
+        for (ll.elements) |elem_node| {
+            const elem_te = try self.visitNode(file.ref(elem_node), s);
 
             try elems.append(elem_te.node);
             try elem_types.append(elem_te.ty);
@@ -6682,26 +5451,28 @@ pub const Semantizer = struct {
             .element_types = elem_types_slice,
         };
 
-        const node = try sg.makeSGNode(.{ .list_literal = lit_ptr }, undefined, self.allocator);
+        const node = try sg.makeSGNode(.{ .list_literal = lit_ptr }, self.nodeLocation(syntax_ref), self.allocator);
         return .{ .node = node, .ty = .{ .builtin = .Any } };
     }
 
     fn handleIndexAccess(
         self: *Semantizer,
-        ia: syn.IndexAccess,
+        syntax_ref: syn.SyntaxRef,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        const base = try self.visitNode(ia.value.*, s);
+        const file = self.syntaxFile(syntax_ref);
+        const ia = file.indexAccess(syntax_ref.node) orelse return error.InvalidType;
+        const base = try self.visitNode(file.ref(ia.value), s);
         const native_uint_ty: sg.Type = .{ .builtin = .UIntNative };
 
         if (base.ty == .array_type) {
-            var idx_te = try self.visitNode(ia.index.*, s);
-            idx_te = try typ.coerceExprToType(native_uint_ty, idx_te, ia.index, s, self.allocator, self.diags);
+            var idx_te = try self.visitNode(file.ref(ia.index), s);
+            idx_te = try typ.coerceExprToType(native_uint_ty, idx_te, file.location(ia.index), s, self.allocator, self.diags);
             if (!typ.typesExactlyEqual(idx_te.ty, native_uint_ty)) {
                 const idx_ty = try self.formatTypeText(idx_te.ty, s);
                 defer idx_ty.deinit();
                 try self.diags.add(
-                    ia.index.*.location,
+                    file.location(ia.index),
                     .semantic,
                     "array index must be 'UIntNative', got '{s}'",
                     .{idx_ty.bytes},
@@ -6711,7 +5482,7 @@ pub const Semantizer = struct {
 
             const arr_type_ptr = base.ty.array_type;
             const elem_ty = arr_type_ptr.*.element_type.*;
-            const ro_self = try typ.ensureReadOnlyPointer(ia.value, base, self.allocator, self.diags);
+            const ro_self = try typ.ensureReadOnlyPointer(file.location(ia.value), base, self.allocator, self.diags);
 
             const node = try sg.makeSGNode(.{ .array_index = .{
                 .array_ptr = ro_self.node,
@@ -6724,14 +5495,14 @@ pub const Semantizer = struct {
 
         if (base.node.content == .list_literal) {
             const ll = base.node.content.list_literal;
-            var idx_te = try self.visitNode(ia.index.*, s);
-            idx_te = try typ.coerceExprToType(native_uint_ty, idx_te, ia.index, s, self.allocator, self.diags);
+            var idx_te = try self.visitNode(file.ref(ia.index), s);
+            idx_te = try typ.coerceExprToType(native_uint_ty, idx_te, file.location(ia.index), s, self.allocator, self.diags);
 
             if (!typ.typesExactlyEqual(idx_te.ty, native_uint_ty)) {
                 const idx_ty = try self.formatTypeText(idx_te.ty, s);
                 defer idx_ty.deinit();
                 try self.diags.add(
-                    ia.index.*.location,
+                    file.location(ia.index),
                     .semantic,
                     "list literal index must be 'UIntNative', got '{s}'",
                     .{idx_ty.bytes},
@@ -6741,7 +5512,7 @@ pub const Semantizer = struct {
 
             if (idx_te.node.content != .value_literal) {
                 try self.diags.add(
-                    ia.index.*.location,
+                    file.location(ia.index),
                     .semantic,
                     "index into a list literal must be a 'UIntNative' integer literal",
                     .{},
@@ -6754,7 +5525,7 @@ pub const Semantizer = struct {
                 .int_literal => |v| v,
                 else => blk: {
                     try self.diags.add(
-                        ia.index.*.location,
+                        file.location(ia.index),
                         .semantic,
                         "index into a list literal must be a 'UIntNative' integer literal",
                         .{},
@@ -6765,7 +5536,7 @@ pub const Semantizer = struct {
 
             if (raw_index < 0 or raw_index >= ll.elements.len) {
                 try self.diags.add(
-                    ia.index.*.location,
+                    file.location(ia.index),
                     .semantic,
                     "list literal index {d} out of bounds (length {d})",
                     .{ raw_index, ll.elements.len },
@@ -6779,12 +5550,12 @@ pub const Semantizer = struct {
             return .{ .node = @constCast(elem_node), .ty = elem_ty };
         }
 
-        const ro_self = try typ.ensureReadOnlyPointer(ia.value, base, self.allocator, self.diags);
+        const ro_self = try typ.ensureReadOnlyPointer(file.location(ia.value), base, self.allocator, self.diags);
         return self.lowerIndexedOperatorCall(
             "operator get[]",
             ro_self,
-            ia.index,
-            ia.value.*.location,
+            file.ref(ia.index),
+            file.location(ia.value),
             s,
         );
     }
@@ -6793,13 +5564,13 @@ pub const Semantizer = struct {
         self: *Semantizer,
         name: []const u8,
         self_expr: typ.TypedExpr,
-        index_node: *syn.STNode,
+        index_node: syn.SyntaxRef,
         call_loc: tok.Location,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+        const empty_args: ?syn.SyntaxRef = null;
         const native_uint_ty: sg.Type = .{ .builtin = .UIntNative };
-        var idx = try self.visitNode(index_node.*, s);
+        var idx = try self.visitNode(index_node, s);
         var input_te = try self.buildCallInput(&[_]CallArg{
             .{ .name = "self", .expr = self_expr },
             .{ .name = "index", .expr = idx },
@@ -6822,7 +5593,7 @@ pub const Semantizer = struct {
         }
 
         if (chosen == null and !typ.typesExactlyEqual(idx.ty, native_uint_ty)) {
-            idx = try typ.coerceExprToType(native_uint_ty, idx, index_node, s, self.allocator, self.diags);
+            idx = try typ.coerceExprToType(native_uint_ty, idx, self.nodeLocation(index_node), s, self.allocator, self.diags);
             input_te = try self.buildCallInput(&[_]CallArg{
                 .{ .name = "self", .expr = self_expr },
                 .{ .name = "index", .expr = idx },
@@ -6850,7 +5621,7 @@ pub const Semantizer = struct {
             return error.Reported;
         };
         try self.discoverFunctionReference(chosen_fn);
-        input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, index_node, s);
+        input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, self.nodeLocation(index_node), s);
 
         const call_ptr = try self.allocator.create(sg.FunctionCall);
         call_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
@@ -6862,11 +5633,13 @@ pub const Semantizer = struct {
 
     fn handleBorrowedIndexAccess(
         self: *Semantizer,
-        ia: syn.IndexAccess,
+        syntax_ref: syn.SyntaxRef,
         mutability: syn.PointerMutability,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        const base = try self.visitNode(ia.value.*, s);
+        const file = self.syntaxFile(syntax_ref);
+        const ia = file.indexAccess(syntax_ref.node) orelse return error.InvalidType;
+        const base = try self.visitNode(file.ref(ia.value), s);
 
         const operator_name = switch (mutability) {
             .read_only => "operator get_ro_pointer[]",
@@ -6874,38 +5647,39 @@ pub const Semantizer = struct {
         };
 
         const self_expr = switch (mutability) {
-            .read_only => try typ.ensureReadOnlyPointer(ia.value, base, self.allocator, self.diags),
-            .read_write => try typ.ensureMutablePointer(ia.value, base, s, self.allocator, self.diags),
+            .read_only => try typ.ensureReadOnlyPointer(file.location(ia.value), base, self.allocator, self.diags),
+            .read_write => try typ.ensureMutablePointer(file.location(ia.value), base, s, self.allocator, self.diags),
         };
 
         return self.lowerIndexedOperatorCall(
             operator_name,
             self_expr,
-            ia.index,
-            ia.value.*.location,
+            file.ref(ia.index),
+            file.location(ia.value),
             s,
         );
     }
 
     fn handleIndexAssignment(
         self: *Semantizer,
-        ia: syn.IndexAssignment,
+        syntax_ref: syn.SyntaxRef,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        if (ia.target.*.content != .index_access) return error.InvalidType;
-        const idx = ia.target.*.content.index_access;
+        const file = self.syntaxFile(syntax_ref);
+        const ia = file.indexAssignment(syntax_ref.node) orelse return error.InvalidType;
+        const idx = file.indexAccess(ia.target) orelse return error.InvalidType;
         const native_uint_ty: sg.Type = .{ .builtin = .UIntNative };
 
-        const base = try self.visitNode(idx.value.*, s);
+        const base = try self.visitNode(file.ref(idx.value), s);
 
         if (base.ty == .array_type) {
-            var index_expr = try self.visitNode(idx.index.*, s);
-            index_expr = try typ.coerceExprToType(native_uint_ty, index_expr, idx.index, s, self.allocator, self.diags);
+            var index_expr = try self.visitNode(file.ref(idx.index), s);
+            index_expr = try typ.coerceExprToType(native_uint_ty, index_expr, file.location(idx.index), s, self.allocator, self.diags);
             if (!typ.typesExactlyEqual(index_expr.ty, native_uint_ty)) {
                 const idx_ty = try self.formatTypeText(index_expr.ty, s);
                 defer idx_ty.deinit();
                 try self.diags.add(
-                    idx.index.*.location,
+                    file.location(idx.index),
                     .semantic,
                     "array index must be 'UIntNative', got '{s}'",
                     .{idx_ty.bytes},
@@ -6913,7 +5687,7 @@ pub const Semantizer = struct {
                 return error.Reported;
             }
 
-            const value_expr = try self.visitNode(ia.value.*, s);
+            const value_expr = try self.visitNode(file.ref(ia.value), s);
             const arr_type_ptr = base.ty.array_type;
             const elem_ty = arr_type_ptr.*.element_type.*;
 
@@ -6921,7 +5695,7 @@ pub const Semantizer = struct {
                 const pair = try self.formatTypePairText(elem_ty, value_expr.ty, s);
                 defer pair.deinit();
                 try self.diags.add(
-                    ia.value.*.location,
+                    file.location(ia.value),
                     .semantic,
                     "cannot assign value of type '{s}' to array element of type '{s}'",
                     .{ pair.actual.bytes, pair.expected.bytes },
@@ -6929,7 +5703,7 @@ pub const Semantizer = struct {
                 return error.Reported;
             }
 
-            const ptr_self = try typ.ensureMutablePointer(idx.value, base, s, self.allocator, self.diags);
+            const ptr_self = try typ.ensureMutablePointer(file.location(idx.value), base, s, self.allocator, self.diags);
 
             const node = try sg.makeSGNode(.{ .array_store = .{
                 .array_ptr = ptr_self.node,
@@ -6942,13 +5716,13 @@ pub const Semantizer = struct {
             return .{ .node = node, .ty = .{ .builtin = .Any } };
         }
 
-        var index_expr = try self.visitNode(idx.index.*, s);
-        const value_expr = try self.visitNode(ia.value.*, s);
+        var index_expr = try self.visitNode(file.ref(idx.index), s);
+        const value_expr = try self.visitNode(file.ref(ia.value), s);
 
-        const ptr_self = try typ.ensureMutablePointer(idx.value, base, s, self.allocator, self.diags);
+        const ptr_self = try typ.ensureMutablePointer(file.location(idx.value), base, s, self.allocator, self.diags);
 
         const name = "operator set[]";
-        const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+        const empty_args: ?syn.SyntaxRef = null;
         var input_te = try self.buildCallInput(&[_]CallArg{
             .{ .name = "self", .expr = ptr_self },
             .{ .name = "index", .expr = index_expr },
@@ -6961,10 +5735,10 @@ pub const Semantizer = struct {
         };
 
         if (chosen == null) {
-            chosen = self.resolveVisibleOverload(name, input_te, s, ia.target.*.location) catch |err| switch (err) {
+            chosen = self.resolveVisibleOverload(name, input_te, s, file.location(ia.target)) catch |err| switch (err) {
                 error.SymbolNotFound => null,
                 error.AmbiguousOverload => {
-                    try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.target.*.location);
+                    try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, file.location(ia.target));
                     return error.Reported;
                 },
                 else => return err,
@@ -6972,7 +5746,7 @@ pub const Semantizer = struct {
         }
 
         if (chosen == null and !typ.typesExactlyEqual(index_expr.ty, native_uint_ty)) {
-            index_expr = try typ.coerceExprToType(native_uint_ty, index_expr, idx.index, s, self.allocator, self.diags);
+            index_expr = try typ.coerceExprToType(native_uint_ty, index_expr, file.location(idx.index), s, self.allocator, self.diags);
             input_te = try self.buildCallInput(&[_]CallArg{
                 .{ .name = "self", .expr = ptr_self },
                 .{ .name = "index", .expr = index_expr },
@@ -6985,10 +5759,10 @@ pub const Semantizer = struct {
             };
 
             if (chosen == null) {
-                chosen = self.resolveVisibleOverload(name, input_te, s, ia.target.*.location) catch |err| switch (err) {
+                chosen = self.resolveVisibleOverload(name, input_te, s, file.location(ia.target)) catch |err| switch (err) {
                     error.SymbolNotFound => null,
                     error.AmbiguousOverload => {
-                        try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, ia.target.*.location);
+                        try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, file.location(ia.target));
                         return error.Reported;
                     },
                     else => return err,
@@ -6997,154 +5771,187 @@ pub const Semantizer = struct {
         }
 
         const chosen_fn = chosen orelse {
-            try self.addMissingFunctionDiagnostic(name, input_te.ty, s, ia.target.*.location);
+            try self.addMissingFunctionDiagnostic(name, input_te.ty, s, file.location(ia.target));
             return error.Reported;
         };
         try self.discoverFunctionReference(chosen_fn);
-        input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, ia.target, s);
+        input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, file.location(ia.target), s);
 
         const call_ptr = try self.allocator.create(sg.FunctionCall);
         call_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
 
-        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, ia.target.*.location, self.allocator);
+        const node = try sg.makeSGNode(.{ .function_call = call_ptr }, file.location(ia.target), self.allocator);
         try s.nodes.append(node);
         return .{ .node = node, .ty = .{ .builtin = .Any } };
     }
 
     //────────────────────────────────────────────────────  AUX STRUCT TYPES
-    pub fn structTypeFromLiteral(
+
+    fn structTypeFromNodeWithSubst(
         self: *Semantizer,
-        st: syn.StructTypeLiteral,
-        s: *Scope,
-    ) SemErr!*sg.StructType {
-        var buf = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
-        for (st.fields) |*f| {
-            const field_ty = if (f.type) |*ty| ty else continue;
-            const ty = try self.resolveCachedSignatureType(field_ty, .preserving_abstracts, s);
-            const dvp = if (f.default_value) |n|
-                (try self.visitNode(n.*, s)).node
-            else
-                null;
-
-            try buf.append(.{ .name = f.name.string, .ty = ty, .default_value = dvp });
-        }
-
-        const slice = try buf.toOwnedSlice();
-        buf.deinit();
-
-        const ptr = try self.allocator.create(sg.StructType);
-        ptr.* = .{ .fields = slice };
-        return ptr;
-    }
-
-    pub fn structTypeFromLiteralWithSubst(
-        self: *Semantizer,
-        st: syn.StructTypeLiteral,
+        node: syn.SyntaxRef,
         s: *Scope,
         subst: *const GenericSubst,
     ) SemErr!*sg.StructType {
-        var buf = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
-        for (st.fields) |f| {
-            const ty = try self.resolveTypeWithSubstPreservingAbstracts(f.type.?, s, subst);
-            const dvp = if (f.default_value) |n|
-                (try self.visitNode(n.*, s)).node
+        const file = self.syntaxFile(node);
+        const literal = file.structTypeLiteral(node.node) orelse return error.InvalidType;
+        var fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
+        defer fields.deinit();
+        for (literal.fields) |field_node| {
+            const field = file.structTypeField(field_node) orelse return error.InvalidType;
+            const type_node = field.type_node orelse continue;
+            const field_type = try self.resolveSyntaxTypeWithSubstPreservingAbstracts(file.ref(type_node), s, subst);
+            const default_value = if (field.default_value) |default_node|
+                (try self.visitNode(file.ref(default_node), s)).node
             else
                 null;
-            try buf.append(.{ .name = f.name.string, .ty = ty, .default_value = dvp });
+            try fields.append(.{
+                .name = if (field.inferred_result) "result" else file.tokenText(&self.diags.source_db, field.name_token),
+                .ty = field_type,
+                .default_value = default_value,
+            });
         }
-        const slice = try buf.toOwnedSlice();
-        buf.deinit();
-        const ptr = try self.allocator.create(sg.StructType);
-        ptr.* = .{ .fields = slice };
-        return ptr;
+        const result = try self.allocator.create(sg.StructType);
+        result.* = .{ .fields = try fields.toOwnedSlice() };
+        return result;
     }
 
-    pub fn choiceTypeFromLiteral(
-        self: *Semantizer,
-        ct: syn.ChoiceTypeLiteral,
-        s: *Scope,
-    ) SemErr!*sg.ChoiceType {
+    fn structTypeFromNode(self: *Semantizer, node: syn.SyntaxRef, s: *Scope) SemErr!*sg.StructType {
         var subst = GenericSubst.init(self.allocator);
         defer subst.deinit();
-        return self.choiceTypeFromLiteralWithSubst(ct, s, &subst);
+        return self.structTypeFromNodeWithSubst(node, s, &subst);
     }
 
-    pub fn choiceTypeFromLiteralWithSubst(
+    fn choiceTypeFromNode(self: *Semantizer, node: syn.SyntaxRef, s: *Scope) SemErr!*sg.ChoiceType {
+        var subst = GenericSubst.init(self.allocator);
+        defer subst.deinit();
+        return self.choiceTypeFromNodeWithSubst(node, s, &subst);
+    }
+
+    fn choiceTypeFromNodeWithSubst(
         self: *Semantizer,
-        ct: syn.ChoiceTypeLiteral,
+        node: syn.SyntaxRef,
         s: *Scope,
         subst: *const GenericSubst,
     ) SemErr!*sg.ChoiceType {
+        const file = self.syntaxFile(node);
+        const literal = file.choiceTypeLiteral(node.node) orelse return error.InvalidType;
         var variants = std.array_list.Managed(sg.ChoiceVariant).init(self.allocator.*);
-        for (ct.variants, 0..) |variant, idx| {
-            const payload_type = if (variant.payload_type) |pt|
-                try self.resolveTypeWithSubstPreservingAbstracts(pt, s, subst)
+        defer variants.deinit();
+        for (literal.variants, 0..) |variant_node, index| {
+            const variant = file.choiceTypeVariant(variant_node) orelse return error.InvalidType;
+            const name = file.tokenText(&self.diags.source_db, variant.name_token);
+            const payload_type = if (variant.payload_type) |payload|
+                try self.resolveSyntaxTypeWithSubstPreservingAbstracts(file.ref(payload), s, subst)
             else
                 null;
-            const option_decl = if (payload_type == null) blk_option: {
-                if (variant.module_qualifier) |qualifier| {
-                    break :blk_option try self.resolveChoiceOptionReference(
-                        qualifier.string,
-                        variant.name.string,
-                        variant.name.location,
-                        s,
-                    );
-                }
-                break :blk_option self.resolveChoiceOptionReference(
-                    null,
-                    variant.name.string,
-                    variant.name.location,
+            const option_decl = if (payload_type == null)
+                self.resolveChoiceOptionReference(
+                    if (variant.module_qualifier) |qualifier| file.tokenText(&self.diags.source_db, qualifier) else null,
+                    name,
+                    file.tokenLocation(variant.name_token),
                     s,
                 ) catch |err| switch (err) {
                     error.SymbolNotFound => null,
                     else => return err,
-                };
-            } else null;
+                }
+            else
+                null;
             try variants.append(.{
-                .name = variant.name.string,
-                .value = if (option_decl) |decl| @intCast(decl.id) else @intCast(idx),
+                .name = name,
+                .value = if (option_decl) |declaration| @intCast(declaration.id) else @intCast(index),
                 .payload_type = payload_type,
                 .option_decl = option_decl,
             });
         }
-
-        const ptr = try self.allocator.create(sg.ChoiceType);
-        ptr.* = .{ .variants = try variants.toOwnedSlice() };
-        variants.deinit();
-        return ptr;
+        const result = try self.allocator.create(sg.ChoiceType);
+        result.* = .{ .variants = try variants.toOwnedSlice() };
+        return result;
     }
 
-    fn structTypeFromVal(
+    fn structTypeSignatureFromNode(
         self: *Semantizer,
-        sv: syn.StructValueLiteral,
-        s: *Scope,
+        node: syn.SyntaxRef,
+        scope: *Scope,
+        infer_errable_reasons: bool,
     ) SemErr!*sg.StructType {
-        var buf = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
-
-        for (sv.fields) |f| {
-            const tv = try self.visitNode(f.value.*, s);
-            try buf.append(.{ .name = f.name.string, .ty = tv.ty, .default_value = null });
+        const file = self.syntaxFile(node);
+        const literal = file.structTypeLiteral(node.node) orelse return error.InvalidType;
+        var fields = std.array_list.Managed(sg.StructTypeField).init(self.allocator.*);
+        defer fields.deinit();
+        for (literal.fields) |field_node| {
+            const field = file.structTypeField(field_node) orelse return error.InvalidType;
+            const type_node = field.type_node orelse return error.InvalidType;
+            const field_type = if (infer_errable_reasons)
+                if (self.compactInferableErrableInnerType(file.ref(type_node))) |inner|
+                    try self.makeCompactInferredErrableType(inner, scope, null)
+                else
+                    try self.resolveSyntaxTypeWithMode(file.ref(type_node), scope, true, null)
+            else
+                try self.resolveSyntaxTypeWithMode(file.ref(type_node), scope, true, null);
+            const field_name = if (field.inferred_result) "result" else file.tokenText(&self.diags.source_db, field.name_token);
+            const field_location = file.tokenLocation(field.name_token);
+            const default_value = if (field.default_value != null) try self.makeNoopNode(field_location) else null;
+            try fields.append(.{ .name = field_name, .ty = field_type, .default_value = default_value });
+            const binding = try self.allocator.create(sg.BindingDeclaration);
+            binding.* = .{
+                .name = field_name,
+                .location = field_location,
+                .origin_file = self.locationPath(field_location),
+                .mutability = .constant,
+                .ty = field_type,
+                .initialization = null,
+            };
+            try scope.bindings.put(field_name, binding);
         }
+        const result = try self.allocator.create(sg.StructType);
+        result.* = .{ .fields = try fields.toOwnedSlice() };
+        return result;
+    }
 
-        const slice = try buf.toOwnedSlice();
-        buf.deinit();
+    fn compactInferableErrableInnerType(self: *Semantizer, node: syn.SyntaxRef) ?syn.SyntaxRef {
+        const file = self.syntaxFile(node);
+        return switch (file.syntaxType(node.node) orelse return null) {
+            .inferred_errable => |inner| file.ref(inner),
+            .generic => |generic| blk: {
+                const base = file.syntaxType(generic.base) orelse break :blk null;
+                if (base != .name or base.name.qualifier_token != null) break :blk null;
+                if (!std.mem.eql(u8, file.tokenText(&self.diags.source_db, base.name.name_token), "Errable")) break :blk null;
+                const arguments = file.structTypeLiteral(generic.arguments) orelse break :blk null;
+                var value: ?syn.SyntaxRef = null;
+                for (arguments.fields) |field_node| {
+                    const field = file.structTypeField(field_node) orelse break :blk null;
+                    const name = file.tokenText(&self.diags.source_db, field.name_token);
+                    if (std.mem.eql(u8, name, "reasons")) break :blk null;
+                    if (std.mem.eql(u8, name, "t")) value = file.ref(field.type_node orelse break :blk null);
+                }
+                break :blk value;
+            },
+            else => null,
+        };
+    }
 
-        const ptr = try self.allocator.create(sg.StructType);
-        ptr.* = .{ .fields = slice };
-        return ptr;
+    fn compactSignatureUsesInferredErrable(self: *Semantizer, node: syn.SyntaxRef) bool {
+        const file = self.syntaxFile(node);
+        const literal = file.structTypeLiteral(node.node) orelse return false;
+        for (literal.fields) |field_node| {
+            const field = file.structTypeField(field_node) orelse continue;
+            const type_node = field.type_node orelse continue;
+            if (self.compactInferableErrableInnerType(file.ref(type_node)) != null) return true;
+        }
+        return false;
     }
 
     //──────────────────────────────────────────────────── FUNCTION CALL
-    fn handleToVirtual(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!typ.TypedExpr {
+    fn handleToVirtual(self: *Semantizer, node_ref: syn.SyntaxRef, s: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node_ref);
+        const call = file.functionCall(node_ref.node) orelse return error.InvalidType;
+        const location = file.tokenLocation(call.callee_token);
         const type_args = call.type_arguments_struct orelse {
-            try self.diags.add(call.callee_loc, .semantic, "to_virtual requires '#(.abstract: <Abstract>)'", .{});
+            try self.diags.add(location, .semantic, "to_virtual requires '#(.abstract: <Abstract>)'", .{});
             return error.Reported;
         };
-        const virtual_syntax = syn.Type{ .generic_type_instantiation = .{
-            .base_name = .{ .string = "Virtual", .location = call.callee_loc },
-            .args = type_args,
-        } };
-        const virtual_type = try self.resolveTypePreservingAbstracts(virtual_syntax, s);
+        const virtual_type = try self.resolveCompactVirtualTypeFromGenericArgs(location, file.ref(type_args), s);
         if (virtual_type != .struct_type) return error.InvalidType;
         const identity = virtual_type.struct_type.identity orelse return error.InvalidType;
         const abstract_type = switch (identity) {
@@ -7157,19 +5964,20 @@ pub const Semantizer = struct {
             },
             else => return error.InvalidType,
         };
-        if (call.input.content != .struct_value_literal) return error.InvalidType;
-        const input = call.input.content.struct_value_literal;
-        if (input.fields.len != 1 or !std.mem.eql(u8, input.fields[0].name.string, "value")) return error.InvalidType;
-        const value = try self.visitNode(input.fields[0].value.*, s);
+        const input = file.structValueLiteral(call.input) orelse return error.InvalidType;
+        if (input.fields.len != 1) return error.InvalidType;
+        const field = file.valueField(input.fields[0]) orelse return error.InvalidType;
+        if (!std.mem.eql(u8, file.tokenText(&self.diags.source_db, field.name_token orelse return error.InvalidType), "value")) return error.InvalidType;
+        const value = try self.visitNode(file.ref(field.value), s);
         if (value.ty != .pointer_type) {
-            try self.diags.add(input.fields[0].value.location, .semantic, "to_virtual '.value' must be a reference", .{});
+            try self.diags.add(file.location(field.value), .semantic, "to_virtual '.value' must be a reference", .{});
             return error.Reported;
         }
         const concrete_type = value.ty.pointer_type.child.*;
         if (!try self.typeImplementsAbstract(concrete_type, abstract_type.name, s)) {
             const concrete_text = try self.formatTypeText(concrete_type, s);
             defer concrete_text.deinit();
-            try self.diags.add(input.fields[0].value.location, .semantic, "type '{s}' does not implement Abstract '{s}'", .{ concrete_text.bytes, abstract_type.name });
+            try self.diags.add(file.location(field.value), .semantic, "type '{s}' does not implement Abstract '{s}'", .{ concrete_text.bytes, abstract_type.name });
             return error.Reported;
         }
         const abstract_info = s.lookupAbstractInfo(abstract_type.name) orelse return error.SymbolNotFound;
@@ -7178,7 +5986,7 @@ pub const Semantizer = struct {
             const expected_input = try abs.buildExpectedInputWithConcrete(requirement, concrete_type, self.allocator);
             methods[index] = abs.resolveOverload(requirement.name, .{ .struct_type = expected_input }, s) catch |err| switch (err) {
                 error.SymbolNotFound, error.AmbiguousOverload => {
-                    try self.diags.add(call.callee_loc, .semantic, "cannot build Virtual vtable for '{s}': requirement '{s}' has no unique concrete implementation", .{ abstract_type.name, requirement.name });
+                    try self.diags.add(location, .semantic, "cannot build Virtual vtable for '{s}': requirement '{s}' has no unique concrete implementation", .{ abstract_type.name, requirement.name });
                     return error.Reported;
                 },
                 else => return err,
@@ -7206,9 +6014,9 @@ pub const Semantizer = struct {
             .virtual_type = virtual_type.struct_type,
             .methods = methods,
             .safety_methods = abstract_info.virtual_methods,
-            .location = call.callee_loc,
+            .location = location,
         };
-        const node = try sg.makeSGNode(.{ .virtualize = virtualize }, call.callee_loc, self.allocator);
+        const node = try sg.makeSGNode(.{ .virtualize = virtualize }, location, self.allocator);
         node.sem_type = virtual_type;
         return .{ .node = node, .ty = virtual_type };
     }
@@ -7241,198 +6049,6 @@ pub const Semantizer = struct {
         }
     }
 
-    fn handleCall(
-        self: *Semantizer,
-        call: syn.FunctionCall,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        if (std.mem.eql(u8, call.callee, "size_of"))
-            return self.handleBuiltinTypeInfo(.size, call, s) catch |err| switch (err) {
-                error.Reported => return err,
-                else => err,
-            };
-        if (std.mem.eql(u8, call.callee, "alignment_of"))
-            return self.handleBuiltinTypeInfo(.alignment, call, s) catch |err| switch (err) {
-                error.Reported => return err,
-                else => err,
-            };
-        if (std.mem.eql(u8, call.callee, "cast"))
-            return self.handleCastBuiltin(call, s) catch |err| switch (err) {
-                error.Reported => return err,
-                else => err,
-            };
-        if (std.mem.eql(u8, call.callee, "to_virtual"))
-            return self.handleToVirtual(call, s) catch |err| switch (err) {
-                error.Reported => return err,
-                else => err,
-            };
-        if (std.mem.eql(u8, call.callee, "type_of"))
-            return self.handleTypeOf(call, s) catch |err| switch (err) {
-                error.Reported => return err,
-                else => err,
-            };
-        if (std.mem.eql(u8, call.callee, "is"))
-            return self.handleIsBuiltin(call, s) catch |err| switch (err) {
-                error.Reported => return err,
-                else => err,
-            };
-        if (std.mem.eql(u8, call.callee, "length")) len_blk: {
-            const len_res = self.handleLengthBuiltin(call, s) catch |err| switch (err) {
-                error.Reported => return err,
-                error.SymbolNotFound => break :len_blk,
-                else => return err,
-            };
-            return len_res;
-        }
-        if ((std.mem.eql(u8, call.callee, "unwrap_or") or std.mem.eql(u8, call.callee, "unwrap_or_do")) and call.module_qualifier == null and call.type_arguments == null and call.type_arguments_struct == null) {
-            const unwrap_res = self.handleNullableUnwrapCall(call, s) catch |err| switch (err) {
-                error.Reported => return err,
-                error.SymbolNotFound => null,
-                else => return err,
-            };
-            if (unwrap_res) |te| return te;
-        }
-
-        const tv_in = try self.visitNode(call.input.*, s);
-        // `testing.expect_error(...)` is a dedicated builtin in v1 instead of a
-        // generic helper over arbitrary `Errable` values. That keeps native
-        // testing independent from the generic/choice-heavy call paths that
-        // previously made this helper brittle.
-        if (call.module_qualifier != null and std.mem.eql(u8, call.module_qualifier.?, "testing") and std.mem.eql(u8, call.callee, "expect_error")) {
-            return try self.handleTestingExpectErrorBuiltin(call, tv_in, s);
-        }
-        if (typ.builtinFromName(call.callee)) |builtin_ty| {
-            if (builtin_ty == .Void) {
-                if (tv_in.ty != .struct_type or tv_in.ty.struct_type.fields.len != 0) {
-                    try self.diags.add(
-                        call.input.*.location,
-                        .semantic,
-                        "builtin 'Void' does not accept initializer arguments",
-                        .{},
-                    );
-                    return error.Reported;
-                }
-
-                const lit = try self.allocator.create(sg.StructValueLiteral);
-                lit.* = .{
-                    .fields = &.{},
-                    .ty = .{ .builtin = .Void },
-                    .dispatch_prefix_positional_count = 0,
-                };
-                const node = try sg.makeSGNode(.{ .struct_value_literal = lit }, call.callee_loc, self.allocator);
-                node.sem_type = .{ .builtin = .Void };
-                return .{ .node = node, .ty = .{ .builtin = .Void } };
-            }
-        }
-        if (s.lookupType(call.callee)) |type_decl| {
-            if (!(try self.typeIsVisible(type_decl, self.locationPath(call.input.*.location)))) {
-                try self.addPrivateMemberDiag(call.input.*.location, "type", call.callee);
-                return error.Reported;
-            }
-            return self.handleTypeInitializer(call, tv_in, type_decl, s);
-        }
-        if (call.type_arguments_struct) |stargs| {
-            const generic_type = syn.Type{ .generic_type_instantiation = .{
-                .base_name = .{
-                    .string = call.callee,
-                    .location = call.callee_loc,
-                },
-                .args = stargs,
-            } };
-            const instantiated_ty = self.resolveType(generic_type, s) catch |err| switch (err) {
-                error.UnknownType, error.AbstractNeedsDefault => null,
-                else => return err,
-            };
-            if (instantiated_ty) |ty| {
-                const type_decl = try self.allocator.create(sg.TypeDeclaration);
-                type_decl.* = .{
-                    .name = call.callee,
-                    .origin_file = self.locationPath(call.input.*.location),
-                    .ty = ty,
-                };
-                return self.handleTypeInitializer(call, tv_in, type_decl, s);
-            }
-        }
-
-        if (tv_in.ty == .struct_type) {
-            const inferred_ty = self.instantiateGenericTypeFromInitializer(call.callee, tv_in.ty, s) catch |err| switch (err) {
-                error.SymbolNotFound => null,
-                error.AmbiguousOverload => {
-                    try self.diags.add(
-                        call.input.*.location,
-                        .semantic,
-                        "generic type initializer for '{s}' is ambiguous",
-                        .{call.callee},
-                    );
-                    return error.Reported;
-                },
-                else => return err,
-            };
-            if (inferred_ty) |ty| {
-                const type_decl = try self.allocator.create(sg.TypeDeclaration);
-                type_decl.* = .{
-                    .name = call.callee,
-                    .origin_file = self.locationPath(call.input.*.location),
-                    .ty = ty,
-                };
-                return self.handleTypeInitializer(call, tv_in, type_decl, s);
-            }
-        }
-
-        if (tv_in.ty != .struct_type) return error.InvalidType;
-        if (try self.tryHandleVirtualCall(call, tv_in, s)) |virtual_call| return virtual_call;
-
-        const trusted_drop_without_destructor = s.current_fn != null and
-            s.current_fn.?.safety_primitive == .trusted_opaque_drop and
-            std.mem.eql(u8, call.callee, "deinit");
-        const chosen = (if (trusted_drop_without_destructor)
-            self.tryResolveRegularCallCallee(call, tv_in, s, call.input.*.location)
-        else
-            self.resolveRegularCallCallee(call, tv_in, s, call.input.*.location)) catch |err| switch (err) {
-            error.SymbolNotFound => if (trusted_drop_without_destructor) {
-                // Dropping a trivially destructible value is a runtime no-op.
-                // Keep this exception inside the trusted primitive; ordinary
-                // missing `deinit` calls must remain diagnostics.
-                const lit = try self.allocator.create(sg.StructValueLiteral);
-                lit.* = .{ .fields = &.{}, .ty = .{ .builtin = .Void } };
-                const node = try sg.makeSGNode(.{ .struct_value_literal = lit }, call.callee_loc, self.allocator);
-                node.sem_type = .{ .builtin = .Void };
-                return .{ .node = node, .ty = .{ .builtin = .Void } };
-            } else return err,
-            error.AmbiguousOverload => {
-                if (call.module_qualifier) |module_name| {
-                    const module_dir = s.lookupModuleAlias(module_name) orelse {
-                        try self.diags.add(call.callee_loc, .semantic, "unknown module alias '{s}'", .{module_name});
-                        return error.Reported;
-                    };
-                    try self.addAmbiguousModuleFunctionDiagnostic(module_name, module_dir, call.callee, tv_in.ty, s, call.callee_loc);
-                } else {
-                    try self.addAmbiguousFunctionDiagnostic(call.callee, tv_in.ty, s, call.callee_loc);
-                }
-                return error.Reported;
-            },
-            else => {
-                return err;
-            },
-        };
-        const coerced_input = try self.coerceCallInputToExpected(&chosen.input, tv_in, call.input, s);
-        try self.discoverFunctionReference(chosen);
-        const consumed_auto_deinit = self.explicitDeinitAutoCleanupTarget(chosen, coerced_input, s);
-
-        const fc_ptr = try self.allocator.create(sg.FunctionCall);
-        fc_ptr.* = .{
-            .callee = chosen,
-            .input = coerced_input.node,
-            .consumes_auto_deinit = consumed_auto_deinit,
-        };
-
-        const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, call.callee_loc, self.allocator);
-
-        const result_ty = typ.functionReturnType(chosen);
-
-        return .{ .node = n, .ty = result_ty };
-    }
-
     fn virtualAbstractType(ty: sg.Type) ?*const sg.AbstractType {
         const value_type = if (ty == .pointer_type) ty.pointer_type.child.* else ty;
         if (value_type != .struct_type) return null;
@@ -7453,8 +6069,12 @@ pub const Semantizer = struct {
         return false;
     }
 
-    fn tryHandleVirtualCall(self: *Semantizer, call: syn.FunctionCall, input: typ.TypedExpr, s: *Scope) SemErr!?typ.TypedExpr {
-        if (call.module_qualifier != null or call.type_arguments != null or call.type_arguments_struct != null) return null;
+    fn tryHandleVirtualCall(self: *Semantizer, node_ref: syn.SyntaxRef, input: typ.TypedExpr, s: *Scope) SemErr!?typ.TypedExpr {
+        const file = self.syntaxFile(node_ref);
+        const call = file.functionCall(node_ref.node) orelse return error.InvalidType;
+        const callee = file.tokenText(&self.diags.source_db, call.callee_token);
+        const location = file.tokenLocation(call.callee_token);
+        if (call.module_qualifier != null or call.type_arguments.len != 0 or call.type_arguments_struct != null) return null;
         if (input.ty != .struct_type or input.node.content != .struct_value_literal) return null;
         const input_type = input.ty.struct_type;
         for (input_type.fields, 0..) |actual_field, self_index| {
@@ -7462,10 +6082,10 @@ pub const Semantizer = struct {
             if (actual_field.ty != .pointer_type) continue;
             const info = s.lookupAbstractInfo(abstract_type.name) orelse return error.SymbolNotFound;
             for (info.requirements, 0..) |*requirement, method_index| {
-                if (!std.mem.eql(u8, requirement.name, call.callee)) continue;
+                if (!std.mem.eql(u8, requirement.name, callee)) continue;
                 if (!containsU32Index(requirement.input_pointer_self_indices, self_index)) continue;
                 if (requirement.input_self_indices.len != 0 or requirement.output_self_indices.len != 0 or requirement.output_pointer_self_indices.len != 0) {
-                    try self.diags.add(call.callee_loc, .semantic, "Abstract method '{s}' is not virtual-safe because Self escapes by value or output", .{call.callee});
+                    try self.diags.add(location, .semantic, "Abstract method '{s}' is not virtual-safe because Self escapes by value or output", .{callee});
                     return error.Reported;
                 }
                 if (requirement.input.fields.len != input_type.fields.len) continue;
@@ -7483,7 +6103,7 @@ pub const Semantizer = struct {
                     }
                 }
                 if (!compatible) continue;
-                const coerced_input = try self.coerceCallInputToExpected(&requirement.input, input, call.input, s);
+                const coerced_input = try self.coerceCallInputToExpected(&requirement.input, input, file.location(call.input), s);
                 for (info.virtual_methods[method_index].implementations.items) |implementation| {
                     try self.discoverFunctionReference(implementation);
                 }
@@ -7502,7 +6122,7 @@ pub const Semantizer = struct {
                     .self_permission = requirement.input.fields[self_index].ty.pointer_type.mutability,
                     .safety_methods = info.virtual_methods[method_index],
                 };
-                const node = try sg.makeSGNode(.{ .virtual_call = virtual_call }, call.callee_loc, self.allocator);
+                const node = try sg.makeSGNode(.{ .virtual_call = virtual_call }, location, self.allocator);
                 const result_type: sg.Type = switch (requirement.output.fields.len) {
                     0 => .{ .builtin = .Any },
                     1 => requirement.output.fields[0].ty,
@@ -7513,43 +6133,6 @@ pub const Semantizer = struct {
             }
         }
         return null;
-    }
-
-    fn handleNullableUnwrapCall(
-        self: *Semantizer,
-        call: syn.FunctionCall,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        if (call.input.*.content != .struct_value_literal) return error.SymbolNotFound;
-
-        const input_syn = call.input.*.content.struct_value_literal;
-        var value_node: ?*const syn.STNode = null;
-        var default_node: ?*const syn.STNode = null;
-        for (input_syn.fields) |field| {
-            if (std.mem.eql(u8, field.name.string, "value")) {
-                value_node = field.value;
-            } else if (std.mem.eql(u8, field.name.string, "default")) {
-                default_node = field.value;
-            }
-        }
-        if (value_node == null or default_node == null) return error.SymbolNotFound;
-
-        const value_te = try self.visitNode(value_node.?.*, s);
-        const nullable_info = try self.nullableInfoOf(value_te.ty, value_node.?.location, "unwrap_or left operand", s);
-        var fallback_te = try self.visitNode(default_node.?.*, s);
-        fallback_te = try typ.coerceExprToType(nullable_info.some_value_type, fallback_te, default_node.?, s, self.allocator, self.diags);
-        const unwrap_ptr = try self.allocator.create(sg.NullableUnwrapOr);
-        unwrap_ptr.* = .{
-            .nullable_value = value_te.node,
-            .fallback_value = fallback_te.node,
-            .some_variant_index = nullable_info.some_variant_index,
-            .some_value_field_index = nullable_info.some_value_field_index,
-            .result_type = nullable_info.some_value_type,
-        };
-
-        const n = try sg.makeSGNode(.{ .nullable_unwrap_or = unwrap_ptr }, call.callee_loc, self.allocator);
-        n.sem_type = nullable_info.some_value_type;
-        return .{ .node = n, .ty = nullable_info.some_value_type };
     }
 
     fn explicitDeinitAutoCleanupTarget(
@@ -7598,154 +6181,6 @@ pub const Semantizer = struct {
             }
         }
         return false;
-    }
-
-    fn extractCallBindingAccess(
-        self: *Semantizer,
-        field_value: *const sg.SGNode,
-        field_ty: sg.Type,
-    ) ?CallBindingAccess {
-        _ = self;
-        return switch (field_value.content) {
-            .binding_use => |binding| .{
-                .root_name = binding.name,
-                .mode = .value,
-                .access_node = field_value,
-            },
-            .struct_field_access,
-            .choice_payload_access,
-            .array_index,
-            .dereference,
-            => blk: {
-                const root_name = extractBindingRootName(field_value) orelse break :blk null;
-                break :blk .{
-                    .root_name = root_name,
-                    .mode = .value,
-                    .access_node = field_value,
-                };
-            },
-            .address_of => |inner| blk: {
-                if (field_ty != .pointer_type) break :blk null;
-                const root_name = extractBindingRootName(inner) orelse break :blk null;
-
-                const mode: CallAccessMode = switch (field_ty.pointer_type.mutability) {
-                    .read_only => .read,
-                    .read_write => .write,
-                };
-                break :blk .{
-                    .root_name = root_name,
-                    .mode = mode,
-                    .access_node = inner,
-                };
-            },
-            else => null,
-        };
-    }
-
-    fn extractBindingRootName(node: *const sg.SGNode) ?[]const u8 {
-        return switch (node.content) {
-            .binding_use => |binding| binding.name,
-            .struct_field_access => |acc| extractBindingRootName(acc.struct_value),
-            .choice_payload_access => |acc| extractBindingRootName(acc.choice_value),
-            .array_index => |acc| extractBindingRootName(acc.array_ptr),
-            .dereference => |deref| extractBindingRootName(deref.pointer),
-            else => null,
-        };
-    }
-
-    fn indexNodesMayAlias(left: *const sg.SGNode, right: *const sg.SGNode) bool {
-        if (left.content == .value_literal and right.content == .value_literal) {
-            const l = left.content.value_literal;
-            const r = right.content.value_literal;
-            if (l == .int_literal and r == .int_literal) {
-                return l.int_literal == r.int_literal;
-            }
-        }
-
-        return true;
-    }
-
-    fn accessNodesMayAlias(left: *const sg.SGNode, right: *const sg.SGNode) bool {
-        return switch (left.content) {
-            .binding_use => switch (right.content) {
-                .binding_use => std.mem.eql(u8, left.content.binding_use.name, right.content.binding_use.name),
-                .struct_field_access => accessNodesMayAlias(left, right.content.struct_field_access.struct_value),
-                .choice_payload_access => accessNodesMayAlias(left, right.content.choice_payload_access.choice_value),
-                .array_index => accessNodesMayAlias(left, right.content.array_index.array_ptr),
-                .dereference => false,
-                else => false,
-            },
-            .struct_field_access => |lacc| switch (right.content) {
-                .binding_use => accessNodesMayAlias(lacc.struct_value, right),
-                .struct_field_access => |racc| lacc.field_index == racc.field_index and accessNodesMayAlias(lacc.struct_value, racc.struct_value),
-                else => false,
-            },
-            .choice_payload_access => |lacc| switch (right.content) {
-                .binding_use => accessNodesMayAlias(lacc.choice_value, right),
-                .choice_payload_access => |racc| lacc.variant_index == racc.variant_index and accessNodesMayAlias(lacc.choice_value, racc.choice_value),
-                else => false,
-            },
-            .array_index => |lacc| switch (right.content) {
-                .binding_use => accessNodesMayAlias(lacc.array_ptr, right),
-                .array_index => |racc| accessNodesMayAlias(lacc.array_ptr, racc.array_ptr) and indexNodesMayAlias(lacc.index, racc.index),
-                .dereference => accessNodesMayAlias(lacc.array_ptr, right),
-                else => false,
-            },
-            .dereference => |lderef| switch (right.content) {
-                .dereference => |rderef| accessNodesMayAlias(lderef.pointer, rderef.pointer),
-                .struct_field_access => accessNodesMayAlias(left, right.content.struct_field_access.struct_value),
-                .choice_payload_access => accessNodesMayAlias(left, right.content.choice_payload_access.choice_value),
-                .array_index => accessNodesMayAlias(left, right.content.array_index.array_ptr),
-                else => false,
-            },
-            else => false,
-        };
-    }
-
-    fn callModesConflict(a: CallAccessMode, b: CallAccessMode) bool {
-        return a == .write or b == .write;
-    }
-
-    fn modeText(mode: CallAccessMode) []const u8 {
-        return switch (mode) {
-            .value => "value",
-            .read => "&",
-            .write => "$&",
-        };
-    }
-
-    fn checkCallBindingExclusivity(
-        self: *Semantizer,
-        callee_name: []const u8,
-        input_te: typ.TypedExpr,
-        loc: tok.Location,
-    ) SemErr!void {
-        if (input_te.ty != .struct_type) return;
-        if (input_te.node.content != .struct_value_literal) return;
-
-        const input_ty = input_te.ty.struct_type;
-        const input_value = input_te.node.content.struct_value_literal;
-
-        var i: usize = 0;
-        while (i < input_value.fields.len) : (i += 1) {
-            const left = self.extractCallBindingAccess(input_value.fields[i].value, input_ty.fields[i].ty) orelse continue;
-
-            var j: usize = i + 1;
-            while (j < input_value.fields.len) : (j += 1) {
-                const right = self.extractCallBindingAccess(input_value.fields[j].value, input_ty.fields[j].ty) orelse continue;
-                if (!std.mem.eql(u8, left.root_name, right.root_name)) continue;
-                if (!accessNodesMayAlias(left.access_node, right.access_node)) continue;
-                if (!callModesConflict(left.mode, right.mode)) continue;
-
-                try self.diags.add(
-                    loc,
-                    .semantic,
-                    "binding '{s}' cannot be passed as '{s}' and '{s}' in the same call to '{s}'",
-                    .{ left.root_name, modeText(left.mode), modeText(right.mode), callee_name },
-                );
-                return error.Reported;
-            }
-        }
     }
 
     fn handleIsBuiltinFromInput(
@@ -7911,33 +6346,95 @@ pub const Semantizer = struct {
         );
     }
 
+    fn tryResolveImplicitCall(
+        self: *Semantizer,
+        name: []const u8,
+        input: typ.TypedExpr,
+        s: *Scope,
+        location: tok.Location,
+    ) SemErr!*sg.FunctionDeclaration {
+        const empty_args: ?syn.SyntaxRef = null;
+        var has_unknown_candidate = false;
+        const generic = self.instantiateGenericNamedVisible(
+            name,
+            empty_args,
+            input,
+            s,
+            .regular,
+            null,
+            self.locationPath(location),
+        ) catch |err| switch (err) {
+            error.SymbolNotFound => null,
+            error.UnknownType => blk: {
+                has_unknown_candidate = true;
+                break :blk null;
+            },
+            else => return err,
+        };
+        const declared = try self.resolveVisibleDeclaredOverloadMaybe(name, input, s, location);
+        const abstract = self.instantiateGenericNamed(name, empty_args, input, s, .abstract_contract) catch |err| switch (err) {
+            error.SymbolNotFound => null,
+            error.UnknownType => blk: {
+                has_unknown_candidate = true;
+                break :blk null;
+            },
+            else => return err,
+        };
+
+        var best = declared;
+        var best_kind: CallCandidateKind = .declared;
+        if (abstract) |candidate| {
+            if (best) |current| {
+                const better = try self.chooseBetterCallCandidateWithKind(current, best_kind, candidate, .abstract_contract, input, s);
+                best = better.function;
+                best_kind = better.kind;
+            } else {
+                best = candidate;
+                best_kind = .abstract_contract;
+            }
+        }
+        if (generic) |candidate| {
+            if (best) |current| {
+                const better = try self.chooseBetterCallCandidateWithKind(current, best_kind, candidate, .generic_regular, input, s);
+                best = better.function;
+            } else best = candidate;
+        }
+        if (best) |chosen| return chosen;
+        if (has_unknown_candidate) return error.UnknownType;
+        return error.SymbolNotFound;
+    }
+
     fn resolveRegularCallCallee(
         self: *Semantizer,
-        call: syn.FunctionCall,
+        syntax_ref: syn.SyntaxRef,
         input_te: typ.TypedExpr,
         s: *Scope,
         loc: tok.Location,
     ) SemErr!*sg.FunctionDeclaration {
-        return self.tryResolveRegularCallCallee(call, input_te, s, loc) catch |err| switch (err) {
+        const file = self.syntaxFile(syntax_ref);
+        const call = file.functionCall(syntax_ref.node) orelse return error.InvalidType;
+        const callee = file.tokenText(&self.diags.source_db, call.callee_token);
+        const qualifier = if (call.module_qualifier) |token_index| file.tokenText(&self.diags.source_db, token_index) else null;
+        return self.tryResolveRegularCallCallee(syntax_ref, input_te, s, loc, null) catch |err| switch (err) {
             error.SymbolNotFound => {
                 if (self.defer_unknown_top_level and self.current_top_node != null) {
                     return error.SymbolNotFound;
                 }
-                if (call.module_qualifier) |module_name| {
+                if (qualifier) |module_name| {
                     const module_dir = s.lookupModuleAlias(module_name) orelse {
                         try self.diags.add(loc, .semantic, "unknown module alias '{s}'", .{module_name});
                         return error.Reported;
                     };
-                    if (try self.addMissingAbstractImplementationDiagnosticMaybeFiltered(call.callee, input_te.ty, s, loc, module_dir)) {
+                    if (try self.addMissingAbstractImplementationDiagnosticMaybeFiltered(callee, input_te.ty, s, loc, module_dir)) {
                         return error.Reported;
                     }
-                    try self.addMissingModuleFunctionDiagnostic(module_name, module_dir, call.callee, input_te.ty, s, loc);
+                    try self.addMissingModuleFunctionDiagnostic(module_name, module_dir, callee, input_te.ty, s, loc);
                     return error.Reported;
                 }
-                if (try self.addMissingAbstractImplementationDiagnostic(call.callee, input_te.ty, s, loc)) {
+                if (try self.addMissingAbstractImplementationDiagnostic(callee, input_te.ty, s, loc)) {
                     return error.Reported;
                 }
-                try self.addMissingFunctionDiagnostic(call.callee, input_te.ty, s, loc);
+                try self.addMissingFunctionDiagnostic(callee, input_te.ty, s, loc);
                 return error.Reported;
             },
             else => return err,
@@ -7946,30 +6443,36 @@ pub const Semantizer = struct {
 
     fn tryResolveRegularCallCallee(
         self: *Semantizer,
-        call: syn.FunctionCall,
+        syntax_ref: syn.SyntaxRef,
         input_te: typ.TypedExpr,
         s: *Scope,
         loc: tok.Location,
+        callee_override: ?[]const u8,
     ) SemErr!*sg.FunctionDeclaration {
-        const qualified_module_dir = if (call.module_qualifier) |module_name|
+        const file = self.syntaxFile(syntax_ref);
+        const call = file.functionCall(syntax_ref.node) orelse return error.InvalidType;
+        const callee = callee_override orelse file.tokenText(&self.diags.source_db, call.callee_token);
+        const qualifier = if (callee_override != null) null else if (call.module_qualifier) |token_index| file.tokenText(&self.diags.source_db, token_index) else null;
+        const qualified_module_dir = if (qualifier) |module_name|
             s.lookupModuleAlias(module_name)
         else
             null;
         var chosen: *sg.FunctionDeclaration = undefined;
         if (call.type_arguments_struct) |stargs| {
-            chosen = self.instantiateGenericNamedVisible(call.callee, stargs, input_te, s, .regular, qualified_module_dir, self.locationPath(loc)) catch |err| switch (err) {
-                error.SymbolNotFound => try self.instantiateGenericNamedVisible(call.callee, stargs, input_te, s, .abstract_contract, qualified_module_dir, self.locationPath(loc)),
+            chosen = self.instantiateGenericNamedVisible(callee, file.ref(stargs), input_te, s, .regular, qualified_module_dir, self.locationPath(loc)) catch |err| switch (err) {
+                error.SymbolNotFound => try self.instantiateGenericNamedVisible(callee, file.ref(stargs), input_te, s, .abstract_contract, qualified_module_dir, self.locationPath(loc)),
                 else => return err,
             };
-        } else if (call.type_arguments) |targs| {
-            chosen = self.instantiateGenericVisible(call.callee, targs, input_te, s, .regular, qualified_module_dir, self.locationPath(loc)) catch |err| switch (err) {
-                error.SymbolNotFound => try self.instantiateGenericVisible(call.callee, targs, input_te, s, .abstract_contract, qualified_module_dir, self.locationPath(loc)),
+        } else if (call.type_arguments.len != 0) {
+            const targs = call.type_arguments;
+            chosen = self.instantiateGenericVisible(callee, syntax_ref, targs, input_te, s, .regular, qualified_module_dir, self.locationPath(loc)) catch |err| switch (err) {
+                error.SymbolNotFound => try self.instantiateGenericVisible(callee, syntax_ref, targs, input_te, s, .abstract_contract, qualified_module_dir, self.locationPath(loc)),
                 else => return err,
             };
         } else {
-            const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
+            const empty_args: ?syn.SyntaxRef = null;
             var has_unknown_candidate = false;
-            const inferred = self.instantiateGenericNamedVisible(call.callee, empty_args, input_te, s, .regular, qualified_module_dir, self.locationPath(loc)) catch |err| switch (err) {
+            const inferred = self.instantiateGenericNamedVisible(callee, empty_args, input_te, s, .regular, qualified_module_dir, self.locationPath(loc)) catch |err| switch (err) {
                 error.SymbolNotFound => null,
                 error.UnknownType => blk: {
                     has_unknown_candidate = true;
@@ -7978,13 +6481,13 @@ pub const Semantizer = struct {
                 else => return err,
             };
 
-            const visible_declared = if (call.module_qualifier) |module_name|
-                try self.resolveQualifiedDeclaredOverloadMaybe(module_name, call.callee, input_te, s, loc)
+            const visible_declared = if (qualifier) |module_name|
+                try self.resolveQualifiedDeclaredOverloadMaybe(module_name, callee, input_te, s, loc)
             else
-                try self.resolveVisibleDeclaredOverloadMaybe(call.callee, input_te, s, loc);
-            const abstract_inferred = if (call.module_qualifier != null)
+                try self.resolveVisibleDeclaredOverloadMaybe(callee, input_te, s, loc);
+            const abstract_inferred = if (qualifier != null)
                 self.instantiateGenericNamedVisible(
-                    call.callee,
+                    callee,
                     empty_args,
                     input_te,
                     s,
@@ -8000,7 +6503,7 @@ pub const Semantizer = struct {
                     else => return inner_err,
                 }
             else
-                self.instantiateGenericNamed(call.callee, empty_args, input_te, s, .abstract_contract) catch |inner_err| switch (inner_err) {
+                self.instantiateGenericNamed(callee, empty_args, input_te, s, .abstract_contract) catch |inner_err| switch (inner_err) {
                     error.SymbolNotFound => null,
                     error.UnknownType => blk: {
                         has_unknown_candidate = true;
@@ -8150,7 +6653,8 @@ pub const Semantizer = struct {
         s: *Scope,
         subst: *const GenericSubst,
     ) SemErr!?u32 {
-        var in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, subst);
+        const template_file = &tmpl.syntax_files[@intFromEnum(tmpl.syntax_file_id)];
+        var in_struct_ptr = try self.structTypeFromNodeWithSubst(template_file.ref(tmpl.input), s, subst);
 
         if (try self.refinedStructTypeWithActual(in_struct_ptr, call_input.ty, s)) |refined| {
             in_struct_ptr = refined;
@@ -8261,21 +6765,6 @@ pub const Semantizer = struct {
         }
         if (ambiguous) return error.AmbiguousOverload;
         return best;
-    }
-
-    fn buildNamedPipeInput(
-        self: *Semantizer,
-        field_names: []const []const u8,
-        args: []const typ.TypedExpr,
-    ) !typ.TypedExpr {
-        var call_args = std.array_list.Managed(CallArg).init(self.allocator.*);
-        defer call_args.deinit();
-
-        for (field_names, 0..) |field_name, idx| {
-            try call_args.append(.{ .name = field_name, .expr = args[idx] });
-        }
-
-        return self.buildNamedCallInput(call_args.items);
     }
 
     fn fieldExprMatchesDispatch(
@@ -8431,28 +6920,28 @@ pub const Semantizer = struct {
         self: *Semantizer,
         expected: sg.Type,
         actual: typ.TypedExpr,
-        expr_node: *const syn.STNode,
+        expr_location: tok.Location,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         if (typ.typesCompatible(expected, actual.ty)) return actual;
 
         if (expected == .pointer_type and actual.ty != .pointer_type) {
-            const coerced_pointer = try typ.coerceExprToType(expected, actual, expr_node, s, self.allocator, self.diags);
+            const coerced_pointer = try typ.coerceExprToType(expected, actual, expr_location, s, self.allocator, self.diags);
             if (typ.typesCompatible(expected, coerced_pointer.ty)) return coerced_pointer;
 
             const ptr_expr = switch (expected.pointer_type.mutability) {
-                .read_only => try typ.ensureReadOnlyPointer(expr_node, actual, self.allocator, self.diags),
-                .read_write => try typ.ensureMutablePointer(expr_node, actual, s, self.allocator, self.diags),
+                .read_only => try typ.ensureReadOnlyPointer(expr_location, actual, self.allocator, self.diags),
+                .read_write => try typ.ensureMutablePointer(expr_location, actual, s, self.allocator, self.diags),
             };
             if (typ.typesCompatible(expected, ptr_expr.ty)) return ptr_expr;
         }
 
-        const coerced = try typ.coerceExprToType(expected, actual, expr_node, s, self.allocator, self.diags);
+        const coerced = try typ.coerceExprToType(expected, actual, expr_location, s, self.allocator, self.diags);
         if (!typ.typesCompatible(expected, coerced.ty)) {
             const pair = try self.formatTypePairText(expected, coerced.ty, s);
             defer pair.deinit();
             try self.diags.add(
-                expr_node.location,
+                expr_location,
                 .semantic,
                 "cannot pass '{s}' where '{s}' is expected",
                 .{ pair.actual.bytes, pair.expected.bytes },
@@ -8467,11 +6956,11 @@ pub const Semantizer = struct {
         self: *Semantizer,
         expected: *const sg.StructType,
         input_te: typ.TypedExpr,
-        expr_node: *const syn.STNode,
+        expr_location: tok.Location,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         if (input_te.ty != .struct_type or input_te.node.content != .struct_value_literal) {
-            return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_node, s, self.allocator, self.diags);
+            return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_location, s, self.allocator, self.diags);
         }
 
         const actual_struct = input_te.ty.struct_type;
@@ -8479,12 +6968,12 @@ pub const Semantizer = struct {
         const positional_prefix: usize = @min(actual_value.dispatch_prefix_positional_count, actual_value.fields.len);
 
         if (positional_prefix > expected.fields.len) {
-            return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_node, s, self.allocator, self.diags);
+            return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_location, s, self.allocator, self.diags);
         }
 
         for (actual_value.fields[positional_prefix..]) |actual_field| {
             if (typ.findFieldByName(expected, actual_field.name) == null) {
-                return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_node, s, self.allocator, self.diags);
+                return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_location, s, self.allocator, self.diags);
             }
         }
 
@@ -8496,7 +6985,7 @@ pub const Semantizer = struct {
                 .node = @constCast(actual_field.value),
                 .ty = actual_field_ty,
             };
-            field_expr = try self.coerceCallFieldExpr(exp_field.ty, field_expr, expr_node, s);
+            field_expr = try self.coerceCallFieldExpr(exp_field.ty, field_expr, expr_location, s);
             coerced_fields[idx] = .{
                 .name = exp_field.name,
                 .value = field_expr.node,
@@ -8512,7 +7001,7 @@ pub const Semantizer = struct {
                     .node = @constCast(actual_field.?.value),
                     .ty = actual_field_ty.?.ty,
                 };
-                field_expr = try self.coerceCallFieldExpr(exp_field.ty, field_expr, expr_node, s);
+                field_expr = try self.coerceCallFieldExpr(exp_field.ty, field_expr, expr_location, s);
                 coerced_fields[idx] = .{
                     .name = exp_field.name,
                     .value = field_expr.node,
@@ -8527,7 +7016,7 @@ pub const Semantizer = struct {
                         exp_field.ty,
                         default_node.content.reach_directive,
                         s,
-                        expr_node.location,
+                        expr_location,
                     );
                     coerced_fields[idx] = .{
                         .name = exp_field.name,
@@ -8542,7 +7031,7 @@ pub const Semantizer = struct {
                 continue;
             }
 
-            return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_node, s, self.allocator, self.diags);
+            return try typ.coerceExprToType(.{ .struct_type = expected }, input_te, expr_location, s, self.allocator, self.diags);
         }
 
         const value_ptr = try self.allocator.create(sg.StructValueLiteral);
@@ -8552,7 +7041,7 @@ pub const Semantizer = struct {
             .dispatch_prefix_positional_count = @intCast(positional_prefix),
         };
 
-        const node = try sg.makeSGNode(.{ .struct_value_literal = value_ptr }, expr_node.location, self.allocator);
+        const node = try sg.makeSGNode(.{ .struct_value_literal = value_ptr }, expr_location, self.allocator);
         return .{ .node = node, .ty = .{ .struct_type = expected } };
     }
 
@@ -8703,106 +7192,6 @@ pub const Semantizer = struct {
         return self.buildCallInputWithPositionalPrefix(args, positional_prefix);
     }
 
-    fn handlePipe(
-        self: *Semantizer,
-        pipe: syn.PipeExpression,
-        s: *Scope,
-        loc: tok.Location,
-    ) SemErr!typ.TypedExpr {
-        const left_te = try self.visitNode(pipe.left.*, s);
-        if (pipe.right.content == .function_call) {
-            const call = pipe.right.content.function_call;
-
-            if (call.input.*.content != .struct_value_literal) {
-                try self.diags.add(
-                    loc,
-                    .semantic,
-                    "pipe right-hand side must be a call with explicit arguments",
-                    .{},
-                );
-                return error.Reported;
-            }
-
-            const sv = call.input.*.content.struct_value_literal;
-            if (sv.fields.len == 0) {
-                try self.diags.add(
-                    loc,
-                    .semantic,
-                    "pipe right-hand side must use at least one argument placeholder",
-                    .{},
-                );
-                return error.Reported;
-            }
-
-            var args = std.array_list.Managed(CallArg).init(self.allocator.*);
-            defer args.deinit();
-
-            var found_placeholder = false;
-            for (sv.fields) |field| {
-                if (syntaxNodeContainsPipePlaceholder(field.value)) {
-                    found_placeholder = true;
-                    break;
-                }
-            }
-            if (!found_placeholder) {
-                try self.diags.add(
-                    loc,
-                    .semantic,
-                    "pipe right-hand side must use at least one argument placeholder",
-                    .{},
-                );
-                return error.Reported;
-            }
-
-            for (sv.fields) |field| {
-                try args.append(.{
-                    .name = field.name.string,
-                    .expr = try self.evalPipeArg(field.value, left_te, s),
-                });
-            }
-
-            var input_te = try self.buildCallInputWithPositionalPrefix(args.items, sv.positional_prefix_count);
-
-            if (std.mem.eql(u8, call.callee, "is")) {
-                return self.handleIsBuiltinFromInput(input_te, loc, s);
-            }
-
-            const chosen = try self.resolveRegularCallCallee(
-                .{
-                    .callee = call.callee,
-                    .callee_loc = call.callee_loc,
-                    .module_qualifier = call.module_qualifier,
-                    .type_arguments = call.type_arguments,
-                    .type_arguments_struct = call.type_arguments_struct,
-                    .input = call.input,
-                },
-                input_te,
-                s,
-                loc,
-            );
-            input_te = try self.coerceCallInputToExpected(&chosen.input, input_te, call.input, s);
-            try self.discoverFunctionReference(chosen);
-
-            const fc_ptr = try self.allocator.create(sg.FunctionCall);
-            fc_ptr.* = .{ .callee = chosen, .input = input_te.node };
-
-            const n = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
-            return .{ .node = n, .ty = typ.functionReturnType(chosen) };
-        }
-
-        if (!syntaxNodeContainsPipePlaceholder(pipe.right)) {
-            try self.diags.add(
-                loc,
-                .semantic,
-                "pipe right-hand side must use at least one argument placeholder",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        return self.evalPipeArg(pipe.right, left_te, s);
-    }
-
     fn makeEmptyStructValueExpr(
         self: *Semantizer,
         loc: tok.Location,
@@ -8833,13 +7222,15 @@ pub const Semantizer = struct {
 
     fn handleTestingExpectErrorBuiltin(
         self: *Semantizer,
-        call: syn.FunctionCall,
+        node_ref: syn.SyntaxRef,
         input_te: typ.TypedExpr,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node_ref);
+        const call = file.functionCall(node_ref.node) orelse return error.InvalidType;
         if (input_te.ty != .struct_type or input_te.node.content != .struct_value_literal) {
             try self.diags.add(
-                call.input.*.location,
+                file.location(call.input),
                 .semantic,
                 "testing.expect_error expects '.expected_reason' and '.actual_result' arguments",
                 .{},
@@ -8851,7 +7242,7 @@ pub const Semantizer = struct {
         const input_value = input_te.node.content.struct_value_literal;
         if (input_struct.fields.len != 2 or input_value.fields.len != 2) {
             try self.diags.add(
-                call.input.*.location,
+                file.location(call.input),
                 .semantic,
                 "testing.expect_error expects '.expected_reason' and '.actual_result' arguments",
                 .{},
@@ -8861,7 +7252,7 @@ pub const Semantizer = struct {
 
         const expected_idx = fieldIndexInStruct(input_struct, "expected_reason") orelse {
             try self.diags.add(
-                call.input.*.location,
+                file.location(call.input),
                 .semantic,
                 "testing.expect_error expects '.expected_reason' and '.actual_result' arguments",
                 .{},
@@ -8870,7 +7261,7 @@ pub const Semantizer = struct {
         };
         const actual_idx = fieldIndexInStruct(input_struct, "actual_result") orelse {
             try self.diags.add(
-                call.input.*.location,
+                file.location(call.input),
                 .semantic,
                 "testing.expect_error expects '.expected_reason' and '.actual_result' arguments",
                 .{},
@@ -8878,14 +7269,14 @@ pub const Semantizer = struct {
             return error.Reported;
         };
 
-        const actual_info = try self.errableInfoOf(input_struct.fields[actual_idx].ty, call.input.*.location, "'.actual_result'", s);
+        const actual_info = try self.errableInfoOf(input_struct.fields[actual_idx].ty, file.location(call.input), "'.actual_result'", s);
         const error_payload_struct = switch (actual_info.error_payload_type) {
             .struct_type => |st| st,
             else => return error.Reported,
         };
         const reason_field = typ.findFieldByName(error_payload_struct, "reason") orelse {
             try self.diags.add(
-                call.input.*.location,
+                file.location(call.input),
                 .semantic,
                 "Errable '..error' payload must contain '.reason'",
                 .{},
@@ -8898,12 +7289,12 @@ pub const Semantizer = struct {
             .node = @constCast(input_value.fields[expected_idx].value),
             .ty = input_struct.fields[expected_idx].ty,
         };
-        expected_reason_te = try typ.coerceExprToType(reason_field.ty, expected_reason_te, call.input, s, self.allocator, self.diags);
+        expected_reason_te = try typ.coerceExprToType(reason_field.ty, expected_reason_te, file.location(call.input), s, self.allocator, self.diags);
         if (!typ.typesCompatible(reason_field.ty, expected_reason_te.ty)) {
             const pair = try self.formatTypePairText(reason_field.ty, expected_reason_te.ty, s);
             defer pair.deinit();
             try self.diags.add(
-                call.input.*.location,
+                file.location(call.input),
                 .semantic,
                 "testing.expect_error expects '.expected_reason' compatible with '{s}', found '{s}'",
                 .{ pair.expected.bytes, pair.actual.bytes },
@@ -8911,12 +7302,12 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const test_fail_fn = try self.resolveTestingFailImpl(s, call.callee_loc);
+        const test_fail_fn = try self.resolveTestingFailImpl(s, file.tokenLocation(call.callee_token));
         const result_type = typ.functionReturnType(test_fail_fn);
-        const result_info = try self.errableInfoOf(result_type, call.callee_loc, "testing.expect_error result", s);
+        const result_info = try self.errableInfoOf(result_type, file.tokenLocation(call.callee_token), "testing.expect_error result", s);
 
         const expect_err = try self.allocator.create(sg.TestingExpectError);
-        const call_position = self.locationLineColumn(call.callee_loc);
+        const call_position = self.locationLineColumn(file.tokenLocation(call.callee_token));
         expect_err.* = .{
             .expected_reason = expected_reason_te.node,
             .actual_result = input_value.fields[actual_idx].value,
@@ -8932,11 +7323,11 @@ pub const Semantizer = struct {
             },
             .line = call_position.line,
             .column = call_position.column,
-            .source_file = self.locationPath(call.callee_loc),
-            .source_line = self.sourceLineText(call.callee_loc),
+            .source_file = self.locationPath(file.tokenLocation(call.callee_token)),
+            .source_line = self.sourceLineText(file.tokenLocation(call.callee_token)),
         };
 
-        const node = try sg.makeSGNode(.{ .testing_expect_error = expect_err }, call.callee_loc, self.allocator);
+        const node = try sg.makeSGNode(.{ .testing_expect_error = expect_err }, file.tokenLocation(call.callee_token), self.allocator);
         node.sem_type = result_type;
         try s.nodes.append(node);
         return .{ .node = node, .ty = result_type };
@@ -9185,20 +7576,25 @@ pub const Semantizer = struct {
         _ = s;
         try buf.appendSlice(tmpl.name);
         try buf.appendSlice(" (");
-        for (tmpl.input.fields, 0..) |fld, i| {
+        const syntax_file = &tmpl.syntax_files[@intFromEnum(tmpl.syntax_file_id)];
+        const input = syntax_file.structTypeLiteral(tmpl.input) orelse return error.InvalidType;
+        const output = syntax_file.structTypeLiteral(tmpl.output) orelse return error.InvalidType;
+        for (input.fields, 0..) |field_node, i| {
+            const fld = syntax_file.structTypeField(field_node) orelse return error.InvalidType;
             if (i != 0) try buf.appendSlice(", ");
             try buf.appendSlice(".");
-            try buf.appendSlice(fld.name.string);
+            try buf.appendSlice(syntax_file.tokenText(tmpl.source_db, fld.name_token));
             try buf.appendSlice(": ");
-            try self.appendTemplateTypePretty(buf, fld.type.?, tmpl);
+            try self.appendTemplateTypePretty(buf, fld.type_node orelse return error.InvalidType, tmpl);
         }
         try buf.appendSlice(") -> (");
-        for (tmpl.output.fields, 0..) |fld, i| {
+        for (output.fields, 0..) |field_node, i| {
+            const fld = syntax_file.structTypeField(field_node) orelse return error.InvalidType;
             if (i != 0) try buf.appendSlice(", ");
             try buf.appendSlice(".");
-            try buf.appendSlice(fld.name.string);
+            try buf.appendSlice(syntax_file.tokenText(tmpl.source_db, fld.name_token));
             try buf.appendSlice(": ");
-            try self.appendTemplateTypePretty(buf, fld.type.?, tmpl);
+            try self.appendTemplateTypePretty(buf, fld.type_node orelse return error.InvalidType, tmpl);
         }
         try buf.appendSlice(")");
     }
@@ -9222,67 +7618,82 @@ pub const Semantizer = struct {
     fn appendTemplateTypePretty(
         self: *Semantizer,
         buf: *std.array_list.Managed(u8),
-        ty: syn.Type,
+        node: syn.NodeIndex,
         tmpl: gen.GenericTemplate,
     ) !void {
+        const file = &tmpl.syntax_files[@intFromEnum(tmpl.syntax_file_id)];
+        const ty = file.syntaxType(node) orelse return error.InvalidType;
         switch (ty) {
-            .type_name => |tn| {
-                try buf.appendSlice(self.templateParamDisplayName(tmpl, tn.string) orelse tn.string);
+            .name => |name| {
+                if (name.qualifier_token) |qualifier| {
+                    try buf.appendSlice(file.tokenText(tmpl.source_db, qualifier));
+                    try buf.appendSlice("::");
+                }
+                const text = file.tokenText(tmpl.source_db, name.name_token);
+                try buf.appendSlice(self.templateParamDisplayName(tmpl, text) orelse text);
             },
-            .pointer_type => |ptr_info| {
-                switch (ptr_info.mutability) {
+            .pointer => |pointer| {
+                switch (pointer.mutability) {
                     .read_only => try buf.appendSlice("&"),
                     .read_write => try buf.appendSlice("$&"),
                 }
-                try self.appendTemplateTypePretty(buf, ptr_info.child.*, tmpl);
+                try self.appendTemplateTypePretty(buf, pointer.child, tmpl);
             },
-            .inferred_errable => |inner| {
+            .nullable => |child| {
+                try buf.appendSlice("?");
+                try self.appendTemplateTypePretty(buf, child, tmpl);
+            },
+            .inferred_errable => |child| {
                 try buf.appendSlice("!");
-                try self.appendTemplateTypePretty(buf, inner.*, tmpl);
+                try self.appendTemplateTypePretty(buf, child, tmpl);
             },
-            .array_type => |arr_info| {
-                var len_buf: [32]u8 = undefined;
-                const len_text = std.fmt.bufPrint(&len_buf, "[{d}]", .{arr_info.length}) catch unreachable;
-                try buf.appendSlice(len_text);
-                try self.appendTemplateTypePretty(buf, arr_info.element.*, tmpl);
+            .array => |array| {
+                try buf.appendSlice("[");
+                try buf.appendSlice(file.tokenText(tmpl.source_db, array.length_token));
+                try buf.appendSlice("]");
+                try self.appendTemplateTypePretty(buf, array.element, tmpl);
             },
-            .generic_type_instantiation => |g| {
-                try buf.appendSlice(g.base_name.string);
+            .generic => |generic| {
+                try self.appendTemplateTypePretty(buf, generic.base, tmpl);
                 try buf.appendSlice("#(");
-                for (g.args.fields, 0..) |field, idx| {
+                const arguments = file.structTypeLiteral(generic.arguments) orelse return error.InvalidType;
+                for (arguments.fields, 0..) |field_node, idx| {
+                    const field = file.structTypeField(field_node) orelse return error.InvalidType;
                     if (idx != 0) try buf.appendSlice(", ");
                     try buf.appendSlice(".");
-                    try buf.appendSlice(field.name.string);
-                    if (field.type) |field_ty| {
+                    try buf.appendSlice(file.tokenText(tmpl.source_db, field.name_token));
+                    if (field.type_node) |field_type| {
                         try buf.appendSlice(": ");
-                        try self.appendTemplateTypePretty(buf, field_ty, tmpl);
+                        try self.appendTemplateTypePretty(buf, field_type, tmpl);
                     }
                 }
                 try buf.appendSlice(")");
             },
-            .struct_type_literal => |st| {
+            .struct_literal => |literal| {
                 try buf.appendSlice("(");
-                for (st.fields, 0..) |field, idx| {
+                for (literal.fields, 0..) |field_node, idx| {
+                    const field = file.structTypeField(field_node) orelse return error.InvalidType;
                     if (idx != 0) try buf.appendSlice(", ");
                     try buf.appendSlice(".");
-                    try buf.appendSlice(field.name.string);
-                    if (field.type) |field_ty| {
+                    try buf.appendSlice(file.tokenText(tmpl.source_db, field.name_token));
+                    if (field.type_node) |field_type| {
                         try buf.appendSlice(": ");
-                        try self.appendTemplateTypePretty(buf, field_ty, tmpl);
+                        try self.appendTemplateTypePretty(buf, field_type, tmpl);
                     }
                 }
                 try buf.appendSlice(")");
             },
-            .choice_type_literal => |ct| {
+            .choice_literal => |literal| {
                 try buf.appendSlice("(");
-                for (ct.variants, 0..) |variant, idx| {
+                for (literal.variants, 0..) |variant_node, idx| {
+                    const variant = file.choiceTypeVariant(variant_node) orelse return error.InvalidType;
                     if (idx != 0) try buf.appendSlice(", ");
                     try buf.appendSlice("..");
                     if (variant.module_qualifier) |qualifier| {
-                        try buf.appendSlice(qualifier.string);
+                        try buf.appendSlice(file.tokenText(tmpl.source_db, qualifier));
                         try buf.appendSlice(".");
                     }
-                    try buf.appendSlice(variant.name.string);
+                    try buf.appendSlice(file.tokenText(tmpl.source_db, variant.name_token));
                     if (variant.payload_type) |payload| {
                         try buf.appendSlice(" ");
                         try self.appendTemplateTypePretty(buf, payload, tmpl);
@@ -9293,66 +7704,87 @@ pub const Semantizer = struct {
         }
     }
 
-    fn appendSyntaxTypePretty(self: *Semantizer, buf: *std.array_list.Managed(u8), ty: syn.Type) !void {
+    fn appendSyntaxTypePretty(
+        self: *Semantizer,
+        buf: *std.array_list.Managed(u8),
+        syntax_ref: syn.SyntaxRef,
+    ) !void {
+        const file = self.syntaxFile(syntax_ref);
+        const ty = file.syntaxType(syntax_ref.node) orelse return error.InvalidType;
         switch (ty) {
-            .type_name => |tn| try buf.appendSlice(tn.string),
-            .pointer_type => |ptr_info| {
-                switch (ptr_info.mutability) {
+            .name => |name| {
+                if (name.qualifier_token) |qualifier| {
+                    try buf.appendSlice(file.tokenText(&self.diags.source_db, qualifier));
+                    try buf.appendSlice("::");
+                }
+                const text = file.tokenText(&self.diags.source_db, name.name_token);
+                try buf.appendSlice(text);
+            },
+            .pointer => |pointer| {
+                switch (pointer.mutability) {
                     .read_only => try buf.appendSlice("&"),
                     .read_write => try buf.appendSlice("$&"),
                 }
-                try self.appendSyntaxTypePretty(buf, ptr_info.child.*);
+                try self.appendSyntaxTypePretty(buf, file.ref(pointer.child));
             },
-            .inferred_errable => |inner| {
+            .nullable => |child| {
+                try buf.appendSlice("?");
+                try self.appendSyntaxTypePretty(buf, file.ref(child));
+            },
+            .inferred_errable => |child| {
                 try buf.appendSlice("!");
-                try self.appendSyntaxTypePretty(buf, inner.*);
+                try self.appendSyntaxTypePretty(buf, file.ref(child));
             },
-            .array_type => |arr_info| {
-                var len_buf: [32]u8 = undefined;
-                const len_text = std.fmt.bufPrint(&len_buf, "[{d}]", .{arr_info.length}) catch unreachable;
-                try buf.appendSlice(len_text);
-                try self.appendSyntaxTypePretty(buf, arr_info.element.*);
+            .array => |array| {
+                try buf.appendSlice("[");
+                try buf.appendSlice(file.tokenText(&self.diags.source_db, array.length_token));
+                try buf.appendSlice("]");
+                try self.appendSyntaxTypePretty(buf, file.ref(array.element));
             },
-            .generic_type_instantiation => |g| {
-                try buf.appendSlice(g.base_name.string);
+            .generic => |generic| {
+                try self.appendSyntaxTypePretty(buf, file.ref(generic.base));
                 try buf.appendSlice("#(");
-                for (g.args.fields, 0..) |field, idx| {
+                const arguments = file.structTypeLiteral(generic.arguments) orelse return error.InvalidType;
+                for (arguments.fields, 0..) |field_node, idx| {
+                    const field = file.structTypeField(field_node) orelse return error.InvalidType;
                     if (idx != 0) try buf.appendSlice(", ");
                     try buf.appendSlice(".");
-                    try buf.appendSlice(field.name.string);
-                    if (field.type) |field_ty| {
+                    try buf.appendSlice(file.tokenText(&self.diags.source_db, field.name_token));
+                    if (field.type_node) |field_type| {
                         try buf.appendSlice(": ");
-                        try self.appendSyntaxTypePretty(buf, field_ty);
+                        try self.appendSyntaxTypePretty(buf, file.ref(field_type));
                     }
                 }
                 try buf.appendSlice(")");
             },
-            .struct_type_literal => |st| {
+            .struct_literal => |literal| {
                 try buf.appendSlice("(");
-                for (st.fields, 0..) |field, idx| {
+                for (literal.fields, 0..) |field_node, idx| {
+                    const field = file.structTypeField(field_node) orelse return error.InvalidType;
                     if (idx != 0) try buf.appendSlice(", ");
                     try buf.appendSlice(".");
-                    try buf.appendSlice(field.name.string);
-                    if (field.type) |field_ty| {
+                    try buf.appendSlice(file.tokenText(&self.diags.source_db, field.name_token));
+                    if (field.type_node) |field_type| {
                         try buf.appendSlice(": ");
-                        try self.appendSyntaxTypePretty(buf, field_ty);
+                        try self.appendSyntaxTypePretty(buf, file.ref(field_type));
                     }
                 }
                 try buf.appendSlice(")");
             },
-            .choice_type_literal => |ct| {
+            .choice_literal => |literal| {
                 try buf.appendSlice("(");
-                for (ct.variants, 0..) |variant, idx| {
+                for (literal.variants, 0..) |variant_node, idx| {
+                    const variant = file.choiceTypeVariant(variant_node) orelse return error.InvalidType;
                     if (idx != 0) try buf.appendSlice(", ");
                     try buf.appendSlice("..");
                     if (variant.module_qualifier) |qualifier| {
-                        try buf.appendSlice(qualifier.string);
+                        try buf.appendSlice(file.tokenText(&self.diags.source_db, qualifier));
                         try buf.appendSlice(".");
                     }
-                    try buf.appendSlice(variant.name.string);
+                    try buf.appendSlice(file.tokenText(&self.diags.source_db, variant.name_token));
                     if (variant.payload_type) |payload| {
                         try buf.appendSlice(" ");
-                        try self.appendSyntaxTypePretty(buf, payload);
+                        try self.appendSyntaxTypePretty(buf, file.ref(payload));
                     }
                 }
                 try buf.appendSlice(")");
@@ -9360,63 +7792,70 @@ pub const Semantizer = struct {
         }
     }
 
-    fn appendSyntaxReachDirective(self: *Semantizer, buf: *std.array_list.Managed(u8), reach: syn.ReachDirective) !void {
-        _ = self;
+    fn appendSyntaxReachDirective(self: *Semantizer, buf: *std.array_list.Managed(u8), syntax_ref: syn.SyntaxRef) !void {
+        const file = self.syntaxFile(syntax_ref);
+        const reach = file.reachDirective(syntax_ref.node) orelse return error.InvalidType;
         for (reach.alternatives, 0..) |alt, alt_idx| {
             if (alt_idx != 0) try buf.appendSlice(", ");
-            for (alt.segments, 0..) |segment, seg_idx| {
+            for (file.reachAlternative(alt).?.segments, 0..) |segment, seg_idx| {
                 if (seg_idx != 0) try buf.append('.');
-                try buf.appendSlice(segment.string);
+                try buf.appendSlice(file.tokenText(&self.diags.source_db, file.mainToken(segment)));
             }
         }
     }
 
-    fn appendSyntaxFunctionSignature(self: *Semantizer, buf: *std.array_list.Managed(u8), decl: syn.FunctionDeclaration) !void {
-        try buf.appendSlice(decl.name.string);
+    fn appendSyntaxFunctionSignature(self: *Semantizer, buf: *std.array_list.Managed(u8), syntax_ref: syn.SyntaxRef, decl: syn.FunctionDeclaration) !void {
+        const file = self.syntaxFile(syntax_ref);
+        try buf.appendSlice(self.functionNameText(syntax_ref).?);
         try buf.appendSlice("(");
-        for (decl.input.fields, 0..) |field, idx| {
+        for (file.structTypeLiteral(decl.input).?.fields, 0..) |field_node, idx| {
+            const field = file.structTypeField(field_node).?;
             if (idx != 0) try buf.appendSlice(", ");
             try buf.appendSlice(".");
-            try buf.appendSlice(field.name.string);
-            if (field.type) |field_ty| {
+            try buf.appendSlice(file.tokenText(&self.diags.source_db, field.name_token));
+            if (field.type_node) |field_ty| {
                 try buf.appendSlice(": ");
-                try self.appendSyntaxTypePretty(buf, field_ty);
+                try self.appendSyntaxTypePretty(buf, file.ref(field_ty));
             }
             if (field.default_value) |default_node| {
-                if (default_node.content == .reach_directive) {
+                if (file.tag(default_node) == .reach_directive) {
                     try buf.appendSlice(" = #reach ");
-                    try self.appendSyntaxReachDirective(buf, default_node.content.reach_directive);
+                    try self.appendSyntaxReachDirective(buf, file.ref(default_node));
                 }
             }
         }
         try buf.appendSlice(") -> (");
-        for (decl.output.fields, 0..) |field, idx| {
+        for (file.structTypeLiteral(decl.output).?.fields, 0..) |field_node, idx| {
+            const field = file.structTypeField(field_node).?;
             if (idx != 0) try buf.appendSlice(", ");
             try buf.appendSlice(".");
-            try buf.appendSlice(field.name.string);
-            if (field.type) |field_ty| {
+            try buf.appendSlice(file.tokenText(&self.diags.source_db, field.name_token));
+            if (field.type_node) |field_ty| {
                 try buf.appendSlice(": ");
-                try self.appendSyntaxTypePretty(buf, field_ty);
+                try self.appendSyntaxTypePretty(buf, file.ref(field_ty));
             }
         }
         try buf.appendSlice(")");
     }
 
-    fn syntaxFunctionVisibleFrom(self: *Semantizer, decl: syn.FunctionDeclaration, decl_loc: tok.Location, requester_file: []const u8) !bool {
-        if (!isPrivateName(decl.name.string)) return true;
+    fn syntaxFunctionVisibleFrom(self: *Semantizer, syntax_ref: syn.SyntaxRef, decl_loc: tok.Location, requester_file: []const u8) !bool {
+        if (!isPrivateName(self.functionNameText(syntax_ref).?)) return true;
         return try self.isSameModule(requester_file, self.locationPath(decl_loc));
     }
 
     fn appendReachDefaultHintForDecl(
         self: *Semantizer,
         out: *std.array_list.Managed(u8),
+        syntax_ref: syn.SyntaxRef,
         decl: syn.FunctionDeclaration,
         any_overload: *bool,
     ) !void {
+        const file = self.syntaxFile(syntax_ref);
         var decl_has_reach_default = false;
-        for (decl.input.fields) |field| {
+        for (file.structTypeLiteral(decl.input).?.fields) |field_node| {
+            const field = file.structTypeField(field_node).?;
             const default_node = field.default_value orelse continue;
-            if (default_node.content != .reach_directive) continue;
+            if (file.tag(default_node) != .reach_directive) continue;
             decl_has_reach_default = true;
             break;
         }
@@ -9425,20 +7864,21 @@ pub const Semantizer = struct {
         if (any_overload.*) try out.appendSlice("\n");
         any_overload.* = true;
         try out.appendSlice("  - ");
-        try self.appendSyntaxFunctionSignature(out, decl);
+        try self.appendSyntaxFunctionSignature(out, syntax_ref, decl);
         try out.appendSlice("\n    omitted #reach defaults:");
 
-        for (decl.input.fields) |field| {
+        for (file.structTypeLiteral(decl.input).?.fields) |field_node| {
+            const field = file.structTypeField(field_node).?;
             const default_node = field.default_value orelse continue;
-            if (default_node.content != .reach_directive) continue;
+            if (file.tag(default_node) != .reach_directive) continue;
             try out.appendSlice("\n      - .");
-            try out.appendSlice(field.name.string);
+            try out.appendSlice(file.tokenText(&self.diags.source_db, field.name_token));
             try out.appendSlice(" uses #reach [");
-            try self.appendSyntaxReachDirective(out, default_node.content.reach_directive);
+            try self.appendSyntaxReachDirective(out, file.ref(default_node));
             try out.appendSlice("]");
-            if (field.type) |field_ty| {
+            if (field.type_node) |field_ty| {
                 try out.appendSlice(" expected as '");
-                try self.appendSyntaxTypePretty(out, field_ty);
+                try self.appendSyntaxTypePretty(out, file.ref(field_ty));
                 try out.appendSlice("'");
             }
         }
@@ -9453,15 +7893,15 @@ pub const Semantizer = struct {
         defer overloads.deinit();
 
         var any_overload = false;
-        for (self.st_nodes) |node| {
-            const decl = switch (node.content) {
-                .function_declaration => |decl| decl,
-                .test_declaration => |td| td.decl,
-                else => continue,
-            };
-            if (!std.mem.eql(u8, decl.name.string, fn_name)) continue;
-            if (!(try self.syntaxFunctionVisibleFrom(decl, node.location, requester_file))) continue;
-            try self.appendReachDefaultHintForDecl(&overloads, decl, &any_overload);
+        for (self.syntax_roots) |node| {
+            const file = self.syntaxFile(node);
+            const decl = if (file.testDeclaration(node.node)) |test_decl|
+                test_decl.function
+            else
+                file.functionDeclaration(node.node) orelse continue;
+            if (!std.mem.eql(u8, self.functionNameText(node).?, fn_name)) continue;
+            if (!(try self.syntaxFunctionVisibleFrom(node, self.nodeLocation(node), requester_file))) continue;
+            try self.appendReachDefaultHintForDecl(&overloads, node, decl, &any_overload);
         }
         if (!any_overload) return null;
 
@@ -9527,9 +7967,12 @@ pub const Semantizer = struct {
         tmpl: gen.GenericTemplate,
         param_name: []const u8,
     ) ?[]const u8 {
-        for (tmpl.input.fields) |fld| {
-            const ty_node = fld.type.?;
-            if (self.typeUsesParam(ty_node, param_name)) return fld.name.string;
+        const file = syn.fileForRef(tmpl.syntax_files, .{ .file_id = tmpl.syntax_file_id, .node = tmpl.input });
+        const input = file.structTypeLiteral(tmpl.input) orelse return null;
+        for (input.fields) |field_node| {
+            const field = file.structTypeField(field_node) orelse continue;
+            const ty_node = field.type_node orelse continue;
+            if (self.compactTypeUsesParam(file.ref(ty_node), param_name)) return file.tokenText(tmpl.source_db, field.name_token);
         }
         return null;
     }
@@ -9718,17 +8161,20 @@ pub const Semantizer = struct {
 
     fn handleTypeInitializer(
         self: *Semantizer,
-        call: syn.FunctionCall,
+        syntax_ref: syn.SyntaxRef,
         tv_in: typ.TypedExpr,
         type_decl: *sg.TypeDeclaration,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(syntax_ref);
+        const call = file.functionCall(syntax_ref.node) orelse return error.InvalidType;
+        const callee = file.tokenText(&self.diags.source_db, call.callee_token);
         if (tv_in.ty != .struct_type) {
             try self.diags.add(
-                call.input.*.location,
+                file.location(call.input),
                 .semantic,
                 "expected struct literal arguments when constructing type '{s}'",
-                .{call.callee},
+                .{callee},
             );
             return error.Reported;
         }
@@ -9753,57 +8199,34 @@ pub const Semantizer = struct {
         init_struct.* = .{ .fields = try init_fields.toOwnedSlice() };
 
         const init_input_ty: sg.Type = .{ .struct_type = init_struct };
-        const init_input_te = try self.buildTypeInitializerDispatchInput(type_decl.ty, tv_in, init_input_ty, call.input.*.location);
+        const init_input_te = try self.buildTypeInitializerDispatchInput(type_decl.ty, tv_in, init_input_ty, file.location(call.input));
         const init_fn = blk: {
-            if (call.type_arguments_struct) |stargs| {
-                const instantiated = self.instantiateGenericNamed("init", stargs, init_input_te, s, .regular) catch |err| switch (err) {
-                    error.SymbolNotFound => null,
-                    else => return err,
-                };
-                if (instantiated) |fn_decl| break :blk fn_decl;
-            } else if (call.type_arguments) |targs| {
-                const instantiated = self.instantiateGeneric("init", targs, init_input_te, s, .regular) catch |err| switch (err) {
-                    error.SymbolNotFound => null,
-                    else => return err,
-                };
-                if (instantiated) |fn_decl| break :blk fn_decl;
-            }
-
-            const synthetic_init_call = syn.FunctionCall{
-                .callee = "init",
-                .callee_loc = call.callee_loc,
-                .module_qualifier = null,
-                .type_arguments = call.type_arguments,
-                .type_arguments_struct = call.type_arguments_struct,
-                .input = call.input,
-            };
-
-            break :blk self.tryResolveRegularCallCallee(synthetic_init_call, init_input_te, s, call.input.*.location) catch |err| switch (err) {
+            break :blk self.tryResolveRegularCallCallee(syntax_ref, init_input_te, s, file.location(call.input), "init") catch |err| switch (err) {
                 error.SymbolNotFound => {
-                    if (type_decl.ty == .struct_type and !(try self.hasVisibleTypeInitializerInit(type_decl.ty, self.locationPath(call.input.*.location), s))) {
-                        return try self.coerceCallInputToExpected(type_decl.ty.struct_type, tv_in, call.input, s);
+                    if (type_decl.ty == .struct_type and !(try self.hasVisibleTypeInitializerInit(type_decl.ty, self.locationPath(file.location(call.input)), s))) {
+                        return try self.coerceCallInputToExpected(type_decl.ty.struct_type, tv_in, file.location(call.input), s);
                     }
 
                     const actual = self.formatOwnedText(try typ.formatCallInput(user_struct, s, self.allocator));
                     defer actual.deinit();
-                    const available = self.formatOwnedText(try self.collectVisibleTypeInitializerSignatures(type_decl.ty, self.locationPath(call.input.*.location), s));
+                    const available = self.formatOwnedText(try self.collectVisibleTypeInitializerSignatures(type_decl.ty, self.locationPath(file.location(call.input)), s));
                     defer available.deinit();
                     try self.diags.add(
-                        call.input.*.location,
+                        file.location(call.input),
                         .semantic,
                         "failed to initialize type '{s}': no visible 'init' overload accepts arguments {s}. Available overloads:\n{s}",
-                        .{ call.callee, actual.bytes, available.bytes },
+                        .{ callee, actual.bytes, available.bytes },
                     );
                     return error.Reported;
                 },
                 error.AmbiguousOverload => {
-                    const candidates = self.formatOwnedText(try self.collectVisibleTypeInitializerSignatures(type_decl.ty, self.locationPath(call.input.*.location), s));
+                    const candidates = self.formatOwnedText(try self.collectVisibleTypeInitializerSignatures(type_decl.ty, self.locationPath(file.location(call.input)), s));
                     defer candidates.deinit();
                     try self.diags.add(
-                        call.input.*.location,
+                        file.location(call.input),
                         .semantic,
                         "failed to initialize type '{s}': matching 'init' overloads are ambiguous. Candidates:\n{s}",
-                        .{ call.callee, candidates.bytes },
+                        .{ callee, candidates.bytes },
                     );
                     return error.Reported;
                 },
@@ -9816,7 +8239,7 @@ pub const Semantizer = struct {
         std.mem.copyForwards(sg.StructTypeField, expected_user_fields, init_fn.input.fields[1..]);
         const expected_user_struct = try self.allocator.create(sg.StructType);
         expected_user_struct.* = .{ .fields = expected_user_fields };
-        const coerced_args = try self.coerceCallInputToExpected(expected_user_struct, tv_in, call.input, s);
+        const coerced_args = try self.coerceCallInputToExpected(expected_user_struct, tv_in, file.location(call.input), s);
 
         const type_init = sg.TypeInitializer{
             .type_decl = type_decl,
@@ -9824,7 +8247,7 @@ pub const Semantizer = struct {
             .args = coerced_args.node,
         };
 
-        const init_node = try sg.makeSGNode(.{ .type_initializer = type_init }, call.callee_loc, self.allocator);
+        const init_node = try sg.makeSGNode(.{ .type_initializer = type_init }, file.tokenLocation(call.callee_token), self.allocator);
         return .{ .node = init_node, .ty = type_decl.ty };
     }
 
@@ -9902,175 +8325,117 @@ pub const Semantizer = struct {
         return try buf.toOwnedSlice();
     }
 
-    fn typeUsesParam(self: *Semantizer, ty: syn.Type, param: []const u8) bool {
-        return switch (ty) {
-            .type_name => std.mem.eql(u8, ty.type_name.string, param),
-            .inferred_errable => |inner| self.typeUsesParam(inner.*, param),
-            .pointer_type => |ptr_info| self.typeUsesParam(ptr_info.child.*, param),
-            .array_type => |arr_info| self.typeUsesParam(arr_info.element.*, param),
-            .generic_type_instantiation => |g| blk: {
-                for (g.args.fields) |fld| {
-                    if (fld.type) |sub_ty| {
-                        if (self.typeUsesParam(sub_ty, param)) break :blk true;
-                    }
-                    if (fld.default_value) |value_expr| {
-                        if (valueExprUsesParam(value_expr, param)) break :blk true;
-                    }
+    fn compactTypeUsesParam(self: *Semantizer, node: syn.SyntaxRef, param: []const u8) bool {
+        const file = self.syntaxFile(node);
+        return switch (file.syntaxType(node.node) orelse return false) {
+            .name => |name| name.qualifier_token == null and std.mem.eql(u8, file.tokenText(&self.diags.source_db, name.name_token), param),
+            .pointer => |pointer| self.compactTypeUsesParam(file.ref(pointer.child), param),
+            .nullable => |child| self.compactTypeUsesParam(file.ref(child), param),
+            .inferred_errable => |child| self.compactTypeUsesParam(file.ref(child), param),
+            .array => |array| self.compactTypeUsesParam(file.ref(array.element), param),
+            .generic => |generic| blk: {
+                if (self.compactTypeUsesParam(file.ref(generic.base), param)) break :blk true;
+                const args = file.structTypeLiteral(generic.arguments) orelse break :blk false;
+                for (args.fields) |field_node| {
+                    const field = file.structTypeField(field_node) orelse continue;
+                    if (field.type_node) |field_type| if (self.compactTypeUsesParam(file.ref(field_type), param)) break :blk true;
+                    if (field.default_value) |value| if (self.syntaxExprUsesParam(file.ref(value), param)) break :blk true;
                 }
                 break :blk false;
             },
-            .struct_type_literal => |st| blk_struct: {
-                for (st.fields) |fld| {
-                    if (fld.type) |sub_ty| {
-                        if (self.typeUsesParam(sub_ty, param)) break :blk_struct true;
-                    }
+            .struct_literal => |literal| blk: {
+                for (literal.fields) |field_node| {
+                    const field = file.structTypeField(field_node) orelse continue;
+                    if (field.type_node) |field_type| if (self.compactTypeUsesParam(file.ref(field_type), param)) break :blk true;
                 }
-                break :blk_struct false;
+                break :blk false;
             },
-            .choice_type_literal => |ct| blk_choice: {
-                for (ct.variants) |variant| {
-                    if (variant.payload_type) |payload_ty| {
-                        if (self.typeUsesParam(payload_ty, param)) break :blk_choice true;
-                    }
+            .choice_literal => |literal| blk: {
+                for (literal.variants) |variant_node| {
+                    const variant = file.choiceTypeVariant(variant_node) orelse continue;
+                    if (variant.payload_type) |payload| if (self.compactTypeUsesParam(file.ref(payload), param)) break :blk true;
                 }
-                break :blk_choice false;
+                break :blk false;
             },
         };
     }
 
-    fn extractTypeArgumentFromActual(
+    fn extractCompactTypeArgumentFromActual(
         self: *Semantizer,
-        template_ty: syn.Type,
-        actual_ty: sg.Type,
-        param_name: []const u8,
+        template: syn.SyntaxRef,
+        actual: sg.Type,
+        param: []const u8,
         s: *Scope,
     ) ?sg.Type {
-        switch (template_ty) {
-            .type_name => |tn| {
-                if (std.mem.eql(u8, tn.string, param_name)) return actual_ty;
-            },
-            .inferred_errable => |inner| {
-                return self.extractTypeArgumentFromActual(inner.*, actual_ty, param_name, s);
-            },
-            .pointer_type => |ptr_info| {
-                if (actual_ty != .pointer_type) return null;
-                return self.extractTypeArgumentFromActual(
-                    ptr_info.child.*,
-                    actual_ty.pointer_type.child.*,
-                    param_name,
-                    s,
-                );
-            },
-            .array_type => |arr_info| {
-                if (actual_ty != .array_type) return null;
-                return self.extractTypeArgumentFromActual(
-                    arr_info.element.*,
-                    actual_ty.array_type.element_type.*,
-                    param_name,
-                    s,
-                );
-            },
-            .struct_type_literal => |st| {
-                if (actual_ty != .struct_type) return null;
-                const actual_struct = actual_ty.struct_type;
-                for (st.fields) |fld| {
-                    if (fld.type) |sub_ty| {
-                        if (typ.findFieldByName(actual_struct, fld.name.string)) |actual_field| {
-                            if (self.extractTypeArgumentFromActual(sub_ty, actual_field.ty, param_name, s)) |res|
-                                return res;
-                        }
-                    }
+        const file = self.syntaxFile(template);
+        switch (file.syntaxType(template.node) orelse return null) {
+            .name => |name| if (name.qualifier_token == null and std.mem.eql(u8, file.tokenText(&self.diags.source_db, name.name_token), param)) return actual,
+            .pointer => |pointer| if (actual == .pointer_type) return self.extractCompactTypeArgumentFromActual(file.ref(pointer.child), actual.pointer_type.child.*, param, s),
+            .nullable, .inferred_errable => |child| return self.extractCompactTypeArgumentFromActual(file.ref(child), actual, param, s),
+            .array => |array| if (actual == .array_type) return self.extractCompactTypeArgumentFromActual(file.ref(array.element), actual.array_type.element_type.*, param, s),
+            .struct_literal => |literal| if (actual == .struct_type) {
+                for (literal.fields) |field_node| {
+                    const field = file.structTypeField(field_node) orelse continue;
+                    const field_type = field.type_node orelse continue;
+                    const name = file.tokenText(&self.diags.source_db, field.name_token);
+                    const actual_field = typ.findFieldByName(actual.struct_type, name) orelse continue;
+                    if (self.extractCompactTypeArgumentFromActual(file.ref(field_type), actual_field.ty, param, s)) |result| return result;
                 }
             },
-            .choice_type_literal => return null,
-            .generic_type_instantiation => |g| return self.extractTypeArgumentFromGenericInstantiation(g, actual_ty, param_name, s),
-        }
-        return null;
-    }
-
-    fn extractComptimeIntArgumentFromActual(
-        self: *Semantizer,
-        template_ty: syn.Type,
-        actual_ty: sg.Type,
-        param_name: []const u8,
-        s: *Scope,
-    ) ?i64 {
-        switch (template_ty) {
-            .pointer_type => |ptr_info| {
-                if (actual_ty != .pointer_type) return null;
-                return self.extractComptimeIntArgumentFromActual(
-                    ptr_info.child.*,
-                    actual_ty.pointer_type.child.*,
-                    param_name,
-                    s,
-                );
-            },
-            .struct_type_literal => |st| {
-                if (actual_ty != .struct_type) return null;
-                const actual_struct = actual_ty.struct_type;
-                for (st.fields) |fld| {
-                    if (fld.type) |sub_ty| {
-                        if (typ.findFieldByName(actual_struct, fld.name.string)) |actual_field| {
-                            if (self.extractComptimeIntArgumentFromActual(sub_ty, actual_field.ty, param_name, s)) |res|
-                                return res;
-                        }
-                    }
+            .generic => |generic| {
+                const base = file.syntaxType(generic.base) orelse return null;
+                if (base == .name and base.name.qualifier_token == null and
+                    std.mem.eql(u8, file.tokenText(&self.diags.source_db, base.name.name_token), param) and
+                    s.lookupAbstractInfo(param) != null) return actual;
+                const identity = typ.genericIdentityOf(actual) orelse return null;
+                if (base != .name or !std.mem.eql(u8, identity.base_name, file.tokenText(&self.diags.source_db, base.name.name_token))) return null;
+                const args = file.structTypeLiteral(generic.arguments) orelse return null;
+                for (args.fields) |field_node| {
+                    const field = file.structTypeField(field_node) orelse continue;
+                    const arg_type = field.type_node orelse continue;
+                    if (!self.compactTypeUsesParam(file.ref(arg_type), param)) continue;
+                    const value = typ.genericIdentityArgByName(identity, file.tokenText(&self.diags.source_db, field.name_token)) orelse continue;
+                    if (value == .type) return value.type;
                 }
             },
-            .generic_type_instantiation => |g| return extractComptimeIntArgumentFromGenericInstantiation(g, actual_ty, param_name, s),
             else => {},
         }
         return null;
     }
 
-    fn extractTypeArgumentFromGenericInstantiation(
+    fn extractCompactIntArgumentFromActual(
         self: *Semantizer,
-        g: @FieldType(syn.Type, "generic_type_instantiation"),
-        actual_ty: sg.Type,
-        param_name: []const u8,
-        s: *Scope,
-    ) ?sg.Type {
-        _ = s;
-        const identity = typ.genericIdentityOf(actual_ty) orelse return null;
-        if (!std.mem.eql(u8, identity.base_name, g.base_name.string)) return null;
-
-        for (g.args.fields) |arg_field| {
-            if (arg_field.type) |arg_ty| {
-                if (!self.typeUsesParam(arg_ty, param_name)) continue;
-                if (typ.genericIdentityArgByName(identity, arg_field.name.string)) |arg_value| {
-                    switch (arg_value) {
-                        .type => |arg_ty_value| return arg_ty_value,
-                        else => {},
-                    }
-                }
-            }
-        }
-
-        return null;
-    }
-
-    fn extractComptimeIntArgumentFromGenericInstantiation(
-        g: @FieldType(syn.Type, "generic_type_instantiation"),
-        actual_ty: sg.Type,
-        param_name: []const u8,
+        template: syn.SyntaxRef,
+        actual: sg.Type,
+        param: []const u8,
         s: *Scope,
     ) ?i64 {
-        _ = s;
-        const identity = typ.genericIdentityOf(actual_ty) orelse return null;
-        if (!std.mem.eql(u8, identity.base_name, g.base_name.string)) return null;
-
-        for (g.args.fields) |arg_field| {
-            if (arg_field.default_value) |value_expr| {
-                if (!valueExprUsesParam(value_expr, param_name)) continue;
-                if (typ.genericIdentityArgByName(identity, arg_field.name.string)) |arg_value| {
-                    switch (arg_value) {
-                        .comptime_int => |value| return value,
-                        else => {},
-                    }
+        const file = self.syntaxFile(template);
+        switch (file.syntaxType(template.node) orelse return null) {
+            .pointer => |pointer| if (actual == .pointer_type) return self.extractCompactIntArgumentFromActual(file.ref(pointer.child), actual.pointer_type.child.*, param, s),
+            .struct_literal => |literal| if (actual == .struct_type) {
+                for (literal.fields) |field_node| {
+                    const field = file.structTypeField(field_node) orelse continue;
+                    const field_type = field.type_node orelse continue;
+                    const actual_field = typ.findFieldByName(actual.struct_type, file.tokenText(&self.diags.source_db, field.name_token)) orelse continue;
+                    if (self.extractCompactIntArgumentFromActual(file.ref(field_type), actual_field.ty, param, s)) |value| return value;
                 }
-            }
+            },
+            .generic => |generic| {
+                const identity = typ.genericIdentityOf(actual) orelse return null;
+                const base = file.syntaxType(generic.base) orelse return null;
+                if (base != .name or !std.mem.eql(u8, identity.base_name, file.tokenText(&self.diags.source_db, base.name.name_token))) return null;
+                const args = file.structTypeLiteral(generic.arguments) orelse return null;
+                for (args.fields) |field_node| {
+                    const field = file.structTypeField(field_node) orelse continue;
+                    const expression = field.default_value orelse continue;
+                    if (!self.syntaxExprUsesParam(file.ref(expression), param)) continue;
+                    const value = typ.genericIdentityArgByName(identity, file.tokenText(&self.diags.source_db, field.name_token)) orelse continue;
+                    if (value == .comptime_int) return value.comptime_int;
+                }
+            },
+            else => {},
         }
-
         return null;
     }
 
@@ -10091,17 +8456,22 @@ pub const Semantizer = struct {
     ) ?gen.GenericArgValue {
         if (call_input_ty != .struct_type) return null;
         const actual = call_input_ty.struct_type;
-        for (tmpl.input.fields) |fld| {
-            const ty_node = fld.type.?;
-            if (!self.typeUsesParam(ty_node, param.name)) continue;
-            if (typ.findFieldByName(actual, fld.name.string)) |actual_field| {
+        const template_file = &tmpl.syntax_files[@intFromEnum(tmpl.syntax_file_id)];
+        const input = template_file.structTypeLiteral(tmpl.input) orelse return null;
+        for (input.fields) |field_node| {
+            const field = template_file.structTypeField(field_node) orelse continue;
+            const type_node = field.type_node orelse continue;
+            const type_ref = template_file.ref(type_node);
+            if (!self.compactTypeUsesParam(type_ref, param.name)) continue;
+            const field_name = template_file.tokenText(tmpl.source_db, field.name_token);
+            if (typ.findFieldByName(actual, field_name)) |actual_field| {
                 switch (param.kind) {
                     .type => {
-                        if (self.extractTypeArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
+                        if (self.extractCompactTypeArgumentFromActual(type_ref, actual_field.ty, param.name, s)) |res|
                             return .{ .type = res };
                     },
                     .comptime_int => {
-                        if (self.extractComptimeIntArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
+                        if (self.extractCompactIntArgumentFromActual(type_ref, actual_field.ty, param.name, s)) |res|
                             return .{ .comptime_int = res };
                     },
                 }
@@ -10127,19 +8497,22 @@ pub const Semantizer = struct {
     ) ?gen.GenericArgValue {
         if (init_input_ty != .struct_type) return null;
         const actual = init_input_ty.struct_type;
-        if (tmpl.input.fields.len == 0) return null;
+        const file = &tmpl.syntax_files[@intFromEnum(tmpl.syntax_file_id)];
+        const input = file.structTypeLiteral(tmpl.input) orelse return null;
+        if (input.fields.len == 0) return null;
 
-        for (tmpl.input.fields[1..]) |fld| {
-            const ty_node = fld.type.?;
-            if (!self.typeUsesParam(ty_node, param.name)) continue;
-            if (typ.findFieldByName(actual, fld.name.string)) |actual_field| {
+        for (input.fields[1..]) |field_node| {
+            const fld = file.structTypeField(field_node) orelse continue;
+            const ty_node = file.ref(fld.type_node orelse continue);
+            if (!self.compactTypeUsesParam(ty_node, param.name)) continue;
+            if (typ.findFieldByName(actual, file.tokenText(tmpl.source_db, fld.name_token))) |actual_field| {
                 switch (param.kind) {
                     .type => {
-                        if (self.extractTypeArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
+                        if (self.extractCompactTypeArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
                             return .{ .type = res };
                     },
                     .comptime_int => {
-                        if (self.extractComptimeIntArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
+                        if (self.extractCompactIntArgumentFromActual(ty_node, actual_field.ty, param.name, s)) |res|
                             return .{ .comptime_int = res };
                     },
                 }
@@ -10157,20 +8530,23 @@ pub const Semantizer = struct {
         s: *Scope,
     ) SemErr!bool {
         if (init_input_ty != .struct_type) return false;
-        if (tmpl.input.fields.len == 0) return false;
+        const file = &tmpl.syntax_files[@intFromEnum(tmpl.syntax_file_id)];
+        const input = file.structTypeLiteral(tmpl.input) orelse return false;
+        if (input.fields.len == 0) return false;
         const actual = init_input_ty.struct_type;
 
         for (actual.fields) |actual_field| {
             var idx: ?usize = null;
-            for (tmpl.input.fields, 0..) |field, field_idx| {
-                if (std.mem.eql(u8, field.name.string, actual_field.name)) {
+            for (input.fields, 0..) |field_node, field_idx| {
+                const field = file.structTypeField(field_node) orelse continue;
+                if (std.mem.eql(u8, file.tokenText(tmpl.source_db, field.name_token), actual_field.name)) {
                     idx = field_idx;
                     break;
                 }
             }
             if (idx == null or idx.? == 0) return false;
-            const expected_field = tmpl.input.fields[idx.?];
-            const expected_field_ty = try self.resolveTypeWithSubst(expected_field.type.?, s, subst);
+            const expected_field = file.structTypeField(input.fields[idx.?]).?;
+            const expected_field_ty = try self.resolveSyntaxTypeWithSubstPreservingAbstracts(file.ref(expected_field.type_node.?), s, subst);
             if (fld_matches: {
                 if (typ.typesExactlyEqual(expected_field_ty, actual_field.ty)) break :fld_matches true;
                 if (typ.typesStructurallyEqual(expected_field_ty, actual_field.ty)) break :fld_matches true;
@@ -10196,18 +8572,16 @@ pub const Semantizer = struct {
             if (sc.generic_functions.getPtr("init")) |list_ptr| {
                 for (list_ptr.items) |tmpl| {
                     if (tmpl.dispatch_kind != .regular) continue;
-                    if (tmpl.input.fields.len == 0) continue;
-
-                    const first_field = tmpl.input.fields[0];
-                    const first_ptr = switch (first_field.type.?) {
-                        .pointer_type => |ptr| ptr,
-                        else => continue,
-                    };
-                    const target_ty = switch (first_ptr.child.*) {
-                        .generic_type_instantiation => |g| g,
-                        else => continue,
-                    };
-                    if (!std.mem.eql(u8, target_ty.base_name.string, name)) continue;
+                    const file = &tmpl.syntax_files[@intFromEnum(tmpl.syntax_file_id)];
+                    const input = file.structTypeLiteral(tmpl.input) orelse continue;
+                    if (input.fields.len == 0) continue;
+                    const first = file.structTypeField(input.fields[0]) orelse continue;
+                    const first_type = file.syntaxType(first.type_node orelse continue) orelse continue;
+                    if (first_type != .pointer) continue;
+                    const target = file.syntaxType(first_type.pointer.child) orelse continue;
+                    if (target != .generic) continue;
+                    const base = file.syntaxType(target.generic.base) orelse continue;
+                    if (base != .name or !std.mem.eql(u8, file.tokenText(tmpl.source_db, base.name.name_token), name)) continue;
 
                     var subst = GenericSubst.init(self.allocator);
                     defer subst.deinit();
@@ -10223,7 +8597,7 @@ pub const Semantizer = struct {
                     if (!ok) continue;
                     if (!(try self.initializerMatchesInitTemplate(tmpl, init_input_ty, &subst, s))) continue;
 
-                    const candidate = try self.resolveTypeWithSubst(first_ptr.child.*, s, &subst);
+                    const candidate = try self.resolveSyntaxTypeWithSubstPreservingAbstracts(file.ref(first_type.pointer.child), s, &subst);
                     if (chosen) |existing| {
                         if (!typ.typesExactlyEqual(existing, candidate)) return error.AmbiguousOverload;
                     } else {
@@ -10302,7 +8676,7 @@ pub const Semantizer = struct {
     fn instantiateGenericNamed(
         self: *Semantizer,
         name: []const u8,
-        stargs: syn.StructTypeLiteral,
+        stargs: ?syn.SyntaxRef,
         call_input: typ.TypedExpr,
         s: *Scope,
         allowed_kind: gen.GenericDispatchKind,
@@ -10313,7 +8687,7 @@ pub const Semantizer = struct {
     fn instantiateGenericNamedVisible(
         self: *Semantizer,
         name: []const u8,
-        stargs: syn.StructTypeLiteral,
+        stargs: ?syn.SyntaxRef,
         call_input: typ.TypedExpr,
         s: *Scope,
         allowed_kind: gen.GenericDispatchKind,
@@ -10357,12 +8731,18 @@ pub const Semantizer = struct {
                     var ok: bool = true;
                     for (tmpl.params) |param| {
                         var found: bool = false;
-                        for (stargs.fields) |fld| {
-                            if (std.mem.eql(u8, fld.name.string, param.name)) {
-                                const resolved = try self.resolveExplicitGenericArg(fld, param, s, &subst);
-                                try self.putGenericArg(&subst, param, resolved);
-                                found = true;
-                                break;
+                        if (stargs) |arguments_ref| {
+                            const arguments_file = self.syntaxFile(arguments_ref);
+                            const arguments = arguments_file.structTypeLiteral(arguments_ref.node) orelse return error.InvalidType;
+                            for (arguments.fields) |field_node| {
+                                const field = arguments_file.structTypeField(field_node) orelse return error.InvalidType;
+                                const field_name = arguments_file.tokenText(&self.diags.source_db, field.name_token);
+                                if (std.mem.eql(u8, field_name, param.name)) {
+                                    const resolved = try self.resolveExplicitGenericArg(arguments_file.ref(field_node), param, s, &subst);
+                                    try self.putGenericArg(&subst, param, resolved);
+                                    found = true;
+                                    break;
+                                }
                             }
                         }
                         if (!found) {
@@ -10435,117 +8815,6 @@ pub const Semantizer = struct {
         return error.SymbolNotFound;
     }
 
-    fn instantiateGenericNamedWithBoundTypeArg(
-        self: *Semantizer,
-        name: []const u8,
-        bound_param_name: []const u8,
-        bound_type: sg.Type,
-        call_input: typ.TypedExpr,
-        s: *Scope,
-        allowed_kind: gen.GenericDispatchKind,
-    ) SemErr!*sg.FunctionDeclaration {
-        var best: ?PreparedGenericTemplateCandidate = null;
-        var ambiguous = false;
-        defer if (best) |*prepared| prepared.deinit();
-
-        var cur: ?*Scope = s;
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.generic_functions.getPtr(name)) |list_ptr| {
-                for (list_ptr.items) |tmpl| {
-                    if (tmpl.dispatch_kind != allowed_kind) continue;
-
-                    var subst = GenericSubst.init(self.allocator);
-                    const dispatch_input = try self.materializeTemplateReachDefaultsForDispatch(tmpl, call_input, s);
-
-                    var ok = false;
-                    for (tmpl.params) |param| {
-                        if (!std.mem.eql(u8, param.name, bound_param_name)) continue;
-                        if (param.kind != .type) break;
-                        try subst.types.put(param.name, bound_type);
-                        ok = true;
-                        break;
-                    }
-                    if (!ok) continue;
-
-                    ok = true;
-                    for (tmpl.params) |param| {
-                        if (std.mem.eql(u8, param.name, bound_param_name)) continue;
-                        if (self.inferGenericArgFromCall(tmpl, param, dispatch_input.ty, s, &subst) orelse
-                            try self.inferGenericArgFromAbstractConstraints(tmpl, param, s, &subst)) |inferred|
-                        {
-                            try self.putGenericArg(&subst, param, inferred);
-                            continue;
-                        }
-                        ok = false;
-                        break;
-                    }
-                    if (!ok) {
-                        subst.deinit();
-                        continue;
-                    }
-                    if (!try self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) {
-                        subst.deinit();
-                        continue;
-                    }
-                    const score = try self.templateInstantiationDispatchScore(tmpl, dispatch_input, s, &subst) orelse {
-                        subst.deinit();
-                        continue;
-                    };
-
-                    if (best) |*current_best| {
-                        if (self.chooseBetterPreparedTemplateCandidate(current_best, score)) {
-                            current_best.deinit();
-                            current_best.* = .{
-                                .tmpl = tmpl,
-                                .subst = subst,
-                                .dispatch_input = dispatch_input,
-                                .score = score,
-                            };
-                            ambiguous = false;
-                        } else if (score == current_best.score) {
-                            subst.deinit();
-                            ambiguous = true;
-                        } else {
-                            subst.deinit();
-                        }
-                    } else {
-                        best = .{
-                            .tmpl = tmpl,
-                            .subst = subst,
-                            .dispatch_input = dispatch_input,
-                            .score = score,
-                        };
-                        ambiguous = false;
-                    }
-                }
-            }
-        }
-
-        if (ambiguous) return error.AmbiguousOverload;
-        if (best) |*prepared| {
-            return (try self.instantiateGenericTemplate(name, prepared.tmpl, prepared.dispatch_input, s, &prepared.subst)).?;
-        }
-        return error.SymbolNotFound;
-    }
-
-    fn resolveTemplateReachDispatchType(
-        self: *Semantizer,
-        tmpl: gen.GenericTemplate,
-        ty_node: syn.Type,
-        s: *Scope,
-    ) SemErr!sg.Type {
-        var subst = GenericSubst.init(self.allocator);
-        defer subst.deinit();
-
-        for (tmpl.params, 0..) |param, idx| {
-            const constraint = tmpl.param_abstract_constraints[idx] orelse continue;
-            const constraint_type_decl = s.lookupType(constraint.name) orelse return error.SymbolNotFound;
-            try subst.types.put(param.name, constraint_type_decl.ty);
-        }
-
-        return self.resolveTypeWithSubstPreservingAbstracts(ty_node, s, &subst);
-    }
-
     fn materializeTemplateReachDefaultsForDispatch(
         self: *Semantizer,
         tmpl: gen.GenericTemplate,
@@ -10572,25 +8841,32 @@ pub const Semantizer = struct {
             });
         }
 
-        for (tmpl.input.fields) |field| {
-            if (findStructValueFieldByNameFrom(actual_value.fields, positional_prefix, field.name.string) != null) continue;
-            if (field.default_value == null) continue;
-            if (field.default_value.?.content != .reach_directive) continue;
-            if (field.type == null) continue;
+        const template_file = &tmpl.syntax_files[@intFromEnum(tmpl.syntax_file_id)];
+        const template_input = template_file.structTypeLiteral(tmpl.input) orelse return error.InvalidType;
+        var empty_subst = GenericSubst.init(self.allocator);
+        defer empty_subst.deinit();
+        for (template_input.fields) |field_node| {
+            const field = template_file.structTypeField(field_node) orelse return error.InvalidType;
+            const field_name = template_file.tokenText(tmpl.source_db, field.name_token);
+            if (findStructValueFieldByNameFrom(actual_value.fields, positional_prefix, field_name) != null) continue;
+            const default_node = field.default_value orelse continue;
+            if (template_file.tag(default_node) != .reach_directive) continue;
+            const field_type = field.type_node orelse continue;
 
-            const reach_te = try self.visitNode(field.default_value.?.*, s);
+            const reach_ref = template_file.ref(default_node);
+            const reach_te = try self.visitNode(reach_ref, s);
             if (reach_te.node.content != .reach_directive) continue;
 
-            const dispatch_ty = self.resolveTemplateReachDispatchType(tmpl, field.type.?, s) catch |err| switch (err) {
+            const dispatch_ty = self.resolveSyntaxTypeWithSubstPreservingAbstracts(template_file.ref(field_type), s, &empty_subst) catch |err| switch (err) {
                 error.UnknownType => {
                     if (try self.resolveReachedArgumentForInference(
-                        field.name.string,
+                        field_name,
                         reach_te.node.content.reach_directive,
                         s,
-                        field.default_value.?.location,
+                        template_file.location(default_node),
                     )) |resolved_for_inference| {
                         try args.append(.{
-                            .name = field.name.string,
+                            .name = field_name,
                             .expr = resolved_for_inference,
                         });
                         changed = true;
@@ -10601,17 +8877,17 @@ pub const Semantizer = struct {
             };
 
             const resolved = try self.tryResolveReachedArgumentInLocalScope(
-                field.name.string,
+                field_name,
                 dispatch_ty,
                 reach_te.node.content.reach_directive,
                 s,
-                field.default_value.?.location,
+                template_file.location(default_node),
             ) orelse blk: {
                 if (self.currentReachFunctionContext()) |ctx| {
                     if (!std.mem.eql(u8, ctx.function_name, "main")) {
                         const placeholder = try sg.makeSGNode(
                             .{ .reach_directive = reach_te.node.content.reach_directive },
-                            field.default_value.?.location,
+                            template_file.location(default_node),
                             self.allocator,
                         );
                         placeholder.sem_type = dispatch_ty;
@@ -10624,7 +8900,7 @@ pub const Semantizer = struct {
                 continue;
             };
             try args.append(.{
-                .name = field.name.string,
+                .name = field_name,
                 .expr = resolved,
             });
             changed = true;
@@ -10634,21 +8910,11 @@ pub const Semantizer = struct {
         return self.buildCallInputWithPositionalPrefix(args.items, @intCast(positional_prefix));
     }
 
-    fn instantiateGeneric(
-        self: *Semantizer,
-        name: []const u8,
-        type_args_syn: []const syn.Type,
-        call_input: typ.TypedExpr,
-        s: *Scope,
-        allowed_kind: gen.GenericDispatchKind,
-    ) SemErr!*sg.FunctionDeclaration {
-        return self.instantiateGenericVisible(name, type_args_syn, call_input, s, allowed_kind, null, null);
-    }
-
     fn instantiateGenericVisible(
         self: *Semantizer,
         name: []const u8,
-        type_args_syn: []const syn.Type,
+        owner: syn.SyntaxRef,
+        type_args_syn: []const syn.NodeIndex,
         call_input: typ.TypedExpr,
         s: *Scope,
         allowed_kind: gen.GenericDispatchKind,
@@ -10679,7 +8945,7 @@ pub const Semantizer = struct {
                     var i: usize = 0;
                     while (i < tmpl.params.len) : (i += 1) {
                         if (tmpl.params[i].kind != .type) continue;
-                        const resolved = try self.resolveTypeWithSubst(type_args_syn[i], s, &subst);
+                        const resolved = try self.resolveSyntaxTypeWithMode(self.childRef(owner, type_args_syn[i]), s, false, &subst);
                         try subst.types.put(tmpl.params[i].name, resolved);
                     }
                     if (!try self.substSatisfiesAbstractConstraints(tmpl, &subst, s)) {
@@ -10756,10 +9022,14 @@ pub const Semantizer = struct {
                 defer self.allocator.free(args);
                 const requested = constraint.args orelse return true;
                 const info = s.lookupAbstractInfo(constraint.name) orelse return false;
-                for (requested.fields) |field| {
+                const requested_file = self.syntaxFile(requested);
+                const requested_literal = requested_file.structTypeLiteral(requested.node) orelse return false;
+                for (requested_literal.fields) |field_node| {
+                    const field = requested_file.structTypeField(field_node) orelse return false;
+                    const field_name = requested_file.tokenText(&self.diags.source_db, field.name_token);
                     var arg_index: ?usize = null;
                     for (info.params, 0..) |param, index| {
-                        if (std.mem.eql(u8, param.name, field.name.string)) {
+                        if (std.mem.eql(u8, param.name, field_name)) {
                             arg_index = index;
                             break;
                         }
@@ -10769,13 +9039,17 @@ pub const Semantizer = struct {
                     const associated = args[index] orelse return false;
                     switch (info.params[index].kind) {
                         .type => {
-                            const requested_ty = field.type orelse return false;
-                            const expected = try self.resolveTypeWithSubstPreservingAbstracts(requested_ty, s, subst);
+                            const requested_ty = field.type_node orelse return false;
+                            const expected = try self.resolveSyntaxTypeWithSubstPreservingAbstracts(
+                                requested_file.ref(requested_ty),
+                                s,
+                                subst,
+                            );
                             if (associated != .type or !typ.typesExactlyEqual(expected, associated.type)) return false;
                         },
                         .comptime_int => {
                             const requested_value = field.default_value orelse return false;
-                            const expected = try self.resolveComptimeIntExpr(requested_value, s, subst);
+                            const expected = try self.resolveComptimeIntExpr(requested_file.ref(requested_value), s, subst);
                             if (associated != .comptime_int or expected != associated.comptime_int) return false;
                         },
                     }
@@ -10816,14 +9090,26 @@ pub const Semantizer = struct {
             const concrete = subst.types.get(constrained_param.name) orelse continue;
             const info = s.lookupAbstractInfo(constraint.name) orelse continue;
 
-            for (args.fields) |field| {
+            const args_file = self.syntaxFile(args);
+            const args_literal = args_file.structTypeLiteral(args.node) orelse continue;
+            for (args_literal.fields) |field_node| {
+                const field = args_file.structTypeField(field_node) orelse continue;
+                const field_name = args_file.tokenText(&self.diags.source_db, field.name_token);
                 const uses_requested = switch (requested_param.kind) {
                     .type => blk: {
-                        const arg_type = field.type orelse break :blk false;
-                        break :blk arg_type == .type_name and std.mem.eql(u8, arg_type.type_name.string, requested_param.name);
+                        const arg_type_node = field.type_node orelse break :blk false;
+                        const arg_type = args_file.syntaxType(arg_type_node) orelse break :blk false;
+                        break :blk switch (arg_type) {
+                            .name => |name| std.mem.eql(
+                                u8,
+                                args_file.tokenText(&self.diags.source_db, name.name_token),
+                                requested_param.name,
+                            ),
+                            else => false,
+                        };
                     },
                     .comptime_int => if (field.default_value) |value|
-                        valueExprUsesParam(value, requested_param.name)
+                        self.syntaxExprUsesParam(args_file.ref(value), requested_param.name)
                     else
                         false,
                 };
@@ -10831,7 +9117,7 @@ pub const Semantizer = struct {
 
                 var abstract_param_index: ?usize = null;
                 for (info.params, 0..) |abstract_param, param_index| {
-                    if (std.mem.eql(u8, abstract_param.name, field.name.string)) {
+                    if (std.mem.eql(u8, abstract_param.name, field_name)) {
                         abstract_param_index = param_index;
                         break;
                     }
@@ -11025,21 +9311,25 @@ pub const Semantizer = struct {
                     const resolved = try self.allocator.alloc(?gen.GenericArgValue, info.params.len);
                     errdefer self.allocator.free(resolved);
                     for (resolved) |*arg| arg.* = null;
-                    for (args.fields) |field| {
+                    const args_file = self.syntaxFile(args);
+                    const args_literal = args_file.structTypeLiteral(args.node) orelse continue;
+                    for (args_literal.fields) |field_node| {
+                        const field = args_file.structTypeField(field_node) orelse continue;
+                        const field_name = args_file.tokenText(&self.diags.source_db, field.name_token);
                         var param_index: ?usize = null;
                         for (info.params, 0..) |abstract_param, index| {
-                            if (std.mem.eql(u8, abstract_param.name, field.name.string)) {
+                            if (std.mem.eql(u8, abstract_param.name, field_name)) {
                                 param_index = index;
                                 break;
                             }
                         }
                         const index = param_index orelse continue;
                         resolved[index] = switch (info.params[index].kind) {
-                            .type => .{ .type = self.resolveTypeWithSubstPreservingAbstracts(field.type orelse continue, s, &subst) catch |err| switch (err) {
+                            .type => .{ .type = self.resolveSyntaxTypeWithSubstPreservingAbstracts(args_file.ref(field.type_node orelse continue), s, &subst) catch |err| switch (err) {
                                 error.UnknownType, error.SymbolNotFound => null,
                                 else => return err,
                             } orelse continue },
-                            .comptime_int => .{ .comptime_int = self.resolveComptimeIntExpr(field.default_value orelse continue, s, &subst) catch |err| switch (err) {
+                            .comptime_int => .{ .comptime_int = self.resolveComptimeIntExpr(args_file.ref(field.default_value orelse continue), s, &subst) catch |err| switch (err) {
                                 error.UnknownType, error.SymbolNotFound => null,
                                 else => return err,
                             } orelse continue },
@@ -11075,14 +9365,15 @@ pub const Semantizer = struct {
         s: *Scope,
         subst: *GenericSubst,
     ) SemErr!?*sg.FunctionDeclaration {
-        var in_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.input, s, subst);
+        const template_file = &tmpl.syntax_files[@intFromEnum(tmpl.syntax_file_id)];
+        var in_struct_ptr = try self.structTypeFromNodeWithSubst(template_file.ref(tmpl.input), s, subst);
 
         if (try self.refinedStructTypeWithActual(in_struct_ptr, call_input.ty, s)) |refined| {
             in_struct_ptr = refined;
         }
         if (!self.callInputMatchesDispatch(in_struct_ptr, call_input, s)) return null;
 
-        const out_struct_ptr = try self.structTypeFromLiteralWithSubst(tmpl.output, s, subst);
+        const out_struct_ptr = try self.structTypeFromNodeWithSubst(template_file.ref(tmpl.output), s, subst);
         if (self.findGenericSpecialization(tmpl, in_struct_ptr, out_struct_ptr, subst)) |existing| {
             self.generic_specialization_cache_hits += 1;
             return existing;
@@ -11147,7 +9438,7 @@ pub const Semantizer = struct {
                 .body_scope = &child,
             });
             defer _ = self.function_reach_stack.pop();
-            const body_te = try self.visitNode(body_node.*, &child);
+            const body_te = try self.visitNode(body_node, &child);
             body_cb = body_te.node.content.code_block;
         }
 
@@ -11251,306 +9542,382 @@ pub const Semantizer = struct {
         });
     }
 
-    pub fn instantiateGenericTypeNamed(
+    fn instantiateCompactGenericTypeNamed(
         self: *Semantizer,
         name: []const u8,
-        stargs: syn.StructTypeLiteral,
+        arguments_ref: syn.SyntaxRef,
         s: *Scope,
         outer_subst: ?*const GenericSubst,
     ) SemErr!sg.Type {
+        const arguments_file = self.syntaxFile(arguments_ref);
+        const arguments = arguments_file.structTypeLiteral(arguments_ref.node) orelse return error.InvalidType;
         var cur: ?*Scope = s;
-        while (cur) |sc| : (cur = sc.parent) {
-            if (sc.generic_types.getPtr(name)) |list_ptr| {
-                for (list_ptr.items) |tmpl| {
-                    var subst = GenericSubst.init(self.allocator);
-                    defer subst.deinit();
+        while (cur) |scope| : (cur = scope.parent) {
+            const templates = scope.generic_types.getPtr(name) orelse continue;
+            for (templates.items) |template| {
+                var subst = GenericSubst.init(self.allocator);
+                defer subst.deinit();
+                if (outer_subst) |outer| try subst.cloneFrom(outer);
 
-                    if (outer_subst) |outer| {
-                        try subst.cloneFrom(outer);
+                var complete = true;
+                for (template.params) |param| {
+                    var found = false;
+                    for (arguments.fields) |field_node| {
+                        const field = arguments_file.structTypeField(field_node) orelse return error.InvalidType;
+                        if (!std.mem.eql(u8, arguments_file.tokenText(&self.diags.source_db, field.name_token), param.name)) continue;
+                        const resolved = try self.resolveExplicitGenericArg(arguments_file.ref(field_node), param, s, &subst);
+                        try self.putGenericArg(&subst, param, resolved);
+                        found = true;
+                        break;
                     }
-
-                    var ok: bool = true;
-                    for (tmpl.params) |param| {
-                        var found: bool = false;
-                        for (stargs.fields) |fld| {
-                            if (std.mem.eql(u8, fld.name.string, param.name)) {
-                                const resolved = try self.resolveExplicitGenericArg(fld, param, s, &subst);
-                                try self.putGenericArg(&subst, param, resolved);
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found) {
-                            ok = false;
-                            break;
-                        }
+                    if (!found) {
+                        complete = false;
+                        break;
                     }
-                    if (!ok) continue;
+                }
+                if (!complete) continue;
 
-                    for (tmpl.params, 0..) |param, index| {
-                        const constraint = tmpl.param_abstract_constraints[index] orelse continue;
-                        const actual = subst.types.get(param.name) orelse continue;
-                        if (try self.abstractConstraintMatches(actual, constraint, s, &subst)) continue;
-
-                        const actual_text = try self.formatTypeText(actual, s);
-                        defer actual_text.deinit();
-                        try self.diags.add(
-                            tmpl.location,
-                            .semantic,
-                            "type '{s}' does not implement abstract '{s}' required by generic type parameter '.{s}' of '{s}'",
-                            .{ actual_text.bytes, constraint.name, param.name, tmpl.name },
-                        );
+                for (template.params, 0..) |param, index| {
+                    const constraint = template.param_abstract_constraints[index] orelse continue;
+                    const actual = subst.types.get(param.name) orelse continue;
+                    if (!(try self.abstractConstraintMatches(actual, constraint, s, &subst))) {
+                        const desc = try self.formatTypeText(actual, s);
+                        defer desc.deinit();
+                        try self.diags.add(template.location, .semantic, "type '{s}' does not implement abstract '{s}' required by generic type parameter '.{s}' of '{s}'", .{ desc.bytes, constraint.name, param.name, template.name });
                         return error.Reported;
                     }
-
-                    return switch (tmpl.body.*.content) {
-                        .struct_type_literal => |st| blk_struct: {
-                            const st_ptr = try self.structTypeFromLiteralWithSubst(st, s, &subst);
-                            const arg_names = try self.allocator.alloc([]const u8, tmpl.params.len);
-                            const arg_values = try self.allocator.alloc(sg.GenericIdentityArg, tmpl.params.len);
-                            var i: usize = 0;
-                            while (i < tmpl.params.len) : (i += 1) {
-                                arg_names[i] = tmpl.params[i].name;
-                                arg_values[i] = switch (tmpl.params[i].kind) {
-                                    .type => .{ .type = subst.types.get(tmpl.params[i].name).? },
-                                    .comptime_int => .{ .comptime_int = subst.ints.get(tmpl.params[i].name).? },
-                                };
-                            }
-
-                            const identity = try self.allocator.create(sg.GenericTypeIdentity);
-                            identity.* = .{
-                                .base_name = tmpl.name,
-                                .arg_names = arg_names,
-                                .arg_values = arg_values,
-                            };
-                            st_ptr.identity = .{ .generic = identity };
-                            break :blk_struct .{ .struct_type = st_ptr };
-                        },
-                        .choice_type_literal => |ct| blk_choice: {
-                            const choice_ptr = try self.choiceTypeFromLiteralWithSubst(ct, s, &subst);
-                            const arg_names = try self.allocator.alloc([]const u8, tmpl.params.len);
-                            const arg_values = try self.allocator.alloc(sg.GenericIdentityArg, tmpl.params.len);
-                            var i: usize = 0;
-                            while (i < tmpl.params.len) : (i += 1) {
-                                arg_names[i] = tmpl.params[i].name;
-                                arg_values[i] = switch (tmpl.params[i].kind) {
-                                    .type => .{ .type = subst.types.get(tmpl.params[i].name).? },
-                                    .comptime_int => .{ .comptime_int = subst.ints.get(tmpl.params[i].name).? },
-                                };
-                            }
-
-                            const identity = try self.allocator.create(sg.GenericTypeIdentity);
-                            identity.* = .{
-                                .base_name = tmpl.name,
-                                .arg_names = arg_names,
-                                .arg_values = arg_values,
-                            };
-                            choice_ptr.identity = .{ .generic = identity };
-                            break :blk_choice .{ .choice_type = choice_ptr };
-                        },
-                        else => error.NotYetImplemented,
-                    };
                 }
+                return self.instantiateCompactGenericTypeTemplate(template, s, &subst);
             }
         }
         return error.SymbolNotFound;
     }
 
-    //──────────────────────────────────────────────────── BINARY OP
-    fn handleBinOp(
+    // Type templates are instantiated from compact syntax and from compiler
+    // sugar alike. Keeping the body expansion here makes both paths produce
+    // the same nominal generic identity.
+    fn instantiateCompactGenericTypeTemplate(
         self: *Semantizer,
-        bo: syn.BinaryOperation,
-        loc: tok.Location,
+        template: gen.GenericTypeTemplate,
         s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        var lhs = try self.visitNode(bo.left.*, s);
-        var rhs = try self.visitNode(bo.right.*, s);
-
-        const operator_name = switch (bo.operator) {
-            .addition => "operator +",
-            else => null,
+        subst: *const GenericSubst,
+    ) SemErr!sg.Type {
+        const result: sg.Type = switch (self.syntaxFile(template.body).tag(template.body.node)) {
+            .struct_type_literal => .{ .struct_type = try self.structTypeFromNodeWithSubst(template.body, s, subst) },
+            .choice_type_literal => .{ .choice_type = try self.choiceTypeFromNodeWithSubst(template.body, s, subst) },
+            else => return error.InvalidType,
         };
-
-        if (operator_name) |name| {
-            var input_te = try self.buildCallInput(&[_]CallArg{
-                .{ .name = "left", .expr = lhs },
-                .{ .name = "right", .expr = rhs },
-            });
-            const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-
-            var chosen: ?*sg.FunctionDeclaration = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
-                error.SymbolNotFound => null,
-                else => return err,
+        const identity = try self.allocator.create(sg.GenericTypeIdentity);
+        const arg_names = try self.allocator.alloc([]const u8, template.params.len);
+        const arg_values = try self.allocator.alloc(sg.GenericIdentityArg, template.params.len);
+        for (template.params, 0..) |param, index| {
+            arg_names[index] = param.name;
+            arg_values[index] = switch (param.kind) {
+                .type => .{ .type = subst.types.get(param.name) orelse return error.InvalidType },
+                .comptime_int => .{ .comptime_int = subst.ints.get(param.name) orelse return error.InvalidType },
             };
-
-            if (chosen == null) {
-                chosen = self.resolveVisibleOverload(name, input_te, s, bo.left.*.location) catch |err| switch (err) {
-                    error.SymbolNotFound => null,
-                    error.AmbiguousOverload => {
-                        try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, bo.left.*.location);
-                        return error.Reported;
-                    },
-                    else => return err,
-                };
-            }
-
-            if (chosen == null) {
-                chosen = self.instantiateGenericNamed(name, empty_args, input_te, s, .abstract_contract) catch |err| switch (err) {
-                    error.SymbolNotFound => null,
-                    else => return err,
-                };
-            }
-
-            if (chosen) |chosen_fn| {
-                try self.discoverFunctionReference(chosen_fn);
-                input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, bo.left, s);
-
-                const result_ty = typ.functionReturnType(chosen_fn);
-                const fc_ptr = try self.allocator.create(sg.FunctionCall);
-                fc_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
-
-                const node = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
-                try s.nodes.append(node);
-                return .{ .node = node, .ty = result_ty };
-            }
         }
-
-        const lhs_is_ptr = lhs.ty == .pointer_type;
-        const rhs_is_ptr = rhs.ty == .pointer_type;
-        if ((bo.operator == .addition or bo.operator == .subtraction) and lhs_is_ptr != rhs_is_ptr) {
-            try self.diags.add(
-                bo.left.*.location,
-                .semantic,
-                "pointer arithmetic is not allowed; cast explicitly to an integer, perform the arithmetic, and cast back",
-                .{},
-            );
-            return error.Reported;
+        identity.* = .{ .base_name = template.name, .arg_names = arg_names, .arg_values = arg_values };
+        switch (result) {
+            .struct_type => |value| @constCast(value).identity = .{ .generic = identity },
+            .choice_type => |value| @constCast(value).identity = .{ .generic = identity },
+            else => return error.InvalidType,
         }
-
-        rhs = try typ.coerceExprToType(lhs.ty, rhs, bo.right, s, self.allocator, self.diags);
-        lhs = try typ.coerceExprToType(rhs.ty, lhs, bo.left, s, self.allocator, self.diags);
-
-        if (!typ.typesExactlyEqual(lhs.ty, rhs.ty)) {
-            const pair = try self.formatTypePairText(lhs.ty, rhs.ty, s);
-            defer pair.deinit();
-            const verb = binaryOpVerb(bo.operator);
-            try self.diags.add(
-                bo.left.*.location,
-                .semantic,
-                "cannot {s} '{s}' and '{s}'",
-                .{ verb, pair.expected.bytes, pair.actual.bytes },
-            );
-            return error.Reported;
-        }
-
-        const bin = try self.allocator.create(sg.BinaryOperation);
-        bin.* = .{ .operator = bo.operator, .left = lhs.node, .right = rhs.node };
-
-        const n = try sg.makeSGNode(.{ .binary_operation = bin.* }, loc, self.allocator);
-        try s.nodes.append(n);
-        return .{ .node = n, .ty = lhs.ty };
+        return result;
     }
 
-    //──────────────────────────────────────────────────── COMPARISON
-    fn handleComparison(
+    fn instantiateCompactGenericTypeFromSubstNamed(
         self: *Semantizer,
-        c: syn.Comparison,
-        loc: tok.Location,
+        name: []const u8,
         s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        var lhs = try self.visitNode(c.left.*, s);
-        var rhs = try self.visitNode(c.right.*, s);
-
-        const operator_name = switch (c.operator) {
-            .equal => "operator ==",
-            .not_equal => "operator !=",
-            else => null,
-        };
-
-        if (operator_name) |name| {
-            var input_te = try self.buildCallInput(&[_]CallArg{
-                .{ .name = "left", .expr = lhs },
-                .{ .name = "right", .expr = rhs },
-            });
-            const empty_args = syn.StructTypeLiteral{ .fields = &.{} };
-
-            var chosen: ?*sg.FunctionDeclaration = self.instantiateGenericNamed(name, empty_args, input_te, s, .regular) catch |err| switch (err) {
-                error.SymbolNotFound => null,
-                else => return err,
-            };
-
-            if (chosen == null) {
-                chosen = self.resolveVisibleOverload(name, input_te, s, c.left.*.location) catch |err| switch (err) {
-                    error.SymbolNotFound => null,
-                    error.AmbiguousOverload => {
-                        try self.addAmbiguousFunctionDiagnostic(name, input_te.ty, s, c.left.*.location);
-                        return error.Reported;
-                    },
-                    else => return err,
+        subst: *GenericSubst,
+    ) SemErr!sg.Type {
+        var current: ?*Scope = s;
+        while (current) |scope| : (current = scope.parent) {
+            const templates = scope.generic_types.getPtr(name) orelse continue;
+            template_loop: for (templates.items) |template| {
+                for (template.params) |param| switch (param.kind) {
+                    .type => if (subst.types.get(param.name) == null) continue :template_loop,
+                    .comptime_int => if (subst.ints.get(param.name) == null) continue :template_loop,
                 };
+                for (template.params, 0..) |param, index| {
+                    const constraint = template.param_abstract_constraints[index] orelse continue;
+                    const actual = subst.types.get(param.name) orelse continue;
+                    if (!(try self.abstractConstraintMatches(actual, constraint, s, subst))) return error.InvalidType;
+                }
+                return self.instantiateCompactGenericTypeTemplate(template, s, subst);
             }
+        }
+        return error.SymbolNotFound;
+    }
 
-            if (chosen) |chosen_fn| {
-                try self.discoverFunctionReference(chosen_fn);
-                input_te = try self.coerceCallInputToExpected(&chosen_fn.input, input_te, c.left, s);
-
-                const result_ty = typ.functionReturnType(chosen_fn);
-                if (!typ.typesExactlyEqual(result_ty, .{ .builtin = .Bool })) {
-                    const actual = try self.formatTypeText(result_ty, s);
-                    defer actual.deinit();
-                    try self.diags.add(
-                        c.left.*.location,
-                        .semantic,
-                        "comparison operator '{s}' must return 'Bool', got '{s}'",
-                        .{ name, actual.bytes },
-                    );
+    fn resolveCompactArrayTypeFromGenericArgs(
+        self: *Semantizer,
+        location: tok.Location,
+        arguments_ref: syn.SyntaxRef,
+        s: *Scope,
+        subst: ?*const GenericSubst,
+    ) SemErr!sg.Type {
+        const file = self.syntaxFile(arguments_ref);
+        const arguments = file.structTypeLiteral(arguments_ref.node) orelse return error.InvalidType;
+        var length: ?i64 = null;
+        var element: ?sg.Type = null;
+        for (arguments.fields) |field_node| {
+            const field = file.structTypeField(field_node) orelse return error.InvalidType;
+            const name = file.tokenText(&self.diags.source_db, field.name_token);
+            if (std.mem.eql(u8, name, "n")) {
+                const value = field.default_value orelse {
+                    try self.diags.add(location, .semantic, "Array expects '.n = <comptime integer expression>'", .{});
+                    return error.Reported;
+                };
+                length = try self.resolveComptimeIntExpr(file.ref(value), s, subst);
+            } else if (std.mem.eql(u8, name, "t")) {
+                if (field.type_node) |type_node| {
+                    element = if (subst) |values|
+                        try self.resolveSyntaxTypeWithSubstPreservingAbstracts(file.ref(type_node), s, values)
+                    else
+                        try self.resolveSyntaxTypeWithMode(file.ref(type_node), s, true, null);
+                } else if (field.default_value) |type_expression| {
+                    element = if (subst) |values|
+                        try self.resolveTypeExpressionWithSubst(file.ref(type_expression), s, values)
+                    else
+                        try self.resolveTypeExpression(file.ref(type_expression), s);
+                } else {
+                    try self.diags.add(location, .semantic, "Array expects '.t: <type>'", .{});
                     return error.Reported;
                 }
-
-                const fc_ptr = try self.allocator.create(sg.FunctionCall);
-                fc_ptr.* = .{ .callee = chosen_fn, .input = input_te.node };
-
-                const node = try sg.makeSGNode(.{ .function_call = fc_ptr }, loc, self.allocator);
-                try s.nodes.append(node);
-                return .{ .node = node, .ty = result_ty };
+            } else {
+                try self.diags.add(location, .semantic, "Array only accepts '.n' and '.t' parameters", .{});
+                return error.Reported;
             }
         }
-
-        if (c.operator == .equal or c.operator == .not_equal) {
-            if (try self.coercePayloadlessChoiceComparisonSide(lhs.ty, rhs, c.right.*.location, s)) |coerced_rhs| {
-                rhs = coerced_rhs;
-            }
-            if (try self.coercePayloadlessChoiceComparisonSide(rhs.ty, lhs, c.left.*.location, s)) |coerced_lhs| {
-                lhs = coerced_lhs;
-            }
-        }
-
-        rhs = try typ.coerceExprToType(lhs.ty, rhs, c.right, s, self.allocator, self.diags);
-        lhs = try typ.coerceExprToType(rhs.ty, lhs, c.left, s, self.allocator, self.diags);
-
-        if (!typ.typesExactlyEqual(lhs.ty, rhs.ty)) {
-            const pair = try self.formatTypePairText(lhs.ty, rhs.ty, s);
-            defer pair.deinit();
-            try self.diags.add(
-                c.left.*.location,
-                .semantic,
-                "cannot compare '{s}' and '{s}'",
-                .{ pair.expected.bytes, pair.actual.bytes },
-            );
+        const resolved_length = length orelse {
+            try self.diags.add(location, .semantic, "Array is missing '.n = <comptime integer expression>'", .{});
+            return error.Reported;
+        };
+        if (resolved_length < 0) {
+            try self.diags.add(location, .semantic, "Array length cannot be negative", .{});
             return error.Reported;
         }
-
-        const cmp_ptr = try self.allocator.create(sg.Comparison);
-        cmp_ptr.* = .{
-            .operator = c.operator,
-            .left = lhs.node,
-            .right = rhs.node,
+        const resolved_element = element orelse {
+            try self.diags.add(location, .semantic, "Array is missing '.t: <type>'", .{});
+            return error.Reported;
         };
-
-        const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, loc, self.allocator);
-        try s.nodes.append(node);
-        return .{ .node = node, .ty = .{ .builtin = .Bool } };
+        return self.makeArrayType(@intCast(resolved_length), resolved_element);
     }
+
+    fn resolveCompactChoiceUnionFromGenericArgs(
+        self: *Semantizer,
+        location: tok.Location,
+        arguments_ref: syn.SyntaxRef,
+        s: *Scope,
+        subst: ?*const GenericSubst,
+    ) SemErr!sg.Type {
+        const file = self.syntaxFile(arguments_ref);
+        const arguments = file.structTypeLiteral(arguments_ref.node) orelse return error.InvalidType;
+        if (arguments.fields.len != 2) {
+            try self.diags.add(location, .semantic, "choice_union expects exactly '.a: <choice>' and '.b: <choice>'", .{});
+            return error.Reported;
+        }
+        var left: ?sg.Type = null;
+        var right: ?sg.Type = null;
+        for (arguments.fields) |field_node| {
+            const field = file.structTypeField(field_node) orelse return error.InvalidType;
+            const name = file.tokenText(&self.diags.source_db, field.name_token);
+            const type_node = field.type_node orelse {
+                try self.diags.add(file.tokenLocation(field.name_token), .semantic, "choice_union argument '.{s}' must be a type", .{name});
+                return error.Reported;
+            };
+            const resolved = if (subst) |values|
+                try self.resolveSyntaxTypeWithSubstPreservingAbstracts(file.ref(type_node), s, values)
+            else
+                try self.resolveSyntaxTypeWithMode(file.ref(type_node), s, true, null);
+            if (std.mem.eql(u8, name, "a")) {
+                left = resolved;
+            } else if (std.mem.eql(u8, name, "b")) {
+                right = resolved;
+            } else {
+                try self.diags.add(file.tokenLocation(field.name_token), .semantic, "choice_union only accepts '.a' and '.b'", .{});
+                return error.Reported;
+            }
+        }
+        const left_type = left orelse {
+            try self.diags.add(location, .semantic, "choice_union is missing '.a'", .{});
+            return error.Reported;
+        };
+        const right_type = right orelse {
+            try self.diags.add(location, .semantic, "choice_union is missing '.b'", .{});
+            return error.Reported;
+        };
+        if (left_type != .choice_type or right_type != .choice_type) {
+            try self.diags.add(location, .semantic, "choice_union arguments must both be choice types", .{});
+            return error.Reported;
+        }
+        const union_type = try self.allocator.create(sg.ChoiceType);
+        union_type.* = .{ .variants = &.{} };
+        for (left_type.choice_type.variants) |variant| _ = try typ.appendChoiceVariant(union_type, variant, self.allocator);
+        for (right_type.choice_type.variants) |variant| _ = try typ.appendChoiceVariant(union_type, variant, self.allocator);
+        const variants = @constCast(union_type.variants);
+        var index: usize = 1;
+        while (index < variants.len) : (index += 1) {
+            var cursor = index;
+            while (cursor > 0 and std.mem.order(u8, variants[cursor - 1].name, variants[cursor].name) == .gt) : (cursor -= 1) {
+                const previous = variants[cursor - 1];
+                variants[cursor - 1] = variants[cursor];
+                variants[cursor] = previous;
+            }
+        }
+        return .{ .choice_type = union_type };
+    }
+
+    fn resolveCompactVirtualTypeFromGenericArgs(
+        self: *Semantizer,
+        location: tok.Location,
+        arguments_ref: syn.SyntaxRef,
+        s: *Scope,
+    ) SemErr!sg.Type {
+        const file = self.syntaxFile(arguments_ref);
+        const arguments = file.structTypeLiteral(arguments_ref.node) orelse return error.InvalidType;
+        if (arguments.fields.len != 1) {
+            try self.diags.add(location, .semantic, "Virtual expects exactly '.abstract: <Abstract>'", .{});
+            return error.Reported;
+        }
+        const field = file.structTypeField(arguments.fields[0]) orelse return error.InvalidType;
+        if (!std.mem.eql(u8, file.tokenText(&self.diags.source_db, field.name_token), "abstract")) {
+            try self.diags.add(location, .semantic, "Virtual expects exactly '.abstract: <Abstract>'", .{});
+            return error.Reported;
+        }
+        const abstract_node = field.type_node orelse return error.InvalidType;
+        const abstract_syntax = file.syntaxType(abstract_node) orelse return error.InvalidType;
+        if (abstract_syntax != .name or abstract_syntax.name.qualifier_token != null) return error.InvalidType;
+        const abstract_name = file.tokenText(&self.diags.source_db, abstract_syntax.name.name_token);
+        if (s.lookupAbstractInfo(abstract_name) == null) {
+            try self.diags.add(file.tokenLocation(field.name_token), .semantic, "'{s}' is not an Abstract type", .{abstract_name});
+            return error.Reported;
+        }
+        const abstract_declaration = s.lookupType(abstract_name) orelse return error.UnknownType;
+        if (abstract_declaration.ty != .abstract_type) return error.InvalidType;
+        const any_type = try self.allocator.create(sg.Type);
+        any_type.* = .{ .builtin = .Any };
+        const data_pointer = try self.allocator.create(sg.PointerType);
+        data_pointer.* = .{ .mutability = .read_write, .child = any_type };
+        const vtable_pointer = try self.allocator.create(sg.PointerType);
+        vtable_pointer.* = .{ .mutability = .read_only, .child = any_type };
+        const fields = try self.allocator.alloc(sg.StructTypeField, 2);
+        fields[0] = .{ .name = "data", .ty = .{ .pointer_type = data_pointer } };
+        fields[1] = .{ .name = "vtable", .ty = .{ .pointer_type = vtable_pointer } };
+        const arg_names = try self.allocator.alloc([]const u8, 1);
+        arg_names[0] = "abstract";
+        const arg_values = try self.allocator.alloc(sg.GenericIdentityArg, 1);
+        arg_values[0] = .{ .type = abstract_declaration.ty };
+        const identity = try self.allocator.create(sg.GenericTypeIdentity);
+        identity.* = .{ .base_name = "Virtual", .arg_names = arg_names, .arg_values = arg_values };
+        const virtual_type = try self.allocator.create(sg.StructType);
+        virtual_type.* = .{ .fields = fields, .identity = .{ .generic = identity } };
+        return .{ .struct_type = virtual_type };
+    }
+
+    fn resolveCompactSpecialGenericType(
+        self: *Semantizer,
+        base_name: []const u8,
+        location: tok.Location,
+        arguments_ref: syn.SyntaxRef,
+        s: *Scope,
+        subst: ?*const GenericSubst,
+    ) SemErr!?sg.Type {
+        if (std.mem.eql(u8, base_name, "choice_union")) return @as(?sg.Type, try self.resolveCompactChoiceUnionFromGenericArgs(location, arguments_ref, s, subst));
+        if (std.mem.eql(u8, base_name, "Array")) return @as(?sg.Type, try self.resolveCompactArrayTypeFromGenericArgs(location, arguments_ref, s, subst));
+        if (std.mem.eql(u8, base_name, "Virtual")) return @as(?sg.Type, try self.resolveCompactVirtualTypeFromGenericArgs(location, arguments_ref, s));
+        return null;
+    }
+
+    fn makeCompactInferredErrableType(
+        self: *Semantizer,
+        inner_ref: syn.SyntaxRef,
+        s: *Scope,
+        subst: ?*const GenericSubst,
+    ) SemErr!sg.Type {
+        const inner = if (subst) |values|
+            try self.resolveSyntaxTypeWithSubstPreservingAbstracts(inner_ref, s, values)
+        else
+            try self.resolveSyntaxTypeWithMode(inner_ref, s, true, null);
+        const reasons = try self.allocator.create(sg.ChoiceType);
+        reasons.* = .{ .variants = &.{} };
+        reasons.identity = .{ .inferred_choice = try self.nextInferredChoiceIdentity(.reasons) };
+        var values = GenericSubst.init(self.allocator);
+        defer values.deinit();
+        if (subst) |outer| try values.cloneFrom(outer);
+        try values.types.put("t", inner);
+        try values.types.put("reasons", .{ .choice_type = reasons });
+        const resolved = self.instantiateCompactGenericTypeFromSubstNamed("Errable", s, &values) catch |err| switch (err) {
+            error.SymbolNotFound => return error.UnknownType,
+            else => return err,
+        };
+        const errable = switch (resolved) {
+            .choice_type => |choice| choice,
+            else => return error.InvalidType,
+        };
+        @constCast(errable).identity = .{ .inferred_choice = try self.nextInferredChoiceIdentity(.errable) };
+        return resolved;
+    }
+
+    fn resolveCompactGenericTypeWithMode(
+        self: *Semantizer,
+        base_name: []const u8,
+        location: tok.Location,
+        arguments_ref: syn.SyntaxRef,
+        s: *Scope,
+        preserve_abstract: bool,
+        subst: ?*const GenericSubst,
+    ) SemErr!sg.Type {
+        if (try self.resolveCompactSpecialGenericType(base_name, location, arguments_ref, s, subst)) |special| return special;
+        if (s.lookupAbstractInfo(base_name)) |info| {
+            const file = self.syntaxFile(arguments_ref);
+            const arguments = file.structTypeLiteral(arguments_ref.node) orelse return error.InvalidType;
+            for (info.params) |param| {
+                var found = false;
+                for (arguments.fields) |field_node| {
+                    const field = file.structTypeField(field_node) orelse return error.InvalidType;
+                    if (!std.mem.eql(u8, file.tokenText(&self.diags.source_db, field.name_token), param.name)) continue;
+                    found = true;
+                    break;
+                }
+                if (!found) return error.UnknownType;
+            }
+            if (preserve_abstract) return (s.lookupType(base_name) orelse return error.UnknownType).ty;
+            if (s.lookupAbstractDefault(base_name)) |default| return default.ty;
+            return error.AbstractNeedsDefault;
+        }
+        return self.instantiateCompactGenericTypeNamed(base_name, arguments_ref, s, subst) catch |err| switch (err) {
+            error.SymbolNotFound => error.UnknownType,
+            else => return err,
+        };
+    }
+
+    fn resolveCompactNullableType(
+        self: *Semantizer,
+        inner_ref: syn.SyntaxRef,
+        s: *Scope,
+        preserve_abstract: bool,
+        subst: ?*const GenericSubst,
+    ) SemErr!sg.Type {
+        var values = GenericSubst.init(self.allocator);
+        defer values.deinit();
+        if (subst) |outer| try values.cloneFrom(outer);
+        const inner = if (subst) |outer|
+            try self.resolveSyntaxTypeWithSubstPreservingAbstracts(inner_ref, s, outer)
+        else
+            try self.resolveSyntaxTypeWithMode(inner_ref, s, preserve_abstract, null);
+        try values.types.put("t", inner);
+        return self.instantiateCompactGenericTypeFromSubstNamed("Nullable", s, &values) catch |err| switch (err) {
+            error.SymbolNotFound => error.UnknownType,
+            else => return err,
+        };
+    }
+
+    //──────────────────────────────────────────────────── BINARY OP
+
+    //──────────────────────────────────────────────────── COMPARISON
 
     fn coercePayloadlessChoiceComparisonSide(
         self: *Semantizer,
@@ -11594,98 +9961,7 @@ pub const Semantizer = struct {
         return error.Reported;
     }
 
-    fn handleLogicalOperation(
-        self: *Semantizer,
-        lo: syn.LogicalOperation,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        var lhs = try self.visitNode(lo.left.*, s);
-        var rhs = try self.visitNode(lo.right.*, s);
-        const bool_ty: sg.Type = .{ .builtin = .Bool };
-
-        lhs = try typ.coerceExprToType(bool_ty, lhs, lo.left, s, self.allocator, self.diags);
-        rhs = try typ.coerceExprToType(bool_ty, rhs, lo.right, s, self.allocator, self.diags);
-
-        if (!typ.typesExactlyEqual(lhs.ty, bool_ty)) {
-            const actual = try self.formatTypeText(lhs.ty, s);
-            defer actual.deinit();
-            try self.diags.add(
-                lo.left.*.location,
-                .semantic,
-                "left operand of logical operator must be 'Bool', got '{s}'",
-                .{actual.bytes},
-            );
-            return error.Reported;
-        }
-
-        if (!typ.typesExactlyEqual(rhs.ty, bool_ty)) {
-            const actual = try self.formatTypeText(rhs.ty, s);
-            defer actual.deinit();
-            try self.diags.add(
-                lo.right.*.location,
-                .semantic,
-                "right operand of logical operator must be 'Bool', got '{s}'",
-                .{actual.bytes},
-            );
-            return error.Reported;
-        }
-
-        const logical_ptr = try self.allocator.create(sg.LogicalOperation);
-        logical_ptr.* = .{
-            .operator = lo.operator,
-            .left = lhs.node,
-            .right = rhs.node,
-        };
-
-        const node = try sg.makeSGNode(.{ .logical_operation = logical_ptr.* }, lo.left.*.location, self.allocator);
-        try s.nodes.append(node);
-        return .{ .node = node, .ty = bool_ty };
-    }
-
     //──────────────────────────────────────────────────── RETURN
-    fn handleReturn(
-        self: *Semantizer,
-        r: syn.ReturnStatement,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        var e = if (r.expression) |ex| (try self.visitNode(ex.*, s)) else null;
-        if (r.expression) |ex| {
-            if (e) |te| e = try self.ensureValuePositionAllowed(te, ex.location, s);
-        }
-
-        const rs = try self.allocator.create(sg.ReturnStatement);
-        const cleanup_nodes = try self.collectActiveEarlyCleanupNodes(s);
-        rs.* = .{
-            .expression = if (e) |te| te.node else null,
-            .cleanup_nodes = cleanup_nodes,
-        };
-
-        const n = try sg.makeSGNode(.{ .return_statement = rs }, if (r.expression) |ex| ex.location else undefined, self.allocator);
-        try s.nodes.append(n);
-        return .{ .node = n, .ty = .{ .builtin = .Any } };
-    }
-
-    fn handleErrorPropagation(
-        self: *Semantizer,
-        prop: syn.ErrorPropagation,
-        s: *Scope,
-        loc: tok.Location,
-    ) SemErr!typ.TypedExpr {
-        const value_te = try self.visitNode(prop.value.*, s);
-        return self.lowerErrorPropagation(value_te, null, s, loc);
-    }
-
-    fn handleErrorContext(
-        self: *Semantizer,
-        ctx: syn.ErrorContext,
-        s: *Scope,
-        loc: tok.Location,
-    ) SemErr!typ.TypedExpr {
-        const value_te = try self.visitNode(ctx.value.*, s);
-        var context_te = try self.visitNode(ctx.context.*, s);
-        context_te = try self.ensureValuePositionAllowed(context_te, ctx.context.location, s);
-        return self.lowerErrorPropagation(value_te, context_te, s, loc);
-    }
 
     const ErrableInfo = struct {
         ok_variant_index: u32,
@@ -12082,41 +10358,6 @@ pub const Semantizer = struct {
     }
 
     //──────────────────────────────────────────────────── IF
-    fn handleIf(
-        self: *Semantizer,
-        ifs: syn.IfStatement,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        const start_len = s.nodes.items.len;
-
-        const cond = try self.visitNode(ifs.condition.*, s);
-        const nullable_refinement = try self.extractNullableIfRefinement(ifs.condition, s);
-        const choice_test = self.choiceTagTestForCondition(cond.node);
-
-        const then_te = switch (ifs.then_block.*.content) {
-            .code_block => |blk| try self.handleCodeBlockWithNullableRefinement(blk, s, nullable_refinement, ifs.condition.location),
-            else => try self.visitNode(ifs.then_block.*, s),
-        };
-
-        const else_cb = if (ifs.else_block) |eb| blk: {
-            var else_scope = try Scope.init(self.allocator, s, s.current_fn);
-            break :blk (try self.visitNode(eb.*, &else_scope)).node.content.code_block;
-        } else null;
-
-        s.nodes.items.len = start_len;
-
-        const if_ptr = try self.allocator.create(sg.IfStatement);
-        if_ptr.* = .{
-            .condition = cond.node,
-            .choice_test = choice_test,
-            .then_block = then_te.node.content.code_block,
-            .else_block = else_cb,
-        };
-
-        const n = try sg.makeSGNode(.{ .if_statement = if_ptr }, undefined, self.allocator);
-        try s.nodes.append(n);
-        return .{ .node = n, .ty = .{ .builtin = .Any } };
-    }
 
     fn choiceTagTestForCondition(self: *Semantizer, condition: *const sg.SGNode) ?sg.ChoiceTagTest {
         _ = self;
@@ -12150,52 +10391,6 @@ pub const Semantizer = struct {
             .choice_type = choice_value.sem_type.?.choice_type,
             .variant_index = literal.variant_index,
             .then_has_variant = then_has_variant,
-        };
-    }
-
-    fn extractNullableIfRefinement(
-        self: *Semantizer,
-        condition: *const syn.STNode,
-        s: *Scope,
-    ) SemErr!?NullableIfRefinement {
-        if (condition.content != .function_call) return null;
-
-        const call = condition.content.function_call;
-        if (!std.mem.eql(u8, call.callee, "is")) return null;
-        if (call.module_qualifier != null or call.type_arguments != null or call.type_arguments_struct != null) return null;
-        if (call.input.*.content != .struct_value_literal) return null;
-
-        const input = call.input.*.content.struct_value_literal;
-        var value_field: ?syn.StructValueLiteralField = null;
-        var variant_field: ?syn.StructValueLiteralField = null;
-        for (input.fields) |field| {
-            if (std.mem.eql(u8, field.name.string, "value")) {
-                value_field = field;
-            } else if (std.mem.eql(u8, field.name.string, "variant")) {
-                variant_field = field;
-            }
-        }
-
-        const value_node = value_field orelse return null;
-        const variant_node = variant_field orelse return null;
-        if (value_node.value.*.content != .identifier) return null;
-        if (variant_node.value.*.content != .choice_literal) return null;
-
-        const variant_lit = variant_node.value.*.content.choice_literal;
-        if (variant_lit.payload != null) return null;
-
-        const binding_name = value_node.value.*.content.identifier;
-        const binding = s.lookupBinding(binding_name) orelse return null;
-        const nullable_info = self.tryNullableInfoOfType(binding.ty) orelse return null;
-
-        if (!std.mem.eql(u8, variant_lit.name.string, "some")) return null;
-        if (!std.mem.eql(u8, binding.ty.choice_type.variants[nullable_info.some_variant_index].name, variant_lit.name.string)) return null;
-
-        return .{
-            .source_binding = binding,
-            .some_variant_index = nullable_info.some_variant_index,
-            .some_payload_type = nullable_info.some_payload_type,
-            .some_value_type = nullable_info.some_value_type,
         };
     }
 
@@ -12245,61 +10440,17 @@ pub const Semantizer = struct {
         try self.maybeScheduleAutoDeinit(binding, loc, child);
     }
 
-    fn handleCodeBlockWithNullableRefinement(
-        self: *Semantizer,
-        blk: syn.CodeBlock,
-        parent: *Scope,
-        refinement: ?NullableIfRefinement,
-        refinement_loc: tok.Location,
-    ) SemErr!typ.TypedExpr {
-        var child = try Scope.init(self.allocator, parent, parent.current_fn);
-        if (refinement) |value| {
-            try self.applyNullableThenRefinement(value, &child, refinement_loc);
-        }
-
-        var ret_val: ?*sg.SGNode = null;
-        var ret_ty: sg.Type = .{ .builtin = .Any };
-
-        for (blk.items, 0..) |st, idx| {
-            const te = try self.visitNode(st.*, &child);
-            const is_last = idx + 1 == blk.items.len;
-            if (is_last and st.*.content == .expression_statement) {
-                ret_val = te.node;
-                ret_ty = te.ty;
-                continue;
-            }
-            if (st.*.content == .function_call) {
-                try child.nodes.append(te.node);
-            }
-        }
-
-        var d_idx: usize = child.deferred.items.len;
-        while (d_idx > 0) : (d_idx -= 1) {
-            const group = child.deferred.items[d_idx - 1];
-            for (group.nodes) |node| try child.nodes.append(node);
-        }
-
-        const slice = try child.nodes.toOwnedSlice();
-        child.nodes.deinit();
-        self.clearDeferred(&child);
-
-        const cb = try self.allocator.create(sg.CodeBlock);
-        cb.* = .{ .nodes = slice, .ret_val = ret_val };
-
-        const n = try sg.makeSGNode(.{ .code_block = cb }, undefined, self.allocator);
-        try parent.nodes.append(n);
-        return .{ .node = n, .ty = ret_ty };
-    }
-
     fn handleWhile(
         self: *Semantizer,
-        w: syn.WhileStatement,
+        node: syn.SyntaxRef,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(node);
+        const w = file.whileStatement(node.node) orelse return error.InvalidType;
         const start_len = s.nodes.items.len;
 
-        const cond = try self.visitNode(w.condition.*, s);
-        const body_te = try self.visitNode(w.body.*, s);
+        const cond = try self.visitNode(file.ref(w.condition), s);
+        const body_te = try self.visitNode(file.ref(w.body), s);
 
         s.nodes.items.len = start_len;
 
@@ -12309,7 +10460,7 @@ pub const Semantizer = struct {
             .body = body_te.node.content.code_block,
         };
 
-        const n = try sg.makeSGNode(.{ .while_statement = while_ptr }, undefined, self.allocator);
+        const n = try sg.makeSGNode(.{ .while_statement = while_ptr }, self.nodeLocation(node), self.allocator);
         try s.nodes.append(n);
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
@@ -12334,476 +10485,35 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
-    fn handleFor(
-        self: *Semantizer,
-        f: syn.ForStatement,
-        s: *Scope,
-        loc: tok.Location,
-    ) SemErr!typ.TypedExpr {
-        const iterable_te = try self.visitNode(f.iterable.*, s);
-        return self.lowerForOverIterator(f, iterable_te.ty, s, loc);
-    }
-
-    fn lowerForOverIterator(
-        self: *Semantizer,
-        f: syn.ForStatement,
-        iterable_ty: sg.Type,
-        s: *Scope,
-        loc: tok.Location,
-    ) SemErr!typ.TypedExpr {
-        const iterable_abstract_name = switch (f.item_mode) {
-            .by_value => "Iterable",
-            .by_borrow => "ROPointerIterable",
-            .by_mut_borrow => "RWPointerIterable",
-        };
-        const iterator_ctor_name = switch (f.item_mode) {
-            .by_value => "to_iterator",
-            .by_borrow => "to_ro_pointer_iterator",
-            .by_mut_borrow => "to_rw_pointer_iterator",
-        };
-        const iterator_next_name = "next";
-        const iterable_needs_mutability = switch (f.item_mode) {
-            .by_mut_borrow => true,
-            else => false,
-        };
-        const iterable_copyable = typ.isTypeCopyable(iterable_ty, s);
-        const iterable_name = try self.makeSyntheticName("iterable");
-        const iterator_name = try self.makeSyntheticName("iterator");
-        const iterable_direct_ok = iterable_ty == .pointer_type and
-            (!iterable_needs_mutability or iterable_ty.pointer_type.mutability == .read_write) and
-            try self.typeImplementsAbstract(iterable_ty.pointer_type.child.*, iterable_abstract_name, s);
-
-        const iterable_ident = if (iterable_copyable and f.iterable.*.content != .identifier)
-            try self.makeSynNode(.{ .identifier = iterable_name }, loc)
-        else
-            f.iterable;
-
-        if (!iterable_copyable and f.iterable.*.content != .identifier) {
-            try self.diags.add(
-                f.iterable.location,
-                .semantic,
-                "for cannot iterate a non-copyable expression directly; bind it to a name first",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        if (!try self.typeImplementsAbstract(iterable_ty, iterable_abstract_name, s) and !iterable_direct_ok) {
-            const iterable_ty_text = try self.formatTypeText(iterable_ty, s);
-            defer iterable_ty_text.deinit();
-            try self.diags.add(
-                loc,
-                .semantic,
-                "for expects a type implementing abstract '{s}', got '{s}'",
-                .{ iterable_abstract_name, iterable_ty_text.bytes },
-            );
-            return error.Reported;
-        }
-
-        const to_iterator_fields = try self.allocator.alloc(syn.StructValueLiteralField, 1);
-        to_iterator_fields[0] = .{
-            .name = .{ .string = "value", .location = loc },
-            .value = if (iterable_direct_ok)
-                iterable_ident
-            else
-                try self.makeSynNode(.{ .address_of = .{
-                    .value = iterable_ident,
-                    .mutability = if (iterable_needs_mutability) .read_write else .read_only,
-                } }, loc),
-        };
-        const to_iterator_arg = try self.makeSynNode(.{ .struct_value_literal = .{
-            .fields = to_iterator_fields,
-        } }, loc);
-        const to_iterator_call = try self.makeSynNode(.{ .function_call = .{
-            .callee = iterator_ctor_name,
-            .callee_loc = loc,
-            .module_qualifier = null,
-            .type_arguments = null,
-            .type_arguments_struct = null,
-            .input = to_iterator_arg,
-        } }, loc);
-
-        var iterator_check_scope_storage: ?Scope = null;
-        var iterator_check_scope: *Scope = s;
-        defer if (iterator_check_scope_storage) |*tmp_scope| self.clearDeferred(tmp_scope);
-
-        if (iterable_copyable and f.iterable.*.content != .identifier) {
-            iterator_check_scope_storage = try Scope.init(self.allocator, s, s.current_fn);
-            const tmp_binding = try self.allocator.create(sg.BindingDeclaration);
-            tmp_binding.* = .{
-                .name = iterable_name,
-                .location = loc,
-                .origin_file = self.locationPath(loc),
-                .mutability = if (iterable_needs_mutability) .variable else .constant,
-                .ty = iterable_ty,
-                .initialization = null,
-            };
-            try iterator_check_scope_storage.?.bindings.put(iterable_name, tmp_binding);
-            iterator_check_scope = &iterator_check_scope_storage.?;
-        }
-
-        const iterator_te = try self.visitNode(to_iterator_call.*, iterator_check_scope);
-        if (!try self.typeImplementsAbstract(iterator_te.ty, "Iterator", iterator_check_scope)) {
-            const iterator_ty = try self.formatTypeText(iterator_te.ty, iterator_check_scope);
-            defer iterator_ty.deinit();
-            try self.diags.add(
-                loc,
-                .semantic,
-                "for expects '{s}(.value = ...)' to return a type implementing abstract '{s}', got '{s}'",
-                .{ iterator_ctor_name, "Iterator", iterator_ty.bytes },
-            );
-            return error.Reported;
-        }
-
-        const iterator_decl = try self.makeSynNode(.{ .symbol_declaration = .{
-            .name = .{ .string = iterator_name, .location = loc },
-            .type = null,
-            .mutability = .variable,
-            .value = to_iterator_call,
-        } }, loc);
-
-        const iterator_ident = try self.makeSynNode(.{ .identifier = iterator_name }, loc);
-        const iterator_ro_addr = try self.makeSynNode(.{ .address_of = .{
-            .value = iterator_ident,
-            .mutability = .read_only,
-        } }, loc);
-        const iterator_rw_addr = try self.makeSynNode(.{ .address_of = .{
-            .value = iterator_ident,
-            .mutability = .read_write,
-        } }, loc);
-
-        const has_next_fields = try self.allocator.alloc(syn.StructValueLiteralField, 1);
-        has_next_fields[0] = .{
-            .name = .{ .string = "self", .location = loc },
-            .value = iterator_ro_addr,
-        };
-        const has_next_arg = try self.makeSynNode(.{ .struct_value_literal = .{
-            .fields = has_next_fields,
-        } }, loc);
-        const has_next_call = try self.makeSynNode(.{ .function_call = .{
-            .callee = "has_next",
-            .callee_loc = loc,
-            .module_qualifier = null,
-            .type_arguments = null,
-            .type_arguments_struct = null,
-            .input = has_next_arg,
-        } }, loc);
-
-        const next_fields = try self.allocator.alloc(syn.StructValueLiteralField, 1);
-        next_fields[0] = .{
-            .name = .{ .string = "self", .location = loc },
-            .value = iterator_rw_addr,
-        };
-        const next_arg = try self.makeSynNode(.{ .struct_value_literal = .{
-            .fields = next_fields,
-        } }, loc);
-        const next_call = try self.makeSynNode(.{ .function_call = .{
-            .callee = iterator_next_name,
-            .callee_loc = loc,
-            .module_qualifier = null,
-            .type_arguments = null,
-            .type_arguments_struct = null,
-            .input = next_arg,
-        } }, loc);
-
-        const item_decl = try self.makeSynNode(.{ .symbol_declaration = .{
-            .name = f.item_name,
-            .type = null,
-            .mutability = .constant,
-            .value = next_call,
-        } }, loc);
-
-        const while_body_items = try self.allocator.alloc(*syn.STNode, 2);
-        while_body_items[0] = item_decl;
-        while_body_items[1] = f.body;
-        const while_body = try self.makeSynNode(.{ .code_block = .{
-            .items = while_body_items,
-        } }, loc);
-        const while_stmt = try self.makeSynNode(.{ .while_statement = .{
-            .condition = has_next_call,
-            .body = while_body,
-        } }, loc);
-
-        const item_count: usize = if (iterable_copyable and f.iterable.*.content != .identifier) 3 else 2;
-        const lowered_items = try self.allocator.alloc(*syn.STNode, item_count);
-        var idx: usize = 0;
-        if (item_count == 3) {
-            lowered_items[0] = try self.makeSynNode(.{ .symbol_declaration = .{
-                .name = .{ .string = iterable_name, .location = loc },
-                .type = null,
-                .mutability = .constant,
-                .value = f.iterable,
-            } }, loc);
-            idx = 1;
-        }
-        lowered_items[idx] = iterator_decl;
-        lowered_items[idx + 1] = while_stmt;
-
-        const lowered = try self.makeSynNode(.{ .code_block = .{
-            .items = lowered_items,
-        } }, loc);
-        return self.visitNode(lowered.*, s);
-    }
-
-    fn handleMatch(
-        self: *Semantizer,
-        m: syn.MatchStatement,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        const start_len = s.nodes.items.len;
-        const match_requires_move = for (m.cases) |case_syn| {
-            if (case_syn.payload_binding) |payload_binding| {
-                if (!std.mem.eql(u8, payload_binding.name.string, "_") and payload_binding.mode == .by_move) break true;
-            }
-        } else false;
-
-        const value_te = if (match_requires_move) blk: {
-            if (m.value.*.content == .identifier) {
-                break :blk try self.handleMove(m.value, s, m.value.location);
-            }
-
-            const te = try self.visitNode(m.value.*, s);
-            if (typ.expressionNeedsCopyForValuePosition(te.node)) {
-                try self.diags.add(
-                    m.value.location,
-                    .semantic,
-                    "match payload move bindings currently only support named bindings or temporary expressions",
-                    .{},
-                );
-                return error.Reported;
-            }
-            break :blk te;
-        } else try self.visitNode(m.value.*, s);
-        if (value_te.ty != .choice_type) {
-            const desc = try self.formatTypeText(value_te.ty, s);
-            defer desc.deinit();
-            try self.diags.add(
-                m.value.location,
-                .semantic,
-                "match expects a choice value, found '{s}'",
-                .{desc.bytes},
-            );
-            return error.Reported;
-        }
-
-        const choice_ty = value_te.ty.choice_type;
-        var cases = std.array_list.Managed(sg.SwitchCase).init(self.allocator.*);
-
-        for (m.cases) |case_syn| {
-            var found_idx: ?u32 = null;
-            var payload_ty: ?sg.Type = null;
-            for (choice_ty.variants, 0..) |variant, idx| {
-                if (std.mem.eql(u8, variant.name, case_syn.variant_name.string)) {
-                    found_idx = @intCast(idx);
-                    payload_ty = variant.payload_type;
-                    break;
-                }
-            }
-
-            if (found_idx == null) {
-                const choice_text = try self.formatTypeText(value_te.ty, s);
-                defer choice_text.deinit();
-                try self.diags.add(
-                    case_syn.variant_name.location,
-                    .semantic,
-                    "choice type '{s}' has no variant '..{s}'",
-                    .{ choice_text.bytes, case_syn.variant_name.string },
-                );
-                return error.Reported;
-            }
-
-            const case_body = try self.handleMatchCaseBody(value_te, found_idx.?, payload_ty, case_syn, s);
-
-            const lit_ptr = try self.allocator.create(sg.ChoiceLiteral);
-            lit_ptr.* = .{
-                .variant_name = case_syn.variant_name.string,
-                .choice_type = choice_ty,
-                .variant_index = found_idx.?,
-                .payload = null,
-            };
-            const lit_node = try sg.makeSGNode(.{ .choice_literal = lit_ptr }, case_syn.variant_name.location, self.allocator);
-            lit_node.sem_type = value_te.ty;
-
-            try cases.append(.{
-                .value = lit_node,
-                .variant_index = found_idx.?,
-                .body = case_body,
-            });
-        }
-
-        s.nodes.items.len = start_len;
-
-        var exhaustive = cases.items.len == choice_ty.variants.len;
-        if (exhaustive) for (choice_ty.variants, 0..) |_, variant_index| {
-            var found = false;
-            for (cases.items) |case| if (case.variant_index == variant_index) {
-                found = true;
-                break;
-            };
-            if (!found) {
-                exhaustive = false;
-                break;
-            }
-        };
-
-        const switch_ptr = try self.allocator.create(sg.SwitchStatement);
-        switch_ptr.* = .{
-            .expression = value_te.node,
-            .cases = try cases.toOwnedSlice(),
-            .default_case = null,
-            .exhaustive = exhaustive,
-        };
-
-        const node = try sg.makeSGNode(.{ .switch_statement = switch_ptr }, m.value.location, self.allocator);
-        try s.nodes.append(node);
-        return .{ .node = node, .ty = .{ .builtin = .Any } };
-    }
-
-    fn handleMatchCaseBody(
-        self: *Semantizer,
-        choice_value: typ.TypedExpr,
-        variant_index: u32,
-        payload_ty: ?sg.Type,
-        case_syn: syn.MatchCase,
-        parent: *Scope,
-    ) SemErr!*const sg.CodeBlock {
-        var child = try Scope.init(self.allocator, parent, parent.current_fn);
-
-        if (case_syn.payload_binding) |payload_binding| {
-            const binding_name = payload_binding.name;
-            if (std.mem.eql(u8, binding_name.string, "_")) {
-                if (payload_ty == null) {
-                    try self.diags.add(
-                        binding_name.location,
-                        .semantic,
-                        "choice variant '..{s}' has no payload to bind",
-                        .{case_syn.variant_name.string},
-                    );
-                    return error.Reported;
-                }
-            } else {
-                const resolved_payload_ty = payload_ty orelse {
-                    try self.diags.add(
-                        binding_name.location,
-                        .semantic,
-                        "choice variant '..{s}' has no payload to bind",
-                        .{case_syn.variant_name.string},
-                    );
-                    return error.Reported;
-                };
-
-                const access = try self.allocator.create(sg.ChoicePayloadAccess);
-                access.* = .{
-                    .choice_value = choice_value.node,
-                    .variant_index = variant_index,
-                    .payload_type = resolved_payload_ty,
-                };
-                const access_node = try sg.makeSGNode(.{ .choice_payload_access = access }, binding_name.location, self.allocator);
-                access_node.sem_type = resolved_payload_ty;
-
-                const init_expr: typ.TypedExpr = switch (payload_binding.mode) {
-                    .by_value => try self.ensureValuePositionAllowed(
-                        .{ .node = access_node, .ty = resolved_payload_ty },
-                        binding_name.location,
-                        parent,
-                    ),
-                    .by_move => .{ .node = access_node, .ty = resolved_payload_ty },
-                    .by_borrow => try typ.makeAddressablePointer(
-                        access_node,
-                        resolved_payload_ty,
-                        .read_only,
-                        binding_name.location,
-                        self.allocator,
-                        self.diags,
-                    ),
-                    .by_mut_borrow => try typ.makeAddressablePointer(
-                        access_node,
-                        resolved_payload_ty,
-                        .read_write,
-                        binding_name.location,
-                        self.allocator,
-                        self.diags,
-                    ),
-                };
-
-                const bd = try self.allocator.create(sg.BindingDeclaration);
-                bd.* = .{
-                    .name = binding_name.string,
-                    .location = binding_name.location,
-                    .origin_file = self.locationPath(binding_name.location),
-                    .mutability = .constant,
-                    .ty = init_expr.ty,
-                    .initialization = init_expr.node,
-                };
-
-                try child.bindings.put(binding_name.string, bd);
-                const decl_node = try sg.makeSGNode(.{ .binding_declaration = bd }, binding_name.location, self.allocator);
-                try child.nodes.append(decl_node);
-                try self.maybeScheduleAutoDeinit(bd, binding_name.location, &child);
-            }
-        } else if (payload_ty != null) {
-            try self.diags.add(
-                case_syn.variant_name.location,
-                .semantic,
-                "choice variant '..{s}' carries a payload and match must bind it explicitly; use '..{s} _' to ignore it",
-                .{ case_syn.variant_name.string, case_syn.variant_name.string },
-            );
-            return error.Reported;
-        }
-
-        const body_cb = case_syn.body.content.code_block;
-        for (body_cb.items) |st| {
-            const te = try self.visitNode(st.*, &child);
-            if (st.*.content == .function_call) {
-                try child.nodes.append(te.node);
-            }
-        }
-
-        var d_idx: usize = child.deferred.items.len;
-        while (d_idx > 0) : (d_idx -= 1) {
-            const group = child.deferred.items[d_idx - 1];
-            for (group.nodes) |node| try child.nodes.append(node);
-        }
-
-        const slice = try child.nodes.toOwnedSlice();
-        child.nodes.deinit();
-        self.clearDeferred(&child);
-
-        const cb = try self.allocator.create(sg.CodeBlock);
-        cb.* = .{ .nodes = slice, .ret_val = null };
-        return cb;
-    }
-
     //──────────────────────────────────────────────────── ADDRESS OF
     fn handleAddressOf(
         self: *Semantizer,
-        addr: syn.AddressOf,
+        syntax_ref: syn.SyntaxRef,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        switch (addr.value.*.content) {
-            .index_access => |ia| {
-                const base = try self.visitNode(ia.value.*, s);
-                if (base.ty != .array_type and base.node.content != .list_literal) {
-                    return self.handleBorrowedIndexAccess(ia, addr.mutability, s);
-                }
-            },
-            else => {},
+        const file = self.syntaxFile(syntax_ref);
+        const addr = file.addressOf(syntax_ref.node) orelse return error.InvalidType;
+        if (file.indexAccess(addr.value)) |ia| {
+            const base = try self.visitNode(file.ref(ia.value), s);
+            if (base.ty != .array_type and base.node.content != .list_literal) {
+                return self.handleBorrowedIndexAccess(file.ref(addr.value), addr.mutability, s);
+            }
         }
 
-        const te = try self.visitNode(addr.value.*, s);
+        const te = try self.visitNode(file.ref(addr.value), s);
         return switch (addr.mutability) {
-            .read_only => try typ.ensureReadOnlyPointer(addr.value, te, self.allocator, self.diags),
-            .read_write => try typ.ensureMutablePointer(addr.value, te, s, self.allocator, self.diags),
+            .read_only => try typ.ensureReadOnlyPointer(file.location(addr.value), te, self.allocator, self.diags),
+            .read_write => try typ.ensureMutablePointer(file.location(addr.value), te, s, self.allocator, self.diags),
         };
     }
 
     fn handleDefer(
         self: *Semantizer,
-        expr: *syn.STNode,
+        expr: syn.SyntaxRef,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
         const start_len = s.nodes.items.len;
-        const te = try self.visitNode(expr.*, s);
+        const te = try self.visitNode(expr, s);
 
         if (s.nodes.items.len > start_len) {
             const new_nodes = s.nodes.items[start_len..];
@@ -12836,15 +10546,19 @@ pub const Semantizer = struct {
 
     fn handleKeep(
         self: *Semantizer,
-        name: syn.Name,
+        syntax_ref: syn.SyntaxRef,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        const binding = s.lookupBinding(name.string) orelse {
+        const file = self.syntaxFile(syntax_ref);
+        const statement = file.keepStatement(syntax_ref.node) orelse return error.InvalidType;
+        const name = file.tokenText(&self.diags.source_db, statement.name_token);
+        const location = file.tokenLocation(statement.name_token);
+        const binding = s.lookupBinding(name) orelse {
             try self.diags.add(
-                name.location,
+                location,
                 .semantic,
                 "cannot keep unknown binding '{s}'",
-                .{name.string},
+                .{name},
             );
             return error.Reported;
         };
@@ -12854,15 +10568,15 @@ pub const Semantizer = struct {
                 return error.SymbolNotFound;
             }
             try self.diags.add(
-                name.location,
+                location,
                 .semantic,
                 "cannot keep binding '{s}': no automatic deinit is scheduled",
-                .{name.string},
+                .{name},
             );
             return error.Reported;
         }
 
-        const use_node = try sg.makeSGNode(.{ .binding_use = binding }, name.location, self.allocator);
+        const use_node = try sg.makeSGNode(.{ .binding_use = binding }, location, self.allocator);
         use_node.sem_type = binding.ty;
         return .{ .node = use_node, .ty = .{ .builtin = .Any } };
     }
@@ -12888,16 +10602,16 @@ pub const Semantizer = struct {
     //──────────────────────────────────────────────────── DEREFERENCE
     fn handleDereference(
         self: *Semantizer,
-        inner: *syn.STNode,
+        inner: syn.SyntaxRef,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        const te = try self.visitNode(inner.*, s);
+        const te = try self.visitNode(inner, s);
 
         if (te.ty != .pointer_type) {
             const ty_str = try self.formatTypeText(te.ty, s);
             defer ty_str.deinit();
             try self.diags.add(
-                inner.*.location,
+                self.nodeLocation(inner),
                 .semantic,
                 "cannot dereference value of type '{s}'; expected a pointer",
                 .{ty_str.bytes},
@@ -12911,7 +10625,7 @@ pub const Semantizer = struct {
         const der_ptr = try self.allocator.create(sg.Dereference);
         der_ptr.* = .{ .pointer = te.node, .ty = base_ty, .pointer_type = ptr_info_ptr };
 
-        const n = try sg.makeSGNode(.{ .dereference = der_ptr.* }, undefined, self.allocator);
+        const n = try sg.makeSGNode(.{ .dereference = der_ptr.* }, self.nodeLocation(inner), self.allocator);
         n.sem_type = base_ty;
 
         return .{ .node = n, .ty = base_ty };
@@ -12972,27 +10686,28 @@ pub const Semantizer = struct {
 
     fn handlePointerAssignment(
         self: *Semantizer,
-        pa: syn.PointerAssignment,
+        syntax_ref: syn.SyntaxRef,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        var rhs = try self.visitNode(pa.value.*, s);
+        const file = self.syntaxFile(syntax_ref);
+        const pa = file.pointerAssignment(syntax_ref.node) orelse return error.InvalidType;
+        var rhs = try self.visitNode(file.ref(pa.value), s);
 
-        if (pa.target.*.content == .struct_field_access) {
-            const sa = pa.target.*.content.struct_field_access;
-            const target_te = try self.visitNode(pa.target.*, s);
+        if (file.structFieldAccess(pa.target)) |sa| {
+            const target_te = try self.visitNode(file.ref(pa.target), s);
             if (target_te.node.content != .struct_field_access)
                 return error.InvalidType;
             const sf = target_te.node.content.struct_field_access;
 
-            const base = try self.visitNode(sa.struct_value.*, s);
-            const ptr_self = try typ.ensureMutablePointer(sa.struct_value, base, s, self.allocator, self.diags);
+            const base = try self.visitNode(file.ref(sa.value), s);
+            const ptr_self = try typ.ensureMutablePointer(file.location(sa.value), base, s, self.allocator, self.diags);
 
             const ptr_info = ptr_self.ty.pointer_type.*;
             if (ptr_info.child.* != .struct_type) {
                 const desc = try self.formatTypeText(ptr_self.ty, s);
                 defer desc.deinit();
                 try self.diags.add(
-                    sa.struct_value.location,
+                    file.location(sa.value),
                     .semantic,
                     "cannot assign field on value of type '{s}'",
                     .{desc.bytes},
@@ -13004,15 +10719,15 @@ pub const Semantizer = struct {
             if (sf.field_index >= struct_type.fields.len) return error.SymbolNotFound;
             const field_index: usize = @intCast(sf.field_index);
             const declared_field_ty = struct_type.fields[field_index].ty;
-            rhs = try typ.coerceExprToType(declared_field_ty, rhs, pa.value, s, self.allocator, self.diags);
-            try self.recordAbstractFieldStorageType(struct_type, field_index, rhs.ty, pa.value.*.location, s);
+            rhs = try typ.coerceExprToType(declared_field_ty, rhs, file.location(pa.value), s, self.allocator, self.diags);
+            try self.recordAbstractFieldStorageType(struct_type, field_index, rhs.ty, file.location(pa.value), s);
             const field_ty = typ.effectiveStructFieldType(struct_type.fields[field_index]);
 
             if (!typ.typesExactlyEqual(field_ty, rhs.ty)) {
                 const pair = try self.formatTypePairText(field_ty, rhs.ty, s);
                 defer pair.deinit();
                 try self.diags.add(
-                    pa.value.*.location,
+                    file.location(pa.value),
                     .semantic,
                     "cannot assign '{s}' to '{s}' (explicit casts not supported yet)",
                     .{ pair.actual.bytes, pair.expected.bytes },
@@ -13033,19 +10748,19 @@ pub const Semantizer = struct {
             return .{ .node = node, .ty = .{ .builtin = .Any } };
         }
 
-        if (pa.target.*.content != .dereference) return error.InvalidType;
+        if (file.tag(pa.target) != .dereference) return error.InvalidType;
 
-        const tgt_te = try self.visitNode(pa.target.*, s);
+        const tgt_te = try self.visitNode(file.ref(pa.target), s);
         const deref_sg = tgt_te.node.content.dereference;
 
-        rhs = try typ.coerceExprToType(deref_sg.ty, rhs, pa.value, s, self.allocator, self.diags);
+        rhs = try typ.coerceExprToType(deref_sg.ty, rhs, file.location(pa.value), s, self.allocator, self.diags);
 
         if (deref_sg.pointer_type.*.mutability != .read_write) {
             const ptr_ty: sg.Type = .{ .pointer_type = deref_sg.pointer_type };
             const ptr_str = try self.formatTypeText(ptr_ty, s);
             defer ptr_str.deinit();
             try self.diags.add(
-                pa.target.*.location,
+                file.location(pa.target),
                 .semantic,
                 "cannot assign through pointer '{s}' because it is read-only; use '$&' when acquiring it",
                 .{ptr_str.bytes},
@@ -13057,7 +10772,7 @@ pub const Semantizer = struct {
             const pair = try self.formatTypePairText(deref_sg.ty, rhs.ty, s);
             defer pair.deinit();
             try self.diags.add(
-                pa.value.*.location,
+                file.location(pa.value),
                 .semantic,
                 "cannot assign '{s}' to '{s}' (explicit casts not supported yet)",
                 .{ pair.actual.bytes, pair.expected.bytes },
@@ -13073,11 +10788,13 @@ pub const Semantizer = struct {
         return .{ .node = n, .ty = .{ .builtin = .Any } };
     }
 
-    fn extractTypeArgument(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!sg.Type {
-        const arg_node = call.input.*;
-        if (arg_node.content != .struct_value_literal) {
+    fn extractTypeArgument(self: *Semantizer, call_ref: syn.SyntaxRef, s: *Scope) SemErr!sg.Type {
+        const file = self.syntaxFile(call_ref);
+        const call = file.functionCall(call_ref.node) orelse return error.InvalidType;
+        const arg_node = call.input;
+        if (file.tag(arg_node) != .struct_value_literal) {
             try self.diags.add(
-                arg_node.location,
+                file.location(arg_node),
                 .semantic,
                 "builtin expects .type argument (example: .type = Int32)",
                 .{},
@@ -13085,10 +10802,10 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const svl = arg_node.content.struct_value_literal;
+        const svl = file.structValueLiteral(arg_node).?;
         if (svl.fields.len != 1) {
             try self.diags.add(
-                arg_node.location,
+                file.location(arg_node),
                 .semantic,
                 "builtin expects a single '.type' argument",
                 .{},
@@ -13096,10 +10813,10 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const field = svl.fields[0];
-        if (!std.mem.eql(u8, field.name.string, "type")) {
+        const field = file.valueField(svl.fields[0]).?;
+        if (field.name_token == null or !std.mem.eql(u8, file.tokenText(&self.diags.source_db, field.name_token.?), "type")) {
             try self.diags.add(
-                field.value.*.location,
+                file.location(field.value),
                 .semantic,
                 "expected '.type' argument",
                 .{},
@@ -13107,18 +10824,20 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        return self.resolveTypeExpression(field.value, s);
+        return self.resolveTypeExpression(file.ref(field.value), s);
     }
 
     fn extractNamedTypeArgument(
         self: *Semantizer,
-        call: syn.FunctionCall,
+        call_ref: syn.SyntaxRef,
         arg_name: []const u8,
         s: *Scope,
     ) SemErr!sg.Type {
+        const file = self.syntaxFile(call_ref);
+        const call = file.functionCall(call_ref.node) orelse return error.InvalidType;
         const stargs = call.type_arguments_struct orelse {
             try self.diags.add(
-                call.callee_loc,
+                file.tokenLocation(call.callee_token),
                 .semantic,
                 "cast expects named type arguments like cast#(.to: UIntNative)(.value = ...)",
                 .{},
@@ -13126,22 +10845,23 @@ pub const Semantizer = struct {
             return error.Reported;
         };
 
-        for (stargs.fields) |field| {
-            if (!std.mem.eql(u8, field.name.string, arg_name)) continue;
-            const field_ty = field.type orelse {
+        for (file.structTypeLiteral(stargs).?.fields) |field_node| {
+            const field = file.structTypeField(field_node).?;
+            if (!std.mem.eql(u8, file.tokenText(&self.diags.source_db, field.name_token), arg_name)) continue;
+            const field_ty = field.type_node orelse {
                 try self.diags.add(
-                    field.name.location,
+                    file.tokenLocation(field.name_token),
                     .semantic,
                     "type argument '.{s}' must specify a type",
                     .{arg_name},
                 );
                 return error.Reported;
             };
-            return self.resolveType(field_ty, s);
+            return self.resolveSyntaxType(file.ref(field_ty), s);
         }
 
         try self.diags.add(
-            call.callee_loc,
+            file.tokenLocation(call.callee_token),
             .semantic,
             "cast expects type argument '.{s}'",
             .{arg_name},
@@ -13151,69 +10871,35 @@ pub const Semantizer = struct {
 
     fn extractValueArgument(
         self: *Semantizer,
-        call: syn.FunctionCall,
+        call_ref: syn.SyntaxRef,
         arg_name: []const u8,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        const arg_node = call.input.*;
-        if (arg_node.content != .struct_value_literal) {
-            try self.diags.add(
-                arg_node.location,
-                .semantic,
-                "builtin expects '.{s}' argument",
-                .{arg_name},
-            );
-            return error.Reported;
-        }
-
-        const svl = arg_node.content.struct_value_literal;
-        if (svl.fields.len == 1 and svl.positional_prefix_count == 1) {
-            return self.visitNode(svl.fields[0].value.*, s);
-        }
-
-        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, arg_name)) {
-            try self.diags.add(
-                arg_node.location,
-                .semantic,
-                "builtin expects a single '.{s}' argument",
-                .{arg_name},
-            );
-            return error.Reported;
-        }
-
-        return self.visitNode(svl.fields[0].value.*, s);
+        return self.visitNode(try self.extractValueArgumentNode(call_ref, arg_name), s);
     }
 
-    fn extractValueArgumentNode(self: *Semantizer, call: syn.FunctionCall, arg_name: []const u8) SemErr!*const syn.STNode {
-        const arg_node = call.input.*;
-        if (arg_node.content != .struct_value_literal) {
-            try self.diags.add(
-                arg_node.location,
-                .semantic,
-                "builtin expects '.{s}' argument",
-                .{arg_name},
-            );
+    fn extractValueArgumentNode(self: *Semantizer, call_ref: syn.SyntaxRef, arg_name: []const u8) SemErr!syn.SyntaxRef {
+        const file = self.syntaxFile(call_ref);
+        const call = file.functionCall(call_ref.node) orelse return error.InvalidType;
+        const input = file.structValueLiteral(call.input) orelse {
+            try self.diags.add(file.location(call.input), .semantic, "builtin expects '.{s}' argument", .{arg_name});
             return error.Reported;
+        };
+        if (input.fields.len == 1) {
+            const field = file.valueField(input.fields[0]).?;
+            if (input.positional_prefix_count == 1 or (field.name_token != null and
+                std.mem.eql(u8, file.tokenText(&self.diags.source_db, field.name_token.?), arg_name)))
+                return file.ref(field.value);
         }
-        const svl = arg_node.content.struct_value_literal;
-        if (svl.fields.len == 1 and svl.positional_prefix_count == 1) {
-            return svl.fields[0].value;
-        }
-        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, arg_name)) {
-            try self.diags.add(
-                arg_node.location,
-                .semantic,
-                "builtin expects a single '.{s}' argument",
-                .{arg_name},
-            );
-            return error.Reported;
-        }
-        return svl.fields[0].value;
+        try self.diags.add(file.location(call.input), .semantic, "builtin expects a single '.{s}' argument", .{arg_name});
+        return error.Reported;
     }
 
-    fn handleCastBuiltin(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!typ.TypedExpr {
-        const value_te = try self.extractValueArgument(call, "value", s);
-        const target_ty = try self.extractNamedTypeArgument(call, "to", s);
+    fn handleCastBuiltin(self: *Semantizer, call_ref: syn.SyntaxRef, s: *Scope) SemErr!typ.TypedExpr {
+        const file = self.syntaxFile(call_ref);
+        const call = file.functionCall(call_ref.node) orelse return error.InvalidType;
+        const value_te = try self.extractValueArgument(call_ref, "value", s);
+        const target_ty = try self.extractNamedTypeArgument(call_ref, "to", s);
 
         if (typ.typesExactlyEqual(value_te.ty, target_ty)) {
             return value_te;
@@ -13229,7 +10915,7 @@ pub const Semantizer = struct {
             const pair = try self.formatTypePairText(target_ty, value_te.ty, s);
             defer pair.deinit();
             try self.diags.add(
-                call.input.*.location,
+                file.location(call.input),
                 .semantic,
                 "unsupported explicit cast from '{s}' to '{s}'",
                 .{ pair.actual.bytes, pair.expected.bytes },
@@ -13240,79 +10926,189 @@ pub const Semantizer = struct {
         const cast_node = try sg.makeSGNode(.{ .explicit_cast = .{
             .value = value_te.node,
             .target_type = target_ty,
-        } }, call.input.*.location, self.allocator);
+        } }, file.location(call.input), self.allocator);
         try s.nodes.append(cast_node);
         return .{ .node = cast_node, .ty = target_ty };
     }
 
-    fn resolveTypeExpression(self: *Semantizer, node: *const syn.STNode, s: *Scope) SemErr!sg.Type {
-        return switch (node.content) {
-            .identifier => |name| blk: {
-                const ty_ast = syn.Type{ .type_name = syn.Name{ .string = name, .location = node.location } };
-                break :blk self.resolveType(ty_ast, s) catch {
-                    try self.diags.add(
-                        node.location,
-                        .semantic,
-                        "unknown type '{s}'",
-                        .{name},
-                    );
-                    return error.Reported;
-                };
-            },
-            .struct_type_literal => |lit| blk: {
-                const struct_ty = try self.structTypeFromLiteral(lit, s);
-                break :blk .{ .struct_type = struct_ty };
-            },
-            .function_call => |fc| blk: {
-                if (std.mem.eql(u8, fc.callee, "type_of")) {
-                    break :blk try self.typeOfCallResultType(fc, s);
-                }
-                try self.diags.add(
-                    node.location,
-                    .semantic,
-                    "unsupported expression in '.type' argument",
-                    .{},
-                );
+    fn resolveTypeExpression(self: *Semantizer, node: syn.SyntaxRef, s: *Scope) SemErr!sg.Type {
+        if (self.syntaxFile(node).syntaxType(node.node) != null) return self.resolveSyntaxType(node, s);
+        const file = self.syntaxFile(node);
+        if (file.tag(node.node) == .identifier) {
+            return self.resolveSyntaxTypeName(node, file.mainToken(node.node), null, s, false) catch {
+                try self.diags.add(file.location(node.node), .semantic, "unknown type '{s}'", .{file.tokenText(&self.diags.source_db, file.mainToken(node.node))});
                 return error.Reported;
+            };
+        }
+        if (file.functionCall(node.node)) |call| {
+            if (std.mem.eql(u8, file.tokenText(&self.diags.source_db, call.callee_token), "type_of")) return (try self.extractValueArgument(node, "value", s)).ty;
+            try self.diags.add(file.location(node.node), .semantic, "unsupported expression in '.type' argument", .{});
+            return error.Reported;
+        }
+
+        try self.diags.add(self.nodeLocation(node), .semantic, "expected type expression", .{});
+        return error.Reported;
+    }
+
+    fn resolveSyntaxTypeName(
+        self: *Semantizer,
+        owner: syn.SyntaxRef,
+        name_token: syn.TokenIndex,
+        qualifier_token: ?syn.TokenIndex,
+        s: *Scope,
+        preserve_abstract: bool,
+    ) SemErr!sg.Type {
+        const name = self.tokenText(owner, name_token);
+        const location = self.tokenLocation(owner, qualifier_token orelse name_token);
+        if (qualifier_token) |qualifier| {
+            const module_name = self.tokenText(owner, qualifier);
+            const module_dir = s.lookupModuleAlias(module_name) orelse return error.UnknownType;
+            const declaration = s.lookupTypeInModule(module_dir, name) orelse return error.UnknownType;
+            if (!(try self.typeIsVisible(declaration, self.locationPath(location)))) {
+                try self.addPrivateMemberDiag(location, "type", name);
+                return error.Reported;
+            }
+            return declaration.ty;
+        }
+        if (typ.builtinFromName(name)) |builtin| return .{ .builtin = builtin };
+        if (s.lookupAbstractInfo(name) != null) {
+            if (preserve_abstract) return (s.lookupType(name) orelse return error.UnknownType).ty;
+            if (s.lookupAbstractDefault(name)) |default| return default.ty;
+            return error.AbstractNeedsDefault;
+        }
+        const declaration = s.lookupType(name) orelse return error.UnknownType;
+        if (!typeDeclIsReady(declaration)) return error.UnknownType;
+        if (!(try self.typeIsVisible(declaration, self.locationPath(location)))) {
+            try self.addPrivateMemberDiag(location, "type", name);
+            return error.Reported;
+        }
+        return declaration.ty;
+    }
+
+    fn resolveSyntaxType(self: *Semantizer, node: syn.SyntaxRef, s: *Scope) SemErr!sg.Type {
+        return self.resolveSyntaxTypeWithMode(node, s, false, null);
+    }
+
+    fn resolveSyntaxTypeWithMode(
+        self: *Semantizer,
+        node: syn.SyntaxRef,
+        s: *Scope,
+        preserve_abstract: bool,
+        subst: ?*const GenericSubst,
+    ) SemErr!sg.Type {
+        const file = self.syntaxFile(node);
+        return switch (file.syntaxType(node.node) orelse return error.InvalidType) {
+            .name => |name| blk: {
+                if (subst) |values| if (name.qualifier_token == null) {
+                    if (values.types.get(self.tokenText(node, name.name_token))) |mapped| break :blk mapped;
+                };
+                break :blk try self.resolveSyntaxTypeName(node, name.name_token, name.qualifier_token, s, preserve_abstract);
             },
-            else => blk_invalid: {
-                try self.diags.add(
-                    node.location,
-                    .semantic,
-                    "expected type expression",
-                    .{},
+            .pointer => |pointer| blk: {
+                const child = try self.allocator.create(sg.Type);
+                child.* = try self.resolveSyntaxTypeWithMode(file.ref(pointer.child), s, preserve_abstract, subst);
+                const semantic_pointer = try self.allocator.create(sg.PointerType);
+                semantic_pointer.* = .{ .mutability = @enumFromInt(@intFromEnum(pointer.mutability)), .child = child };
+                break :blk .{ .pointer_type = semantic_pointer };
+            },
+            .array => |array| blk: {
+                const length = std.fmt.parseInt(usize, self.tokenText(node, array.length_token), 0) catch return error.InvalidType;
+                break :blk try self.makeArrayType(length, try self.resolveSyntaxTypeWithMode(file.ref(array.element), s, preserve_abstract, subst));
+            },
+            .generic => |generic| blk: {
+                const base = file.syntaxType(generic.base) orelse return error.InvalidType;
+                if (base != .name or base.name.qualifier_token != null) return error.InvalidType;
+                const base_name = file.tokenText(&self.diags.source_db, base.name.name_token);
+                break :blk try self.resolveCompactGenericTypeWithMode(
+                    base_name,
+                    file.tokenLocation(base.name.name_token),
+                    file.ref(generic.arguments),
+                    s,
+                    preserve_abstract,
+                    subst,
                 );
-                break :blk_invalid error.Reported;
             },
+            .struct_literal => .{ .struct_type = if (subst) |values| try self.structTypeFromNodeWithSubst(node, s, values) else try self.structTypeFromNode(node, s) },
+            .choice_literal => .{ .choice_type = if (subst) |values| try self.choiceTypeFromNodeWithSubst(node, s, values) else try self.choiceTypeFromNode(node, s) },
+            .nullable => |inner| try self.resolveCompactNullableType(file.ref(inner), s, preserve_abstract, subst),
+            .inferred_errable => |inner| try self.makeCompactInferredErrableType(file.ref(inner), s, subst),
         };
     }
 
-    fn typeOfCallResultType(self: *Semantizer, call: syn.FunctionCall, s: *Scope) SemErr!sg.Type {
-        const arg_node = call.input.*;
-        if (arg_node.content != .struct_value_literal) {
-            try self.diags.add(
-                arg_node.location,
-                .semantic,
-                "type_of expects '.value' argument",
-                .{},
-            );
-            return error.Reported;
-        }
+    fn resolveSyntaxTypeWithSubstPreservingAbstracts(
+        self: *Semantizer,
+        node: syn.SyntaxRef,
+        s: *Scope,
+        subst: *const GenericSubst,
+    ) SemErr!sg.Type {
+        const file = self.syntaxFile(node);
+        return switch (file.syntaxType(node.node) orelse return error.InvalidType) {
+            .name => |name| blk: {
+                if (name.qualifier_token == null) {
+                    const text = self.tokenText(node, name.name_token);
+                    if (subst.types.get(text)) |mapped| break :blk mapped;
+                }
+                break :blk try self.resolveSyntaxTypeName(node, name.name_token, name.qualifier_token, s, true);
+            },
+            .pointer => |pointer| blk: {
+                const child = try self.allocator.create(sg.Type);
+                child.* = try self.resolveSyntaxTypeWithSubstPreservingAbstracts(self.childRef(node, pointer.child), s, subst);
+                const semantic_pointer = try self.allocator.create(sg.PointerType);
+                semantic_pointer.* = .{ .mutability = @enumFromInt(@intFromEnum(pointer.mutability)), .child = child };
+                break :blk .{ .pointer_type = semantic_pointer };
+            },
+            .array => |array| blk: {
+                const length = std.fmt.parseInt(usize, self.tokenText(node, array.length_token), 0) catch return error.InvalidType;
+                const element = try self.resolveSyntaxTypeWithSubstPreservingAbstracts(self.childRef(node, array.element), s, subst);
+                break :blk try self.makeArrayType(length, element);
+            },
+            .generic => |generic| blk: {
+                const base = file.syntaxType(generic.base) orelse return error.InvalidType;
+                if (base != .name or base.name.qualifier_token != null) return error.InvalidType;
+                const base_name = file.tokenText(&self.diags.source_db, base.name.name_token);
+                if (s.lookupAbstractInfo(base_name) != null) {
+                    if (subst.types.get(base_name)) |mapped| break :blk mapped;
+                }
+                break :blk try self.resolveCompactGenericTypeWithMode(
+                    base_name,
+                    file.tokenLocation(base.name.name_token),
+                    file.ref(generic.arguments),
+                    s,
+                    true,
+                    subst,
+                );
+            },
+            .struct_literal => .{ .struct_type = try self.structTypeFromNodeWithSubst(node, s, subst) },
+            .choice_literal => .{ .choice_type = try self.choiceTypeFromNodeWithSubst(node, s, subst) },
+            .nullable => |inner| try self.resolveCompactNullableType(file.ref(inner), s, true, subst),
+            .inferred_errable => |inner| try self.makeCompactInferredErrableType(file.ref(inner), s, subst),
+        };
+    }
 
-        const svl = arg_node.content.struct_value_literal;
-        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, "value")) {
-            try self.diags.add(
-                arg_node.location,
-                .semantic,
-                "type_of expects a single '.value' argument",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        const value_expr = svl.fields[0].value;
-        const tv = try self.visitNode(value_expr.*, s);
-        return tv.ty;
+    fn syntaxExprUsesParam(self: *Semantizer, node: syn.SyntaxRef, param_name: []const u8) bool {
+        const file = self.syntaxFile(node);
+        return switch (file.tag(node.node)) {
+            .identifier => std.mem.eql(u8, file.tokenText(&self.diags.source_db, file.mainToken(node.node)), param_name),
+            .binary_add,
+            .binary_subtract,
+            .binary_multiply,
+            .binary_divide,
+            .binary_modulo,
+            .compare_equal,
+            .compare_not_equal,
+            .compare_less,
+            .compare_greater,
+            .compare_less_equal,
+            .compare_greater_equal,
+            .logical_and,
+            .logical_or,
+            => if (file.binaryOperation(node.node)) |operation|
+                self.syntaxExprUsesParam(file.ref(operation.lhs), param_name) or
+                    self.syntaxExprUsesParam(file.ref(operation.rhs), param_name)
+            else
+                false,
+            else => false,
+        };
     }
 
     fn inferArrayTypeFromList(
@@ -13349,375 +11145,41 @@ pub const Semantizer = struct {
         return @constCast(arr_ty.array_type);
     }
 
-    fn resolveType(self: *Semantizer, t: syn.Type, s: *Scope) SemErr!sg.Type {
-        return switch (t) {
-            .type_name => |tn| blk: {
-                const id = tn.string;
-                if (std.mem.indexOfScalar(u8, id, '.')) |dot_idx| {
-                    const module_name = id[0..dot_idx];
-                    const type_name = id[dot_idx + 1 ..];
-                    const module_dir = s.lookupModuleAlias(module_name) orelse break :blk error.UnknownType;
-                    if (s.lookupTypeInModule(module_dir, type_name)) |td| {
-                        if (!(try self.typeIsVisible(td, self.locationPath(tn.location)))) {
-                            try self.addPrivateMemberDiag(tn.location, "type", type_name);
-                            return error.Reported;
-                        }
-                        break :blk td.ty;
-                    }
-                    break :blk error.UnknownType;
-                }
-                if (typ.builtinFromName(id)) |bt|
-                    break :blk .{ .builtin = bt };
-                if (s.lookupAbstractInfo(id)) |_| {
-                    if (s.lookupAbstractDefault(id)) |def_entry|
-                        break :blk def_entry.ty;
-                    break :blk error.AbstractNeedsDefault;
-                }
-                if (s.lookupType(id)) |td| {
-                    if (!typeDeclIsReady(td)) break :blk error.UnknownType;
-                    if (!(try self.typeIsVisible(td, self.locationPath(tn.location)))) {
-                        try self.addPrivateMemberDiag(tn.location, "type", id);
-                        return error.Reported;
-                    }
-                    break :blk td.ty;
-                }
-                break :blk error.UnknownType;
-            },
-            .generic_type_instantiation => |g| blk_g: {
-                const base_name = g.base_name.string;
-                if (try self.resolveSpecialGenericType(g, s, null)) |special_ty| break :blk_g special_ty;
-                if (s.lookupAbstractInfo(base_name)) |info| {
-                    for (info.param_names) |pname| {
-                        var found = false;
-                        for (g.args.fields) |fld| {
-                            if (std.mem.eql(u8, fld.name.string, pname)) {
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found) break :blk_g error.UnknownType;
-                    }
-                    if (s.lookupAbstractDefault(base_name)) |def_entry|
-                        break :blk_g def_entry.ty;
-                    break :blk_g error.AbstractNeedsDefault;
-                }
-
-                const ty = self.instantiateGenericTypeNamed(base_name, g.args, s, null) catch |err| switch (err) {
-                    error.SymbolNotFound => break :blk_g error.UnknownType,
-                    else => return err,
-                };
-                break :blk_g ty;
-            },
-            .inferred_errable => error.InvalidType,
-            .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
-            .choice_type_literal => |ct| .{ .choice_type = try self.choiceTypeFromLiteral(ct, s) },
-            .pointer_type => |ptr_info| blk: {
-                const inner_ty = try self.resolveType(ptr_info.child.*, s);
-                const child = try self.allocator.create(sg.Type);
-                child.* = inner_ty;
-
-                const sem_ptr = try self.allocator.create(sg.PointerType);
-                sem_ptr.* = .{
-                    .mutability = ptr_info.mutability,
-                    .child = child,
-                };
-
-                break :blk .{ .pointer_type = sem_ptr };
-            },
-            .array_type => |arr_info| blk_arr: {
-                const elem_ty = try self.resolveType(arr_info.element.*, s);
-                break :blk_arr try self.makeArrayType(arr_info.length, elem_ty);
-            },
-        };
-    }
-
-    fn resolveTypePreservingAbstracts(self: *Semantizer, t: syn.Type, s: *Scope) SemErr!sg.Type {
-        return switch (t) {
-            .type_name => |tn| blk: {
-                const id = tn.string;
-                if (std.mem.indexOfScalar(u8, id, '.')) |dot_idx| {
-                    const module_name = id[0..dot_idx];
-                    const type_name = id[dot_idx + 1 ..];
-                    const module_dir = s.lookupModuleAlias(module_name) orelse break :blk error.UnknownType;
-                    if (s.lookupTypeInModule(module_dir, type_name)) |td| {
-                        if (!(try self.typeIsVisible(td, self.locationPath(tn.location)))) {
-                            try self.addPrivateMemberDiag(tn.location, "type", type_name);
-                            return error.Reported;
-                        }
-                        break :blk td.ty;
-                    }
-                    break :blk error.UnknownType;
-                }
-                if (typ.builtinFromName(id)) |bt|
-                    break :blk .{ .builtin = bt };
-                if (s.lookupAbstractInfo(id)) |_| {
-                    if (s.lookupType(id)) |td| break :blk td.ty;
-                    break :blk error.UnknownType;
-                }
-                if (s.lookupType(id)) |td| {
-                    if (!typeDeclIsReady(td)) break :blk error.UnknownType;
-                    if (!(try self.typeIsVisible(td, self.locationPath(tn.location)))) {
-                        try self.addPrivateMemberDiag(tn.location, "type", id);
-                        return error.Reported;
-                    }
-                    break :blk td.ty;
-                }
-                break :blk error.UnknownType;
-            },
-            .generic_type_instantiation => |g| blk_g: {
-                const base_name = g.base_name.string;
-                if (try self.resolveSpecialGenericType(g, s, null)) |special_ty| break :blk_g special_ty;
-                if (s.lookupAbstractInfo(base_name)) |_| {
-                    if (s.lookupType(base_name)) |td| break :blk_g td.ty;
-                    break :blk_g error.UnknownType;
-                }
-
-                const ty = self.instantiateGenericTypeNamed(base_name, g.args, s, null) catch |err| switch (err) {
-                    error.SymbolNotFound => break :blk_g error.UnknownType,
-                    else => return err,
-                };
-                break :blk_g ty;
-            },
-            .inferred_errable => error.InvalidType,
-            .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
-            .choice_type_literal => |ct| .{ .choice_type = try self.choiceTypeFromLiteral(ct, s) },
-            .pointer_type => |ptr_info| blk: {
-                const inner_ty = try self.resolveTypePreservingAbstracts(ptr_info.child.*, s);
-                const child = try self.allocator.create(sg.Type);
-                child.* = inner_ty;
-
-                const sem_ptr = try self.allocator.create(sg.PointerType);
-                sem_ptr.* = .{
-                    .mutability = ptr_info.mutability,
-                    .child = child,
-                };
-
-                break :blk .{ .pointer_type = sem_ptr };
-            },
-            .array_type => |arr_info| blk_arr: {
-                const elem_ty = try self.resolveTypePreservingAbstracts(arr_info.element.*, s);
-                break :blk_arr try self.makeArrayType(arr_info.length, elem_ty);
-            },
-        };
-    }
-
-    fn resolveTypeForSignaturePredeclaration(self: *Semantizer, t: syn.Type, s: *Scope) SemErr!sg.Type {
-        return switch (t) {
-            .type_name => |tn| blk: {
-                const id = tn.string;
-                if (std.mem.indexOfScalar(u8, id, '.')) |dot_idx| {
-                    const module_name = id[0..dot_idx];
-                    const type_name = id[dot_idx + 1 ..];
-                    const module_dir = s.lookupModuleAlias(module_name) orelse break :blk error.UnknownType;
-                    if (s.lookupTypeInModule(module_dir, type_name)) |td| {
-                        if (!(try self.typeIsVisible(td, self.locationPath(tn.location)))) {
-                            try self.addPrivateMemberDiag(tn.location, "type", type_name);
-                            return error.Reported;
-                        }
-                        break :blk td.ty;
-                    }
-                    break :blk error.UnknownType;
-                }
-                if (typ.builtinFromName(id)) |bt| break :blk .{ .builtin = bt };
-                if (s.lookupAbstractInfo(id)) |_| {
-                    if (s.lookupType(id)) |td| break :blk td.ty;
-                    break :blk error.UnknownType;
-                }
-                if (s.lookupType(id)) |td| {
-                    if (!(try self.typeIsVisible(td, self.locationPath(tn.location)))) {
-                        try self.addPrivateMemberDiag(tn.location, "type", id);
-                        return error.Reported;
-                    }
-                    break :blk td.ty;
-                }
-                break :blk error.UnknownType;
-            },
-            .generic_type_instantiation => |g| blk_g: {
-                const base_name = g.base_name.string;
-                if (try self.resolveSpecialGenericType(g, s, null)) |special_ty| break :blk_g special_ty;
-                if (s.lookupAbstractInfo(base_name)) |_| {
-                    if (s.lookupType(base_name)) |td| break :blk_g td.ty;
-                    break :blk_g error.UnknownType;
-                }
-
-                const ty = self.instantiateGenericTypeNamed(base_name, g.args, s, null) catch |err| switch (err) {
-                    error.SymbolNotFound => break :blk_g error.UnknownType,
-                    else => return err,
-                };
-                break :blk_g ty;
-            },
-            .inferred_errable => error.InvalidType,
-            .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteral(st, s) },
-            .choice_type_literal => |ct| .{ .choice_type = try self.choiceTypeFromLiteral(ct, s) },
-            .pointer_type => |ptr_info| blk: {
-                const inner_ty = try self.resolveTypeForSignaturePredeclaration(ptr_info.child.*, s);
-                const child = try self.allocator.create(sg.Type);
-                child.* = inner_ty;
-
-                const sem_ptr = try self.allocator.create(sg.PointerType);
-                sem_ptr.* = .{
-                    .mutability = ptr_info.mutability,
-                    .child = child,
-                };
-
-                break :blk .{ .pointer_type = sem_ptr };
-            },
-            .array_type => |arr_info| blk_arr: {
-                const elem_ty = try self.resolveTypeForSignaturePredeclaration(arr_info.element.*, s);
-                break :blk_arr try self.makeArrayType(arr_info.length, elem_ty);
-            },
-        };
-    }
-
-    fn resolveTypeWithSubst(
-        self: *Semantizer,
-        t: syn.Type,
-        s: *Scope,
-        subst: *const GenericSubst,
-    ) SemErr!sg.Type {
-        return switch (t) {
-            .type_name => |tn| blk: {
-                const id = tn.string;
-                if (subst.types.get(id)) |mapped| break :blk mapped;
-                break :blk try self.resolveType(t, s);
-            },
-            .generic_type_instantiation => |g| blk_g: {
-                const base_name = g.base_name.string;
-                if (try self.resolveSpecialGenericType(g, s, subst)) |special_ty| break :blk_g special_ty;
-                if (s.lookupAbstractInfo(base_name)) |info| {
-                    for (info.param_names) |pname| {
-                        var found = false;
-                        for (g.args.fields) |fld| {
-                            if (std.mem.eql(u8, fld.name.string, pname)) {
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (!found) break :blk_g error.UnknownType;
-                    }
-                    if (s.lookupAbstractDefault(base_name)) |def_entry|
-                        break :blk_g def_entry.ty;
-                    break :blk_g error.AbstractNeedsDefault;
-                }
-
-                const ty = self.instantiateGenericTypeNamed(base_name, g.args, s, subst) catch |err| switch (err) {
-                    error.SymbolNotFound => break :blk_g error.UnknownType,
-                    else => return err,
-                };
-                break :blk_g ty;
-            },
-            .inferred_errable => error.InvalidType,
-            .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteralWithSubst(st, s, subst) },
-            .choice_type_literal => |ct| .{ .choice_type = try self.choiceTypeFromLiteralWithSubst(ct, s, subst) },
-            .pointer_type => |ptr_info| blk: {
-                const inner_ty = try self.resolveTypeWithSubst(ptr_info.child.*, s, subst);
-                const child = try self.allocator.create(sg.Type);
-                child.* = inner_ty;
-
-                const sem_ptr = try self.allocator.create(sg.PointerType);
-                sem_ptr.* = .{
-                    .mutability = ptr_info.mutability,
-                    .child = child,
-                };
-
-                break :blk .{ .pointer_type = sem_ptr };
-            },
-            .array_type => |arr_info| blk_arr: {
-                const elem_ty = try self.resolveTypeWithSubst(arr_info.element.*, s, subst);
-                break :blk_arr try self.makeArrayType(arr_info.length, elem_ty);
-            },
-        };
-    }
-
-    fn resolveTypeWithSubstPreservingAbstracts(
-        self: *Semantizer,
-        t: syn.Type,
-        s: *Scope,
-        subst: *const GenericSubst,
-    ) SemErr!sg.Type {
-        return switch (t) {
-            .type_name => |tn| blk: {
-                const id = tn.string;
-                if (subst.types.get(id)) |mapped| break :blk mapped;
-                break :blk try self.resolveTypePreservingAbstracts(t, s);
-            },
-            .generic_type_instantiation => |g| blk_g: {
-                const base_name = g.base_name.string;
-                if (try self.resolveSpecialGenericType(g, s, subst)) |special_ty| break :blk_g special_ty;
-                if (s.lookupAbstractInfo(base_name)) |_| {
-                    if (s.lookupType(base_name)) |td| break :blk_g td.ty;
-                    break :blk_g error.UnknownType;
-                }
-
-                const ty = self.instantiateGenericTypeNamed(base_name, g.args, s, subst) catch |err| switch (err) {
-                    error.SymbolNotFound => break :blk_g error.UnknownType,
-                    else => return err,
-                };
-                break :blk_g ty;
-            },
-            .inferred_errable => error.InvalidType,
-            .struct_type_literal => |st| .{ .struct_type = try self.structTypeFromLiteralWithSubst(st, s, subst) },
-            .choice_type_literal => |ct| .{ .choice_type = try self.choiceTypeFromLiteralWithSubst(ct, s, subst) },
-            .pointer_type => |ptr_info| blk: {
-                const inner_ty = try self.resolveTypeWithSubstPreservingAbstracts(ptr_info.child.*, s, subst);
-                const child = try self.allocator.create(sg.Type);
-                child.* = inner_ty;
-
-                const sem_ptr = try self.allocator.create(sg.PointerType);
-                sem_ptr.* = .{
-                    .mutability = ptr_info.mutability,
-                    .child = child,
-                };
-
-                break :blk .{ .pointer_type = sem_ptr };
-            },
-            .array_type => |arr_info| blk_arr: {
-                const elem_ty = try self.resolveTypeWithSubstPreservingAbstracts(arr_info.element.*, s, subst);
-                break :blk_arr try self.makeArrayType(arr_info.length, elem_ty);
-            },
-        };
-    }
-
     //──────────────────────────────────────────────────── HELPERS
     fn handleBuiltinTypeInfo(
         self: *Semantizer,
         kind: typ.BuiltinTypeInfoKind,
-        call: syn.FunctionCall,
+        call_ref: syn.SyntaxRef,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        const target_ty = try self.extractTypeArgument(call, s);
+        const target_ty = try self.extractTypeArgument(call_ref, s);
 
         const value = switch (kind) {
             .size => typ.computeTypeSize(target_ty),
             .alignment => typ.computeTypeAlignment(target_ty),
         };
 
-        const loc = call.input.*.location;
+        const file = self.syntaxFile(call_ref);
+        const loc = file.location(file.functionCall(call_ref.node).?.input);
         if (value > std.math.maxInt(i64)) return error.InvalidType;
         return try typ.makeIntLiteral(self.allocator, loc, @intCast(value), .{ .builtin = .UIntNative });
     }
 
     fn handleLengthBuiltin(
         self: *Semantizer,
-        call: syn.FunctionCall,
+        call_ref: syn.SyntaxRef,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        const arg_node = call.input.*;
-        const arg_loc = arg_node.location;
-
-        var value_te: typ.TypedExpr = undefined;
-        if (arg_node.content == .struct_value_literal) {
-            const sv = arg_node.content.struct_value_literal;
-            if (sv.fields.len == 1 and sv.positional_prefix_count == 1) {
-                value_te = try self.visitNode(sv.fields[0].value.*, s);
-            } else if (sv.fields.len != 1 or !std.mem.eql(u8, sv.fields[0].name.string, "value")) {
-                return error.SymbolNotFound;
-            } else {
-                value_te = try self.visitNode(sv.fields[0].value.*, s);
-            }
-        } else {
-            value_te = try self.visitNode(arg_node, s);
-        }
+        const file = self.syntaxFile(call_ref);
+        const call = file.functionCall(call_ref.node) orelse return error.InvalidType;
+        const arg_loc = file.location(call.input);
+        const input = file.structValueLiteral(call.input) orelse return error.SymbolNotFound;
+        if (input.fields.len != 1) return error.SymbolNotFound;
+        const field = file.valueField(input.fields[0]).?;
+        if (input.positional_prefix_count != 1 and (field.name_token == null or
+            !std.mem.eql(u8, file.tokenText(&self.diags.source_db, field.name_token.?), "value")))
+            return error.SymbolNotFound;
+        const value_te = try self.visitNode(file.ref(field.value), s);
 
         switch (value_te.node.content) {
             .list_literal => |ll| {
@@ -13767,53 +11229,23 @@ pub const Semantizer = struct {
         return error.SymbolNotFound;
     }
 
-    fn handleTypeOf(
-        self: *Semantizer,
-        call: syn.FunctionCall,
-        s: *Scope,
-    ) SemErr!typ.TypedExpr {
-        const arg_node = call.input.*;
-        if (arg_node.content != .struct_value_literal) {
-            try self.diags.add(
-                arg_node.location,
-                .semantic,
-                "type_of expects '.value' argument",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        const svl = arg_node.content.struct_value_literal;
-        if (svl.fields.len == 1 and svl.positional_prefix_count == 1) {
-            const tv = try self.visitNode(svl.fields[0].value.*, s);
-            const loc = call.input.*.location;
-            return try typ.makeTypeLiteral(self.allocator, loc, tv.ty);
-        }
-
-        if (svl.fields.len != 1 or !std.mem.eql(u8, svl.fields[0].name.string, "value")) {
-            try self.diags.add(
-                arg_node.location,
-                .semantic,
-                "type_of expects a single '.value' argument",
-                .{},
-            );
-            return error.Reported;
-        }
-
-        const tv = try self.visitNode(svl.fields[0].value.*, s);
-        const loc = call.input.*.location;
-        return try typ.makeTypeLiteral(self.allocator, loc, tv.ty);
+    fn handleTypeOf(self: *Semantizer, call_ref: syn.SyntaxRef, s: *Scope) SemErr!typ.TypedExpr {
+        const value = try self.extractValueArgument(call_ref, "value", s);
+        const file = self.syntaxFile(call_ref);
+        return typ.makeTypeLiteral(self.allocator, file.location(file.functionCall(call_ref.node).?.input), value.ty);
     }
 
     fn handleIsBuiltin(
         self: *Semantizer,
-        call: syn.FunctionCall,
+        call_ref: syn.SyntaxRef,
         s: *Scope,
     ) SemErr!typ.TypedExpr {
-        const arg_node = call.input.*;
-        if (arg_node.content != .struct_value_literal) {
+        const file = self.syntaxFile(call_ref);
+        const call = file.functionCall(call_ref.node) orelse return error.InvalidType;
+        const arg_node = call.input;
+        if (file.tag(arg_node) != .struct_value_literal) {
             try self.diags.add(
-                arg_node.location,
+                file.location(arg_node),
                 .semantic,
                 "is expects '.value' and '.variant' arguments",
                 .{},
@@ -13821,48 +11253,49 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const svl = arg_node.content.struct_value_literal;
-        var value_field: ?syn.StructValueLiteralField = null;
-        var variant_field: ?syn.StructValueLiteralField = null;
+        const svl = file.structValueLiteral(arg_node).?;
+        var value_field: ?syn.ValueField = null;
+        var variant_field: ?syn.ValueField = null;
 
-        for (svl.fields, 0..) |field, idx| {
+        for (svl.fields, 0..) |field_node, idx| {
+            const field = file.valueField(field_node).?;
             if (idx < svl.positional_prefix_count) {
                 if (idx == 0) {
                     if (value_field != null) {
-                        try self.addDuplicateIsBuiltinArgument(arg_node.location);
+                        try self.addDuplicateIsBuiltinArgument(file.location(arg_node));
                         return error.Reported;
                     }
                     value_field = field;
                 } else if (idx == 1) {
                     if (variant_field != null) {
-                        try self.addDuplicateIsBuiltinArgument(arg_node.location);
+                        try self.addDuplicateIsBuiltinArgument(file.location(arg_node));
                         return error.Reported;
                     }
                     variant_field = field;
                 } else {
                     try self.diags.add(
-                        field.name.location,
+                        file.location(field_node),
                         .semantic,
                         "is only accepts two positional arguments: value and variant",
                         .{},
                     );
                     return error.Reported;
                 }
-            } else if (std.mem.eql(u8, field.name.string, "value")) {
+            } else if (std.mem.eql(u8, file.tokenText(&self.diags.source_db, field.name_token.?), "value")) {
                 if (value_field != null) {
-                    try self.addDuplicateIsBuiltinArgument(field.name.location);
+                    try self.addDuplicateIsBuiltinArgument(file.location(field_node));
                     return error.Reported;
                 }
                 value_field = field;
-            } else if (std.mem.eql(u8, field.name.string, "variant")) {
+            } else if (std.mem.eql(u8, file.tokenText(&self.diags.source_db, field.name_token.?), "variant")) {
                 if (variant_field != null) {
-                    try self.addDuplicateIsBuiltinArgument(field.name.location);
+                    try self.addDuplicateIsBuiltinArgument(file.location(field_node));
                     return error.Reported;
                 }
                 variant_field = field;
             } else {
                 try self.diags.add(
-                    field.name.location,
+                    file.location(field_node),
                     .semantic,
                     "is only accepts '.value' and '.variant' arguments",
                     .{},
@@ -13873,7 +11306,7 @@ pub const Semantizer = struct {
 
         if (value_field == null or variant_field == null) {
             try self.diags.add(
-                arg_node.location,
+                file.location(arg_node),
                 .semantic,
                 "is expects '.value' and '.variant' arguments",
                 .{},
@@ -13881,12 +11314,12 @@ pub const Semantizer = struct {
             return error.Reported;
         }
 
-        const value_te = try self.visitNode(value_field.?.value.*, s);
+        const value_te = try self.visitNode(file.ref(value_field.?.value), s);
         if (value_te.ty != .choice_type) {
             const desc = try self.formatTypeText(value_te.ty, s);
             defer desc.deinit();
             try self.diags.add(
-                value_field.?.value.location,
+                file.location(value_field.?.value),
                 .semantic,
                 "is expects '.value' to be a choice, found '{s}'",
                 .{desc.bytes},
@@ -13895,22 +11328,21 @@ pub const Semantizer = struct {
         }
 
         const variant_te = blk_variant: {
-            const variant_node = variant_field.?.value.*;
-            if (variant_node.content == .choice_literal) {
-                const raw_variant = variant_node.content.choice_literal;
+            const variant_node = variant_field.?.value;
+            if (file.choiceLiteral(variant_node)) |raw_variant| {
                 if (raw_variant.payload == null) {
                     const choice_ty = value_te.ty.choice_type;
                     for (choice_ty.variants, 0..) |variant, idx| {
-                        if (!std.mem.eql(u8, variant.name, raw_variant.name.string)) continue;
+                        if (!std.mem.eql(u8, variant.name, file.tokenText(&self.diags.source_db, raw_variant.name_token))) continue;
 
                         const typed = try self.allocator.create(sg.ChoiceLiteral);
                         typed.* = .{
-                            .variant_name = raw_variant.name.string,
+                            .variant_name = file.tokenText(&self.diags.source_db, raw_variant.name_token),
                             .choice_type = choice_ty,
                             .variant_index = @intCast(idx),
                             .payload = null,
                         };
-                        const typed_node = try sg.makeSGNode(.{ .choice_literal = typed }, variant_node.location, self.allocator);
+                        const typed_node = try sg.makeSGNode(.{ .choice_literal = typed }, file.location(variant_node), self.allocator);
                         typed_node.sem_type = value_te.ty;
                         break :blk_variant typ.TypedExpr{ .node = typed_node, .ty = value_te.ty };
                     }
@@ -13918,23 +11350,23 @@ pub const Semantizer = struct {
                     const choice_text = try self.formatTypeText(value_te.ty, s);
                     defer choice_text.deinit();
                     try self.diags.add(
-                        variant_node.location,
+                        file.location(variant_node),
                         .semantic,
                         "choice type '{s}' has no variant '..{s}'",
-                        .{ choice_text.bytes, raw_variant.name.string },
+                        .{ choice_text.bytes, file.tokenText(&self.diags.source_db, raw_variant.name_token) },
                     );
                     return error.Reported;
                 }
             }
 
-            var coerced = try self.visitNode(variant_node, s);
-            coerced = try typ.coerceExprToType(value_te.ty, coerced, variant_field.?.value, s, self.allocator, self.diags);
+            var coerced = try self.visitNode(file.ref(variant_node), s);
+            coerced = try typ.coerceExprToType(value_te.ty, coerced, file.location(variant_field.?.value), s, self.allocator, self.diags);
             break :blk_variant coerced;
         };
 
         if (!typ.typesExactlyEqual(value_te.ty, variant_te.ty)) {
             try self.diags.add(
-                variant_field.?.value.location,
+                file.location(variant_field.?.value),
                 .semantic,
                 "is expects '.variant' to belong to the same choice type as '.value'",
                 .{},
@@ -13949,7 +11381,7 @@ pub const Semantizer = struct {
             .right = variant_te.node,
         };
 
-        const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, arg_node.location, self.allocator);
+        const node = try sg.makeSGNode(.{ .comparison = cmp_ptr.* }, file.location(arg_node), self.allocator);
         try s.nodes.append(node);
         return .{ .node = node, .ty = .{ .builtin = .Bool } };
     }
@@ -14019,14 +11451,14 @@ pub const Semantizer = struct {
         if (self.current_top_node) |ptr| {
             self.retry_enqueue_attempts += 1;
             for (self.pending_next.items) |pending| {
-                if (pending == ptr) return;
+                if (pending.file_id == ptr.file_id and pending.node == ptr.node) return;
             }
             try self.pending_next.append(ptr);
             self.retry_enqueue_unique += 1;
-            switch (ptr.content) {
-                .function_declaration, .test_declaration => self.retry_function_nodes += 1,
-                .type_declaration => self.retry_type_nodes += 1,
-                .symbol_declaration => self.retry_symbol_nodes += 1,
+            switch (self.nodeTag(ptr)) {
+                .function_declaration, .function_declaration_once, .test_declaration => self.retry_function_nodes += 1,
+                .type_declaration, .c_enum_declaration, .c_union_declaration => self.retry_type_nodes += 1,
+                .symbol_declaration_constant, .symbol_declaration_variable => self.retry_symbol_nodes += 1,
                 else => self.retry_other_nodes += 1,
             }
         }

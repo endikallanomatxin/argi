@@ -1,8 +1,30 @@
+const std = @import("std");
 const source_db = @import("../1_base/source_db.zig");
 
 pub const Token = struct {
     content: Content,
     location: Location,
+};
+
+/// Borrowed access to the owned SoA token columns of a file artifact.
+pub const View = struct {
+    contents: []const Content = &.{},
+    locations: []const Location = &.{},
+    len: usize = 0,
+
+    pub fn init(list: *const std.MultiArrayList(Token)) View {
+        return .{ .contents = list.items(.content), .locations = list.items(.location), .len = list.len };
+    }
+
+    pub fn get(view: View, index: usize) Token {
+        return .{ .content = view.contents[index], .location = view.locations[index] };
+    }
+
+    pub fn clone(view: View, allocator: std.mem.Allocator) !View {
+        const contents = try allocator.dupe(Content, view.contents);
+        errdefer allocator.free(contents);
+        return .{ .contents = contents, .locations = try allocator.dupe(Location, view.locations), .len = view.len };
+    }
 };
 
 pub const Location = struct {
@@ -147,4 +169,30 @@ pub const ComparisonOperator = enum {
 test "token stream records remain compact" {
     try @import("std").testing.expectEqual(@as(usize, 8), @sizeOf(Location));
     try @import("std").testing.expectEqual(@as(usize, 24), @sizeOf(Token));
+}
+
+// Token text borrows source storage. Decode escapes only when a consumer
+// needs the literal value; unescaped strings continue borrowing the source.
+pub fn decodeStringLiteral(allocator: std.mem.Allocator, raw: []const u8) ![]const u8 {
+    if (std.mem.indexOfScalar(u8, raw, '\\') == null) return raw;
+    var decoded = std.array_list.Managed(u8).init(allocator);
+    var index: usize = 0;
+    while (index < raw.len) : (index += 1) {
+        if (raw[index] != '\\') {
+            try decoded.append(raw[index]);
+            continue;
+        }
+        index += 1;
+        const escaped = raw[index];
+        try decoded.append(switch (escaped) {
+            'n' => '\n',
+            't' => '\t',
+            'r' => '\r',
+            '\\' => '\\',
+            '"' => '"',
+            '0' => 0,
+            else => unreachable,
+        });
+    }
+    return try decoded.toOwnedSlice();
 }

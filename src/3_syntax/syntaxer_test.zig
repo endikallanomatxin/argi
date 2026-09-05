@@ -4,7 +4,6 @@ const source_files = @import("../1_base/source_files.zig");
 const tokenizer = @import("../2_tokens/tokenizer.zig");
 const syntax_tree = @import("syntax_tree.zig");
 const syntaxer = @import("syntaxer.zig");
-const legacy_syntaxer = @import("syntaxer_legacy.zig");
 
 fn parseTestFile(path: []const u8) !syntax_tree.SyntaxFile {
     const source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, std.testing.allocator, .limited(4 * 1024 * 1024));
@@ -19,14 +18,11 @@ fn parseTestFile(path: []const u8) !syntax_tree.SyntaxFile {
     var tokenizer_context = tokenizer.Tokenizer.init(allocator, &diagnostics, source, diagnostics.source_db.fileId(0));
     _ = try tokenizer_context.tokenize();
     const tokens = try tokenizer_context.takeTokens();
-    var legacy = legacy_syntaxer.Syntaxer.init(allocator, tokens, source, &diagnostics);
-    const legacy_roots = try legacy.parse();
 
     var compact = try syntaxer.Syntaxer.init(std.testing.allocator, tokens, source, &diagnostics);
     defer compact.deinit();
     const tree = try compact.parse();
     try std.testing.expect(!diagnostics.hasErrors());
-    try std.testing.expectEqual(legacy_roots.len, tree.roots.len);
     return tree;
 }
 
@@ -78,7 +74,7 @@ test "compact syntaxing preserves generic parameter indices across extra data gr
     try std.testing.expectEqual(syntax_tree.Node.Tag.type_name, tree.tag(parameter.type_node.?));
 }
 
-test "compact syntaxing matches legacy roots for positive feature programs" {
+test "compact syntaxing accepts positive feature programs" {
     var root = try std.Io.Dir.cwd().openDir(std.testing.io, ".", .{ .iterate = true });
     defer root.close(std.testing.io);
     var feature_root = try root.openDir(std.testing.io, "tests/feature_tests", .{ .iterate = true });

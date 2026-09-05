@@ -5,8 +5,8 @@ const source_db = @import("../1_base/source_db.zig");
 const diag = @import("../1_base/diagnostic.zig");
 const token = @import("../2_tokens/token.zig");
 const tokenizer = @import("../2_tokens/tokenizer.zig");
-const st = @import("../3_syntax/syntax_tree_legacy.zig");
-const syntaxer = @import("../3_syntax/syntaxer_legacy.zig");
+const st = @import("../3_syntax/syntax_tree.zig");
+const syntaxer = @import("../3_syntax/syntaxer.zig");
 const sg = @import("../4_semantics/semantic_graph.zig");
 const semantizer = @import("../4_semantics/semantizer.zig");
 const safety_checker = @import("../4_semantics/safety_checker.zig");
@@ -16,11 +16,6 @@ const safety_checker = @import("../4_semantics/safety_checker.zig");
 // tokenizing/syntaxing/semantizing path so architectural changes in the
 // compiler do not fork into subtly different command-specific pipelines.
 pub const FrontendPipeline = struct {
-    pub const FileTokens = struct {
-        file_id: source_db.FileId,
-        tokens: []const token.Token,
-    };
-
     pub const Options = struct {
         semantizer: semantizer.SemantizerOptions = .{},
         collect_stats: bool = false,
@@ -31,16 +26,16 @@ pub const FrontendPipeline = struct {
     diagnostics: *diag.Diagnostics,
     options: Options,
     source_db: *const source_db.SourceDb,
-    token_files: std.array_list.Managed(FileTokens),
-    st_list: std.array_list.Managed(*st.STNode),
+    syntax_files: std.array_list.Managed(st.SyntaxFile),
+    syntax_root_list: std.array_list.Managed(st.SyntaxRef),
     syntax_ctx: ?syntaxer.Syntaxer = null,
     sem_ctx: ?semantizer.Semantizer = null,
     safety_ctx: ?safety_checker.SafetyChecker = null,
     semantize_timings: semantizer.Semantizer.SemantizeTimings = .{},
     safety_ns: u64 = 0,
-    st_node_count: usize = 0,
+    syntax_node_count: usize = 0,
     sg_node_count: usize = 0,
-    st_nodes: []const *st.STNode = &.{},
+    syntax_roots: []const st.SyntaxRef = &.{},
     sg_nodes: []const *sg.SGNode = &.{},
 
     pub fn init(
@@ -55,21 +50,21 @@ pub const FrontendPipeline = struct {
             .diagnostics = diagnostics,
             .options = options,
             .source_db = &diagnostics.source_db,
-            .token_files = std.array_list.Managed(FileTokens).init(allocator),
-            .st_list = std.array_list.Managed(*st.STNode).init(allocator),
+            .syntax_files = std.array_list.Managed(st.SyntaxFile).init(allocator),
+            .syntax_root_list = std.array_list.Managed(st.SyntaxRef).init(allocator),
         };
     }
 
     pub fn deinit(self: *FrontendPipeline) void {
         if (self.safety_ctx) |*ctx| ctx.deinit();
-        for (self.token_files.items) |file_tokens| self.allocator.free(file_tokens.tokens);
-        self.token_files.deinit();
-        self.st_list.deinit();
+        for (self.syntax_files.items) |*file| file.deinit(self.allocator);
+        self.syntax_files.deinit();
+        self.syntax_root_list.deinit();
     }
 
     pub fn tokenizeFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !void {
-        for (self.token_files.items) |file_tokens| self.allocator.free(file_tokens.tokens);
-        self.token_files.clearRetainingCapacity();
+        for (self.syntax_files.items) |*file| file.deinit(self.allocator);
+        self.syntax_files.clearRetainingCapacity();
 
         for (files, 0..) |source_file, index| {
             var tokenizer_ctx = tokenizer.Tokenizer.init(
@@ -79,34 +74,49 @@ pub const FrontendPipeline = struct {
                 self.source_db.fileId(index),
             );
             _ = try tokenizer_ctx.tokenize();
-            try self.token_files.append(.{
-                .file_id = self.source_db.fileId(index),
-                .tokens = try tokenizer_ctx.takeTokens(),
-            });
+            const tokens = try tokenizer_ctx.takeTokens();
+            defer self.allocator.free(tokens);
+            var file = try st.SyntaxFile.init(self.allocator, self.source_db.fileId(index), tokens);
+            errdefer file.deinit(self.allocator);
+            try self.syntax_files.append(file);
         }
     }
 
-    pub fn syntax(self: *FrontendPipeline) ![]const *st.STNode {
-        self.st_list.clearRetainingCapacity();
-        self.st_node_count = 0;
-        for (self.token_files.items) |file_tokens| {
-            self.syntax_ctx = syntaxer.Syntaxer.init(
-                self.allocator,
-                file_tokens.tokens,
-                self.source_db.get(file_tokens.file_id).source,
-                self.diagnostics,
-            );
-            const nodes = try self.syntax_ctx.?.parse();
-            try self.st_list.appendSlice(nodes);
-            self.st_node_count += self.syntax_ctx.?.nodeCount();
+    pub fn syntax(self: *FrontendPipeline) ![]const st.SyntaxRef {
+        self.syntax_root_list.clearRetainingCapacity();
+        self.syntax_node_count = 0;
+        for (self.syntax_files.items) |*file| {
+            const file_id = file.file_id;
+            self.syntax_ctx = syntaxer.Syntaxer.initFile(self.allocator, file.*, self.source_db.get(file_id).source, self.diagnostics);
+            file.* = .{ .file_id = file_id };
+            file.* = self.syntax_ctx.?.parse() catch |err| {
+                // Keep the failed file's tokens for lexical LSP fallback.
+                file.* = self.syntax_ctx.?.file;
+                self.syntax_ctx.?.file = .{ .file_id = file_id };
+                return err;
+            };
+            self.syntax_node_count += file.nodes.len;
+            for (file.roots) |node| try self.syntax_root_list.append(file.ref(node));
         }
-        self.st_nodes = self.st_list.items;
-        return self.st_nodes;
+        self.syntax_roots = self.syntax_root_list.items;
+        return self.syntax_roots;
+    }
+
+    pub fn syntaxStorageMetrics(self: *const FrontendPipeline) st.SyntaxFile.StorageMetrics {
+        var result = st.SyntaxFile.StorageMetrics{ .token_bytes = 0, .node_base_bytes = 0, .extra_data_bytes = 0, .root_bytes = 0 };
+        for (self.syntax_files.items) |*file| {
+            const metrics = file.storageMetrics();
+            result.token_bytes += metrics.token_bytes;
+            result.node_base_bytes += metrics.node_base_bytes;
+            result.extra_data_bytes += metrics.extra_data_bytes;
+            result.root_bytes += metrics.root_bytes;
+        }
+        return result;
     }
 
     pub fn tokenCount(self: *const FrontendPipeline) usize {
         var count: usize = 0;
-        for (self.token_files.items) |file_tokens| count += file_tokens.tokens.len;
+        for (self.syntax_files.items) |file| count += file.tokens.len;
         return count;
     }
 
@@ -114,15 +124,15 @@ pub const FrontendPipeline = struct {
         return self.tokenCount() * @sizeOf(token.Token);
     }
 
-    pub fn tokensForPath(self: *const FrontendPipeline, path: []const u8) ?[]const token.Token {
+    pub fn tokensForPath(self: *const FrontendPipeline, path: []const u8) ?token.View {
         const file_id = self.source_db.findPath(path) orelse return null;
-        for (self.token_files.items) |file_tokens| {
-            if (file_tokens.file_id == file_id) return file_tokens.tokens;
+        for (self.syntax_files.items) |*file| {
+            if (file.file_id == file_id) return token.View.init(&file.tokens);
         }
         return null;
     }
 
-    pub fn parseFiles(self: *FrontendPipeline, files: []const sf.SourceFile) ![]const *st.STNode {
+    pub fn parseFiles(self: *FrontendPipeline, files: []const sf.SourceFile) ![]const st.SyntaxRef {
         try self.tokenizeFiles(files);
         return try self.syntax();
     }
@@ -136,7 +146,7 @@ pub const FrontendPipeline = struct {
         self.sg_node_count = 0;
         if (self.options.collect_stats) sg.beginNodeCounting(&self.sg_node_count);
         defer if (self.options.collect_stats) sg.endNodeCounting();
-        self.sem_ctx = semantizer.Semantizer.init(&self.allocator, self.io, self.st_nodes, self.diagnostics, self.options.semantizer);
+        self.sem_ctx = semantizer.Semantizer.init(&self.allocator, self.io, self.syntax_files.items, self.syntax_roots, self.diagnostics, self.options.semantizer);
         const result = try self.sem_ctx.?.semantizeWithTimings();
         self.sg_nodes = result.nodes;
         self.safety_ctx = safety_checker.SafetyChecker.init(&self.allocator, self.diagnostics);
