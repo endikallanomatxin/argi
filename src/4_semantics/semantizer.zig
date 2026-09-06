@@ -107,7 +107,7 @@ pub const SemantizerOptions = struct {
     include_tests: bool = false,
     selected_test_name: ?[]const u8 = null,
     implicit_testing_module_dir: ?[]const u8 = null,
-    exhaustive_function_bodies: bool = false,
+    exhaustive_function_bodies: bool = true,
 };
 
 const OnceConsumption = struct {

@@ -863,8 +863,8 @@ pub fn compile(io: std.Io, environ_map: ?*const std.process.Environ.Map, args: [
     try compileTarget(parsed.target_path, parsed.flags, .{}, io, environ_map);
 }
 
-/// Check every function body without producing machine code. Build, run, and
-/// test intentionally semantize only their reachable execution graph.
+/// Check every function body without producing machine code. Build uses the
+/// same whole-module validation by default before pruning codegen reachability.
 pub fn check(io: std.Io, environ_map: ?*const std.process.Environ.Map, args: []const []const u8) !void {
     const parsed = try parseBuildArgs(args);
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
