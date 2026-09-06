@@ -1264,7 +1264,16 @@ pub const SafetyChecker = struct {
         provenances: []const facts.OpaqueProvenance,
     ) !facts.ValueFacts {
         const value_type = ty orelse return value;
-        if (!typeContainsPointer(value_type) or provenances.len == 0) return value;
+        // A scalar load has no temporal relationship with the opaque slot that
+        // contained it. Dynamic projections may resolve to conservative parent
+        // facts, so discard those structural dependencies before the value is
+        // stored in another opaque domain.
+        if (!typeContainsPointer(value_type)) return .{
+            .integer_address = value.integer_address,
+            .foreign_storage = value.foreign_storage,
+            .storage_capabilities = value.storage_capabilities,
+        };
+        if (provenances.len == 0) return value;
 
         var result = value;
         var dependencies = std.array_list.Managed(facts.ValidityDependency).init(self.allocator.*);
@@ -5066,7 +5075,7 @@ pub const SafetyChecker = struct {
         effect: facts.ValueEffect,
     ) !facts.ValueEffect {
         const ty = node.sem_type orelse return effect;
-        if (!typeContainsPointer(ty)) return effect;
+        if (!typeContainsPointer(ty)) return .{};
         return self.withOpaqueReadGenerationDependencies(try self.inferOpaqueReadInputPaths(function, node), effect);
     }
 
@@ -7607,6 +7616,36 @@ test "input Place values instantiate the pointee rather than the pointer" {
     try std.testing.expect(valueDependsOnRoot(value, pointee_root));
     try std.testing.expect(!valueDependsOnRoot(value, pointer_root));
     try std.testing.expect(value.referenced_place == null);
+}
+
+test "opaque scalar reads discard container temporal facts" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var checker = SafetyChecker.init(&allocator, undefined);
+    defer checker.deinit();
+
+    var binding: sg.BindingDeclaration = undefined;
+    const root: facts.ValidityRootId = @enumFromInt(3);
+    const capability: facts.StorageCapabilityId = @enumFromInt(2);
+    const scalar = try checker.addOpaqueReadEnvelope(.{
+        .dependencies = &.{.{ .root = root }},
+        .owned_roots = &.{root},
+        .integer_address = true,
+        .foreign_storage = true,
+        .storage_capabilities = &.{capability},
+        .opaque_provenance = &.{.{ .storage = .{ .root = &binding }, .generation = root }},
+    }, .{ .builtin = .UIntNative }, &.{.{
+        .storage = .{ .root = &binding },
+        .generation = root,
+    }});
+
+    try std.testing.expectEqual(@as(usize, 0), scalar.dependencies.len);
+    try std.testing.expectEqual(@as(usize, 0), scalar.owned_roots.len);
+    try std.testing.expectEqual(@as(usize, 0), scalar.opaque_provenance.len);
+    try std.testing.expect(scalar.integer_address);
+    try std.testing.expect(scalar.foreign_storage);
+    try std.testing.expectEqualSlices(facts.StorageCapabilityId, &.{capability}, scalar.storage_capabilities);
 }
 
 test "opaque input Place values hide pointee dependencies rather than pointer facts" {

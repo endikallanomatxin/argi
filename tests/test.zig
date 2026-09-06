@@ -194,6 +194,8 @@ fn expectSuccessfulBuild(name: []const u8) !void {
     defer std.testing.allocator.free(result.stdout);
     defer std.testing.allocator.free(result.stderr);
 
+    if (result.term != .exited or result.term.exited != 0)
+        std.debug.print("argi build {s} failed:\n{s}", .{ name, result.stderr });
     try expectEqual(std.process.Child.Term{ .exited = 0 }, result.term);
 }
 
