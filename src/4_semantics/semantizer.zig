@@ -200,6 +200,7 @@ pub const Semantizer = struct {
     allocator: *const std.mem.Allocator,
     io: std.Io,
     syntax_files: []const syn.FileSyntaxTree,
+    file_graphs: []const @import("file_semantic_graph.zig").FileSemanticGraph,
     syntax_roots: []const syn.SyntaxRef,
     root_list: std.array_list.Managed(*sg.SGNode), // buffer mut
     root_nodes: []const *sg.SGNode = &.{}, // slice final
@@ -245,6 +246,7 @@ pub const Semantizer = struct {
         io: std.Io,
         syntax_files: []const syn.FileSyntaxTree,
         st: []const syn.SyntaxRef,
+        file_graphs: []const @import("file_semantic_graph.zig").FileSemanticGraph,
         diags: *diagnostic.Diagnostics,
         options: SemantizerOptions,
     ) Semantizer {
@@ -253,6 +255,7 @@ pub const Semantizer = struct {
             .io = io,
             .syntax_files = syntax_files,
             .syntax_roots = st,
+            .file_graphs = file_graphs,
             .root_list = std.array_list.Managed(*sg.SGNode).init(alloc.*),
             .diags = diags,
             .options = options,
@@ -763,25 +766,29 @@ pub const Semantizer = struct {
     }
 
     fn predeclareTopLevelSymbols(self: *Semantizer, global: *Scope) SemErr!void {
-        for (self.syntax_roots) |node| {
-            switch (self.nodeTag(node)) {
-                .symbol_declaration_constant, .symbol_declaration_variable => {
-                    try self.predeclareTopLevelImportAliasRef(node, global);
-                    try self.predeclareTopLevelBindingRef(node, global);
-                },
-                .abstract_declaration => try self.predeclareTopLevelAbstractRef(node, global),
-                .type_declaration, .c_enum_declaration, .c_union_declaration => try self.predeclareTopLevelTypeRef(node, global),
-                .choice_option_declaration => try self.predeclareTopLevelChoiceOptionRef(node, global),
-                .function_declaration, .function_declaration_once => try self.predeclareTopLevelFunctionRef(node, global, false),
-                .test_declaration => if (self.options.include_tests) try self.predeclareTopLevelFunctionRef(node, global, true),
-                else => {},
+        for (self.file_graphs, self.syntax_files) |graph, file| {
+            for (graph.declarations.items) |declaration| {
+                const node = file.ref(declaration.syntax_node);
+                // LSP retains global results after the frontend artifacts have
+                // been released. Names crossing this bridge belong to the
+                // global result arena, not the independently owned file graph.
+                const name = try self.allocator.dupe(u8, graph.text(declaration.name));
+                switch (declaration.kind) {
+                    .binding, .import_alias => {
+                        try self.predeclareTopLevelImportAliasRef(node, name, global);
+                        try self.predeclareTopLevelBindingRef(node, name, global);
+                    },
+                    .abstract_type => try self.predeclareTopLevelAbstractRef(node, name, global),
+                    .type => try self.predeclareTopLevelTypeRef(node, name, global),
+                    .choice_option => try self.predeclareTopLevelChoiceOptionRef(node, name, global),
+                    .function => try self.predeclareTopLevelFunctionRef(node, global, false, name),
+                    .test_function => if (self.options.include_tests) try self.predeclareTopLevelFunctionRef(node, global, true, name),
+                }
             }
         }
     }
 
-    fn predeclareTopLevelChoiceOptionRef(self: *Semantizer, node: syn.SyntaxRef, global: *Scope) SemErr!void {
-        const decl = self.syntaxFile(node).choiceOptionDeclaration(node.node).?;
-        const name = self.tokenText(node, decl.name_token);
+    fn predeclareTopLevelChoiceOptionRef(self: *Semantizer, node: syn.SyntaxRef, name: []const u8, global: *Scope) SemErr!void {
         if (global.choice_options.contains(name)) return;
         const option_decl = try self.allocator.create(sg.ChoiceOptionDeclaration);
         option_decl.* = .{ .name = name, .origin_file = self.locationPath(self.nodeLocation(node)), .id = self.next_choice_option_id };
@@ -789,12 +796,11 @@ pub const Semantizer = struct {
         try global.choice_options.put(name, option_decl);
     }
 
-    fn predeclareTopLevelImportAliasRef(self: *Semantizer, node: syn.SyntaxRef, global: *Scope) SemErr!void {
+    fn predeclareTopLevelImportAliasRef(self: *Semantizer, node: syn.SyntaxRef, name: []const u8, global: *Scope) SemErr!void {
         const file = self.syntaxFile(node);
         const decl = file.symbolDeclaration(node.node).?;
         const value = decl.value orelse return;
         const import = file.importStatement(value) orelse return;
-        const name = self.tokenText(node, decl.name_token);
         if (global.module_aliases.contains(name)) return;
         const resolved = source_files.resolveImportDir(
             self.allocator,
@@ -805,12 +811,11 @@ pub const Semantizer = struct {
         try global.module_aliases.put(name, resolved);
     }
 
-    fn predeclareTopLevelBindingRef(self: *Semantizer, node: syn.SyntaxRef, global: *Scope) SemErr!void {
+    fn predeclareTopLevelBindingRef(self: *Semantizer, node: syn.SyntaxRef, name: []const u8, global: *Scope) SemErr!void {
         const file = self.syntaxFile(node);
         const decl = file.symbolDeclaration(node.node).?;
         if (decl.value) |value| if (file.tag(value) == .import_statement) return;
         const type_node = decl.type_node orelse return;
-        const name = self.tokenText(node, decl.name_token);
         if (global.bindings.contains(name) or global.module_aliases.contains(name)) return;
         const ty = self.resolveTypeExpression(self.childRef(node, type_node), global) catch |err| switch (err) {
             error.UnknownType, error.SymbolNotFound => return,
@@ -829,10 +834,9 @@ pub const Semantizer = struct {
         try global.bindings.put(name, binding);
     }
 
-    fn predeclareTopLevelAbstractRef(self: *Semantizer, node: syn.SyntaxRef, global: *Scope) SemErr!void {
+    fn predeclareTopLevelAbstractRef(self: *Semantizer, node: syn.SyntaxRef, name: []const u8, global: *Scope) SemErr!void {
         const abstract_file = self.syntaxFile(node);
         const decl = abstract_file.abstractDeclaration(node.node).?;
-        const name = self.tokenText(node, decl.name_token);
         if (global.abstracts.contains(name) or global.types.contains(name)) return;
         const param_names = try self.compactAbstractParamNames(node, decl.generic_params, decl.generic_params_struct);
         const params = try self.allocator.alloc(gen.GenericParam, param_names.len);
@@ -858,24 +862,23 @@ pub const Semantizer = struct {
         try global.types.put(name, type_decl);
     }
 
-    fn predeclareTopLevelTypeRef(self: *Semantizer, node: syn.SyntaxRef, global: *Scope) SemErr!void {
+    fn predeclareTopLevelTypeRef(self: *Semantizer, node: syn.SyntaxRef, name: []const u8, global: *Scope) SemErr!void {
         const file = self.syntaxFile(node);
-        const name_token, const generic_params, const generic_params_struct, const value = switch (self.nodeTag(node)) {
+        const generic_params, const generic_params_struct, const value = switch (self.nodeTag(node)) {
             .type_declaration => blk: {
                 const decl = file.typeDeclaration(node.node).?;
-                break :blk .{ decl.name_token, decl.generic_params, decl.generic_params_struct, decl.value };
+                break :blk .{ decl.generic_params, decl.generic_params_struct, decl.value };
             },
             .c_enum_declaration => blk: {
                 const decl = file.cEnumDeclaration(node.node).?;
-                break :blk .{ decl.name_token, decl.generic_params, decl.generic_params_struct, decl.value };
+                break :blk .{ decl.generic_params, decl.generic_params_struct, decl.value };
             },
             .c_union_declaration => blk: {
                 const decl = file.cUnionDeclaration(node.node).?;
-                break :blk .{ decl.name_token, decl.generic_params, decl.generic_params_struct, decl.value };
+                break :blk .{ decl.generic_params, decl.generic_params_struct, decl.value };
             },
             else => unreachable,
         };
-        const name = self.tokenText(node, name_token);
         if (generic_params.len > 0 or generic_params_struct != null) {
             const generic_info = self.compactGenericParamDefs(node, generic_params, generic_params_struct, global) catch return;
             try global.appendGenericTypeTemplate(name, .{
@@ -906,7 +909,7 @@ pub const Semantizer = struct {
         try global.types.put(name, type_decl);
     }
 
-    fn predeclareTopLevelFunctionRef(self: *Semantizer, node: syn.SyntaxRef, global: *Scope, is_test: bool) SemErr!void {
+    fn predeclareTopLevelFunctionRef(self: *Semantizer, node: syn.SyntaxRef, global: *Scope, is_test: bool, discovered_name: ?[]const u8) SemErr!void {
         const file = self.syntaxFile(node);
         const declaration = if (is_test)
             (file.testDeclaration(node.node) orelse return).function
@@ -919,7 +922,7 @@ pub const Semantizer = struct {
                 if (self.compactAbstractConstraintForType(node, type_node, global) != null) return;
             }
         }
-        const name = self.functionNameText(node) orelse return;
+        const name = discovered_name orelse self.functionNameText(node) orelse return;
         const location = self.nodeLocation(node);
         var function_scope = try Scope.init(self.allocator, global, null);
         const input = self.structTypeSignatureFromNode(file.ref(declaration.input), &function_scope, false) catch |err| switch (err) {
@@ -2413,7 +2416,7 @@ pub const Semantizer = struct {
             const noop = try self.makeNoopNode(location);
             return .{ .node = noop, .ty = .{ .builtin = .Any } };
         }
-        try self.predeclareTopLevelFunctionRef(node, scope, is_test);
+        try self.predeclareTopLevelFunctionRef(node, scope, is_test, null);
         var function: ?*sg.FunctionDeclaration = null;
         if (scope.functions.getPtr(name)) |functions| {
             for (functions.items) |candidate| {

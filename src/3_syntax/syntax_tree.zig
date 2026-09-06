@@ -448,9 +448,12 @@ pub const FileSyntaxTree = struct {
     }
 
     pub fn tokenText(tree: *const FileSyntaxTree, db: *const source_db.SourceDb, index: TokenIndex) []const u8 {
+        return tree.tokenTextFromSource(db.get(tree.file_id).source, index);
+    }
+
+    pub fn tokenTextFromSource(tree: *const FileSyntaxTree, source: []const u8, index: TokenIndex) []const u8 {
         const token_index: usize = @intFromEnum(index);
         const contents = tree.tokens.items(.content)[token_index];
-        const source = db.get(tree.file_id).source;
         return switch (contents) {
             .identifier, .comment => |range| range.slice(source),
             .literal => |literal_value| switch (literal_value) {
@@ -499,8 +502,12 @@ pub const FileSyntaxTree = struct {
     }
 
     pub fn functionName(tree: *const FileSyntaxTree, db: *const source_db.SourceDb, node: NodeIndex) ?FunctionName {
+        return tree.functionNameFromSource(db.get(tree.file_id).source, node);
+    }
+
+    pub fn functionNameFromSource(tree: *const FileSyntaxTree, source: []const u8, node: NodeIndex) ?FunctionName {
         const declaration = tree.functionDeclaration(node) orelse (tree.testDeclaration(node) orelse return null).function;
-        if (!std.mem.eql(u8, tree.tokenText(db, declaration.name_token), "operator")) {
+        if (!std.mem.eql(u8, tree.tokenTextFromSource(source, declaration.name_token), "operator")) {
             return .{ .identifier = declaration.name_token };
         }
 
@@ -514,7 +521,7 @@ pub const FileSyntaxTree = struct {
                 else => null,
             },
             .identifier => |range| blk: {
-                const text = range.slice(db.get(tree.file_id).source);
+                const text = range.slice(source);
                 if (std.mem.eql(u8, text, "get")) break :blk .{ .operator = .get };
                 if (std.mem.eql(u8, text, "set")) break :blk .{ .operator = .set };
                 if (std.mem.eql(u8, text, "get_ro_pointer")) break :blk .{ .operator = .get_ro_pointer };

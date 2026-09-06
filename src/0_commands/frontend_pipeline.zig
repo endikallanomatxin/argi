@@ -8,6 +8,7 @@ const tokenizer = @import("../2_tokens/tokenizer.zig");
 const st = @import("../3_syntax/syntax_tree.zig");
 const syntaxer = @import("../3_syntax/syntaxer.zig");
 const sg = @import("../4_semantics/semantic_graph.zig");
+const file_sg = @import("../4_semantics/file_semantic_graph.zig");
 const semantizer = @import("../4_semantics/semantizer.zig");
 const safety_checker = @import("../4_semantics/safety_checker.zig");
 
@@ -28,11 +29,13 @@ pub const FrontendPipeline = struct {
     source_db: *const source_db.SourceDb,
     syntax_files: std.array_list.Managed(st.FileSyntaxTree),
     syntax_root_list: std.array_list.Managed(st.SyntaxRef),
+    file_graphs: std.ArrayList(file_sg.FileSemanticGraph) = .empty,
     syntax_ctx: ?syntaxer.Syntaxer = null,
     sem_ctx: ?semantizer.Semantizer = null,
     safety_ctx: ?safety_checker.SafetyChecker = null,
     semantize_timings: semantizer.Semantizer.SemantizeTimings = .{},
     safety_ns: u64 = 0,
+    file_semantizing_ns: u64 = 0,
     syntax_node_count: usize = 0,
     sg_node_count: usize = 0,
     syntax_roots: []const st.SyntaxRef = &.{},
@@ -57,12 +60,15 @@ pub const FrontendPipeline = struct {
 
     pub fn deinit(self: *FrontendPipeline) void {
         if (self.safety_ctx) |*ctx| ctx.deinit();
+        self.clearFileGraphs();
+        self.file_graphs.deinit(self.allocator);
         for (self.syntax_files.items) |*file| file.deinit(self.allocator);
         self.syntax_files.deinit();
         self.syntax_root_list.deinit();
     }
 
     pub fn tokenizeFiles(self: *FrontendPipeline, files: []const sf.SourceFile) !void {
+        self.clearFileGraphs();
         for (self.syntax_files.items) |*file| file.deinit(self.allocator);
         self.syntax_files.clearRetainingCapacity();
 
@@ -142,10 +148,19 @@ pub const FrontendPipeline = struct {
     }
 
     pub fn semantize(self: *FrontendPipeline) ![]const *sg.SGNode {
+        const file_start = std.Io.Timestamp.now(self.io, .boot).nanoseconds;
+        self.clearFileGraphs();
+        errdefer self.clearFileGraphs();
+        try self.file_graphs.ensureTotalCapacity(self.allocator, self.syntax_files.items.len);
+        for (self.syntax_files.items) |*file| {
+            const graph = try file_sg.semantizeFile(self.allocator, file, self.source_db.get(file.file_id).source);
+            self.file_graphs.appendAssumeCapacity(graph);
+        }
+        self.file_semantizing_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - file_start);
         self.sg_node_count = 0;
         if (self.options.collect_stats) sg.beginNodeCounting(&self.sg_node_count);
         defer if (self.options.collect_stats) sg.endNodeCounting();
-        self.sem_ctx = semantizer.Semantizer.init(&self.allocator, self.io, self.syntax_files.items, self.syntax_roots, self.diagnostics, self.options.semantizer);
+        self.sem_ctx = semantizer.Semantizer.init(&self.allocator, self.io, self.syntax_files.items, self.syntax_roots, self.file_graphs.items, self.diagnostics, self.options.semantizer);
         const result = try self.sem_ctx.?.semantizeWithTimings();
         self.sg_nodes = result.nodes;
         self.safety_ctx = safety_checker.SafetyChecker.init(&self.allocator, self.diagnostics);
@@ -155,5 +170,16 @@ pub const FrontendPipeline = struct {
         self.safety_ns = @intCast(std.Io.Timestamp.now(self.io, .boot).nanoseconds - safety_start);
         self.semantize_timings = result.timings;
         return self.sg_nodes;
+    }
+
+    fn clearFileGraphs(self: *FrontendPipeline) void {
+        for (self.file_graphs.items) |*graph| graph.deinit(self.allocator);
+        self.file_graphs.clearRetainingCapacity();
+    }
+
+    pub fn fileSemanticStorageBytes(self: *const FrontendPipeline) usize {
+        var bytes: usize = 0;
+        for (self.file_graphs.items) |*graph| bytes += graph.storageBytes();
+        return bytes;
     }
 };
