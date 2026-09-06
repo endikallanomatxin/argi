@@ -660,6 +660,16 @@ pub const Semantizer = struct {
                     try self.enqueueEntrypointRuntimeFunctions(pending.function);
                 }
             }
+            // Inferred Errable signatures are completed from their bodies and
+            // may be inspected by a reachable caller while that caller is
+            // being semantized. Seed those bodies after the entrypoint so the
+            // LIFO worklist completes their reason choices first. This is
+            // still selective: ordinary unreachable bodies remain untouched.
+            for (self.pending_function_bodies.items) |pending| {
+                if (pending.function.uses_inferred_error_reasons) {
+                    try self.enqueueFunctionBody(pending.function);
+                }
+            }
         }
 
         // Output defaults and bodies are discovered together. Calls resolved
@@ -701,6 +711,12 @@ pub const Semantizer = struct {
             };
             body_ns += @intCast(nowNs(self.io) - body_start);
             pending.state = .done;
+            if (!self.options.exhaustive_function_bodies and pending.function.uses_inferred_error_reasons) {
+                // A caller still waiting on the worklist may immediately
+                // inspect this open choice (for example in a match). Close
+                // transitive reason sets before advancing to that caller.
+                try self.inferFunctionErrorReasons(global);
+            }
         }
         timings.output_defaults_ns = output_defaults_ns;
         timings.body_ns = body_ns;
