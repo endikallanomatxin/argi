@@ -112,8 +112,17 @@ copy #(
     i :: UIntNative = 0
     while i < self&.length {
         ptr ::= dynamic_array_element_ro_pointer#(.t: t)(.array = self, .offset = i).pointer
-        element ::= copy(.self = ptr)!
-        push_assume_capacity#(.t: t)(.self = $&out, .value = ~element)
+        copied ::= copy(.self = ptr)
+        match copied {
+            ..ok ~ payload {
+                push_assume_capacity#(.t: t)(.self = $&out, .value = ~payload)
+            }
+            ..error ~ err {
+                deinit#(.t: t)(.allocator = allocator, .self = $&out)
+                result = ..error(.reason = err.reason)
+                return
+            }
+        }
         i = i + 1
     }
     result = ..ok ~out
