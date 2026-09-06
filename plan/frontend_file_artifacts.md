@@ -43,12 +43,14 @@ already operate independently per source file. `FrontendPipeline` owns one
 compact syntax artifact per file and Semantizer consumes those compact syntax
 files directly.
 
-The current names and ownership model do not yet match the target architecture:
+The artifact names have been introduced. `FileTokenList` is defined by the
+tokenizing layer and its columns are transferred into `FileSyntaxTree`.
+`GlobalSemanticGraph` names the existing global representation; it does not yet
+imply indexed storage. The ownership model still needs migration:
 
-- tokens are currently owned as part of `SyntaxFile`;
-- the compact syntax artifact is currently named `SyntaxFile`;
+- tokens are currently retained as part of `FileSyntaxTree`;
 - semantic analysis currently constructs one global, pointer-heavy
-  `SemanticGraph`/`SGNode` world;
+  `GlobalSemanticGraph`/`SGNode` world;
 - semantic declarations, types, bindings, calls, scopes, and helper structures
   are connected extensively through pointers and allocator-owned slices;
 - local and global semantic work are performed by the same Semantizer.

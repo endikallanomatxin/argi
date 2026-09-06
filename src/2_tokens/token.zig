@@ -6,8 +6,10 @@ pub const Token = struct {
     location: Location,
 };
 
-/// Owned compact token columns retained by a syntax file.
-pub const List = std.MultiArrayList(Token);
+/// Owned tokenizing artifact for one source file. Syntaxing takes ownership
+/// of these columns without rebuilding the token stream.
+pub const FileTokenList = std.MultiArrayList(Token);
+pub const List = FileTokenList;
 
 /// Borrowed access to the owned SoA token columns of a file artifact.
 pub const View = struct {

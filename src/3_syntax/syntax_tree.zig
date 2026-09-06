@@ -306,7 +306,7 @@ pub const IndexAssignment = struct { target: NodeIndex, value: NodeIndex };
 pub const Literal = struct { token: TokenIndex, negative: bool };
 pub const BinaryOperation = struct { lhs: NodeIndex, rhs: NodeIndex };
 
-pub const FileTokenList = token.List;
+pub const FileTokenList = token.FileTokenList;
 pub const NodeList = std.MultiArrayList(Node);
 
 pub const FileSyntaxTree = struct {
