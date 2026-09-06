@@ -35,7 +35,7 @@ pub const AbstractConstraint = struct {
 
 // Generic function template used for monomorphization
 pub const GenericTemplate = struct {
-    syntax_files: []const syn.SyntaxFile,
+    syntax_files: []const syn.FileSyntaxTree,
     source_db: *const @import("../1_base/source_db.zig").SourceDb,
     syntax_file_id: @import("../1_base/source_db.zig").FileId,
     name: []const u8,

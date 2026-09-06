@@ -37,17 +37,17 @@ pub const Syntaxer = struct {
     source: []const u8,
     index: usize,
     allocator: std.mem.Allocator,
-    file: syn.SyntaxFile,
+    file: syn.FileSyntaxTree,
     tokens: tok.View,
     diags: *diagnostic.Diagnostics,
     parsing_pipe_rhs: bool,
     scratch: std.ArrayList(syn.NodeIndex),
 
     pub fn init(alloc: std.mem.Allocator, toks: tok.View, source: []const u8, diags: *diagnostic.Diagnostics) !Syntaxer {
-        return initFile(alloc, try syn.SyntaxFile.init(alloc, toks.locations[0].file, toks), source, diags);
+        return initFile(alloc, try syn.FileSyntaxTree.init(alloc, toks.locations[0].file, toks), source, diags);
     }
 
-    pub fn initFile(alloc: std.mem.Allocator, file: syn.SyntaxFile, source: []const u8, diags: *diagnostic.Diagnostics) Syntaxer {
+    pub fn initFile(alloc: std.mem.Allocator, file: syn.FileSyntaxTree, source: []const u8, diags: *diagnostic.Diagnostics) Syntaxer {
         const tokens = tok.View.init(&file.tokens);
         return .{ .source = source, .index = 0, .allocator = alloc, .file = file, .tokens = tokens, .diags = diags, .parsing_pipe_rhs = false, .scratch = .empty };
     }
@@ -62,7 +62,7 @@ pub const Syntaxer = struct {
         self.file = .{ .file_id = file_id };
     }
 
-    pub fn parse(self: *Syntaxer) !syn.SyntaxFile {
+    pub fn parse(self: *Syntaxer) !syn.FileSyntaxTree {
         defer self.scratch.deinit(self.allocator);
         const scratch_top = self.scratch.items.len;
         defer self.scratch.shrinkRetainingCapacity(scratch_top);

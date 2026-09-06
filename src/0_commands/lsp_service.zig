@@ -1179,7 +1179,7 @@ pub const LanguageService = struct {
 };
 
 fn collectSyntaxRefs(
-    syntax_files: []const st.SyntaxFile,
+    syntax_files: []const st.FileSyntaxTree,
     db: *const source_db.SourceDb,
     syntax_roots: []const st.SyntaxRef,
     function_refs: *std.array_list.Managed(SyntaxFunctionDeclRef),
@@ -1364,7 +1364,7 @@ fn collectSyntaxRefs(
 }
 
 fn collectSyntaxStructShape(
-    tree: *const st.SyntaxFile,
+    tree: *const st.FileSyntaxTree,
     db: *const source_db.SourceDb,
     node: st.NodeIndex,
     binding_decl_refs: *std.array_list.Managed(SyntaxBindingDeclRef),
@@ -1386,7 +1386,7 @@ fn collectSyntaxStructShape(
 }
 
 fn collectSyntaxStructChildren(
-    tree: *const st.SyntaxFile,
+    tree: *const st.FileSyntaxTree,
     db: *const source_db.SourceDb,
     node: st.NodeIndex,
     type_refs: *std.array_list.Managed(SyntaxTypeRef),
@@ -1400,7 +1400,7 @@ fn collectSyntaxStructChildren(
     }
 }
 
-fn collectTypeRefsFromNode(tree: *const st.SyntaxFile, db: *const source_db.SourceDb, node: st.NodeIndex, type_refs: *std.array_list.Managed(SyntaxTypeRef)) !void {
+fn collectTypeRefsFromNode(tree: *const st.FileSyntaxTree, db: *const source_db.SourceDb, node: st.NodeIndex, type_refs: *std.array_list.Managed(SyntaxTypeRef)) !void {
     const syntax_type = tree.syntaxType(node) orelse return;
     switch (syntax_type) {
         .name => |name| try type_refs.append(.{ .location = tree.tokenLocation(name.name_token), .name = tree.tokenText(db, name.name_token) }),
@@ -1428,7 +1428,7 @@ fn collectTypeRefsFromNode(tree: *const st.SyntaxFile, db: *const source_db.Sour
     }
 }
 
-fn collectSyntaxValueFieldNames(tree: *const st.SyntaxFile, db: *const source_db.SourceDb, node: st.NodeIndex, allocator: std.mem.Allocator) ![]const []const u8 {
+fn collectSyntaxValueFieldNames(tree: *const st.FileSyntaxTree, db: *const source_db.SourceDb, node: st.NodeIndex, allocator: std.mem.Allocator) ![]const []const u8 {
     const literal = tree.structValueLiteral(node) orelse return &.{};
     var names = std.array_list.Managed([]const u8).init(allocator);
     defer names.deinit();
@@ -1439,7 +1439,7 @@ fn collectSyntaxValueFieldNames(tree: *const st.SyntaxFile, db: *const source_db
     return try names.toOwnedSlice();
 }
 
-fn appendSyntaxTypeDeclaration(tree: *const st.SyntaxFile, db: *const source_db.SourceDb, reference: st.SyntaxRef, name_token: st.TokenIndex, refs: *std.array_list.Managed(SyntaxTypeDeclRef)) !void {
+fn appendSyntaxTypeDeclaration(tree: *const st.FileSyntaxTree, db: *const source_db.SourceDb, reference: st.SyntaxRef, name_token: st.TokenIndex, refs: *std.array_list.Managed(SyntaxTypeDeclRef)) !void {
     var fields = std.array_list.Managed(SyntaxName).init(refs.allocator);
     const value: ?st.NodeIndex = switch (tree.tag(reference.node)) {
         .type_declaration => tree.typeDeclaration(reference.node).?.value,
@@ -1457,7 +1457,7 @@ fn appendSyntaxTypeDeclaration(tree: *const st.SyntaxFile, db: *const source_db.
     try refs.append(.{ .node = reference, .name = .{ .location = tree.tokenLocation(name_token), .string = tree.tokenText(db, name_token) }, .fields = try fields.toOwnedSlice() });
 }
 
-fn syntaxFunctionName(tree: *const st.SyntaxFile, db: *const source_db.SourceDb, node: st.NodeIndex, name_token: st.TokenIndex) SyntaxName {
+fn syntaxFunctionName(tree: *const st.FileSyntaxTree, db: *const source_db.SourceDb, node: st.NodeIndex, name_token: st.TokenIndex) SyntaxName {
     const text = switch (tree.functionName(db, node) orelse return .{ .location = tree.tokenLocation(name_token), .string = tree.tokenText(db, name_token) }) {
         .identifier => |token_index| tree.tokenText(db, token_index),
         .operator => |operator| switch (operator) {
@@ -1473,7 +1473,7 @@ fn syntaxFunctionName(tree: *const st.SyntaxFile, db: *const source_db.SourceDb,
     return .{ .location = tree.tokenLocation(name_token), .string = text };
 }
 
-fn appendCompactOperator(tree: *const st.SyntaxFile, node: st.NodeIndex, refs: *std.array_list.Managed(SyntaxOperatorRef)) !void {
+fn appendCompactOperator(tree: *const st.FileSyntaxTree, node: st.NodeIndex, refs: *std.array_list.Managed(SyntaxOperatorRef)) !void {
     const operator: SyntaxOperatorRef = switch (tree.tag(node)) {
         .binary_add => .{ .location = tree.location(node), .name = "operator +", .len = 1 },
         .binary_subtract => .{ .location = tree.location(node), .name = "operator -", .len = 1 },
@@ -2691,7 +2691,7 @@ fn emitLexical(
 
 const SemanticToken = struct { line: u32, start: u32, len: u32, type_index: u32, mods: u32 };
 
-fn appendCompactSyntaxSemanticTokens(sink: *std.array_list.Managed(SemanticToken), db: *const source_db.SourceDb, tree: *const st.SyntaxFile) !void {
+fn appendCompactSyntaxSemanticTokens(sink: *std.array_list.Managed(SemanticToken), db: *const source_db.SourceDb, tree: *const st.FileSyntaxTree) !void {
     const Role = struct { kind: u32, mods: u32 = 0 };
     const roles = try sink.allocator.alloc(?Role, tree.tokens.len);
     defer sink.allocator.free(roles);

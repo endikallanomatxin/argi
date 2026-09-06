@@ -199,7 +199,7 @@ pub const Semantizer = struct {
     // work and makes the remaining retries residual rather than fundamental.
     allocator: *const std.mem.Allocator,
     io: std.Io,
-    syntax_files: []const syn.SyntaxFile,
+    syntax_files: []const syn.FileSyntaxTree,
     syntax_roots: []const syn.SyntaxRef,
     root_list: std.array_list.Managed(*sg.SGNode), // buffer mut
     root_nodes: []const *sg.SGNode = &.{}, // slice final
@@ -243,7 +243,7 @@ pub const Semantizer = struct {
     pub fn init(
         alloc: *const std.mem.Allocator,
         io: std.Io,
-        syntax_files: []const syn.SyntaxFile,
+        syntax_files: []const syn.FileSyntaxTree,
         st: []const syn.SyntaxRef,
         diags: *diagnostic.Diagnostics,
         options: SemantizerOptions,
@@ -271,7 +271,7 @@ pub const Semantizer = struct {
         return id;
     }
 
-    fn syntaxFile(self: *const Semantizer, node: syn.SyntaxRef) *const syn.SyntaxFile {
+    fn syntaxFile(self: *const Semantizer, node: syn.SyntaxRef) *const syn.FileSyntaxTree {
         return syn.fileForRef(self.syntax_files, node);
     }
 
@@ -3821,7 +3821,7 @@ pub const Semantizer = struct {
 
     fn compactCollectHiddenImplementsParamsFromFields(
         self: *Semantizer,
-        file: *const syn.SyntaxFile,
+        file: *const syn.FileSyntaxTree,
         fields: []const syn.NodeIndex,
         params: *std.array_list.Managed(gen.GenericParam),
         scope: *Scope,
@@ -4785,7 +4785,7 @@ pub const Semantizer = struct {
         fn_ptr.input = input_struct_ptr.*;
     }
 
-    fn functionHasAnyDefaults(file: *const syn.SyntaxFile, fields: []const syn.NodeIndex) bool {
+    fn functionHasAnyDefaults(file: *const syn.FileSyntaxTree, fields: []const syn.NodeIndex) bool {
         for (fields) |field_node| {
             if (file.structTypeField(field_node).?.default_value != null) return true;
         }

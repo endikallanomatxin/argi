@@ -230,7 +230,7 @@ fn printCompilerStats(
     const syntax_storage = pipeline.syntaxStorageMetrics();
     std.debug.print("  node base bytes: {d}\n", .{syntax_storage.node_base_bytes});
     std.debug.print("  extra_data bytes: {d}\n", .{syntax_storage.extra_data_bytes});
-    std.debug.print("  SyntaxFile total: {d}\n", .{syntax_storage.total()});
+    std.debug.print("  FileSyntaxTree total: {d}\n", .{syntax_storage.total()});
     std.debug.print("  SG nodes:     {d}\n", .{pipeline.sg_node_count});
 
     std.debug.print("Types\n", .{});

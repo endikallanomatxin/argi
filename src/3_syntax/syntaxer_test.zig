@@ -5,7 +5,7 @@ const tokenizer = @import("../2_tokens/tokenizer.zig");
 const syntax_tree = @import("syntax_tree.zig");
 const syntaxer = @import("syntaxer.zig");
 
-fn parseTestFile(path: []const u8) !syntax_tree.SyntaxFile {
+fn parseTestFile(path: []const u8) !syntax_tree.FileSyntaxTree {
     const source = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, std.testing.allocator, .limited(4 * 1024 * 1024));
     defer std.testing.allocator.free(source);
     const files = [_]source_files.SourceFile{.{ .path = path, .code = source }};
@@ -38,7 +38,7 @@ fn expectTags(path: []const u8, expected: []const syntax_tree.Node.Tag) !void {
     }
 }
 
-fn firstNodeWithTag(tree: *const syntax_tree.SyntaxFile, tag: syntax_tree.Node.Tag) syntax_tree.NodeIndex {
+fn firstNodeWithTag(tree: *const syntax_tree.FileSyntaxTree, tag: syntax_tree.Node.Tag) syntax_tree.NodeIndex {
     const index = std.mem.indexOfScalar(syntax_tree.Node.Tag, tree.nodes.items(.tag), tag).?;
     return @enumFromInt(@as(u32, @intCast(index)));
 }
